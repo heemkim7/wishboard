@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<meta name="referrer" content="no-referrer" />
+<title>사진 전광판 검수 · 타임스퀘어 K-점령전</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<style>
+  :root { --bg: #070a16; --text: #eef1ff; --muted: #9aa3c7; --dim: #6b7398; --stroke: rgba(255,255,255,.12); --glass: rgba(255,255,255,.05); --gold: #ffcf5a; --gold-2: #ffe9a8; --red: #ff5c7a; --green: #39f58a; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: radial-gradient(1200px 600px at 20% -10%, #1a1440 0%, transparent 60%), var(--bg); color: var(--text); font-family: "Pretendard Variable", Pretendard, "Malgun Gothic", sans-serif; }
+  main { max-width: 1120px; margin: 0 auto; padding: 28px 20px 60px; }
+  h1 { margin: 0; font-size: 24px; font-weight: 900; letter-spacing: -.02em; }
+  .sub { margin: 6px 0 0; font-size: 13px; color: var(--muted); font-weight: 600; line-height: 1.6; }
+  .bar { margin-top: 20px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  input[type=password] { flex: 1; min-width: 220px; height: 42px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--stroke); background: rgba(0,0,0,.3); color: var(--text); font: inherit; font-weight: 700; }
+  button { height: 42px; padding: 0 16px; border-radius: 12px; border: 1px solid var(--stroke); background: var(--glass); color: var(--text); font: inherit; font-weight: 800; cursor: pointer; }
+  button:hover { border-color: rgba(255,255,255,.3); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.gold { color: #2a1800; border: 0; background: linear-gradient(135deg, var(--gold-2), var(--gold) 45%, #e6a52a); }
+  button.ok { color: #04210f; border: 0; background: linear-gradient(135deg, #b4ffd3, var(--green)); }
+  button.no { color: #fff; border: 0; background: linear-gradient(135deg, #ff8aa0, var(--red)); }
+  .tabs { margin-top: 18px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .tabs button { height: 34px; border-radius: 999px; font-size: 13px; }
+  .tabs button.on { color: var(--gold-2); border-color: rgba(255,207,90,.6); background: rgba(255,207,90,.1); }
+  .msg { margin-top: 14px; font-size: 13px; font-weight: 700; color: var(--muted); min-height: 18px; }
+  .msg.err { color: #ff9cb0; }
+  .grid { margin-top: 10px; display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+  .card { border-radius: 16px; overflow: hidden; border: 1px solid var(--stroke); background: var(--glass); }
+  .card img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #000; }
+  .gone { display: grid; place-items: center; aspect-ratio: 16 / 9; background: rgba(0,0,0,.35); color: var(--dim); font-size: 13px; font-weight: 700; }
+  .meta { padding: 12px 14px 0; font-size: 13px; line-height: 1.6; color: var(--muted); font-weight: 600; }
+  .meta b { color: var(--text); }
+  .acts { display: flex; gap: 8px; padding: 12px 14px 14px; }
+  .acts button { flex: 1; }
+  .empty { margin-top: 30px; text-align: center; color: var(--dim); font-weight: 700; }
+  ul { margin: 8px 0 0; padding-left: 18px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>📷 사진 전광판 검수</h1>
+  <p class="sub">승인한 사진만 광장 전체 전광판에 송출됩니다. 거절하면 사진 요금이 점령자에게 환불되고, 송출 중인 사진을 내리면 환불 없이 글자 전광판으로 돌아갑니다.</p>
+  <div class="sub">거절 기준
+    <ul>
+      <li>선정적·폭력적·혐오 표현, 불법 광고, 도박·사기 홍보</li>
+      <li>본인이 아닌 사람의 얼굴이 알아볼 수 있게 나온 사진, 전화번호·주소·차량번호 등 개인정보</li>
+      <li>연예인 사진·로고 등 저작권/초상권이 의심되는 사진, QR 코드</li>
+    </ul>
+  </div>
+  <div class="bar">
+    <input id="key" type="password" autocomplete="off" placeholder="ADMIN_KEY (Worker 시크릿)" />
+    <button id="save" class="gold" type="button">열기</button>
+  </div>
+  <div class="tabs" id="tabs"></div>
+  <div class="msg" id="msg"></div>
+  <div class="grid" id="grid"></div>
+</main>
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const TABS = [['pending', '⏳ 검수 대기'], ['approved', '✅ 송출 중'], ['rejected', '거절함'], ['removed', '내림']];
+const SLOT = (s) => s === 'MAIN_S' ? 'S급 메인 타워' : s.startsWith('SUB_') ? `B급 서브 ${s.slice(4)}` : `C급 거리 ${s.replace('PLOT_', '')}번`;
+let key = sessionStorage.getItem('kts-admin') || '', tab = 'pending', urls = [];
+$('key').value = key;
+
+function msg(text, err) { $('msg').textContent = text || ''; $('msg').className = err ? 'msg err' : 'msg'; }
+async function api(path, init = {}) {
+  const r = await fetch(path, { ...init, headers: { ...(init.headers || {}), 'x-admin-key': key } });
+  if (r.status === 401) throw new Error('ADMIN_KEY가 맞지 않아요. (Worker에 ADMIN_KEY 시크릿이 설정돼 있는지 확인)');
+  return r;
+}
+function renderTabs() {
+  $('tabs').replaceChildren(...TABS.map(([k, label]) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = label; b.className = k === tab ? 'on' : '';
+    b.onclick = () => { tab = k; renderTabs(); load(); };
+    return b;
+  }));
+}
+async function review(id, approve, btns) {
+  if (!approve && !confirm(tab === 'approved' ? '송출 중인 사진을 내릴까요? (환불 없음)' : '이 사진을 거절할까요? (사진 요금 환불)')) return;
+  for (const b of btns) b.disabled = true;
+  try {
+    const r = await api('/rt/admin/photo', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ photo_id: id, approve }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.ok === false) throw new Error(d.error || '처리하지 못했어요');
+    msg(approve ? '✅ 승인했어요. 광장 전광판에 바로 송출됩니다.' : d.photo?.refunded ? `거절하고 ${d.photo.refunded} 코인을 환불했어요.` : '사진을 내렸어요.');
+    load();
+  } catch (e) { msg(e.message, true); for (const b of btns) b.disabled = false; }
+}
+async function load() {
+  if (!key) { msg('ADMIN_KEY를 입력하세요.'); $('grid').replaceChildren(); return; }
+  msg('불러오는 중…');
+  try {
+    const r = await api('/rt/admin/photos?status=' + tab);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) throw new Error('목록을 불러오지 못했어요. (Supabase에 schema.sql 사진 전광판 마이그레이션을 적용했는지 확인)');
+    for (const u of urls) URL.revokeObjectURL(u);
+    urls = [];
+    const list = d.photos || [];
+    msg(list.length ? `${list.length}장` : '');
+    if (!list.length) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = '해당하는 사진이 없어요'; $('grid').replaceChildren(e); return; }
+    $('grid').replaceChildren(...list.map((p) => {
+      const card = document.createElement('div'); card.className = 'card';
+      const img = document.createElement('img'); img.alt = p.slot_id;
+      const gone = () => { const g = document.createElement('div'); g.className = 'gone'; g.textContent = '사진 파일은 삭제됐어요'; img.replaceWith(g); };
+      if (Number(p.bytes) > 0) api(`/rt/photo/${p.photo_id}.jpg?review=1`).then(r => r.ok ? r.blob() : null).then(b => { if (!b) return gone(); const u = URL.createObjectURL(b); urls.push(u); img.src = u; }).catch(gone);
+      else queueMicrotask(gone);
+      const meta = document.createElement('div'); meta.className = 'meta';
+      const when = new Date(p.created_at).toLocaleString('ko-KR');
+      meta.innerHTML = `<b></b> · <span class="slot"></span><br>요금 <b>${Number(p.fee) || 0}</b> 코인 · ${Math.round((Number(p.bytes) || 0) / 1024)}KB · ${when}<br><span class="actor"></span>`;
+      meta.querySelector('b').textContent = p.nickname || '익명';
+      meta.querySelector('.slot').textContent = SLOT(p.slot_id);
+      meta.querySelector('.actor').textContent = 'actor ' + String(p.actor_id).slice(0, 18);
+      const acts = document.createElement('div'); acts.className = 'acts';
+      if (tab === 'pending') {
+        const ok = document.createElement('button'); ok.type = 'button'; ok.className = 'ok'; ok.textContent = '승인 · 송출';
+        const no = document.createElement('button'); no.type = 'button'; no.className = 'no'; no.textContent = '거절 · 환불';
+        ok.onclick = () => review(p.photo_id, true, [ok, no]);
+        no.onclick = () => review(p.photo_id, false, [ok, no]);
+        acts.append(ok, no);
+      } else if (tab === 'approved') {
+        const down = document.createElement('button'); down.type = 'button'; down.className = 'no'; down.textContent = '내리기';
+        down.onclick = () => review(p.photo_id, false, [down]);
+        acts.append(down);
+      }
+      card.append(img, meta);
+      if (acts.childElementCount) card.append(acts);
+      return card;
+    }));
+  } catch (e) { msg(e.message, true); }
+}
+$('save').onclick = () => { key = $('key').value.trim(); sessionStorage.setItem('kts-admin', key); load(); };
+$('key').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('save').click(); });
+renderTabs();
+load();
+setInterval(() => { if (key && tab === 'pending' && !document.hidden) load(); }, 30000);
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+.wrangler/
+node_modules/
+out/
+.dev.vars
+.env
+.env.*
+*.pem
+*.key
+*.fbx
+*.blend
+*.crdownload
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
