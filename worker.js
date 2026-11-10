@@ -15,7 +15,7 @@ let BUD = FREE;
 const budget = env => { const p = env && env.PLAN === 'paid' ? PAID : FREE; BUD = { DAY: +(env && env.BUDGET_REQ_DAY) || p.DAY, GBS: +(env && env.BUDGET_GBS_DAY) || p.GBS }; return BUD; };
 const lvlOf = (n, g = 0) => { const f = Math.max(n / BUD.DAY, g / BUD.GBS); return f >= HARD ? 2 : f >= LEAN ? 1 : 0; };
 const today = () => new Date().toISOString().slice(0, 10);
-const SUPA = 'https://gisykxqhticmdhmupnry.supabase.co', ANON = 'sb_publishable__yq2TXlS1wg8-6FotfrbEg_ckhZxgTj'; // public
+const SUPA = 'https://yxddhpacuyaffaoutxjn.supabase.co', ANON = 'sb_publishable_Vd-7c6e2f2s3G1d5Jbx9vw_0UCuHm-B'; // public
 // Supabase JWT check (guest = anonymous sign-in tokens too). Public JWKS only: no secret needed or stored.
 let JW = { at: 0, keys: new Map() };
 const b64u = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), c => c.charCodeAt(0));

@@ -4,8 +4,8 @@
 // To move to a dedicated WebSocket server, reimplement these methods here; nothing else needs to change.
 // Fully optional: if the CDN or Supabase is unreachable, the game keeps running single-player.
 // v6: Seoul project (ap-northeast-2). Rooms = 행정동 code + scene; a shared lobby presence channel gives per-dong head counts.
-export const SUPA_URL = 'https://gisykxqhticmdhmupnry.supabase.co';
-export const SUPA_KEY = 'sb_publishable__yq2TXlS1wg8-6FotfrbEg_ckhZxgTj'; // publishable key: public by design
+export const SUPA_URL = 'https://yxddhpacuyaffaoutxjn.supabase.co';
+export const SUPA_KEY = 'sb_publishable_Vd-7c6e2f2s3G1d5Jbx9vw_0UCuHm-B'; // publishable key: public by design
 // v13: QA/test clients (?qa=1) live in a separate namespace and never appear in real players' rooms, lobby counts or chat history
 export const NS = /[?&]qa=1/.test(location.search) || window.__QA || navigator.webdriver ? 'chapelqa:' : 'chapel:';
 export const CDN = 'https://esm.sh/@supabase/supabase-js@2.45.4';
@@ -23,7 +23,7 @@ export const DO_MODE = /^(studio(-qa)?\.masilchapel|(masil|masilchapel)\.[a-z0-9
 // while the page is visible and the device is online. Explicit server 'down' (budget) still stops at once.
 const DO_BASE = 800, DO_CAP = 30000, FAIL_MS = 60000, FAIL_N = 5;
 // Identity for the DO = verified Supabase JWT (guests use anonymous sign-in). Sent as a WebSocket subprotocol, never in the URL.
-const AUTH_LS = 'sb-gisykxqhticmdhmupnry-auth-token';
+const AUTH_LS = 'sb-yxddhpacuyaffaoutxjn-auth-token';
 export async function doToken(sb, fresh) { try { const c = window.G?.net?.sb || sb; let { data } = await c.auth.getSession(); let s = data?.session;
     if (!s && c === sb) { try { const j = JSON.parse(localStorage.getItem(AUTH_LS) || 'null'); if (j?.access_token && j.expires_at * 1000 > Date.now() + 60000) return j.access_token; } catch { } }
     if (s) return s.access_token; const g = await guestToken(fresh); if (g) return g.token; // v16: guests get a Worker-signed token (no Supabase anonymous user/MAU)
