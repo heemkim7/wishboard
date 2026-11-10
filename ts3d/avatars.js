@@ -30,10 +30,11 @@ export const speciesId = (v) => (Number(v) === 2 || Number(v) === 3 ? Number(v) 
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
-export function createAvatars({ scene, manager, urls, models, height = 1.8 }) {
+export function createAvatars({ scene, urls, models, first, height = 1.8 }) {
   const sources = models || { 1: urls?.[0] };
   const sys = { species: new Map(), missing: new Set(), pending: 0, failed: false, waiting: new Set(), all: new Set(), height };
-  const loader = new GLTFLoader(manager);
+  const loader = new GLTFLoader();
+  const started = new Set();
 
   const shadowC = makeCanvas(128, 128);
   {
@@ -92,21 +93,29 @@ export function createAvatars({ scene, manager, urls, models, height = 1.8 }) {
     }
   }
 
-  for (const [key, url] of Object.entries(sources)) {
-    if (!url) continue;
-    const id = speciesId(key);
+  function loadId(id) {
+    const url = sources[id];
+    if (!url || started.has(id)) return;
+    started.add(id);
     sys.pending++;
     loader.load(url, (gltf) => {
       prepare(id, gltf);
       sys.pending--;
       flush();
+      if (id === priority) rest();
     }, undefined, (err) => {
       console.error('[avatar]', url, err);
       sys.missing.add(id);
       sys.pending--;
       flush();
+      if (id === priority) rest();
     });
   }
+  function rest() {
+    for (const key of Object.keys(sources)) loadId(speciesId(key));
+  }
+  const priority = speciesId(first);
+  loadId(priority);
 
   function create(opts) {
     const a = new Avatar(sys, scene, opts);
@@ -202,13 +211,14 @@ class Avatar {
   }
 
   attach() {
-    if (this.model || this.disposed) return;
+    if (this.disposed || (this.model && !this.fallback)) return;
     const spec = this.spec();
     if (!spec) {
-      if (this.sys.failed || (this.sys.pending === 0 && this.sys.species.size === 0)) this.attachFallback();
-      else this.sys.waiting.add(this);
+      if (!this.fallback) this.attachFallback();
+      if (!(this.sys.failed || (this.sys.pending === 0 && this.sys.species.size === 0))) this.sys.waiting.add(this);
       return;
     }
+    if (this.fallback) this.detachModel();
     const sys = this.sys;
     const model = cloneSkinned(spec.gltf.scene);
     model.scale.setScalar(spec.scale);

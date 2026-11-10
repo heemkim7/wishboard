@@ -162,7 +162,7 @@ void main(){
   const fireworks = [];
   const sparkTex = new THREE.CanvasTexture(paintGlow(makeCanvas(64, 64)));
   const boards = createBoards({ renderer, kitMats, pick, onBurst: (p, color, tier) => celebrateAt(p, color, tier) });
-  const avatars = createAvatars({ scene, manager, models: MODELS });
+  const avatars = createAvatars({ scene, models: MODELS, first: opts.species });
   {
     const S = LAYOUT.stairs, G = LAYOUT.stage;
     carColliders.push({ x0: S.x0 - 0.4, x1: S.x1 + 0.4, z0: S.back, z1: S.front + 0.2 });
