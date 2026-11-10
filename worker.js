@@ -1,4 +1,4 @@
-// Worker name: masil (https://masil.heemkim7.workers.dev; target masil.chapel.workers.dev)
+// Worker name: studio (https://studio.wishboard.workers.dev)
 // K-Times Square plaza on the same Workers Free stack: floor is fixed at 0.
 // 마실채플 realtime on Cloudflare Workers Free: static assets + SQLite Durable Objects (WebSocket Hibernation).
 // Room DO (one per channel topic): presence, broadcast relay (pos filtered by floor = zone sync), FIFO queue, CAP per channel.
@@ -185,7 +185,7 @@ const kstDay = (t = Date.now()) => new Date(t + 9 * 36e5).toISOString().slice(0,
 const isoWeek = (t = Date.now()) => { const d = new Date(t + 9 * 36e5), w = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())), dn = (w.getUTCDay() + 6) % 7; w.setUTCDate(w.getUTCDate() - dn + 3); const y = w.getUTCFullYear(), f = new Date(Date.UTC(y, 0, 4)); return y + 'W' + String(1 + Math.round(((w - f) / 864e5 - 3 + ((f.getUTCDay() + 6) % 7)) / 7)).padStart(2, '0'); };
 let VK = null;
 async function vapidAuth(env, endpoint) { if (!env.VAPID_PRIV) return null; if (!VK) VK = await crypto.subtle.importKey('jwk', JSON.parse(env.VAPID_PRIV), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
-  const enc = o => b64e(new TextEncoder().encode(JSON.stringify(o))), h = enc({ typ: 'JWT', alg: 'ES256' }), p = enc({ aud: new URL(endpoint).origin, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: 'https://studio.masilchapel.workers.dev' });
+  const enc = o => b64e(new TextEncoder().encode(JSON.stringify(o))), h = enc({ typ: 'JWT', alg: 'ES256' }), p = enc({ aud: new URL(endpoint).origin, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: 'https://studio.wishboard.workers.dev' });
   const g = new Uint8Array(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, VK, new TextEncoder().encode(h + '.' + p))); return `vapid t=${h}.${p}.${b64e(g)}, k=${VAPID_PUB}`; }
 const GRP = { at: 0, w: '', v: null };
 const J = (o, s = 200, h = {}) => new Response(JSON.stringify(o), { status: s, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...h } });

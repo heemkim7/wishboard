@@ -18,7 +18,7 @@ const CELL = 900, KEEP = 2; // cell size (world px); drop a cell only when ≥KE
 // v15 Cloudflare transport: on *.workers.dev (or ?rt=do) realtime goes to SQLite Durable Objects over one WebSocket per channel.
 // The shim mimics the small part of supabase-js RealtimeChannel this game uses, so the rest of the file is unchanged.
 // Supabase stays for auth, DB and RPCs. Any failure → solo mode (game keeps working single-player).
-export const DO_MODE = /^(studio(-qa)?\.masilchapel|(masil|masilchapel)\.[a-z0-9-]+)\.workers\.dev$/.test(location.hostname) || /[?&]rt=do/.test(location.search) || window.__PLAZA_RT === true; // plaza sets __PLAZA_RT before this module loads
+export const DO_MODE = /^(studio(-qa)?\.(masilchapel|wishboard)|(masil|masilchapel|wishboard)\.[a-z0-9-]+)\.workers\.dev$/.test(location.hostname) || /[?&]rt=do/.test(location.search) || window.__PLAZA_RT === true; // plaza sets __PLAZA_RT before this module loads
 // v17 resilient reconnect: silent exponential backoff (0.8s→30s cap, forever); the solo popup only after FAIL_MS of continuous failure
 // while the page is visible and the device is online. Explicit server 'down' (budget) still stops at once.
 const DO_BASE = 800, DO_CAP = 30000, FAIL_MS = 60000, FAIL_N = 5;
