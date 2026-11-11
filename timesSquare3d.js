@@ -10,7 +10,8 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { toNetUnits, fromNetUnits } from './net.js';
-import { LAYOUT, PLOT_SLOTS, TAXI_STANDS, SKIP_ZONES, NO_PROPS, NO_TREES, FAR_CLUSTERS, LANDMARKS, groundHeight, onStairs } from './ts3d/layout.js';
+import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, SKIP_ZONES, NO_PROPS, NO_TREES, FAR_CLUSTERS, LANDMARKS, groundHeight, onStairs, fountainSpot } from './ts3d/layout.js';
+import { BALANCE } from './balance.js';
 import { kitMaterials } from './ts3d/kit.js';
 import { createReflection } from './ts3d/ground.js';
 import { createBoards, screenTime } from './ts3d/screens.js';
@@ -67,7 +68,7 @@ export function createTimesSquare(canvas, opts = {}) {
   const { signal } = ac;
 
   // ---- renderer / scene / camera ---------------------------------------------
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', stencil: false });
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', stencil: false, preserveDrawingBuffer: true });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.NeutralToneMapping;
   renderer.toneMappingExposure = clamp(Number(opts.exposure) || 0.95, 0.5, 1.5);
@@ -208,9 +209,10 @@ void main(){
   applyGlow();
 
   // ---- local player -------------------------------------------------------------------
-  const pos = new THREE.Vector3(LAYOUT.spawn.x, groundHeight(LAYOUT.spawn.x, LAYOUT.spawn.z), LAYOUT.spawn.z);
+  const pos0 = opts.start && Number.isFinite(opts.start.x) ? opts.start : LAYOUT.spawn;
+  const pos = new THREE.Vector3(pos0.x, groundHeight(pos0.x, pos0.z), pos0.z);
   const vel = new THREE.Vector3();
-  let yaw = LAYOUT.spawn.yaw, animSpeed = 0, sitTimer = 0, inputEnabled = true, dancing = false, danceAt = 0;
+  let yaw = Number.isFinite(pos0.yaw) ? pos0.yaw : LAYOUT.spawn.yaw, animSpeed = 0, sitTimer = 0, inputEnabled = true, dancing = false, danceAt = 0;
   let name = chars(opts.name || '네온손님', 16);
   let color = COLOR_RE.test(opts.color || '') ? opts.color : AVATAR_COLORS[0];
   let species = speciesId(opts.species);
@@ -227,14 +229,24 @@ void main(){
   controls.dampingFactor = 0.085;
   controls.enablePan = false;
   controls.rotateSpeed = low ? 0.85 : 0.6;
-  controls.zoomSpeed = 0.9;
+  controls.enableZoom = false;
   controls.minDistance = 2.8;
-  controls.maxDistance = 30;
+  controls.maxDistance = 26;
   controls.minPolarAngle = 0.18;
   controls.maxPolarAngle = Math.PI - 0.12;
   controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
   controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_ROTATE };
   let orbiting = false, orbitEnd = 0;
+  canvas.addEventListener('wheel', (e) => {
+    if (e.target.closest?.('.modal, .minimap, .mapzoom, input, textarea, select')) return;
+    e.preventDefault();
+    const off = camWant.clone().sub(follow);
+    const len = off.length() || 8;
+    const next = clamp(len * (e.deltaY > 0 ? 1.12 : 0.88), controls.minDistance, controls.maxDistance);
+    camWant.copy(follow).add(off.setLength(next));
+    camera.position.copy(camWant);
+    controls.update();
+  }, { signal, passive: false });
   controls.addEventListener('start', () => { orbiting = true; });
   controls.addEventListener('end', () => { orbiting = false; orbitEnd = performance.now(); });
   let eye = EYE;
@@ -243,6 +255,8 @@ void main(){
   camera.position.set(pos.x - Math.sin(yaw) * 8.2, pos.y + eye + 1.25, pos.z - Math.cos(yaw) * 8.2);
   controls.update();
   const camWant = camera.position.clone();
+  const cineFrom = new THREE.Vector3(), cineTo = new THREE.Vector3(), cineL0 = new THREE.Vector3(), cineL1 = new THREE.Vector3();
+  let cine = null, boostHeld = false, boostSnd = 0;
 
   // ---- input ----------------------------------------------------------------------------
   const keys = new Set();
@@ -255,7 +269,12 @@ void main(){
       if (e.code.startsWith('Arrow')) e.preventDefault();
     }
     if (!inputEnabled || e.repeat) return;
-    if (e.code === 'Space') { e.preventDefault(); if (drive) opts.onHorn?.(); else jump(); }
+    if (e.code === 'Space') {
+      e.preventDefault();
+      if (drive) opts.onHorn?.();
+      else if (near && (near.kind === 'cart' || near.kind === 'stage')) interact();
+      else jump();
+    }
     else if (e.code === 'KeyE' || e.code === 'KeyF') interact();
     else if (!drive && /^Digit[1-4]$/.test(e.code)) playEmote(Number(e.code.slice(5)));
   }, { signal });
@@ -327,8 +346,21 @@ void main(){
       if (world) [x, z] = world.collideProps(x, z, r);
       if (nyc) [x, z] = nyc.collide(x, z, r);
     }
-    const B = LAYOUT.bounds;
-    return [clamp(x, B.x0 - 60, B.x1 + 60), clamp(z, B.z0 - 60, B.z1 + 60)];
+    return [clamp(x, LOOP.x0 + 1.4, LOOP.x1 - 1.4), clamp(z, LOOP.z0 + 1.4, LOOP.z1 - 1.4)];
+  }
+  function approachOf(x, z) {
+    const S = LAYOUT.stall, G = LAYOUT.stage;
+    const spots = [
+      { x: S.x, z: S.z + 4.4, yaw: Math.PI },
+      { x: G.spot.x, z: G.z0 - 3.6, yaw: 0 },
+      ...TAXI_STANDS.map((s) => ({ x: s.x, z: s.z, yaw: s.axis === 'x' ? Math.PI / 2 : 0 })),
+    ];
+    let best = null;
+    for (const s of spots) {
+      const d = Math.hypot(s.x - x, s.z - z);
+      if (d < 18 && (!best || d < best.d)) best = { ...s, d };
+    }
+    return best;
   }
 
   const PALETTE = ['#ff3d9a', '#3fe6ff', '#ffcf5a', '#39f58a', '#b84dff', '#ffffff'];
@@ -360,6 +392,18 @@ void main(){
   const rockets = [];
   function launch(x, z, y1, hex, delay = 0) {
     rockets.push({ x, z, y: groundHeight(x, z), y1, hex, delay, sprite: null });
+  }
+  function cheerAt(slotId) {
+    const p = boards.worldPos(slotId);
+    if (!p) return false;
+    burst(p.clone(), '#ff3d9a', 46, 0.65);
+    launch(p.x, p.z, p.y + 3, '#ffcf5a', 0.04);
+    launch(p.x + 1.2, p.z, p.y + 7, '#ffffff', 0.12);
+    return true;
+  }
+  function fountainSplash() {
+    const f = fountainSpot();
+    burst(new THREE.Vector3(f.x, f.y, f.z), '#7fd4ff', 42, 0.6);
   }
   function celebrateAt(p, hex, tier) {
     const big = tier === 'S' ? 4 : tier === 'B' ? 3 : 2;
@@ -400,6 +444,15 @@ void main(){
     return { g, ring, icon, set(p) { g.visible = !!p; if (p) g.position.set(p.x, groundHeight(p.x, p.z), p.z); } };
   }
   const markers = { pickup: makeMarker('#39f58a', '🙋'), drop: makeMarker('#ffcf5a', '🏁'), way: makeMarker('#3fe6ff', '📍') };
+  {
+    const beam = markers.drop.g.children[0];
+    beam.geometry.dispose();
+    beam.geometry = new THREE.CylinderGeometry(1.6, 1.6, 25, 24, 1, true);
+    beam.position.y = 12.5;
+    beam.rotation.x = 0;
+    beam.material = new THREE.MeshBasicMaterial({ color: 0xffcf5a, transparent: true, opacity: 0.45, depthWrite: false, side: THREE.DoubleSide });
+    beam.layers.enable(0);
+  }
   let waypoint = null;
   const job = { phase: 'none', target: null, dest: null, t0: 0, limit: 0, nextAt: 0, startX: 0, startZ: 0 };
 
@@ -412,9 +465,9 @@ void main(){
       if (!hit) continue;
       const w = nyc.roads.width[hit.road], side = Math.random() < 0.5 ? 1 : -1;
       const x = hit.px - hit.fz * (w / 2 - 1.4) * side, z = hit.pz + hit.fx * (w / 2 - 1.4) * side;
-      if (nyc.onLand(x, z)) return { x, z };
+      if (nyc.onLand(x, z) && insideLoop(x, z, 8)) return { x, z };
     }
-    return { x: from.x + 60, z: from.z };
+    return { x: clamp(from.x, LOOP.x0 + 12, LOOP.x1 - 12), z: clamp(from.z + 40, LOOP.z0 + 12, LOOP.z1 - 12) };
   }
 
   // ---- emotes / actions -----------------------------------------------------------------------
@@ -511,7 +564,7 @@ void main(){
       opts.onInteract?.('stand', near.id, { near: true, ok: i >= 0 });
       return;
     }
-    opts.onInteract?.(near.kind, near.id, { near: true });
+    opts.onInteract?.(near.kind, near.id, { near: true, n: near.n || 0 });
   }
 
   // ---- remote avatars -----------------------------------------------------------------------
@@ -606,10 +659,12 @@ void main(){
       const beam = new THREE.Mesh(starBeamGeo, starBeamMat);
       beam.visible = false;
       beam.layers.set(2);
-      g.add(gem, halo, beam);
+      const pad = new THREE.Mesh(new THREE.RingGeometry(1.15, BALANCE.starR, 24).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffcf5a, transparent: true, opacity: 0.7, depthWrite: false, side: THREE.DoubleSide }));
+      pad.visible = false;
+      g.add(gem, halo, beam, pad);
       g.visible = false;
       scene.add(g);
-      stars.set(s.i, { ...s, g, gem, halo, beam, born: now + (s.delay || 0), touched: 0 });
+      stars.set(s.i, { ...s, g, gem, halo, beam, pad, born: now + (s.delay || 0), touched: 0 });
     }
   }
   function removeStar(i, mine) {
@@ -622,6 +677,37 @@ void main(){
     return true;
   }
   function clearStars() { for (const i of [...stars.keys()]) removeStar(i, false); }
+  // Sidewalk coins in the bowtie, in front of the spawn. Walk over one for +1.
+  const COIN_HOME = [[14, 38], [21, 44], [11, 50], [23, 56], [16, 64], [8, 47], [27, 52], [18, 74]];
+  const coinMat = new THREE.MeshStandardMaterial({ color: '#ffd56a', emissive: '#ffb020', emissiveIntensity: 1.4, metalness: 0.85, roughness: 0.25 });
+  const coinGeo = new THREE.CylinderGeometry(0.28, 0.28, 0.08, 16);
+  const coins = COIN_HOME.map(([x, z], i) => {
+    const mesh = new THREE.Mesh(coinGeo, coinMat);
+    mesh.rotation.x = Math.PI / 2;
+    mesh.position.set(x, 0.9, z);
+    scene.add(mesh);
+    return { i, x, z, mesh, back: 0 };
+  });
+  function removeCoin(i) {
+    const c = coins[i];
+    if (!c || !c.mesh.visible) return;
+    c.mesh.visible = false;
+    c.back = performance.now() + 20000;
+  }
+  function updateCoins(now, t) {
+    for (const c of coins) {
+      if (!c.mesh.visible) {
+        if (c.back && now >= c.back) { c.mesh.visible = true; c.back = 0; }
+        continue;
+      }
+      const gy = groundHeight(c.x, c.z) + 0.85 + Math.sin(t * 2.2 + c.i) * 0.12;
+      c.mesh.position.y = gy;
+      c.mesh.rotation.z = t * 1.4;
+      if (drive) continue;
+      const dx = pos.x - c.x, dz = pos.z - c.z;
+      if (dx * dx + dz * dz < 1.4 && Math.abs(pos.y - groundHeight(c.x, c.z)) < 1.6) opts.onCoin?.(c.i);
+    }
+  }
   function updateStars(now, t) {
     for (const s of stars.values()) {
       const u = (now - s.born) / 1800;
@@ -635,9 +721,11 @@ void main(){
       s.gem.rotation.x = Math.sin(t + s.i) * 0.3;
       s.beam.visible = landed;
       s.beam.position.y = -0.95;
-      if (landed && !drive && now - s.touched > 1200) {
+      s.pad.visible = landed;
+      s.pad.position.y = gy - y;
+      if (landed && !drive) {
         const dx = pos.x - s.x, dz = pos.z - s.z;
-        if (dx * dx + dz * dz < 2.4 && Math.abs(pos.y - (gy - 0.95)) < 1.6) { s.touched = now; opts.onStarTouch?.(s.i); }
+        if (dx * dx + dz * dz < BALANCE.starR * BALANCE.starR) opts.onStarTouch?.(s.i);
       }
     }
   }
@@ -771,7 +859,9 @@ void main(){
 
   function stepDrive(dt, input, t) {
     const d = drive;
-    const top = input.walk ? CAR.boost : CAR.max;
+    const boosting = input.walk || boostHeld;
+    if (boosting && d.v > 8 && t - boostSnd > 1.4) { boostSnd = t; opts.onBoost?.(); }
+    const top = boosting ? CAR.boost : CAR.max;
     if (input.f > 0.1) d.v = Math.min(top, d.v + (d.v < 0 ? CAR.brake : CAR.accel) * input.f * dt);
     else if (input.f < -0.1) d.v = Math.max(-CAR.reverse, d.v - (d.v > 0 ? CAR.brake : CAR.accel * 0.6) * -input.f * dt);
     else d.v -= Math.sign(d.v) * Math.min(Math.abs(d.v), CAR.drag * dt);
@@ -810,22 +900,67 @@ void main(){
     updateJob(t);
   }
 
+  function slotPose(slotId, dist) {
+    const p = boards.worldPos(slotId);
+    if (!p) return null;
+    const screen = boards.get(slotId)?.mounts[0]?.screen;
+    const q = new THREE.Quaternion();
+    if (screen) screen.getWorldQuaternion(q);
+    const f = new THREE.Vector3(0, 0, 1).applyQuaternion(q);
+    f.y = 0;
+    if (f.lengthSq() < 1e-4) f.set(0, 0, 1);
+    f.normalize();
+    const look = p.clone();
+    const cam = p.clone().addScaledVector(f, dist);
+    cam.y = Math.max(look.y * 0.42 + 1.8, groundHeight(cam.x, cam.z) + 1.6);
+    return { look, cam, front: { x: p.x + f.x * 9, z: p.z + f.z * 9 }, board: boards.get(slotId)?.data || null, slot: slotId };
+  }
+  const AD_IDS = ['MAIN_S', 'SUB_B1', 'SUB_B2', 'SUB_B3', 'SUB_B4'];
+  for (let i = 1; i <= 20; i++) AD_IDS.push('PLOT_' + i);
+  function pickBoardDrop() {
+    for (let n = 0; n < 10; n++) {
+      const pose = slotPose(AD_IDS[(Math.random() * AD_IDS.length) | 0], 12);
+      if (pose && insideLoop(pose.front.x, pose.front.z, 4)) return { point: pose.front, slot: pose.slot, board: pose.board };
+    }
+    return { point: pickSpot(70, 200, { x: pos.x, z: pos.z }), slot: '', board: null };
+  }
+  function playIntroSweep() {
+    const pose = slotPose('MAIN_S', 28);
+    cineFrom.copy(pose?.cam || new THREE.Vector3(LAYOUT.oneTimes.x, 42, LAYOUT.oneTimes.z + 30));
+    cineL0.copy(pose?.look || new THREE.Vector3(LAYOUT.oneTimes.x, 26, LAYOUT.oneTimes.z));
+    cine = { t0: performance.now(), dur: 2200, hold: false, locked: false };
+  }
+  function focusSlot(slotId, holdMs = 0) {
+    const pose = slotPose(slotId, 18);
+    if (!pose) return null;
+    cineFrom.copy(camera.position);
+    cineL0.copy(controls.target);
+    cineTo.copy(pose.cam);
+    cineL1.copy(pose.look);
+    cine = { t0: performance.now(), dur: 700, hold: !holdMs, locked: true, until: holdMs ? performance.now() + holdMs : 0 };
+    burst(pose.look, '#ffcf5a', 80, 1);
+    launch(pose.front.x, pose.front.z, pose.look.y, '#ff3d9a', 0.05);
+    return pose;
+  }
   function updateJob(t) {
     const d = drive;
     if (job.phase === 'none' && t >= job.nextAt) {
-      job.target = pickSpot(140, 420, d);
+      job.target = pickSpot(40, 140, d);
       job.phase = 'pickup';
       markers.pickup.set(job.target);
       opts.onJob?.({ type: 'offer' });
     } else if (job.phase === 'pickup' && Math.hypot(d.x - job.target.x, d.z - job.target.z) < 7 && Math.abs(d.v) < 3) {
       markers.pickup.set(null);
-      job.dest = pickSpot(320, 1100, job.target);
+      const drop = pickBoardDrop();
+      job.dest = drop.point;
+      job.slot = drop.slot;
+      job.board = drop.board;
       const dist = Math.hypot(job.dest.x - job.target.x, job.dest.z - job.target.z);
       job.limit = Math.round(dist * 1.4 / 10 + 25);
       job.t0 = t;
       job.phase = 'ride';
       markers.drop.set(job.dest);
-      opts.onJob?.({ type: 'board', limit: job.limit });
+      opts.onJob?.({ type: 'board', limit: job.limit, slot: job.slot, title: job.board?.line1 ? `목적지 · ${job.board.line1}` : '목적지 전광판으로 이동' });
     } else if (job.phase === 'ride') {
       const left = job.limit - (t - job.t0);
       if (left <= 0) {
@@ -838,7 +973,7 @@ void main(){
         job.phase = 'none';
         job.nextAt = t + 2.5;
         markers.drop.set(null);
-        opts.onJob?.({ type: 'done', fare, at: screenOf(tmp.set(d.x, 2.4, d.z)) });
+        opts.onJob?.({ type: 'done', fare, slot: job.slot, board: job.board, at: screenOf(tmp.set(d.x, 2.4, d.z)) });
       }
     }
   }
@@ -927,28 +1062,61 @@ void main(){
       camera.lookAt(look);
       me.tag.visible = camera.position.distanceTo(follow) > 2.4;
     }
+    if (cine) {
+      const u = Math.min(1, (now - cine.t0) / cine.dur);
+      const e = u < 0.5 ? 4 * u * u * u : 1 - ((-2 * u + 2) ** 3) / 2;
+      if (!cine.locked) {
+        cineTo.set(pos.x - Math.sin(yaw) * 8.2, pos.y + eye + 1.25, pos.z - Math.cos(yaw) * 8.2);
+        cineL1.copy(follow);
+      }
+      look.lerpVectors(cineL0, cineL1, e);
+      controls.target.copy(look);
+      controls.update();
+      camera.position.lerpVectors(cineFrom, cineTo, e);
+      camera.lookAt(look);
+      camWant.copy(camera.position);
+      if ((cine.until && now >= cine.until) || (u >= 1 && !cine.hold && !cine.until)) cine = null;
+    }
+    if (markers.drop.g.visible) markers.drop.ring.rotation.z += dt * 1.8;
     sky.position.copy(camera.position);
 
     // Proximity prompts.
     let nk = null;
     if (!drive) {
-      const S = LAYOUT.stall, A = LAYOUT.atm, G = LAYOUT.stage.spot;
-      if ((pos.x - S.x) ** 2 + (pos.z - S.z) ** 2 < S.r * S.r) nk = { kind: 'cart' };
+      const S = LAYOUT.stall, A = LAYOUT.atm, G = LAYOUT.stage, spot = G.spot, F = fountainSpot();
+      const front = { x: spot.x, z: G.z0 - 3.6 };
+      if ((pos.x - S.x) ** 2 + (pos.z - S.z) ** 2 < BALANCE.stallR ** 2) nk = { kind: 'cart' };
       else if ((pos.x - A.x) ** 2 + (pos.z - A.z) ** 2 < A.r * A.r) nk = { kind: 'atm' };
-      else if ((pos.x - G.x) ** 2 + (pos.z - G.z) ** 2 < G.r * G.r && pos.y > 0.6) nk = { kind: 'stage' };
+      else if ((pos.x - spot.x) ** 2 + (pos.z - spot.z) ** 2 < BALANCE.stageR ** 2 || (pos.x - front.x) ** 2 + (pos.z - front.z) ** 2 < BALANCE.stageFrontR ** 2) nk = { kind: 'stage' };
+      else if ((pos.x - F.x) ** 2 + (pos.z - F.z) ** 2 < 4.8 * 4.8) nk = { kind: 'fountain' };
       else {
-        const tx = traffic?.nearestTaxi(pos.x, pos.z, 4.6);
-        if (tx) nk = { kind: 'taxi', i: tx.i };
+        const parked = traffic?.nearestTaxi(pos.x, pos.z, BALANCE.taxiParkedR, true);
+        if (parked) nk = { kind: 'taxi', i: parked.i };
         else {
-          const si = TAXI_STANDS.findIndex(s => Math.hypot(s.x - pos.x, s.z - pos.z) < 2.8);
-          if (si >= 0) nk = { kind: 'stand', id: si };
-          else if (marks) {
+          const si = TAXI_STANDS.findIndex(s => Math.hypot(s.x - pos.x, s.z - pos.z) < BALANCE.taxiStandR);
+          if (si >= 0) {
+            const cab = traffic?.nearestTaxi(TAXI_STANDS[si].x, TAXI_STANDS[si].z, BALANCE.taxiStandCabR, true);
+            nk = cab ? { kind: 'taxi', i: cab.i } : { kind: 'stand', id: si };
+          } else if (marks) {
             for (const slot of PLOT_SLOTS) {
               const p = marks.plotFront(slot.id, tmp);
               if ((pos.x - p.x) ** 2 + (pos.z - p.z) ** 2 < 3.6 * 3.6) { nk = { kind: 'plot', id: slot.id }; break; }
             }
           }
         }
+      }
+      if (!nk) {
+        let mates = 0;
+        if (net?.peers) {
+          for (const [id, peer] of net.peers) {
+            if (!peer || id === net.id) continue;
+            const s = net.sample(peer);
+            if (!s || s.x == null) continue;
+            const x = fromNetUnits(s.x), z = fromNetUnits(s.y);
+            if (Math.hypot(x - pos.x, z - pos.z) < BALANCE.cheerNear) mates++;
+          }
+        }
+        nk = { kind: 'crowd', n: mates };
       }
     }
     const key = nk ? nk.kind + (nk.id ?? '') + (nk.i ?? '') : '';
@@ -966,6 +1134,7 @@ void main(){
     marks?.update(dt, t);
     boards.update(dt);
     updateStars(now, t);
+    updateCoins(now, t);
 
     for (let i = rockets.length - 1; i >= 0; i--) {
       const r = rockets[i];
@@ -1089,6 +1258,7 @@ void main(){
     return wrapAngle(Math.atan2(x - pos.x, z - pos.z) - camYaw);
   }
   function setWaypoint(p) {
+    if (p && Number.isFinite(p.x) && Number.isFinite(p.z) && !insideLoop(p.x, p.z, 0)) p = null;
     waypoint = p && Number.isFinite(p.x) && Number.isFinite(p.z) ? { x: p.x, z: p.z } : null;
     markers.way.set(waypoint);
     opts.onWaypoint?.(waypoint);
@@ -1131,7 +1301,7 @@ void main(){
     canvas, scene, camera, renderer, quality,
     start, stop, dispose, resize,
     updateWorld, updateBillboardTexture, applyPlot,
-    playEmote, playEmoji: playEmote, playReaction, showReaction, jump, interact,
+    playEmote, playEmoji: playEmote, playReaction, showReaction, jump, interact, cheerAt, fountainSplash,
     setJoystick(x, y) { joy.x = clamp(Number(x) || 0, -1, 1); joy.y = clamp(Number(y) || 0, -1, 1); },
     setInputEnabled(v) { inputEnabled = !!v; if (!inputEnabled) { keys.clear(); joy.x = 0; joy.y = 0; } },
     setName(n) { name = chars(n || '네온손님', 16) || '네온손님'; me.setName(name); },
@@ -1140,24 +1310,54 @@ void main(){
     setGlow(v) { glow = clamp(Number(v) || 0, 0, 1); applyGlow(); },
     setExposure(v) { renderer.toneMappingExposure = clamp(Number(v) || 0.95, 0.5, 1.5); },
     setDancing,
+    playIntro: playIntroSweep,
+    focusSlot,
+    endFocus() { cine = null; },
+    setBoost(on) { boostHeld = !!on; },
     setWaypoint,
     getPlayer() { return playerInfo; },
     netState() { return netState; },
     near() { return near; },
     isDriving: () => !!drive,
     exitTaxi,
-    startStars, removeStar, clearStars,
+    startStars, removeStar, clearStars, removeCoin,
+    capture() {
+      composer.render();
+      const maxW = 1280;
+      const scale = Math.min(1, maxW / Math.max(1, canvas.width));
+      const out = document.createElement('canvas');
+      out.width = Math.max(2, Math.round(canvas.width * scale));
+      out.height = Math.max(2, Math.round(canvas.height * scale));
+      const g = out.getContext('2d');
+      g.drawImage(canvas, 0, 0, out.width, out.height);
+      const bar = Math.round(Math.max(36, out.height * 0.07));
+      g.fillStyle = 'rgba(5,6,16,0.78)';
+      g.fillRect(0, out.height - bar, out.width, bar);
+      g.textBaseline = 'middle';
+      g.fillStyle = '#ffe7a8';
+      g.font = `800 ${Math.max(15, Math.round(bar * 0.4))}px sans-serif`;
+      g.fillText('WISH BOARD · 모두의 전광판', 16, out.height - bar * 0.62);
+      const raw = out.toDataURL('image/jpeg', 0.9).split(',')[1] || '';
+      const bin = atob(raw);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new Blob([bytes], { type: 'image/jpeg' });
+    },
     bake(amount) { marks?.stall.popFish(amount >= 15); },
     setTicker(text) { boards.setTicker(text); },
     teleport(x, z) {
       if (drive) exitTaxi();
-      let tx = Number(x) || 0, tz = Number(z) || 0;
-      if (nyc) [tx, tz] = nyc.freeSpot(tx, tz, RADIUS);
+      let tx = clamp(Number(x) || 0, LOOP.x0 + 4, LOOP.x1 - 4), tz = clamp(Number(z) || 0, LOOP.z0 + 4, LOOP.z1 - 4);
+      const spot = approachOf(tx, tz);
+      if (spot) { tx = spot.x; tz = spot.z; yaw = spot.yaw; }
+      if (nyc) [tx, tz] = nyc.freeSpot(tx, tz, RADIUS, 12);
+      tx = clamp(tx, LOOP.x0 + 2, LOOP.x1 - 2);
+      tz = clamp(tz, LOOP.z0 + 2, LOOP.z1 - 2);
       const [nx, nz] = collide(tx, tz, RADIUS, false);
       const dx = nx - pos.x, dz = nz - pos.z;
       pos.set(nx, groundHeight(nx, nz), nz);
       vel.set(0, 0, 0);
-      const back = Math.atan2(camWant.x - follow.x, camWant.z - follow.z);
+      const back = spot ? yaw + Math.PI : Math.atan2(camWant.x - follow.x, camWant.z - follow.z);
       follow.set(pos.x, pos.y + eye, pos.z);
       camWant.set(pos.x + Math.sin(back) * 8.2, pos.y + eye + 1.4, pos.z + Math.cos(back) * 8.2);
       controls.target.copy(follow);

@@ -8,7 +8,7 @@ export const SUPA_URL = 'https://yxddhpacuyaffaoutxjn.supabase.co';
 export const SUPA_KEY = 'sb_publishable_Vd-7c6e2f2s3G1d5Jbx9vw_0UCuHm-B'; // publishable key: public by design
 // v13: QA/test clients (?qa=1) live in a separate namespace and never appear in real players' rooms, lobby counts or chat history
 export const NS = /[?&]qa=1/.test(location.search) || window.__QA || navigator.webdriver ? 'chapelqa:' : 'chapel:';
-export const CDN = 'https://esm.sh/@supabase/supabase-js@2.45.4';
+export const CDN = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm';
 // Interest management: the room channel (≤100 users/shard, see v6.cap) carries presence diffs + chat/events only.
 // Positions go to a spatial-grid cell channel; each client subscribes to the 3x3 cells around it (≈ one screen each way),
 // so it only receives nearby users. Rate: 2Hz if someone is within NEAR, else 1Hz (edge/far); idle or seated → nothing.
@@ -31,9 +31,10 @@ export async function doToken(sb, fresh) { try { const c = window.G?.net?.sb || 
 // v16 guest identity: HMAC token from /rt/guest, cached in localStorage and renewed (same id) before it expires.
 const GT_LS = 'masil_gt';
 export async function guestToken(fresh) { let g = null; try { g = JSON.parse(localStorage.getItem(GT_LS) || 'null'); } catch { }
-  if (!fresh && g?.token && g.exp * 1000 > Date.now() + 86400000) return g; // fresh: re-sign (same sub) after repeated handshake failures
-  try { const r = await fetch('/rt/guest', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(g?.token ? { t: g.token } : {}) }); if (!r.ok) return null;
-    const n = await r.json(); if (!n?.token) return null; localStorage.setItem(GT_LS, JSON.stringify(n)); return n; } catch { return null; } }
+  const live = g?.token && g.exp * 1000 > Date.now();
+  if (!fresh && live && g.exp * 1000 > Date.now() + 86400000) return g;
+  try { const r = await fetch('/rt/guest', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(g?.token ? { t: g.token } : {}) }); if (!r.ok) return live ? g : null;
+    const n = await r.json(); if (!n?.token) return live ? g : null; localStorage.setItem(GT_LS, JSON.stringify(n)); return n; } catch { return live ? g : null; } }
 class DOChan {
   constructor(rt, topic, cfg) { this.rt = rt; this.topic = topic; this.key = cfg?.config?.presence?.key || ('w' + Math.random().toString(36).slice(2, 10)); this.hs = []; this.st = {}; this.state = 'closed'; this.mine = null; this.tries = 0; }
   on(type, f, fn) { this.hs.push([type, f?.event, fn]); return this; }
@@ -55,6 +56,7 @@ class DOChan {
     else if (m.t === 'down') { this.dead = true; this.rt.down(this); }
     else if (m.t === 'WORLD_UPDATE') { if (this.rt.net) this.rt.net.emit('world', m); }
     else if (m.t === 'WALLET_SYNC') { if (this.rt.net) this.rt.net.emit('wallet', m); }
+    else if (m.t === 'AD') { if (this.rt.net) this.rt.net.emit('ad', m); }
     else if (m.t === 'E') { this.fire('broadcast', 'emote', { type: 'broadcast', event: 'emote', payload: { id: m.k, e: m.e } }); if (this.rt.net) this.rt.net.emit('emoji', { id: m.k, e: m.e }); } }
   raw(o) { if (this.ws?.readyState === 1) { this.ws.send(JSON.stringify(o)); return true; } return false; }
   send(o) { if (this.state !== 'joined') return Promise.resolve('error'); const p = o.payload; if (o.event === 'pos' && p) { this.raw({ t: 'p', a: [p.x, p.y, p.face, p.anim, p.fl, p.vx, p.vy] }); return Promise.resolve('ok'); } this.raw({ t: 'b', e: o.event, p: o.payload }); return Promise.resolve('ok'); }
@@ -142,11 +144,11 @@ export class Net {
       else if (s === 'CLOSED') this.setStatus('connecting'); /* silent auto-reconnect */ else if (s === 'CHANNEL_ERROR' || s === 'TIMED_OUT') this.setStatus('offline'); });
   }
   async leave(rejoin) { this._jseq = rejoin ? this._jseq : (this._jseq || 0) + 1; for (const c of (this.cells || new Map()).values()) { try { this.sb.removeChannel(c.ch); } catch { } } this.cells = new Map(); if (this.ch) { const c = this.ch; this.ch = null; try { await c.untrack(); await this.sb.removeChannel(c); } catch { } } for (const k of this.peers.keys()) this.emit('leave', k, true); this.peers.clear(); } // local=true: we left, no '나갔어요' toasts
-  state() { const m = this.me; return { id: this.id, name: m.name, outfit: m.outfit, x: Math.round(m.x), y: Math.round(m.y), face: m.face, anim: m.anim, fl: 0, equip: m.equip, av: m.av, vx: Math.round(m.vx || 0), vy: Math.round(m.vy || 0) }; } /* char-fix: velocity lets receivers dead-reckon between sparse sends. Plaza floor is always 0. */
+  state() { const m = this.me; return { id: this.id, name: m.name, outfit: m.outfit, x: Math.round(m.x), y: Math.round(m.y), face: m.face, anim: m.anim, fl: 0, equip: m.equip, av: m.av, rank: m.rank || '', vx: Math.round(m.vx || 0), vy: Math.round(m.vy || 0) }; } /* char-fix: velocity lets receivers dead-reckon between sparse sends. Plaza floor is always 0. */
   upsert(k, m, fromPresence) {
     let p = this.peers.get(k); const now = performance.now();
     if (!p) { p = { id: k, buf: [] }; this.peers.set(k, p); this.emit('join', p, m); }
-    Object.assign(p, { name: m.name ?? p.name, outfit: m.outfit ?? p.outfit, equip: m.equip ?? p.equip, av: m.av ?? p.av, fl: m.fl ?? p.fl });
+    Object.assign(p, { name: m.name ?? p.name, outfit: m.outfit ?? p.outfit, equip: m.equip ?? p.equip, av: m.av ?? p.av, rank: m.rank ?? p.rank, fl: m.fl ?? p.fl });
     if (!fromPresence || !p.buf.length) { p.buf.push({ t: now, x: m.x, y: m.y, face: m.face, anim: m.anim, vx: m.vx, vy: m.vy }); if (p.buf.length > 20) p.buf.shift(); }
     this.emit('update', p);
   }
@@ -162,7 +164,7 @@ export class Net {
     else due = moved && now - this.lastSend > (this.nearPeer(st) ? Net.POS_MS : Net.FAR_MS);
     if (due) { this.lastSend = now; this.lastSt = st; this.sent = (this.sent || 0) + 1;
       const own = this.cells.get(this.cellKey(st)); (own?.ok ? own.ch : this.ch).send({ type: 'broadcast', event: 'pos', payload: st }); }
-    const K = JSON.stringify([st.outfit, st.av, st.equip, st.fl, st.name]);
+    const K = JSON.stringify([st.outfit, st.av, st.equip, st.fl, st.name, st.rank]);
     if (K !== this.lastPresK && now - this.lastPres > 2500) { this.lastPres = now; this.lastPresK = K; this.ch.track(st); }
   }
   cellOf(st) { return [Math.floor(st.x / CELL), Math.floor(st.y / CELL)]; }
@@ -194,10 +196,19 @@ export class Net {
   async world() { const r = await fetch('/rt/world', { cache: 'no-store' }); if (!r.ok) throw new Error('world ' + r.status); return r.json(); }
   async wallet(actorId) { const id = actorId || this.id; const tok = await doToken(this.sb); if (!tok) throw new Error('auth'); const r = await fetch('/rt/wallet?actor_id=' + encodeURIComponent(id), { cache: 'no-store', headers: { authorization: 'Bearer ' + tok } }); const data = await r.json().catch(() => ({})); if (!r.ok) throw new Error(data.err || data.error || ('wallet ' + r.status)); return data; }
   sendMine(amount, nick) { if (!this.ch?.raw || this.status !== 'online') return false; const n = Math.floor(Number(amount)); if (!Number.isFinite(n) || n < 1) return false; return this.ch.raw({ t: 'MINE', amount: Math.min(15, n), nick: Array.from(String(nick ?? this.me?.name ?? '')).slice(0, 16).join('') }); }
+  sendFare(amount, nick, slot) { if (!this.ch?.raw || this.status !== 'online') return false; const n = Math.floor(Number(amount)); if (!Number.isInteger(n) || n < 1) return false; return this.ch.raw({ t: 'FARE', amount: Math.min(25, n), nick: Array.from(String(nick ?? '')).slice(0, 16).join(''), slot: String(slot || '').slice(0, 16) }); }
+  sendAdClick(nick, slot) { if (!this.ch?.raw || this.status !== 'online') return false; return this.ch.raw({ t: 'ADCLICK', nick: Array.from(String(nick ?? '')).slice(0, 16).join(''), slot: String(slot || '').slice(0, 16) }); }
   sendEmoji(emojiId) { if (!this.ch?.raw || this.status !== 'online') return false; const e = Number(emojiId); if (!Number.isInteger(e) || e < 1 || e > 4) return false; return this.ch.raw({ t: 'E', e }); }
   onWorldUpdate(fn) { this.on('world', fn); return this; }
   async claimBillboard(payload) { return this._plazaPost('/rt/claim-billboard', payload); }
   async buyPlot(payload) { return this._plazaPost('/rt/buy-plot', payload); }
+  async sellCoins(payload) { return this._plazaPost('/rt/sell-coins', payload); }
+  async flushWallet() { return this._plazaPost('/rt/flush-wallet', {}); }
+  async publishShot(blob) { const tok = await doToken(this.sb); if (!tok) throw new Error('auth'); const r = await fetch('/rt/snap', { method: 'POST', headers: { authorization: 'Bearer ' + tok, 'content-type': 'image/jpeg' }, body: blob }); const data = await r.json().catch(() => ({})); if (!r.ok || !data.url) throw new Error(data.err || 'snap'); return data.url; }
+  async shareBonus() { return this.authed('/rt/share-bonus', {}); }
+  async redeemCode(code) { return this.authed('/rt/redeem-code', { code }); }
+  async sponsorUrl() { const r = await fetch('/rt/sponsor', { cache: 'no-store' }); const d = await r.json().catch(() => ({})); return d.url || ''; }
+  async authed(path, payload) { const tok = await doToken(this.sb); if (!tok) throw new Error('입장한 뒤에 사용할 수 있어요'); const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + tok }, body: JSON.stringify(payload || {}) }); const data = await r.json().catch(() => ({})); if (!r.ok || data.ok === false) throw new Error(data.error || data.err || '요청을 처리하지 못했습니다.'); return data; }
   async submitBillboardPhoto(payload) { return this._plazaPost('/rt/billboard-photo', payload); }
   async _plazaPost(path, payload) { const tok = await doToken(this.sb); if (!tok) throw new Error('auth'); const body = { ...(payload || {}) }; if (!body.topic) body.topic = this.topic || ''; if (!body.nickname && !body.nick) body.nickname = this.me?.name || ''; const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + tok }, body: JSON.stringify(body) }); const data = await r.json().catch(() => ({})); if (!r.ok || data.ok === false) throw new Error(data.error || data.err || '요청을 처리하지 못했습니다.'); return data; }
   async prayers(dong) { if (DO_MODE) return this.world(); if (!this.sb) throw new Error('offline'); const [pub, mine] = await Promise.all([

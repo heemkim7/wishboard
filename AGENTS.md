@@ -12,7 +12,7 @@
 
 ## 데이터
 
-- 이 게임의 Supabase는 `kts-plaza` (`https://yxddhpacuyaffaoutxjn.supabase.co`, 서울)다.
+- 이 게임의 Supabase는 `wishboard` (`https://yxddhpacuyaffaoutxjn.supabase.co`, 서울)다.
 - `masil-chapel-seoul` (`gisykxqhticmdhmupnry`)은 채플 운영 DB다. 테이블을 만들거나 함수를 바꾸지 마라. `wallets` 스키마가 서로 다르다.
 - 스키마 원본은 `schema.sql`. 브라우저에는 publishable 키만 둔다.
 - `FLUSH_KEY`, `GUEST_KEY`, `ADMIN_KEY`는 Worker 시크릿이다. `.dev.vars`에만 두고 커밋하지 마라. `service_role` 키도 코드에 넣지 마라.

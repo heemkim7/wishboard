@@ -60,14 +60,16 @@ CREATE INDEX IF NOT EXISTS billboards_updated_at_idx ON public.billboards(update
 -- 사진 전광판(승인제): 현재 점유자가 올린 사진 id와 검수 상태. 'approved'일 때만 클라이언트가 사진을 띄운다.
 ALTER TABLE public.billboards ADD COLUMN IF NOT EXISTS photo_id TEXT;
 ALTER TABLE public.billboards ADD COLUMN IF NOT EXISTS photo_status TEXT CHECK (photo_status IN ('pending', 'approved'));
+ALTER TABLE public.billboards ADD COLUMN IF NOT EXISTS views BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE public.billboards ADD COLUMN IF NOT EXISTS clicks BIGINT NOT NULL DEFAULT 0;
 
 -- 초기 전광판 시드 데이터 입력 (메인 1개, 서브 4개, 토지 귀속 20개)
-INSERT INTO public.billboards (slot_id, tier, current_bid) VALUES
-  ('MAIN_S', 'S', 5000),
-  ('SUB_B1', 'B', 1000),
-  ('SUB_B2', 'B', 1000),
-  ('SUB_B3', 'B', 1000),
-  ('SUB_B4', 'B', 1000)
+INSERT INTO public.billboards (slot_id, tier, current_bid, expires_at, protected_until) VALUES
+  ('MAIN_S', 'S', 3000, now(), now()),
+  ('SUB_B1', 'B', 500, now(), now()),
+  ('SUB_B2', 'B', 500, now(), now()),
+  ('SUB_B3', 'B', 500, now(), now()),
+  ('SUB_B4', 'B', 500, now(), now())
 ON CONFLICT (slot_id) DO NOTHING;
 
 INSERT INTO public.billboards (slot_id, tier, plot_id, current_bid, line1, line2, line3)
@@ -78,7 +80,7 @@ ON CONFLICT (slot_id) DO NOTHING;
 -- 타임스퀘어 거리·타워에 붙던 사진 스크린. 등급은 C라 100코인부터 점령한다.
 INSERT INTO public.billboards (slot_id, tier, current_bid, line1, line2, line3, expires_at, protected_until)
 SELECT 'WALL_' || g, 'C', 100, g || '번 광장 전광판', '타임스퀘어 거리', '100 코인부터', now(), now()
-FROM generate_series(1, 64) AS g
+FROM generate_series(1, 400) AS g
 ON CONFLICT (slot_id) DO NOTHING;
 INSERT INTO public.billboards (slot_id, tier, current_bid, line1, line2, line3, expires_at, protected_until)
 SELECT 'TOWER_' || g, 'C', 100, g || '번 타워 전광판', '원 타임스퀘어', '100 코인부터', now(), now()
@@ -136,6 +138,79 @@ BEGIN
 END;
 $$;
 
+-- 거리 코인을 모은 사람이, 지금 전광판을 가진 광고주에게 넘긴다.
+CREATE OR REPLACE FUNCTION public.sell_coins_to_advertiser(
+  p_key TEXT,
+  p_actor_id TEXT,
+  p_nickname TEXT,
+  p_slot_id TEXT,
+  p_amount INT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_seller public.wallets%ROWTYPE;
+  v_board public.billboards%ROWTYPE;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  IF p_amount NOT IN (10, 20, 50) THEN
+    RETURN jsonb_build_object('ok', false, 'error', '10, 20, 50코인만 팔 수 있어요.');
+  END IF;
+  SELECT * INTO v_board FROM public.billboards WHERE slot_id = p_slot_id FOR UPDATE;
+  IF NOT FOUND OR v_board.holder_id IS NULL OR v_board.expires_at <= now() THEN
+    RETURN jsonb_build_object('ok', false, 'error', '지금 그 전광판을 산 광고주가 없어요.');
+  END IF;
+  IF v_board.holder_id = p_actor_id THEN
+    RETURN jsonb_build_object('ok', false, 'error', '내 광고에는 코인을 팔 수 없어요.');
+  END IF;
+  INSERT INTO public.wallets (actor_id, nickname, coins)
+  VALUES (p_actor_id, left(COALESCE(p_nickname, '네온손님'), 16), 100)
+  ON CONFLICT (actor_id) DO NOTHING;
+  SELECT * INTO v_seller FROM public.wallets WHERE actor_id = p_actor_id FOR UPDATE;
+  IF v_seller.coins < p_amount THEN
+    RETURN jsonb_build_object('ok', false, 'error', '팔 코인이 부족해요.');
+  END IF;
+  UPDATE public.wallets SET coins = coins - p_amount, nickname = left(p_nickname, 16), updated_at = now()
+  WHERE actor_id = p_actor_id;
+  UPDATE public.wallets SET coins = coins + p_amount, updated_at = now()
+  WHERE actor_id = v_board.holder_id;
+  RETURN jsonb_build_object('ok', true, 'remaining_coins', v_seller.coins - p_amount, 'buyer_name', v_board.holder_name, 'amount', p_amount);
+END;
+$$;
+
+-- Room DO가 메모리에 모은 전광판 노출/클릭을 주기적으로 더한다.
+CREATE OR REPLACE FUNCTION public.ad_stat_batch(p_key TEXT, p_items JSONB)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_item JSONB;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized flush key';
+  END IF;
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
+  LOOP
+    UPDATE public.billboards
+    SET views = GREATEST(views, COALESCE((v_item->>'views')::BIGINT, 0)),
+        clicks = GREATEST(clicks, COALESCE((v_item->>'clicks')::BIGINT, 0))
+    WHERE slot_id = v_item->>'slot_id';
+  END LOOP;
+  RETURN jsonb_build_object('ok', true);
+END;
+$$;
+
 -- ============================================================================
 -- RPC 2: 전광판 등록 및 밀어내기 경매 + 건물주 50% 수수료 자동 정산
 -- ============================================================================
@@ -189,9 +264,14 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'error', '현재 광고의 최소 보장 시간이 남아있습니다.');
   END IF;
 
-  -- 입찰 필요 금액 계산 (만료되었으면 기본가, 아니면 직전 입찰가 + 50코인)
-  IF v_board.expires_at <= now() THEN
-    v_min_required := CASE v_board.tier WHEN 'S' THEN 3000 WHEN 'B' THEN 500 ELSE 100 END;
+  -- 빈 자리는 등급 기본가. 누군가 점령 중일 때만 직전 입찰가 + 50.
+  IF v_board.holder_id IS NULL OR v_board.expires_at <= now() THEN
+    v_min_required := CASE
+      WHEN v_board.slot_id IN ('PLOT_18', 'PLOT_19', 'PLOT_20') THEN 30
+      WHEN v_board.tier = 'S' THEN 3000
+      WHEN v_board.tier = 'B' THEN 500
+      ELSE 100
+    END;
   ELSE
     v_min_required := v_board.current_bid + 50;
   END IF;
@@ -241,7 +321,7 @@ BEGIN
       emoji = left(COALESCE(p_emoji, '✨'), 4),
       bg_theme = COALESCE(p_bg_theme, 'cyber_navy'),
       text_color = COALESCE(p_text_color, '#ffffff'),
-      external_url = CASE WHEN v_board.tier = 'S' THEN left(p_external_url, 200) ELSE NULL END,
+      external_url = CASE WHEN left(COALESCE(p_external_url, ''), 200) ~ '^https://' THEN left(p_external_url, 200) ELSE NULL END,
       current_bid = p_bid,
       protected_until = now() + (v_protect_mins || ' minutes')::INTERVAL,
       expires_at = now() + (v_expire_mins || ' minutes')::INTERVAL,
@@ -527,5 +607,64 @@ BEGIN
       LIMIT 100
     ) t
   ), '[]'::JSONB));
+END;
+$$;
+
+-- 테스트용. 닉네임으로 지갑 후보를 찾고, 고른 actor_id 에만 코인을 더한다.
+CREATE OR REPLACE FUNCTION public.find_wallets(p_key TEXT, p_nickname TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  IF btrim(COALESCE(p_nickname, '')) = '' THEN
+    RETURN jsonb_build_object('ok', false, 'error', '닉네임을 입력하세요.');
+  END IF;
+  RETURN jsonb_build_object('ok', true, 'wallets', COALESCE((
+    SELECT jsonb_agg(row_to_json(t) ORDER BY t.updated_at DESC)
+    FROM (
+      SELECT actor_id, nickname, coins, updated_at
+      FROM public.wallets
+      WHERE nickname = left(btrim(p_nickname), 16)
+      ORDER BY updated_at DESC NULLS LAST
+      LIMIT 20
+    ) t
+  ), '[]'::JSONB));
+END;
+$$;
+
+DROP FUNCTION IF EXISTS public.grant_coins(TEXT, TEXT, BIGINT);
+CREATE FUNCTION public.grant_coins(p_key TEXT, p_actor_id TEXT, p_amount BIGINT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_coins BIGINT;
+  v_nick TEXT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  IF p_amount IS NULL OR p_amount < 1 OR p_amount > 1000000 THEN
+    RETURN jsonb_build_object('ok', false, 'error', '1에서 100만 코인까지 지급할 수 있어요.');
+  END IF;
+  UPDATE public.wallets SET coins = coins + p_amount, updated_at = now()
+  WHERE actor_id = p_actor_id
+  RETURNING coins, nickname INTO v_coins, v_nick;
+  IF v_coins IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error', '그 지갑을 찾지 못했습니다.');
+  END IF;
+  RETURN jsonb_build_object('ok', true, 'actor_id', p_actor_id, 'nickname', v_nick, 'coins', v_coins);
 END;
 $$;

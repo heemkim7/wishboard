@@ -4,6 +4,13 @@
 // game features onto that map.
 import { NYC_META, LANDMARKS as MAP_LANDMARKS } from './nycmeta.js';
 
+// Walkable Times Square. The real canyon stays: TKTS, the bowtie, the stall, One Times Square.
+// X is the requested width. Z is longer so those landmarks are not cut off.
+export const LOOP = { x0: -75, x1: 75, z0: -155, z1: 400 };
+export function insideLoop(x, z, pad = 0) {
+  return x > LOOP.x0 + pad && x < LOOP.x1 - pad && z > LOOP.z0 + pad && z < LOOP.z1 - pad;
+}
+
 export const LAYOUT = {
   bounds: NYC_META.bounds,
   // South bowtie plaza between W 44th and W 45th St, facing One Times Square.
@@ -17,45 +24,40 @@ export const LAYOUT = {
   stairs: { x0: -29, x1: -13, front: -124, steps: 14, depth: 1.1, rise: 0.34, back: -143.6 },
   // North tip of One Times Square (MAIN_S wraps it) and the tower roof for the ball.
   oneTimes: { x: 17.4, z: 192.9, roof: { x: 21.3, z: 225.6, h: 110.6 } },
-  // K-POP stage on the Bryant Park lawn, facing north toward W 42nd St.
-  stage: { cx: 371.5, x0: 363.5, x1: 379.5, z0: 340, z1: 352, h: 0.75, spot: { x: 371.5, z: 346, r: 3.8 } },
-  bryant: { x0: 327, x1: 416, z0: 305, z1: 359 },
-  // Koreatown: W 32nd St ("Korea Way") between Broadway and 5th Ave.
-  ktown: { z: 1053, x0: 397, step: 11.5, n: 10, depth: 15.5 },
+  // Dance floor in the south lot pad, inside the fence. The Bryant Park lawn is outside the playable square.
+  stage: { cx: 0, x0: -8, x1: 8, z0: 360, z1: 372, h: 0.75, spot: { x: 0, z: 366, r: 3.8 } },
+  bryant: { x0: -12, x1: 12, z0: 356, z1: 376 },
+  // Lot rows sit in the cleared pad south of One Times Square.
+  ktown: { z: 305, x0: -44, step: 22, n: 5, depth: 12 },
 };
 
 export const TAXI_STANDS = [
   { x: 9.4, z: 72, axis: 'z', name: '타임스퀘어' },
   { x: -11.6, z: -40, axis: 'z', name: '더피 스퀘어' },
-  { x: 330, z: 260.6, axis: 'x', name: '브라이언트 파크' },
-  { x: 452, z: 1046.4, axis: 'x', name: 'K-타운' },
-  { x: 880, z: 240.6, axis: 'x', name: '그랜드 센트럴' },
-  { x: -11.6, z: 1010, axis: 'z', name: '펜 스테이션' },
-  { x: 284.8, z: -350, axis: 'z', name: '록펠러 센터' },
-  { x: 150, z: -1116.5, axis: 'x', name: '센트럴 파크' },
+  { x: 0, z: 255, axis: 'z', name: '분양 구역' },
 ];
 
-const K = LAYOUT.ktown;
-// rot turns the lot's local +Z (its street front) toward W 32nd St.
+const lot = (id, i, z, rot) => ({ id, x: -44 + i * 22, z, rot, side: rot ? 'S' : 'N', scale: 0.9 });
 export const PLOT_SLOTS = [
-  ...Array.from({ length: K.n }, (_, i) => ({ id: i + 1, x: K.x0 + i * K.step, z: K.z - K.depth, rot: 0, side: 'N', scale: 1.25 })),
-  ...Array.from({ length: K.n }, (_, i) => ({ id: i + 11, x: K.x0 + i * K.step, z: K.z + K.depth, rot: Math.PI, side: 'S', scale: 1.25 })),
+  ...[1, 2, 3, 4, 5].map((id, i) => lot(id, i, 268, 0)),
+  ...[6, 7, 8, 9, 10].map((id, i) => lot(id, i, 292, Math.PI)),
+  ...[11, 12, 13, 14, 15].map((id, i) => lot(id, i, 318, 0)),
+  ...[16, 17, 18, 19, 20].map((id, i) => lot(id, i, 342, Math.PI)),
 ];
 
 /** OpenStreetMap buildings replaced by game structures (K-Town lots, the TKTS booth under the red steps). */
 export const SKIP_ZONES = [
-  { x0: 384, x1: 514, z0: 1006, z1: 1047 },
-  { x0: 384, x1: 514, z0: 1059, z1: 1100 },
   { x0: -30, x1: -12, z0: -145, z1: -123 },
+  // South pad for the 20 lots and the dance floor. The canyon north of this stays.
+  { x0: -70, x1: 70, z0: 255, z1: 395 },
 ];
 /** No auto-generated lamps/trees/subway railings here (hand-built areas). */
 export const NO_PROPS = [
   { x0: -30, x1: -12, z0: -146, z1: -118 },
   { x0: 8, x1: 40, z0: 8, z1: 168 },
-  { x0: 356, x1: 387, z0: 330, z1: 360 },
-  { x0: 384, x1: 514, z0: 1020, z1: 1086 },
+  { x0: -70, x1: 70, z0: 250, z1: 398 },
 ];
-export const NO_TREES = [{ x0: 327, x1: 416, z0: 305, z1: 359 }];
+export const NO_TREES = [{ x0: -12, x1: 12, z0: 356, z1: 376 }];
 /** Where the star shower lands: the south bowtie plaza. */
 export const STAR_ZONES = [
   { x0: 10.5, x1: 21, z0: 14, z1: 50 },
@@ -71,6 +73,12 @@ export const FAR_CLUSTERS = [
   { x: 2700, z: 3800, r: 800, h: 60 },
   { x: -1300, z: -5600, r: 900, h: 90 },
 ];
+
+/** Street side of the TKTS steps (south of `front`). Stays inside LOOP. */
+export function fountainSpot() {
+  const s = LAYOUT.stairs;
+  return { x: (s.x0 + s.x1) / 2, z: s.front + 4.6, y: 1.15 };
+}
 
 export function onStairs(x, z) {
   const s = LAYOUT.stairs;
@@ -121,13 +129,12 @@ export const LANDMARKS = [
   { id: 'atm', ko: '황금 ATM', en: 'Golden ATM', x: LAYOUT.atm.x, z: LAYOUT.atm.z, g: '💰', major: true, side: 1 },
   { id: 'subway', ko: '타임스퀘어역', en: 'Times Sq Station', x: LAYOUT.subway.x, z: LAYOUT.subway.z, g: '🚇', major: true, side: 1 },
   { id: 'stage', ko: 'K-POP 스테이지', en: 'K-POP Stage', x: LAYOUT.stage.spot.x, z: LAYOUT.stage.spot.z, g: '💃', major: true },
-  { id: 'lots', ko: 'K-타운 분양 구역', en: 'Koreatown Lots', x: K.x0 + (K.n - 1) * K.step / 2, z: K.z, g: '🏗️', major: true },
-  ...MAP_LANDMARKS.filter(l => !['timessq', 'ktown', 'bryant'].includes(l.id)).map(l => {
+  { id: 'lots', ko: '분양 구역', en: 'Lots', x: 0, z: 305, g: '🏗️', major: true },
+  ...MAP_LANDMARKS.filter(l => !['timessq', 'ktown', 'bryant'].includes(l.id) && insideLoop(l.x, l.z, 0)).map(l => {
     if (l.id === 'rock') return { ...l, ko: '30 록펠러 플라자', en: '30 Rockefeller Plaza', x: 406, z: -328, g: '🏢', major: true };
     const mark = { esb: '🏙️', chrysler: '🏢', flatiron: '🏢', owtc: '🏙️', gct: '🚉', msg: '🏟️', un: '🏛️' }[l.id];
     return mark ? { ...l, g: mark, major: true } : { ...l, g: '📍' };
   }),
-  { id: 'bryant', ko: '브라이언트 파크', en: 'Bryant Park', x: 356, z: 300, g: '🌳' },
 ];
 
 export const PLAZA_CENTER = { x: 16, z: 90 };

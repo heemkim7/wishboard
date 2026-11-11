@@ -7,6 +7,7 @@ import { Kit } from './kit.js';
 import { makeCanvas, paintTaxiSign, paintTaxiDecal, paintBeam } from './art.js';
 import { GROUND_LAYER } from './ground.js';
 import { ROAD } from './nyc.js';
+import { LAYOUT } from './layout.js';
 
 export function signalPhase(t) {
   const c = t % 36;
@@ -89,6 +90,10 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
     junctionR[nd] = G.nodeAdj[nd].length >= 3 ? w / 2 : 0;
   }
   const carRoad = (r) => R.cls[r] !== ROAD.PEDESTRIAN && R.cls[r] !== ROAD.SERVICE;
+  function onStage(x, z) {
+    const G = LAYOUT.stage;
+    return x >= G.x0 - 1.5 && x <= G.x1 + 1.5 && z >= G.z0 - 3.2 && z <= G.z1 + 1.2;
+  }
 
   // ---- vehicles -----------------------------------------------------------------------------------------
   // slots: [0, N_TAXI) AI cabs · [N_TAXI, N_AI) AI cars · [N_AI, +N_SPECIAL) called/parked cabs · then remote cabs
@@ -226,6 +231,7 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
       c.lane = (Math.random() * 4) | 0;
       c.off = laneOffset(c);
       pose(c);
+      if (onStage(c.x, c.z)) continue;
       let clash = false;
       for (const o of veh) if (o !== c && o.mode !== 'off' && Math.abs(o.x - c.x) < 9 && Math.abs(o.z - c.z) < 9) { clash = true; break; }
       if (clash) continue;
@@ -401,6 +407,14 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
         if (!nextSegment(c)) { c.v = 0; c.s = c.L; c.dir = -c.dir; c.s = 0; c.off = laneOffset(c); pose(c); break; }
       }
       pose(c);
+      if (onStage(c.x, c.z)) {
+        c.dir = -c.dir;
+        c.s = Math.min(c.L, Math.max(0, c.L - c.s));
+        c.off = laneOffset(c);
+        pose(c);
+        c.v = Math.max(3, c.v);
+        if (onStage(c.x, c.z)) { c.seg = -1; continue; }
+      }
       const kk = 1 - Math.exp(-dt * 9);
       if (Math.hypot(c.x - c.rx, c.z - c.rz) > 12) { c.rx = c.x; c.rz = c.z; c.ryaw = c.yaw; }
       c.rx += (c.x - c.rx) * kk;
@@ -426,13 +440,15 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
   }
 
   // ---- player-facing API ---------------------------------------------------------------------------------------------
-  function nearestTaxi(x, z, maxD = 4.6) {
+  function nearestTaxi(x, z, maxD = 4.6, parkedOnly = false) {
     let best = null;
     for (const c of veh) {
-      if (!c.taxi || (c.mode !== 'ai' && c.mode !== 'parked')) continue;
+      if (!c.taxi || c.mode === 'driven' || c.mode === 'off') continue;
+      if (parkedOnly && c.mode !== 'parked') continue;
+      if (!parkedOnly && c.mode !== 'ai' && c.mode !== 'parked') continue;
       const cx = c.mode === 'ai' ? c.rx : c.x, cz = c.mode === 'ai' ? c.rz : c.z;
       const d = Math.hypot(cx - x, cz - z);
-      if (d < (c.mode === 'parked' ? maxD + 1.6 : maxD) && (!best || d < best.d)) best = { i: c.i, d };
+      if (d < maxD && (!best || d < best.d)) best = { i: c.i, d, mode: c.mode };
     }
     return best;
   }

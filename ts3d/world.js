@@ -3,6 +3,7 @@
 // rooftop water towers — plus the far shores and a skyline layer that stays when tiles unload.
 import * as THREE from 'three';
 import { TILE, ROAD, AREA } from './nyc.js';
+import { LOOP } from './layout.js';
 import { patchWet, GROUND_LAYER } from './ground.js';
 import { Kit } from './kit.js';
 import { makeCanvas, paintPuddles, paintGlow } from './art.js';
@@ -617,10 +618,15 @@ export function createWorld(ctx) {
   }
   function setLayer(root, layer) { root?.traverse(o => { if (o.isMesh && o.layers.mask !== (1 << GROUND_LAYER)) o.layers.set(layer); }); }
 
+  const tileOn = (t) => {
+    const x0 = t.tx * TILE, z0 = t.tz * TILE;
+    return x0 < LOOP.x1 + 30 && x0 + TILE > LOOP.x0 - 30 && z0 < LOOP.z1 + 30 && z0 + TILE > LOOP.z0 - 30;
+  };
   function plan(x, z) {
     const near = nyc.tilesNear(x, z, RAD.far + 60);
     const want = new Set();
     for (const { t, dist } of near) {
+      if (!tileOn(t)) continue;
       want.add(t.key);
       let rec = live.get(t.key);
       if (!rec) { rec = { key: t.key, t, base: null, detail: null, dist, layer: 0 }; live.set(t.key, rec); }
@@ -680,6 +686,14 @@ export function createWorld(ctx) {
         walls.t(n0, n2, n1); walls.t(n0, n3, n2); walls.t(n0, n1, n2); walls.t(n0, n2, n3);
       }
     }
+    renderer.localClippingEnabled = true;
+    const clips = [
+      new THREE.Plane(new THREE.Vector3(1, 0, 0), -LOOP.x0),
+      new THREE.Plane(new THREE.Vector3(-1, 0, 0), LOOP.x1),
+      new THREE.Plane(new THREE.Vector3(0, 0, 1), -LOOP.z0),
+      new THREE.Plane(new THREE.Vector3(0, 0, -1), LOOP.z1),
+    ];
+    for (const m of [mats.land, mats.grass, mats.pavers, mats.pool, mats.river]) m.clippingPlanes = clips;
     const lm = put(land.build(), mats.land, GROUND_LAYER, 0);
     lm.material.map.repeat.set(1, 1);
     put(walls.build(), mats.wall, 0, 0);

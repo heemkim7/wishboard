@@ -360,11 +360,11 @@ export function createNYC(bytes) {
     return false;
   }
   /** Closest walkable spot: outside buildings, on land, off the walls. */
-  function freeSpot(x, z, r = 0.5) {
+  function freeSpot(x, z, r = 0.5, maxRad = 160) {
     ensureSolid(x, z, 260);
     const ok = (px, pz) => buildingAt(px, pz) < 0 && onLand(px, pz);
     if (ok(x, z)) return collide(x, z, r);
-    for (let rad = 3; rad < 160; rad += 3) {
+    for (let rad = 2; rad <= maxRad; rad += 2) {
       const n = Math.max(8, Math.round(rad * 1.2));
       for (let k = 0; k < n; k++) {
         const a = (k / n) * Math.PI * 2;

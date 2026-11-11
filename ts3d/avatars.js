@@ -23,10 +23,8 @@ export const REACTIONS = [
 export const AVATAR_COLORS = ['#ff3d9a', '#3fe6ff', '#ffcf5a', '#39f58a', '#b84dff', '#ff6a3d', '#f4f6ff', '#4d7cff'];
 export const SPECIES = [
   { id: 1, label: '쥐', glyph: '🐭' },
-  { id: 2, label: '고양이', glyph: '🐱' },
-  { id: 3, label: '곰', glyph: '🐻' },
 ];
-export const speciesId = (v) => (Number(v) === 2 || Number(v) === 3 ? Number(v) : 1);
+export const speciesId = () => 1;
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 

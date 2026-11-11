@@ -36,6 +36,10 @@
   .acts { display: flex; gap: 8px; padding: 12px 14px 14px; }
   .acts button { flex: 1; }
   .empty { margin-top: 30px; text-align: center; color: var(--dim); font-weight: 700; }
+  .hits { margin-top: 12px; display: grid; gap: 8px; }
+  .hit { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--stroke); background: var(--glass); font-size: 13px; font-weight: 700; }
+  .hit b { color: var(--text); }
+  .hit span { color: var(--muted); }
   ul { margin: 8px 0 0; padding-left: 18px; }
 </style>
 </head>
@@ -54,6 +58,12 @@
     <input id="key" type="password" autocomplete="off" placeholder="ADMIN_KEY (Worker 시크릿)" />
     <button id="save" class="gold" type="button">열기</button>
   </div>
+  <div class="bar">
+    <input id="actor" type="text" placeholder="설정에 있는 계정 번호" />
+    <input id="amt" type="number" min="1" max="1000000" value="10000" />
+    <button id="grant" type="button">코인 지급</button>
+  </div>
+  <div class="hits" id="hits"></div>
   <div class="tabs" id="tabs"></div>
   <div class="msg" id="msg"></div>
   <div class="grid" id="grid"></div>
@@ -133,6 +143,22 @@ async function load() {
   } catch (e) { msg(e.message, true); }
 }
 $('save').onclick = () => { key = $('key').value.trim(); sessionStorage.setItem('kts-admin', key); load(); };
+$('grant').onclick = async () => {
+  key = $('key').value.trim();
+  sessionStorage.setItem('kts-admin', key);
+  const actorId = $('actor').value.trim();
+  const amount = Math.floor(Number($('amt').value));
+  if (!key) { msg('ADMIN_KEY를 입력하세요.', true); return; }
+  if (!actorId) { msg('계정 번호를 입력하세요.', true); return; }
+  $('grant').disabled = true;
+  try {
+    const r = await api('/rt/admin/coins', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ actor_id: actorId, amount }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.ok === false) throw new Error(d.error || '코인을 넣지 못했어요');
+    msg(`${d.nickname || '지갑'} 잔액 ${Number(d.coins).toLocaleString('ko-KR')} 코인. 게임에서 새로고침하세요.`);
+  } catch (e) { msg(e.message, true); }
+  $('grant').disabled = false;
+};
 $('key').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('save').click(); });
 renderTabs();
 load();

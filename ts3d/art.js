@@ -76,13 +76,13 @@ function neon(g, text, x, y, size, family, weight, color, o = {}) {
   const glow = o.glow ?? 1;
   if (glow > 0) {
     g.shadowColor = color;
-    g.shadowBlur = size * 0.3 * glow;
+    g.shadowBlur = size * 0.48 * glow;
     g.fillStyle = color;
     g.fillText(text, x, y);
     g.shadowBlur = 0;
   }
   if (o.stroke !== false) {
-    g.lineWidth = Math.max(3, size * 0.13);
+    g.lineWidth = Math.max(4, size * 0.18);
     g.strokeStyle = 'rgba(2,2,10,0.92)';
     g.strokeText(text, x, y);
   }
@@ -423,6 +423,16 @@ function cover(g, img, x, y, w, h) {
 
 /** Full billboard artwork. data: {slot_id, emoji, bg_theme, text_color, line1..3, holder_name, holder_id}.
  *  opts.photo (image/canvas) replaces the artwork with the photo + line1 caption; opts.pending adds a "사진 검수 중" chip. */
+export function linkBadge(url) {
+  const u = String(url || '').toLowerCase();
+  if (!u) return null;
+  if (u.includes('threads.net')) return { label: 'Threads 공식 홍보', color: '#f4f6ff' };
+  if (u.includes('youtube.com') || u.includes('youtu.be')) return { label: 'YouTube 채널 바로가기', color: '#ff6b6b' };
+  if (u.includes('instagram.com')) return { label: 'Instagram 바로가기', color: '#ff7ac0' };
+  if (u.includes('smartstore.naver.com')) return { label: '스토어 특가', color: '#7dffb2' };
+  return null;
+}
+
 export function paintBillboard(canvas, data = {}, opts = {}) {
   const g = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height, k = W / 1024;
@@ -434,26 +444,30 @@ export function paintBillboard(canvas, data = {}, opts = {}) {
   g.clearRect(0, 0, W, H);
   const ink = /^#[0-9a-f]{3,8}$/i.test(String(data.text_color || '')) ? data.text_color : '#ffffff';
   const ticker = opts.ticker ? 44 * k : 0;
-  const body = H - ticker;
+  const statsH = Math.max(28, 42 * k);
+  const body = H - ticker - statsH;
 
   if (opts.photo) {
     g.fillStyle = '#000';
     g.fillRect(0, 0, W, body);
     cover(g, opts.photo, 0, 0, W, body);
-    let gr = g.createLinearGradient(0, 0, 0, 130 * k);
-    gr.addColorStop(0, 'rgba(2,3,14,0.55)');
-    gr.addColorStop(1, 'rgba(2,3,14,0)');
-    g.fillStyle = gr;
-    g.fillRect(0, 0, W, 130 * k);
-    const cap = chars(data.line1, 20).trim();
-    if (cap) {
-      gr = g.createLinearGradient(0, body * 0.58, 0, body);
-      gr.addColorStop(0, 'rgba(2,3,14,0)');
-      gr.addColorStop(1, 'rgba(2,3,14,0.82)');
-      g.fillStyle = gr;
-      g.fillRect(0, body * 0.58, W, body * 0.42);
-      const s = fit(g, cap, W * 0.84, 84 * k, 900, SANS, 30 * k);
-      neon(g, cap, W / 2, body - s * 0.62 - 26 * k, s, SANS, 900, ink, { glow: 0.5, align: 'center' });
+    const lines = [chars(data.line1, 20), chars(data.line2, 24), chars(data.line3, 28)].map(t => String(t || '').trim()).filter(Boolean);
+    if (lines.length) {
+      const weights = [900, 800, 700];
+      const caps = [72 * k, 40 * k, 32 * k];
+      const mins = [26 * k, 18 * k, 15 * k];
+      const sizes = lines.map((t, i) => fit(g, t, W * 0.86, caps[Math.min(i, 2)], weights[Math.min(i, 2)], SANS, mins[Math.min(i, 2)]));
+      const gap = 8 * k;
+      const block = sizes.reduce((a, s) => a + s * 1.2, 0) + gap * (sizes.length - 1);
+      const anchor = Math.min(88, Math.max(12, Number(data.caption_y) || 72)) / 100;
+      let y = Math.max(14 * k, Math.min(body - block - 14 * k, body * anchor - block / 2));
+      g.fillStyle = 'rgba(2,3,14,0.62)';
+      g.fillRect(0, y - 12 * k, W, block + 24 * k);
+      lines.forEach((t, i) => {
+        const s = sizes[i];
+        neon(g, t, W / 2, y + s * 0.55, s, SANS, weights[Math.min(i, 2)], ink, { glow: 0.45, align: 'center' });
+        y += s * 1.2 + gap;
+      });
     }
   } else {
     ART[theme](g, W, H, r, k);
@@ -490,9 +504,9 @@ export function paintBillboard(canvas, data = {}, opts = {}) {
 
     const tx = W * 0.385, maxW = W * 0.575;
     const l1 = chars(data.line1, 20).trim(), l2 = chars(data.line2, 24).trim(), l3 = chars(data.line3, 28).trim();
-    const s1 = l1 ? fit(g, l1, maxW, 112 * k, 900, SANS, 34 * k) : 0;
-    const s2 = l2 ? fit(g, l2, maxW, 58 * k, 800, SANS, 22 * k) : 0;
-    const s3 = l3 ? fit(g, l3, maxW, 44 * k, 700, SANS, 18 * k) : 0;
+    const s1 = l1 ? fit(g, l1, maxW, 146 * k, 900, SANS, 44 * k) : 0;
+    const s2 = l2 ? fit(g, l2, maxW, 75 * k, 800, SANS, 29 * k) : 0;
+    const s3 = l3 ? fit(g, l3, maxW, 57 * k, 700, SANS, 23 * k) : 0;
     const gap = 20 * k;
     const total = (s1 ? s1 * 1.02 : 0) + (s2 ? s2 * 1.15 + gap : 0) + (s3 ? s3 * 1.2 + gap : 0);
     let y = body * 0.56 - total / 2;
@@ -502,8 +516,8 @@ export function paintBillboard(canvas, data = {}, opts = {}) {
   }
 
   const vacant = !data.holder_id;
-  const who = vacant ? '📢 광고 모집 중' : `👑 ${chars(data.holder_name || '익명', 14)}`;
-  g.font = `800 ${Math.round(26 * k)}px ${SANS}`;
+  const who = vacant ? '✨ 소원 기다리는 중' : `👑 ${chars(data.holder_name || '익명', 14)}`;
+  g.font = `800 ${Math.round(34 * k)}px ${SANS}`;
   const pw = g.measureText(who).width + 40 * k;
   roundRect(g, 28 * k, 26 * k, pw, 46 * k, 23 * k);
   g.fillStyle = 'rgba(4,5,18,0.72)';
@@ -515,6 +529,22 @@ export function paintBillboard(canvas, data = {}, opts = {}) {
   g.textAlign = 'left';
   g.textBaseline = 'middle';
   g.fillText(who, 48 * k, 50 * k);
+  const badge = linkBadge(data.external_url);
+  if (badge) {
+    g.font = `800 ${Math.round(22 * k)}px ${SANS}`;
+    const bw = g.measureText(badge.label).width + 36 * k;
+    const by = vacant ? 26 * k : 82 * k;
+    roundRect(g, 28 * k, by, bw, 36 * k, 18 * k);
+    g.fillStyle = 'rgba(4,5,18,0.78)';
+    g.fill();
+    g.strokeStyle = badge.color;
+    g.lineWidth = 2 * k;
+    g.stroke();
+    g.fillStyle = badge.color;
+    g.textAlign = 'left';
+    g.textBaseline = 'middle';
+    g.fillText(badge.label, 46 * k, by + 18 * k);
+  }
   if (opts.pending && !vacant) {
     const t = '📷 사진 검수 중';
     g.font = `800 ${Math.round(22 * k)}px ${SANS}`;
@@ -550,6 +580,19 @@ export function paintBillboard(canvas, data = {}, opts = {}) {
     g.lineTo(x + dx * L, y2);
     g.stroke();
   }
+
+  const views = Math.max(0, Math.floor(Number(data.views) || 0));
+  const cheers = Math.max(0, Math.floor(Number(data.cheers) || 0));
+  g.fillStyle = '#05060f';
+  g.fillRect(0, H - statsH, W, statsH);
+  g.fillStyle = '#ffcf5a';
+  g.font = `800 ${Math.max(14, Math.round(22 * k))}px ${SANS}`;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  let label = `🙏 ${cheers}명이 함께 응원 중`;
+  const taxi = ` · 🚕 ${views}`;
+  if (views > 0 && g.measureText(label + taxi).width <= W - 36 * k) label += taxi;
+  g.fillText(label, W / 2, H - statsH / 2);
 
   if (ticker) {
     g.fillStyle = '#030308';
@@ -646,10 +689,10 @@ export function paintStationSign(canvas) {
   g.fillStyle = '#111827';
   g.textAlign = 'left';
   g.font = `900 ${Math.round(96 * k)}px ${SANS}`;
-  g.fillText('타임스퀘어', 238 * k, H * 0.42);
-  g.font = `700 ${Math.round(42 * k)}px ${SANS}`;
+  g.fillText('위시보드', 238 * k, H * 0.42);
+  g.font = `700 ${Math.round(36 * k)}px ${SANS}`;
   g.fillStyle = '#374151';
-  g.fillText('Times Square Stn.', 242 * k, H * 0.76);
+  g.fillText('타임스퀘어 1번출구', 242 * k, H * 0.76);
   const bx = W - 220 * k;
   g.fillStyle = '#ffd400';
   roundRect(g, bx, 40 * k, 176 * k, H - 80 * k, 16 * k);
@@ -681,7 +724,7 @@ export function paintPylon(canvas) {
   g.textBaseline = 'middle';
   g.fillText('1', W / 2, 74 * k);
   g.font = `900 ${Math.round(58 * k)}px ${SANS}`;
-  const word = '타임스퀘어';
+  const word = '위시보드';
   Array.from(word).forEach((ch, i) => g.fillText(ch, W / 2, 168 * k + i * 70 * k));
   g.fillStyle = '#ffd400';
   g.fillRect(14 * k, H - 120 * k, W - 28 * k, 96 * k);
@@ -766,7 +809,7 @@ export function paintTaxiDecal(canvas) {
   g.fillText('TAXI', 172 * k, 76 * k);
   g.fillStyle = '#111111';
   g.font = `800 ${Math.round(26 * k)}px ${SANS}`;
-  g.fillText('K-점령전 7K42', W - 260 * k, 78 * k);
+  g.fillText('WISH BOARD', W - 280 * k, 78 * k);
   return canvas;
 }
 
