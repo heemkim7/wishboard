@@ -5,10 +5,10 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { TILE } from './nyc.js';
-import { LAYOUT } from './layout.js';
+import { LAYOUT } from './layout.js?v=20261113b';
 import { Kit, cropPlane, imgCrop } from './kit.js';
-import { makeCanvas, paintAdAtlas, paintBlade, paintLabel, paintGlow, paintNeonSign } from './art.js';
-import { screenTime } from './screens.js';
+import { makeCanvas, paintAdAtlas, paintBlade, paintLabel, paintGlow, paintNeonSign } from './art.js?v=20261113b';
+import { screenTime } from './screens.js?v=20261113h';
 
 const ONE = new THREE.Vector3(1, 1, 1);
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
@@ -138,10 +138,31 @@ diffuseColor.rgb += vec3(0.35, 0.3, 0.45) * (1.0 - smoothstep(0.0, 0.012, vFlip)
     slidePhase.push(r() * 16);
     framed(w, h, m, ACCENTS[(r() * ACCENTS.length) | 0]);
   };
-  // Former photo screens become real claimable boards. The biggest 24 mount; the rest stay as cycling ads.
+  // Claimable boards only. WALL_1..500 stay scarce enough to fight over.
   const wantBoard = (m, w, h, pri = 1) => {
-    if (w < 5 || h < 3.2) { slideAt(m, Math.max(w, 4), Math.max(h, 2.4)); return; }
+    if (w < 6 || h < 3.4) return;
     wanted.push({ m, w, h, pri });
+  };
+  // Real Times Square faces are a few huge 16:9 screens with a thin joint, not a scatter of posters.
+  const coverWall = (w, hole) => {
+    const gap = 0.7;
+    const span = Math.max(6, w.len - 0.8);
+    let cols = Math.max(1, Math.ceil(span / 26));
+    let cw = (span - gap * (cols - 1)) / cols;
+    if (cw < 11 && cols > 1) { cols = 1; cw = span; }
+    const ch = cw * 9 / 16;
+    if (ch < 4) return;
+    const top = Math.min(w.h - 1, 120);
+    let y = 3.2 + ch / 2;
+    for (let guard = 0; y + ch / 2 <= top + 0.3 && guard < 16; guard++) {
+      const y0 = y - ch / 2, y1 = y + ch / 2;
+      if (hole && y1 > hole.y0 && y0 < hole.y1) { y = hole.y1 + gap + ch / 2; continue; }
+      for (let c = 0; c < cols; c++) {
+        const along = -span / 2 + cw / 2 + c * (cw + gap);
+        wantBoard(faceM(w, along, y, 0.55), cw, ch, w.dist);
+      }
+      y += ch + gap;
+    }
   };
   const mountBoard = (slot, m, w, h) => {
     const p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
@@ -205,74 +226,55 @@ diffuseColor.rgb += vec3(0.35, 0.3, 0.45) * (1.0 - smoothstep(0.0, 0.012, vFlip)
     return w.nx * vx + w.nz * vz > (best > 60 ? 0.62 : 0.5);
   });
   const used = new Set();
-  // SUB boards on the canyon walls (curved, with tickers).
-  const SUB_ANCHORS = { SUB_B1: [-42, -40, 1, 0], SUB_B2: [14, -112, -1, 0], SUB_B3: [-14, 124, 1, 0], SUB_B4: [40, 58, -1, 0] };
-  for (const [slot, [ax, az, nx, nz]] of Object.entries(SUB_ANCHORS)) {
+  // Four corner towers, two claimable boards each (upper A, lower B).
+  const CORNERS = [['1', -42, -40, 1, 0], ['2', 14, -112, -1, 0], ['3', -14, 124, 1, 0], ['4', 40, 58, -1, 0]];
+  for (const [n, ax, az, nx, nz] of CORNERS) {
     const w = pickWall(facing, ax, az, nx, nz, 13, 26) || pickWall(facing, ax, az, nx, nz, 9, 16);
-    const width = w ? Math.min(17, w.len - 1.5) : 15, R = 15, sag = R * (1 - Math.cos(width / R / 2));
     const g = new THREE.Group();
     scene.add(g);
     if (w) {
       used.add(w);
-      g.position.set(w.mx + w.nx * (sag + 0.7), 0, w.mz + w.nz * (sag + 0.7));
+      g.position.set(w.mx + w.nx * 0.8, 0, w.mz + w.nz * 0.8);
       g.rotation.y = Math.atan2(w.nx, w.nz);
     } else {
       g.position.set(ax, 0, az);
       g.rotation.y = Math.atan2(nx, nz);
     }
-    boards.mount(slot, g, { x: 0, y: 21, z: 0, w: width, h: width * 9 / 16, curve: R, ticker: true, tickerH: 1.0, marquee: !low });
+    const bw = w ? Math.min(16, Math.max(11, w.len - 1.4)) : 14;
+    const bh = bw * 9 / 16;
+    boards.mount('SUB_' + n + 'A', g, { x: 0, y: 26, z: 0.35, w: bw, h: bh });
+    boards.mount('SUB_' + n + 'B', g, { x: 0, y: 26 - bh - 0.7, z: 0.35, w: bw, h: bh });
   }
-  // Everything else facing the square: street-level screens, mid-height billboards, and screens up the towers.
+  // About 30 large faces on the buildings that look onto the main street.
+  const streetPool = facing
+    .filter((w) => !used.has(w) && w.len >= 12 && w.h >= 12 && w.dist < 85 && Math.hypot(w.mx - LAYOUT.oneTimes.x, w.mz - LAYOUT.oneTimes.z) > 28)
+    .sort((a, b) => a.dist - b.dist);
+  const streetWalls = [];
+  for (const w of streetPool) {
+    if (streetWalls.length >= 30) break;
+    if (streetWalls.some((p) => Math.hypot(p.mx - w.mx, p.mz - w.mz) < 16)) continue;
+    streetWalls.push(w);
+  }
+  for (const w of streetPool) {
+    if (streetWalls.length >= 30) break;
+    if (!streetWalls.includes(w)) streetWalls.push(w);
+  }
+  streetWalls.forEach((w, i) => {
+    used.add(w);
+    const g = new THREE.Group();
+    scene.add(g);
+    g.position.set(w.mx + w.nx * 0.7, 0, w.mz + w.nz * 0.7);
+    g.rotation.y = Math.atan2(w.nx, w.nz);
+    const bw = Math.min(22, Math.max(14, w.len * 0.78));
+    const bh = bw * 9 / 16;
+    const y = Math.min(w.h - bh / 2 - 1.2, Math.max(bh / 2 + 6, 12));
+    boards.mount('STREET_' + (i + 1), g, { x: 0, y, z: 0.2, w: bw, h: bh, frameT: 0.45 });
+  });
+  // Canyon walls: large screens butted together so the facade barely shows, same as the real bowtie.
   for (const w of facing) {
     const L = w.len, H = w.h;
-    if (H < 9) continue;
-    const reserved = used.has(w) || w.dist > 60;
-    // low band, 6–15 m
-    if (!reserved && L >= 6) {
-      const n = Math.max(1, Math.round(L / 13));
-      for (let k = 0; k < n; k++) {
-        const along = -L / 2 + (k + 0.5) * L / n;
-        const slotW = L / n - 1.2;
-        if (slotW < 4) continue;
-        const roll = r();
-        if (roll < 0.5) {
-          const key = WIDE_KEYS[(r() * WIDE_KEYS.length) | 0];
-          const ph = Math.min(7.5, slotW / C[key][2]);
-          if (ph > 2.5) wantBoard(faceM(w, along, Math.min(H - 1, 6.2 + ph / 2), 0.32), ph * C[key][2], ph, 0);
-        } else if (roll < 0.88) {
-          const sw = Math.min(slotW, 12), sh = Math.min(7, sw * 9 / 16);
-          wantBoard(faceM(w, along, Math.min(H - 1, 6.4 + sh / 2), 0.32), sw, sh, 0);
-        } else {
-          const s = Math.min(slotW, 6);
-          wantBoard(faceM(w, along, 6.4 + s / 2, 0.32), s, s, 0);
-        }
-      }
-    }
-    // mid band, 16–40 m
-    if (!reserved && H > 22 && L >= 8) {
-      const sw = Math.min(L * 0.84, 10 + r() * 12);
-      const key = r() < 0.5 ? TALL_KEYS[(r() * TALL_KEYS.length) | 0] : WIDE_KEYS[(r() * WIDE_KEYS.length) | 0];
-      const aspect = C[key][2];
-      let ph = sw / aspect;
-      ph = Math.min(ph, H - 18, 20);
-      if (ph > 4 && r() < 0.6) wantBoard(faceM(w, 0, 16 + ph / 2 + r() * 4, 0.32), ph * aspect, ph, 1);
-      else if (H > 26) { const sh = Math.min(sw * 9 / 16, H - 20); wantBoard(faceM(w, 0, 17 + sh / 2, 0.32), sh * 16 / 9, sh, 1); }
-    }
-    // high band: screens up the towers (two side by side on wide walls)
-    if (H > 44 && L >= 8) {
-      const cols = L > 34 ? [-L / 4, L / 4] : [0];
-      for (let y0 = 38; y0 + 10 < Math.min(H - 3, 190); y0 += 24 + r() * 16) {
-        for (const cx of cols) {
-          if (r() > 0.88) continue;
-          const tall = r() < 0.45;
-          const room = cols.length > 1 ? L / 2 - 2 : L - 2;
-          const sw = Math.min(room * 0.9, tall ? 9 + r() * 6 : 14 + r() * 10);
-          const sh = Math.min(tall ? sw * 1.5 : sw * 9 / 16, H - y0 - 3);
-          if (sh < 5) continue;
-          const along = cx + (r() - 0.5) * Math.max(0, room - sw) * 0.5;
-          wantBoard(faceM(w, along, y0 + sh / 2, 0.34), sw, sh, 2);
-        }
-      }
+    if (H < 9 || Math.hypot(w.mx - LAYOUT.oneTimes.x, w.mz - LAYOUT.oneTimes.z) < 24) {
+      // corner towers and the main stack own the claimable faces
     }
     // blade signs
     if (L > 14 && H > 18 && w.dist <= 60 && r() < 0.35) {
@@ -284,23 +286,31 @@ diffuseColor.rgb += vec3(0.35, 0.3, 0.45) * (1.0 - smoothstep(0.0, 0.012, vFlip)
 
   // ---- One Times Square ----------------------------------------------------------------------------------------------
   const OT = LAYOUT.oneTimes;
-  const mainW = 20, mainR = 12;
   const mainGroup = new THREE.Group();
   mainGroup.position.set(OT.x, 0, OT.z - 1.2);
   mainGroup.rotation.y = Math.PI;
   scene.add(mainGroup);
-  boards.mount('MAIN_S', mainGroup, { x: 0, y: 25, z: 0, w: mainW, h: mainW * 9 / 16, curve: mainR, ticker: true, tickerH: 1.4, marquee: true });
-  const tipM = (y, out = 0.6) => new THREE.Matrix4().compose(new THREE.Vector3(OT.x, y, OT.z - out), new THREE.Quaternion().setFromAxisAngle(Y_AXIS, Math.PI), ONE);
-  let towerN = 0;
-  for (const [y, h, aspect] of [[10, 7.5, 0.53], [40.5, 7.4, 1.56], [50.6, 8.2, 1.36], [61.6, 10, 0.78], [73, 8.6, 1.21]]) {
-    mountBoard('TOWER_' + (++towerN), tipM(y, 0.6), h * aspect, h);
-  }
+  const faceW = 24, faceH = faceW * 9 / 16, seam = 0.5;
+  const mountMain = (id, y, extra) => boards.mount(id, mainGroup, { x: 0, y, z: 0, w: faceW, h: faceH, frameT: 0.55, ...extra });
+  const stack = ['MAIN_LOW', 'MAIN_BOT', 'MAIN_MID', 'MAIN_TOP', 'MAIN_UP'];
+  const y0 = 11 + faceH / 2;
+  stack.forEach((id, i) => mountMain(id, y0 + i * (faceH + seam), id === 'MAIN_UP' ? { marquee: true } : id === 'MAIN_MID' ? { ticker: true, tickerH: 1.2 } : {}));
+  const botY = y0, topY = y0 + (stack.length - 1) * (faceH + seam);
+  const span = (topY + faceH / 2) - (botY - faceH / 2);
+  const holo = new THREE.Mesh(new THREE.BoxGeometry(faceW + 1.8, span + 1, 1.6), new THREE.MeshBasicMaterial({ color: 0xffe08a, transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide }));
+  holo.position.set(0, (topY + botY) / 2, 0.2);
+  holo.visible = false;
+  mainGroup.add(holo);
+  const laser = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 1.1, 52, 20, 1, true), new THREE.MeshBasicMaterial({ color: 0xff4ad8, transparent: true, opacity: 0.8, depthWrite: false, side: THREE.DoubleSide }));
+  laser.position.set(0, topY + faceH / 2 + 28, 0);
+  laser.visible = false;
+  mainGroup.add(laser);
+  boards.watchShow(holo, laser);
   const towerFace = (y) => new THREE.Matrix4().compose(new THREE.Vector3(20.2, y, 215.0), new THREE.Quaternion().setFromAxisAngle(Y_AXIS, Math.PI), ONE);
   const label = new THREE.Mesh(new THREE.PlaneGeometry(12, 2), new THREE.MeshBasicMaterial({ map: toTex(paintLabel(makeCanvas(1024, 170), 'K-TIMES SQUARE', '#ffe7a3', '#07070d')), color: new THREE.Color(1.1, 1.1, 1.1) }));
   label.applyMatrix4(towerFace(86));
   scene.add(label);
   kit.box(12.6, 2.6, 0.3, '#111217', { mat: 'metal', m: towerFace(86).multiply(new THREE.Matrix4().makeTranslation(0, 0, -0.2)) });
-  wantBoard(towerFace(97), 11, 6.2, 0);
   const roof = OT.roof;
   kit.box(1.2, 0.5, 1.2, '#16171c', { x: roof.x, y: roof.h + 0.25, z: roof.z, mat: 'metal' });
   kit.cyl(0.32, 0.45, 15, '#9aa0aa', { x: roof.x, y: roof.h + 7.5, z: roof.z, mat: 'metal' });
@@ -343,8 +353,6 @@ diffuseColor.rgb += vec3(0.35, 0.3, 0.45) * (1.0 - smoothstep(0.0, 0.012, vFlip)
       g.position.set(sw.mx + sw.nx * 0.5, 0, sw.mz + sw.nz * 0.5);
       g.rotation.y = Math.atan2(sw.nx, sw.nz);
       scene.add(g);
-      const ww = Math.min(14, sw.len - 1);
-      boards.mount('MAIN_S', g, { x: 0, y: 13, z: 0, w: ww, h: ww * 9 / 16 });
     }
   }
 
@@ -375,12 +383,6 @@ diffuseColor.rgb += vec3(0.35, 0.3, 0.45) * (1.0 - smoothstep(0.0, 0.012, vFlip)
   });
 
   // ---- commit -----------------------------------------------------------------------------------------------------------
-  wanted.sort((a, b) => a.pri - b.pri || b.w * b.h - a.w * a.h);
-  let wallN = 0;
-  for (const item of wanted) {
-    if (wallN < 64) mountBoard('WALL_' + (++wallN), item.m, item.w, item.h);
-    else slideAt(item.m, item.w, item.h);
-  }
   const putMesh = (geos, mat) => {
     if (!geos.length) return null;
     const m = new THREE.Mesh(mergeGeometries(geos, false), mat);

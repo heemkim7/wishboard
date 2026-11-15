@@ -4,11 +4,16 @@ export const SANS = '"Pretendard Variable", Pretendard, "Noto Sans KR", "Apple S
 export const EMOJI = '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
 
 export const THEMES = {
+  plain: { label: '배경 없음', accent: '#ffe7a8', accent2: '#ffffff', swatch: ['#07080f', '#141824', '#07080f'] },
   cyber_navy: { label: '사이버 네이비', accent: '#3fe6ff', accent2: '#ff3d9a', swatch: ['#050b2a', '#3b1170', '#ff3d9a'] },
   neon_pink: { label: 'K-POP 핑크', accent: '#ff3d9a', accent2: '#ffd1f4', swatch: ['#16001e', '#7a0a6a', '#ff6fd0'] },
   gold_luxury: { label: '골드 럭셔리', accent: '#ffcf5a', accent2: '#fff3c4', swatch: ['#0b0702', '#5a3c08', '#ffcf5a'] },
   matrix_green: { label: '매트릭스', accent: '#39f58a', accent2: '#d4ffe6', swatch: ['#010a05', '#06361b', '#39f58a'] },
   sunset_red: { label: '선셋 서울', accent: '#ff6a3d', accent2: '#ffe0b0', swatch: ['#1b0230', '#ff3d3d', '#ffb347'] },
+  bday_party: { label: '생일', accent: '#ffcf5a', accent2: '#ff8ad4', swatch: ['#2a1040', '#ff4fa3', '#ffcf5a'], gift: true, title: 'HAPPY BIRTHDAY' },
+  cheer_exam: { label: '합격 기원', accent: '#39f58a', accent2: '#ffcf5a', swatch: ['#042018', '#147a45', '#ffcf5a'], gift: true, title: '합격 · 대박 기원' },
+  love_anniv: { label: '기념일', accent: '#ff3d9a', accent2: '#d9b3ff', swatch: ['#240018', '#a01268', '#ff7ad9'], gift: true, title: '특별한 기념일' },
+  vip_wreath: { label: '경축 화환', accent: '#ff6a6a', accent2: '#ffe08a', swatch: ['#2a080c', '#b4233a', '#ffd36a'], gift: true, title: '축 발전!', sub: '타임스퀘어가 인정한 슈퍼스타' },
 };
 
 export function hashStr(s) {
@@ -153,7 +158,28 @@ function seoulSkyline(g, W, base, r, k, fill, lit) {
   g.restore();
 }
 
+function giftWash(g, W, H, a, b, emoji) {
+  const gr = g.createLinearGradient(0, 0, W, H);
+  gr.addColorStop(0, '#140818');
+  gr.addColorStop(1, '#05020c');
+  g.fillStyle = gr;
+  g.fillRect(0, 0, W, H);
+  g.strokeStyle = a;
+  g.lineWidth = 22;
+  g.strokeRect(28, 28, W - 56, H - 90);
+  g.strokeStyle = b;
+  g.lineWidth = 6;
+  g.strokeRect(48, 48, W - 96, H - 130);
+  g.font = `${Math.round(H * 0.16)}px ${EMOJI}`;
+  g.textAlign = 'right';
+  g.textBaseline = 'middle';
+  g.fillText(emoji, W - 70, H * 0.34);
+}
 const ART = {
+  plain(g, W, H) {
+    g.fillStyle = '#07080f';
+    g.fillRect(0, 0, W, H);
+  },
   cyber_navy(g, W, H, r, k) {
     let gr = g.createLinearGradient(0, 0, 0, H);
     gr.addColorStop(0, '#03051a');
@@ -386,6 +412,10 @@ const ART = {
     g.fillStyle = 'rgba(20,0,20,0.9)';
     g.fillRect(0, hz + 22 * k, W, 6 * k);
   },
+  bday_party(g, W, H) { giftWash(g, W, H, '#ff4fa3', '#ffcf5a', '🎂'); },
+  cheer_exam(g, W, H) { giftWash(g, W, H, '#39f58a', '#ffcf5a', '🎉'); },
+  love_anniv(g, W, H) { giftWash(g, W, H, '#ff3d9a', '#b84dff', '💖'); },
+  vip_wreath(g, W, H) { giftWash(g, W, H, '#ff6a6a', '#ffd36a', '💐'); },
 };
 
 const TIER_TAG = { S: 'S-CLASS · MAIN TOWER', B: 'B-CLASS · SUB TOWER', C: 'C-CLASS · STREET WALL' };
@@ -451,7 +481,7 @@ export function paintBillboard(canvas, data = {}, opts = {}) {
     g.fillStyle = '#000';
     g.fillRect(0, 0, W, body);
     cover(g, opts.photo, 0, 0, W, body);
-    const lines = [chars(data.line1, 20), chars(data.line2, 24), chars(data.line3, 28)].map(t => String(t || '').trim()).filter(Boolean);
+    const lines = [chars(data.line1, 20), chars(data.line2, 24), chars(data.line3, 28)].map(t => String(t || '').trim()).filter((t) => t && !/^To\.\s+/.test(t));
     if (lines.length) {
       const weights = [900, 800, 700];
       const caps = [72 * k, 40 * k, 32 * k];
@@ -503,7 +533,8 @@ export function paintBillboard(canvas, data = {}, opts = {}) {
     g.fillText(chars(data.emoji || '🔥', 4) || '🔥', cx, cy + R * 0.07);
 
     const tx = W * 0.385, maxW = W * 0.575;
-    const l1 = chars(data.line1, 20).trim(), l2 = chars(data.line2, 24).trim(), l3 = chars(data.line3, 28).trim();
+    const raw1 = chars(data.line1, 20).trim();
+    const l1 = /^To\.\s+/.test(raw1) ? '' : raw1, l2 = chars(data.line2, 24).trim(), l3 = chars(data.line3, 28).trim();
     const s1 = l1 ? fit(g, l1, maxW, 146 * k, 900, SANS, 44 * k) : 0;
     const s2 = l2 ? fit(g, l2, maxW, 75 * k, 800, SANS, 29 * k) : 0;
     const s3 = l3 ? fit(g, l3, maxW, 57 * k, 700, SANS, 23 * k) : 0;
@@ -513,6 +544,16 @@ export function paintBillboard(canvas, data = {}, opts = {}) {
     if (s1) { neon(g, l1, tx, y + s1 * 0.5, s1, SANS, 900, ink, { glow: 1 }); y += s1 * 1.02 + gap; }
     if (s2) { neon(g, l2, tx, y + s2 * 0.55, s2, SANS, 800, mixHex(ink, th.accent2, 0.35), { glow: 0.55 }); y += s2 * 1.15 + gap; }
     if (s3) neon(g, l3, tx, y + s3 * 0.55, s3, SANS, 700, th.accent2, { glow: 0.45 });
+    if (th.title) {
+      g.textAlign = 'right';
+      g.textBaseline = 'alphabetic';
+      g.fillStyle = '#fff';
+      g.font = `700 ${Math.round(22 * k)}px ${SANS}`;
+      if (th.sub) g.fillText(th.sub, W - 40 * k, body - 52 * k);
+      g.fillStyle = th.accent;
+      g.font = `900 ${Math.round(34 * k)}px ${SANS}`;
+      g.fillText(th.title, W - 40 * k, body - 16 * k);
+    }
   }
 
   const vacant = !data.holder_id;
@@ -581,6 +622,47 @@ export function paintBillboard(canvas, data = {}, opts = {}) {
     g.stroke();
   }
 
+  if (data.taken_from) {
+    const stamp = `⚔️ ${chars(data.taken_from, 14)}님을 밀어내고 점령!`;
+    g.font = `800 ${Math.round(26 * k)}px ${SANS}`;
+    g.textAlign = 'right';
+    g.textBaseline = 'alphabetic';
+    g.fillStyle = '#ffcf5a';
+    g.shadowColor = '#ffcf5a';
+    g.shadowBlur = 12 * k;
+    g.fillText(stamp, W - 28 * k, body - 22 * k);
+    g.shadowBlur = 0;
+  }
+  if (opts.shield) {
+    g.fillStyle = 'rgba(40,0,0,0.62)';
+    g.fillRect(0, body * 0.58, W, body * 0.42);
+    g.font = `900 ${Math.round(42 * k)}px ${SANS}`;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillStyle = '#ff2a2a';
+    g.shadowColor = '#ff2a2a';
+    g.shadowBlur = 16 * k;
+    const text = String(opts.shield);
+    const size = fit(g, text, W * 0.92, 48 * k, 900, SANS, 22 * k);
+    g.font = `900 ${Math.round(size)}px ${SANS}`;
+    g.fillText(text, W / 2, body * 0.78);
+    g.shadowBlur = 0;
+  }
+
+  const to = /^To\.\s*(.+)/.exec(chars(data.line1, 20).trim());
+  if (to) {
+    const label = `To. ${chars(to[1], 12)}`;
+    g.font = `900 ${Math.round(28 * k)}px ${SANS}`;
+    const bw = g.measureText(label).width + 36 * k;
+    const by = badge ? 128 * k : 82 * k;
+    roundRect(g, 28 * k, by, bw, 40 * k, 20 * k);
+    g.fillStyle = 'rgba(255,207,90,0.92)';
+    g.fill();
+    g.fillStyle = '#2a1200';
+    g.textAlign = 'left';
+    g.textBaseline = 'middle';
+    g.fillText(label, 46 * k, by + 20 * k);
+  }
   const views = Math.max(0, Math.floor(Number(data.views) || 0));
   const cheers = Math.max(0, Math.floor(Number(data.cheers) || 0));
   g.fillStyle = '#05060f';

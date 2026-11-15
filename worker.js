@@ -5,8 +5,10 @@
 // Meter DO: daily (UTC) estimate of billed DO requests -> lean mode at 80%, solo (down) at 95% of the Free 100k/day.
 // Supabase keeps auth, DB and RPCs only. No timers in DOs (hibernation-friendly); alarms only while someone waits.
 import { DurableObject } from 'cloudflare:workers';
+import { BALANCE, slotName, SLOT_IDS } from './balance.js';
+import { EVENT_NAMES, keysMatch, parseGuestHandover, statsFromCounts } from './plaza-account.js';
 // v16 cost pass: ping 25s (client) / STALE 75s, idle scan alarm 60s, meter report 60s, compact pos ('p'/'P'), nearby fanout, event ring + world cache, HMAC guest tokens.
-const CAP = 100, MEM = 0.125, LEAN = 0.8, HARD = 0.95, STALE = 75000, SCAN = 5000, IDLE_SCAN = 60000, REP = 60000;
+const CAP = 50, MEM = 0.125, LEAN = 0.8, HARD = 0.95, STALE = 75000, SCAN = 5000, IDLE_SCAN = 60000, REP = 60000;
 const NEAR_R = 1600, FAR_MS = 3000, HIST_N = 10, PRAY_TTL = 15;
 // Budget guard. Default = Workers Free daily limits (safe on Free). Only if the Worker var PLAN === 'paid' are paid-plan
 // cost-safety budgets used (overridable with BUDGET_REQ_DAY / BUDGET_GBS_DAY vars). This never changes the account plan.
@@ -60,6 +62,10 @@ export class Meter extends DurableObject {
   snapInit() { if (this.sp) return; this.sp = 1; this.ctx.storage.sql.exec('create table if not exists snap(id text primary key, jpeg blob, at integer)'); }
   snapPut(id, bytes) { this.snapInit(); const q = this.ctx.storage.sql; q.exec('insert into snap values(?,?,?)', id, bytes, Date.now()); q.exec('delete from snap where at < ?', Date.now() - 7 * 86400000); const n = Number(q.exec('select count(*) n from snap').one().n) || 0; if (n > 400) q.exec('delete from snap where id in (select id from snap order by at asc limit ?)', n - 300); return { ok: true }; }
   snapGet(id) { this.snapInit(); const row = this.ctx.storage.sql.exec('select jpeg from snap where id = ?', id).toArray()[0]; return row?.jpeg || null; }
+  // Daily product counters. No alarm: a row is written only when a client reports an event.
+  statInit() { if (this.st) return; this.st = 1; this.ctx.storage.sql.exec('create table if not exists stat(day text, k text, n integer not null, primary key(day, k))'); }
+  evAdd(name, day) { this.statInit(); const d = String(day || today()).slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return { ok: false }; this.ctx.storage.sql.exec('insert into stat(day, k, n) values(?, ?, 1) on conflict(day, k) do update set n = n + excluded.n', d, String(name).slice(0, 40)); return { ok: true }; }
+  evDay(day) { this.statInit(); const d = String(day || today()).slice(0, 10); const counts = {}; for (const r of [...this.ctx.storage.sql.exec('select k, n from stat where day = ?', d)]) counts[String(r.k)] = Number(r.n) || 0; return counts; }
 }
 
 export class Room extends DurableObject {
@@ -80,6 +86,8 @@ export class Room extends DurableObject {
     if (u.pathname === '/flush') return this.httpFlush(req);
     if (u.pathname === '/world') return this.httpWorld(req);
     if (u.pathname === '/sync') return this.httpSync(req);
+    if (u.pathname === '/air') return this.httpAir(req);
+    if (u.pathname === '/fever') return this.httpFever(req);
     const topic = u.searchParams.get('topic') || '', k = req.headers.get('x-uid') || ''; if (!k) return new Response('auth', { status: 401 });
     if (this.lvl >= 2) return new Response('down', { status: 503 });
     const room = (u.searchParams.get('room') || '').slice(0, 48), v2 = req.headers.get('x-v2') === '1';
@@ -91,7 +99,7 @@ export class Room extends DurableObject {
     this.arm(); this.meter(); return new Response(null, { status: 101, webSocket: c, headers: { 'Sec-WebSocket-Protocol': v2 ? 'masil2' : 'masil' } });
   }
   admit(w, a) { a.q = true; a.fl = 0; if (a.m) a.m.fl = 0; this.save(w, a); const st = {}; for (const b of this.socks().values()) if (b.q && b.m) { b.fl = 0; b.m.fl = 0; st[b.k] = b.m; }
-    const o = { t: 'ok', s: st, cap: a.lob ? 0 : CAP, live: this.adm(), lean: this.lvl >= 1 }; if (a.v2 && this.hist) o.h = this.hist; this.tx(w, o); }
+    const o = { t: 'ok', s: st, cap: a.lob ? 0 : CAP, live: this.adm(), lean: this.lvl >= 1 }; if (a.v2 && this.hist) o.h = this.hist; if (this.airShow && this.airShow.until > Date.now()) o.air = this.airShow; this.tx(w, o); }
   waitMsgs() { const ws = this.waiters(), live = this.adm(); ws.forEach(([w], i) => this.tx(w, { t: 'wait', pos: i + 1, live, cap: CAP })); }
   promote() { let n = this.adm(); for (const [w, a] of this.waiters()) { if (n >= CAP) break; this.admit(w, a); n++; } this.waitMsgs(); }
   // alarm: fast (5s) while someone waits or taps are pending, otherwise a slow 60s stale scan while any socket is connected
@@ -110,10 +118,25 @@ export class Room extends DurableObject {
   syncPending() { const q = this.ctx.storage.sql; this.tapN = Number(q.exec('select coalesce(sum(n),0) s from coin').one().s) || 0; const age = q.exec('select min(at) a from coin').one().a; if (age) this.tapAt = Number(age); }
   addMine(a, amount, nick) { if (!a?.k || this.lvl >= 2) return false; this.tapDb(); const now = Date.now();
     if (typeof amount !== 'number' || !Number.isFinite(amount)) return false; const credit = Math.min(MINE_CAP, Math.floor(amount)); if (credit < 1) return false;
-    const q = this.ctx.storage.sql; const prev = q.exec('select at from rate where uid = ?', a.k).toArray()[0]; if (prev && now - Number(prev.at) < MINE_GAP) return false;
-    const name = clip(nick, 16); q.exec('insert into rate(uid, at) values(?, ?) on conflict(uid) do update set at = excluded.at', a.k, now);
+    const q = this.ctx.storage.sql;
+    if (credit === 1) {
+      // sidewalk coins: no 2s wait. 12 per 2s is the script ceiling, the street only has 8.
+      const key = a.k + '#c';
+      const prev = q.exec('select at from rate where uid = ?', key).toArray()[0];
+      const raw = prev ? Number(prev.at) : 0;
+      let start = Math.floor(raw / 100), n = raw % 100;
+      if (!start || now - start >= 2000) { start = now; n = 0; }
+      if (n >= 12) return false;
+      q.exec('insert into rate(uid, at) values(?, ?) on conflict(uid) do update set at = excluded.at', key, start * 100 + n + 1);
+    } else {
+      const prev = q.exec('select at from rate where uid = ?', a.k).toArray()[0]; if (prev && now - Number(prev.at) < MINE_GAP) return false;
+      q.exec('insert into rate(uid, at) values(?, ?) on conflict(uid) do update set at = excluded.at', a.k, now);
+    }
+    const name = clip(nick, 16);
     if (!this.tapN) this.tapAt = now;
-    q.exec('insert into coin(uid, nick, delta, n, at) values(?, ?, ?, 1, ?) on conflict(uid) do update set delta = delta + excluded.delta, n = n + excluded.n, nick = excluded.nick, at = min(coin.at, excluded.at)', a.k, name, credit, now);
+    const scale = this.feverScale(a.k);
+    const gain = Math.min(MINE_CAP * scale, credit * scale);
+    q.exec('insert into coin(uid, nick, delta, n, at) values(?, ?, ?, 1, ?) on conflict(uid) do update set delta = delta + excluded.delta, n = n + excluded.n, nick = excluded.nick, at = min(coin.at, excluded.at)', a.k, name, gain, now);
     this.tapN++; if (Math.random() < 0.02) q.exec('delete from rate where at < ?', now - 86400000);
     if (this.tapN >= FLUSH_N) this.flush(); else this.arm(); return true; }
   credit(a, amount, nick, cap, kind) { if (!a?.k || this.lvl >= 2) return false; this.tapDb(); const now = Date.now();
@@ -124,6 +147,72 @@ export class Room extends DurableObject {
     const name = clip(nick, 16); if (!this.tapN) this.tapAt = now;
     q.exec('insert into coin(uid, nick, delta, n, at) values(?, ?, ?, 1, ?) on conflict(uid) do update set delta = delta + excluded.delta, n = n + excluded.n, nick = excluded.nick, at = min(coin.at, excluded.at)', a.k, name, creditN, now);
     this.tapN++; if (this.tapN >= FLUSH_N) this.flush(); else this.arm(); return true; }
+  // Retention payouts. Each kind has its own gap so a lounge tick cannot mint a jackpot.
+  bonus(a, kind, amount, nick) {
+    const spec = { lounge: [3, 9000], stunt: [10, 15000], hive: [3, 4500], draw: [300, 240000], quest: [100, 0], hello: [BALANCE.firstCoins, -1] }[kind];
+    if (!a?.k || this.lvl >= 2 || !spec) return false;
+    this.tapDb();
+    const now = Date.now();
+    const scale = this.feverScale(a.k);
+    const creditN = Math.min(spec[0] * scale, Math.floor(Number(amount)) * scale);
+    if (!Number.isInteger(creditN) || creditN < 1) return false;
+    const q = this.ctx.storage.sql;
+    if (kind === 'quest') {
+      const day = new Date(now + 9 * 36e5).toISOString().slice(0, 10);
+      const key = a.k + '|quest|' + day;
+      const prev = q.exec('select at from gate where k = ?', key).toArray()[0];
+      const n = prev ? Number(prev.at) : 0;
+      if (n >= 4) return false;
+      q.exec('insert into gate(k, at) values(?, ?) on conflict(k) do update set at = excluded.at', key, n + 1);
+    } else if (spec[1] < 0) {
+      const key = a.k + '|' + kind;
+      if (q.exec('select at from gate where k = ?', key).toArray()[0]) return false;
+      q.exec('insert into gate(k, at) values(?, ?) on conflict(k) do update set at = excluded.at', key, now);
+    } else {
+      const key = a.k + '|' + kind;
+      const prev = q.exec('select at from gate where k = ?', key).toArray()[0];
+      if (prev && now - Number(prev.at) < spec[1]) return false;
+      q.exec('insert into gate(k, at) values(?, ?) on conflict(k) do update set at = excluded.at', key, now);
+    }
+    const name = clip(nick, 16);
+    if (!this.tapN) this.tapAt = now;
+    q.exec('insert into coin(uid, nick, delta, n, at) values(?, ?, ?, 1, ?) on conflict(uid) do update set delta = delta + excluded.delta, n = n + excluded.n, nick = excluded.nick, at = min(coin.at, excluded.at)', a.k, name, creditN, now);
+    this.tapN++;
+    if (this.tapN >= FLUSH_N) this.flush(); else this.arm();
+    return true;
+  }
+  gateAt(key) { this.tapDb(); const row = this.ctx.storage.sql.exec('select at from gate where k = ?', key).toArray()[0]; return row ? Number(row.at) : 0; }
+  gateSet(key, at) { this.tapDb(); this.ctx.storage.sql.exec('insert into gate(k, at) values(?, ?) on conflict(k) do update set at = excluded.at', key, at); }
+  fareMult(uid) { return this.gateAt('rev|' + uid) > Date.now() ? 2 : 1; }
+  feverScale(uid) { return this.gateAt('fv|' + uid) > Date.now() ? 2 : 1; }
+  trainMult(uid, riders) {
+    const table = [1, 2.2, 3.8, 6, 10];
+    const n = Math.min(5, Math.max(1, Math.floor(Number(riders)) || 1));
+    return table[n - 1] * this.fareMult(uid) * this.feverScale(uid);
+  }
+  bumpFeverCount(uid) {
+    if (this.gateAt('fv|' + uid) > Date.now()) return this.gateAt('fg|' + uid);
+    const next = Math.min(20, (this.gateAt('fg|' + uid) || 0) + 1);
+    this.gateSet('fg|' + uid, next);
+    return next;
+  }
+  startFever(uid) {
+    const until = this.gateAt('fv|' + uid);
+    if (until > Date.now()) return until;
+    if ((this.gateAt('fg|' + uid) || 0) < 20) return 0;
+    const next = Date.now() + 60000;
+    this.gateSet('fv|' + uid, next);
+    this.gateSet('fg|' + uid, 0);
+    return next;
+  }
+  markDisp(uid) { if (uid) this.gateSet('disp|' + String(uid).slice(0, 80), Date.now()); }
+  startRevenge(uid) {
+    const at = this.gateAt('disp|' + uid);
+    if (!at || Date.now() - at > 10 * 60 * 1000) return 0;
+    const until = Date.now() + 120000;
+    this.gateSet('rev|' + uid, until);
+    return until;
+  }
   bumpAd(slot, kind, by) { if (!AD_SLOT.test(String(slot || ''))) return; this.tapDb(); const q = this.ctx.storage.sql;
     q.exec('insert into adstat(slot, views, clicks, dirty) values(?, 0, 0, 0) on conflict(slot) do nothing', slot);
     if (kind === 'clicks') q.exec('update adstat set clicks = clicks + 1, dirty = 1 where slot = ?', slot);
@@ -176,8 +265,24 @@ export class Room extends DurableObject {
     } catch { return J({ ok: false, error: '미정산 코인을 반영하지 못했습니다. 잠시 후 다시 시도해 주세요.', pending: true }, 409); } }
   async httpWorld(req) { let m = null; try { m = await req.json(); } catch { return J({ err: 'json' }, 400); }
     if (!m || m.t !== 'WORLD_UPDATE' || (m.kind !== 'BILLBOARD' && m.kind !== 'PLOT') || !m.data || typeof m.data !== 'object') return J({ err: 'world' }, 400);
-    const msg = { t: 'WORLD_UPDATE', kind: m.kind, data: m.data }; this.pushEv(msg); const s = JSON.stringify(msg); for (const w of this.socks().keys()) this.tx(w, s); return J({ ok: true, n: this.socks().size }); }
+    const msg = { t: 'WORLD_UPDATE', kind: m.kind, data: m.data }; this.pushEv(msg); const s = JSON.stringify(msg); for (const w of this.socks().keys()) this.tx(w, s);
+    const take = m.take;
+    if (take && take.victim) {
+      this.markDisp(take.victim);
+      this.bc({ t: 'TAKE', victim: String(take.victim).slice(0, 80), attacker: clip(take.attacker, 16), slot: String(take.slot || '').slice(0, 16), name: clip(take.name, 24), price: Math.floor(Number(take.price) || 0), line1: clip(take.line1, 16), line2: clip(take.line2, 16), line3: clip(take.line3, 16), emoji: clip(take.emoji, 4), theme: clip(take.theme, 32), color: clip(take.color, 9) });
+    }
+    if (m.mono) this.bc({ t: 'MONO', name: clip(m.mono, 24) });
+    return J({ ok: true, n: this.socks().size }); }
   httpSync(req) { const uid = String(req.headers.get('x-uid') || ''); let n = 0; for (const [w, b] of this.socks()) if (b.k === uid) { this.tx(w, { t: 'WALLET_SYNC' }); n++; } return J({ ok: true, n }); }
+  async httpAir(req) { let m = null; try { m = await req.json(); } catch { return J({ err: 'json' }, 400); }
+    const until = Math.floor(Number(m?.until));
+    const nick = clip(m?.nick, 16);
+    const line = clip(m?.line, 24);
+    if (!nick || !line || !Number.isInteger(until) || until < Date.now() || until > Date.now() + 120000) return J({ err: 'air' }, 400);
+    this.airShow = { nick, line, until };
+    this.bc({ t: 'AIR', nick, line, until });
+    return J({ ok: true }); }
+  httpFever(req) { const uid = String(req.headers.get('x-uid') || '').slice(0, 80); if (!uid) return J({ err: 'auth' }, 401); return J({ ok: true, gauge: this.bumpFeverCount(uid) }); }
   scan(force) { const now = Date.now(); if (!force && now - this.lastScan < SCAN) return; this.lastScan = now;
     for (const [w, a] of [...this.socks()]) { const ar = this.ctx.getWebSocketAutoResponseTimestamp(w)?.getTime() || 0;
       if (now - Math.max(a.ls, ar, a.t) > STALE) { try { w.close(4000, 'stale'); } catch { } this.gone(w); } } }
@@ -191,7 +296,8 @@ export class Room extends DurableObject {
   // position relay: same floor + within NEAR_R gets every update; far/unknown peers get at most one per FAR_MS per sender (+ every stop),
   // so ghosts never drift far. v2 sockets get the compact form {t:'P',k,a:[x,y,face,anim,fl,vx,vy]}, legacy sockets the old {t:'b',e:'pos',p}.
   relayPos(w, a, P) { if (Array.isArray(P)) P[4] = 0; const [x, y, face, anim, fl, vx, vy] = P, now = Date.now(); a.fl = 0; a.m = Object.assign(a.m || {}, { x, y, face, anim, fl: 0 });
-    if (now - (a.sv || 0) > 2000) { a.sv = now; this.save(w, a); }
+    // Attachment is only for wake-after-hibernation. Live relay uses memory. 30s keeps a runner inside NEAR_R (80m) and cuts rows_written 15x.
+    if (now - (a.sv || 0) > 30000) { a.sv = now; this.save(w, a); }
     const far = anim !== 'walk' || now - (a.fz || 0) >= FAR_MS; if (far) a.fz = now; let sc = null, sl = null;
     for (const [x2, b] of this.socks()) { if (x2 === w || !b.q || b.lob) continue; b.fl = 0; if (b.m) b.m.fl = 0; if (b.fl != null && a.fl != null && b.fl !== a.fl) continue;
       const bm = b.m, near = !bm || bm.x == null || (Math.abs(bm.x - x) <= NEAR_R && Math.abs(bm.y - y) <= NEAR_R); if (!near && !far) continue;
@@ -202,8 +308,16 @@ export class Room extends DurableObject {
     if (m.t === 'p' && a.q && Array.isArray(m.a) && m.a.length <= 8) { const A = m.a, n = v => (typeof v === 'number' && isFinite(v) ? Math.round(v) : 0), sv = v => (typeof v === 'string' ? v.slice(0, 12) : null);
       this.relayPos(w, a, [n(A[0]), n(A[1]), sv(A[2]), sv(A[3]), (typeof A[4] === 'number' && isFinite(A[4])) ? A[4] : sv(A[4]), n(A[5]), n(A[6])]); }
     else if (m.t === 'MINE' && a.q) this.addMine(a, m.amount, m.nick);
-    else if (m.t === 'FARE' && a.q) { if (this.credit(a, m.amount, m.nick, 25, 'fare')) this.bumpAd(m.slot, 'views', a.k); }
-    else if (m.t === 'ADCLICK' && a.q) { if (this.credit(a, 15, m.nick, 15, 'click')) this.bumpAd(m.slot, 'clicks', a.k); }
+    else if (m.t === 'BONUS' && a.q) this.bonus(a, String(m.kind || ''), m.amount, m.nick);
+    else if (m.t === 'FARE' && a.q) {
+      const asked = Math.min(25, Math.floor(Number(m.amount)));
+      this.bumpFeverCount(a.k);
+      const creditN = Math.max(1, Math.round(asked * this.trainMult(a.k, m.riders)));
+      if (Number.isInteger(asked) && asked >= 1 && this.credit(a, creditN, m.nick, 1000, 'fare')) this.bumpAd(m.slot, 'views', a.k);
+    }
+    else if (m.t === 'FEVER' && a.q) { this.tx(w, { t: 'FEVER', until: this.startFever(a.k) }); }
+    else if (m.t === 'REV' && a.q) { const until = this.startRevenge(a.k); if (until) this.tx(w, { t: 'REV', until }); }
+    else if (m.t === 'ADCLICK' && a.q) { const scale = this.feverScale(a.k); if (this.credit(a, 15 * scale, m.nick, 15 * scale, 'click')) this.bumpAd(m.slot, 'clicks', a.k); }
     else if (m.t === 'E' && a.q) { const e = m.e; if (Number.isInteger(e) && e >= 1 && e <= 4) { this.bc({ t: 'E', k: a.k, e }, w); this.pushEv({ t: 'E', k: a.k, e }); } }
     else if (m.t === 'b' && a.q) { const e = String(m.e || '').slice(0, 16), p = m.p;
       if (p && typeof p === 'object') p.id = a.k; // identity always from the verified token
@@ -233,8 +347,8 @@ let GATE = { at: 0, r: null }; // per-isolate meter cache: /rt/gate no longer co
 const GATE_TTL = 15000, PC = new Map(); // PC: per-isolate world cache (Cache API is a no-op on *.workers.dev)
 const WORLD_CACHE = 'https://cache.masil/rt/world';
 const TOPIC_RE = /^chapel(qa)?:[^\s/]{1,96}$/;
-const SLOT_RE = /^(MAIN_S|SUB_B[1-4]|PLOT_(?:[1-9]|1\d|20)|WALL_(?:[1-9]\d{0,2})|TOWER_[1-5])$/;
-const AD_SLOT = /^(MAIN_S|SUB_B[1-4]|PLOT_(?:[1-9]|1\d|20))$/;
+const SLOT_RE = /^(MAIN_(UP|TOP|MID|BOT|LOW)|SUB_[1-4][AB]|STREET_([1-9]|[12]\d|30)|PLOT_([1-9]|1[0-8]))$/;
+const AD_SLOT = SLOT_RE;
 function clip(s, n) { return Array.from(String(s ?? '').replace(/[\u0000-\u001f]/g, '')).slice(0, n).join(''); }
 function tokenOf(req) { const a = req.headers.get('authorization') || ''; return a.startsWith('Bearer ') ? a.slice(7).trim() : ''; }
 function hexColor(s, d) { const t = String(s || '').trim(); return /^#[0-9a-fA-F]{3,8}$/.test(t) ? t : d; }
@@ -242,14 +356,15 @@ function extUrl(s) { if (s == null || s === '') return null; const t = String(s)
 async function readJson(req) { const n = Number(req.headers.get('content-length') || 0); if (n > 10000) return null; try { const b = await req.json(); return b && typeof b === 'object' ? b : null; } catch { return null; } }
 async function readWorld() {
   const h = { apikey: ANON, accept: 'application/json' };
-  const [bs, ps] = await Promise.all([
-    fetch(SUPA + '/rest/v1/billboards?select=*&order=slot_id.asc', { headers: h }),
+  const [bs, ps, rs] = await Promise.all([
+    fetch(SUPA + '/rest/v1/billboards?select=*&slot_id=in.(' + SLOT_IDS.join(',') + ')&order=slot_id.asc', { headers: h }),
     fetch(SUPA + '/rest/v1/plots?select=*&order=plot_id.asc', { headers: h }),
+    fetch(SUPA + '/rest/v1/wallets?select=actor_id,nickname,spent,linked&spent=gt.0&order=spent.desc&limit=20', { headers: h }),
   ]);
   if (!bs.ok || !ps.ok) return { err: 'upstream ' + (bs.ok ? ps.status : bs.status) };
-  const [billboards, plots] = await Promise.all([bs.json(), ps.json()]);
+  const [billboards, plots, ranks] = await Promise.all([bs.json(), ps.json(), rs.ok ? rs.json() : []]);
   if (!Array.isArray(billboards) || !Array.isArray(plots)) return { err: 'shape' };
-  return { body: JSON.stringify({ billboards, plots }) };
+  return { body: JSON.stringify({ billboards, plots, ranks: Array.isArray(ranks) ? ranks : [] }) };
 }
 async function invalidateWorld(ctx) {
   PC.delete('world');
@@ -316,11 +431,11 @@ async function plaza(req, env, ctx, u) {
     if (req.method !== 'GET') return J({ err: 'get' }, 405);
     const actor = await resolveActor(env, tokenOf(req)); if (!actor) return J({ err: 'auth' }, 401);
     const q = u.searchParams.get('actor_id'); if (q && q !== actor.id) return J({ err: 'actor' }, 403);
-    const s = await fetch(SUPA + '/rest/v1/wallets?select=actor_id,nickname,coins,vip_tickets,updated_at&actor_id=eq.' + encodeURIComponent(actor.id), { headers: { apikey: ANON, accept: 'application/json' } });
+    const s = await fetch(SUPA + '/rest/v1/wallets?select=actor_id,nickname,coins,vip_tickets,updated_at,linked&actor_id=eq.' + encodeURIComponent(actor.id), { headers: { apikey: ANON, accept: 'application/json' } });
     if (!s.ok) return J({ err: 'upstream ' + s.status }, 502);
     const rows = await s.json(); const row = Array.isArray(rows) ? rows[0] : null;
-    if (!row) return J({ ok: true, actor_id: actor.id, nickname: '네온손님', coins: 100, vip_tickets: 0, exists: false });
-    const coins = Number(row.coins); return J({ ok: true, actor_id: row.actor_id, nickname: row.nickname, coins: Number.isFinite(coins) ? coins : 0, vip_tickets: Number(row.vip_tickets) || 0, exists: true });
+    if (!row) return J({ ok: true, actor_id: actor.id, nickname: '네온손님', coins: 100, vip_tickets: 0, linked: actor.id.startsWith('user:'), exists: false });
+    const coins = Number(row.coins); return J({ ok: true, actor_id: row.actor_id, nickname: row.nickname, coins: Number.isFinite(coins) ? coins : 0, vip_tickets: Number(row.vip_tickets) || 0, linked: row.linked === true || actor.id.startsWith('user:'), exists: true });
   }
   if (req.method !== 'POST') return J({ err: 'post' }, 405);
   const actor = await resolveActor(env, tokenOf(req)); if (!actor) return J({ err: 'auth' }, 401);
@@ -335,6 +450,38 @@ async function plaza(req, env, ctx, u) {
     const rows = s.ok ? await s.json() : [];
     const coins = Number(Array.isArray(rows) ? rows[0]?.coins : 0) || 0;
     return J({ ok: true, coins, flushed: settled.flushed || 0 });
+  }
+  if (u.pathname === '/rt/spend') {
+    const kind = String(b.kind || '');
+    const pay = String(b.pay || 'coins');
+    const stickers = ['🔥부럽다!', '👑성지순례', '💖하트폭탄', '👀내자리찜'];
+    const glyph = String(b.glyph || '');
+    const line = clip(b.line || '', 24);
+    let coins = 0, tickets = 0;
+    if (kind === 'sticker') {
+      const slot = String(b.slot_id || '');
+      if (!stickers.includes(glyph)) return J({ ok: false, error: '그 스티커는 없어요.' }, 400);
+      if (!SLOT_RE.test(slot)) return J({ ok: false, error: '전광판 슬롯이 올바르지 않습니다.' }, 400);
+      coins = 30;
+    } else if (kind === 'air') {
+      if (!line) return J({ ok: false, error: '전광판에 올릴 한 줄을 적어 주세요.' }, 400);
+      if (pay === 'ticket') tickets = 1;
+      else coins = 5000;
+    } else return J({ ok: false, error: '그 금액은 쓸 수 없어요.' }, 400);
+    const spent = await supabaseRpc('spend_plaza', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_coins: coins, p_tickets: tickets });
+    const paid = spent.data || {};
+    const missing = /schema cache|Could not find the function/i.test(String(paid.message || paid.error || spent.data || ''));
+    if (!spent.ok || paid.ok === false) return J({ ok: false, error: paid.error || (missing ? '코인 사용이 아직 준비 중이에요.' : '코인을 쓰지 못했어요.') }, spent.ok ? 400 : 502);
+    if (kind === 'air') {
+      const until = Date.now() + 60000;
+      try {
+        for (const name of squareTopics(topic)) {
+          await env.ROOM.get(env.ROOM.idFromName(name)).fetch(new Request('https://room.internal/air', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ nick, line, until }) }));
+        }
+      } catch { /* the buyer still applies the response locally */ }
+      return J({ ok: true, kind: 'air', remaining_coins: paid.remaining_coins ?? null, vip_tickets: paid.vip_tickets ?? null, until, nick, line });
+    }
+    return J({ ok: true, kind: 'sticker', glyph, slot_id: String(b.slot_id || ''), remaining_coins: paid.remaining_coins ?? null, vip_tickets: paid.vip_tickets ?? null });
   }
   const claim = u.pathname === '/rt/claim-billboard';
   const sell = u.pathname === '/rt/sell-coins';
@@ -356,7 +503,7 @@ async function plaza(req, env, ctx, u) {
     const theme = String(b.bg_theme || '');
     rpc = await supabaseRpc('claim_billboard', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_nickname: nick, p_slot_id: slot, p_bid: b.bid, p_line1: clip(b.line1, 16), p_line2: clip(b.line2, 16), p_line3: clip(b.line3, 16), p_emoji: clip(b.emoji || '✨', 4) || '✨', p_bg_theme: /^[\w-]{1,32}$/.test(theme) ? theme : 'cyber_navy', p_text_color: hexColor(b.text_color, '#ffffff'), p_external_url: extUrl(b.external_url), p_caption_y: Math.min(88, Math.max(12, Math.round(Number(b.caption_y) || 72))) });
   } else {
-    if (!Number.isInteger(b.plot_id) || b.plot_id < 1 || b.plot_id > 20) return J({ ok: false, error: '토지 번호가 올바르지 않습니다.' }, 400);
+    if (!Number.isInteger(b.plot_id) || b.plot_id < 1 || b.plot_id > 18) return J({ ok: false, error: '토지 번호가 올바르지 않습니다.' }, 400);
     rpc = await supabaseRpc('buy_or_upgrade_plot', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_nickname: nick, p_plot_id: b.plot_id, p_sign_text: clip(b.sign_text, 14), p_theme_color: hexColor(b.theme_color, '#00ffcc') });
   }
   const data = rpc.data || {};
@@ -366,9 +513,13 @@ async function plaza(req, env, ctx, u) {
   try { await invalidateWorld(ctx); } catch { }
   let broadcast = false;
   try {
-    const br = await env.ROOM.get(env.ROOM.idFromName(topic)).fetch(new Request('https://room.internal/world', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ t: 'WORLD_UPDATE', kind, data: row }) }));
-    broadcast = br.ok;
+    const take = claim && data.prev_holder_id && data.prev_holder_id !== actor.id ? { victim: data.prev_holder_id, attacker: nick, slot: row.slot_id, name: slotName(row.slot_id), price: Number(data.reclaim_bid) || 0, line1: data.prev_line1, line2: data.prev_line2, line3: data.prev_line3, emoji: data.prev_emoji, theme: data.prev_theme, color: data.prev_color } : null;
+    for (const name of squareTopics(topic)) {
+      const br = await env.ROOM.get(env.ROOM.idFromName(name)).fetch(new Request('https://room.internal/world', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ t: 'WORLD_UPDATE', kind, data: row, take, mono: data.monopoly_name || '' }) }));
+      broadcast = broadcast || br.ok;
+    }
     await env.ROOM.get(env.ROOM.idFromName(topic)).fetch(new Request('https://room.internal/sync', { method: 'POST', headers: { 'x-uid': actor.id } }));
+    if (claim) await env.ROOM.get(env.ROOM.idFromName(topic)).fetch(new Request('https://room.internal/fever', { method: 'POST', headers: { 'x-uid': actor.id } }));
   } catch { broadcast = false; }
   return J({ ok: true, kind, data: row, remaining_coins: data.remaining_coins ?? null, broadcast });
 }
@@ -376,7 +527,16 @@ async function plaza(req, env, ctx, u) {
 // Supabase keeps the bytes in billboard_photos (no public read) and charges the tier fee in the same RPC.
 // Players only receive approved photos from /rt/photo/<id>; the Worker secret ADMIN_KEY unlocks review.
 const PHOTO_MAX = 300000, PHOTO_ID_RE = /^[0-9a-f]{40}$/, PHOTO_GAP = 10000, PHOTO_TTL = 300000;
-const PHOTO_C = new Map(), PHOTO_AT = new Map(), PLAZA_TOPICS = ['chapel:square', 'chapelqa:square'];
+const PHOTO_C = new Map(), PHOTO_AT = new Map();
+function squareTopics(topic) {
+  const m = /^(chapel(?:qa)?):square(?:-(\d+))?$/.exec(topic || '');
+  if (!m) return topic ? [topic] : ['chapel:square'];
+  const base = m[1] + ':square';
+  const out = [base];
+  for (let i = 2; i <= 8; i++) out.push(base + '-' + i);
+  return out;
+}
+const PLAZA_TOPICS = squareTopics('chapel:square').concat(squareTopics('chapelqa:square'));
 async function readBody(req, max) {
   if (Number(req.headers.get('content-length') || 0) > max) return null;
   try { const t = await req.text(); if (t.length > max) return null; const b = JSON.parse(t); return b && typeof b === 'object' ? b : null; } catch { return null; }
@@ -499,6 +659,53 @@ async function photos(req, env, ctx, u) {
   }
   return J({ err: 'not found' }, 404);
 }
+async function accountApi(req, env, ctx, u) {
+  if (u.pathname === '/rt/config') {
+    if (req.method !== 'GET') return J({ err: 'get' }, 405);
+    return J({ url: SUPA, key: ANON });
+  }
+  if (u.pathname === '/rt/event') {
+    if (req.method !== 'POST') return J({ err: 'post' }, 405);
+    const b = await readJson(req);
+    const name = String(b?.name || '');
+    if (!EVENT_NAMES.includes(name)) return J({ err: 'event' }, 400);
+    try { await env.METER.get(env.METER.idFromName('day')).evAdd(name, kstDay()); }
+    catch { return J({ err: 'meter' }, 503); }
+    return J({ ok: true });
+  }
+  if (u.pathname === '/rt/admin/stats') {
+    if (req.method !== 'GET') return J({ err: 'get' }, 405);
+    const key = u.searchParams.get('key') || '';
+    if (!keysMatch(typeof env.FLUSH_KEY === 'string' ? env.FLUSH_KEY : '', key)) return J({ err: 'auth' }, 401);
+    const day = kstDay();
+    try {
+      const counts = await env.METER.get(env.METER.idFromName('day')).evDay(day);
+      return J({ day, ...statsFromCounts(counts || {}) });
+    } catch { return J({ err: 'meter' }, 503); }
+  }
+  if (req.method !== 'POST') return J({ err: 'post' }, 405);
+  const actor = await resolveActor(env, tokenOf(req));
+  if (!actor || actor.guest || !actor.id.startsWith('user:')) return J({ err: 'auth' }, 401);
+  if (u.pathname === '/rt/auth/withdraw') {
+    const rpc = await supabaseRpc('withdraw_account', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id });
+    const data = rpc.data || {};
+    if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || '탈퇴를 처리하지 못했습니다.' }, rpc.ok ? 400 : 502);
+    try { await fetch(SUPA + '/auth/v1/user', { method: 'DELETE', headers: { apikey: ANON, Authorization: 'Bearer ' + tokenOf(req) } }); } catch { }
+    try { await invalidateWorld(ctx); } catch { }
+    return J({ ok: true });
+  }
+  const b = await readJson(req);
+  const sub = parseGuestHandover(b?.guest_id);
+  if (!sub) return J({ ok: false, error: '게스트 정보가 없습니다.' }, 400);
+  const guestId = 'guest:' + sub;
+  const G = await guestVerify(env, b?.guest_token, 180 * 86400);
+  if (!G || G.s !== sub) return J({ err: 'guest' }, 401);
+  const rpc = await supabaseRpc('merge_guest_account', { p_key: env.FLUSH_KEY || '', p_user_id: actor.id, p_guest_id: guestId, p_nickname: clip(b?.nickname || '', 16) });
+  const data = rpc.data || {};
+  if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || '계정을 연결하지 못했습니다.' }, rpc.ok ? 400 : 502);
+  try { await invalidateWorld(ctx); } catch { }
+  return J({ ok: true, actor_id: actor.id, coins: data.coins, bonus: data.bonus || 0, linked: true, nickname: data.nickname || '' });
+}
 export default {
   async fetch(req, env, ctx) {
     const u = new URL(req.url); budget(env);
@@ -532,14 +739,21 @@ export default {
       return env.ROOM.get(env.ROOM.idFromName(t)).fetch(new Request(req, { headers: h }));
     }
     if (u.pathname === '/rt/guest') { if (req.method !== 'POST') return J({ err: 'post' }, 405); if (!env.GUEST_KEY) return J({ err: 'no guest key' }, 503);
-      let old = null; try { const b = await req.json(); if (b && typeof b.t === 'string') old = await guestVerify(env, b.t, 180 * 86400); } catch { }
-      return J(await guestSign(env, old ? old.s : 'g-' + crypto.randomUUID())); }
+      let old = null, hand = ''; try { const b = await req.json(); if (b && typeof b.t === 'string') old = await guestVerify(env, b.t, 180 * 86400); if (!old && b && typeof b.h === 'string') hand = parseGuestHandover(b.h); } catch { }
+      return J(await guestSign(env, old ? old.s : (hand || ('g-' + crypto.randomUUID())))); }
+    if (u.pathname === '/rt/config' || u.pathname === '/rt/event' || u.pathname === '/rt/admin/stats' || u.pathname === '/rt/auth/merge' || u.pathname === '/rt/auth/withdraw') return accountApi(req, env, ctx, u);
+    if (u.pathname === '/rt/here' && req.method === 'GET') {
+      try {
+        const s = await env.ROOM.get(env.ROOM.idFromName('chapel:square')).stats();
+        return J({ live: Number(s?.live) || 0 });
+      } catch { return J({ live: 0 }); }
+    }
     if (u.pathname === '/rt/gate') { try { const now = Date.now(); if (!GATE.r || now - GATE.at > GATE_TTL) { GATE = { at: now, r: await env.METER.get(env.METER.idFromName('day')).add(0) }; }
         const r = GATE.r, l = r.lvl, used = Math.round(r.n), gbs = Math.round(r.g);
         return J(l >= 2 ? { full: true, used, gbs } : { ok: true, cap: CAP, used, gbs, lean: l >= 1 }); } catch (e) { return J({ full: true, err: 1 }, 503); } }
     if (u.pathname === '/rt/sponsor' && req.method === 'GET') return J({ url: extUrl(env.SPONSOR_INQUIRY_URL) || '' });
     if (u.pathname === '/rt/share-bonus' || u.pathname === '/rt/redeem-code') return promo(req, env, u);
-    if (u.pathname === '/rt/world' || u.pathname === '/rt/wallet' || u.pathname === '/rt/claim-billboard' || u.pathname === '/rt/buy-plot' || u.pathname === '/rt/sell-coins' || u.pathname === '/rt/flush-wallet') return plaza(req, env, ctx, u);
+    if (u.pathname === '/rt/world' || u.pathname === '/rt/wallet' || u.pathname === '/rt/claim-billboard' || u.pathname === '/rt/buy-plot' || u.pathname === '/rt/sell-coins' || u.pathname === '/rt/flush-wallet' || u.pathname === '/rt/spend') return plaza(req, env, ctx, u);
     if (u.pathname === '/rt/billboard-photo' || u.pathname.startsWith('/rt/photo/') || u.pathname.startsWith('/rt/admin/')) return photos(req, env, ctx, u);
     if (u.pathname === '/rt/grp') { const M = env.METER.get(env.METER.idFromName('grp'));
       if (req.method === 'GET') { const w = isoWeek(); if (GRP.w !== w || Date.now() - GRP.at > 60000) { GRP.v = await M.grpTop(w); GRP.at = Date.now(); GRP.w = w; } return J({ w, top: GRP.v }); }

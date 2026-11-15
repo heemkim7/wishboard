@@ -9,24 +9,26 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { toNetUnits, fromNetUnits } from './net.js';
-import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, SKIP_ZONES, NO_PROPS, NO_TREES, FAR_CLUSTERS, LANDMARKS, groundHeight, onStairs, fountainSpot } from './ts3d/layout.js';
-import { BALANCE } from './balance.js';
+import { toNetUnits, fromNetUnits } from './net.js?v=20261114a';
+import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, SKIP_ZONES, NO_PROPS, NO_TREES, FAR_CLUSTERS, LANDMARKS, groundHeight, onStairs, fountainSpot } from './ts3d/layout.js?v=20261113b';
+import { BALANCE, chainsOf, slotName } from './balance.js?v=20261113y';
 import { kitMaterials } from './ts3d/kit.js';
 import { createReflection } from './ts3d/ground.js';
-import { createBoards, screenTime } from './ts3d/screens.js';
+import { createBoards, screenTime } from './ts3d/screens.js?v=20261114a';
 import { loadNYC, ROAD } from './ts3d/nyc.js';
 import { createWorld, FAR_LAYER } from './ts3d/world.js';
-import { createTraffic } from './ts3d/traffic.js';
-import { buildTimesSquare } from './ts3d/timesq.js';
+import { createTraffic } from './ts3d/traffic.js?v=20261113j';
+import { buildTimesSquare } from './ts3d/timesq.js?v=20261113h';
 import { claimRockefeller, buildRockefeller } from './ts3d/rockefeller.js';
 import { claimIcons, buildIcons } from './ts3d/icons.js';
-import { buildLandmarks } from './ts3d/landmarks.js';
-import { createAvatars, EMOTES, REACTIONS, AVATAR_COLORS, speciesId } from './ts3d/avatars.js';
-import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, fontsReady, chars, hashStr } from './ts3d/art.js';
+import { buildLandmarks } from './ts3d/landmarks.js?v=20261114i';
+import { createAvatars, EMOTES, REACTIONS, AVATAR_COLORS, speciesId } from './ts3d/avatars.js?v=20261114q';
+import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, fontsReady, chars, hashStr } from './ts3d/art.js?v=20261113b';
+import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=20261114d';
 
-export { paintBillboard, THEMES, LAYOUT, PLOT_SLOTS, groundHeight, EMOTES, AVATAR_COLORS };
+export { paintBillboard, THEMES, LAYOUT, PLOT_SLOTS, groundHeight, EMOTES, AVATAR_COLORS, taxiTrainMult, applyTaxiHardHit };
 export const PLAZA = LAYOUT;
+const STICKER_GLYPHS = ['🔥부럽다!', '👑성지순례', '💖하트폭탄', '👀내자리찜'];
 
 const RUN = 6.2, WALK = 2.4, RADIUS = 0.36, DEG = Math.PI / 180, EYE = 1.9, CAR_EYE = 2.5;
 const MODELS = { 1: '/assets/models/Mousey.glb', 2: '/assets/models/Cat.glb', 3: '/assets/models/Bear.glb' };
@@ -77,7 +79,7 @@ export function createTimesSquare(canvas, opts = {}) {
   renderer.setPixelRatio(dpr);
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0x221a40, quality === 'high' ? 0.00125 : quality === 'medium' ? 0.0016 : 0.0024);
+  scene.fog = new THREE.FogExp2(0x2a2248, quality === 'high' ? 0.0009 : quality === 'medium' ? 0.00115 : 0.0015);
   scene.environmentIntensity = 0.4;
   const baseFov = low ? 62 : 55;
   const camera = new THREE.PerspectiveCamera(baseFov, 1, 0.2, 5200);
@@ -125,8 +127,8 @@ void main(){
   scene.add(sky);
 
   // ---- lights (constant count: toggling would recompile every material) -----------
-  const hemi = new THREE.HemisphereLight(0x7486c8, 0x3a1830, low ? 3.6 : 3.1);
-  const moon = new THREE.DirectionalLight(0xa8b8ff, 0.7);
+  const hemi = new THREE.HemisphereLight(0xb7c6ff, 0x6a3048, low ? 5.4 : 4.6);
+  const moon = new THREE.DirectionalLight(0xd0dcff, 1.25);
   moon.position.set(-40, 90, 30);
   scene.add(hemi, moon);
   const mainLight = new THREE.PointLight(0x3fe6ff, 600, 95, 2);
@@ -182,6 +184,7 @@ void main(){
     buildRockefeller(rock, { scene });
     buildIcons(icons, { scene });
     tsq = buildTimesSquare({ scene, renderer, manager, kitMats, boards, nyc, quality, colliders });
+    hideStockBall();
     marks = buildLandmarks({ scene, kitMats, boards, ground: world, colliders, blockers, pick, quality, onFishLanded: (p, gold) => burst(p, gold ? '#ffcf5a' : '#ffb070', gold ? 70 : 34, gold ? 0.8 : 0.5) });
     traffic = createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk: () => opts.onHonk?.() });
     nyc.ensureSolid(pos.x, pos.z, 360);
@@ -247,6 +250,25 @@ void main(){
     camera.position.copy(camWant);
     controls.update();
   }, { signal, passive: false });
+  let pinch = null;
+  const onCanvas = (list) => [...list].filter((t) => t.target === canvas);
+  canvas.addEventListener('touchstart', (e) => {
+    const v = onCanvas(e.touches);
+    if (v.length < 2) { pinch = null; return; }
+    pinch = { d: Math.hypot(v[0].clientX - v[1].clientX, v[0].clientY - v[1].clientY) || 1, len: camWant.clone().sub(follow).length() || 8 };
+  }, { signal, passive: true });
+  canvas.addEventListener('touchmove', (e) => {
+    const v = onCanvas(e.touches);
+    if (v.length < 2 || !pinch) return;
+    e.preventDefault();
+    const d = Math.hypot(v[0].clientX - v[1].clientX, v[0].clientY - v[1].clientY) || 1;
+    const off = camWant.clone().sub(follow);
+    const next = clamp((pinch.len * pinch.d) / d, controls.minDistance, controls.maxDistance);
+    camWant.copy(follow).add(off.setLength(next));
+    camera.position.copy(camWant);
+    controls.update();
+  }, { signal, passive: false });
+  canvas.addEventListener('touchend', () => { pinch = null; }, { signal });
   controls.addEventListener('start', () => { orbiting = true; });
   controls.addEventListener('end', () => { orbiting = false; orbitEnd = performance.now(); });
   let eye = EYE;
@@ -257,6 +279,7 @@ void main(){
   const camWant = camera.position.clone();
   const cineFrom = new THREE.Vector3(), cineTo = new THREE.Vector3(), cineL0 = new THREE.Vector3(), cineL1 = new THREE.Vector3();
   let cine = null, boostHeld = false, boostSnd = 0;
+  let lounge = false, loungeI = 0, loungeAt = 0, hopped = 0, hiveAt = 0, shake = 0;
 
   // ---- input ----------------------------------------------------------------------------
   const keys = new Set();
@@ -264,6 +287,7 @@ void main(){
   let lastNearKey = '', near = null, lastJump = 0;
   window.addEventListener('keydown', (e) => {
     if (isTyping(e)) return;
+    if (e.code === 'Escape') { clearCine(); return; }
     if (MOVE_CODES.has(e.code)) {
       keys.add(e.code);
       if (e.code.startsWith('Arrow')) e.preventDefault();
@@ -293,7 +317,10 @@ void main(){
     const hit = ray.intersectObjects(pick, false).find(h => h.object.userData.pick);
     return hit ? hit.object.userData.pick : null;
   };
-  canvas.addEventListener('pointerdown', (ev) => { down = { x: ev.clientX, y: ev.clientY, t: performance.now() }; canvas.style.cursor = 'grabbing'; }, { signal });
+  canvas.addEventListener('pointerdown', (ev) => {
+    if (cine?.locked && me.root.visible) clearCine();
+    down = { x: ev.clientX, y: ev.clientY, t: performance.now() }; canvas.style.cursor = 'grabbing';
+  }, { signal });
   canvas.addEventListener('pointerup', (ev) => {
     canvas.style.cursor = 'grab';
     if (!down) return;
@@ -444,6 +471,25 @@ void main(){
     return { g, ring, icon, set(p) { g.visible = !!p; if (p) g.position.set(p.x, groundHeight(p.x, p.z), p.z); } };
   }
   const markers = { pickup: makeMarker('#39f58a', '🙋'), drop: makeMarker('#ffcf5a', '🏁'), way: makeMarker('#3fe6ff', '📍') };
+  const passenger = new THREE.Group();
+  {
+    const cloth = new THREE.MeshStandardMaterial({ color: '#ffcf5a', roughness: 0.55 });
+    const skin = new THREE.MeshStandardMaterial({ color: '#ffd2ad', roughness: 0.6 });
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 0.62, 4, 8), cloth);
+    body.position.y = 0.9;
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 10), skin);
+    head.position.y = 1.62;
+    const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(paintMarker(makeCanvas(256, 96), '손님', '#39f58a')), transparent: true, depthWrite: false }));
+    tag.position.y = 2.25;
+    tag.scale.set(3.4, 1.28, 1);
+    passenger.add(body, head, tag);
+    passenger.visible = false;
+    scene.add(passenger);
+  }
+  function showPassenger(p) {
+    passenger.visible = !!p;
+    if (p) passenger.position.set(p.x, groundHeight(p.x, p.z), p.z);
+  }
   {
     const beam = markers.drop.g.children[0];
     beam.geometry.dispose();
@@ -453,8 +499,17 @@ void main(){
     beam.material = new THREE.MeshBasicMaterial({ color: 0xffcf5a, transparent: true, opacity: 0.45, depthWrite: false, side: THREE.DoubleSide });
     beam.layers.enable(0);
   }
+  {
+    const beam = markers.pickup.g.children[0];
+    beam.geometry.dispose();
+    beam.geometry = new THREE.CylinderGeometry(1.2, 2.4, 40, 16, 1, true);
+    beam.position.y = 20;
+    beam.rotation.x = 0;
+    beam.material = new THREE.MeshBasicMaterial({ color: 0x39f58a, transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide });
+    beam.layers.enable(0);
+  }
   let waypoint = null;
-  const job = { phase: 'none', target: null, dest: null, t0: 0, limit: 0, nextAt: 0, startX: 0, startZ: 0 };
+  const job = { phase: 'none', target: null, dest: null, t0: 0, limit: 0, nextAt: 0, startX: 0, startZ: 0, riders: 0, extra: null, extraAt: 0, extraReach: 0, detachAt: 0 };
 
   /** A curbside spot on a real street, minD..maxD meters from `from`. */
   function pickSpot(minD, maxD, from) {
@@ -504,6 +559,7 @@ void main(){
     if (now - lastJump < 900 || drive) return;
     lastJump = now;
     me.emote('Jump');
+    opts.onJump?.();
     try { net?.send?.('jump', {}); } catch { /* offline */ }
   }
   function rescaleOrbit(dist) {
@@ -521,8 +577,8 @@ void main(){
     eye = CAR_EYE;
     follow.set(pos.x, eye, pos.z);
     rescaleOrbit(11.5);
-    job.phase = 'none';
-    job.nextAt = clockT + 1.5;
+    clearRide();
+    job.nextAt = clockT + 0.4;
     netState.equip = 'taxi';
     opts.onDrive?.(true);
     return true;
@@ -548,9 +604,7 @@ void main(){
     rescaleOrbit(8.5);
     camera.fov = baseFov;
     camera.updateProjectionMatrix();
-    job.phase = 'none';
-    markers.pickup.set(null);
-    markers.drop.set(null);
+    clearRide();
     netState.equip = '';
     opts.onDrive?.(false);
   }
@@ -594,16 +648,22 @@ void main(){
       r.av.setName(chars(peer.name || '익명', 12));
       r.av.setColor(col);
       const px = r.x, pz = r.z;
-      if (Math.hypot(x - r.x, z - r.z) > 18) { r.x = x; r.z = z; }
-      else { const k = 1 - Math.exp(-dt * 9); r.x += (x - r.x) * k; r.z += (z - r.z) * k; }
-      const vx = (r.x - px) / Math.max(dt, 1e-3), vz = (r.z - pz) / Math.max(dt, 1e-3);
-      const sp = Math.min(40, Math.hypot(vx, vz));
-      r.spd += (sp - r.spd) * (1 - Math.exp(-dt * 7));
+      const wishX = (Number(s.vx) || 0) / 20, wishZ = (Number(s.vy) || 0) / 20, wish = Math.hypot(wishX, wishZ);
+      const err = Math.hypot(x - r.x, z - r.z);
+      if (err > 18) { r.x = x; r.z = z; }
+      else {
+        const k = 1 - Math.exp(-dt * (err > 2.5 ? 2.2 : 8));
+        r.x += (x - r.x) * k; r.z += (z - r.z) * k;
+      }
+      const movedX = (r.x - px) / Math.max(dt, 1e-3), movedZ = (r.z - pz) / Math.max(dt, 1e-3);
+      const sp = Math.min(9, wish > 0.25 ? wish : Math.hypot(movedX, movedZ));
+      r.spd += (sp - r.spd) * (1 - Math.exp(-dt * 4));
       r.y += (groundHeight(r.x, r.z) - r.y) * (1 - Math.exp(-dt * 12));
       const inCar = peer.equip === 'taxi';
       const face = Number(s.face) * DEG;
       let want = r.yaw;
-      if (r.spd > 0.5) want = Math.atan2(vx, vz);
+      if (wish > 0.35) want = Math.atan2(wishX, wishZ);
+      else if (r.spd > 0.5) want = Math.atan2(movedX, movedZ);
       else if (s.anim === 'sit') want = 0;
       else if (Number.isFinite(face)) want = face;
       if (inCar && Number.isFinite(face) && Math.cos(want - face) < 0) want = face;
@@ -658,7 +718,7 @@ void main(){
       halo.layers.set(2);
       const beam = new THREE.Mesh(starBeamGeo, starBeamMat);
       beam.visible = false;
-      beam.layers.set(2);
+      beam.layers.enable(0);
       const pad = new THREE.Mesh(new THREE.RingGeometry(1.15, BALANCE.starR, 24).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffcf5a, transparent: true, opacity: 0.7, depthWrite: false, side: THREE.DoubleSide }));
       pad.visible = false;
       g.add(gem, halo, beam, pad);
@@ -694,6 +754,106 @@ void main(){
     c.mesh.visible = false;
     c.back = performance.now() + 20000;
   }
+  const STUNTS = [
+    { x: 16, z: 52 },
+    { x: 16, z: 90 },
+  ];
+  const ringMat = new THREE.MeshBasicMaterial({ color: '#ffcf5a' });
+  for (const s of STUNTS) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(2.1, 0.16, 10, 28), ringMat);
+    ring.position.set(s.x, 2.3, s.z);
+    scene.add(ring);
+    s.ry = ring;
+    s.inside = false;
+  }
+  let balloon = null;
+  const pouchThrows = [];
+  const WISH_LINES = [
+    '복주머니가 열렸어요. 올해 소원, 이루어지세요.',
+    '금복이 터졌어요. 바라는 일이 당신 쪽으로 옵니다.',
+    '주머니 속 소원이 하늘로 올라갔어요. 지금 빈 마음이면 닿습니다.',
+    '붉은 복이 쏟아졌어요. 이름 석 자가 빛나는 해가 옵니다.',
+    '던져 연 복주머니입니다. 전광판에 걸린 소원도 같이 열리세요.',
+  ];
+  let pouchMat = null;
+  function pouchMaterial() {
+    if (pouchMat) return pouchMat;
+    const map = new THREE.TextureLoader(manager).load('/icons/bokjumeoni.png');
+    map.colorSpace = THREE.SRGBColorSpace;
+    pouchMat = new THREE.SpriteMaterial({ map, transparent: true, depthWrite: false, alphaTest: 0.12 });
+    return pouchMat;
+  }
+  function makePouch(size) {
+    const s = new THREE.Sprite(pouchMaterial());
+    s.scale.set(size, size, 1);
+    return s;
+  }
+  function popBalloon() {
+    if (!balloon || balloon.hp < 0) return;
+    balloon.hp = -1;
+    balloon.next = performance.now() + 25000;
+    const p = balloon.mesh.position.clone();
+    for (const t of pouchThrows) scene.remove(t.mesh);
+    pouchThrows.length = 0;
+    burst(p, '#ff3d4a', 120, 1.8);
+    burst(p, '#ffcf5a', 90, 1.4);
+    burst(p, '#fff6d0', 60, 1);
+    for (let i = 1; i <= 5; i++) setTimeout(() => burst(p.clone().setY(p.y - i * 9), i % 2 ? '#ffcf5a' : '#ff3d9a', 48, 1.2), i * 140);
+    scene.remove(balloon.mesh);
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2;
+      const x = p.x + Math.cos(a) * 7, z = p.z + Math.sin(a) * 7;
+      const mesh = new THREE.Mesh(coinGeo, coinMat);
+      mesh.rotation.x = Math.PI / 2;
+      mesh.position.set(x, 1.2, z);
+      scene.add(mesh);
+      coins.push({ i: coins.length, x, z, mesh, back: 0 });
+    }
+    opts.onBalloon?.(0, 25000);
+    opts.onWish?.(WISH_LINES[(Math.random() * WISH_LINES.length) | 0]);
+  }
+  function hitBalloon() {
+    if (!balloon || balloon.hp <= 0) return;
+    balloon.hp -= 10;
+    const s = 16 + 12 * (Math.max(0, balloon.hp) / 1000);
+    balloon.mesh.scale.set(s, s, 1);
+    opts.onBalloon?.(balloon.hp);
+    if (balloon.hp <= 0) popBalloon();
+  }
+  function throwPouch() {
+    if (!balloon || balloon.hp <= 0) return false;
+    const from = new THREE.Vector3(pos.x, (pos.y || 0) + 1.5, pos.z);
+    const mesh = makePouch(1.8);
+    mesh.position.copy(from);
+    scene.add(mesh);
+    pouchThrows.push({ mesh, from, t: 0 });
+    me?.emote?.('Throw');
+    return true;
+  }
+  function updateThrows(dt) {
+    for (let i = pouchThrows.length - 1; i >= 0; i--) {
+      const p = pouchThrows[i];
+      p.t += dt / 0.65;
+      const u = Math.min(1, p.t);
+      const target = balloon?.mesh?.position || p.from;
+      p.mesh.position.lerpVectors(p.from, target, u);
+      p.mesh.position.y += Math.sin(u * Math.PI) * 8;
+      if (u < 1) continue;
+      scene.remove(p.mesh);
+      pouchThrows.splice(i, 1);
+      hitBalloon();
+    }
+  }
+  function ensureBalloon(now) {
+    if (balloon && balloon.hp > 0) return;
+    if (balloon && now < (balloon.next || 0)) return;
+    if (balloon?.mesh) scene.remove(balloon.mesh);
+    const mesh = makePouch(22);
+    mesh.position.set(16, 58, 42);
+    scene.add(mesh);
+    balloon = { hp: 1000, mesh, next: 0 };
+    opts.onBalloon?.(1000);
+  }
   function updateCoins(now, t) {
     for (const c of coins) {
       if (!c.mesh.visible) {
@@ -705,7 +865,7 @@ void main(){
       c.mesh.rotation.z = t * 1.4;
       if (drive) continue;
       const dx = pos.x - c.x, dz = pos.z - c.z;
-      if (dx * dx + dz * dz < 1.4 && Math.abs(pos.y - groundHeight(c.x, c.z)) < 1.6) opts.onCoin?.(c.i);
+      if (dx * dx + dz * dz < BALANCE.coinR * BALANCE.coinR) opts.onCoin?.(c.i);
     }
   }
   function updateStars(now, t) {
@@ -751,15 +911,67 @@ void main(){
     }
     return true;
   }
+  const chainMarks = new Map();
+  function chainMark(title) {
+    const g = new THREE.Group();
+    const c = document.createElement('canvas');
+    c.width = 512; c.height = 128;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#14081c'; ctx.fillRect(0, 0, 512, 128);
+    ctx.strokeStyle = '#ffcf5a'; ctx.lineWidth = 8; ctx.strokeRect(10, 10, 492, 108);
+    ctx.fillStyle = '#ffe9a0'; ctx.font = '700 40px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(title.slice(0, 18), 256, 64);
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    const sign = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+    sign.scale.set(12, 3, 1); sign.position.y = 8;
+    const pole = new THREE.MeshBasicMaterial({ color: 0x3fe6ff });
+    for (const [x, z] of [[-4, -4], [4, -4], [-4, 4], [4, 4]]) {
+      const box = new THREE.Mesh(new THREE.BoxGeometry(0.35, 14, 0.35), pole);
+      box.position.set(x, 0, z);
+      g.add(box);
+    }
+    g.add(sign);
+    g.userData.tex = tex;
+    g.userData.title = title;
+    scene.add(g);
+    return g;
+  }
+  function syncChains(list) {
+    const on = new Set();
+    for (const c of chainsOf(list || [])) {
+      on.add(c.id);
+      let g = chainMarks.get(c.id);
+      const title = `👑 ${c.name} 독점 타워`;
+      if (!g) { g = chainMark(title); chainMarks.set(c.id, g); }
+      else if (g.userData.title !== title) {
+        const ctx = g.userData.tex.image.getContext('2d');
+        ctx.fillStyle = '#14081c'; ctx.fillRect(0, 0, 512, 128);
+        ctx.strokeStyle = '#ffcf5a'; ctx.lineWidth = 8; ctx.strokeRect(10, 10, 492, 108);
+        ctx.fillStyle = '#ffe9a0'; ctx.font = '700 40px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(title.slice(0, 18), 256, 64);
+        g.userData.tex.needsUpdate = true;
+        g.userData.title = title;
+      }
+      const pts = c.slots.map((id) => boards.worldPos(id)).filter(Boolean);
+      if (!pts.length) { g.visible = false; continue; }
+      const x = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+      const z = pts.reduce((s, p) => s + p.z, 0) / pts.length;
+      const y = Math.max(...pts.map((p) => p.y));
+      g.position.set(x, y, z);
+      g.visible = true;
+    }
+    for (const [id, g] of chainMarks) if (!on.has(id)) g.visible = false;
+  }
   function updateWorld(state) {
-    for (const row of state?.billboards || []) if (row?.slot_id) updateBillboardTexture(row.slot_id, row, false);
+    for (const row of state?.billboards || []) if (row?.slot_id && /^(MAIN_(UP|TOP|MID|BOT|LOW)|SUB_[1-4][AB]|STREET_([1-9]|[12]\d|30)|PLOT_([1-9]|1[0-8]))$/.test(row.slot_id)) updateBillboardTexture(row.slot_id, row, false);
     for (const row of state?.plots || []) if (row?.plot_id) applyPlot(row, false);
+    syncChains(state?.billboards);
   }
   const lightCol = new THREE.Color();
   function refreshLightColors() {
-    mainLight.color.set(boards.accentOf('MAIN_S'));
-    westLight.color.set(boards.accentOf(low ? 'MAIN_S' : 'SUB_B1'));
-    eastLight?.color.set(boards.accentOf('SUB_B4'));
+    mainLight.color.set(boards.accentOf('MAIN_TOP'));
+    westLight.color.set(boards.accentOf(low ? 'MAIN_TOP' : 'SUB_1A'));
+    eastLight?.color.set(boards.accentOf('SUB_4A'));
   }
   refreshLightColors();
   if (opts.world) updateWorld(opts.world);
@@ -859,31 +1071,48 @@ void main(){
 
   function stepDrive(dt, input, t) {
     const d = drive;
-    const boosting = input.walk || boostHeld;
+    const party = feverLive();
+    const boosting = party || input.walk || boostHeld;
     if (boosting && d.v > 8 && t - boostSnd > 1.4) { boostSnd = t; opts.onBoost?.(); }
-    const top = boosting ? CAR.boost : CAR.max;
+    const top = party ? 52 : (boosting ? CAR.boost : CAR.max);
     if (input.f > 0.1) d.v = Math.min(top, d.v + (d.v < 0 ? CAR.brake : CAR.accel) * input.f * dt);
     else if (input.f < -0.1) d.v = Math.max(-CAR.reverse, d.v - (d.v > 0 ? CAR.brake : CAR.accel * 0.6) * -input.f * dt);
     else d.v -= Math.sign(d.v) * Math.min(Math.abs(d.v), CAR.drag * dt);
     if (d.v > top) d.v = Math.max(top, d.v - CAR.brake * dt);
     d.steer += (-input.r - d.steer) * (1 - Math.exp(-dt * 8));
-    d.yaw = wrapAngle(d.yaw + d.steer * CAR.steer * clamp(d.v / 7, -1, 1) * dt);
+    const steerV = Math.abs(d.v) < 1.6 ? (d.v < 0 ? -1.6 : 1.6) : d.v;
+    d.yaw = wrapAngle(d.yaw + d.steer * CAR.steer * clamp(steerV / 7, -1, 1) * dt);
     const fx = Math.sin(d.yaw), fz = Math.cos(d.yaw);
-    const travel = d.v * dt, steps = Math.max(1, Math.ceil(Math.abs(travel) / 0.45));
+    const impactSpeed = d.v;
+    const travel = d.v * dt, steps = Math.max(1, Math.ceil(Math.abs(travel) / 0.35));
     let cx = d.x, cz = d.z, blocked = 0;
     for (let k = 0; k < steps; k++) {
-      const nx = cx + fx * travel / steps, nz = cz + fz * travel / steps;
-      const [ax, az] = collide(nx + fx * 1.3, nz + fz * 1.3, CAR.radius, true);
-      const [bx, bz] = collide(nx - fx * 1.3, nz - fz * 1.3, CAR.radius, true);
-      const fdx = ax - (nx + fx * 1.3), fdz = az - (nz + fz * 1.3), bdx = bx - (nx - fx * 1.3), bdz = bz - (nz - fz * 1.3);
-      cx = nx + (Math.abs(fdx) > Math.abs(bdx) ? fdx : bdx);
-      cz = nz + (Math.abs(fdz) > Math.abs(bdz) ? fdz : bdz);
-      blocked = Math.max(blocked, Math.hypot(cx - nx, cz - nz));
+      const step = travel / steps;
+      let nx = cx + fx * step, nz = cz + fz * step;
+      const [ax, az] = collide(nx, nz, 0.82, true);
+      const pdx = ax - nx, pdz = az - nz, push = Math.hypot(pdx, pdz);
+      if (push > 0.004) {
+        const ndx = pdx / push, ndz = pdz / push, into = fx * ndx + fz * ndz;
+        if (into < -0.12) {
+          const sx = fx - ndx * into, sz = fz - ndz * into, sl = Math.hypot(sx, sz) || 1;
+          const [bx, bz] = collide(cx + (sx / sl) * step, cz + (sz / sl) * step, 0.82, true);
+          nx = bx; nz = bz;
+        } else { nx = ax; nz = az; }
+        blocked = Math.max(blocked, push);
+      }
+      cx = nx; cz = nz;
     }
-    if (blocked > 0.02) {
-      d.v *= Math.max(0, 1 - blocked * 3);
+    const held = Math.hypot(cx - d.x, cz - d.z);
+    const hitX = cx, hitZ = cz;
+    if (blocked > 0.04 && Math.abs(input.f) > 0.15) {
+      const hit = nyc?.nearestRoad?.(cx, cz, 16);
+      if (hit && hit.d > 0.3 && hit.d < 10) {
+        const [rx, rz] = collide(cx + (hit.px - cx) * 0.4, cz + (hit.pz - cz) * 0.4, 0.7, true);
+        cx = rx; cz = rz;
+      }
+      d.v *= 0.94;
       if (Math.abs(d.v) > 4 && t - lastBump > 0.6) { lastBump = t; opts.onBump?.(); }
-    }
+    } else if (blocked > 0.25) d.v *= 0.82;
     const moved = Math.hypot(cx - d.x, cz - d.z);
     d.odo += moved;
     d.fare = 3 + Math.floor(d.odo / 64) * 0.7;
@@ -892,6 +1121,7 @@ void main(){
     d.z = cz;
     d.y += (groundHeight(cx, cz) - d.y) * (1 - Math.exp(-dt * 10));
     traffic?.driveTaxi(d.i, d.x, d.z, d.yaw, d.v, d.y);
+    maybeDetach(t, { blocked, intend: travel, moved, held, speed: impactSpeed, x: hitX, z: hitZ });
     pos.set(d.x, d.y, d.z);
     yaw = d.yaw;
     animSpeed = Math.abs(d.v);
@@ -915,20 +1145,80 @@ void main(){
     cam.y = Math.max(look.y * 0.42 + 1.8, groundHeight(cam.x, cam.z) + 1.6);
     return { look, cam, front: { x: p.x + f.x * 9, z: p.z + f.z * 9 }, board: boards.get(slotId)?.data || null, slot: slotId };
   }
-  const AD_IDS = ['MAIN_S', 'SUB_B1', 'SUB_B2', 'SUB_B3', 'SUB_B4'];
-  for (let i = 1; i <= 20; i++) AD_IDS.push('PLOT_' + i);
+  const AD_IDS = ['MAIN_TOP', 'MAIN_MID', 'MAIN_BOT', 'SUB_1A', 'SUB_1B', 'SUB_2A', 'SUB_2B', 'SUB_3A', 'SUB_3B', 'SUB_4A', 'SUB_4B'];
+  for (let i = 1; i <= 30; i++) AD_IDS.push('STREET_' + i);
+  for (let i = 1; i <= 18; i++) AD_IDS.push('PLOT_' + i);
+  const crown = new THREE.Group();
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 1.4, 90, 10, 1, true), new THREE.MeshBasicMaterial({ color: 0xffcf5a, transparent: true, opacity: 0.38, depthWrite: false, side: THREE.DoubleSide }));
+  beam.position.y = 48;
+  const hat = new THREE.Mesh(new THREE.TorusGeometry(1.8, 0.22, 8, 20), new THREE.MeshBasicMaterial({ color: 0xffe08a }));
+  hat.rotation.x = Math.PI / 2;
+  hat.position.y = 3.2;
+  const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.55), new THREE.MeshBasicMaterial({ color: 0xfff6c8 }));
+  gem.position.y = 4.6;
+  crown.add(beam, hat, gem);
+  crown.visible = false;
+  scene.add(crown);
+  let crownAt = 0;
+  function placeCrown() {
+    let best = '', score = 0;
+    for (const id of AD_IDS) {
+      const d = boards.get(id)?.data;
+      if (!d?.holder_id) continue;
+      const s = (Number(d.views) || 0) + (Number(d.cheers) || 0);
+      if (s > score) { score = s; best = id; }
+    }
+    const p = best ? boards.worldPos(best) : null;
+    crown.visible = !!p;
+    if (p) crown.position.set(p.x, p.y + 1.5, p.z);
+  }
+  function topTeam() {
+    const map = new Map();
+    const re = /#[0-9A-Za-z가-힣_]{1,16}/g;
+    for (const id of AD_IDS) {
+      const d = boards.get(id)?.data;
+      if (!d?.holder_id) continue;
+      const tags = new Set([d.line1, d.line2, d.line3, d.holder_name].join(' ').match(re) || []);
+      const s = (Number(d.views) || 0) + (Number(d.cheers) || 0);
+      for (const tag of tags) map.set(tag, (map.get(tag) || 0) + s);
+    }
+    let best = '', n = 0;
+    for (const [tag, s] of map) if (s > n) { best = tag; n = s; }
+    return best;
+  }
+  function giftPop(slotId) {
+    const pose = slotPose(slotId, 18);
+    if (!pose) return;
+    ['#ffcf5a', '#ff3d9a', '#39f58a', '#b84dff'].forEach((hex, i) => {
+      setTimeout(() => {
+        burst(pose.look.clone(), hex, 100, 1.3);
+        launch(pose.front.x + (i - 1.5) * 3, pose.front.z, pose.look.y + 8, hex, 0);
+      }, i * 700);
+    });
+  }
   function pickBoardDrop() {
+    const owned = new Set();
+    for (const c of chainsOf(AD_IDS.map((id) => boards.get(id)?.data).filter(Boolean))) for (const id of c.slots) owned.add(id);
+    const pool = [];
+    for (const id of AD_IDS) for (let i = 0; i < (owned.has(id) ? 5 : 2); i++) pool.push(id);
     for (let n = 0; n < 10; n++) {
-      const pose = slotPose(AD_IDS[(Math.random() * AD_IDS.length) | 0], 12);
+      const pose = slotPose(pool[(Math.random() * pool.length) | 0], 12);
       if (pose && insideLoop(pose.front.x, pose.front.z, 4)) return { point: pose.front, slot: pose.slot, board: pose.board };
     }
     return { point: pickSpot(70, 200, { x: pos.x, z: pos.z }), slot: '', board: null };
   }
   function playIntroSweep() {
-    const pose = slotPose('MAIN_S', 28);
+    const pose = slotPose('MAIN_TOP', 28);
     cineFrom.copy(pose?.cam || new THREE.Vector3(LAYOUT.oneTimes.x, 42, LAYOUT.oneTimes.z + 30));
     cineL0.copy(pose?.look || new THREE.Vector3(LAYOUT.oneTimes.x, 26, LAYOUT.oneTimes.z));
     cine = { t0: performance.now(), dur: 2200, hold: false, locked: false };
+  }
+  function clearCine() {
+    const had = !!cine || !me.root.visible;
+    cine = null;
+    if (lounge) { lounge = false; opts.onLoungeEnd?.(); }
+    if (!drive) me.root.visible = true;
+    if (had) opts.onFocus?.(false);
   }
   function focusSlot(slotId, holdMs = 0) {
     const pose = slotPose(slotId, 18);
@@ -938,42 +1228,158 @@ void main(){
     cineTo.copy(pose.cam);
     cineL1.copy(pose.look);
     cine = { t0: performance.now(), dur: 700, hold: !holdMs, locked: true, until: holdMs ? performance.now() + holdMs : 0 };
-    burst(pose.look, '#ffcf5a', 80, 1);
-    launch(pose.front.x, pose.front.z, pose.look.y, '#ff3d9a', 0.05);
+    if (!lounge) {
+      const here = camera.position.clone().lerp(pose.look, 0.35);
+      burst(here, '#ffcf5a', 90, 1.4);
+      burst(pose.look, '#ff3d9a', 80, 1);
+      launch(pose.front.x, pose.front.z, pose.look.y, '#ffcf5a', 0.05);
+    }
+    opts.onFocus?.(true);
     return pose;
+  }
+  function frameBillboard(slotId) {
+    const pose = slotPose(slotId, 10);
+    if (!pose) return false;
+    const dir = pose.cam.clone().sub(pose.look);
+    dir.y = 0;
+    if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1);
+    dir.normalize();
+    const cam = pose.look.clone().addScaledVector(dir, 8);
+    cineFrom.copy(cam);
+    cineTo.copy(cam);
+    cineL0.copy(pose.look);
+    cineL1.copy(pose.look);
+    cine = { t0: performance.now(), dur: 1, hold: true, locked: true, until: 0 };
+    camera.position.copy(cam);
+    controls.target.copy(pose.look);
+    camera.lookAt(pose.look);
+    camWant.copy(cam);
+    me.root.visible = false;
+    opts.onFocus?.(true);
+    return true;
+  }
+  function taxiCanSit(x, z) {
+    if (!nyc || !insideLoop(x, z, 6) || !nyc.onLand(x, z) || nyc.buildingAt(x, z) >= 0) return false;
+    nyc.ensureSolid(x, z, 36);
+    const [cx, cz] = collide(x, z, 0.9, false);
+    return Math.hypot(cx - x, cz - z) < 0.45;
+  }
+  function taxiSpotNear(x, z) {
+    if (!nyc) return null;
+    const filters = [
+      (r) => nyc.roads.cls[r] >= ROAD.PRIMARY && nyc.roads.cls[r] <= ROAD.STREET,
+      (r) => nyc.roads.cls[r] !== ROAD.PEDESTRIAN,
+    ];
+    for (const filter of filters) {
+      const hit = nyc.nearestRoad(x, z, 56, filter);
+      if (!hit) continue;
+      const tryAt = (px, pz) => (taxiCanSit(px, pz) ? { x: px, z: pz } : null);
+      for (const side of [1.8, -1.8, 3.4, -3.4]) {
+        const p = tryAt(hit.px - hit.fz * side, hit.pz + hit.fx * side);
+        if (p) return p;
+      }
+      for (const along of [12, -12, 26, -26, 42, -42]) {
+        for (const side of [1.8, -1.8]) {
+          const p = tryAt(hit.px + hit.fx * along - hit.fz * side, hit.pz + hit.fz * along + hit.fx * side);
+          if (p) return p;
+        }
+      }
+    }
+    return null;
+  }
+  function placeAhead(d, dist) {
+    for (const extra of [0, 28, 56, 90]) {
+      const spot = taxiSpotNear(d.x + Math.sin(d.yaw) * (dist + extra), d.z + Math.cos(d.yaw) * (dist + extra));
+      if (spot && Math.hypot(spot.x - d.x, spot.z - d.z) >= 18) return spot;
+    }
+    return taxiSpotNear(d.x + Math.sin(d.yaw) * dist, d.z + Math.cos(d.yaw) * dist)
+      || { x: d.x + Math.sin(d.yaw) * dist, z: d.z + Math.cos(d.yaw) * dist };
+  }
+  function clearRide() {
+    job.phase = 'none';
+    job.riders = 0;
+    job.extra = null;
+    job.target = null;
+    job.dest = null;
+    markers.pickup.set(null);
+    markers.drop.set(null);
+    showPassenger(null);
+    syncTrailers();
+  }
+  function offerExtra(d, t) {
+    if (job.riders >= 5 || job.extra || t < (job.extraAt || 0)) return;
+    let spot = placeAhead(d, 34 + job.riders * 7);
+    if (job.dest && Math.hypot(spot.x - job.dest.x, spot.z - job.dest.z) < 18) {
+      const road = taxiSpotNear(spot.x + Math.cos(d.yaw) * 22, spot.z - Math.sin(d.yaw) * 22);
+      if (road) spot = road;
+    }
+    job.extra = spot;
+    job.extraReach = Math.hypot(d.x - spot.x, d.z - spot.z);
+    markers.pickup.set(spot);
+    showPassenger(spot);
+  }
+  function boardExtra(t) {
+    job.riders = Math.min(5, (job.riders || 1) + 1);
+    job.extra = null;
+    job.extraAt = t + 1.6;
+    markers.pickup.set(null);
+    showPassenger(null);
+    syncTrailers();
+    opts.onJob?.({ type: 'chain', riders: job.riders, mult: taxiTrainMult(job.riders) });
   }
   function updateJob(t) {
     const d = drive;
     if (job.phase === 'none' && t >= job.nextAt) {
-      job.target = pickSpot(40, 140, d);
+      job.riders = 0;
+      job.extra = null;
+      job.target = placeAhead(d, 38);
+      job.reach = Math.hypot(d.x - job.target.x, d.z - job.target.z);
       job.phase = 'pickup';
       markers.pickup.set(job.target);
+      showPassenger(job.target);
       opts.onJob?.({ type: 'offer' });
-    } else if (job.phase === 'pickup' && Math.hypot(d.x - job.target.x, d.z - job.target.z) < 7 && Math.abs(d.v) < 3) {
-      markers.pickup.set(null);
-      const drop = pickBoardDrop();
-      job.dest = drop.point;
-      job.slot = drop.slot;
-      job.board = drop.board;
-      const dist = Math.hypot(job.dest.x - job.target.x, job.dest.z - job.target.z);
-      job.limit = Math.round(dist * 1.4 / 10 + 25);
-      job.t0 = t;
-      job.phase = 'ride';
-      markers.drop.set(job.dest);
-      opts.onJob?.({ type: 'board', limit: job.limit, slot: job.slot, title: job.board?.line1 ? `목적지 · ${job.board.line1}` : '목적지 전광판으로 이동' });
+    } else if (job.phase === 'pickup') {
+      const pd = Math.hypot(d.x - job.target.x, d.z - job.target.z);
+      if (pd < 8 && pd + 10 < job.reach && Math.abs(d.v) < 12) {
+        markers.pickup.set(null);
+        showPassenger(null);
+        const drop = pickBoardDrop();
+        const curb = drop.point ? taxiSpotNear(drop.point.x, drop.point.z) : null;
+        job.dest = curb && Math.hypot(curb.x - d.x, curb.z - d.z) >= 30 ? curb : placeAhead(d, 85);
+        job.dropReach = Math.hypot(d.x - job.dest.x, d.z - job.dest.z);
+        job.slot = drop.slot;
+        job.board = drop.board;
+        job.limit = 150;
+        job.t0 = t;
+        job.riders = 1;
+        job.extra = null;
+        job.extraAt = t + 2;
+        job.phase = 'ride';
+        markers.drop.set(job.dest);
+        syncTrailers();
+        opts.onJob?.({ type: 'board', limit: job.limit, slot: job.slot, riders: 1, mult: 1, title: drop.slot ? `노란 기둥 · ${slotName(drop.slot)} 앞에서 속도를 줄이세요` : '노란 기둥까지 가서 속도를 줄이세요' });
+      }
     } else if (job.phase === 'ride') {
+      offerExtra(d, t);
+      if (job.extra) {
+        const pd = Math.hypot(d.x - job.extra.x, d.z - job.extra.z);
+        if (pd < 8 && pd + 10 < (job.extraReach || 0) && Math.abs(d.v) < 12) boardExtra(t);
+      }
       const left = job.limit - (t - job.t0);
+      const dd = job.dest ? Math.hypot(d.x - job.dest.x, d.z - job.dest.z) : 999;
       if (left <= 0) {
-        job.phase = 'none';
+        clearRide();
         job.nextAt = t + 3;
-        markers.drop.set(null);
         opts.onJob?.({ type: 'fail' });
-      } else if (Math.hypot(d.x - job.dest.x, d.z - job.dest.z) < 7.5 && Math.abs(d.v) < 3) {
+      } else if (dd < 12 && dd + 12 < (job.dropReach || 0) && Math.abs(d.v) < 12) {
         const fare = clamp(Math.round(6 + 9 * left / job.limit), 6, 15);
-        job.phase = 'none';
+        const riders = job.riders || 1;
+        const slot = job.slot;
+        const board = job.board;
+        clearRide();
         job.nextAt = t + 2.5;
-        markers.drop.set(null);
-        opts.onJob?.({ type: 'done', fare, slot: job.slot, board: job.board, at: screenOf(tmp.set(d.x, 2.4, d.z)) });
+        bumpFever('drop');
+        opts.onJob?.({ type: 'done', fare, riders, mult: taxiTrainMult(riders), slot, board, at: screenOf(tmp.set(d.x, 2.4, d.z)) });
       }
     }
   }
@@ -985,6 +1391,34 @@ void main(){
     let sitting = false;
     if (drive) stepDrive(dt, input, t);
     else sitting = stepWalk(dt, input);
+    for (const s of STUNTS) {
+      const nearRing = Math.hypot(pos.x - s.ry.position.x, pos.z - s.ry.position.z) < 1.7;
+      if (nearRing && !s.inside) {
+        s.inside = true;
+        shake = 0.35;
+        burst(s.ry.position.clone(), '#ffcf5a', 28, 0.6);
+        opts.onStunt?.();
+      } else if (!nearRing) s.inside = false;
+    }
+    if (drive) {
+      if (performance.now() - hiveAt > 5000) {
+        for (const c of traffic?.positions?.() || []) {
+          if (c.mode === 'driven') continue;
+          if (Math.hypot(c.x - drive.x, c.z - drive.z) < 3.5) { hiveAt = performance.now(); opts.onHive?.(); break; }
+        }
+      }
+    }
+    ensureBalloon(performance.now());
+    updateThrows(dt);
+    if (balloon && balloon.hp > 0) {
+      balloon.mesh.position.y = 58 + Math.sin(t * 0.6) * 1.6;
+    }
+    if (lounge && (keys.size || Math.hypot(joy.x, joy.y) > 0.25)) clearCine();
+    else if (lounge && performance.now() - loungeAt > 8000) {
+      loungeAt = performance.now();
+      const ids = ['MAIN_TOP', 'MAIN_MID', 'MAIN_BOT', 'SUB_1A', 'SUB_2A', 'SUB_3A', 'SUB_4A'];
+      focusSlot(ids[loungeI++ % ids.length], 7600);
+    }
     if (!drive) me.update(dt, t);
     playerInfo.x = pos.x; playerInfo.y = pos.y; playerInfo.z = pos.z; playerInfo.yaw = yaw; playerInfo.driving = !!drive;
 
@@ -1062,6 +1496,7 @@ void main(){
       camera.lookAt(look);
       me.tag.visible = camera.position.distanceTo(follow) > 2.4;
     }
+    if (cine && cine.locked && me.root.visible && (keys.size || joy.x || joy.y)) clearCine();
     if (cine) {
       const u = Math.min(1, (now - cine.t0) / cine.dur);
       const e = u < 0.5 ? 4 * u * u * u : 1 - ((-2 * u + 2) ** 3) / 2;
@@ -1075,10 +1510,21 @@ void main(){
       camera.position.lerpVectors(cineFrom, cineTo, e);
       camera.lookAt(look);
       camWant.copy(camera.position);
-      if ((cine.until && now >= cine.until) || (u >= 1 && !cine.hold && !cine.until)) cine = null;
+      if ((cine.until && now >= cine.until)) {
+        cine = null;
+        if (!lounge) { if (!drive) me.root.visible = true; opts.onFocus?.(false); }
+      } else if (u >= 1 && !cine.hold && !cine.until) clearCine();
+    }
+    if (shake > 0) {
+      camera.position.x += (Math.random() - 0.5) * shake;
+      camera.position.y += (Math.random() - 0.5) * shake * 0.6;
+      shake = Math.max(0, shake - dt * 1.4);
     }
     if (markers.drop.g.visible) markers.drop.ring.rotation.z += dt * 1.8;
     sky.position.copy(camera.position);
+    hat.rotation.y += dt;
+    gem.rotation.y += dt * 2;
+    if (now - crownAt > 800) { crownAt = now; placeCrown(); }
 
     // Proximity prompts.
     let nk = null;
@@ -1088,6 +1534,7 @@ void main(){
       if ((pos.x - S.x) ** 2 + (pos.z - S.z) ** 2 < BALANCE.stallR ** 2) nk = { kind: 'cart' };
       else if ((pos.x - A.x) ** 2 + (pos.z - A.z) ** 2 < A.r * A.r) nk = { kind: 'atm' };
       else if ((pos.x - spot.x) ** 2 + (pos.z - spot.z) ** 2 < BALANCE.stageR ** 2 || (pos.x - front.x) ** 2 + (pos.z - front.z) ** 2 < BALANCE.stageFrontR ** 2) nk = { kind: 'stage' };
+      else if (pos.x > -34 && pos.x < -8 && pos.z > -122 && pos.z < -102) nk = { kind: 'lounge' };
       else if ((pos.x - F.x) ** 2 + (pos.z - F.z) ** 2 < 4.8 * 4.8) nk = { kind: 'fountain' };
       else {
         const parked = traffic?.nearestTaxi(pos.x, pos.z, BALANCE.taxiParkedR, true);
@@ -1095,6 +1542,7 @@ void main(){
         else {
           const si = TAXI_STANDS.findIndex(s => Math.hypot(s.x - pos.x, s.z - pos.z) < BALANCE.taxiStandR);
           if (si >= 0) {
+            if (!traffic?.nearestTaxi(TAXI_STANDS[si].x, TAXI_STANDS[si].z, BALANCE.taxiStandCabR, true)) traffic?.callTaxi(TAXI_STANDS[si]);
             const cab = traffic?.nearestTaxi(TAXI_STANDS[si].x, TAXI_STANDS[si].z, BALANCE.taxiStandCabR, true);
             nk = cab ? { kind: 'taxi', i: cab.i } : { kind: 'stand', id: si };
           } else if (marks) {
@@ -1132,7 +1580,8 @@ void main(){
     traffic?.update(dt, t, playerInfo);
     tsq?.update(dt, t);
     marks?.update(dt, t);
-    boards.update(dt);
+    boards.update(dt, camera.position);
+    stepPlaza(dt, t);
     updateStars(now, t);
     updateCoins(now, t);
 
@@ -1174,7 +1623,7 @@ void main(){
 
     const pulse = 0.85 + Math.sin(t * 1.7) * 0.15;
     mainLight.intensity = 600 * pulse;
-    lightCol.set(boards.accentOf('MAIN_S'));
+    lightCol.set(boards.accentOf('MAIN_TOP'));
     mainLight.color.lerp(lightCol, 0.05);
   }
 
@@ -1297,6 +1746,296 @@ void main(){
     return whereVal;
   }
 
+  const roof = LAYOUT.oneTimes.roof;
+  const crystalHome = 26;
+  const crystalLow = 4.2;
+  const crystal = new THREE.Group();
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.7, 24, 12), new THREE.MeshStandardMaterial({ color: '#d7dde8', metalness: 0.72, roughness: 0.28, emissive: '#8fd7ff', emissiveIntensity: 0.35 }));
+  pole.position.y = 12;
+  const ball = new THREE.Mesh(new THREE.IcosahedronGeometry(4.4, 1), new THREE.MeshStandardMaterial({ color: '#f4fbff', emissive: '#9af7ff', emissiveIntensity: 1.8, roughness: 0.12, metalness: 0.45, flatShading: true }));
+  ball.position.y = 26;
+  const glowBall = new THREE.Mesh(new THREE.SphereGeometry(5.2, 16, 12), new THREE.MeshBasicMaterial({ color: 0xbff9ff, transparent: true, opacity: 0.28, depthWrite: false, blending: THREE.AdditiveBlending }));
+  glowBall.position.y = 26;
+  const lasers = new THREE.Group();
+  for (let i = 0; i < 6; i++) {
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.45, 36, 8, 1, true), new THREE.MeshBasicMaterial({ color: [0xff4ad8, 0xffcf5a, 0x39f58a, 0x3fe6ff, 0xb84dff, 0xffffff][i], transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
+    beam.position.y = 16;
+    beam.rotation.z = 0.55;
+    beam.rotation.y = (i / 6) * Math.PI * 2;
+    lasers.add(beam);
+  }
+  lasers.visible = false;
+  crystal.add(pole, ball, glowBall, lasers);
+  crystal.position.set(roof.x, roof.h, roof.z);
+  scene.add(crystal);
+  function hideStockBall() {
+    scene.traverse((o) => {
+      if (!o.isMesh || o.geometry?.parameters?.radius !== 2.4) return;
+      if (Math.hypot(o.position.x - roof.x, o.position.z - roof.z) < 2) o.visible = false;
+    });
+  }
+  const fever = { gauge: 0, phase: 'idle', until: 0, confetti: 0 };
+  function feverLive() { return fever.phase === 'party' && performance.now() < fever.until; }
+  function feverHud() {
+    const left = fever.phase === 'idle' ? 0 : Math.max(0, (fever.until - performance.now()) / 1000);
+    return { gauge: fever.gauge, phase: fever.phase, left };
+  }
+  function bumpFever() {
+    if (fever.phase !== 'idle') return fever.gauge;
+    fever.gauge = Math.min(20, fever.gauge + 1);
+    if (fever.gauge >= 20) {
+      fever.phase = 'count';
+      fever.until = performance.now() + 10000;
+      opts.onFever?.({ phase: 'count', gauge: 20, left: 10 });
+    } else opts.onFever?.({ phase: 'gauge', gauge: fever.gauge });
+    return fever.gauge;
+  }
+  function stepFever(t) {
+    const now = performance.now();
+    ball.rotation.y += 0.01;
+    glowBall.scale.setScalar(1 + Math.sin(t * 3) * 0.04);
+    if (fever.phase === 'count') {
+      const u = 1 - Math.max(0, fever.until - now) / 10000;
+      const y = crystalHome + (crystalLow - crystalHome) * (u * u);
+      ball.position.y = y;
+      glowBall.position.y = y;
+      lasers.visible = true;
+      lasers.rotation.y = t;
+      if (now >= fever.until) {
+        fever.phase = 'party';
+        fever.until = now + 60000;
+        opts.onFever?.({ phase: 'party', gauge: 20, left: 60 });
+      }
+    } else if (fever.phase === 'party') {
+      ball.position.y = crystalLow + Math.sin(t * 2) * 0.4;
+      glowBall.position.y = ball.position.y;
+      lasers.visible = true;
+      lasers.rotation.y = t * 1.4;
+      if (t - fever.confetti > 0.85) {
+        fever.confetti = t;
+        burst(crystal.position.clone().setY(roof.h + ball.position.y), PALETTE[(fever.gauge + (t * 3) | 0) % PALETTE.length], 36, 0.7);
+      }
+      if (now >= fever.until) {
+        fever.phase = 'idle';
+        fever.gauge = 0;
+        fever.until = 0;
+        lasers.visible = false;
+        opts.onFever?.({ phase: 'idle', gauge: 0, done: true });
+      }
+    } else {
+      const target = crystalHome + Math.sin(t * 0.8) * 0.35;
+      ball.position.y += (target - ball.position.y) * 0.08;
+      glowBall.position.y = ball.position.y;
+      lasers.visible = false;
+    }
+    lasers.position.y = ball.position.y - 14;
+  }
+
+  const trailers = [];
+  const fallen = [];
+  function miniRider(hex) {
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 0.42, 4, 8), new THREE.MeshStandardMaterial({ color: hex, emissive: hex, emissiveIntensity: 0.55, roughness: 0.4 }));
+    body.position.y = 0.55;
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 10, 8), new THREE.MeshStandardMaterial({ color: '#ffd2ad', emissive: '#ffcf5a', emissiveIntensity: 0.2 }));
+    head.position.y = 1.15;
+    const link = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 2.6), new THREE.MeshBasicMaterial({ color: hex, transparent: true, opacity: 0.85 }));
+    link.position.set(0, 0.7, 1.3);
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: sparkTex, color: new THREE.Color(hex).multiplyScalar(2.4), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    halo.position.y = 0.9;
+    halo.scale.set(1.7, 2.3, 1);
+    g.add(body, head, link, halo);
+    g.visible = false;
+    scene.add(g);
+    return g;
+  }
+  function syncTrailers() {
+    const n = drive && job.phase === 'ride' ? Math.max(0, (job.riders || 0) - 1) : 0;
+    const colors = ['#ffcf5a', '#ff3d9a', '#39f58a', '#3fe6ff'];
+    while (trailers.length < n) trailers.push(miniRider(colors[trailers.length % colors.length]));
+    while (trailers.length > n) scene.remove(trailers.pop());
+    for (let i = 0; i < trailers.length; i++) {
+      const g = trailers[i];
+      const on = i < n && !!drive;
+      g.visible = on;
+      if (!on) continue;
+      const back = (i + 1) * 3.15;
+      const x = drive.x - Math.sin(drive.yaw) * back;
+      const z = drive.z - Math.cos(drive.yaw) * back;
+      g.position.set(x, groundHeight(x, z), z);
+      g.rotation.y = drive.yaw;
+    }
+  }
+  function maybeDetach(t, hit) {
+    if (!drive || job.phase !== 'ride' || !hit) return;
+    const next = applyTaxiHardHit(
+      { riders: job.riders, detachAt: job.detachAt },
+      { speed: hit.speed, intend: hit.intend, blocked: hit.blocked, held: hit.held, t, x: hit.x, z: hit.z },
+      traffic?.positions?.() || [],
+    );
+    if (!next.dropped) return;
+    job.detachAt = t;
+    job.riders = next.riders;
+    const back = next.riders * 3.15;
+    const x = drive.x - Math.sin(drive.yaw) * back + (Math.random() - 0.5) * 1.2;
+    const z = drive.z - Math.cos(drive.yaw) * back + (Math.random() - 0.5) * 1.2;
+    const mesh = miniRider('#ff6a3d');
+    mesh.visible = true;
+    mesh.position.set(x, groundHeight(x, z) + 1.4, z);
+    fallen.push({ mesh, y: mesh.position.y, vy: 1.2, age: 0, x, z });
+    drive.v *= 0.55;
+    syncTrailers();
+    opts.onJob?.({ type: 'detach', riders: next.riders, mult: next.mult });
+  }
+  function stepFallen(dt) {
+    for (let i = fallen.length - 1; i >= 0; i--) {
+      const f = fallen[i];
+      f.age += dt;
+      f.vy -= 9 * dt;
+      f.y += f.vy * dt;
+      const floor = groundHeight(f.x, f.z);
+      if (f.y < floor) { f.y = floor; f.vy = 0; }
+      f.mesh.position.y = f.y;
+      f.mesh.rotation.z = Math.min(1.2, f.age * 2);
+      if (f.age > 2.8) {
+        scene.remove(f.mesh);
+        fallen.splice(i, 1);
+      }
+    }
+  }
+
+  const STICKER_KEY = 'kts_stickers';
+  const stickerMap = new Map();
+  const shots = [];
+  function saveStickers() {
+    const o = {};
+    for (const [k, v] of stickerMap) if (v?.length) o[k] = v;
+    try { localStorage.setItem(STICKER_KEY, JSON.stringify(o)); } catch { /* private mode */ }
+  }
+  function loadStickers() {
+    let raw = null;
+    try { raw = JSON.parse(localStorage.getItem(STICKER_KEY) || 'null'); } catch { raw = null; }
+    if (!raw || typeof raw !== 'object') return;
+    for (const [id, list] of Object.entries(raw)) {
+      if (!Array.isArray(list)) continue;
+      const kept = list.filter((d) => STICKER_GLYPHS.includes(d?.g)).slice(0, 8);
+      if (!kept.length) continue;
+      stickerMap.set(id, kept);
+      boards.setDecals(id, kept);
+    }
+  }
+  function commitSticker(slot, glyph) {
+    if (!STICKER_GLYPHS.includes(glyph)) return false;
+    const list = stickerMap.get(slot) || [];
+    if (list.length >= 8) return false;
+    list.push({ g: glyph, c: list.length % 4 });
+    stickerMap.set(slot, list);
+    saveStickers();
+    boards.setDecals(slot, list);
+    return true;
+  }
+  function launchSticker(slot, glyph) {
+    if (!STICKER_GLYPHS.includes(glyph)) return false;
+    const list = stickerMap.get(slot) || [];
+    if (list.length >= 8) return false;
+    const to = boards.worldPos(slot);
+    if (!to) return commitSticker(slot, glyph);
+    const from = new THREE.Vector3(drive ? drive.x : pos.x, (drive ? drive.y : pos.y) + 1.5, drive ? drive.z : pos.z);
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: sparkTex, color: new THREE.Color('#ffcf5a').multiplyScalar(2.4), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    sprite.scale.set(1.4, 1.4, 1);
+    sprite.position.copy(from);
+    scene.add(sprite);
+    shots.push({ sprite, from, to: to.clone(), t: 0, slot, glyph });
+    return true;
+  }
+  function stepShots(dt) {
+    for (let i = shots.length - 1; i >= 0; i--) {
+      const s = shots[i];
+      s.t += dt / 0.9;
+      const u = Math.min(1, s.t);
+      s.sprite.position.lerpVectors(s.from, s.to, u);
+      s.sprite.position.y += Math.sin(Math.min(1, u) * Math.PI) * 6;
+      if (u < 1) continue;
+      scene.remove(s.sprite);
+      s.sprite.material.dispose();
+      commitSticker(s.slot, s.glyph);
+      burst(s.to.clone(), '#ffcf5a', 28, 0.45);
+      shots.splice(i, 1);
+    }
+  }
+  function peelSticker(slot) {
+    const list = stickerMap.get(slot);
+    if (!list?.length) return false;
+    list.pop();
+    if (!list.length) stickerMap.delete(slot);
+    saveStickers();
+    boards.setDecals(slot, list);
+    return true;
+  }
+
+  let airShow = null;
+  const blimp = new THREE.Group();
+  const blimpBody = new THREE.Mesh(new THREE.SphereGeometry(7.5, 18, 12), new THREE.MeshStandardMaterial({ color: '#ffcf5a', emissive: '#ffbf3a', emissiveIntensity: 0.7, metalness: 0.35, roughness: 0.28 }));
+  blimpBody.scale.set(2.1, 0.72, 0.72);
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.4, 3.2, 2.2), new THREE.MeshStandardMaterial({ color: '#ffe08a', emissive: '#ffcf5a', emissiveIntensity: 0.4 }));
+  fin.position.set(-14, 1.2, 0);
+  const blimpCanvas = makeCanvas(768, 192);
+  const blimpTex = new THREE.CanvasTexture(blimpCanvas);
+  blimpTex.colorSpace = THREE.SRGBColorSpace;
+  const blimpSign = new THREE.Mesh(new THREE.PlaneGeometry(16, 4), new THREE.MeshBasicMaterial({ map: blimpTex, transparent: true, side: THREE.DoubleSide }));
+  blimpSign.position.set(0, -2.4, 0);
+  blimp.add(blimpBody, fin, blimpSign);
+  blimp.visible = false;
+  scene.add(blimp);
+  function paintBlimp(nick, line) {
+    const g = blimpCanvas.getContext('2d');
+    g.clearRect(0, 0, 768, 192);
+    g.fillStyle = '#1a1204';
+    g.fillRect(0, 0, 768, 192);
+    g.strokeStyle = '#ffcf5a';
+    g.lineWidth = 8;
+    g.strokeRect(8, 8, 752, 176);
+    g.fillStyle = '#fff6d0';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.font = '800 42px sans-serif';
+    g.fillText(chars(nick || '', 16), 384, 62);
+    g.font = '700 36px sans-serif';
+    g.fillText(chars(line || '', 24), 384, 124);
+    blimpTex.needsUpdate = true;
+  }
+  function beginAir(info) {
+    const until = Number(info?.until) || 0;
+    const line = chars(info?.line || '', 24);
+    if (!line || until <= Date.now()) { endAir(); return false; }
+    airShow = { nick: chars(info.nick || name, 16), line, until };
+    boards.setAir(airShow);
+    paintBlimp(airShow.nick, airShow.line);
+    blimp.visible = true;
+    return true;
+  }
+  function endAir() {
+    if (!airShow && !blimp.visible) return;
+    airShow = null;
+    blimp.visible = false;
+    boards.setAir(null);
+  }
+  function stepBlimp(t) {
+    if (!airShow) return;
+    if (Date.now() >= airShow.until) { endAir(); return; }
+    const ang = t * 0.28;
+    const cx = LAYOUT.oneTimes.x, cz = LAYOUT.oneTimes.z;
+    blimp.position.set(cx + Math.cos(ang) * 52, 74, cz + Math.sin(ang) * 52);
+    blimp.rotation.y = -ang + Math.PI / 2;
+  }
+  function stepPlaza(dt, t) {
+    stepFever(t);
+    stepFallen(dt);
+    stepShots(dt);
+    stepBlimp(t);
+    if (drive && job.phase === 'ride') syncTrailers();
+  }
+
   const api = {
     canvas, scene, camera, renderer, quality,
     start, stop, dispose, resize,
@@ -1312,7 +2051,28 @@ void main(){
     setDancing,
     playIntro: playIntroSweep,
     focusSlot,
-    endFocus() { cine = null; },
+    slotCard(id) {
+      const p = boards.worldPos(id);
+      const mainName = { MAIN_UP: '맨 위 · 가장 비쌈', MAIN_TOP: '위에서 둘째', MAIN_MID: '한가운데', MAIN_BOT: '아래에서 둘째', MAIN_LOW: '가장 아래 · 길에서 잘 보임' };
+      if (String(id).startsWith('MAIN_')) return { title: '원 타임스퀘어 북쪽 면', line: mainName[id] || '메인 타워', x: p?.x, y: p?.y, z: p?.z };
+      if (!p) return { title: slotName(id), line: '아직 지도에 없습니다' };
+      const dx = p.x - LAYOUT.oneTimes.x, dz = p.z - LAYOUT.oneTimes.z;
+      const dir = Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? '동쪽' : '서쪽') : (dz > 0 ? '남쪽' : '북쪽');
+      const kind = String(id).startsWith('SUB_') ? '교차로 코너 빌딩' : String(id).startsWith('PLOT_') ? '분양 구역 상가 정면' : '메인거리를 보는 건물 벽';
+      const h = p.y < 14 ? '길에서 바로 보이는 높이' : p.y < 30 ? '중간 층' : '높은 층';
+      return { title: kind, line: `원 타임스퀘어에서 ${dir} ${Math.round(Math.hypot(dx, dz))}m · ${h}`, x: p.x, y: p.y, z: p.z };
+    },
+    frameBillboard,
+    setMonopoly(on) { boards.setShow?.(!!on); },
+    strike(slotId) {
+      const p = boards.worldPos(slotId);
+      if (!p) return;
+      burst(p.clone(), '#ffcf5a', 110, 1.5);
+      launch(p.x, p.z, p.y + 8, '#fff6c8', 0);
+    },
+    giftPop,
+    topTeam,
+    endFocus() { clearCine(); },
     setBoost(on) { boostHeld = !!on; },
     setWaypoint,
     getPlayer() { return playerInfo; },
@@ -1345,12 +2105,39 @@ void main(){
     },
     bake(amount) { marks?.stall.popFish(amount >= 15); },
     setTicker(text) { boards.setTicker(text); },
+    startLounge() {
+      lounge = true;
+      loungeAt = 0;
+      loungeI = 0;
+      teleport(-21, -112);
+      yaw = 0;
+      me.holder.rotation.y = 0;
+    },
+    stopLounge() { lounge = false; cine = null; if (!drive) me.root.visible = true; },
+    throwPouch,
+    bumpFever,
+    launchSticker,
+    peelSticker,
+    stickerList: (slot) => (stickerMap.get(slot) || []).slice(),
+    beginAir,
+    feverOn: feverLive,
+    balloonUp: () => !!(balloon && balloon.hp > 0),
     teleport(x, z) {
       if (drive) exitTaxi();
       let tx = clamp(Number(x) || 0, LOOP.x0 + 4, LOOP.x1 - 4), tz = clamp(Number(z) || 0, LOOP.z0 + 4, LOOP.z1 - 4);
       const spot = approachOf(tx, tz);
       if (spot) { tx = spot.x; tz = spot.z; yaw = spot.yaw; }
-      if (nyc) [tx, tz] = nyc.freeSpot(tx, tz, RADIUS, 12);
+      if (nyc) {
+        const [fx, fz] = nyc.freeSpot(tx, tz, RADIUS, 6);
+        if (Math.hypot(fx - tx, fz - tz) < 3 && groundHeight(fx, fz) < 0.8) { tx = fx; tz = fz; }
+      }
+      for (let rad = 0; rad <= 8 && groundHeight(tx, tz) > 0.8; rad += 1.5) {
+        for (let k = 0; k < 8; k++) {
+          const a = (k / 8) * Math.PI * 2;
+          const px = tx + Math.cos(a) * rad, pz = tz + Math.sin(a) * rad;
+          if (insideLoop(px, pz, 2) && groundHeight(px, pz) < 0.5) { tx = px; tz = pz; break; }
+        }
+      }
       tx = clamp(tx, LOOP.x0 + 2, LOOP.x1 - 2);
       tz = clamp(tz, LOOP.z0 + 2, LOOP.z1 - 2);
       const [nx, nz] = collide(tx, tz, RADIUS, false);
@@ -1374,10 +2161,11 @@ void main(){
     onLand: (x, z) => (nyc ? nyc.onLand(x, z) : true),
     where,
     hud() {
-      const out = { driving: !!drive, speed: drive ? Math.abs(drive.v) * 3.6 : 0, fare: drive ? drive.fare : 0, job: null, waypoint: null, where: where() };
+      const out = { driving: !!drive, speed: drive ? Math.abs(drive.v) * 3.6 : 0, fare: drive ? drive.fare : 0, job: null, waypoint: null, where: where(), train: null, fever: feverHud() };
+      if (drive && job.phase === 'ride' && job.riders > 0) out.train = { riders: job.riders, mult: taxiTrainMult(job.riders) };
       if (drive && job.phase !== 'none') {
-        const tgt = job.phase === 'pickup' ? job.target : job.dest;
-        out.job = { phase: job.phase, dist: Math.hypot(tgt.x - pos.x, tgt.z - pos.z), bearing: bearingTo(tgt.x, tgt.z), left: job.phase === 'ride' ? Math.max(0, job.limit - (clockT - job.t0)) : null, limit: job.limit };
+        const aim = job.phase === 'pickup' ? job.target : job.dest;
+        if (aim) out.job = { phase: job.phase, dist: Math.hypot(aim.x - pos.x, aim.z - pos.z), bearing: bearingTo(aim.x, aim.z), left: job.phase === 'ride' ? Math.max(0, job.limit - (clockT - job.t0)) : null, limit: job.limit, riders: job.riders || 0 };
       }
       if (waypoint) out.waypoint = { dist: Math.hypot(waypoint.x - pos.x, waypoint.z - pos.z), bearing: bearingTo(waypoint.x, waypoint.z) };
       return out;
@@ -1394,6 +2182,7 @@ void main(){
       return { me: { x: pos.x, z: pos.z, yaw }, camYaw: Math.atan2(cd.x, cd.z), peers, stars: st, plots: lv, taxis: traffic?.positions() || [], driving: !!drive, job: jobTarget, waypoint };
     },
   };
+  loadStickers();
   if (opts.autostart !== false) start();
   return api;
 }

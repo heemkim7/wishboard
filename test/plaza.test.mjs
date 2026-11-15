@@ -241,6 +241,12 @@ describe('times square plaza', { concurrency: false }, () => {
       assert.equal(items[0].delta, 20);
       assert.equal(items[0].actor_id, 'guest:farm');
       assert.equal(sql3.db.prepare('select count(*) c from coin').get().c, 0);
+      const newbie = openSock(room3, 'guest:new');
+      await room3.webSocketMessage(newbie, JSON.stringify({ t: 'BONUS', kind: 'hello', amount: 40, nick: '새' }));
+      await room3.webSocketMessage(newbie, JSON.stringify({ t: 'BONUS', kind: 'hello', amount: 80, nick: '새' }));
+      const hello = sql3.db.prepare('select delta, n from coin where uid = ?').get('guest:new');
+      assert.equal(hello.delta, 40);
+      assert.equal(hello.n, 1);
     } finally {
       Date.now = orig;
       globalThis.fetch = origFetch;
@@ -309,7 +315,7 @@ describe('times square plaza', { concurrency: false }, () => {
       const boards = () => calls.filter(c => c.url.includes('/billboards')).length;
       const first = await call('/rt/world');
       assert.equal(first.status, 200);
-      assert.deepEqual(await first.json(), { billboards: world.boards, plots: world.plots });
+      assert.deepEqual(await first.json(), { billboards: world.boards, plots: world.plots, ranks: [] });
       assert.equal(boards(), 1);
       await call('/rt/world');
       assert.equal(boards(), 1);
@@ -487,6 +493,8 @@ describe('times square plaza', { concurrency: false }, () => {
     assert.equal(sent[1].amount, 15);
     assert.equal(sent[1].nick, '길드');
     assert.equal(sendMine(0), false);
+    assert.equal(net.sendBonus('hello', 40, '뉴'), true);
+    assert.deepEqual(sent.at(-1), { t: 'BONUS', kind: 'hello', amount: 40, nick: '뉴' });
     assert.equal(sendEmoji(3), true);
     assert.deepEqual(sent.at(-1), { t: 'E', e: 3 });
     assert.equal(sendEmoji(5), false);

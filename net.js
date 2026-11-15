@@ -4,11 +4,12 @@
 // To move to a dedicated WebSocket server, reimplement these methods here; nothing else needs to change.
 // Fully optional: if the CDN or Supabase is unreachable, the game keeps running single-player.
 // v6: Seoul project (ap-northeast-2). Rooms = 행정동 code + scene; a shared lobby presence channel gives per-dong head counts.
+import { parseGuestHandover, GT_LS } from './plaza-account.js?v=20261113z';
 export const SUPA_URL = 'https://yxddhpacuyaffaoutxjn.supabase.co';
 export const SUPA_KEY = 'sb_publishable_Vd-7c6e2f2s3G1d5Jbx9vw_0UCuHm-B'; // publishable key: public by design
 // v13: QA/test clients (?qa=1) live in a separate namespace and never appear in real players' rooms, lobby counts or chat history
 export const NS = /[?&]qa=1/.test(location.search) || window.__QA || navigator.webdriver ? 'chapelqa:' : 'chapel:';
-export const CDN = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm';
+export const CDN = '@supabase/supabase-js';
 // Interest management: the room channel (≤100 users/shard, see v6.cap) carries presence diffs + chat/events only.
 // Positions go to a spatial-grid cell channel; each client subscribes to the 3x3 cells around it (≈ one screen each way),
 // so it only receives nearby users. Rate: 2Hz if someone is within NEAR, else 1Hz (edge/far); idle or seated → nothing.
@@ -24,16 +25,19 @@ export const DO_MODE = /^(studio(-qa)?\.(masilchapel|wishboard)|(masil|masilchap
 const DO_BASE = 800, DO_CAP = 30000, FAIL_MS = 60000, FAIL_N = 5;
 // Identity for the DO = verified Supabase JWT (guests use anonymous sign-in). Sent as a WebSocket subprotocol, never in the URL.
 const AUTH_LS = 'sb-yxddhpacuyaffaoutxjn-auth-token';
-export async function doToken(sb, fresh) { try { const c = window.G?.net?.sb || sb; let { data } = await c.auth.getSession(); let s = data?.session;
-    if (!s && c === sb) { try { const j = JSON.parse(localStorage.getItem(AUTH_LS) || 'null'); if (j?.access_token && j.expires_at * 1000 > Date.now() + 60000) return j.access_token; } catch { } }
-    if (s) return s.access_token; const g = await guestToken(fresh); if (g) return g.token; // v16: guests get a Worker-signed token (no Supabase anonymous user/MAU)
-    { const r = await c.auth.signInAnonymously(); s = r.data?.session; } return s?.access_token || null; } catch { return null; } }
+const soon = (ms) => new Promise((r) => setTimeout(() => r(null), ms));
+export async function doToken(sb, fresh) { try { const c = (window.G?.net?.sb || sb);
+    let s = null;
+    if (c?.auth?.getSession) s = await Promise.race([c.auth.getSession().then((x) => x?.data?.session || null).catch(() => null), soon(1500)]);
+    if (!s && c) { try { const j = JSON.parse(localStorage.getItem(AUTH_LS) || 'null'); if (j?.access_token && j.expires_at * 1000 > Date.now() + 60000) return j.access_token; } catch { } }
+    if (s?.access_token) return s.access_token; const g = await guestToken(fresh); if (g) return g.token; // v16: guests get a Worker-signed token (no Supabase anonymous user/MAU)
+    if (!c?.auth?.signInAnonymously) return null; const r = await Promise.race([c.auth.signInAnonymously(), soon(2000)]); return r?.data?.session?.access_token || null; } catch { return null; } }
 // v16 guest identity: HMAC token from /rt/guest, cached in localStorage and renewed (same id) before it expires.
-const GT_LS = 'masil_gt';
 export async function guestToken(fresh) { let g = null; try { g = JSON.parse(localStorage.getItem(GT_LS) || 'null'); } catch { }
   const live = g?.token && g.exp * 1000 > Date.now();
   if (!fresh && live && g.exp * 1000 > Date.now() + 86400000) return g;
-  try { const r = await fetch('/rt/guest', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(g?.token ? { t: g.token } : {}) }); if (!r.ok) return live ? g : null;
+  const body = {}; if (g?.token) body.t = g.token; const hand = parseGuestHandover(g?.sub); if (hand) body.h = hand;
+  try { const r = await fetch('/rt/guest', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); if (!r.ok) return live ? g : null;
     const n = await r.json(); if (!n?.token) return live ? g : null; localStorage.setItem(GT_LS, JSON.stringify(n)); return n; } catch { return live ? g : null; } }
 class DOChan {
   constructor(rt, topic, cfg) { this.rt = rt; this.topic = topic; this.key = cfg?.config?.presence?.key || ('w' + Math.random().toString(36).slice(2, 10)); this.hs = []; this.st = {}; this.state = 'closed'; this.mine = null; this.tries = 0; }
@@ -46,8 +50,11 @@ class DOChan {
     ws.onmessage = e => this.msg(e.data); ws.onclose = () => this.closed(ws); ws.onerror = () => { };
     clearInterval(this.pt); this.pt = setInterval(() => { if (ws.readyState === 1) ws.send('ping'); }, 25000); } // server auto-responds (free, no DO wake); stale after 75s
   msg(d) { if (d === 'pong') return; let m; try { m = JSON.parse(d); } catch { return; }
-    if (m.t === 'ok') { this.st = m.s || {}; this.state = 'joined'; this.tries = 0; this.failAt = 0; this.rt.ev(this, { ok: true, live: m.live, cap: m.cap }); this.rt.cfg(m); this._trS = 0; this.cb('SUBSCRIBED'); if (this.mine && !this._trS) this.raw({ t: 'tr', m: this.mine }); this.fire('presence', 'sync'); if (m.h && this.rt.net && this.topic === this.rt.net.topic) { const chat = []; for (const row of m.h) { if (row?.t === 'WORLD_UPDATE') this.rt.net.emit('world', { ...row, replay: true }); else if (row?.t === 'E') this.rt.net.emit('emoji', { id: row.k, e: row.e, replay: true }); else chat.push(row); } if (chat.length) this.rt.net.emit('history', chat); } }
-    else if (m.t === 'wait') { this.state = 'waiting'; this.rt.ev(this, { pos: m.pos, live: m.live, cap: m.cap }); }
+    if (m.t === 'ok') { this.st = m.s || {}; this.state = 'joined'; this.tries = 0; this.failAt = 0; this.rt.ev(this, { ok: true, live: m.live, cap: m.cap }); this.rt.cfg(m); this._trS = 0; this.cb('SUBSCRIBED'); if (m.air && this.rt.net) this.rt.net.emit('air', m.air); if (this.mine && !this._trS) this.raw({ t: 'tr', m: this.mine }); this.fire('presence', 'sync'); if (m.h && this.rt.net && this.topic === this.rt.net.topic) { const chat = []; for (const row of m.h) { if (row?.t === 'WORLD_UPDATE') this.rt.net.emit('world', { ...row, replay: true }); else if (row?.t === 'E') this.rt.net.emit('emoji', { id: row.k, e: row.e, replay: true }); else chat.push(row); } if (chat.length) this.rt.net.emit('history', chat); } }
+    else if (m.t === 'wait') {
+      if (this.rt.net?.bumpShard?.()) { this.dead = true; try { this.ws.close(); } catch { } return; }
+      this.state = 'waiting'; this.rt.ev(this, { pos: m.pos, live: m.live, cap: m.cap });
+    }
     else if (m.t === 'pj') { this.st[m.k] = m.m; this.fire('presence', 'sync'); }
     else if (m.t === 'pl') { delete this.st[m.k]; this.fire('presence', 'sync'); }
     else if (m.t === 'P' && Array.isArray(m.a)) { const [x, y, face, anim, fl, vx, vy] = m.a; this.fire('broadcast', 'pos', { type: 'broadcast', event: 'pos', payload: { id: m.k, x, y, face, anim, fl, vx, vy } }); }
@@ -57,7 +64,8 @@ class DOChan {
     else if (m.t === 'WORLD_UPDATE') { if (this.rt.net) this.rt.net.emit('world', m); }
     else if (m.t === 'WALLET_SYNC') { if (this.rt.net) this.rt.net.emit('wallet', m); }
     else if (m.t === 'AD') { if (this.rt.net) this.rt.net.emit('ad', m); }
-    else if (m.t === 'E') { this.fire('broadcast', 'emote', { type: 'broadcast', event: 'emote', payload: { id: m.k, e: m.e } }); if (this.rt.net) this.rt.net.emit('emoji', { id: m.k, e: m.e }); } }
+    else if (m.t === 'E') { this.fire('broadcast', 'emote', { type: 'broadcast', event: 'emote', payload: { id: m.k, e: m.e } }); if (this.rt.net) this.rt.net.emit('emoji', { id: m.k, e: m.e }); }
+    else if (m.t === 'TAKE' || m.t === 'MONO' || m.t === 'REV' || m.t === 'FEVER' || m.t === 'AIR') { if (this.rt.net) this.rt.net.emit(m.t.toLowerCase(), m); } }
   raw(o) { if (this.ws?.readyState === 1) { this.ws.send(JSON.stringify(o)); return true; } return false; }
   send(o) { if (this.state !== 'joined') return Promise.resolve('error'); const p = o.payload; if (o.event === 'pos' && p) { this.raw({ t: 'p', a: [p.x, p.y, p.face, p.anim, p.fl, p.vx, p.vy] }); return Promise.resolve('ok'); } this.raw({ t: 'b', e: o.event, p: o.payload }); return Promise.resolve('ok'); }
   track(m) { this.mine = m; if (this.state === 'joined') { this._trS = 1; this.raw({ t: 'tr', m }); } return Promise.resolve('ok'); }
@@ -88,9 +96,14 @@ export class Net {
   static cid() { try { let c = localStorage.getItem('maeul_cid'); if (!c) { c = Math.random().toString(36).slice(2, 10); localStorage.setItem('maeul_cid', c); } return c; } catch { return Math.random().toString(36).slice(2, 10); } }
   on(ev, fn) { (this.h[ev] ||= []).push(fn); } emit(ev, ...a) { for (const f of this.h[ev] || []) f(...a); }
   async init() {
-    try { const m = globalThis.__SUPA_MOD || await Promise.race([import(CDN), new Promise((_, r) => setTimeout(() => r(new Error('cdn timeout')), 8000))]);
-      this.sb = m.createClient(SUPA_URL, SUPA_KEY, { realtime: { params: { eventsPerSecond: 30 } }, auth: { persistSession: true, storageKey: 'maeul_auth', detectSessionInUrl: true, flowType: 'pkce' } }); rtPatch(this.sb, this); if (DO_MODE) { Net.GRID_ON = 1e9; Net.GRID_OFF = 1e9 - 1; try { await doToken(this.sb); const { data } = await this.sb.auth.getSession(); if (data?.session?.user?.id) this.id = 'user:' + data.session.user.id; else { const g = await guestToken(); if (g?.sub) this.id = 'guest:' + g.sub; } } catch { } } return true;
-    } catch (e) { console.warn('[net] offline:', e.message); this.setStatus('offline'); return false; }
+    if (DO_MODE) { Net.GRID_ON = 1e9; Net.GRID_OFF = 1e9 - 1; try { const g = await guestToken(); if (g?.sub) this.id = 'guest:' + g.sub; } catch { } }
+    try { let m = globalThis.__SUPA_MOD; if (!m?.createClient) m = await Promise.race([import(CDN).then((mod) => { globalThis.__SUPA_MOD = mod; return mod; }), soon(4000)]);
+      if (!m?.createClient) throw new Error('cdn timeout');
+      const cfg = await this.loadConfig();
+      this.sb = m.createClient(cfg.url, cfg.key, { realtime: { params: { eventsPerSecond: 30 } }, auth: { persistSession: true, storageKey: 'maeul_auth', detectSessionInUrl: true, flowType: 'pkce' } }); rtPatch(this.sb, this);
+    } catch (e) { console.warn('[net] offline:', e.message); this.setStatus('offline'); }
+    if (DO_MODE && this.sb?.auth?.getSession) { try { const s = await Promise.race([this.sb.auth.getSession().then((x) => x?.data?.session || null).catch(() => null), soon(1500)]); if (s?.user?.id) this.id = 'user:' + s.user.id; } catch { } }
+    return !!this.sb;
   }
   setStatus(s) { this.status = s; this.emit('status', s, this.peers.size); }
   // ENTRY GATE (global cap + FIFO queue, server-side counter via REST RPC; DO-ready: swap gateBeat() for a DO fetch).
@@ -117,10 +130,18 @@ export class Net {
     try { const body = JSON.stringify({ p_cid: id }), u = SUPA_URL + '/rest/v1/rpc/gate_leave'; // keepalive so a tab close still frees the slot at once
       fetch(u, { method: 'POST', keepalive: true, headers: { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY, 'Content-Type': 'application/json' }, body }).catch(() => { }); } catch { } }
   goSolo() { this.solo = true; this.emit('gate', { solo: true }); }
+  bumpShard() {
+    const n = (this.shard || 1) + 1;
+    if (n > 8) return false;
+    this.shard = n;
+    const room = 'square-' + n;
+    queueMicrotask(() => this.join(room, this.me));
+    return true;
+  }
   async join(room, me) {
     this.me = me; if (!this.sb || this.solo || this.gateDown) return;
     if (!this.admitted) { const first = !this._gate; this._want = room; if (first) this.gateEnter().then(ok => { if (ok && this._want) this.join(this._want, this.me); }); return; } if (this.room === room && this.ch) return; const seq = this._jseq = (this._jseq || 0) + 1;
-    await this.leave(true); if (seq !== this._jseq) return; this.room = room; this.setStatus('connecting');
+    await this.leave(true); if (seq !== this._jseq) return; this.room = room; this.shard = room === 'square' ? 1 : (Number(String(room).split('-').pop()) || 1); this.setStatus('connecting');
     const topic = NS + room.replace(/^d(\d+)(?:-(\d+))?/, (m, c, n) => c + '-' + (n || 1));
     for (const c of this.sb.getChannels?.() || []) if (c.topic === 'realtime:' + topic || c.topic === topic) { try { await this.sb.removeChannel(c); } catch { } } // never two subscriptions to one room
     if (seq !== this._jseq) return;
@@ -180,7 +201,7 @@ export class Net {
   // interpolated sample ~1.15s in the past (1Hz near / 0.5Hz far senders)
   sample(p) { const b = p.buf; if (!b.length) return null; const t = performance.now() - 1150;
     if (b.length === 1 || t <= b[0].t) return b[0];
-    for (let i = b.length - 1; i > 0; i--) if (b[i - 1].t <= t) { const a = b[i - 1], c = b[i]; if (t >= c.t) { const e = Math.min(3200, t - c.t) / 1000; return c.anim === 'walk' && (c.vx || c.vy) ? { ...c, x: c.x + c.vx * e, y: c.y + c.vy * e, stale: t - c.t } : { ...c, stale: t - c.t }; } /* keep walking past the newest sample instead of stalling then jumping */ const k = (t - a.t) / (c.t - a.t); return { x: a.x + (c.x - a.x) * k, y: a.y + (c.y - a.y) * k, face: c.face, anim: c.anim }; }
+    for (let i = b.length - 1; i > 0; i--) if (b[i - 1].t <= t) { const a = b[i - 1], c = b[i]; if (t >= c.t) { const e = Math.min(3200, t - c.t) / 1000; return c.anim === 'walk' && (c.vx || c.vy) ? { ...c, x: c.x + c.vx * e, y: c.y + c.vy * e, stale: t - c.t } : { ...c, stale: t - c.t }; } /* keep walking past the newest sample instead of stalling then jumping */ const k = (t - a.t) / (c.t - a.t); return { x: a.x + (c.x - a.x) * k, y: a.y + (c.y - a.y) * k, face: c.face, anim: c.anim, vx: c.vx, vy: c.vy }; }
     return b[b.length - 1]; }
   send(ev, payload) { if (this.ch && this.status === 'online') this.ch.send({ type: 'broadcast', event: ev, payload: { id: this.id, ...payload } }); }
   async chat(name, text) { this.send('chat', { name, text }); if (this.sb && this.room && NS === 'chapel:') try { await this.sb.from('chat_messages').insert({ room: this.room, name: name.slice(0, 12), body: text.slice(0, 80), client_id: this.id }); } catch { } }
@@ -193,10 +214,19 @@ export class Net {
   async leaveLobby() { if (this.lb) { const c = this.lb; this.lb = null; this.lbKey = null; try { await c.untrack(); await this.sb.removeChannel(c); } catch { } } this.counts = {}; }
   // ---- prayer wall (RLS: public rows readable; writes only via rate-limited security-definer RPCs)
   secret() { let s = localStorage.getItem('maeul_secret'); if (!s) { s = Array.from(crypto.getRandomValues(new Uint8Array(18)), b => b.toString(16).padStart(2, '0')).join(''); localStorage.setItem('maeul_secret', s); } return s; }
+  async loadConfig() { try { const r = await fetch('/rt/config', { cache: 'no-store' }); if (r.ok) { const j = await r.json(); if (typeof j?.url === 'string' && j.url.startsWith('https://') && typeof j?.key === 'string' && j.key && !/service_role/i.test(j.key)) return { url: j.url, key: j.key }; } } catch { } return { url: SUPA_URL, key: SUPA_KEY }; }
+  async currentSession() { try { const s = await this.sb?.auth?.getSession(); return s?.data?.session || null; } catch { return null; } }
+  async startOAuth(provider) { if (!this.sb?.auth) throw new Error('로그인 준비 중이에요'); const back = new URL(location.href); for (const k of ['autologin', 'handover', 'code']) back.searchParams.delete(k); const redirectTo = back.origin + back.pathname + back.search; const { error } = await this.sb.auth.signInWithOAuth({ provider, options: { redirectTo } }); if (error) throw error; }
+  async passwordAuth(kind, email, password) { const auth = this.sb?.auth; if (!auth) throw new Error('로그인 준비 중이에요'); const first = kind === 'up' ? await auth.signUp({ email, password }) : await auth.signInWithPassword({ email, password }); if (first.error) throw first.error; if (first.data?.session) return first.data.session; if (kind === 'up') { const again = await auth.signInWithPassword({ email, password }); if (again.data?.session) return again.data.session; const err = new Error('가입은 기록됐지만 이 창에서 바로 로그인되지 않았어요. 메일 확인이 켜져 있으면 확인 후 다시 로그인해 주세요.'); err.code = 'confirm'; throw err; } throw new Error('로그인에 실패했어요'); }
+  async mergeGuest(guestId, guestToken, nickname) { const tok = await doToken(this.sb); if (!tok || String(tok).startsWith('g1.')) throw new Error('로그인 세션이 없어요'); const r = await fetch('/rt/auth/merge', { method: 'POST', headers: { authorization: 'Bearer ' + tok, 'content-type': 'application/json' }, body: JSON.stringify({ guest_id: guestId, guest_token: guestToken, nickname: nickname || '' }) }); const data = await r.json().catch(() => ({})); if (!r.ok || data.ok === false) throw new Error(data.error || data.err || '계정 연결에 실패했어요'); return data; }
+  async withdrawAccount() { const tok = await doToken(this.sb); if (!tok || String(tok).startsWith('g1.')) throw new Error('로그인된 계정만 탈퇴할 수 있어요'); const r = await fetch('/rt/auth/withdraw', { method: 'POST', headers: { authorization: 'Bearer ' + tok, 'content-type': 'application/json' }, body: '{}' }); const data = await r.json().catch(() => ({})); if (!r.ok || data.ok === false) throw new Error(data.error || '탈퇴를 처리하지 못했어요'); try { await this.sb?.auth?.signOut(); } catch { } return data; }
   async world() { const r = await fetch('/rt/world', { cache: 'no-store' }); if (!r.ok) throw new Error('world ' + r.status); return r.json(); }
   async wallet(actorId) { const id = actorId || this.id; const tok = await doToken(this.sb); if (!tok) throw new Error('auth'); const r = await fetch('/rt/wallet?actor_id=' + encodeURIComponent(id), { cache: 'no-store', headers: { authorization: 'Bearer ' + tok } }); const data = await r.json().catch(() => ({})); if (!r.ok) throw new Error(data.err || data.error || ('wallet ' + r.status)); return data; }
   sendMine(amount, nick) { if (!this.ch?.raw || this.status !== 'online') return false; const n = Math.floor(Number(amount)); if (!Number.isFinite(n) || n < 1) return false; return this.ch.raw({ t: 'MINE', amount: Math.min(15, n), nick: Array.from(String(nick ?? this.me?.name ?? '')).slice(0, 16).join('') }); }
-  sendFare(amount, nick, slot) { if (!this.ch?.raw || this.status !== 'online') return false; const n = Math.floor(Number(amount)); if (!Number.isInteger(n) || n < 1) return false; return this.ch.raw({ t: 'FARE', amount: Math.min(25, n), nick: Array.from(String(nick ?? '')).slice(0, 16).join(''), slot: String(slot || '').slice(0, 16) }); }
+  sendBonus(kind, amount, nick) { if (!this.ch?.raw || this.status !== 'online') return false; const n = Math.floor(Number(amount)); if (!Number.isInteger(n) || n < 1) return false; return this.ch.raw({ t: 'BONUS', kind: String(kind || '').slice(0, 12), amount: n, nick: Array.from(String(nick ?? '')).slice(0, 16).join('') }); }
+  sendFare(amount, nick, slot, riders) { if (!this.ch?.raw || this.status !== 'online') return false; const n = Math.floor(Number(amount)); if (!Number.isInteger(n) || n < 1) return false; const msg = { t: 'FARE', amount: Math.min(25, n), nick: Array.from(String(nick ?? '')).slice(0, 16).join(''), slot: String(slot || '').slice(0, 16) }; const ridersN = Math.floor(Number(riders)); if (ridersN >= 1 && ridersN <= 5) msg.riders = ridersN; return this.ch.raw(msg); }
+  sendRevenge() { if (!this.ch?.raw || this.status !== 'online') return false; return this.ch.raw({ t: 'REV' }); }
+  sendFever() { if (!this.ch?.raw || this.status !== 'online') return false; return this.ch.raw({ t: 'FEVER' }); }
   sendAdClick(nick, slot) { if (!this.ch?.raw || this.status !== 'online') return false; return this.ch.raw({ t: 'ADCLICK', nick: Array.from(String(nick ?? '')).slice(0, 16).join(''), slot: String(slot || '').slice(0, 16) }); }
   sendEmoji(emojiId) { if (!this.ch?.raw || this.status !== 'online') return false; const e = Number(emojiId); if (!Number.isInteger(e) || e < 1 || e > 4) return false; return this.ch.raw({ t: 'E', e }); }
   onWorldUpdate(fn) { this.on('world', fn); return this; }
@@ -210,7 +240,7 @@ export class Net {
   async sponsorUrl() { const r = await fetch('/rt/sponsor', { cache: 'no-store' }); const d = await r.json().catch(() => ({})); return d.url || ''; }
   async authed(path, payload) { const tok = await doToken(this.sb); if (!tok) throw new Error('입장한 뒤에 사용할 수 있어요'); const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + tok }, body: JSON.stringify(payload || {}) }); const data = await r.json().catch(() => ({})); if (!r.ok || data.ok === false) throw new Error(data.error || data.err || '요청을 처리하지 못했습니다.'); return data; }
   async submitBillboardPhoto(payload) { return this._plazaPost('/rt/billboard-photo', payload); }
-  async _plazaPost(path, payload) { const tok = await doToken(this.sb); if (!tok) throw new Error('auth'); const body = { ...(payload || {}) }; if (!body.topic) body.topic = this.topic || ''; if (!body.nickname && !body.nick) body.nickname = this.me?.name || ''; const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + tok }, body: JSON.stringify(body) }); const data = await r.json().catch(() => ({})); if (!r.ok || data.ok === false) throw new Error(data.error || data.err || '요청을 처리하지 못했습니다.'); return data; }
+  async _plazaPost(path, payload) { const tok = await doToken(this.sb); if (!tok) throw new Error('auth'); const body = { ...(payload || {}) }; if (!body.topic) body.topic = this.topic || (NS + 'square'); if (!body.nickname && !body.nick) body.nickname = this.me?.name || ''; const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + tok }, body: JSON.stringify(body) }); const data = await r.json().catch(() => ({})); if (!r.ok || data.ok === false) throw new Error(data.error || data.err || '요청을 처리하지 못했습니다.'); return data; }
   async prayers(dong) { if (DO_MODE) return this.world(); if (!this.sb) throw new Error('offline'); const [pub, mine] = await Promise.all([
       DO_MODE ? fetch('/rt/prayers?dong=' + encodeURIComponent(dong)).then(async r => r.ok ? { data: await r.json() } : { error: new Error('prayers ' + r.status) }).catch(error => ({ error })) // v16: 15s edge/DO-side cache
         : this.sb.from('prayers').select('id,room,name,body,is_public,amen_count,created_at,answered,testimony').eq('room', dong).order('created_at', { ascending: false }).limit(40),

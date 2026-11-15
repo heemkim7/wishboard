@@ -209,8 +209,9 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
     const dx = bx - ax, dz = bz - az, L = Math.hypot(dx, dz) || 1;
     const fx = dx / L, fz = dz / L;
     c.L = L; c.fx = fx; c.fz = fz;
-    c.x = ax + fx * c.s - fz * c.off;
-    c.z = az + fz * c.s + fx * c.off;
+    const off = c.off + (c.bias || 0);
+    c.x = ax + fx * c.s - fz * off;
+    c.z = az + fz * c.s + fx * off;
     c.yaw = Math.atan2(fx, fz);
     c.endNode = G.nodeAt(bx, bz);
   }
@@ -382,29 +383,58 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
         const d = stopAt - c.s;
         if (!green && d > (yellow ? 6 : -0.6) && d < 40) target = Math.min(target, Math.max(0, d - 0.4) * 0.85);
       }
-      // keep distance to whatever is ahead in the lane (cars, parked cabs, remote cabs, the player)
+      // Same-lane followers slow down. Oncoming traffic and a cab at the curb do not cork the street.
       const rx = -c.fz, rz = c.fx;
+      let corked = false;
       for (const o of others) {
         if (o === c) continue;
         const dx = o.x - c.x, dz = o.z - c.z;
         if (dx > 24 || dx < -24 || dz > 24 || dz < -24) continue;
         const along = dx * c.fx + dz * c.fz, lat = Math.abs(dx * rx + dz * rz);
-        if (along > 0 && along < 22 && lat < 1.9) target = Math.min(target, Math.max(0, along - 6.6) * 1.1);
+        if (along < 0.4) continue;
+        const hx = o.fx != null ? o.fx : (o.yaw != null ? Math.sin(o.yaw) : c.fx);
+        const hz = o.fz != null ? o.fz : (o.yaw != null ? Math.cos(o.yaw) : c.fz);
+        const oncoming = hx * c.fx + hz * c.fz < -0.2;
+        if (oncoming) {
+          if (lat < 0.85 && along < 9) target = Math.min(target, Math.max(0, along - 3.2) * 0.7);
+          continue;
+        }
+        if (o.mode === 'parked' && lat > 1.05) continue;
+        if (along < 14 && lat < 1.15) {
+          target = Math.min(target, Math.max(0, along - 4.8) * 1.2);
+          if (along < 12 && (o.v == null || o.v < 0.8)) corked = true;
+        }
       }
       if (player) {
         const dx = px - c.x, dz = pz - c.z;
         const along = dx * c.fx + dz * c.fz, lat = Math.abs(dx * rx + dz * rz);
         if (along > 0 && along < (player.driving ? 22 : 12) && lat < (player.driving ? 2 : 1.6)) {
           target = Math.min(target, Math.max(0, along - (player.driving ? 6.6 : 3.6)) * 0.9);
+          if (along < 12 && lat < 1.4) corked = true;
           if (along < 8 && c.v > 1.5 && t - c.honk > 4) { c.honk = t; onHonk?.(); }
         }
       }
+      const atLight = node != null && G.nodeSignal[node] && target < 1 && c.L - c.s < 12;
+      if (!atLight && corked && c.v < 0.8) c.stuck = (c.stuck || 0) + dt;
+      else c.stuck = Math.max(0, (c.stuck || 0) - dt);
+      if ((c.stuck || 0) > 1.6) { c.bias = (c.bias || 0) >= 0 ? -2.2 : 2.2; c.biasFor = 3.2; c.stuck = 0; }
+      if ((c.biasFor || 0) > 0) c.biasFor -= dt; else c.bias = 0;
       const k = target < c.v ? 5 : 1.2;
       c.v += (target - c.v) * (1 - Math.exp(-dt * k));
       c.s += c.v * dt;
       let guard = 0;
       while (c.s > c.L && guard++ < 4) {
-        if (!nextSegment(c)) { c.v = 0; c.s = c.L; c.dir = -c.dir; c.s = 0; c.off = laneOffset(c); pose(c); break; }
+        if (!nextSegment(c)) {
+          c.uturn = (c.uturn || 0) + 1;
+          if (c.uturn > 2) { c.seg = -1; c.uturn = 0; break; }
+          c.v = Math.max(3, c.vmax * 0.45);
+          c.dir = -c.dir;
+          c.s = Math.min(4, c.L * 0.2);
+          c.off = laneOffset(c);
+          pose(c);
+          break;
+        }
+        c.uturn = 0;
       }
       pose(c);
       if (onStage(c.x, c.z)) {

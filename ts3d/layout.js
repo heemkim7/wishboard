@@ -42,7 +42,7 @@ export const PLOT_SLOTS = [
   ...[1, 2, 3, 4, 5].map((id, i) => lot(id, i, 268, 0)),
   ...[6, 7, 8, 9, 10].map((id, i) => lot(id, i, 292, Math.PI)),
   ...[11, 12, 13, 14, 15].map((id, i) => lot(id, i, 318, 0)),
-  ...[16, 17, 18, 19, 20].map((id, i) => lot(id, i, 342, Math.PI)),
+  ...[16, 17, 18].map((id, i) => lot(id, i, 342, Math.PI)),
 ];
 
 /** OpenStreetMap buildings replaced by game structures (K-Town lots, the TKTS booth under the red steps). */

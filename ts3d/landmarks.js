@@ -1,12 +1,12 @@
 // Plaza landmarks: TKTS red stairs, Times Square Station exit 1, the golden bungeo-ppang pocha,
 // the Golden ATM and the 20 plot buildings (levels 0–4).
 import * as THREE from 'three';
-import { LAYOUT, LOOP, PLOT_SLOTS, TAXI_STANDS, fountainSpot, insideLoop } from './layout.js';
+import { LAYOUT, LOOP, PLOT_SLOTS, TAXI_STANDS, fountainSpot, insideLoop } from './layout.js?v=20261113b';
 import { Kit, fishGeometry } from './kit.js';
 import {
   makeCanvas, paintStationSign, paintPylon, paintMenuBoard, paintTKTS, paintNeonSign,
   paintBeam, paintPlotBadge, paintLabel, paintTaxiStand, SANS, EMOJI,
-} from './art.js';
+} from './art.js?v=20261113b';
 
 const tex = (canvas, aniso = 4) => {
   const t = new THREE.CanvasTexture(canvas);
@@ -453,11 +453,6 @@ export function buildLandmarks(ctx) {
     floor.position.set(0, top + 0.01, cz);
     floor.layers.set(1);
     root.add(floor);
-    const wall = new THREE.Group();
-    wall.position.set(0, top + 5.4, G.z1 + 0.25);
-    wall.rotation.y = Math.PI;
-    root.add(wall);
-    boards.mount('MAIN_S', wall, { x: 0, y: 0, z: 0, w: 15.6, h: 8.78 });
     const sign = new THREE.Mesh(new THREE.PlaneGeometry(12, 1.6), new THREE.MeshBasicMaterial({ map: tex(paintLabel(makeCanvas(1024, 136), 'K-POP STAGE · 댄스 챌린지', '#ff7ac0', '#07070d')), color: new THREE.Color(1.05, 1.05, 1.05) }));
     sign.position.set(0, top + 10.9, G.z0 + 0.1);
     sign.rotation.y = Math.PI;
@@ -578,7 +573,7 @@ export function buildLandmarks(ctx) {
       kit.box(7.0, 0.07, 0.08, '#ff3d9a', { y: 0.7, z: 1.9, glow: 2.6 });
       kit.cyl(0.32, 0.32, 0.72, '#e23a2e', { x: -3.2, y: 1.9, z: 1.95, seg: 12, glow: 1.4 });
       kit.sphere(0.12, '#ffd0a0', { x: -3.2, y: 2.34, z: 1.95, glow: 3, seg: 8 });
-      board = { x: 0, y: 5.15, z: 1.95, w: 8.0, h: 4.5 };
+      board = { x: 0, y: 6.4, z: 2.05, w: 6.4, h: 3.6 };
       signSpec = { x: 2.2, y: 2.2, z: 2.05, w: 2.4, h: 0.5 };
       foot = [3.6, 1.9];
     } else if (level === 3) {
@@ -588,7 +583,7 @@ export function buildLandmarks(ctx) {
       for (const s of [-1, 1]) kit.box(0.12, 6.2, 0.12, '#ffcf5a', { x: s * 4.7, y: 3.2, z: 2.9, glow: 2.6 });
       kit.box(10, 0.28, 6.6, color, { y: 6.55, z: -0.3, glow: 2.2 });
       signSpec = { x: 0, y: 7.35, z: 1.6, w: 5.2, h: 0.8, posts: true };
-      board = { x: 0, y: 3.7, z: 3.25, w: 10.4, h: 5.85 };
+      board = { x: 0, y: 4.6, z: 3.15, w: 6.6, h: 3.7 };
       foot = [5, 3.4];
     } else {
       kit.box(8.4, 16.5, 6.4, '#0d1a33', { y: 8.25, z: -0.2, mat: 'tower' });
@@ -621,14 +616,8 @@ export function buildLandmarks(ctx) {
     group.add(badge);
     scene.add(group);
     const slotId = 'PLOT_' + slot.id;
-    const boardGroup = boards.mount(slotId, group, { x: board.x, y: board.y, z: board.z, w: board.w, h: board.h });
+    const boardGroup = boards.mount(slotId, group, board);
     const extraBoards = [];
-    const more = level === 3
-      ? [{ x: 0, y: 8.55, z: 2.4, w: 6.6, h: 3.7 }]
-      : level === 4
-        ? [{ x: -4.7, y: 7.4, z: 0, ry: Math.PI / 2, w: 5.6, h: 3.15 }, { x: 4.7, y: 7.4, z: 0, ry: -Math.PI / 2, w: 5.6, h: 3.15 }]
-        : [];
-    for (const spec of more) extraBoards.push(boards.mount(slotId, group, spec));
     const box = [];
     if (foot) {
       const swap = Math.abs(Math.sin(slot.rot)) > 0.5;

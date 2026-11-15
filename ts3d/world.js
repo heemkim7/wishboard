@@ -215,6 +215,22 @@ export function createWorld(ctx) {
       if (B.cx[i] >= z.x0 && B.cx[i] <= z.x1 && B.cz[i] >= z.z0 && B.cz[i] <= z.z1) { nyc.skipBuilding[i] = 1; break; }
     }
   }
+  // ponytail: one shop south of the stall. More facades only if this one reads.
+  let dressId = -1;
+  for (let i = 0; i < B.count; i++) {
+    if (B.h[i] < 8 && Math.hypot(B.cx[i] - 10.6, B.cz[i] - 141.6) < 2) { dressId = i; nyc.hideMesh[i] = 1; break; }
+  }
+  const dressMap = loader.load('/icons/facade-test.jpg');
+  dressMap.colorSpace = THREE.SRGBColorSpace;
+  dressMap.anisotropy = aniso;
+  dressMap.wrapS = dressMap.wrapT = THREE.ClampToEdgeWrapping;
+  const dressMat = new THREE.MeshStandardMaterial({ map: dressMap, roughness: 0.78, metalness: 0.02, envMapIntensity: 0.4 });
+  const sideMap = loader.load('/icons/facade-side.jpg');
+  sideMap.colorSpace = THREE.SRGBColorSpace;
+  sideMap.anisotropy = aniso;
+  sideMap.wrapS = sideMap.wrapT = THREE.ClampToEdgeWrapping;
+  const sideMat = new THREE.MeshStandardMaterial({ map: sideMap, roughness: 0.78, metalness: 0.02, envMapIntensity: 0.4 });
+  const dressRoof = new THREE.MeshStandardMaterial({ color: '#2c3036', roughness: 0.92, metalness: 0 });
 
   // ---- building geometry ------------------------------------------------------------------------------------------
   const tmpCol = new THREE.Color();
@@ -591,6 +607,50 @@ export function createWorld(ctx) {
     g.traverse(o => { if (o.isMesh && o.geometry && !o.isInstancedMesh) o.geometry.dispose(); if (o.isInstancedMesh) o.dispose(); });
     g.parent?.remove(g);
   }
+  function addDress(parent, i, ox, oz) {
+    const a = B.off[i], b = B.off[i + 1], n = b - a;
+    const top = B.h[i], mh = B.minh[i];
+    const walls = { front: { pos: [], uv: [], ind: [] }, side: { pos: [], uv: [], ind: [] } };
+    const push = (bag, x, y, z, u, v) => { bag.pos.push(x, y, z); bag.uv.push(u, v); return bag.pos.length / 3 - 1; };
+    let longest = 0;
+    for (let k = 0; k < n; k++) {
+      const p = a + k, q = k + 1 < n ? p + 1 : a;
+      longest = Math.max(longest, Math.hypot(B.xs[q] - B.xs[p], B.zs[q] - B.zs[p]));
+    }
+    for (let k = 0; k < n; k++) {
+      const p = a + k, q = k + 1 < n ? p + 1 : a;
+      const x1 = B.xs[p] - ox, z1 = B.zs[p] - oz, x2 = B.xs[q] - ox, z2 = B.zs[q] - oz;
+      const L = Math.hypot(x2 - x1, z2 - z1);
+      if (L < 0.05) continue;
+      const bag = L > longest * 0.75 ? walls.front : walls.side;
+      const va = push(bag, x1, mh, z1, 0, 0), vb = push(bag, x2, mh, z2, 1, 0);
+      const vc = push(bag, x2, top, z2, 1, 1), vd = push(bag, x1, top, z1, 0, 1);
+      bag.ind.push(va, vc, vb, va, vd, vc);
+    }
+    for (const [bag, mat] of [[walls.front, dressMat], [walls.side, sideMat]]) {
+      if (!bag.ind.length) continue;
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(bag.pos, 3));
+      geo.setAttribute('uv', new THREE.Float32BufferAttribute(bag.uv, 2));
+      geo.setIndex(bag.ind);
+      geo.computeVertexNormals();
+      parent.add(new THREE.Mesh(geo, mat));
+    }
+    const tris = triangulate(B.xs, B.zs, a, b);
+    if (!tris.length) return;
+    const rp = [], ri = [];
+    for (let k = 0; k < n; k++) rp.push(B.xs[a + k] - ox, top, B.zs[a + k] - oz);
+    for (const [i0, i1, i2] of tris) {
+      const ax = B.xs[a + i0], az = B.zs[a + i0];
+      const cy = (B.zs[a + i1] - az) * (B.xs[a + i2] - ax) - (B.xs[a + i1] - ax) * (B.zs[a + i2] - az);
+      if (cy > 0) ri.push(i0, i1, i2); else ri.push(i0, i2, i1);
+    }
+    const roof = new THREE.BufferGeometry();
+    roof.setAttribute('position', new THREE.Float32BufferAttribute(rp, 3));
+    roof.setIndex(ri);
+    roof.computeVertexNormals();
+    parent.add(new THREE.Mesh(roof, dressRoof));
+  }
   function buildBase(rec) {
     const t = rec.t;
     const ox = t.tx * TILE, oz = t.tz * TILE;
@@ -598,6 +658,7 @@ export function createWorld(ctx) {
     root.position.set(ox, 0, oz);
     const g = new Geo(true);
     for (const i of t.b) if (!nyc.skipBuilding[i] && !nyc.hideMesh[i] && B.h[i] < SKY_H) addBuilding(g, i, ox, oz);
+    if (dressId >= 0 && t.b.includes(dressId)) addDress(root, dressId, ox, oz);
     if (!g.empty()) put(g.build(), facade, 0, 0, root);
     const roads = buildRoads(t, ox, oz, false);
     if (!roads.asphalt.empty()) put(roads.asphalt.build(), mats.asphalt, GROUND_LAYER, 1, root);

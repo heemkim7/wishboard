@@ -7,9 +7,9 @@ import { makeCanvas, paintNameTag, paintBubble } from './art.js';
 
 const LOOPS = new Set(['Idle', 'Walking', 'Running', 'Dance', 'Sitting', 'Standing']);
 export const EMOTES = {
-  1: { anim: 'Wave', glyph: '🙏', label: '대박기원' },
+  1: { anim: 'Pray', glyph: '🙏', label: '대박기원' },
   2: { anim: 'Jump', glyph: '🎆', label: '폭죽발사' },
-  3: { anim: 'ThumbsUp', glyph: '🐟', label: '붕어빵냠냠' },
+  3: { anim: 'Cheer', glyph: '🙌', label: '만세' },
   4: { anim: 'Dance', glyph: '💃', label: 'K-댄스', hold: 6 },
 };
 // Quick reactions: a bubble over the head (plus a short gesture), sent to others as a 'react' broadcast by index.
@@ -123,6 +123,89 @@ export function createAvatars({ scene, urls, models, first, height = 1.8 }) {
   return { create, sys, get ready() { return sys.species.size > 0; } };
 }
 
+// Two-bone aim so the hands meet a world point. The Mixamo clip set has no prayer or cheer.
+const _p = new THREE.Vector3();
+const _q = new THREE.Quaternion();
+const _qP = new THREE.Quaternion();
+function poseBones(model) {
+  if (!model.userData.poseBones) {
+    const found = {};
+    model.traverse((o) => { if (o.isBone) found[o.name.replace(/^mixamorig:?/, '')] = o; });
+    model.userData.poseBones = found;
+  }
+  return model.userData.poseBones;
+}
+function boneAt(b, out) {
+  b.updateWorldMatrix(true, false);
+  return out.setFromMatrixPosition(b.matrixWorld);
+}
+function pointY(b, dir) {
+  b.updateWorldMatrix(true, false);
+  b.parent.getWorldQuaternion(_qP);
+  b.getWorldQuaternion(_q);
+  const cur = new THREE.Vector3(0, 1, 0).applyQuaternion(_q);
+  const want = dir.clone().normalize();
+  if (cur.dot(want) < 0.999) _q.premultiply(new THREE.Quaternion().setFromUnitVectors(cur, want));
+  b.quaternion.copy(_qP.clone().invert()).multiply(_q);
+}
+function foldArm(model, side, elbowTarget, handTarget) {
+  const bones = poseBones(model);
+  const upper = bones[side + 'Arm'];
+  const fore = bones[side + 'ForeArm'];
+  if (!upper || !fore) return;
+  pointY(upper, elbowTarget.clone().sub(boneAt(upper, new THREE.Vector3())));
+  pointY(fore, handTarget.clone().sub(boneAt(fore, new THREE.Vector3())));
+}
+function aimHand(hand, fingerDir, palmDir) {
+  const y = fingerDir.clone().normalize();
+  const z = palmDir.clone().addScaledVector(y, -palmDir.dot(y)).normalize();
+  const x = new THREE.Vector3().crossVectors(y, z).normalize();
+  const worldQ = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
+  hand.updateWorldMatrix(true, false);
+  hand.parent.getWorldQuaternion(_qP);
+  hand.quaternion.copy(_qP.clone().invert()).multiply(worldQ);
+  hand.traverse((b) => { if (b.isBone && b !== hand) b.quaternion.identity(); });
+}
+function holdPose(model, pose, t = 1) {
+  if (!model) return;
+  const bones = poseBones(model);
+  const spine = bones.Spine2 || bones.Spine;
+  const head = bones.Head;
+  if (!spine || !head) return;
+  const chest = boneAt(spine, new THREE.Vector3());
+  const headP = boneAt(head, new THREE.Vector3());
+  model.updateWorldMatrix(true, false);
+  const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(model.getWorldQuaternion(new THREE.Quaternion()));
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(model.getWorldQuaternion(new THREE.Quaternion()));
+  const up = new THREE.Vector3(0, 1, 0.18);
+  if (pose === 'Pray') {
+    const meet = chest.clone().addScaledVector(fwd, 0.34).add(new THREE.Vector3(0, 0.08, 0));
+    const elbowL = chest.clone().addScaledVector(fwd, 0.06).addScaledVector(right, 0.24);
+    const elbowR = chest.clone().addScaledVector(fwd, 0.06).addScaledVector(right, -0.24);
+    foldArm(model, 'Left', elbowL, meet);
+    foldArm(model, 'Right', elbowR, meet);
+    if (bones.LeftHand) aimHand(bones.LeftHand, up, right.clone().multiplyScalar(-1));
+    if (bones.RightHand) aimHand(bones.RightHand, up, right);
+  } else if (pose === 'Cheer') {
+    const leftT = headP.clone().add(new THREE.Vector3(0, 0.48, 0)).addScaledVector(right, 0.62).addScaledVector(fwd, -0.04);
+    const rightT = headP.clone().add(new THREE.Vector3(0, 0.48, 0)).addScaledVector(right, -0.62).addScaledVector(fwd, -0.04);
+    foldArm(model, 'Left', leftT, leftT);
+    foldArm(model, 'Right', rightT, rightT);
+    if (bones.LeftHand) aimHand(bones.LeftHand, right.clone().add(new THREE.Vector3(0, 1.2, 0)), fwd);
+    if (bones.RightHand) aimHand(bones.RightHand, right.clone().multiplyScalar(-1).add(new THREE.Vector3(0, 1.2, 0)), fwd);
+  } else if (pose === 'Throw') {
+    // No throw clip in the GLB. Overhand: cock behind the head, then the hand leads forward and up.
+    const u = Math.max(0, Math.min(1, t));
+    const fire = u < 0.28 ? 0 : Math.min(1, (u - 0.28) / 0.3);
+    const elbow = headP.clone().addScaledVector(right, -0.34).addScaledVector(fwd, -0.22).add(new THREE.Vector3(0, 0.12, 0))
+      .lerp(headP.clone().addScaledVector(right, -0.08).addScaledVector(fwd, 0.26).add(new THREE.Vector3(0, 0.32, 0)), fire);
+    const hand = headP.clone().addScaledVector(right, -0.16).addScaledVector(fwd, -0.42).add(new THREE.Vector3(0, 0.04, 0))
+      .lerp(headP.clone().addScaledVector(fwd, 0.62).add(new THREE.Vector3(0, 0.72, 0)), fire);
+    foldArm(model, 'Right', elbow, hand);
+    if (bones.RightHand) aimHand(bones.RightHand, fwd.clone().add(new THREE.Vector3(0, fire > 0.15 ? 1 : 0.25, 0)), right.clone().multiplyScalar(-1));
+  }
+}
+
 class Avatar {
   constructor(sys, scene, { id, name, color, local, species }) {
     this.sys = sys;
@@ -139,6 +222,8 @@ class Avatar {
     this.base = 'Idle';
     this.current = null;
     this.emoteAction = null;
+    this.pose = '';
+    this.poseUntil = 0;
     this.danceUntil = 0;
     this.speed = 0;
     const shadow = new THREE.Mesh(sys.shadowGeo, sys.shadowMat);
@@ -281,6 +366,7 @@ class Avatar {
   /** speed in m/s; sitting picks the seated loop. */
   setMotion(speed, sitting = false) {
     this.speed = speed;
+    if (speed > 0.35 && this.pose !== 'Throw') this.pose = '';
     const now = performance.now();
     let base = sitting ? 'Sitting' : speed > 4.3 ? 'Running' : speed > 0.35 ? 'Walking' : 'Idle';
     if (base === 'Idle' && this.danceUntil > now) base = 'Dance';
@@ -296,6 +382,14 @@ class Avatar {
   }
 
   emote(name, hold = 0) {
+    if (name === 'Pray' || name === 'Cheer' || name === 'Throw') {
+      this.pose = name;
+      this.poseUntil = performance.now() + (name === 'Throw' ? 980 : 2400);
+      this.emoteAction = null;
+      if (this.current && this.actions?.Idle && this.speed <= 0.35) this.fadeTo('Idle', 0.15);
+      return;
+    }
+    this.pose = '';
     if (name === 'Dance') {
       this.danceUntil = performance.now() + (hold || 6) * 1000;
       if (this.speed <= 0.35) {
@@ -335,6 +429,15 @@ class Avatar {
 
   update(dt, t) {
     this.mixer?.update(dt);
+    if (this.pose && performance.now() > this.poseUntil) this.pose = '';
+    if (this.pose === 'Throw') {
+      const u = 1 - Math.max(0, (this.poseUntil - performance.now()) / 980);
+      this.holder.position.y = Math.sin(Math.min(1, u * 1.2) * Math.PI) * 0.75;
+      holdPose(this.model, 'Throw', u);
+    } else {
+      if (this.holder.position.y) this.holder.position.y = 0;
+      if (this.pose) holdPose(this.model, this.pose, 1);
+    }
     if (this.fallback) this.model.position.y = this.speed > 0.35 ? Math.abs(Math.sin(t * 9)) * 0.08 : Math.sin(t * 2) * 0.02;
     if (this.bubble.visible) {
       const b = (this.bubbleT += dt);

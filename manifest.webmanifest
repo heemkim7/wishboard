@@ -1,0 +1,11 @@
+{
+  "name": "WISH BOARD : 모두의 전광판",
+  "short_name": "WISH BOARD",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#12182c",
+  "theme_color": "#12182c",
+  "icons": [
+    { "src": "/icons/app-icon.jpg?v=4", "sizes": "512x512", "type": "image/jpeg", "purpose": "any" }
+  ]
+}

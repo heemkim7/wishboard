@@ -2,7 +2,8 @@
 // scrolling news tickers, and the slot registry (MAIN_S, SUB_B1..4, PLOT_1..20).
 import * as THREE from 'three';
 import { Kit, arcSlab } from './kit.js';
-import { THEMES, makeCanvas, paintBillboard, paintTicker, fontsReady, tierOf, boardPhoto, photoReady, SANS, rgba } from './art.js';
+import { THEMES, makeCanvas, paintBillboard, paintTicker, fontsReady, tierOf, boardPhoto, photoReady, SANS, rgba, chars } from './art.js?v=20261113b';
+import { floorOf } from '../balance.js?v=20261113h';
 
 export const screenTime = { value: 0 };
 
@@ -14,6 +15,7 @@ export function screenMaterial(map, { gain = 1.6, grid = [208, 117], led = 1, sw
     sh.uniforms.uGrid = { value: new THREE.Vector2(grid[0], grid[1]) };
     sh.uniforms.uLed = { value: led };
     sh.uniforms.uSweep = { value: sweep };
+    m.userData.sweep = sh.uniforms.uSweep;
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\nuniform float uTime;\nuniform vec2 uGrid;\nuniform float uLed;\nuniform float uSweep;')
       .replace('#include <map_fragment>', `#include <map_fragment>
@@ -25,10 +27,11 @@ export function screenMaterial(map, { gain = 1.6, grid = [208, 117], led = 1, sw
   float cell = 1.0 - smoothstep(0.3, 0.5, max(f.x, f.y));
   float ledMask = mix(0.74 + 0.26 * cell, 1.0, smoothstep(0.3, 0.85, fw));
   diffuseColor.rgb *= mix(1.0, ledMask, uLed);
-  float s = fract(uTime * 0.06 + vMapUv.x * 0.5 - vMapUv.y * 0.28);
+  float tt = uTime * uSweep;
+  float s = fract(tt * 0.06 + vMapUv.x * 0.5 - vMapUv.y * 0.28);
   float band = smoothstep(0.0, 0.03, s) * (1.0 - smoothstep(0.03, 0.1, s));
   diffuseColor.rgb += band * 0.2 * uSweep * (0.5 + diffuseColor.rgb);
-  diffuseColor.rgb *= 0.95 + 0.05 * sin(uTime * 2.1 + vMapUv.y * 37.0);
+  diffuseColor.rgb *= 0.95 + 0.05 * sin(tt * 2.1 + vMapUv.y * 37.0);
   float edge = min(min(vMapUv.x, vMapUv.y), min(1.0 - vMapUv.x, 1.0 - vMapUv.y));
   float rim = 1.0 - smoothstep(0.0, 0.028, edge);
   float around = vMapUv.x;
@@ -36,18 +39,18 @@ export function screenMaterial(map, { gain = 1.6, grid = [208, 117], led = 1, sw
   else if (vMapUv.x > 0.972) around = 2.0 + (1.0 - vMapUv.y);
   else if (vMapUv.y < 0.028) around = 3.0 + vMapUv.x;
   else if (vMapUv.x < 0.028) around = 4.0 + vMapUv.y;
-  float chase = fract(around * 0.25 - uTime * 0.35);
+  float chase = fract(around * 0.25 - tt * 0.35);
   float lamp = smoothstep(0.0, 0.015, chase) * (1.0 - smoothstep(0.015, 0.14, chase));
   diffuseColor.rgb += rim * (0.18 + lamp * 1.35) * vec3(0.45, 0.95, 1.0);
   if (vMapUv.y < 0.42 && vMapUv.y > 0.1) {
-    float gx = abs(fract(vMapUv.x * 14.0 - uTime * 0.35) - 0.5);
-    float gy = abs(fract(vMapUv.y * 9.0 + uTime * 0.45) - 0.5);
+    float gx = abs(fract(vMapUv.x * 14.0 - tt * 0.35) - 0.5);
+    float gy = abs(fract(vMapUv.y * 9.0 + tt * 0.45) - 0.5);
     float grid = 1.0 - smoothstep(0.0, 0.08, min(gx, gy));
-    float wave = 1.0 - smoothstep(0.0, 0.035, abs(vMapUv.y - 0.26 - 0.05 * sin(vMapUv.x * 12.0 + uTime * 2.1)));
+    float wave = 1.0 - smoothstep(0.0, 0.035, abs(vMapUv.y - 0.26 - 0.05 * sin(vMapUv.x * 12.0 + tt * 2.1)));
     diffuseColor.rgb += vec3(0.15, 0.75, 1.0) * grid * 0.28 + vec3(1.0, 0.25, 0.62) * wave * 0.55;
   }
   if (vMapUv.y < 0.085) {
-    float slide = fract(vMapUv.x - uTime * 0.15);
+    float slide = fract(vMapUv.x - tt * 0.15);
     float bit = smoothstep(0.0, 0.03, fract(slide * 9.0)) * (1.0 - smoothstep(0.03, 0.11, fract(slide * 9.0)));
     diffuseColor.rgb += vec3(1.0, 0.78, 0.25) * bit * 0.65;
   }
@@ -85,7 +88,7 @@ const WISHES = [
   { emoji: '💘', line1: '올해 연애는', line2: '버그 없이', line3: '업데이트' },
 ];
 function wishSlot(slotId) {
-  return slotId === 'MAIN_S' || /^SUB_B[1-4]$/.test(slotId) || /^PLOT_([1-9]|1\d|20)$/.test(slotId);
+  return /^MAIN_(UP|TOP|MID|BOT|LOW)$/.test(slotId) || /^SUB_[1-4][AB]$/.test(slotId) || /^STREET_([1-9]|[12]\d|30)$/.test(slotId) || /^PLOT_([1-9]|1[0-8])$/.test(slotId);
 }
 function wishIndex(slotId) {
   let h = 0;
@@ -100,24 +103,27 @@ function vacantWish(row) {
 
 function defaultData(slotId) {
   const tier = tierOf(slotId);
+  const price = (floorOf(slotId) || 0).toLocaleString('en-US') + ' 코인부터';
   let row;
-  if (tier === 'S') row = { slot_id: slotId, emoji: '📢', bg_theme: 'cyber_navy', text_color: '#ffffff', line1: '이 자리를 점령하세요', line2: '타임스퀘어 메인 타워 · S급', line3: '3,000 코인부터 입찰 가능', holder_id: null };
-  else if (tier === 'B') {
-    const n = Number(String(slotId).slice(-1)) || 1;
+  if (tier === 'S') {
+    row = { slot_id: slotId, emoji: '📢', bg_theme: 'cyber_navy', text_color: '#ffffff', line1: '이 자리를 점령하세요', line2: '타임스퀘어 메인 타워', line3: price, holder_id: null };
+  } else if (String(slotId).startsWith('STREET_')) {
+    const n = Number(String(slotId).slice(7)) || 1;
+    row = { slot_id: slotId, emoji: '🌃', bg_theme: 'cyber_navy', text_color: '#ffffff', line1: `${n}번 메인거리`, line2: '거리 쪽 큰 화면', line3: price, holder_id: null };
+  } else if (tier === 'B') {
+    const n = Number(String(slotId).replace(/\D/g, '')) || 1;
+    const upper = /A$/.test(slotId);
     const theme = ['neon_pink', 'gold_luxury', 'sunset_red', 'matrix_green'][(n - 1) % 4];
-    row = { slot_id: slotId, emoji: ['💖', '👑', '🌇', '💎'][(n - 1) % 4], bg_theme: theme, text_color: '#ffffff', line1: `서브 전광판 B${n}`, line2: '내 이름을 뉴욕 한복판에', line3: '500 코인부터 점령', holder_id: null };
+    row = { slot_id: slotId, emoji: ['💖', '👑', '🌇', '💎'][(n - 1) % 4], bg_theme: theme, text_color: '#ffffff', line1: `${n}번 코너 ${upper ? '상단' : '하단'}`, line2: '내 이름을 뉴욕 한복판에', line3: price, holder_id: null };
   } else {
-    const wall = String(slotId).startsWith('WALL_'), tower = String(slotId).startsWith('TOWER_');
     const n = Number(String(slotId).replace(/\D/g, '')) || 1;
     const theme = ['matrix_green', 'neon_pink', 'sunset_red', 'cyber_navy', 'gold_luxury'][n % 5];
-    const line1 = tower ? `${n}번 타워 전광판` : wall ? `${n}번 광장 전광판` : `${n}번 거리 전광판`;
-    const line2 = tower ? '원 타임스퀘어' : wall ? '타임스퀘어 거리' : '건물 외벽 · C급';
-    row = { slot_id: slotId, emoji: tower ? '🗽' : '🌟', bg_theme: theme, text_color: '#ffffff', line1, line2, line3: '100 코인부터', holder_id: null };
+    row = { slot_id: slotId, emoji: '🌟', bg_theme: theme, text_color: '#ffffff', line1: `${n}번 분양 전광판`, line2: '건물 앞 큰 화면', line3: price, holder_id: null };
   }
   return vacantWish(row);
 }
 
-const sigOf = (d) => [d.line1, d.line2, d.line3, d.emoji, d.bg_theme, d.text_color, d.holder_name, d.holder_id, d.photo_id, d.photo_status, d.external_url, d.views, d.clicks, d.cheers].join('\u0001');
+const sigOf = (d) => [d.line1, d.line2, d.line3, d.emoji, d.bg_theme, d.text_color, d.holder_name, d.holder_id, d.photo_id, d.photo_status, d.external_url, d.views, d.clicks, d.cheers, d.taken_from, ...(d.notes || [])].join('\u0001');
 
 export function createBoards({ renderer, kitMats, onBurst, pick }) {
   const boards = new Map();
@@ -154,16 +160,89 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
   const tmp = new THREE.Vector3();
 
   const vacantCanvas = makeCanvas(512, 288);
-  paintBillboard(vacantCanvas, { slot_id: 'WALL_1', emoji: '📢', bg_theme: 'cyber_navy', text_color: '#ffffff', line1: '이 자리를 점령하세요', line2: '타임스퀘어 건물 전광판', line3: '100 코인부터', holder_id: null });
+  paintBillboard(vacantCanvas, { slot_id: 'WALL_1', emoji: '📢', bg_theme: 'cyber_navy', text_color: '#ffffff', line1: '이 자리를 점령하세요', line2: '타임스퀘어 건물 전광판', line3: '가격은 자리를 누르면', holder_id: null });
   const vacantTex = tune(new THREE.CanvasTexture(vacantCanvas));
   remember(vacantCanvas);
   const vacantMat = screenMaterial(vacantTex, { gain: 1.06, grid: [128, 72] });
 
+  const CLAIM = /^(MAIN_(UP|TOP|MID|BOT|LOW)|SUB_[1-4][AB]|STREET_([1-9]|[12]\d|30)|PLOT_([1-9]|1[0-8]))$/;
+  let air = null;
+  function airOn() { return !!(air && air.until > Date.now()); }
+  function airRow(b) {
+    const glyphs = Array.from(String(air?.line || ''));
+    return {
+      slot_id: b.slotId, emoji: '📣', bg_theme: 'gold_luxury', text_color: '#fff6d0',
+      line1: glyphs.slice(0, 12).join('') || '전광판 장악',
+      line2: glyphs.slice(12, 24).join('') || chars(air?.nick || '', 16),
+      line3: chars(air?.nick || '', 16),
+      holder_name: chars(air?.nick || '', 16),
+      holder_id: 'air',
+    };
+  }
+  function drawBadge(g, W, H, d, i) {
+    const text = chars(String(d?.g || ''), 12);
+    if (!text) return;
+    const k = W / 1024;
+    const bw = Math.min(W * 0.46, 360 * k);
+    const bh = Math.max(26, 46 * k);
+    const corner = (Math.floor(Number(d.c) || 0) % 4);
+    const stack = Math.floor(i / 4);
+    const x = corner % 2 === 0 ? 14 * k : W - bw - 14 * k;
+    const y = (corner < 2 ? 14 * k : H * 0.5) + stack * (bh + 6 * k);
+    g.save();
+    g.fillStyle = 'rgba(10, 6, 24, 0.88)';
+    g.strokeStyle = '#ffcf5a';
+    g.lineWidth = Math.max(2, 3 * k);
+    g.shadowColor = '#ffcf5a';
+    g.shadowBlur = 16 * k;
+    g.beginPath();
+    if (g.roundRect) g.roundRect(x, y, bw, bh, 10 * k);
+    else g.rect(x, y, bw, bh);
+    g.fill();
+    g.stroke();
+    g.shadowBlur = 0;
+    g.fillStyle = '#fff6d0';
+    g.font = `800 ${Math.max(14, Math.round(22 * k))}px ${SANS}`;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(text, x + bw / 2, y + bh / 2);
+    g.restore();
+  }
+  function applyOverlay(b) {
+    if (!b?.canvas || b.shared) return;
+    if (airOn()) {
+      paintBillboard(b.canvas, airRow(b));
+      return;
+    }
+    const list = b.decals || [];
+    if (!list.length) return;
+    const g = b.canvas.getContext('2d');
+    for (let i = 0; i < list.length; i++) drawBadge(g, b.canvas.width, b.canvas.height, list[i], i);
+  }
+  function eachClaim(fn) {
+    for (const b of boards.values()) if (CLAIM.test(b.slotId) && b.mounts.length && !b.shared) fn(b);
+  }
+  function setAir(next) {
+    air = next && Number(next.until) > Date.now()
+      ? { nick: chars(next.nick || '', 16), line: chars(next.line || '', 24), until: Number(next.until) }
+      : null;
+    if (!air) { repaintAll(); return; }
+    eachClaim((b) => paint(b));
+  }
+  function setDecals(slotId, list) {
+    const b = ensure(slotId);
+    if (!b || b.shared) return false;
+    b.decals = Array.isArray(list) ? list.slice(0, 8).map((d, i) => ({ g: chars(String(d?.g || ''), 12), c: (Math.floor(Number(d?.c) || i) % 4) })).filter((d) => d.g) : [];
+    paint(b);
+    return true;
+  }
+
   function paint(b) {
     const d = b.data, id = d.photo_status === 'approved' && d.holder_id ? d.photo_id : null;
     const photo = id ? photoReady(id) : null;
-    paintBillboard(b.canvas, d, { photo, pending: d.photo_status === 'pending' });
+    paintBillboard(b.canvas, d, { photo, pending: d.photo_status === 'pending', shield: b.shield || '' });
     remember(b.canvas);
+    applyOverlay(b);
     b.tex.needsUpdate = true;
     if (id && !photo) boardPhoto(id).then((img) => { if (img && b.data.photo_id === id && b.data.photo_status === 'approved') paint(b); });
   }
@@ -172,7 +251,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
     let b = boards.get(slotId);
     if (b) return b;
     const tier = tierOf(slotId);
-    const share = tier === 'C' && String(slotId).startsWith('WALL_');
+    const share = false && tier === 'C';
     if (share) {
       b = { slotId, tier, canvas: vacantCanvas, tex: vacantTex, mat: vacantMat, data: defaultData(slotId), sig: '', mounts: [], shared: true };
       boards.set(slotId, b);
@@ -194,7 +273,12 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
     const group = new THREE.Group();
     group.position.set(spec.x || 0, spec.y || 0, spec.z || 0);
     group.rotation.y = spec.ry || 0;
-    const { w, h } = spec;
+    // Artwork is 16:9. A taller or wider mesh squishes the letters, so fit inside the slot.
+    let { w, h } = spec;
+    if (w > 0 && h > 0) {
+      if (w / h > 16 / 9) w = h * 16 / 9;
+      else h = w * 9 / 16;
+    }
     const R = spec.curve || 0;
     const geo = R ? curvedGeometry(w, h, R) : new THREE.PlaneGeometry(w, h);
     const screen = new THREE.Mesh(geo, b.mat);
@@ -245,8 +329,12 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
     }
     const frame = kit.build({ ...kitMats, metal: frameMat });
     group.add(frame);
+    const rim = new THREE.Mesh(new THREE.PlaneGeometry(w + 0.7, h + 0.7), new THREE.MeshBasicMaterial({ color: 0xff1a1a, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
+    rim.position.z = -0.01;
+    rim.visible = false;
+    group.add(rim);
     parent.add(group);
-    const rec = { group, screen, w, h, R };
+    const rec = { group, screen, w, h, R, rim };
     b.mounts.push(rec);
     return group;
   }
@@ -391,7 +479,8 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
     g.fillStyle = '#ffcf5a';
     const views = Math.max(0, Math.floor(Number(b.data?.views) || 0));
     const clicks = Math.max(0, Math.floor(Number(b.data?.clicks) || 0));
-    const msg = `👁 택시 정차 ${views}회   ·   🔗 링크 클릭 ${clicks}회   ·   ${liveHead}`;
+    const notes = Array.isArray(b.data?.notes) ? b.data.notes.map((t) => chars(String(t || ''), 15)).filter(Boolean).slice(-5) : [];
+    const msg = notes.length ? `${notes.join('   ·   ')}   ·   ` : `👁 택시 정차 ${views}회   ·   🔗 링크 클릭 ${clicks}회   ·   ${liveHead}`;
     const tw = Math.max(8, g.measureText(msg).width);
     const x0 = 120 * k - ((t * 90) % tw);
     g.fillText(msg, x0, body + th / 2);
@@ -414,28 +503,69 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
       g.fill();
     }
     g.globalAlpha = 1;
+    applyOverlay(b);
     b.tex.needsUpdate = true;
   }
 
-  function update(dt) {
+  const showMeshes = [];
+  function watchShow(holo, laser) { showMeshes[0] = holo; showMeshes[1] = laser; }
+  function setShow(on) { for (const m of showMeshes) if (m) m.visible = !!on; }
+  function shieldText(b) {
+    const d = b.data;
+    if (!d?.holder_id || !d.protected_until) return '';
+    const exp = d.expires_at ? new Date(d.expires_at).getTime() : 0;
+    if (!(exp > Date.now())) return '';
+    const left = new Date(d.protected_until).getTime() - Date.now();
+    if (left > 60000) return '';
+    if (left > 0) {
+      const s = Math.ceil(left / 1000);
+      return `🚨 방어막 해제 임박! ${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')} (탈환 가능 대기중)`;
+    }
+    return '⚡ 지금 빼기 가능! (+50 코인으로 즉시 강탈)';
+  }
+  function update(dt, cam) {
     tickerTex.offset.x = (tickerTex.offset.x + dt * 0.035) % 1;
     liveAcc += dt;
-    if (liveAcc < 0.05) return;
+    if (liveAcc < 0.08) return;
     liveAcc = 0;
     liveTick++;
-    const t = screenTime.value;
+    const near = [];
+    for (const b of boards.values()) {
+      if (!b.mounts.length) continue;
+      const p = worldPos(b.slotId);
+      const d = cam && p ? cam.distanceToSquared(p) : 0;
+      near.push({ b, d });
+    }
+    near.sort((a, b) => a.d - b.d);
+    const hot = new Set(near.slice(0, 10).map((r) => r.b));
     const seen = new Set();
     for (const b of boards.values()) {
-      if (!b.mounts.length || seen.has(b.canvas)) continue;
+      const on = hot.has(b);
+      if (b.mat?.userData?.sweep) b.mat.userData.sweep.value = on ? 1 : 0;
+      if (!on || b.shared || seen.has(b.canvas)) continue;
       seen.add(b.canvas);
-      const hero = b.slotId === 'MAIN_S' || b.shared;
-      if (!hero) continue;
-      if (b.shared && (liveTick % 2) !== 0) continue;
-      drawLive(b, t);
+      drawLive(b, screenTime.value);
+    }
+    if (liveTick % 8 === 0) {
+      for (const b of boards.values()) {
+        const text = shieldText(b);
+        if (text !== (b.shield || '')) { b.shield = text; paint(b); }
+        const warn = text.startsWith('🚨');
+        for (const m of b.mounts) {
+          if (!m.rim) continue;
+          m.rim.visible = !!text;
+          m.rim.material.opacity = warn ? ((liveTick / 8) % 2 < 1 ? 0.62 : 0.16) : 0.4;
+          m.rim.material.color.set(warn ? 0xff1a1a : 0xffcf5a);
+        }
+      }
+      if (showMeshes[1]?.visible) {
+        const hues = [0xff3d4a, 0xffcf5a, 0x39f58a, 0x3fe6ff, 0xb84dff, 0xff7ad9];
+        showMeshes[1].material.color.set(hues[(liveTick / 8) % hues.length | 0]);
+      }
     }
   }
 
   function accentOf(slotId) { return THEMES[boards.get(slotId)?.data.bg_theme]?.accent || '#3fe6ff'; }
 
-  return { boards, ensure, mount, unmount, set, get: (id) => boards.get(id), worldPos, setTicker, repaintAll, update, accentOf, tickerCanvas };
+  return { boards, ensure, mount, unmount, set, get: (id) => boards.get(id), worldPos, setTicker, repaintAll, update, accentOf, tickerCanvas, watchShow, setShow, setAir, setDecals, decalsOf: (id) => (boards.get(id)?.decals || []).slice() };
 }
