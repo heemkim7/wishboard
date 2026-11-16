@@ -69,12 +69,17 @@ LANGUAGE plpgsql
 SET search_path = public
 AS $$
 BEGIN
-  IF NEW.holder_id IS NOT NULL AND NEW.current_bid > 0
-     AND (NEW.current_bid IS DISTINCT FROM OLD.current_bid
-       OR NEW.holder_id IS DISTINCT FROM OLD.holder_id
-       OR NEW.expires_at IS DISTINCT FROM OLD.expires_at) THEN
+  -- holder change counts the new bid; a raise by the same holder counts only the increase.
+  -- An expires_at-only update does not move spent.
+  IF NEW.holder_id IS NOT NULL AND NEW.holder_id IS DISTINCT FROM OLD.holder_id THEN
+    IF COALESCE(NEW.current_bid, 0) > 0 THEN
+      UPDATE public.wallets
+      SET spent = spent + NEW.current_bid, updated_at = now()
+      WHERE actor_id = NEW.holder_id;
+    END IF;
+  ELSIF NEW.holder_id IS NOT NULL AND NEW.current_bid > OLD.current_bid THEN
     UPDATE public.wallets
-    SET spent = spent + NEW.current_bid, updated_at = now()
+    SET spent = spent + (NEW.current_bid - OLD.current_bid), updated_at = now()
     WHERE actor_id = NEW.holder_id;
   END IF;
   RETURN NEW;
@@ -91,6 +96,14 @@ ALTER TABLE public.billboards ADD COLUMN IF NOT EXISTS photo_id TEXT;
 ALTER TABLE public.billboards ADD COLUMN IF NOT EXISTS photo_status TEXT CHECK (photo_status IN ('pending', 'approved'));
 ALTER TABLE public.billboards ADD COLUMN IF NOT EXISTS views BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE public.billboards ADD COLUMN IF NOT EXISTS clicks BIGINT NOT NULL DEFAULT 0;
+-- 문구 세로 위치(%). claim_billboard(p_caption_y)가 12~88로 잘라서 쓴다.
+ALTER TABLE public.billboards ADD COLUMN IF NOT EXISTS caption_y SMALLINT NOT NULL DEFAULT 72;
+ALTER TABLE public.billboards ADD COLUMN IF NOT EXISTS lit_until TIMESTAMPTZ;
+ALTER TABLE public.billboards ADD COLUMN IF NOT EXISTS lit_on DATE;
+ALTER TABLE public.billboards ADD COLUMN IF NOT EXISTS lit_days INT NOT NULL DEFAULT 0;
+ALTER TABLE public.billboards ADD COLUMN IF NOT EXISTS cheers INT NOT NULL DEFAULT 0;
+ALTER TABLE public.billboards ADD COLUMN IF NOT EXISTS frame TEXT;
+UPDATE public.billboards SET lit_until = expires_at WHERE lit_until IS NULL;
 
 -- Claimable slots. Main tower is the expensive face: five stacked screens.
 INSERT INTO public.billboards (slot_id, tier, current_bid, line1, line2, line3, expires_at, protected_until) VALUES
@@ -134,9 +147,96 @@ INSERT INTO public.app_secrets (key_name, key_value)
 VALUES ('FLUSH_KEY', 'YOUR_FLUSH_SECRET_HERE')
 ON CONFLICT (key_name) DO NOTHING;
 
+-- profiles, the coin ledger, and billboard history. Re-run safe. No public read.
+CREATE TABLE IF NOT EXISTS public.profiles (
+  actor_id TEXT PRIMARY KEY REFERENCES public.wallets(actor_id) ON DELETE CASCADE,
+  level INT NOT NULL DEFAULT 1 CHECK (level BETWEEN 1 AND 99),
+  reputation INT NOT NULL DEFAULT 0 CHECK (reputation >= 0),
+  species SMALLINT NOT NULL DEFAULT 1 CHECK (species BETWEEN 1 AND 3),
+  ring_color TEXT NOT NULL DEFAULT '#ff3d9a',
+  starter_slot TEXT,
+  attend_streak INT NOT NULL DEFAULT 0,
+  attend_last DATE,
+  tribe_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS tribe_id TEXT;
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS public.coin_ledger (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  actor_id TEXT NOT NULL,
+  delta BIGINT NOT NULL,
+  reason TEXT NOT NULL CHECK (reason IN (
+    'mine','fare','bonus','claim','refund','landlord','photo','photo_refund',
+    'sell','spend','link','admin','lottery','starter'
+  )),
+  ref TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS coin_ledger_actor_idx ON public.coin_ledger (actor_id, created_at DESC);
+ALTER TABLE public.coin_ledger ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS public.billboard_history (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  slot_id TEXT NOT NULL,
+  holder_id TEXT,
+  holder_name TEXT,
+  line1 TEXT, line2 TEXT, line3 TEXT,
+  bid BIGINT NOT NULL DEFAULT 0,
+  event TEXT NOT NULL CHECK (event IN (
+    'claim','takeover','edit','relight','clear','takedown','reject','starter'
+  )),
+  at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS billboard_history_slot_idx ON public.billboard_history (slot_id, at DESC);
+ALTER TABLE public.billboard_history ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS public.lottery_draws (
+  bucket BIGINT PRIMARY KEY,
+  winning SMALLINT NOT NULL CHECK (winning BETWEEN 1 AND 15),
+  drawn_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE public.lottery_draws ENABLE ROW LEVEL SECURITY;
+
+-- 5.7 reports: one row per account, slot, and KST day. AT TIME ZONE is STABLE, so the
+-- unique index calls an IMMUTABLE wrapper of that same Seoul-date expression.
+CREATE OR REPLACE FUNCTION public.report_kst_day(p_at TIMESTAMPTZ)
+RETURNS DATE
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT (p_at AT TIME ZONE 'Asia/Seoul')::date;
+$$;
+
+CREATE TABLE IF NOT EXISTS public.reports (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  slot_id TEXT NOT NULL,
+  reporter_id TEXT NOT NULL,
+  reason TEXT NOT NULL CHECK (reason IN ('abuse','ad','impersonation','other')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS reports_day_idx
+  ON public.reports (slot_id, reporter_id, (public.report_kst_day(created_at)));
+
+CREATE TABLE IF NOT EXISTS public.billboard_reviews (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  slot_id TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  bid BIGINT NOT NULL,
+  payload JSONB NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS billboard_reviews_pending_idx
+  ON public.billboard_reviews (slot_id) WHERE status = 'pending';
+ALTER TABLE public.reports ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.billboard_reviews ENABLE ROW LEVEL SECURITY;
+
 -- ============================================================================
 -- RPC 1: Worker DO 전용 코인 배치 정산 (기존 tap_batch 대체)
--- p_items 형식: [{"actor_id":"guest:123", "nickname":"홍길동", "delta":45}, ...]
+-- p_items 형식: [{"actor_id":"guest:123", "nickname":"홍길동", "delta":45, "reason":"mine"}, ...]
+-- coin_batch 항목: reason이 없으면 'mine'
 -- ============================================================================
 CREATE OR REPLACE FUNCTION public.coin_batch(p_key TEXT, p_items JSONB)
 RETURNS JSONB
@@ -148,6 +248,8 @@ DECLARE
   v_secret TEXT;
   v_item JSONB;
   v_count INT := 0;
+  v_delta BIGINT;
+  v_reason TEXT;
 BEGIN
   SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
   IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
@@ -156,17 +258,28 @@ BEGIN
 
   FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
   LOOP
+    -- coin_batch 항목: reason이 없으면 'mine'
+    v_delta := LEAST(GREATEST((v_item->>'delta')::BIGINT, 0), 500);
+    v_reason := COALESCE(NULLIF(v_item->>'reason', ''), 'mine');
+    IF v_reason NOT IN (
+      'mine','fare','bonus','claim','refund','landlord','photo','photo_refund',
+      'sell','spend','link','admin','lottery','starter'
+    ) THEN
+      v_reason := 'mine';
+    END IF;
     INSERT INTO public.wallets (actor_id, nickname, coins, updated_at)
     VALUES (
       v_item->>'actor_id',
       COALESCE(NULLIF( left(v_item->>'nickname', 16), '' ), '네온손님'),
-      100 + LEAST(GREATEST((v_item->>'delta')::BIGINT, 0), 500), -- 1회 배치당 최대 500코인 상한 방어
+      100 + v_delta, -- 1회 배치당 최대 500코인 상한 방어
       now()
     )
     ON CONFLICT (actor_id) DO UPDATE
-    SET coins = public.wallets.coins + LEAST(GREATEST((v_item->>'delta')::BIGINT, 0), 500),
+    SET coins = public.wallets.coins + v_delta,
         nickname = COALESCE(NULLIF(left(v_item->>'nickname', 16), ''), public.wallets.nickname),
         updated_at = now();
+    INSERT INTO public.coin_ledger (actor_id, delta, reason)
+    VALUES (v_item->>'actor_id', v_delta, v_reason);
     v_count := v_count + 1;
   END LOOP;
 
@@ -200,7 +313,7 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'error', '10, 20, 50코인만 팔 수 있어요.');
   END IF;
   SELECT * INTO v_board FROM public.billboards WHERE slot_id = p_slot_id FOR UPDATE;
-  IF NOT FOUND OR v_board.holder_id IS NULL OR v_board.expires_at <= now() THEN
+  IF NOT FOUND OR v_board.holder_id IS NULL OR COALESCE(v_board.lit_until, v_board.expires_at) <= now() THEN
     RETURN jsonb_build_object('ok', false, 'error', '지금 그 전광판을 산 광고주가 없어요.');
   END IF;
   IF v_board.holder_id = p_actor_id THEN
@@ -217,7 +330,8 @@ BEGIN
   WHERE actor_id = p_actor_id;
   UPDATE public.wallets SET coins = coins + p_amount, updated_at = now()
   WHERE actor_id = v_board.holder_id;
-  RETURN jsonb_build_object('ok', true, 'remaining_coins', v_seller.coins - p_amount, 'buyer_name', v_board.holder_name, 'amount', p_amount);
+  -- buyer_id: Worker가 광고주 소켓에 WALLET_SYNC를 보내는 데만 쓴다. 클라이언트 응답에는 넣지 않는다.
+  RETURN jsonb_build_object('ok', true, 'remaining_coins', v_seller.coins - p_amount, 'buyer_name', v_board.holder_name, 'buyer_id', v_board.holder_id, 'amount', p_amount);
 END;
 $$;
 
@@ -276,7 +390,6 @@ DECLARE
   v_plot_owner TEXT;
   v_min_required BIGINT;
   v_protect_mins INT;
-  v_expire_mins INT;
 BEGIN
   SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
   IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
@@ -296,12 +409,12 @@ BEGIN
   END IF;
 
   -- 아직 보호 시간(최소 노출 보장)이 남아있는 경우 밀어내기 불가
-  IF v_board.protected_until > now() AND v_board.expires_at > now() AND v_board.holder_id IS DISTINCT FROM p_actor_id THEN
+  IF v_board.protected_until > now() AND COALESCE(v_board.lit_until, v_board.expires_at) > now() AND v_board.holder_id IS DISTINCT FROM p_actor_id THEN
     RETURN jsonb_build_object('ok', false, 'error', '현재 광고의 최소 보장 시간이 남아있습니다.');
   END IF;
 
   -- 빈 자리는 등급 기본가. 누군가 점령 중일 때만 직전 입찰가 + 50.
-  IF v_board.holder_id IS NULL OR v_board.expires_at <= now() THEN
+  IF v_board.holder_id IS NULL OR COALESCE(v_board.lit_until, v_board.expires_at) <= now() THEN
     v_min_required := CASE
       WHEN v_board.slot_id IN ('PLOT_18', 'PLOT_19', 'PLOT_20') THEN 30
       WHEN v_board.tier = 'S' THEN 3000
@@ -335,7 +448,6 @@ BEGIN
 
   -- 등급별 보호 시간 및 만료 시간 설정
   v_protect_mins := CASE v_board.tier WHEN 'S' THEN 120 WHEN 'B' THEN 60 ELSE 30 END;
-  v_expire_mins  := CASE v_board.tier WHEN 'S' THEN 720 WHEN 'B' THEN 360 ELSE 180 END;
 
   -- 점유자가 바뀌면 이전 점유자의 사진은 내려간다. 아직 검수 전이었다면 사진 요금을 돌려준다.
   IF v_board.photo_id IS NOT NULL AND v_board.holder_id IS DISTINCT FROM p_actor_id THEN
@@ -360,7 +472,10 @@ BEGIN
       external_url = CASE WHEN left(COALESCE(p_external_url, ''), 200) ~ '^https://' THEN left(p_external_url, 200) ELSE NULL END,
       current_bid = p_bid,
       protected_until = now() + (v_protect_mins || ' minutes')::INTERVAL,
-      expires_at = now() + (v_expire_mins || ' minutes')::INTERVAL,
+      expires_at = now() + interval '72 hours',
+      lit_until = now() + interval '72 hours',
+      lit_days = 1,
+      lit_on = (timezone('Asia/Seoul', now()))::date,
       updated_at = now()
   WHERE slot_id = p_slot_id
   RETURNING * INTO v_board;
@@ -493,7 +608,7 @@ BEGIN
   IF NOT FOUND THEN
     RETURN jsonb_build_object('ok', false, 'error', '존재하지 않는 전광판 슬롯입니다.');
   END IF;
-  IF v_board.holder_id IS DISTINCT FROM p_actor_id OR v_board.expires_at <= now() THEN
+  IF v_board.holder_id IS DISTINCT FROM p_actor_id OR COALESCE(v_board.lit_until, v_board.expires_at) <= now() THEN
     RETURN jsonb_build_object('ok', false, 'error', '지금 이 전광판을 점령 중인 사람만 사진을 올릴 수 있어요.');
   END IF;
   IF v_board.photo_status = 'pending' THEN
@@ -729,7 +844,8 @@ AS $$
   END;
 $$;
 
--- caption_y overload only. The 12-arg claim_billboard stays as it is.
+-- 14-arg claim. The 12-arg claim_billboard stays. Drop only the old caption_y signature.
+DROP FUNCTION IF EXISTS public.claim_billboard(text, text, text, text, bigint, text, text, text, text, text, text, text, integer);
 CREATE OR REPLACE FUNCTION public.claim_billboard(
   p_key TEXT,
   p_actor_id TEXT,
@@ -743,7 +859,8 @@ CREATE OR REPLACE FUNCTION public.claim_billboard(
   p_bg_theme TEXT,
   p_text_color TEXT,
   p_external_url TEXT DEFAULT NULL,
-  p_caption_y INTEGER DEFAULT 72
+  p_caption_y INTEGER DEFAULT 72,
+  p_mode TEXT DEFAULT 'claim'
 )
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -758,7 +875,6 @@ DECLARE
   v_floor BIGINT;
   v_min_required BIGINT;
   v_protect_mins INT;
-  v_expire_mins INT;
   v_prev_id TEXT;
   v_prev_name TEXT;
   v_prev_l1 TEXT;
@@ -767,14 +883,55 @@ DECLARE
   v_prev_emoji TEXT;
   v_prev_theme TEXT;
   v_prev_color TEXT;
+  v_prev_bid BIGINT := 0;
+  v_live BOOLEAN := false;
+  v_charge BIGINT := 0;
+  v_refund BIGINT := 0;
+  v_landlord BIGINT := 0;
+  v_event TEXT := 'claim';
   v_mono_before TEXT;
   v_mono_after TEXT;
   v_reclaim BIGINT;
   v_rival BOOLEAN;
+  v_review BIGINT;
+  v_payer TEXT;
+  v_holder TEXT;
+  v_name TEXT;
+  v_tribe TEXT;
+  v_tag TEXT;
+  v_show BIGINT;
+  v_left BIGINT;
+  v_take BIGINT;
+  v_pool_id BIGINT;
+  v_pool_amount BIGINT;
+  v_pool_spent BIGINT;
 BEGIN
   SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
   IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
     RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+
+  IF p_mode NOT IN ('claim', 'edit', 'starter', 'tribe') THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'mode');
+  END IF;
+  v_payer := p_actor_id;
+  v_holder := p_actor_id;
+  v_name := p_nickname;
+  IF p_mode = 'tribe' THEN
+    SELECT tm.tribe_id, t.tag INTO v_tribe, v_tag
+    FROM public.tribe_members tm
+    JOIN public.tribes t ON t.id = tm.tribe_id
+    WHERE tm.actor_id = p_actor_id;
+    IF v_tribe IS NULL THEN
+      RETURN jsonb_build_object('ok', false, 'error', 'tribe');
+    END IF;
+    v_payer := 'tribe:' || v_tribe;
+    v_holder := v_payer;
+    v_name := v_tag;
+  END IF;
+  IF p_slot_id LIKE 'MAIN_%' AND p_mode IN ('claim', 'starter', 'tribe')
+     AND ((timezone('Asia/Seoul', now()))::time < time '21:00' OR (timezone('Asia/Seoul', now()))::time >= time '21:10') THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'auction_closed');
   END IF;
 
   v_floor := public.slot_floor(p_slot_id);
@@ -782,38 +939,22 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'error', '그 전광판은 점령할 수 없습니다.');
   END IF;
 
-  INSERT INTO public.wallets (actor_id, nickname, coins)
-  VALUES (p_actor_id, left(COALESCE(p_nickname, '익명'), 16), 100)
-  ON CONFLICT (actor_id) DO NOTHING;
+  IF p_mode IS DISTINCT FROM 'tribe' THEN
+    INSERT INTO public.wallets (actor_id, nickname, coins)
+    VALUES (p_actor_id, left(COALESCE(p_nickname, '익명'), 16), 100)
+    ON CONFLICT (actor_id) DO NOTHING;
+  END IF;
 
-  SELECT * INTO v_wallet FROM public.wallets WHERE actor_id = p_actor_id FOR UPDATE;
+  SELECT * INTO v_wallet FROM public.wallets WHERE actor_id = v_payer FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('ok', false, 'error', '코인이 부족합니다. 붕어빵을 더 구워보세요!');
+  END IF;
   SELECT * INTO v_board FROM public.billboards WHERE slot_id = p_slot_id FOR UPDATE;
   IF NOT FOUND THEN
     RETURN jsonb_build_object('ok', false, 'error', '존재하지 않는 전광판 슬롯입니다.');
   END IF;
 
-  IF v_board.protected_until > now() AND v_board.expires_at > now() AND v_board.holder_id IS DISTINCT FROM p_actor_id THEN
-    RETURN jsonb_build_object('ok', false, 'error', '현재 광고의 최소 보장 시간이 남아있습니다.');
-  END IF;
-
-  IF v_board.holder_id IS NULL OR v_board.expires_at <= now() THEN
-    v_min_required := v_floor;
-  ELSE
-    v_min_required := GREATEST(v_floor, v_board.current_bid + 50);
-  END IF;
-
-  v_mono_before := public.monopoly_name();
-  IF v_mono_before IS NOT NULL AND p_slot_id LIKE 'MAIN_%' AND NOT public.monopoly_member(p_actor_id, p_line1, p_line2, p_line3) THEN
-    v_min_required := ceil(v_min_required * 1.5)::bigint;
-  END IF;
-
-  IF p_bid < v_min_required THEN
-    RETURN jsonb_build_object('ok', false, 'error', '최소 ' || v_min_required || ' 코인 이상 입찰해야 합니다.');
-  END IF;
-  IF v_wallet.coins < p_bid THEN
-    RETURN jsonb_build_object('ok', false, 'error', '코인이 부족합니다. 붕어빵을 더 구워보세요!');
-  END IF;
-
+  v_live := v_board.holder_id IS NOT NULL AND COALESCE(v_board.lit_until, v_board.expires_at) > now();
   v_prev_id := v_board.holder_id;
   v_prev_name := v_board.holder_name;
   v_prev_l1 := v_board.line1;
@@ -822,15 +963,155 @@ BEGIN
   v_prev_emoji := v_board.emoji;
   v_prev_theme := v_board.bg_theme;
   v_prev_color := v_board.text_color;
-
-  UPDATE public.wallets SET coins = coins - p_bid, nickname = left(p_nickname, 16), updated_at = now()
-  WHERE actor_id = p_actor_id;
-
-  IF v_board.tier = 'C' AND v_board.plot_id IS NOT NULL THEN
+  v_prev_bid := COALESCE(v_board.current_bid, 0);
+  IF v_board.plot_id IS NOT NULL THEN
     SELECT owner_id INTO v_plot_owner FROM public.plots WHERE plot_id = v_board.plot_id;
-    IF v_plot_owner IS NOT NULL AND v_plot_owner IS DISTINCT FROM p_actor_id THEN
-      UPDATE public.wallets SET coins = coins + (p_bid / 2), updated_at = now()
-      WHERE actor_id = v_plot_owner;
+  END IF;
+  v_mono_before := public.monopoly_name();
+
+  IF p_mode = 'starter' THEN
+    IF p_bid <> 0 OR p_slot_id NOT IN ('STREET_8','STREET_9','STREET_10','STREET_11') OR v_live THEN
+      RETURN jsonb_build_object('ok', false, 'error', 'starter');
+    END IF;
+    INSERT INTO public.profiles (actor_id) VALUES (p_actor_id) ON CONFLICT (actor_id) DO NOTHING;
+    PERFORM 1 FROM public.profiles WHERE actor_id = p_actor_id FOR UPDATE;
+    IF EXISTS (SELECT 1 FROM public.profiles WHERE actor_id = p_actor_id AND starter_slot IS NOT NULL) THEN
+      RETURN jsonb_build_object('ok', false, 'error', 'starter');
+    END IF;
+    v_charge := 0; v_refund := 0; v_landlord := 0;
+    v_event := 'starter';
+  ELSIF p_mode = 'edit' THEN
+    IF v_board.holder_id IS DISTINCT FROM p_actor_id OR NOT v_live OR p_bid < v_board.current_bid THEN
+      RETURN jsonb_build_object('ok', false, 'error', 'edit');
+    END IF;
+    v_charge := GREATEST(0, p_bid - v_board.current_bid);
+    v_refund := 0;
+    v_landlord := 0;
+    IF v_board.plot_id IS NOT NULL AND v_plot_owner IS NOT NULL AND v_plot_owner IS DISTINCT FROM p_actor_id THEN
+      v_landlord := v_charge / 2;
+    END IF;
+    v_event := 'edit';
+  ELSE
+    IF v_board.protected_until > now() AND v_live AND v_board.holder_id IS DISTINCT FROM p_actor_id THEN
+      RETURN jsonb_build_object('ok', false, 'error', '현재 광고의 최소 보장 시간이 남아있습니다.');
+    END IF;
+    IF NOT v_live THEN
+      v_min_required := v_floor;
+    ELSE
+      v_min_required := GREATEST(v_floor, v_board.current_bid + 50);
+    END IF;
+    IF v_mono_before IS NOT NULL AND p_slot_id LIKE 'MAIN_%' AND NOT public.monopoly_member(v_holder, p_line1, p_line2, p_line3) THEN
+      v_min_required := ceil(v_min_required * 1.5)::bigint;
+    END IF;
+    IF p_bid < v_min_required THEN
+      RETURN jsonb_build_object('ok', false, 'error', '최소 ' || v_min_required || ' 코인 이상 입찰해야 합니다.');
+    END IF;
+    v_charge := p_bid;
+    IF NOT v_live THEN
+      v_refund := 0;
+      v_landlord := CASE WHEN v_board.plot_id IS NOT NULL AND v_plot_owner IS NOT NULL AND v_plot_owner IS DISTINCT FROM v_holder THEN p_bid / 2 ELSE 0 END;
+    ELSE
+      v_refund := LEAST(p_bid, v_prev_bid * 80 / 100);
+      v_landlord := (p_bid - v_refund) / 2;
+      IF v_board.plot_id IS NULL OR v_plot_owner IS NULL OR v_plot_owner = v_holder OR v_plot_owner = v_board.holder_id THEN
+        v_landlord := 0;
+      END IF;
+    END IF;
+    v_event := CASE WHEN v_live AND v_prev_id IS NOT NULL AND v_prev_id IS DISTINCT FROM v_holder THEN 'takeover' ELSE 'claim' END;
+  END IF;
+
+  IF v_refund > v_charge THEN
+    v_refund := v_charge;
+  END IF;
+  IF v_refund + v_landlord > v_charge THEN
+    v_landlord := v_charge - v_refund;
+  END IF;
+  IF v_wallet.coins < v_charge THEN
+    RETURN jsonb_build_object('ok', false, 'error', '코인이 부족합니다. 붕어빵을 더 구워보세요!');
+  END IF;
+
+  -- S-tier claim waits for review. The bid is held here; the board and the 4.1 split wait until approval.
+  -- Tribe pays from tribe:<id>. The review stores that id so approval does not charge the member.
+  IF v_board.tier = 'S' AND p_mode IN ('claim', 'tribe') THEN
+    IF EXISTS (SELECT 1 FROM public.billboard_reviews WHERE slot_id = p_slot_id AND status = 'pending') THEN
+      RETURN jsonb_build_object('ok', false, 'error', 'pending');
+    END IF;
+    IF v_wallet.coins < p_bid THEN
+      RETURN jsonb_build_object('ok', false, 'error', '코인이 부족합니다. 붕어빵을 더 구워보세요!');
+    END IF;
+    UPDATE public.wallets SET coins = coins - p_bid, updated_at = now() WHERE actor_id = v_payer;
+    INSERT INTO public.coin_ledger (actor_id, delta, reason, ref) VALUES (v_payer, -p_bid, 'claim', p_slot_id);
+    IF p_mode = 'tribe' AND v_tribe IS NOT NULL THEN
+      v_left := p_bid;
+      FOR v_pool_id, v_pool_amount, v_pool_spent IN
+        SELECT id, amount, spent FROM public.tribe_pool
+        WHERE tribe_id = v_tribe AND spent < amount
+        ORDER BY week, id
+        FOR UPDATE
+      LOOP
+        EXIT WHEN v_left <= 0;
+        v_take := LEAST(v_left, v_pool_amount - v_pool_spent);
+        UPDATE public.tribe_pool SET spent = spent + v_take WHERE id = v_pool_id;
+        v_left := v_left - v_take;
+      END LOOP;
+    END IF;
+    INSERT INTO public.billboard_reviews (slot_id, actor_id, bid, payload)
+    VALUES (p_slot_id, v_payer, p_bid, jsonb_build_object(
+      'nickname', left(CASE WHEN p_mode = 'tribe' THEN v_name ELSE p_nickname END, 16),
+      'line1', left(p_line1, 16), 'line2', left(p_line2, 16), 'line3', left(p_line3, 16),
+      'emoji', left(COALESCE(p_emoji, '✨'), 4), 'bg_theme', p_bg_theme, 'text_color', p_text_color,
+      'external_url', p_external_url, 'caption_y', p_caption_y, 'member', p_actor_id))
+    RETURNING id INTO v_review;
+    IF p_mode = 'tribe' THEN
+      SELECT coins INTO v_show FROM public.wallets WHERE actor_id = p_actor_id;
+    ELSE
+      v_show := v_wallet.coins - p_bid;
+    END IF;
+    RETURN jsonb_build_object('ok', true, 'review_id', v_review, 'remaining_coins', COALESCE(v_show, 0));
+  END IF;
+
+  UPDATE public.wallets
+  SET coins = coins - v_charge,
+      nickname = CASE WHEN p_mode = 'tribe' THEN nickname ELSE left(p_nickname, 16) END,
+      updated_at = now()
+  WHERE actor_id = v_payer;
+
+  IF p_mode = 'starter' THEN
+    INSERT INTO public.coin_ledger (actor_id, delta, reason, ref)
+    VALUES (p_actor_id, 0, 'starter', p_slot_id);
+  ELSIF v_charge > 0 THEN
+    INSERT INTO public.coin_ledger (actor_id, delta, reason, ref)
+    VALUES (v_payer, -v_charge, 'claim', p_slot_id);
+  END IF;
+  IF p_mode = 'tribe' AND v_tribe IS NOT NULL AND v_charge > 0 THEN
+    v_left := v_charge;
+    FOR v_pool_id, v_pool_amount, v_pool_spent IN
+      SELECT id, amount, spent FROM public.tribe_pool
+      WHERE tribe_id = v_tribe AND spent < amount
+      ORDER BY week, id
+      FOR UPDATE
+    LOOP
+      EXIT WHEN v_left <= 0;
+      v_take := LEAST(v_left, v_pool_amount - v_pool_spent);
+      UPDATE public.tribe_pool SET spent = spent + v_take WHERE id = v_pool_id;
+      v_left := v_left - v_take;
+    END LOOP;
+  END IF;
+
+  IF v_refund > 0 AND v_prev_id IS NOT NULL THEN
+    UPDATE public.wallets SET coins = coins + v_refund, updated_at = now()
+    WHERE actor_id = v_prev_id;
+    IF FOUND THEN
+      INSERT INTO public.coin_ledger (actor_id, delta, reason, ref)
+      VALUES (v_prev_id, v_refund, 'refund', p_slot_id);
+    END IF;
+  END IF;
+  IF v_landlord > 0 AND v_plot_owner IS NOT NULL THEN
+    UPDATE public.wallets SET coins = coins + v_landlord, updated_at = now()
+    WHERE actor_id = v_plot_owner;
+    IF FOUND THEN
+      INSERT INTO public.coin_ledger (actor_id, delta, reason, ref)
+      VALUES (v_plot_owner, v_landlord, 'landlord', p_slot_id);
     END IF;
   END IF;
 
@@ -839,9 +1120,8 @@ BEGIN
   IF left(p_actor_id, 5) = 'user:' THEN
     v_protect_mins := v_protect_mins + 5;
   END IF;
-  v_expire_mins  := CASE v_board.tier WHEN 'S' THEN 720 WHEN 'B' THEN 360 ELSE 180 END;
 
-  IF v_board.photo_id IS NOT NULL AND v_board.holder_id IS DISTINCT FROM p_actor_id THEN
+  IF v_board.photo_id IS NOT NULL AND v_prev_id IS DISTINCT FROM v_holder THEN
     UPDATE public.wallets w SET coins = w.coins + p.fee, updated_at = now()
     FROM public.billboard_photos p
     WHERE p.photo_id = v_board.photo_id AND p.status = 'pending' AND w.actor_id = p.actor_id;
@@ -850,10 +1130,10 @@ BEGIN
   END IF;
 
   UPDATE public.billboards
-  SET photo_id = CASE WHEN v_board.holder_id = p_actor_id THEN v_board.photo_id END,
-      photo_status = CASE WHEN v_board.holder_id = p_actor_id THEN v_board.photo_status END,
-      holder_id = p_actor_id,
-      holder_name = left(p_nickname, 16),
+  SET photo_id = CASE WHEN v_prev_id = v_holder THEN v_board.photo_id END,
+      photo_status = CASE WHEN v_prev_id = v_holder THEN v_board.photo_status END,
+      holder_id = v_holder,
+      holder_name = left(COALESCE(v_name, ''), 16),
       line1 = left(COALESCE(p_line1, ''), 16),
       line2 = left(COALESCE(p_line2, ''), 16),
       line3 = left(COALESCE(p_line3, ''), 16),
@@ -864,10 +1144,24 @@ BEGIN
       caption_y = LEAST(88, GREATEST(12, COALESCE(p_caption_y, 72))),
       current_bid = p_bid,
       protected_until = now() + (v_protect_mins || ' minutes')::INTERVAL,
-      expires_at = now() + (v_expire_mins || ' minutes')::INTERVAL,
+      expires_at = CASE WHEN p_mode = 'edit' THEN v_board.expires_at ELSE now() + interval '72 hours' END,
+      lit_until = CASE WHEN p_mode = 'edit' THEN v_board.lit_until ELSE now() + interval '72 hours' END,
+      lit_days = CASE WHEN p_mode = 'edit' THEN v_board.lit_days ELSE 1 END,
+      lit_on = CASE WHEN p_mode = 'edit' THEN v_board.lit_on ELSE (timezone('Asia/Seoul', now()))::date END,
       updated_at = now()
   WHERE slot_id = p_slot_id
   RETURNING * INTO v_board;
+
+  IF p_mode = 'starter' THEN
+    UPDATE public.profiles SET starter_slot = p_slot_id WHERE actor_id = p_actor_id;
+  END IF;
+
+  INSERT INTO public.billboard_history (slot_id, holder_id, holder_name, line1, line2, line3, bid, event)
+  VALUES (
+    p_slot_id, v_holder, left(COALESCE(v_name, ''), 16),
+    left(COALESCE(p_line1, ''), 16), left(COALESCE(p_line2, ''), 16), left(COALESCE(p_line3, ''), 16),
+    GREATEST(0, p_bid), v_event
+  );
 
   v_mono_after := public.monopoly_name();
   v_reclaim := v_board.current_bid + 50;
@@ -876,11 +1170,16 @@ BEGIN
   IF v_rival THEN
     v_reclaim := ceil(v_reclaim * 1.5)::bigint;
   END IF;
+  IF p_mode = 'tribe' THEN
+    SELECT coins INTO v_show FROM public.wallets WHERE actor_id = p_actor_id;
+  ELSE
+    v_show := v_wallet.coins - v_charge;
+  END IF;
 
   RETURN jsonb_build_object(
     'ok', true,
     'billboard', row_to_json(v_board),
-    'remaining_coins', v_wallet.coins - p_bid,
+    'remaining_coins', COALESCE(v_show, 0),
     'prev_holder_id', v_prev_id,
     'prev_holder_name', v_prev_name,
     'prev_line1', v_prev_l1,
@@ -889,12 +1188,36 @@ BEGIN
     'prev_emoji', v_prev_emoji,
     'prev_theme', v_prev_theme,
     'prev_color', v_prev_color,
-    'reclaim_bid', CASE WHEN v_prev_id IS NOT NULL AND v_prev_id IS DISTINCT FROM p_actor_id THEN v_reclaim ELSE NULL END,
-    'monopoly_name', CASE WHEN v_mono_after IS NOT NULL AND v_mono_before IS NULL THEN v_mono_after ELSE NULL END
+    'reclaim_bid', CASE WHEN v_prev_id IS NOT NULL AND v_prev_id IS DISTINCT FROM v_holder THEN v_reclaim ELSE NULL END,
+    'monopoly_name', CASE WHEN v_mono_after IS NOT NULL AND v_mono_before IS NULL THEN v_mono_after ELSE NULL END,
+    'refund', v_refund,
+    'landlord', v_landlord
   );
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.record_lottery_draw(p_key TEXT, p_bucket BIGINT, p_winning INT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  IF p_winning IS NULL OR p_winning < 1 OR p_winning > 15 THEN
+    RETURN jsonb_build_object('ok', false);
+  END IF;
+  INSERT INTO public.lottery_draws (bucket, winning)
+  VALUES (p_bucket, p_winning)
+  ON CONFLICT (bucket) DO NOTHING;
+  RETURN jsonb_build_object('ok', true);
+END;
+$$;
 CREATE OR REPLACE FUNCTION public.monopoly_name()
 RETURNS TEXT
 LANGUAGE plpgsql
@@ -911,12 +1234,12 @@ BEGIN
   FROM public.billboards
   WHERE slot_id IN ('MAIN_TOP', 'MAIN_MID', 'MAIN_BOT')
     AND holder_id IS NOT NULL
-    AND expires_at > now();
+    AND COALESCE(lit_until, expires_at) > now();
   IF v_n < 3 THEN
     RETURN NULL;
   END IF;
   IF (SELECT count(DISTINCT holder_id) FROM public.billboards
-      WHERE slot_id IN ('MAIN_TOP', 'MAIN_MID', 'MAIN_BOT') AND holder_id IS NOT NULL AND expires_at > now()) = 1 THEN
+      WHERE slot_id IN ('MAIN_TOP', 'MAIN_MID', 'MAIN_BOT') AND holder_id IS NOT NULL AND COALESCE(lit_until, expires_at) > now()) = 1 THEN
     RETURN v_name;
   END IF;
   SELECT t.tag INTO v_tag
@@ -924,7 +1247,7 @@ BEGIN
     SELECT (regexp_matches(coalesce(line1, '') || ' ' || coalesce(line2, '') || ' ' || coalesce(line3, ''), '#[0-9A-Za-z가-힣_]{1,16}', 'g'))[1] AS tag,
            slot_id
     FROM public.billboards
-    WHERE slot_id IN ('MAIN_TOP', 'MAIN_MID', 'MAIN_BOT') AND expires_at > now()
+    WHERE slot_id IN ('MAIN_TOP', 'MAIN_MID', 'MAIN_BOT') AND COALESCE(lit_until, expires_at) > now()
   ) t
   GROUP BY t.tag
   HAVING count(DISTINCT t.slot_id) = 3
@@ -947,10 +1270,10 @@ BEGIN
     RETURN FALSE;
   END IF;
   SELECT holder_id INTO v_holder FROM public.billboards
-  WHERE slot_id = 'MAIN_TOP' AND expires_at > now();
+  WHERE slot_id = 'MAIN_TOP' AND COALESCE(lit_until, expires_at) > now();
   IF v_holder IS NOT NULL AND v_holder = p_actor
      AND (SELECT count(DISTINCT holder_id) FROM public.billboards
-          WHERE slot_id IN ('MAIN_TOP', 'MAIN_MID', 'MAIN_BOT') AND expires_at > now()) = 1 THEN
+          WHERE slot_id IN ('MAIN_TOP', 'MAIN_MID', 'MAIN_BOT') AND COALESCE(lit_until, expires_at) > now()) = 1 THEN
     RETURN TRUE;
   END IF;
   v_blob := coalesce(p_l1, '') || ' ' || coalesce(p_l2, '') || ' ' || coalesce(p_l3, '');
@@ -959,7 +1282,7 @@ BEGIN
     SELECT (regexp_matches(coalesce(line1, '') || ' ' || coalesce(line2, '') || ' ' || coalesce(line3, ''), '#[0-9A-Za-z가-힣_]{1,16}', 'g'))[1] AS tag,
            slot_id
     FROM public.billboards
-    WHERE slot_id IN ('MAIN_TOP', 'MAIN_MID', 'MAIN_BOT') AND expires_at > now()
+    WHERE slot_id IN ('MAIN_TOP', 'MAIN_MID', 'MAIN_BOT') AND COALESCE(lit_until, expires_at) > now()
   ) t
   GROUP BY t.tag
   HAVING count(DISTINCT t.slot_id) = 3
@@ -1162,3 +1485,1342 @@ BEGIN
   RETURN jsonb_build_object('ok', true, 'actor_id', p_actor_id);
 END;
 $$;
+
+-- One report per account, slot, and KST day. A repeat still counts as received.
+CREATE OR REPLACE FUNCTION public.file_report(p_key TEXT, p_actor_id TEXT, p_slot_id TEXT, p_reason TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  IF p_reason IS NULL OR p_reason NOT IN ('abuse', 'ad', 'impersonation', 'other') THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'reason');
+  END IF;
+  BEGIN
+    INSERT INTO public.reports (slot_id, reporter_id, reason)
+    VALUES (p_slot_id, p_actor_id, p_reason);
+  EXCEPTION WHEN unique_violation THEN
+    RETURN jsonb_build_object('ok', true);
+  END;
+  RETURN jsonb_build_object('ok', true);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.list_reports(p_key TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_items JSONB;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+    'id', id, 'slot_id', slot_id, 'reporter_id', reporter_id, 'reason', reason, 'created_at', created_at
+  ) ORDER BY id DESC), '[]'::JSONB)
+  INTO v_items
+  FROM (
+    SELECT id, slot_id, reporter_id, reason, created_at
+    FROM public.reports
+    ORDER BY id DESC
+    LIMIT 80
+  ) s;
+  RETURN jsonb_build_object('ok', true, 'items', v_items);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.list_billboard_reviews(p_key TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_items JSONB;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+    'id', id, 'slot_id', slot_id, 'actor_id', actor_id, 'bid', bid, 'payload', payload, 'created_at', created_at
+  ) ORDER BY id ASC), '[]'::JSONB)
+  INTO v_items
+  FROM (
+    SELECT id, slot_id, actor_id, bid, payload, created_at
+    FROM public.billboard_reviews
+    WHERE status = 'pending'
+    ORDER BY id ASC
+    LIMIT 40
+  ) s;
+  RETURN jsonb_build_object('ok', true, 'items', v_items);
+END;
+$$;
+
+-- Approve applies 4.1 to the board's current bid at this moment. The buyer was already charged.
+-- Reject returns that bid in full. Pending rows only. The auction window may already be closed.
+CREATE OR REPLACE FUNCTION public.review_slot_claim(p_key TEXT, p_id BIGINT, p_approve BOOLEAN)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_row public.billboard_reviews%ROWTYPE;
+  v_board public.billboards%ROWTYPE;
+  v_plot_owner TEXT;
+  v_prev_id TEXT;
+  v_prev_name TEXT;
+  v_prev_l1 TEXT;
+  v_prev_l2 TEXT;
+  v_prev_l3 TEXT;
+  v_prev_emoji TEXT;
+  v_prev_theme TEXT;
+  v_prev_color TEXT;
+  v_prev_bid BIGINT := 0;
+  v_live BOOLEAN := false;
+  v_bid BIGINT := 0;
+  v_refund BIGINT := 0;
+  v_landlord BIGINT := 0;
+  v_coins BIGINT;
+  v_protect_mins INT;
+  v_exp TIMESTAMPTZ;
+  v_event TEXT;
+  v_mono_before TEXT;
+  v_mono_after TEXT;
+  v_reclaim BIGINT;
+  v_rival BOOLEAN;
+  v_cap INT;
+  v_url TEXT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+
+  SELECT * INTO v_row FROM public.billboard_reviews WHERE id = p_id FOR UPDATE;
+  IF NOT FOUND OR v_row.status IS DISTINCT FROM 'pending' THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'pending');
+  END IF;
+
+  IF p_approve IS NOT TRUE THEN
+    UPDATE public.billboard_reviews SET status = 'rejected' WHERE id = p_id;
+    INSERT INTO public.wallets (actor_id, nickname, coins)
+    VALUES (v_row.actor_id, left(COALESCE(v_row.payload->>'nickname', '익명'), 16), v_row.bid)
+    ON CONFLICT (actor_id) DO UPDATE
+    SET coins = public.wallets.coins + EXCLUDED.coins, updated_at = now()
+    RETURNING coins INTO v_coins;
+    INSERT INTO public.coin_ledger (actor_id, delta, reason, ref)
+    VALUES (v_row.actor_id, v_row.bid, 'refund', v_row.slot_id);
+    RETURN jsonb_build_object('ok', true, 'rejected', true, 'actor_id', v_row.actor_id, 'refund', v_row.bid, 'remaining_coins', v_coins);
+  END IF;
+
+  SELECT * INTO v_board FROM public.billboards WHERE slot_id = v_row.slot_id FOR UPDATE;
+  IF NOT FOUND THEN
+    UPDATE public.billboard_reviews SET status = 'rejected' WHERE id = p_id;
+    INSERT INTO public.wallets (actor_id, nickname, coins)
+    VALUES (v_row.actor_id, left(COALESCE(v_row.payload->>'nickname', '익명'), 16), v_row.bid)
+    ON CONFLICT (actor_id) DO UPDATE
+    SET coins = public.wallets.coins + EXCLUDED.coins, updated_at = now();
+    INSERT INTO public.coin_ledger (actor_id, delta, reason, ref)
+    VALUES (v_row.actor_id, v_row.bid, 'refund', v_row.slot_id);
+    RETURN jsonb_build_object('ok', false, 'error', 'slot');
+  END IF;
+
+  v_bid := v_row.bid;
+  v_live := v_board.holder_id IS NOT NULL AND COALESCE(v_board.lit_until, v_board.expires_at) > now();
+  v_prev_id := v_board.holder_id;
+  v_prev_name := v_board.holder_name;
+  v_prev_l1 := v_board.line1;
+  v_prev_l2 := v_board.line2;
+  v_prev_l3 := v_board.line3;
+  v_prev_emoji := v_board.emoji;
+  v_prev_theme := v_board.bg_theme;
+  v_prev_color := v_board.text_color;
+  v_prev_bid := COALESCE(v_board.current_bid, 0);
+  IF v_board.plot_id IS NOT NULL THEN
+    SELECT owner_id INTO v_plot_owner FROM public.plots WHERE plot_id = v_board.plot_id;
+  END IF;
+  v_mono_before := public.monopoly_name();
+
+  IF NOT v_live THEN
+    v_refund := 0;
+    v_landlord := CASE WHEN v_board.plot_id IS NOT NULL AND v_plot_owner IS NOT NULL AND v_plot_owner IS DISTINCT FROM v_row.actor_id THEN v_bid / 2 ELSE 0 END;
+  ELSE
+    v_refund := LEAST(v_bid, v_prev_bid * 80 / 100);
+    v_landlord := (v_bid - v_refund) / 2;
+    IF v_board.plot_id IS NULL OR v_plot_owner IS NULL OR v_plot_owner = v_row.actor_id OR v_plot_owner = v_board.holder_id THEN
+      v_landlord := 0;
+    END IF;
+  END IF;
+  IF v_refund > v_bid THEN
+    v_refund := v_bid;
+  END IF;
+  IF v_refund + v_landlord > v_bid THEN
+    v_landlord := v_bid - v_refund;
+  END IF;
+
+  IF v_refund > 0 AND v_prev_id IS NOT NULL THEN
+    UPDATE public.wallets SET coins = coins + v_refund, updated_at = now()
+    WHERE actor_id = v_prev_id;
+    IF FOUND THEN
+      INSERT INTO public.coin_ledger (actor_id, delta, reason, ref)
+      VALUES (v_prev_id, v_refund, 'refund', v_row.slot_id);
+    END IF;
+  END IF;
+  IF v_landlord > 0 AND v_plot_owner IS NOT NULL THEN
+    UPDATE public.wallets SET coins = coins + v_landlord, updated_at = now()
+    WHERE actor_id = v_plot_owner;
+    IF FOUND THEN
+      INSERT INTO public.coin_ledger (actor_id, delta, reason, ref)
+      VALUES (v_plot_owner, v_landlord, 'landlord', v_row.slot_id);
+    END IF;
+  END IF;
+
+  v_protect_mins := CASE v_board.tier WHEN 'S' THEN 120 WHEN 'B' THEN 60 ELSE 30 END;
+  IF left(v_row.actor_id, 5) = 'user:' THEN
+    v_protect_mins := v_protect_mins + 5;
+  END IF;
+  v_exp := now() + interval '72 hours';
+  v_event := CASE WHEN v_live AND v_prev_id IS NOT NULL AND v_prev_id IS DISTINCT FROM v_row.actor_id THEN 'takeover' ELSE 'claim' END;
+  v_cap := LEAST(88, GREATEST(12, COALESCE(NULLIF(v_row.payload->>'caption_y', '')::INT, 72)));
+  v_url := left(COALESCE(v_row.payload->>'external_url', ''), 200);
+
+  IF v_board.photo_id IS NOT NULL AND v_prev_id IS DISTINCT FROM v_row.actor_id THEN
+    UPDATE public.wallets w SET coins = w.coins + p.fee, updated_at = now()
+    FROM public.billboard_photos p
+    WHERE p.photo_id = v_board.photo_id AND p.status = 'pending' AND w.actor_id = p.actor_id;
+    UPDATE public.billboard_photos SET status = 'lapsed', jpeg = ''::BYTEA, reviewed_at = COALESCE(reviewed_at, now())
+    WHERE photo_id = v_board.photo_id AND status IN ('pending', 'approved');
+  END IF;
+
+  UPDATE public.billboards
+  SET photo_id = CASE WHEN v_prev_id = v_row.actor_id THEN v_board.photo_id END,
+      photo_status = CASE WHEN v_prev_id = v_row.actor_id THEN v_board.photo_status END,
+      holder_id = v_row.actor_id,
+      holder_name = left(COALESCE(v_row.payload->>'nickname', ''), 16),
+      line1 = left(COALESCE(v_row.payload->>'line1', ''), 16),
+      line2 = left(COALESCE(v_row.payload->>'line2', ''), 16),
+      line3 = left(COALESCE(v_row.payload->>'line3', ''), 16),
+      emoji = left(COALESCE(v_row.payload->>'emoji', '✨'), 4),
+      bg_theme = COALESCE(v_row.payload->>'bg_theme', 'cyber_navy'),
+      text_color = COALESCE(v_row.payload->>'text_color', '#ffffff'),
+      external_url = CASE WHEN v_url ~ '^https://' THEN v_url ELSE NULL END,
+      caption_y = v_cap,
+      current_bid = v_bid,
+      protected_until = now() + (v_protect_mins || ' minutes')::INTERVAL,
+      expires_at = v_exp,
+      lit_until = v_exp,
+      lit_days = 1,
+      lit_on = (timezone('Asia/Seoul', now()))::date,
+      updated_at = now()
+  WHERE slot_id = v_row.slot_id
+  RETURNING * INTO v_board;
+
+  UPDATE public.billboard_reviews SET status = 'approved' WHERE id = p_id;
+
+  INSERT INTO public.billboard_history (slot_id, holder_id, holder_name, line1, line2, line3, bid, event)
+  VALUES (
+    v_row.slot_id, v_row.actor_id, left(COALESCE(v_row.payload->>'nickname', ''), 16),
+    left(COALESCE(v_row.payload->>'line1', ''), 16), left(COALESCE(v_row.payload->>'line2', ''), 16), left(COALESCE(v_row.payload->>'line3', ''), 16),
+    GREATEST(0, v_bid), v_event
+  );
+
+  SELECT coins INTO v_coins FROM public.wallets WHERE actor_id = v_row.actor_id;
+  v_mono_after := public.monopoly_name();
+  v_reclaim := v_board.current_bid + 50;
+  v_rival := v_mono_after IS NOT NULL AND v_row.slot_id LIKE 'MAIN_%'
+    AND NOT public.monopoly_member(v_prev_id, v_prev_l1, v_prev_l2, v_prev_l3);
+  IF v_rival THEN
+    v_reclaim := ceil(v_reclaim * 1.5)::bigint;
+  END IF;
+
+  RETURN jsonb_build_object(
+    'ok', true,
+    'billboard', row_to_json(v_board),
+    'remaining_coins', v_coins,
+    'actor_id', v_row.actor_id,
+    'member', v_row.payload->>'member',
+    'prev_holder_id', v_prev_id,
+    'prev_holder_name', v_prev_name,
+    'prev_line1', v_prev_l1,
+    'prev_line2', v_prev_l2,
+    'prev_line3', v_prev_l3,
+    'prev_emoji', v_prev_emoji,
+    'prev_theme', v_prev_theme,
+    'prev_color', v_prev_color,
+    'reclaim_bid', CASE WHEN v_prev_id IS NOT NULL AND v_prev_id IS DISTINCT FROM v_row.actor_id THEN v_reclaim ELSE NULL END,
+    'monopoly_name', CASE WHEN v_mono_after IS NOT NULL AND v_mono_before IS NULL THEN v_mono_after ELSE NULL END,
+    'refund', v_refund,
+    'landlord', v_landlord,
+    'landlord_id', CASE WHEN v_landlord > 0 THEN v_plot_owner ELSE NULL END
+  );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.takedown_billboard(p_key TEXT, p_slot_id TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_board public.billboards%ROWTYPE;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+
+  UPDATE public.billboards
+  SET line1 = '운영자가 내렸습니다',
+      line2 = '',
+      line3 = '',
+      external_url = NULL,
+      updated_at = now()
+  WHERE slot_id = p_slot_id
+  RETURNING * INTO v_board;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'slot');
+  END IF;
+
+  INSERT INTO public.billboard_history (slot_id, holder_id, holder_name, line1, line2, line3, bid, event)
+  VALUES (
+    p_slot_id, v_board.holder_id, left(COALESCE(v_board.holder_name, ''), 16),
+    '운영자가 내렸습니다', '', '', GREATEST(0, COALESCE(v_board.current_bid, 0)), 'takedown'
+  );
+
+  RETURN jsonb_build_object('ok', true, 'billboard', row_to_json(v_board));
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.file_report(TEXT, TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.list_reports(TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.list_billboard_reviews(TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.review_slot_claim(TEXT, BIGINT, BOOLEAN) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.takedown_billboard(TEXT, TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.report_kst_day(TIMESTAMPTZ) TO anon, authenticated, service_role;
+
+ALTER TABLE public.wallets ADD COLUMN IF NOT EXISTS ref_code TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS wallets_ref_code_idx ON public.wallets (ref_code) WHERE ref_code IS NOT NULL;
+
+CREATE OR REPLACE FUNCTION public.ensure_ref_code(p_key TEXT, p_actor_id TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_code TEXT;
+  v_n INT := 0;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  SELECT ref_code INTO v_code FROM public.wallets WHERE actor_id = p_actor_id;
+  IF v_code IS NOT NULL THEN
+    RETURN v_code;
+  END IF;
+  LOOP
+    v_n := v_n + 1;
+    v_code := substr(md5(p_actor_id || clock_timestamp()::text || v_n::text), 1, 8);
+    BEGIN
+      UPDATE public.wallets SET ref_code = v_code WHERE actor_id = p_actor_id AND ref_code IS NULL;
+      EXIT;
+    EXCEPTION WHEN unique_violation THEN
+      IF v_n > 8 THEN RAISE; END IF;
+    END;
+  END LOOP;
+  RETURN v_code;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.ensure_ref_code(TEXT, TEXT) TO anon, authenticated, service_role;
+
+-- Cosmetics locker. No public read. A 7-day streak fills only the rows that are still missing.
+CREATE TABLE IF NOT EXISTS public.cosmetics (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('hat','cab','frame','emote')),
+  season TEXT,
+  grant_via TEXT NOT NULL CHECK (grant_via IN ('attend7','shop','season','tribe'))
+);
+CREATE TABLE IF NOT EXISTS public.inventory (
+  actor_id TEXT NOT NULL REFERENCES public.wallets(actor_id) ON DELETE CASCADE,
+  cosmetic_id TEXT NOT NULL REFERENCES public.cosmetics(id),
+  equipped BOOLEAN NOT NULL DEFAULT false,
+  granted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (actor_id, cosmetic_id)
+);
+ALTER TABLE public.cosmetics ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.inventory ENABLE ROW LEVEL SECURITY;
+
+INSERT INTO public.cosmetics (id, kind, grant_via) VALUES
+  ('hat_ribbon', 'hat', 'attend7'),
+  ('cab_yellow', 'cab', 'attend7'),
+  ('frame_streak', 'frame', 'attend7')
+ON CONFLICT (id) DO NOTHING;
+
+CREATE OR REPLACE FUNCTION public.equip_cosmetic(p_key TEXT, p_actor_id TEXT, p_cosmetic_id TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_kind TEXT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  SELECT kind INTO v_kind FROM public.cosmetics WHERE id = p_cosmetic_id;
+  IF v_kind IS NULL OR NOT EXISTS (
+    SELECT 1 FROM public.inventory WHERE actor_id = p_actor_id AND cosmetic_id = p_cosmetic_id
+  ) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'missing');
+  END IF;
+  UPDATE public.inventory AS inv
+  SET equipped = false
+  FROM public.cosmetics AS c
+  WHERE inv.actor_id = p_actor_id
+    AND inv.cosmetic_id = c.id
+    AND c.kind = v_kind
+    AND inv.cosmetic_id IS DISTINCT FROM p_cosmetic_id;
+  UPDATE public.inventory
+  SET equipped = true
+  WHERE actor_id = p_actor_id AND cosmetic_id = p_cosmetic_id;
+  RETURN jsonb_build_object('ok', true);
+END;
+$$;
+
+-- Level is read-time: least(99, 1 + reputation / 10). Reputation itself is the relight +1.
+CREATE OR REPLACE FUNCTION public.profile_read(p_key TEXT, p_actor_id TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_rep INT;
+  v_species SMALLINT;
+  v_equip JSONB;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  INSERT INTO public.wallets (actor_id) VALUES (p_actor_id) ON CONFLICT (actor_id) DO NOTHING;
+  INSERT INTO public.profiles (actor_id) VALUES (p_actor_id) ON CONFLICT (actor_id) DO NOTHING;
+  SELECT reputation, species INTO v_rep, v_species FROM public.profiles WHERE actor_id = p_actor_id;
+  SELECT COALESCE(jsonb_agg(s.cosmetic_id ORDER BY s.cosmetic_id), '[]'::jsonb)
+  INTO v_equip
+  FROM (
+    SELECT cosmetic_id FROM public.inventory
+    WHERE actor_id = p_actor_id AND equipped
+    ORDER BY cosmetic_id
+    LIMIT 4
+  ) s;
+  RETURN jsonb_build_object(
+    'ok', true,
+    'level', LEAST(99, 1 + COALESCE(v_rep, 0) / 10),
+    'reputation', COALESCE(v_rep, 0),
+    'species', COALESCE(v_species, 1),
+    'equip', COALESCE(v_equip, '[]'::jsonb)
+  );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.save_species(p_key TEXT, p_actor_id TEXT, p_species INT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_species SMALLINT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  v_species := CASE WHEN p_species IN (2, 3) THEN p_species ELSE 1 END;
+  INSERT INTO public.wallets (actor_id) VALUES (p_actor_id) ON CONFLICT (actor_id) DO NOTHING;
+  INSERT INTO public.profiles (actor_id, species) VALUES (p_actor_id, v_species)
+  ON CONFLICT (actor_id) DO UPDATE SET species = EXCLUDED.species;
+  RETURN jsonb_build_object('ok', true, 'species', v_species);
+END;
+$$;
+
+-- Attendance ladder. Same profiles table as above; no DROP. Yesterday continues the streak, any other day starts at 1.
+CREATE TABLE IF NOT EXISTS public.profiles (
+  actor_id TEXT PRIMARY KEY REFERENCES public.wallets(actor_id) ON DELETE CASCADE,
+  level INT NOT NULL DEFAULT 1 CHECK (level BETWEEN 1 AND 99),
+  reputation INT NOT NULL DEFAULT 0 CHECK (reputation >= 0),
+  species SMALLINT NOT NULL DEFAULT 1 CHECK (species BETWEEN 1 AND 3),
+  ring_color TEXT NOT NULL DEFAULT '#ff3d9a',
+  starter_slot TEXT,
+  attend_streak INT NOT NULL DEFAULT 0,
+  attend_last DATE,
+  tribe_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE OR REPLACE FUNCTION public.touch_attend(p_key TEXT, p_actor_id TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_last DATE;
+  v_streak INT;
+  v_today DATE := (timezone('Asia/Seoul', now()))::date;
+  v_amount INT;
+  v_ladder INT[] := ARRAY[10, 12, 15, 20, 30];
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  INSERT INTO public.wallets (actor_id) VALUES (p_actor_id) ON CONFLICT (actor_id) DO NOTHING;
+  INSERT INTO public.profiles (actor_id) VALUES (p_actor_id) ON CONFLICT (actor_id) DO NOTHING;
+  SELECT attend_last, attend_streak INTO v_last, v_streak FROM public.profiles WHERE actor_id = p_actor_id FOR UPDATE;
+  IF v_last = v_today THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'attended');
+  END IF;
+  IF v_last = v_today - 1 THEN
+    v_streak := COALESCE(v_streak, 0) + 1;
+  ELSE
+    v_streak := 1;
+  END IF;
+  v_amount := v_ladder[LEAST(v_streak, 5)];
+  UPDATE public.profiles SET attend_streak = v_streak, attend_last = v_today WHERE actor_id = p_actor_id;
+  IF v_streak % 7 = 0 THEN
+    INSERT INTO public.inventory (actor_id, cosmetic_id) VALUES
+      (p_actor_id, 'hat_ribbon'),
+      (p_actor_id, 'cab_yellow'),
+      (p_actor_id, 'frame_streak')
+    ON CONFLICT (actor_id, cosmetic_id) DO NOTHING;
+  END IF;
+  RETURN jsonb_build_object('ok', true, 'streak', v_streak, 'amount', v_amount, 'last', v_today);
+END;
+$$;
+
+-- Away inbox and web push subscriptions. No public read. The worker calls SECURITY DEFINER RPCs with FLUSH_KEY.
+CREATE TABLE IF NOT EXISTS public.inbox (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  actor_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('taken','cheer','dark','gift','tribe','ball')),
+  slot_id TEXT,
+  phrase SMALLINT,
+  from_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  read_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS inbox_actor_idx ON public.inbox (actor_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS public.push_subs (
+  endpoint TEXT PRIMARY KEY,
+  actor_id TEXT NOT NULL,
+  p256dh TEXT NOT NULL,
+  auth_key TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE public.inbox ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.push_subs ENABLE ROW LEVEL SECURITY;
+
+CREATE OR REPLACE FUNCTION public.inbox_batch(p_key TEXT, p_items JSONB)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_item JSONB;
+  v_actor TEXT;
+  v_kind TEXT;
+  v_phrase SMALLINT;
+  v_count INT := 0;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  IF jsonb_typeof(p_items) IS DISTINCT FROM 'array' THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'items');
+  END IF;
+  FOR v_item IN SELECT value FROM jsonb_array_elements(p_items)
+  LOOP
+    v_actor := left(COALESCE(NULLIF(v_item->>'actor_id', ''), NULLIF(v_item->>'to', '')), 80);
+    v_kind := v_item->>'kind';
+    IF v_actor IS NULL OR v_actor = '' OR v_kind NOT IN ('taken','cheer','dark','gift','tribe','ball') THEN
+      CONTINUE;
+    END IF;
+    v_phrase := NULL;
+    IF COALESCE(v_item->>'phrase', '') ~ '^[0-9]+$' THEN
+      v_phrase := LEAST(12, GREATEST(1, (v_item->>'phrase')::int));
+    END IF;
+    INSERT INTO public.inbox (actor_id, kind, slot_id, phrase, from_name)
+    VALUES (
+      v_actor,
+      v_kind,
+      NULLIF(left(COALESCE(v_item->>'slot_id', ''), 32), ''),
+      v_phrase,
+      NULLIF(left(COALESCE(v_item->>'from_name', ''), 12), '')
+    );
+    DELETE FROM public.inbox
+    WHERE actor_id = v_actor
+      AND id NOT IN (
+        SELECT id FROM public.inbox
+        WHERE actor_id = v_actor
+        ORDER BY created_at DESC, id DESC
+        LIMIT 50
+      );
+    v_count := v_count + 1;
+  END LOOP;
+  RETURN jsonb_build_object('ok', true, 'n', v_count);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.inbox_list(p_key TEXT, p_actor_id TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_items JSONB;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+    'id', s.id,
+    'kind', s.kind,
+    'slot_id', s.slot_id,
+    'phrase', s.phrase,
+    'from_name', s.from_name,
+    'created_at', s.created_at
+  ) ORDER BY (s.read_at IS NULL) DESC, s.created_at DESC), '[]'::jsonb)
+  INTO v_items
+  FROM (
+    SELECT id, kind, slot_id, phrase, from_name, created_at, read_at
+    FROM public.inbox
+    WHERE actor_id = p_actor_id
+    ORDER BY (read_at IS NULL) DESC, created_at DESC
+    LIMIT 20
+  ) s;
+  RETURN jsonb_build_object('items', v_items);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.inbox_read(p_key TEXT, p_actor_id TEXT, p_ids JSONB)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  IF jsonb_typeof(p_ids) IS DISTINCT FROM 'array' THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'ids');
+  END IF;
+  UPDATE public.inbox
+  SET read_at = now()
+  WHERE actor_id = p_actor_id
+    AND read_at IS NULL
+    AND id IN (
+      SELECT value::bigint
+      FROM jsonb_array_elements_text(p_ids) AS value
+      WHERE value ~ '^[0-9]+$'
+      LIMIT 50
+    );
+  RETURN jsonb_build_object('ok', true);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.push_subscribe(p_key TEXT, p_actor_id TEXT, p_endpoint TEXT, p_p256dh TEXT, p_auth TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  IF p_endpoint IS NULL OR length(p_endpoint) > 600 OR p_endpoint = '' OR p_p256dh IS NULL OR p_auth IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'endpoint');
+  END IF;
+  INSERT INTO public.push_subs (endpoint, actor_id, p256dh, auth_key)
+  VALUES (p_endpoint, p_actor_id, p_p256dh, p_auth)
+  ON CONFLICT (endpoint) DO UPDATE
+  SET actor_id = EXCLUDED.actor_id, p256dh = EXCLUDED.p256dh, auth_key = EXCLUDED.auth_key;
+  RETURN jsonb_build_object('ok', true);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.push_unsubscribe(p_key TEXT, p_actor_id TEXT, p_endpoint TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  DELETE FROM public.push_subs WHERE endpoint = p_endpoint AND actor_id = p_actor_id;
+  RETURN jsonb_build_object('ok', true);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.push_drop(p_key TEXT, p_endpoint TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  DELETE FROM public.push_subs WHERE endpoint = p_endpoint;
+  RETURN jsonb_build_object('ok', true);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.push_due(p_key TEXT, p_limit INT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_limit INT;
+  v_items JSONB;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  v_limit := LEAST(40, GREATEST(1, COALESCE(p_limit, 40)));
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+    'endpoint', q.endpoint,
+    'p256dh', q.p256dh,
+    'auth_key', q.auth_key,
+    'kind', q.kind,
+    'slot_id', q.slot_id,
+    'phrase', q.phrase,
+    'from_name', q.from_name
+  )), '[]'::jsonb)
+  INTO v_items
+  FROM (
+    SELECT endpoint, p256dh, auth_key, kind, slot_id, phrase, from_name
+    FROM (
+      SELECT s.endpoint, s.p256dh, s.auth_key, i.kind, i.slot_id, i.phrase, i.from_name
+      FROM public.inbox i
+      JOIN public.push_subs s ON s.actor_id = i.actor_id
+      WHERE i.read_at IS NULL AND i.kind IN ('taken', 'cheer')
+      UNION ALL
+      SELECT s.endpoint, s.p256dh, s.auth_key, 'dark', b.slot_id, NULL::smallint, NULL::text
+      FROM public.push_subs s
+      JOIN public.billboards b ON b.holder_id = s.actor_id
+      WHERE COALESCE(b.lit_until, b.expires_at) > now()
+        AND COALESCE(b.lit_until, b.expires_at) <= now() + interval '6 hours'
+    ) u
+    LIMIT v_limit
+  ) q;
+  RETURN jsonb_build_object('ok', true, 'items', v_items);
+END;
+$$;
+
+
+-- One tap a day keeps a held board. This function does not pay, refund, or mint.
+CREATE OR REPLACE FUNCTION public.relight_billboard(p_key TEXT, p_actor_id TEXT, p_slot_id TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_board public.billboards%ROWTYPE;
+  v_today DATE := (timezone('Asia/Seoul', now()))::date;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  SELECT * INTO v_board FROM public.billboards WHERE slot_id = p_slot_id FOR UPDATE;
+  IF NOT FOUND OR (
+    v_board.holder_id IS DISTINCT FROM p_actor_id
+    AND NOT (
+      left(COALESCE(v_board.holder_id, ''), 6) = 'tribe:'
+      AND EXISTS (
+        SELECT 1 FROM public.tribe_members m
+        WHERE m.actor_id = p_actor_id
+          AND m.tribe_id = substr(v_board.holder_id, 7)
+      )
+    )
+  ) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'holder');
+  END IF;
+  IF v_board.lit_on = v_today THEN
+    RETURN jsonb_build_object('ok', true, 'lit_until', v_board.lit_until, 'lit_days', v_board.lit_days);
+  END IF;
+  UPDATE public.billboards
+  SET lit_until = now() + interval '72 hours',
+      expires_at = now() + interval '72 hours',
+      lit_on = v_today,
+      lit_days = lit_days + 1,
+      updated_at = now()
+  WHERE slot_id = p_slot_id
+  RETURNING * INTO v_board;
+  INSERT INTO public.profiles (actor_id)
+  SELECT actor_id FROM public.wallets WHERE actor_id = p_actor_id
+  ON CONFLICT (actor_id) DO NOTHING;
+  UPDATE public.profiles SET reputation = reputation + 1 WHERE actor_id = p_actor_id;
+  INSERT INTO public.billboard_history (slot_id, holder_id, holder_name, line1, line2, line3, bid, event)
+  VALUES (p_slot_id, v_board.holder_id, v_board.holder_name, v_board.line1, v_board.line2, v_board.line3, v_board.current_bid, 'relight');
+  RETURN jsonb_build_object('ok', true, 'lit_until', v_board.lit_until, 'lit_days', v_board.lit_days, 'scored', true);
+END;
+$$;
+
+-- A held board whose light has run out becomes empty. No wallet write.
+CREATE OR REPLACE FUNCTION public.clear_dark_boards(p_key TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_board public.billboards%ROWTYPE;
+  v_n INT := 0;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  FOR v_board IN
+    SELECT * FROM public.billboards
+    WHERE holder_id IS NOT NULL
+      AND COALESCE(lit_until, expires_at) < now()
+    FOR UPDATE
+  LOOP
+    INSERT INTO public.billboard_history (slot_id, holder_id, holder_name, line1, line2, line3, bid, event)
+    VALUES (v_board.slot_id, v_board.holder_id, v_board.holder_name, v_board.line1, v_board.line2, v_board.line3, v_board.current_bid, 'clear');
+    UPDATE public.billboards
+    SET holder_id = NULL,
+        expires_at = LEAST(expires_at, now()),
+        updated_at = now()
+    WHERE slot_id = v_board.slot_id;
+    v_n := v_n + 1;
+  END LOOP;
+  RETURN jsonb_build_object('ok', true, 'cleared', v_n);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.relight_billboard(TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.clear_dark_boards(TEXT) TO anon, authenticated, service_role;
+
+GRANT EXECUTE ON FUNCTION public.touch_attend(TEXT, TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.equip_cosmetic(TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.profile_read(TEXT, TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.save_species(TEXT, TEXT, INT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.inbox_batch(TEXT, JSONB) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.inbox_list(TEXT, TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.inbox_read(TEXT, TEXT, JSONB) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.push_subscribe(TEXT, TEXT, TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.push_unsubscribe(TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.push_drop(TEXT, TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.push_due(TEXT, INT) TO anon, authenticated, service_role;
+
+-- Tribes. One membership per account. No public read. Pledge moves coins; it does not mint them.
+CREATE TABLE IF NOT EXISTS public.tribes (
+  id TEXT PRIMARY KEY CHECK (id ~ '^[a-z0-9]{8}$'),
+  tag TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  roof_until TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS public.tribe_members (
+  tribe_id TEXT NOT NULL REFERENCES public.tribes(id),
+  actor_id TEXT NOT NULL REFERENCES public.wallets(actor_id) ON DELETE CASCADE,
+  role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('member','owner')),
+  joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (actor_id)
+);
+CREATE TABLE IF NOT EXISTS public.tribe_pool (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  tribe_id TEXT NOT NULL,
+  slot_id TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  amount BIGINT NOT NULL CHECK (amount > 0),
+  week TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE public.tribe_pool ADD COLUMN IF NOT EXISTS spent BIGINT NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS public.tribe_scores (
+  tribe_id TEXT NOT NULL,
+  week TEXT NOT NULL,
+  points INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (tribe_id, week)
+);
+CREATE INDEX IF NOT EXISTS tribe_pool_week_idx ON public.tribe_pool (tribe_id, week);
+ALTER TABLE public.tribes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tribe_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tribe_pool ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tribe_scores ENABLE ROW LEVEL SECURITY;
+
+CREATE OR REPLACE FUNCTION public.pledge_tribe(p_key TEXT, p_actor_id TEXT, p_slot_id TEXT, p_amount BIGINT, p_week TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_tribe TEXT;
+  v_coins BIGINT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  IF p_amount NOT IN (10, 20, 50) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'amount');
+  END IF;
+  IF p_week !~ '^[0-9]{4}W[0-9]{2}$' THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'week');
+  END IF;
+  SELECT tribe_id INTO v_tribe FROM public.tribe_members WHERE actor_id = p_actor_id;
+  IF v_tribe IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'tribe');
+  END IF;
+  SELECT coins INTO v_coins FROM public.wallets WHERE actor_id = p_actor_id FOR UPDATE;
+  IF COALESCE(v_coins, 0) < p_amount THEN
+    RETURN jsonb_build_object('ok', false, 'error', '코인이 부족합니다. 붕어빵을 더 구워보세요!');
+  END IF;
+  INSERT INTO public.wallets (actor_id, nickname, coins) VALUES ('tribe:' || v_tribe, v_tribe, 0)
+  ON CONFLICT (actor_id) DO NOTHING;
+  UPDATE public.wallets SET coins = coins - p_amount, updated_at = now() WHERE actor_id = p_actor_id;
+  UPDATE public.wallets SET coins = coins + p_amount, updated_at = now() WHERE actor_id = 'tribe:' || v_tribe;
+  INSERT INTO public.coin_ledger (actor_id, delta, reason, ref) VALUES
+    (p_actor_id, -p_amount, 'spend', p_slot_id),
+    ('tribe:' || v_tribe, p_amount, 'spend', p_slot_id);
+  INSERT INTO public.tribe_pool (tribe_id, slot_id, actor_id, amount, week)
+  VALUES (v_tribe, p_slot_id, p_actor_id, p_amount, p_week);
+  RETURN jsonb_build_object('ok', true, 'tribe_id', v_tribe, 'amount', p_amount);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.refund_tribe_week(p_key TEXT, p_week TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_row RECORD;
+  v_back BIGINT;
+  v_coins BIGINT;
+  v_n INT := 0;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  IF p_week !~ '^[0-9]{4}W[0-9]{2}$' THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'week');
+  END IF;
+  FOR v_row IN
+    SELECT id, tribe_id, actor_id, amount, spent
+    FROM public.tribe_pool
+    WHERE week = p_week AND amount > spent
+    ORDER BY id
+    FOR UPDATE
+  LOOP
+    v_back := v_row.amount - v_row.spent;
+    SELECT coins INTO v_coins FROM public.wallets WHERE actor_id = 'tribe:' || v_row.tribe_id FOR UPDATE;
+    IF COALESCE(v_coins, 0) < v_back THEN
+      CONTINUE;
+    END IF;
+    UPDATE public.wallets SET coins = coins - v_back, updated_at = now() WHERE actor_id = 'tribe:' || v_row.tribe_id;
+    UPDATE public.wallets SET coins = coins + v_back, updated_at = now() WHERE actor_id = v_row.actor_id;
+    IF NOT FOUND THEN
+      INSERT INTO public.wallets (actor_id, nickname, coins) VALUES (v_row.actor_id, '네온손님', v_back);
+    END IF;
+    INSERT INTO public.coin_ledger (actor_id, delta, reason, ref) VALUES
+      ('tribe:' || v_row.tribe_id, -v_back, 'refund', v_row.tribe_id),
+      (v_row.actor_id, v_back, 'refund', v_row.tribe_id);
+    UPDATE public.tribe_pool SET spent = amount WHERE id = v_row.id;
+    v_n := v_n + 1;
+  END LOOP;
+  RETURN jsonb_build_object('ok', true, 'rows', v_n);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.create_tribe(p_key TEXT, p_actor_id TEXT, p_id TEXT, p_tag TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  IF p_id !~ '^[a-z0-9]{8}$' THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'id');
+  END IF;
+  IF p_tag !~ '^[0-9A-Za-z가-힣_]{1,16}$' THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'tag');
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.tribe_members WHERE actor_id = p_actor_id) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'tribe');
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.tribes WHERE id = p_id) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'id');
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.tribes WHERE tag = p_tag) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'tag');
+  END IF;
+  INSERT INTO public.wallets (actor_id) VALUES (p_actor_id) ON CONFLICT (actor_id) DO NOTHING;
+  INSERT INTO public.tribes (id, tag, name, created_by) VALUES (p_id, p_tag, p_tag, p_actor_id);
+  INSERT INTO public.tribe_members (tribe_id, actor_id, role) VALUES (p_id, p_actor_id, 'owner');
+  INSERT INTO public.profiles (actor_id, tribe_id) VALUES (p_actor_id, p_id)
+  ON CONFLICT (actor_id) DO UPDATE SET tribe_id = EXCLUDED.tribe_id;
+  RETURN jsonb_build_object('ok', true, 'tribe_id', p_id, 'tag', p_tag);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.join_tribe(p_key TEXT, p_actor_id TEXT, p_id TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_tag TEXT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  IF p_id !~ '^[a-z0-9]{8}$' THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'id');
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.tribe_members WHERE actor_id = p_actor_id) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'tribe');
+  END IF;
+  SELECT tag INTO v_tag FROM public.tribes WHERE id = p_id;
+  IF v_tag IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'id');
+  END IF;
+  INSERT INTO public.wallets (actor_id) VALUES (p_actor_id) ON CONFLICT (actor_id) DO NOTHING;
+  INSERT INTO public.tribe_members (tribe_id, actor_id, role) VALUES (p_id, p_actor_id, 'member');
+  INSERT INTO public.profiles (actor_id, tribe_id) VALUES (p_actor_id, p_id)
+  ON CONFLICT (actor_id) DO UPDATE SET tribe_id = EXCLUDED.tribe_id;
+  RETURN jsonb_build_object('ok', true, 'tribe_id', p_id, 'tag', v_tag);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.add_tribe_score(p_key TEXT, p_actor_id TEXT, p_week TEXT, p_points INT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_tribe TEXT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  IF p_week !~ '^[0-9]{4}W[0-9]{2}$' THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'week');
+  END IF;
+  IF p_points IS NULL OR p_points < 1 OR p_points > 7 THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'points');
+  END IF;
+  SELECT tribe_id INTO v_tribe FROM public.tribe_members WHERE actor_id = p_actor_id;
+  IF v_tribe IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'tribe');
+  END IF;
+  INSERT INTO public.tribe_scores (tribe_id, week, points)
+  VALUES (v_tribe, p_week, p_points)
+  ON CONFLICT (tribe_id, week) DO UPDATE
+  SET points = public.tribe_scores.points + EXCLUDED.points;
+  RETURN jsonb_build_object('ok', true, 'tribe_id', v_tribe, 'points', p_points);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.pledge_tribe(TEXT, TEXT, TEXT, BIGINT, TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.refund_tribe_week(TEXT, TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.create_tribe(TEXT, TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.join_tribe(TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.add_tribe_score(TEXT, TEXT, TEXT, INT) TO anon, authenticated, service_role;
+
+-- Seasons and the ops calendar. One confirmed season row. Ops copy is written by the admin route, not seeded.
+CREATE TABLE IF NOT EXISTS public.seasons (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  starts_on DATE NOT NULL,
+  ends_on DATE NOT NULL,
+  theme TEXT NOT NULL CHECK (theme IN ('csat','xmas','newyear','seollal','valentine'))
+);
+CREATE TABLE IF NOT EXISTS public.ops_events (
+  id TEXT PRIMARY KEY,
+  starts_on DATE NOT NULL,
+  ends_on DATE NOT NULL,
+  theme TEXT NOT NULL CHECK (theme IN ('csat','xmas','newyear','seollal','valentine')),
+  title TEXT NOT NULL,
+  copy TEXT NOT NULL
+);
+ALTER TABLE public.seasons ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.ops_events ENABLE ROW LEVEL SECURITY;
+INSERT INTO public.seasons (id, title, starts_on, ends_on, theme)
+VALUES ('s1-2027', '새해 소원', '2027-01-01', '2027-01-28', 'newyear')
+ON CONFLICT (id) DO NOTHING;
+
+CREATE OR REPLACE FUNCTION public.plaza_live(p_key TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_day DATE := (timezone('Asia/Seoul', now()))::date;
+  v_ops JSONB;
+  v_roof TEXT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  SELECT jsonb_build_object('id', id, 'theme', theme, 'title', title, 'copy', copy)
+  INTO v_ops
+  FROM public.ops_events
+  WHERE starts_on <= v_day AND ends_on >= v_day
+  ORDER BY starts_on DESC, id ASC
+  LIMIT 1;
+  SELECT tag INTO v_roof
+  FROM public.tribes
+  WHERE roof_until > now()
+  ORDER BY roof_until DESC, id ASC
+  LIMIT 1;
+  RETURN jsonb_build_object('ops', v_ops, 'roof', COALESCE(v_roof, ''));
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.upsert_ops_event(
+  p_key TEXT, p_id TEXT, p_starts DATE, p_ends DATE, p_theme TEXT, p_title TEXT, p_copy TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  IF p_id IS NULL OR p_id = '' OR char_length(p_id) > 40 THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'id');
+  END IF;
+  IF p_theme NOT IN ('csat', 'xmas', 'newyear', 'seollal', 'valentine') THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'theme');
+  END IF;
+  IF p_starts IS NULL OR p_ends IS NULL OR p_ends < p_starts THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'date');
+  END IF;
+  IF p_title IS NULL OR char_length(p_title) < 1 OR char_length(p_title) > 80 THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'title');
+  END IF;
+  IF p_copy IS NULL OR char_length(p_copy) < 1 OR char_length(p_copy) > 80 THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'copy');
+  END IF;
+  INSERT INTO public.ops_events (id, starts_on, ends_on, theme, title, copy)
+  VALUES (p_id, p_starts, p_ends, p_theme, p_title, p_copy)
+  ON CONFLICT (id) DO UPDATE SET
+    starts_on = EXCLUDED.starts_on,
+    ends_on = EXCLUDED.ends_on,
+    theme = EXCLUDED.theme,
+    title = EXCLUDED.title,
+    copy = EXCLUDED.copy;
+  RETURN jsonb_build_object('ok', true, 'id', p_id);
+END;
+$$;
+
+-- Sunday 21:00 KST. The week's top tribe keeps the roof for seven days. Scores stay.
+CREATE OR REPLACE FUNCTION public.award_tribe_roof(p_key TEXT, p_week TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_id TEXT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  IF p_week !~ '^[0-9]{4}W[0-9]{2}$' THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'week');
+  END IF;
+  IF EXTRACT(DOW FROM timezone('Asia/Seoul', now()))::int <> 0 THEN
+    RETURN jsonb_build_object('ok', true, 'skipped', true);
+  END IF;
+  SELECT tribe_id INTO v_id
+  FROM public.tribe_scores
+  WHERE week = p_week AND points > 0
+  ORDER BY points DESC, tribe_id ASC
+  LIMIT 1;
+  UPDATE public.tribes SET roof_until = NULL WHERE roof_until IS NOT NULL;
+  IF v_id IS NULL THEN
+    RETURN jsonb_build_object('ok', true, 'roof', '');
+  END IF;
+  UPDATE public.tribes SET roof_until = now() + interval '7 days' WHERE id = v_id;
+  RETURN jsonb_build_object('ok', true, 'tribe_id', v_id);
+END;
+$$;
+
+-- 20:50 KST preview. One unread ball row per subscribed account, then the usual 50-row cap.
+CREATE OR REPLACE FUNCTION public.inbox_ball(p_key TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_n INT := 0;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  INSERT INTO public.inbox (actor_id, kind)
+  SELECT DISTINCT s.actor_id, 'ball'
+  FROM public.push_subs s
+  WHERE NOT EXISTS (
+    SELECT 1 FROM public.inbox i
+    WHERE i.actor_id = s.actor_id
+      AND i.kind = 'ball'
+      AND (i.created_at AT TIME ZONE 'Asia/Seoul')::date = (timezone('Asia/Seoul', now()))::date
+  );
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  DELETE FROM public.inbox i
+  USING (
+    SELECT id FROM (
+      SELECT id, row_number() OVER (PARTITION BY actor_id ORDER BY created_at DESC, id DESC) AS n
+      FROM public.inbox
+      WHERE actor_id IN (SELECT DISTINCT actor_id FROM public.push_subs)
+    ) ranked
+    WHERE ranked.n > 50
+  ) old
+  WHERE i.id = old.id;
+  RETURN jsonb_build_object('ok', true, 'n', v_n);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.push_ball(p_key TEXT, p_limit INT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_limit INT;
+  v_items JSONB;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  v_limit := LEAST(40, GREATEST(1, COALESCE(p_limit, 40)));
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+    'endpoint', q.endpoint,
+    'p256dh', q.p256dh,
+    'auth_key', q.auth_key,
+    'kind', 'ball',
+    'slot_id', NULL,
+    'phrase', NULL,
+    'from_name', NULL
+  )), '[]'::jsonb)
+  INTO v_items
+  FROM (
+    SELECT s.endpoint, s.p256dh, s.auth_key
+    FROM public.push_subs s
+    JOIN public.inbox i ON i.actor_id = s.actor_id
+    WHERE i.kind = 'ball'
+      AND i.read_at IS NULL
+      AND i.created_at > now() - interval '2 hours'
+    LIMIT v_limit
+  ) q;
+  RETURN jsonb_build_object('ok', true, 'items', v_items);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.plaza_live(TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.upsert_ops_event(TEXT, TEXT, DATE, DATE, TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.award_tribe_roof(TEXT, TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.inbox_ball(TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.push_ball(TEXT, INT) TO anon, authenticated, service_role;

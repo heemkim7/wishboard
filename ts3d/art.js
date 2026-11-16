@@ -557,7 +557,7 @@ export function paintBillboard(canvas, data = {}, opts = {}) {
   }
 
   const vacant = !data.holder_id;
-  const who = vacant ? '✨ 소원 기다리는 중' : `👑 ${chars(data.holder_name || '익명', 14)}`;
+  const who = vacant ? '✨ 빈 자리 · 지금 걸 수 있어요' : `👑 ${chars(data.holder_name || '익명', 14)}`;
   g.font = `800 ${Math.round(34 * k)}px ${SANS}`;
   const pw = g.measureText(who).width + 40 * k;
   roundRect(g, 28 * k, 26 * k, pw, 46 * k, 23 * k);
@@ -610,6 +610,23 @@ export function paintBillboard(canvas, data = {}, opts = {}) {
   g.arc(W - 48 * k, 50 * k, 8 * k, 0, Math.PI * 2);
   g.fill();
   g.shadowBlur = 0;
+  const days = Math.max(0, Math.floor(Number(data.lit_days) || 0));
+  if (!vacant && days > 0) {
+    const streak = `연속 ${days}일`;
+    g.font = `800 ${Math.round(22 * k)}px ${SANS}`;
+    g.textAlign = 'right';
+    g.textBaseline = 'middle';
+    const tw = g.measureText(streak).width + 28 * k;
+    const ty = 78 * k;
+    roundRect(g, W - 28 * k - tw, ty, tw, 36 * k, 18 * k);
+    g.fillStyle = 'rgba(4,5,18,0.78)';
+    g.fill();
+    g.strokeStyle = '#ffcf5a';
+    g.lineWidth = 2 * k;
+    g.stroke();
+    g.fillStyle = '#ffcf5a';
+    g.fillText(streak, W - 42 * k, ty + 18 * k);
+  }
 
   g.strokeStyle = rgba(th.accent, 0.9);
   g.lineWidth = 4 * k;

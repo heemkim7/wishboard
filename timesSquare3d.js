@@ -9,21 +9,22 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { toNetUnits, fromNetUnits } from './net.js?v=20261114a';
+import { toNetUnits, fromNetUnits } from './net.js?v=20261116j';
+import { walkerPoints } from './ts3d/walkers.js?v=20261116j';
 import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, SKIP_ZONES, NO_PROPS, NO_TREES, FAR_CLUSTERS, LANDMARKS, groundHeight, onStairs, fountainSpot } from './ts3d/layout.js?v=20261113b';
-import { BALANCE, chainsOf, slotName } from './balance.js?v=20261113y';
+import { BALANCE, chainsOf, slotName } from './balance.js?v=20261116f';
 import { kitMaterials } from './ts3d/kit.js';
 import { createReflection } from './ts3d/ground.js';
-import { createBoards, screenTime } from './ts3d/screens.js?v=20261114a';
+import { createBoards, screenTime } from './ts3d/screens.js?v=20261116j';
 import { loadNYC, ROAD } from './ts3d/nyc.js';
 import { createWorld, FAR_LAYER } from './ts3d/world.js';
-import { createTraffic } from './ts3d/traffic.js?v=20261113j';
-import { buildTimesSquare } from './ts3d/timesq.js?v=20261113h';
+import { createTraffic } from './ts3d/traffic.js?v=20261116g';
+import { buildTimesSquare } from './ts3d/timesq.js?v=20261116j';
 import { claimRockefeller, buildRockefeller } from './ts3d/rockefeller.js';
 import { claimIcons, buildIcons } from './ts3d/icons.js';
-import { buildLandmarks } from './ts3d/landmarks.js?v=20261114i';
-import { createAvatars, EMOTES, REACTIONS, AVATAR_COLORS, speciesId } from './ts3d/avatars.js?v=20261114q';
-import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, fontsReady, chars, hashStr } from './ts3d/art.js?v=20261113b';
+import { buildLandmarks } from './ts3d/landmarks.js?v=20261116f';
+import { createAvatars, EMOTES, REACTIONS, AVATAR_COLORS, speciesId } from './ts3d/avatars.js?v=20261116g';
+import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, paintLabel, fontsReady, chars, hashStr } from './ts3d/art.js?v=20261116f';
 import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=20261114d';
 
 export { paintBillboard, THEMES, LAYOUT, PLOT_SLOTS, groundHeight, EMOTES, AVATAR_COLORS, taxiTrainMult, applyTaxiHardHit };
@@ -70,7 +71,7 @@ export function createTimesSquare(canvas, opts = {}) {
   const { signal } = ac;
 
   // ---- renderer / scene / camera ---------------------------------------------
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', stencil: false, preserveDrawingBuffer: true });
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', stencil: false, preserveDrawingBuffer: false });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.NeutralToneMapping;
   renderer.toneMappingExposure = clamp(Number(opts.exposure) || 0.95, 0.5, 1.5);
@@ -86,6 +87,30 @@ export function createTimesSquare(canvas, opts = {}) {
   camera.layers.enable(1);
   camera.layers.enable(2);
   camera.layers.enable(FAR_LAYER);
+
+  const walkerPts = walkerPoints(12);
+  const walkerMesh = new THREE.InstancedMesh(
+    new THREE.CapsuleGeometry(0.18, 0.62, 2, 6),
+    new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.55, metalness: 0.04 }),
+    walkerPts.length,
+  );
+  walkerMesh.frustumCulled = false;
+  const walkerDummy = new THREE.Object3D();
+  const walkerTint = [0xd5deee, 0xf0c14e, 0xef7aa8, 0x7dcea0, 0x9eb6ff, 0xffb087];
+  for (let i = 0; i < walkerPts.length; i++) walkerMesh.setColorAt(i, new THREE.Color(walkerTint[i % walkerTint.length]));
+  scene.add(walkerMesh);
+  function stepWalkers(t) {
+    for (let i = 0; i < walkerPts.length; i++) {
+      const p = walkerPts[i];
+      const bob = Math.abs(Math.sin(t * 3.1 + i)) * 0.05;
+      walkerDummy.position.set(p.x, groundHeight(p.x, p.z) + 0.55 + bob, p.z);
+      walkerDummy.rotation.set(0, i * 0.9 + t * 0.15, 0);
+      walkerDummy.updateMatrix();
+      walkerMesh.setMatrixAt(i, walkerDummy.matrix);
+    }
+    walkerMesh.instanceMatrix.needsUpdate = true;
+  }
+  stepWalkers(0);
 
   const manager = new THREE.LoadingManager();
   manager.onProgress = (_url, loaded, total) => { mgrProgress = total ? loaded / total : 1; reportProgress(); };
@@ -219,6 +244,7 @@ void main(){
   let name = chars(opts.name || '네온손님', 16);
   let color = COLOR_RE.test(opts.color || '') ? opts.color : AVATAR_COLORS[0];
   let species = speciesId(opts.species);
+  let myEquip = [];
   const me = avatars.create({ id: 'me', name, color, local: true, species });
   me.root.position.copy(pos);
   me.holder.rotation.y = yaw;
@@ -280,6 +306,7 @@ void main(){
   const cineFrom = new THREE.Vector3(), cineTo = new THREE.Vector3(), cineL0 = new THREE.Vector3(), cineL1 = new THREE.Vector3();
   let cine = null, boostHeld = false, boostSnd = 0;
   let lounge = false, loungeI = 0, loungeAt = 0, hopped = 0, hiveAt = 0, shake = 0;
+  let watchPortrait = false;
 
   // ---- input ----------------------------------------------------------------------------
   const keys = new Set();
@@ -580,6 +607,7 @@ void main(){
     clearRide();
     job.nextAt = clockT + 0.4;
     netState.equip = 'taxi';
+    traffic?.setCabYellow(i, myEquip.includes('cab_yellow'));
     opts.onDrive?.(true);
     return true;
   }
@@ -593,6 +621,7 @@ void main(){
       const [cx, cz] = collide(ex, ez, RADIUS, false);
       if (Math.hypot(cx - ex, cz - ez) < 0.05 || s === 0) { out = [cx, cz]; break; }
     }
+    traffic?.setCabYellow(drive.i, false);
     traffic?.releaseTaxi(drive.i, x, z, cy);
     drive = null;
     pos.set(out[0], groundHeight(out[0], out[1]), out[1]);
@@ -639,12 +668,14 @@ void main(){
       seen.add(id);
       const col = COLOR_RE.test(peer.outfit || '') ? peer.outfit : colorFor(id);
       const kind = speciesId(peer.av);
+      const cosmetics = Array.isArray(peer.equip) ? peer.equip : (peer.equip && peer.equip !== 'taxi' ? String(peer.equip).split(',') : []);
       let r = remotes.get(id);
       if (!r) {
         r = { av: avatars.create({ id, name: chars(peer.name || '익명', 12), color: col, species: kind }), x, z, y: groundHeight(x, z), yaw: 0, spd: 0 };
         remotes.set(id, r);
       }
       r.av.setSpecies(kind);
+      r.av.setEquip(cosmetics);
       r.av.setName(chars(peer.name || '익명', 12));
       r.av.setColor(col);
       const px = r.x, pz = r.z;
@@ -659,7 +690,7 @@ void main(){
       const sp = Math.min(9, wish > 0.25 ? wish : Math.hypot(movedX, movedZ));
       r.spd += (sp - r.spd) * (1 - Math.exp(-dt * 4));
       r.y += (groundHeight(r.x, r.z) - r.y) * (1 - Math.exp(-dt * 12));
-      const inCar = peer.equip === 'taxi';
+      const inCar = peer.equip === 'taxi' || peer.seat === 'taxi';
       const face = Number(s.face) * DEG;
       let want = r.yaw;
       if (wish > 0.35) want = Math.atan2(wishX, wishZ);
@@ -673,7 +704,7 @@ void main(){
       r.av.holder.rotation.y = r.yaw;
       r.av.setMotion(inCar ? 0 : Math.min(r.spd, 9), !inCar && s.anim === 'sit' && r.spd < 0.3);
       r.av.update(dt, t);
-      if (inCar) remoteCars.push({ x: r.x, z: r.z, yaw: r.yaw, v: r.spd });
+      if (inCar) remoteCars.push({ x: r.x, z: r.z, yaw: r.yaw, v: r.spd, yellow: cosmetics.includes('cab_yellow') });
     }
     for (const [id, r] of remotes) if (!seen.has(id)) { r.av.dispose(); remotes.delete(id); }
     traffic?.setRemoteTaxis(remoteCars);
@@ -693,8 +724,9 @@ void main(){
       if (!ev?.data) return;
       if (ev.kind === 'BILLBOARD') {
         const old = boards.get(ev.data.slot_id)?.data;
-        const photoOnly = old && old.holder_id === ev.data.holder_id && String(old.expires_at) === String(ev.data.expires_at);
-        updateBillboardTexture(ev.data.slot_id, ev.data, !ev.replay && (!photoOnly || (ev.data.photo_status === 'approved' && old.photo_status !== 'approved')));
+        const sameHold = old && old.holder_id === ev.data.holder_id && Number(old.current_bid) === Number(ev.data.current_bid);
+        const photoOn = ev.data.photo_status === 'approved' && old?.photo_status !== 'approved';
+        updateBillboardTexture(ev.data.slot_id, ev.data, !ev.replay && (!sameHold || photoOn));
       }
       else if (ev.kind === 'PLOT') applyPlot(ev.data, !ev.replay);
     });
@@ -815,10 +847,10 @@ void main(){
   function hitBalloon() {
     if (!balloon || balloon.hp <= 0) return;
     balloon.hp -= 10;
-    const s = 16 + 12 * (Math.max(0, balloon.hp) / 1000);
+    if (balloon.hp <= 0) { popBalloon(); return; }
+    const s = 16 + 12 * (balloon.hp / 1000);
     balloon.mesh.scale.set(s, s, 1);
     opts.onBalloon?.(balloon.hp);
-    if (balloon.hp <= 0) popBalloon();
   }
   function throwPouch() {
     if (!balloon || balloon.hp <= 0) return false;
@@ -891,10 +923,19 @@ void main(){
   }
 
   // ---- billboards / plots API -----------------------------------------------------------------------
+  function paintMyFrames() {
+    const mine = opts.actorId?.() || '';
+    const color = myEquip.includes('frame_streak') ? '#ff3d9a' : '';
+    for (const [id, b] of boards.boards) {
+      const own = !!(mine && b.data?.holder_id === mine);
+      boards.setRim(id, own ? color : '');
+    }
+  }
   function updateBillboardTexture(slotId, data, celebrate = true) {
     if (!slotId) return false;
     const changed = boards.set(slotId, data, celebrate);
     if (changed) refreshLightColors();
+    paintMyFrames();
     return changed;
   }
   function applyPlot(data, celebrate = true) {
@@ -936,9 +977,11 @@ void main(){
     scene.add(g);
     return g;
   }
-  function syncChains(list) {
+  let chainRows = [];
+  function syncChains(list = chainRows) {
+    chainRows = list || [];
     const on = new Set();
-    for (const c of chainsOf(list || [])) {
+    for (const c of chainsOf(chainRows)) {
       on.add(c.id);
       let g = chainMarks.get(c.id);
       const title = `👑 ${c.name} 독점 타워`;
@@ -962,10 +1005,13 @@ void main(){
     }
     for (const [id, g] of chainMarks) if (!on.has(id)) g.visible = false;
   }
+  let paintRoof = (name) => { paintRoof.pending = String(name || '').slice(0, 16); };
   function updateWorld(state) {
+    boards.setOps?.(state?.ops?.copy || '');
     for (const row of state?.billboards || []) if (row?.slot_id && /^(MAIN_(UP|TOP|MID|BOT|LOW)|SUB_[1-4][AB]|STREET_([1-9]|[12]\d|30)|PLOT_([1-9]|1[0-8]))$/.test(row.slot_id)) updateBillboardTexture(row.slot_id, row, false);
     for (const row of state?.plots || []) if (row?.plot_id) applyPlot(row, false);
     syncChains(state?.billboards);
+    if (typeof state?.roof === 'string') paintRoof(state.roof);
   }
   const lightCol = new THREE.Color();
   function refreshLightColors() {
@@ -1244,7 +1290,7 @@ void main(){
     dir.y = 0;
     if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1);
     dir.normalize();
-    const cam = pose.look.clone().addScaledVector(dir, 8);
+    const cam = pose.look.clone().addScaledVector(dir, watchPortrait ? 22 : 8);
     cineFrom.copy(cam);
     cineTo.copy(cam);
     cineL0.copy(pose.look);
@@ -1417,7 +1463,9 @@ void main(){
     else if (lounge && performance.now() - loungeAt > 8000) {
       loungeAt = performance.now();
       const ids = ['MAIN_TOP', 'MAIN_MID', 'MAIN_BOT', 'SUB_1A', 'SUB_2A', 'SUB_3A', 'SUB_4A'];
-      focusSlot(ids[loungeI++ % ids.length], 7600);
+      const id = ids[loungeI++ % ids.length];
+      if (watchPortrait) frameBillboard(id);
+      else focusSlot(id, 7600);
     }
     if (!drive) me.update(dt, t);
     playerInfo.x = pos.x; playerInfo.y = pos.y; playerInfo.z = pos.z; playerInfo.yaw = yaw; playerInfo.driving = !!drive;
@@ -1524,7 +1572,12 @@ void main(){
     sky.position.copy(camera.position);
     hat.rotation.y += dt;
     gem.rotation.y += dt * 2;
-    if (now - crownAt > 800) { crownAt = now; placeCrown(); }
+    if (now - crownAt > 800) {
+      crownAt = now;
+      // A hold that just ran out: the screen is back on the house notice, so the lights and tower marks follow.
+      if (boards.expire()) { refreshLightColors(); syncChains(); }
+      placeCrown();
+    }
 
     // Proximity prompts.
     let nk = null;
@@ -1575,6 +1628,8 @@ void main(){
     for (const m of Object.values(markers)) if (m.g.visible) { m.icon.position.y = 6 + Math.sin(t * 2.4) * 0.4; m.ring.scale.setScalar(1 + Math.sin(t * 3) * 0.06); }
 
     syncRemotes(dt, t);
+    stepWalkers(t);
+    stepGhosts(now);
     if (nyc) nyc.ensureSolid(pos.x, pos.z);
     world?.update(dt, t, camera.position);
     traffic?.update(dt, t, playerInfo);
@@ -1633,7 +1688,8 @@ void main(){
     const p = canvas.parentElement;
     width = Math.max(1, canvas.clientWidth || p?.clientWidth || innerWidth);
     height = Math.max(1, canvas.clientHeight || p?.clientHeight || innerHeight);
-    camera.aspect = width / height;
+    const liveAspect = width / Math.max(1, height);
+    camera.aspect = watchPortrait ? (Math.abs(liveAspect - 9 / 16) < 0.08 ? liveAspect : 9 / 16) : liveAspect;
     camera.updateProjectionMatrix();
     renderer.setPixelRatio(dpr);
     renderer.setSize(width, height, false);
@@ -1670,6 +1726,7 @@ void main(){
     const dt = Math.min(0.05, clock.getDelta());
     if (document.hidden) return;
     elapsed += dt;
+    if (beaconSlot && !beaconGroup) placeBeacon();
     step(dt, elapsed, performance.now());
     reflection.update(scene, camera);
     composer.render();
@@ -1768,6 +1825,29 @@ void main(){
   crystal.add(pole, ball, glowBall, lasers);
   crystal.position.set(roof.x, roof.h, roof.z);
   scene.add(crystal);
+  let roofShown = '';
+  let roofSprite = null;
+  const pendingRoof = paintRoof.pending;
+  paintRoof = function (name) {
+    const text = String(name || '').slice(0, 16);
+    if (text === roofShown && (text ? roofSprite : !roofSprite)) return;
+    roofShown = text;
+    if (roofSprite) {
+      scene.remove(roofSprite);
+      roofSprite.material.map?.dispose();
+      roofSprite.material.dispose();
+      roofSprite = null;
+    }
+    if (!text) return;
+    const canvas = makeCanvas(512, 96);
+    paintLabel(canvas, text, '#ffe7a3', '#07070d');
+    const map = new THREE.CanvasTexture(canvas);
+    roofSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map, transparent: true, depthWrite: false }));
+    roofSprite.position.set(roof.x, roof.h + 40, roof.z);
+    roofSprite.scale.set(16, 3, 1);
+    scene.add(roofSprite);
+  };
+  if (pendingRoof != null) paintRoof(pendingRoof);
   function hideStockBall() {
     scene.traverse((o) => {
       if (!o.isMesh || o.geometry?.parameters?.radius !== 2.4) return;
@@ -1775,6 +1855,12 @@ void main(){
     });
   }
   const fever = { gauge: 0, phase: 'idle', until: 0, confetti: 0 };
+  const night = { phase: 'idle', until: 0 };
+  function openPlaza() {
+    if (night.phase === 'drop' || fever.phase !== 'idle') return;
+    night.phase = 'drop';
+    night.until = performance.now() + 10000;
+  }
   function feverLive() { return fever.phase === 'party' && performance.now() < fever.until; }
   function feverHud() {
     const left = fever.phase === 'idle' ? 0 : Math.max(0, (fever.until - performance.now()) / 1000);
@@ -1794,6 +1880,21 @@ void main(){
     const now = performance.now();
     ball.rotation.y += 0.01;
     glowBall.scale.setScalar(1 + Math.sin(t * 3) * 0.04);
+    if (fever.phase === 'idle' && night.phase === 'drop') {
+      const u = Math.min(1, 1 - Math.max(0, night.until - now) / 10000);
+      const y = crystalHome + (crystalLow - crystalHome) * (u * u);
+      ball.position.y = y;
+      glowBall.position.y = y;
+      lasers.visible = true;
+      lasers.rotation.y = t;
+      lasers.position.y = ball.position.y - 14;
+      if (now >= night.until) {
+        night.phase = 'idle';
+        burst(crystal.position.clone().setY(roof.h + y), '#ffe7a3', 80, 1.1);
+        lasers.visible = false;
+      }
+      return;
+    }
     if (fever.phase === 'count') {
       const u = 1 - Math.max(0, fever.until - now) / 10000;
       const y = crystalHome + (crystalLow - crystalHome) * (u * u);
@@ -2036,6 +2137,94 @@ void main(){
     if (drive && job.phase === 'ride') syncTrailers();
   }
 
+  let beaconSlot = null;
+  let beaconGroup = null;
+  let mapPin = null;
+  function clearBeaconMesh() {
+    if (!beaconGroup) return;
+    scene.remove(beaconGroup);
+    beaconGroup.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) o.material.dispose();
+    });
+    beaconGroup = null;
+  }
+  function placeBeacon() {
+    if (!beaconSlot) {
+      clearBeaconMesh();
+      mapPin = null;
+      return;
+    }
+    const p = boards.worldPos(beaconSlot);
+    if (!p) return;
+    mapPin = { slot: beaconSlot, x: p.x, z: p.z };
+    if (!beaconGroup) {
+      const beam = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.7, 1.6, 70, 20, 1, true).translate(0, 35, 0),
+        new THREE.MeshBasicMaterial({ map: beamTex, color: new THREE.Color('#7cf6ff').multiplyScalar(0.55), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }),
+      );
+      beam.rotation.x = Math.PI;
+      beam.position.y = 70;
+      beaconGroup = new THREE.Group();
+      beaconGroup.add(beam);
+      scene.add(beaconGroup);
+    }
+    beaconGroup.visible = true;
+    beaconGroup.position.set(p.x, groundHeight(p.x, p.z), p.z);
+  }
+  function setMyBeacon(slotId) {
+    beaconSlot = slotId || null;
+    if (!beaconSlot) {
+      clearBeaconMesh();
+      mapPin = null;
+      return;
+    }
+    placeBeacon();
+  }
+  function pinSlot(slotId) {
+    if (!slotId) {
+      mapPin = null;
+      return;
+    }
+    const p = boards.worldPos(slotId);
+    mapPin = p ? { slot: slotId, x: p.x, z: p.z } : null;
+    if (slotId !== beaconSlot) return;
+    placeBeacon();
+  }
+  const ghostMarks = [];
+  const GHOST_MS = 10 * 60 * 1000;
+  function dropGhost(i) {
+    const g = ghostMarks[i];
+    scene.remove(g.sprite);
+    g.sprite.material.map?.dispose();
+    g.sprite.material.dispose();
+    ghostMarks.splice(i, 1);
+  }
+  function showGhost(msg) {
+    const name = chars(String(msg?.name || ''), 12);
+    if (!name) return;
+    const x = fromNetUnits(msg.x);
+    const z = fromNetUnits(msg.y);
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return;
+    const label = makeCanvas(256, 64);
+    paintLabel(label, name, '#d7e4ff');
+    const map = new THREE.CanvasTexture(label);
+    map.colorSpace = THREE.SRGBColorSpace;
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map, transparent: true, depthWrite: false, opacity: 0.78 }));
+    sprite.position.set(x, groundHeight(x, z) + 2.05, z);
+    sprite.scale.set(2.2, 0.55, 1);
+    scene.add(sprite);
+    ghostMarks.push({ sprite, until: performance.now() + GHOST_MS });
+    while (ghostMarks.length > 8) dropGhost(0);
+  }
+  function stepGhosts(now) {
+    for (let i = ghostMarks.length - 1; i >= 0; i--) if (now >= ghostMarks[i].until) dropGhost(i);
+  }
+  function setWatchPortrait(on) {
+    watchPortrait = !!on;
+    resize();
+  }
+
   const api = {
     canvas, scene, camera, renderer, quality,
     start, stop, dispose, resize,
@@ -2045,7 +2234,13 @@ void main(){
     setInputEnabled(v) { inputEnabled = !!v; if (!inputEnabled) { keys.clear(); joy.x = 0; joy.y = 0; } },
     setName(n) { name = chars(n || '네온손님', 16) || '네온손님'; me.setName(name); },
     setColor(c) { if (!COLOR_RE.test(c || '')) return; color = c; me.setColor(c); },
-    setSpecies(id) { species = speciesId(id); me.setSpecies(species); },
+    setSpecies(id) { species = speciesId(id); me.setSpecies(species); netState.av = species; },
+    setEquip(ids) {
+      myEquip = (Array.isArray(ids) ? ids : []).map((id) => String(id || '')).filter((id) => id && id !== 'taxi').slice(0, 4);
+      me.setEquip(myEquip);
+      paintMyFrames();
+      if (drive) traffic?.setCabYellow(drive.i, myEquip.includes('cab_yellow'));
+    },
     setGlow(v) { glow = clamp(Number(v) || 0, 0, 1); applyGlow(); },
     setExposure(v) { renderer.toneMappingExposure = clamp(Number(v) || 0.95, 0.5, 1.5); },
     setDancing,
@@ -2063,6 +2258,7 @@ void main(){
       return { title: kind, line: `원 타임스퀘어에서 ${dir} ${Math.round(Math.hypot(dx, dz))}m · ${h}`, x: p.x, y: p.y, z: p.z };
     },
     frameBillboard,
+    boardView: (id) => boards.get(id)?.data || null,
     setMonopoly(on) { boards.setShow?.(!!on); },
     strike(slotId) {
       const p = boards.worldPos(slotId);
@@ -2073,6 +2269,7 @@ void main(){
     giftPop,
     topTeam,
     endFocus() { clearCine(); },
+    cineOn: () => !!cine || lounge,
     setBoost(on) { boostHeld = !!on; },
     setWaypoint,
     getPlayer() { return playerInfo; },
@@ -2105,17 +2302,21 @@ void main(){
     },
     bake(amount) { marks?.stall.popFish(amount >= 15); },
     setTicker(text) { boards.setTicker(text); },
+    showGhost,
+    setWatchPortrait,
     startLounge() {
       lounge = true;
       loungeAt = 0;
       loungeI = 0;
-      teleport(-21, -112);
+      api.teleport(-21, -112);
       yaw = 0;
       me.holder.rotation.y = 0;
     },
     stopLounge() { lounge = false; cine = null; if (!drive) me.root.visible = true; },
     throwPouch,
     bumpFever,
+    openPlaza,
+    setRoof: (name) => paintRoof(name),
     launchSticker,
     peelSticker,
     stickerList: (slot) => (stickerMap.get(slot) || []).slice(),
@@ -2170,6 +2371,8 @@ void main(){
       if (waypoint) out.waypoint = { dist: Math.hypot(waypoint.x - pos.x, waypoint.z - pos.z), bearing: bearingTo(waypoint.x, waypoint.z) };
       return out;
     },
+    setMyBeacon,
+    pinSlot,
     minimap() {
       const peers = [];
       for (const r of remotes.values()) peers.push({ x: r.x, z: r.z, color: r.av.color });
@@ -2179,7 +2382,7 @@ void main(){
       for (const rec of marks?.plots.values() || []) lv.push({ id: rec.id, level: rec.level, color: rec.color, mine: !!rec.data?.owner_id && rec.data.owner_id === opts.actorId?.() });
       const cd = camera.getWorldDirection(tmp);
       const jobTarget = drive && job.phase !== 'none' ? (job.phase === 'pickup' ? { ...job.target, kind: 'pickup' } : { ...job.dest, kind: 'drop' }) : null;
-      return { me: { x: pos.x, z: pos.z, yaw }, camYaw: Math.atan2(cd.x, cd.z), peers, stars: st, plots: lv, taxis: traffic?.positions() || [], driving: !!drive, job: jobTarget, waypoint };
+      return { me: { x: pos.x, z: pos.z, yaw }, camYaw: Math.atan2(cd.x, cd.z), peers, stars: st, plots: lv, taxis: traffic?.positions() || [], driving: !!drive, job: jobTarget, waypoint, pin: mapPin };
     },
   };
   loadStickers();

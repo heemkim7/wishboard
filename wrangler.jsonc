@@ -5,6 +5,8 @@
   "compatibility_date": "2026-11-09",
   "workers_dev": true,
   "observability": { "enabled": true },
+  // Hourly game push. Later plans append crons; do not replace this array.
+  "triggers": { "crons": ["5 * * * *", "50 11 * * *", "0 12 * * *"] },
   "assets": {
     "directory": ".",
     "binding": "ASSETS",
@@ -18,6 +20,14 @@
       { "name": "ROOM", "class_name": "Room" }
     ]
   },
+  // Workers Rate Limiting bindings, keyed by client IP in worker.js (rateOk). Counts are per Cloudflare location and approximate.
+  // namespace_id only has to be unique within the Cloudflare account. period must be 10 or 60 (seconds).
+  "ratelimits": [
+    // new guests minted by POST /rt/guest (renewals and handovers are not counted)
+    { "name": "GUEST_RL", "namespace_id": "4701", "simple": { "limit": 10, "period": 60 } },
+    // POST /rt/event
+    { "name": "EVENT_RL", "namespace_id": "4702", "simple": { "limit": 600, "period": 60 } }
+  ],
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Meter", "Room"] }
   ]

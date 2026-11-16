@@ -109,7 +109,9 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
   const remoteList = [];
 
   const kits = vehicleKits();
-  const paintTaxi = new THREE.MeshPhysicalMaterial({ color: 0xffc21a, roughness: 0.32, metalness: 0.25, clearcoat: 1, clearcoatRoughness: 0.08 });
+  const paintTaxi = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0.25, clearcoat: 1, clearcoatRoughness: 0.08 });
+  const TAXI_BODY = new THREE.Color(0xffc21a);
+  const TAXI_YELLOW = new THREE.Color(0xfff3a0);
   const paintCar = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.3, metalness: 0.45, clearcoat: 1, clearcoatRoughness: 0.1 });
   const toTex = (c) => { const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = aniso; return t; };
   const signGeo = (() => {
@@ -156,6 +158,8 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
     mk(kits.car.get('metal'), kitMats.metal, N_CAR),
     mk(kits.car.get('glow'), kitMats.glow, N_CAR),
   ];
+  for (let k = 0; k < nTaxiSlots; k++) taxiParts[0].setColorAt(k, TAXI_BODY);
+  taxiParts[0].instanceColor.needsUpdate = true;
   for (let k = 0; k < N_CAR; k++) carParts[0].setColorAt(k, veh[N_TAXI + k].color);
   carParts[0].instanceColor.needsUpdate = true;
   const wheels = mk(kits.wheel, kitMats.metal, total * 4);
@@ -360,6 +364,7 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
       if (c.mode === 'driven') {
         c.spin += c.v * dt / 0.34;
         place(c.i, c.x, c.z, c.yaw, c.spin, c.y || 0);
+        paintCab(c.i, !!c.yellow);
         continue;
       }
       if (c.mode === 'parked') {
@@ -459,6 +464,7 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
       if (!rc) { hide(i); continue; }
       rc.spin = (rc.spin || 0) + (rc.v || 0) * dt / 0.34;
       place(i, rc.x, rc.z, rc.yaw, rc.spin);
+      paintCab(i, !!rc.yellow);
     }
     for (const p of [...taxiParts, ...carParts]) p.instanceMatrix.needsUpdate = true;
     wheels.instanceMatrix.needsUpdate = true;
@@ -481,6 +487,19 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
       if (d < maxD && (!best || d < best.d)) best = { i: c.i, d, mode: c.mode };
     }
     return best;
+  }
+  function paintCab(i, yellow) {
+    const c = veh[i];
+    if (!c?.taxi) return;
+    const paint = slotOf(i).parts[0];
+    paint.setColorAt(slotOf(i).k, yellow ? TAXI_YELLOW : TAXI_BODY);
+    if (paint.instanceColor) paint.instanceColor.needsUpdate = true;
+  }
+  function setCabYellow(i, on) {
+    const c = veh[i];
+    if (!c) return;
+    c.yellow = !!on;
+    paintCab(i, c.yellow);
   }
   function takeTaxi(i) {
     const c = veh[i];
@@ -575,6 +594,6 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
 
   return {
     update, warm, phase: () => phase,
-    nearestTaxi, takeTaxi, driveTaxi, releaseTaxi, callTaxi, setRemoteTaxis, collide, positions,
+    nearestTaxi, takeTaxi, driveTaxi, releaseTaxi, callTaxi, setRemoteTaxis, setCabYellow, collide, positions,
   };
 }

@@ -48,8 +48,8 @@ visualViewport?.addEventListener('scroll', fitVV);
 <script type="importmap">
 {
   "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+    "three": "./vendor/three/build/three.module.js",
+    "three/addons/": "./vendor/three/examples/jsm/",
     "@supabase/supabase-js": "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm"
   }
 }
@@ -173,9 +173,13 @@ visualViewport?.addEventListener('scroll', fitVV);
   .wallet .sub-fixed { flex: none; }
   .wallet .sub-live { margin-left: auto; }
   .nextgoal { flex: 1 0 100%; font-size: 11px; font-weight: 800; color: var(--gold-2); }
+  .nextline { margin: 0; padding: 8px 10px; border-radius: 12px; background: rgba(8,10,22,.78); border: 1px solid rgba(255,207,90,.45); color: #ffcf5a; font: 800 13px/1.35 var(--font); }
   .wallet .protect { font-size: 11px; font-weight: 700; color: var(--muted); white-space: nowrap; }
   .chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 999px; background: var(--glass-hi); border: 1px solid var(--stroke); color: var(--muted); }
   .chip.gold { color: var(--gold-2); border-color: rgba(255,207,90,.35); background: rgba(255,207,90,.08); }
+  .attend-week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin: 4px 0 12px; }
+  .attend-day { display: grid; place-items: center; height: 36px; border-radius: 8px; background: rgba(255,255,255,.06); border: 1px solid var(--stroke); font-weight: 800; color: var(--muted); }
+  .attend-day.on { background: rgba(255,207,90,.16); color: var(--gold-2); border-color: rgba(255,207,90,.45); }
   .chip.pulse { animation: chipPulse 1.4s ease-in-out infinite; }
   @keyframes chipPulse { 50% { box-shadow: 0 0 0 4px rgba(255,207,90,.12); } }
   .wallet.bump .amt { animation: bump .5s cubic-bezier(.2,1.6,.4,1); }
@@ -783,16 +787,16 @@ const CLARITY_ID = '';
     <div class="badge">✨ NEW YORK WISH & DRIVE SQUARE</div>
     <h1>모두의 전광판</h1>
     <div class="tag">내 소원을 타임스퀘어에 거세요.<br>자랑하고, 응원하고, 명당은 빼앗으세요.</div>
-    <div class="bootlive" id="bootLive"><div id="bootKing">👑 지금 메인 타워의 소원: 확인 중…</div><div id="bootStat">소원을 보러 온 사람과 빈 명당을 세는 중…</div></div>
+    <div class="bootlive" id="bootLive"><div id="bootKing">👑 지금 메인 타워의 소원: 확인 중…</div><div id="bootStat">빈 자리와 오늘 다녀간 사람을 세는 중…</div></div>
     <div class="prog" aria-hidden="true"><i id="bootBar"></i></div>
     <div class="msg" id="bootMsg">타임스퀘어로 이동하는 중…</div>
     <div class="enter" id="bootEnter" hidden></div>
   </div>
 </div>
 <script>
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js?v=5');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js?v=7');
 </script>
 <script type="module" src="./legal.js?v=20261113z"></script>
-<script type="module" src="./main.js?v=20261115b"></script>
+<script type="module" src="./main.js?v=20261116j"></script>
 </body>
 </html>

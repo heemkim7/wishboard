@@ -1,6 +1,6 @@
 /* K-Times Square service worker.
    Caches GET /assets/* only, under a revision taken from this script's ?v= query.
-   HTML, JS, CSS, and /rt/* stay on the network. No character-sprite manifest. */
+   HTML, JS, CSS, vendor/three, and /rt/* stay on the network. No character-sprite manifest. */
 const REV = new URL(self.location.href).searchParams.get('v') || 'dev';
 const CACHE = 'kts-assets-' + REV;
 
@@ -14,6 +14,12 @@ self.addEventListener('activate', (event) => {
     await Promise.all(keys.filter((key) => key.startsWith('kts-assets-') && key !== CACHE).map((key) => caches.delete(key)));
     await self.clients.claim();
   })());
+});
+
+self.addEventListener('push', (event) => {
+  let body = '';
+  try { body = event.data ? (event.data.json().body || '') : ''; } catch { try { body = event.data ? event.data.text() : ''; } catch { body = ''; } }
+  event.waitUntil(self.registration.showNotification('모두의 전광판', { body: String(body || '') }));
 });
 
 self.addEventListener('fetch', (event) => {

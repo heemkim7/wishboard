@@ -2,8 +2,8 @@
 // scrolling news tickers, and the slot registry (MAIN_S, SUB_B1..4, PLOT_1..20).
 import * as THREE from 'three';
 import { Kit, arcSlab } from './kit.js';
-import { THEMES, makeCanvas, paintBillboard, paintTicker, fontsReady, tierOf, boardPhoto, photoReady, SANS, rgba, chars } from './art.js?v=20261113b';
-import { floorOf } from '../balance.js?v=20261113h';
+import { THEMES, makeCanvas, paintBillboard, paintTicker, fontsReady, tierOf, boardPhoto, photoReady, SANS, rgba, chars } from './art.js?v=20261116f';
+import { floorOf, live } from '../balance.js?v=20261116f';
 
 export const screenTime = { value: 0 };
 
@@ -75,32 +75,7 @@ function scaleU(geo, factor) {
   return geo;
 }
 
-const WISHES = [
-  { emoji: '🙏', line1: '로또 1등 당첨 기원', line2: '1일차', line3: '명당에서 비는 중' },
-  { emoji: '😴', line1: '내일 눈 떴을 때', line2: '토요일 아침이게', line3: '해주세요' },
-  { emoji: '📈', line1: '내가 산 주식만', line2: '파란불에서 구조되길', line3: '📈' },
-  { emoji: '🏠', line1: '올해는 꼭', line2: '내 집 마련', line3: '건강 기원!' },
-  { emoji: '✨', line1: '타임스퀘어 명당', line2: '기운 받아갑니다', line3: '✨' },
-  { emoji: '☕', line1: '월요일이 오면', line2: '네온 아래로', line3: '도망칠게요' },
-  { emoji: '💌', line1: '보낸 카톡에', line2: '따뜻한 답장이', line3: '오게 해주세요' },
-  { emoji: '🍗', line1: '다이어트는 내일부터', line2: '치킨은 지금', line3: '🍗' },
-  { emoji: '🚇', line1: '출근길 지하철에', line2: '빈자리가 나게', line3: '해주세요' },
-  { emoji: '💘', line1: '올해 연애는', line2: '버그 없이', line3: '업데이트' },
-];
-function wishSlot(slotId) {
-  return /^MAIN_(UP|TOP|MID|BOT|LOW)$/.test(slotId) || /^SUB_[1-4][AB]$/.test(slotId) || /^STREET_([1-9]|[12]\d|30)$/.test(slotId) || /^PLOT_([1-9]|1[0-8])$/.test(slotId);
-}
-function wishIndex(slotId) {
-  let h = 0;
-  for (let i = 0; i < slotId.length; i++) h = (Math.imul(h, 33) + slotId.charCodeAt(i)) >>> 0;
-  return h % WISHES.length;
-}
-function vacantWish(row) {
-  if (!row || row.holder_id || !wishSlot(row.slot_id)) return row;
-  const w = WISHES[wishIndex(row.slot_id)];
-  return { ...row, emoji: w.emoji, line1: w.line1, line2: w.line2, line3: w.line3 };
-}
-
+// House notice for a vacant screen (never held, or the hold expired): the slot and its real floor price, never a made-up wish.
 function defaultData(slotId) {
   const tier = tierOf(slotId);
   const price = (floorOf(slotId) || 0).toLocaleString('en-US') + ' 코인부터';
@@ -120,10 +95,10 @@ function defaultData(slotId) {
     const theme = ['matrix_green', 'neon_pink', 'sunset_red', 'cyber_navy', 'gold_luxury'][n % 5];
     row = { slot_id: slotId, emoji: '🌟', bg_theme: theme, text_color: '#ffffff', line1: `${n}번 분양 전광판`, line2: '건물 앞 큰 화면', line3: price, holder_id: null };
   }
-  return vacantWish(row);
+  return row;
 }
 
-const sigOf = (d) => [d.line1, d.line2, d.line3, d.emoji, d.bg_theme, d.text_color, d.holder_name, d.holder_id, d.photo_id, d.photo_status, d.external_url, d.views, d.clicks, d.cheers, d.taken_from, ...(d.notes || [])].join('\u0001');
+const sigOf = (d) => [d.line1, d.line2, d.line3, d.emoji, d.bg_theme, d.text_color, d.holder_name, d.holder_id, d.photo_id, d.photo_status, d.external_url, d.views, d.clicks, d.cheers, d.lit_days, d.taken_from, ...(d.notes || [])].join('\u0001');
 
 export function createBoards({ renderer, kitMats, onBurst, pick }) {
   const boards = new Map();
@@ -167,6 +142,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
 
   const CLAIM = /^(MAIN_(UP|TOP|MID|BOT|LOW)|SUB_[1-4][AB]|STREET_([1-9]|[12]\d|30)|PLOT_([1-9]|1[0-8]))$/;
   let air = null;
+  let opsLine = '';
   function airOn() { return !!(air && air.until > Date.now()); }
   function airRow(b) {
     const glyphs = Array.from(String(air?.line || ''));
@@ -368,10 +344,13 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
     for (const m of b.mounts) m.screen.material = b.mat;
   }
 
+  // b.row keeps what the server said. b.data is what the screen shows: the holder's ad while the hold is live, the house notice otherwise.
   function set(slotId, row, celebrate) {
     const b = ensure(slotId);
-    const next = vacantWish({ ...b.data, ...row, slot_id: slotId });
-    if (b.shared && !next.holder_id) { b.data = next; b.sig = sigOf(next); return false; }
+    b.row = { ...b.row, ...row, slot_id: slotId };
+    const vacant = !live(b.row);
+    const next = vacant ? { ...defaultData(slotId), views: b.row.views, clicks: b.row.clicks, ...(opsLine ? { line2: opsLine } : {}) } : b.row;
+    if (b.shared && !next.holder_id && !opsLine) { b.data = next; b.sig = sigOf(next); return false; }
     if (b.shared) ownCanvas(b);
     const sig = sigOf(next);
     const changed = sig !== b.sig;
@@ -386,7 +365,19 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
     }
     return true;
   }
+  /** Puts the house notice back on every screen whose hold has run out. True when a screen changed. */
+  function expire() {
+    let any = false;
+    for (const b of boards.values()) if (b.data.holder_id && b.row && !live(b.row)) any = set(b.slotId, {}) || any;
+    return any;
+  }
 
+  function setOps(copy) {
+    const next = String(copy || '').slice(0, 80);
+    if (next === opsLine) return;
+    opsLine = next;
+    for (const b of boards.values()) set(b.slotId, {}, false);
+  }
   function setTicker(text) {
     paintTicker(tickerCanvas, text);
     tickerTex.needsUpdate = true;
@@ -553,9 +544,9 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
         const warn = text.startsWith('🚨');
         for (const m of b.mounts) {
           if (!m.rim) continue;
-          m.rim.visible = !!text;
-          m.rim.material.opacity = warn ? ((liveTick / 8) % 2 < 1 ? 0.62 : 0.16) : 0.4;
-          m.rim.material.color.set(warn ? 0xff1a1a : 0xffcf5a);
+          m.rim.visible = !!text || !!b.rimColor;
+          m.rim.material.opacity = warn ? ((liveTick / 8) % 2 < 1 ? 0.62 : 0.16) : (b.rimColor ? 0.85 : 0.4);
+          m.rim.material.color.set(warn ? 0xff1a1a : (b.rimColor || 0xffcf5a));
         }
       }
       if (showMeshes[1]?.visible) {
@@ -567,5 +558,19 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
 
   function accentOf(slotId) { return THEMES[boards.get(slotId)?.data.bg_theme]?.accent || '#3fe6ff'; }
 
-  return { boards, ensure, mount, unmount, set, get: (id) => boards.get(id), worldPos, setTicker, repaintAll, update, accentOf, tickerCanvas, watchShow, setShow, setAir, setDecals, decalsOf: (id) => (boards.get(id)?.decals || []).slice() };
+  function setRim(slotId, color) {
+    const b = boards.get(slotId);
+    if (!b) return;
+    b.rimColor = color || '';
+    const text = shieldText(b);
+    const warn = text.startsWith('🚨');
+    for (const m of b.mounts) {
+      if (!m.rim) continue;
+      m.rim.visible = !!text || !!b.rimColor;
+      m.rim.material.opacity = warn ? 0.62 : (b.rimColor ? 0.85 : 0.4);
+      m.rim.material.color.set(warn ? 0xff1a1a : (b.rimColor || 0xffcf5a));
+    }
+  }
+
+  return { boards, ensure, mount, unmount, set, expire, get: (id) => boards.get(id), worldPos, setTicker, setOps, repaintAll, update, accentOf, tickerCanvas, watchShow, setShow, setAir, setDecals, decalsOf: (id) => (boards.get(id)?.decals || []).slice(), setRim };
 }

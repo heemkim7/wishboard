@@ -1,12 +1,19 @@
 // Times Square K-점령전 — app wiring: realtime net (DO), 3D world, UI, wallet, world state, star shower.
-import { Net, CDN, guestToken } from './net.js?v=20261114a';
-import { createTimesSquare, AVATAR_COLORS, taxiTrainMult } from './timesSquare3d.js?v=20261115b';
-import { speciesId } from './ts3d/avatars.js';
+import { Net, CDN, guestToken } from './net.js?v=20261116j';
+import { createTimesSquare, AVATAR_COLORS, taxiTrainMult } from './timesSquare3d.js?v=20261116j';
+import { speciesId } from './ts3d/avatars.js?v=20261116g';
+import { equip, loadProfile, saveSpecies, setSpecies } from './profile.js?v=20261116g';
 import { starSpot, insideLoop } from './ts3d/layout.js?v=20261113b';
-import { createUI } from './ui.js?v=20261115b';
-import { BALANCE, chainBoost, chainsOf, floorOf, monopolyOf, slotName, slotOf } from './balance.js?v=20261113y';
-import { trackEvent } from './analytics.js?v=20261113z';
-import { adoptHandover, chromeIntent, handoverHref, isAndroid, isInAppWebView, loginEmail, profileName, GT_LS, slotTier } from './plaza-account.js?v=20261113z';
+import { createUI } from './ui.js?v=20261116j';
+import { haptic, startMusic } from './audio.js?v=20261116j';
+import { BALANCE, PAY, chainsOf, live, monopolyOf, slotName, slotOf } from './balance.js?v=20261116f';
+import { trackEvent } from './analytics.js?v=20261116f';
+import { adoptHandover, allowedLink, blockedText, chromeIntent, handoverHref, isAndroid, isInAppWebView, loginEmail, profileName, CHEER_PHRASES, GT_LS, slotTier } from './plaza-account.js?v=20261116f';
+import { saveClip } from './share.js?v=20261116f';
+import { lockCelebration, startFtue } from './ftue.js?v=20261116f';
+import { applyInboxPush, loadInbox, readInbox } from './inbox.js?v=20261116e';
+import { openTribe, pledge, sendCheer } from './tribe.js?v=20261116h';
+import { applyBall, applyOps } from './live.js?v=20261116i';
 
 adoptHandover(location.search, localStorage);
 
@@ -23,39 +30,46 @@ const FOCUS = (() => {
   return slotOf(f) ? f : '';
 })();
 const GIFT = new URLSearchParams(location.search).get('gift') === '1';
-let bootLive = false;
+const FOCUS_REF = (() => {
+  const r = new URLSearchParams(location.search).get('ref') || '';
+  return /^[a-z0-9]{8}$/.test(r) ? r : '';
+})();
+// First screen: only what the server reported. A count that is missing or zero is left out, and with no answer the box is hidden.
+let hereLive = null;
+function applyChannelChip() {
+  const card = document.querySelector('.channel-card');
+  if (!card || hereLive == null) return;
+  card.hidden = hereLive < 40;
+}
 function paintBootLive(data, here) {
+  const box = document.getElementById('bootLive');
   const king = document.getElementById('bootKing');
   const stat = document.getElementById('bootStat');
-  if (!king || !stat) return;
-  const n = Number(here?.live);
-  const crowd = Number.isFinite(n) ? `지금 광장 ${n}명` : '지금 광장 인원을 확인하는 중';
-  if (!data) {
-    if (bootLive) return;
-    king.textContent = '👑 지금 메인 타워의 소원: 곧 표시됩니다';
-    stat.textContent = crowd;
-    return;
-  }
-  bootLive = true;
-  const boards = Array.isArray(data.billboards) ? data.billboards : [];
+  if (!box || !king || !stat) return;
+  if (!Array.isArray(data?.billboards)) { box.hidden = true; return; }
+  const boards = data.billboards.filter((b) => slotOf(b.slot_id));
   const main = boards.find((b) => b.slot_id === 'MAIN_TOP');
-  const who = main?.holder_name ? `${main.holder_name} — "${main.line1 || '소원 대기'}"` : '비어 있음 — 첫 소원을 걸 자리';
-  const now = Date.now();
-  const alive = (b) => {
-    const exp = b.expires_at ? new Date(b.expires_at).getTime() : 0;
-    return !!b.holder_id && (!exp || exp > now);
-  };
-  const held = boards.filter(alive).length;
-  const expired = boards.filter((b) => b.holder_id && !alive(b)).length;
-  const open = boards.length - held;
-  king.textContent = `👑 지금 메인 타워의 소원: ${who}`;
-  stat.textContent = `전광판 ${boards.length}개 · 점령 ${held} · 만료 ${expired} · 지금 걸 수 있는 자리 ${open} · ${crowd}`;
+  const open = boards.filter((b) => !live(b)).length;
+  const count = (v) => Math.max(0, Math.floor(Number(v)) || 0);
+  const visitors = count(data.today?.visitors), wishes = count(data.today?.wishes), crowd = count(here?.live);
+  king.textContent = live(main)
+    ? `👑 지금 메인 타워의 소원: ${main.holder_name || '익명'} — "${main.line1 || '소원 대기'}"`
+    : '👑 메인 타워 정상이 비어 있어요 — 첫 소원을 걸 자리';
+  stat.textContent = [
+    open ? `지금 걸 수 있는 빈 자리 ${open}곳` : '지금은 빈 자리가 없어요',
+    visitors ? `오늘 다녀간 사람 ${visitors.toLocaleString('ko-KR')}명` : '',
+    wishes ? `오늘 걸린 소원 ${wishes.toLocaleString('ko-KR')}개` : '',
+    crowd ? `지금 광장 ${crowd}명` : '',
+  ].filter(Boolean).join(' · ');
 }
 Promise.all([
   fetch('/rt/world', { cache: 'no-store' }).then((r) => r.json()).catch(() => null),
   fetch('/rt/here', { cache: 'no-store' }).then((r) => r.json()).catch(() => null),
-]).then(([data, here]) => paintBootLive(data, here)).catch(() => paintBootLive(null, null));
-setTimeout(() => paintBootLive(null), 2500);
+]).then(([data, here]) => {
+  if (here && Number.isFinite(Number(here.live))) hereLive = Math.max(0, Math.floor(Number(here.live)));
+  paintBootLive(data, here);
+  applyChannelChip();
+}).catch(() => paintBootLive(null, null));
 
 const chars = (s, n) => Array.from(String(s ?? '')).slice(0, n).join('');
 const isColor = (c) => /^#[0-9a-f]{6}$/i.test(String(c || ''));
@@ -89,6 +103,7 @@ const state = {
   nick: chars(recall(NICK_KEY), 16) || `${NICKS[Math.floor(Math.random() * NICKS.length)]}${Math.floor(10 + Math.random() * 90)}`,
   color: isColor(recall(COLOR_KEY)) ? recall(COLOR_KEY) : AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)],
   species: speciesId(recall(SPECIES_KEY)),
+  profile: { level: 1, reputation: 0, equip: [] },
   confirmed: 0,
   pending: 0,
   grants: [],
@@ -138,6 +153,8 @@ const ui = createUI(document.getElementById('ui'), {
   nick: () => state.nick,
   color: () => state.color,
   species: () => state.species,
+  profile: () => state.profile,
+  wear: (id) => wear(id),
   hasSession: () => !!recall(NICK_KEY),
   actorId: () => net.id,
   isGuest: () => accountReady && !sessionUser,
@@ -149,6 +166,8 @@ const ui = createUI(document.getElementById('ui'), {
   withdraw: () => withdrawAccount(),
   mine: (amount, source = 'cart') => grant(amount, source),
   claim: (payload) => claim(payload),
+  relight: (slot) => relight(slot),
+  submitClaim: (payload) => claim(payload),
   sticker: (slot, glyph) => buySticker(slot, glyph),
   washSticker: (slot) => washSticker(slot),
   takeover: (payload) => takeover(payload),
@@ -156,6 +175,7 @@ const ui = createUI(document.getElementById('ui'), {
   revenge: () => { if (net.sendRevenge()) ui.note('복수 운임을 요청했어요', 'ok'); else ui.note('광장에 연결된 뒤에 복수 운임을 켤 수 있어요', 'err'); },
   submitPhoto: (payload) => submitPhoto(payload),
   capture: () => world?.capture() || null,
+  saveClip: () => saveClip(document.getElementById('view')),
   publishShot: (blob) => net.publishShot(blob),
   buy: (payload) => buy(payload),
   sell: (payload) => sellCoins(payload),
@@ -171,9 +191,10 @@ const ui = createUI(document.getElementById('ui'), {
     world?.setColor(color);
   },
   reshape(id) {
-    state.species = speciesId(id);
+    state.species = setSpecies(id);
     keep(SPECIES_KEY, String(state.species));
     world?.setSpecies(state.species);
+    saveSpecies(state.species).catch(() => {});
   },
   react: (id) => world?.playEmote(id),
   reactEmoji: (i) => world?.playReaction(i),
@@ -186,15 +207,25 @@ const ui = createUI(document.getElementById('ui'), {
   boost: (on) => world?.setBoost?.(on),
   adClick: (slot, url) => adClick(slot, url),
   cheer: (slot, msg) => cheer(slot, msg),
+  createTribe: (tag) => createTribe(tag),
+  pledge: (slot, amount) => pledgeSlot(slot, amount),
+  replyCheer: (slot, phraseId) => replyCheer(slot, phraseId),
   bonus: (kind, amount) => payBonus(kind, amount),
+  claimQuest: (key) => !!(net.status === 'online' && net.ch?.raw?.({ t: 'QUEST', key })),
   tickets: (n) => giveTicket(n),
   toggleLounge: () => setLounge(!loungeOn),
+  watchPortrait: (on) => world?.setWatchPortrait?.(!!on),
   throwPouch: () => world?.throwPouch(),
   syncCrown: () => paintCrown(),
   interact: () => world?.interact(),
   enter: (p) => enter(p),
   arrive() {
-    if (!FOCUS) { world?.playIntro(); return; }
+    if (FOCUS) trackEvent('focus_enter', { slot: FOCUS, ref: FOCUS_REF });
+    if (!FOCUS) {
+      world?.playIntro();
+      setTimeout(armFtue, 3000);
+      return;
+    }
     const pose = world?.focusSlot(FOCUS, GIFT ? 4500 : 2500);
     if (!pose) return;
     if (GIFT) {
@@ -205,6 +236,8 @@ const ui = createUI(document.getElementById('ui'), {
   },
   focusShot: (slot) => world?.focusSlot(slot),
   endFocus: () => world?.endFocus(),
+  cineOn: () => !!world?.cineOn?.(),
+  boardView: (slot) => world?.boardView?.(slot) || null,
   setChannel(n) {
     const ch = Math.max(1, Math.min(8, Math.round(Number(n)) || 1));
     net.join(ch === 1 ? 'square' : 'square-' + ch, world?.netState?.());
@@ -232,6 +265,7 @@ const ui = createUI(document.getElementById('ui'), {
   setExposure(v) { gfx.exposure = v; world?.setExposure(v); saveGfx(); },
   setQuality(q) { gfx.quality = q; saveGfx(); },
 });
+applyChannelChip();
 
 world = createTimesSquare(document.getElementById('view'), {
   net,
@@ -275,25 +309,28 @@ world = createTimesSquare(document.getElementById('view'), {
   onBump: () => ui.sfx.bump(),
   onBoost: () => ui.sfx.boost(),
   onJump: () => ui.sfx.whoosh(),
-  onDrive: (on) => ui.setDriving(on),
+  onDrive: (on) => { ui.setDriving(on); startMusic(on ? 'drive' : (ballShown ? 'night' : 'plaza')); },
   onStunt: () => {
     const now = Date.now();
-    if (now - stuntAt < 15000) { ui.note(`황금 링은 ${Math.ceil((15000 - (now - stuntAt)) / 1000)}초 뒤에 다시 받아요`); return; }
-    if (!payBonus('stunt', 10)) return;
+    if (now - stuntAt < PAY.stunt.gapMs) { ui.note(`황금 링은 ${Math.ceil((PAY.stunt.gapMs - (now - stuntAt)) / 1000)}초 뒤에 다시 받아요`); return; }
+    if (!payBonus('stunt', PAY.stunt.base)) return;
     stuntAt = now;
-    ui.note('🔥 황금 링 +10', 'ok');
+    ui.note(`🔥 황금 링 +${PAY.stunt.base}`, 'ok');
     ui.quest('stunt');
   },
-  onHive: () => { if (payBonus('hive', 3)) ui.note('🙌 드라이버 하이파이브! +3', 'ok'); },
+  onHive: () => { if (payBonus('hive', PAY.hive.base)) ui.note(`🙌 드라이버 하이파이브! +${PAY.hive.base}`, 'ok'); },
   onBalloon: (hp, wait) => {
     ui.balloon(hp, wait);
-    if (hp === 0 && grant(30, 'me')) ui.note('🧧 복주머니가 터져 코인 30개가 쏟아졌어요', 'ok');
+    if (hp !== 0) return;
+    if (payBonus('pouch', PAY.pouch.base)) ui.note(`🧧 복주머니가 터져 코인 ${PAY.pouch.base}개가 쏟아졌어요`, 'ok');
+    else ui.note('광장 서버에 연결되면 코인이 기록됩니다', 'err');
   },
   onWish: (line) => ui.note(`🧧 ${line}`, 'ok'),
   onLoungeEnd: () => setLounge(false),
-  onFocus: (on) => ui.focusLock(on),
+  onFocus: (on) => { ui.focusLock(on); if (!on) armFtue(); },
   onWaypoint: (wp) => ui.setWaypoint(wp),
   onJob(ev) {
+    if (ev.type === 'board') { try { net.ch?.raw?.({ t: 'PICK' }); } catch { /* the fare still asks */ } }
     if (ev.type === 'done') ev.paid = payFare(ev.slot || '', ev.riders || 1);
     if (ev.paid) ev.fare = ev.paid;
     ui.job(ev);
@@ -304,7 +341,7 @@ world = createTimesSquare(document.getElementById('view'), {
     ui.quest('fare');
     fareStreak += 1;
     trackEvent('taxi_dropoff', { streak: fareStreak });
-    if (ev.paid) ui.note(`🚕 하차 완료 · ${ev.riders || 1}명 · 연속 ${fareStreak}명 +${ev.paid}`, 'ok');
+    ui.note(`🚕 하차 완료 · ${ev.riders || 1}명 · 연속 ${fareStreak}명`, 'ok');
   },
   onFever(ev) {
     if (ev?.phase === 'count') ui.note('🔮 크리스탈볼이 내려옵니다', 'ok');
@@ -317,13 +354,21 @@ world = createTimesSquare(document.getElementById('view'), {
 });
 window.G.world = world;
 window.G.ui = ui;
-setInterval(() => {
-  if (!state.billboards.length || !world) return;
-  fillRivals();
-  noteChains();
-  ui.setWorld(state);
-  world.updateWorld(state);
-}, 90000);
+
+let ftueApi = null;
+let ftueArmed = false;
+let bakeGuided = false;
+function armFtue() {
+  if (ftueArmed || !entered || !world) return;
+  ftueArmed = true;
+  ftueApi = startFtue({ ui, world, net, balance: BALANCE });
+  if (bakeGuided) ftueApi.onBakePay();
+}
+function noteBakePay() {
+  if (bakeGuided) return;
+  bakeGuided = true;
+  ftueApi?.onBakePay();
+}
 
 // ---- wallet & economy ----------------------------------------------------------------
 // The Room DO credits 1–15 coins per mine, at most one mine per 2 s per player. The first visit
@@ -349,22 +394,15 @@ function grant(amount, source, wait = true) {
 const tickets = [];
 let loungeOn = false, loungeSum = 0, loungeTimer = 0, stuntAt = 0, fareStreak = 0, revengeUntil = 0, feverUntil = 0;
 let drawSeen = Math.floor(Date.now() / 300000);
-function drawNo(bucket) {
-  let x = Math.imul((bucket ^ 0x9e3779b9) >>> 0, 0x7feb352d) >>> 0;
-  return (x % 15) + 1;
-}
 function giveTicket(n = 1) {
   for (let i = 0; i < n; i++) tickets.push(1 + ((Math.random() * 15) | 0));
   ui.tickets(tickets.length, 300000 - (Date.now() % 300000));
-  if (n === 1) ui.note(`🎟️ 복권 ${tickets[tickets.length - 1]}번`, 'ok');
+  if (n === 1) ui.note(`🎟️ 추첨 ${tickets[tickets.length - 1]}번`, 'ok');
 }
 function payBonus(kind, amount) {
   const n = Math.floor(Number(amount));
   if (!Number.isInteger(n) || n < 1) return false;
   if (!net.sendBonus(kind, n, state.nick)) return false;
-  const shown = n * coinMult();
-  creditNow(shown);
-  ui.flyCoins(Math.min(shown, 30), world?.screenOf('me'));
   return true;
 }
 function setLounge(on) {
@@ -380,12 +418,12 @@ function setLounge(on) {
   loungeSum = 0;
   world.startLounge();
   ui.lounge(true, 0);
-  ui.note('☕ 전광판 관람을 켰어요. 8초마다 다른 전광판, 10초마다 +3. 움직이면 끝나요.', 'ok');
+  ui.note('☕ 전광판 관람을 켰어요. 8초마다 다른 전광판, 20초마다 +2. 움직이면 끝나요.', 'ok');
   clearInterval(loungeTimer);
   loungeTimer = setInterval(() => {
     if (!loungeOn) return;
-    if (payBonus('lounge', 3)) { loungeSum += 3; ui.lounge(true, loungeSum); }
-  }, 10000);
+    if (payBonus('lounge', PAY.lounge.base)) { loungeSum += PAY.lounge.base; ui.lounge(true, loungeSum); }
+  }, PAY.lounge.gapMs);
 }
 function tickDraw() {
   const left = 300000 - (Date.now() % 300000);
@@ -393,35 +431,26 @@ function tickDraw() {
   const bucket = Math.floor(Date.now() / 300000);
   if (bucket === drawSeen) return;
   drawSeen = bucket;
-  const win = drawNo(bucket);
-  const hit = tickets.some((n) => n === win);
   tickets.length = 0;
-  ui.sfx.drum();
-  setTimeout(() => ui.sfx.jackpot(), 700);
-  const pay = hit ? 300 : 25;
-  const paid = entered && payBonus('draw', pay);
-  ui.showDraw(win, hit, paid ? pay : 0);
-  if (!paid) ui.note('광장에 연결된 뒤에 복권 당첨금이 들어옵니다', 'err');
   ui.tickets(0, 300000);
 }
 setInterval(tickDraw, 1000);
 
 function creditNow(n) {
   const amount = Math.floor(Number(n));
-  if (!Number.isInteger(amount) || amount < 1) return false;
+  if (!Number.isInteger(amount) || amount < 1) return 0;
   state.grants.push({ n: amount, at: Date.now() });
   state.pending = pendingSum();
-  ui.setWallet(state, { defer: true });
+  state.earned = (state.earned || 0) + amount;
+  ui.setWallet(state);
+  ui.flyCoins?.(Math.min(amount, 40), world?.screenOf?.('me'));
   world?.setRank?.(state.confirmed + state.pending);
-  return true;
+  return amount;
 }
 
 function payFare(slot, riders = 1) {
-  const shown = Math.max(1, Math.round(25 * taxiTrainMult(riders) * (Date.now() < revengeUntil ? 2 : 1) * coinMult()));
   if (!net.sendFare(25, state.nick, slot, riders)) { ui.note('광장 서버에 연결되면 운임이 코인으로 기록됩니다', 'err'); return 0; }
-  creditNow(shown);
-  ui.flyCoins(Math.min(shown, 40), world.screenOf('me'));
-  return shown;
+  return 0;
 }
 
 function adClick(slot, url) {
@@ -429,9 +458,6 @@ function adClick(slot, url) {
   trackEvent('outlink_click', { slot: String(slot || '') });
   window.open(url, '_blank', 'noopener');
   if (!net.sendAdClick(state.nick, slot)) { ui.note('링크는 열렸고, 보너스 코인은 광장 연결 후 기록됩니다', 'err'); return; }
-  const shown = 15 * coinMult();
-  creditNow(shown);
-  ui.flyCoins(shown, world.screenOf('me'));
   ui.note('🔗 작성자 공간 +15 코인', 'ok');
 }
 
@@ -457,33 +483,66 @@ function drawFortune() {
   if (line.includes('+15')) ui.note('광장 서버에 연결되면 보너스 코인이 기록됩니다', 'err');
   ui.armCooldown();
 }
-function cheer(slot, msg) {
-  if (!slot) return;
-  const left = ui.cooldownLeft();
-  if (left > 0) { ui.note(`다음 함성까지 ${Math.ceil(left / 1000)}초`); return; }
-  const bonus = chainBoost(state.billboards, slot) ? 10 : 5;
-  if (!grant(bonus, 'me')) { ui.note('광장 서버에 연결되면 코인이 기록됩니다', 'err'); return; }
+function cheer(slot, phraseId) {
+  const msg = sendCheer(slot, phraseId);
+  if (!msg) return;
+  const { p } = msg;
+  const row = state.billboards.find((b) => b.slot_id === slot);
+  if (row && (!live(row) || row.holder_id === net.id)) {
+    ui.note('켜져 있는 다른 사람 전광판에만 응원할 수 있어요');
+    return;
+  }
+  const wait = PAY.cheer.gapMs - (Date.now() - (cheerAt.get(slot) || 0));
+  if (wait > 0) { ui.note(`다음 응원까지 ${Math.ceil(wait / 1000)}초`); return; }
+  if (!net.ch?.raw?.(msg)) { ui.note('광장 서버에 연결되면 응원이 기록됩니다', 'err'); return; }
+  cheerAt.set(slot, Date.now());
   ui.quest('cheer');
-  giveTicket();
   world?.cheerAt?.(slot);
   trackEvent('wish_cheer', { slot });
   const n = (state.cheers[slot] || 0) + 1;
   state.cheers[slot] = n;
-  const line = chars(String(msg || '').trim(), 15);
-  const patch = { cheers: n };
-  if (line) {
-    const list = state.notes[slot] || (state.notes[slot] = []);
-    list.push(line);
-    if (list.length > 5) list.splice(0, list.length - 5);
-    patch.notes = list.slice();
-  }
-  const row = state.billboards.find((b) => b.slot_id === slot);
-  if (row) Object.assign(row, patch);
-  world?.updateBillboardTexture(slot, patch, false);
+  const board = state.billboards.find((b) => b.slot_id === slot);
+  if (board) board.cheers = n;
+  world?.updateBillboardTexture(slot, { cheers: n }, false);
   ui.setWorld(state);
   paintCrown();
-  ui.note(line ? `🙏 ${line} · 보너스 코인 +${bonus}` : `🙏 응원 +1 · 보너스 코인 +${bonus}`, 'ok');
+  ui.note(`🙏 ${CHEER_PHRASES[p - 1]}`, 'ok');
   ui.sfx.hit();
+}
+const cheerAt = new Map();
+
+async function createTribe(tag) {
+  const made = openTribe().create(tag);
+  if (!made.tag) throw new Error('태그를 적어 주세요');
+  return net.authed('/rt/tribe', { tag: made.tag });
+}
+async function pledgeSlot(slot, amount) {
+  const body = pledge(slot, amount);
+  if (!body) return null;
+  const res = await net.authed('/rt/tribe/pledge', { ...body, topic: net.topic || '' });
+  refreshWallet();
+  return res;
+}
+function replyCheer(slot, phraseId) {
+  const msg = sendCheer(slot, phraseId);
+  if (!msg) return false;
+  if (!net.ch?.raw?.(msg)) {
+    ui.note('광장 서버에 연결되면 답례가 전달됩니다', 'err');
+    return false;
+  }
+  ui.note(`🙏 ${CHEER_PHRASES[msg.p - 1]}`, 'ok');
+  return true;
+}
+async function joinTribeLink() {
+  let id = '';
+  try { id = new URLSearchParams(location.search).get('tribe') || ''; } catch { id = ''; }
+  if (!/^[a-z0-9]{8}$/.test(id)) return;
+  try {
+    const res = await net.authed('/rt/tribe', { id });
+    if (res?.tag) ui.note(`#${res.tag} 소속에 들어왔어요`, 'ok');
+  } catch (e) {
+    ui.note(e?.message || '소속에 들어가지 못했어요', 'err');
+  }
 }
 
 async function refreshWallet() {
@@ -524,8 +583,53 @@ function settle(res) {
   ui.setWorld(state);
 }
 
+function markMine(prefer) {
+  if (!world?.setMyBeacon) return;
+  const rows = state.billboards.filter((b) => b.holder_id && b.holder_id === net.id && live(b));
+  let best = prefer ? rows.find((b) => b.slot_id === prefer) : null;
+  if (!best) {
+    for (const b of rows) if (!best || (Number(b.lit_days) || 0) > (Number(best.lit_days) || 0)) best = b;
+  }
+  const id = best ? best.slot_id : null;
+  world.setMyBeacon(id);
+  world.pinSlot?.(id);
+}
+
+async function relight(slot) {
+  const data = await net.authed('/rt/relight', { slot, topic: net.topic || '' });
+  const row = state.billboards.find((b) => b.slot_id === slot);
+  if (row && data && data.ok !== false) {
+    if (data.lit_until) {
+      row.lit_until = data.lit_until;
+      row.expires_at = data.lit_until;
+    }
+    if (data.lit_days != null) row.lit_days = data.lit_days;
+    world.updateBillboardTexture(slot, row, false);
+    ui.setWorld(state);
+  }
+  markMine(slot);
+  trackEvent('relight', { slot });
+  return data;
+}
+
+function celebrateClaim(slot) {
+  ui.setQuietBlock(true);
+  world.focusSlot(slot);
+  const ms = lockCelebration(5000);
+  setTimeout(() => ui.setQuietBlock(false), ms);
+}
+
 async function claim(payload) {
-  const res = await net.claimBillboard({ ...payload, nickname: state.nick });
+  if (blockedText(state.nick) || blockedText(payload?.line1) || blockedText(payload?.line2) || blockedText(payload?.line3)) {
+    throw new Error('그 문구는 올릴 수 없어요');
+  }
+  const link = payload?.external_url ? allowedLink(payload.external_url) : payload?.external_url;
+  const res = await net.claimBillboard({ ...payload, external_url: link || '', nickname: state.nick });
+  if (res?.review_id) {
+    settle(res);
+    ui.setNextLine('검수 대기');
+    return res;
+  }
   if (res?.data) {
     upsert(state.billboards, 'slot_id', res.data);
     world.updateBillboardTexture(res.data.slot_id || payload.slot_id, res.data, true);
@@ -540,6 +644,8 @@ async function claim(payload) {
   settle(res);
   if (res?.ok !== false && res?.data) {
     trackEvent('board_claim', { tier: slotTier(res.data.slot_id || payload?.slot_id) });
+    const mode = payload?.mode;
+    if (mode === 'starter' || mode === 'claim') celebrateClaim(res.data.slot_id || payload?.slot_id);
     ui.promptLink?.('own');
     world?.bumpFever?.();
   }
@@ -569,6 +675,7 @@ function washSticker(slot) {
 async function takeover(payload) {
   const line = chars(payload?.line || '', 24).trim();
   if (!line) throw new Error('한 줄을 적어 주세요');
+  if (blockedText(line) || blockedText(state.nick)) throw new Error('그 문구는 올릴 수 없어요');
   const pay = payload?.pay === 'ticket' ? 'ticket' : 'coins';
   if (pay === 'coins' && state.confirmed + state.pending < 5000) throw new Error('5000코인이 필요해요');
   if (pay === 'ticket' && !(state.vipTickets >= 1)) throw new Error('VIP 티켓이 없어요');
@@ -590,6 +697,7 @@ async function submitPhoto(payload) {
 }
 
 async function buy(payload) {
+  if (blockedText(state.nick) || blockedText(payload?.sign_text)) throw new Error('그 문구는 올릴 수 없어요');
   const res = await net.buyPlot({ ...payload, nickname: state.nick });
   if (res?.data) {
     upsert(state.plots, 'plot_id', res.data);
@@ -609,6 +717,8 @@ function readPlaza() {
       billboards: Array.isArray(j.billboards) ? j.billboards : [],
       plots: Array.isArray(j.plots) ? j.plots : [],
       ranks: Array.isArray(j.ranks) ? j.ranks : [],
+      ...(typeof j.roof === 'string' ? { roof: j.roof } : {}),
+      ...(j.ops && j.ops.copy ? { ops: j.ops } : {}),
     };
   } catch { return null; }
 }
@@ -619,39 +729,10 @@ function writePlaza(remote) {
       billboards: remote.billboards || [],
       plots: remote.plots || [],
       ranks: remote.ranks || [],
+      ...(typeof remote.roof === 'string' ? { roof: remote.roof } : {}),
+      ...(remote.ops ? { ops: remote.ops } : {}),
     }));
   } catch { /* private mode */ }
-}
-const RIVALS = ['성수동까마귀', '판교불나방', '강남건물주', '홍대버스커', '수지맘', '여의도고래', '을지로프린터', '합정디제이', '건대폭스', '잠실호랑이', '신촌야옹', '망원필름', '성수네온', '한남유리', '이태원밤'];
-const DRIPS = [
-  ['로또 1등만', '이번 달은', '제발'],
-  ['출근길만', '자리 나게', '해주세요'],
-  ['월세 말고', '보증금이', '돌아오길'],
-  ['오늘 야근', '치킨은', '공짜로'],
-  ['카톡 답장', '따뜻한 말로', '오게 해주세요'],
-  ['다이어트는', '내일부터', '오늘은 야식'],
-];
-function rivalOf(slotId, bucket) {
-  let h = bucket;
-  const s = String(slotId);
-  for (let i = 0; i < s.length; i++) h = (Math.imul(h, 33) + s.charCodeAt(i)) >>> 0;
-  const name = RIVALS[h % RIVALS.length];
-  const drip = DRIPS[h % DRIPS.length];
-  const floor = floorOf(slotId) || 100;
-  const bid = floor >= 500 ? floor : 100 + (h % 201);
-  return {
-    holder_id: 'rival:' + slotId, holder_name: name, emoji: '✨',
-    line1: drip[0], line2: drip[1], line3: drip[2], current_bid: bid,
-    expires_at: new Date(Date.now() + 36e5).toISOString(),
-    protected_until: new Date(Date.now() - 1000).toISOString(),
-  };
-}
-function fillRivals() {
-  const bucket = Math.floor(Date.now() / 90000);
-  for (const row of state.billboards) {
-    if (row.holder_id && !String(row.holder_id).startsWith('rival:')) continue;
-    Object.assign(row, rivalOf(row.slot_id, bucket));
-  }
 }
 let chainReady = false, chainSeen = new Set();
 function noteChains() {
@@ -663,10 +744,14 @@ function noteChains() {
 function applyPlaza(remote) {
   if (!remote) return;
   state.billboards = (remote.billboards || []).filter((b) => slotOf(b.slot_id));
-  fillRivals();
   noteChains();
   state.plots = remote.plots || [];
   if (Array.isArray(remote.ranks)) state.ranks = remote.ranks;
+  if (typeof remote.roof === 'string') state.roof = remote.roof;
+  if (remote.ops) {
+    const line = applyOps(remote.ops);
+    if (line) ui.setNextLine(line);
+  }
   for (const row of state.billboards) {
     if (state.cheers[row.slot_id]) row.cheers = state.cheers[row.slot_id];
     if (state.notes[row.slot_id]) row.notes = state.notes[row.slot_id];
@@ -674,6 +759,7 @@ function applyPlaza(remote) {
   ui.setWorld(state);
   world.updateWorld(state);
   world.setMonopoly?.(!!monopolyOf(state.billboards));
+  markMine();
   paintCrown();
 }
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -687,8 +773,10 @@ async function refreshWorld() {
 }
 
 let crownSig = '';
+let welcomeUntil = 0;
+let welcomeTimer = 0;
 function paintCrown() {
-  if (shower) return;
+  if (shower || Date.now() < welcomeUntil) return;
   const tag = world?.topTeam?.() || '';
   const sig = tag + '|' + headlines.join('|');
   if (sig === crownSig) return;
@@ -747,10 +835,10 @@ function takeStar(i) {
     if (performance.now() - (takeStar.at || 0) > 1200) { takeStar.at = performance.now(); ui.note(ui.isBusy() ? '별똥별은 지금 동작을 끝내고 주워요' : `별똥별은 ${Math.ceil(left / 1000)}초 뒤에 주울 수 있어요`); }
     return;
   }
-  if (!grant(STAR_BONUS, 'star')) { ui.note('별똥별을 주우려면 광장 서버에 연결되어 있어야 해요', 'err'); return; }
+  if (!payBonus('star', BALANCE.starCoin)) { ui.note('별똥별을 주우려면 광장 서버에 연결되어 있어야 해요', 'err'); return; }
   shower.taken.add(i);
   ui.sfx.star();
-  ui.note('별똥별 +8', 'ok');
+  ui.note(`별똥별 +${BALANCE.starCoin}`, 'ok');
   world.removeStar(i, true);
   try { net.send('take', { seed: shower.seed, i }); } catch { /* solo */ }
 }
@@ -773,6 +861,52 @@ function bindTake() {
 
 // ---- network events -----------------------------------------------------------------------
 net.on('wallet', () => refreshWallet());
+net.on('pay', (m) => {
+  creditNow(m?.amount);
+  if (m?.kind === 'bake') noteBakePay();
+  if (m?.kind === 'attend') ui.noteAttend?.(m?.key);
+});
+net.on('inbox', (m) => {
+  const line = applyInboxPush(m);
+  if (line) ui.setNextLine(line, m?.kind === 'cheer' ? m.slot_id : '');
+});
+let ballShown = false;
+net.on('ball', (m) => {
+  const line = applyBall(m);
+  if (line) ui.setNextLine(line);
+  if (m?.open) {
+    if (!ballShown) {
+      ballShown = true;
+      world?.openPlaza?.();
+      haptic(60);
+    }
+    if (!world?.isDriving?.()) startMusic('night');
+  } else {
+    ballShown = false;
+    if (!world?.isDriving?.()) startMusic('plaza');
+  }
+});
+net.on('ghost', (m) => world?.showGhost?.(m));
+net.on('draw', (m) => {
+  creditNow(m?.amount);
+  ui.showDraw?.(m?.win, !!m?.hit, Math.floor(Number(m?.amount)) || 0);
+  tickets.length = 0;
+  ui.tickets?.(0, 300000);
+});
+net.on('profile', (m) => applyServerProfile(m));
+net.on('welcome', (m) => {
+  if (!m?.name) return;
+  ui.news('WELCOME', { nick: m.name });
+  welcomeUntil = Date.now() + 8000;
+  world?.setTicker?.('방금 도착: ' + m.name);
+  clearTimeout(welcomeTimer);
+  welcomeTimer = setTimeout(() => {
+    welcomeUntil = 0;
+    world?.setTicker?.('');
+    crownSig = '';
+    paintCrown();
+  }, 8000);
+});
 net.on('take', (m) => {
   if (!m || m.victim !== net.id) return;
   ui.revenge({ slot: m.slot, slotName: m.name || slotName(m.slot), attacker: m.attacker, price: m.price, line1: m.line1, line2: m.line2, line3: m.line3, emoji: m.emoji, theme: m.theme, color: m.color });
@@ -796,7 +930,17 @@ net.on('ad', (m) => {
   ui.setWorld(state);
   if (m.kind === 'views' && row?.holder_id && row.holder_id === net.id && m.by !== net.id) ui.note('🚕 방금 다른 유저의 택시가 내 전광판 앞에 손님을 내려줬습니다! (누적 노출 +1)', 'ok');
 });
+// Wallet and world arrive over the socket: WALLET_SYNC after every settle (the Room DO settles pending coins within 30 s on its own)
+// and WORLD_UPDATE on every board or plot change. HTTP only fills the gaps: once when the socket (re)connects, and every 60 s while it is down.
+let syncedAt = 0;
+function resync() {
+  if (Date.now() - syncedAt < 15000) return;
+  syncedAt = Date.now();
+  refreshWallet();
+  refreshWorld();
+}
 net.on('status', (s) => {
+  if (s === 'online') resync();
   if (queuePos) return;
   if (s === 'online') { ui.setStatus('실시간 연결됨', 'ok'); bindTake(); }
   else if (s === 'connecting') ui.setStatus('광장 연결 중', 'warn');
@@ -808,11 +952,16 @@ net.on('gate', (g) => {
   if (g?.down) ui.setStatus('오늘 광장 정원이 찼어요', 'off');
 });
 net.onWorldUpdate((ev) => {
+  // No kind: the world changed in bulk (an account was withdrawn). Refetch, spread over 3 s so a full room does not ask at once.
+  if (!ev?.kind) { if (!ev?.replay) setTimeout(refreshWorld, Math.random() * 3000); return; }
+  if (Array.isArray(ev.ranks) && !ev.replay) state.ranks = ev.ranks;
   const prev = ev?.kind === 'BILLBOARD' && ev.data ? state.billboards.find(b => b.slot_id === ev.data.slot_id) : null;
-  const sameClaim = !!prev && prev.holder_id === ev.data.holder_id && String(prev.expires_at) === String(ev.data.expires_at) && Number(prev.current_bid) === Number(ev.data.current_bid);
+  const sameHold = !!prev && !!prev.holder_id && prev.holder_id === ev.data.holder_id && Number(prev.current_bid) === Number(ev.data.current_bid);
+  const sameClaim = sameHold && String(prev.expires_at) === String(ev.data.expires_at) && String(prev.lit_until || '') === String(ev.data.lit_until || '');
   if (ev?.kind === 'BILLBOARD' && ev.data) upsert(state.billboards, 'slot_id', ev.data);
   if (ev?.kind === 'PLOT' && ev.data) upsert(state.plots, 'plot_id', ev.data);
   ui.setWorld(state);
+  if (ev?.kind === 'BILLBOARD') markMine();
   if (!ev?.kind || ev.replay) return;
   if (sameClaim) {
     if (ev.data.photo_status === 'approved' && prev.photo_status !== 'approved') headline(`📷 ${chars(ev.data.holder_name || '누군가', 12)}님의 사진 광고 송출 시작!`);
@@ -824,6 +973,7 @@ net.onWorldUpdate((ev) => {
     }
     return;
   }
+  if (ev.kind === 'BILLBOARD' && sameHold) return;
   ui.news(ev.kind, ev.data);
   if (ev.kind === 'BILLBOARD') {
     const stolen = prev?.holder_id && prev.holder_id !== ev.data.holder_id;
@@ -844,11 +994,13 @@ function guestActor() {
     return { id: 'guest:' + g.sub, token: g.token || '' };
   } catch { return null; }
 }
+// The handover link carries a short-lived ticket instead of the public guest id (net.handoverTicket). Both strings stay empty until one is ready.
 function authEnv() {
-  const g = guestActor();
-  const href = handoverHref(g?.id || '', 'google');
   const ua = navigator.userAgent || '';
-  return { inApp: isInAppWebView(ua), android: isAndroid(ua), handoverUrl: g?.id ? href : '', intent: g?.id ? chromeIntent(href) : '' };
+  const inApp = isInAppWebView(ua);
+  const ticket = inApp ? net.handoverTicket() : '';
+  const href = ticket ? handoverHref(ticket, 'google') : '';
+  return { inApp, android: isAndroid(ua), handoverUrl: href, intent: href ? chromeIntent(href) : '' };
 }
 function authMessage(e) {
   const m = String(e?.message || '');
@@ -949,9 +1101,66 @@ async function withdrawAccount() {
 }
 
 // ---- lifecycle ------------------------------------------------------------------------------
+async function showAwayInbox() {
+  try {
+    const items = await loadInbox();
+    const shown = items.filter((row) => applyInboxPush(row)).slice(0, 3);
+    const line = shown.map((row) => applyInboxPush(row)).join(' · ');
+    const cheerRow = shown.find((row) => row.kind === 'cheer' && row.slot_id);
+    if (line) ui.setNextLine(line, cheerRow?.slot_id || '');
+    await readInbox(shown.map((row) => row.id));
+  } catch { /* the square still opens when the inbox is down */ }
+}
+
+async function pullProfile() {
+  try {
+    const p = await loadProfile();
+    if (!p || p.err || p.species == null) return;
+    const reputation = Math.max(0, Math.floor(Number(p.reputation) || 0));
+    state.profile = {
+      level: Math.min(99, 1 + Math.floor(reputation / 10)),
+      reputation,
+      equip: Array.isArray(p.equip) ? p.equip.slice(0, 4) : [],
+    };
+    state.species = setSpecies(p.species);
+    keep(SPECIES_KEY, String(state.species));
+    world?.setSpecies(state.species);
+    world?.setEquip(state.profile.equip);
+    ui.refreshProfile();
+  } catch { /* the square still opens when the profile is down */ }
+}
+async function wear(id) {
+  try {
+    const res = await equip(id);
+    if (!res || res.ok === false) {
+      ui.note(res?.error === 'missing' ? '아직 없는 꾸미기예요' : '장착하지 못했어요', 'err');
+      return false;
+    }
+    await pullProfile();
+    ui.note('장착했어요', 'ok');
+    return true;
+  } catch {
+    ui.note('장착하지 못했어요', 'err');
+    return false;
+  }
+}
+function applyServerProfile(m) {
+  if (!m) return;
+  if (m.av != null) {
+    state.species = setSpecies(m.av);
+    keep(SPECIES_KEY, String(state.species));
+    world?.setSpecies(state.species);
+  }
+  if (Array.isArray(m.equip)) {
+    state.profile.equip = m.equip.slice(0, 4);
+    world?.setEquip(state.profile.equip);
+  }
+  ui.refreshProfile();
+}
 async function enter({ nick, color, species }) {
   if (entered) return;
   entered = true;
+  startMusic(ballShown ? 'night' : 'plaza');
   state.nick = chars(nick, 16) || state.nick;
   if (isColor(color)) state.color = color;
   if (species != null) state.species = speciesId(species);
@@ -961,6 +1170,7 @@ async function enter({ nick, color, species }) {
   world.setName(state.nick);
   world.setColor(state.color);
   world.setSpecies(state.species);
+  pullProfile();
   ui.refreshProfile();
   ui.news('WELCOME', { nick: state.nick });
   if (!tickets.length) giveTicket();
@@ -970,11 +1180,6 @@ async function enter({ nick, color, species }) {
       if (recall('kts_hello')) return;
       if (!net.sendBonus('hello', BALANCE.firstCoins, state.nick)) { if (--left > 0) setTimeout(hello, 2000); return; }
       keep('kts_hello', '1');
-      state.grants.push({ n: BALANCE.firstCoins, at: Date.now() });
-      state.pending = pendingSum();
-      state.earned = (state.earned || 0) + BALANCE.firstCoins;
-      ui.setWallet(state, { defer: true });
-      ui.flyCoins(BALANCE.firstCoins, world.screenOf('me'));
       ui.note(`첫 놀이 +${BALANCE.firstCoins}`, 'ok');
     };
     setTimeout(hello, 2500);
@@ -986,6 +1191,8 @@ async function enter({ nick, color, species }) {
   try {
     await net.join('square', world.netState());
     bindTake();
+    showAwayInbox();
+    joinTribeLink();
     if (!queuePos) ui.setStatus(net.status === 'online' ? '실시간 연결됨' : '광장 연결 중', net.status === 'online' ? 'ok' : 'warn');
   } catch { ui.setStatus('혼자 걷는 중', 'off'); }
 }
@@ -1006,30 +1213,14 @@ setInterval(() => {
   const b = bucketKey();
   if (b !== lastBucket && entered) { lastBucket = b; startShower(b, true); }
   if (shower && performance.now() - shower.started > STAR_LIFE) { world.clearStars(); shower = null; crownSig = ''; paintCrown(); }
-  else if (shower) {
+  else if (shower && Date.now() >= welcomeUntil) {
     const left = Math.max(0, Math.ceil((STAR_LIFE - (performance.now() - shower.started)) / 1000));
     world.setTicker(`🌠 별똥별 ${10 - shower.taken.size}개 남음 · ${left}초 · 노란 빛기둥에 서면 +8`);
   } else paintCrown();
   ui.setPeople(1 + (net.peers?.size || 0), net.shard || 1);
 }, 1000);
-setInterval(refreshWallet, 20000);
 setInterval(savePlace, 1000);
 window.addEventListener('pagehide', savePlace);
 window.addEventListener('beforeunload', savePlace);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') savePlace(); });
-function applyFlush(res) {
-  const coins = Number(res?.coins);
-  if (!Number.isFinite(coins)) return;
-  const rose = coins > state.confirmed;
-  if (rose || Number(res.flushed) > 0) { state.grants = []; state.pending = 0; }
-  state.confirmed = coins;
-  state.walletKnown = true;
-  state.pending = pendingSum();
-  ui.setWallet(state, { bump: rose });
-}
-setInterval(() => {
-  const g = state.grants[0];
-  if (!g || Date.now() - g.at < BALANCE.flushAskMs) return;
-  net.flushWallet?.().then((res) => { applyFlush(res); return refreshWallet(); }).catch(() => {});
-}, 5000);
-setInterval(refreshWorld, 20000);
+setInterval(() => { if (net.status !== 'online' && !document.hidden) resync(); }, 60000);

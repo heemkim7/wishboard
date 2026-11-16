@@ -6,7 +6,7 @@ import { Kit, fishGeometry } from './kit.js';
 import {
   makeCanvas, paintStationSign, paintPylon, paintMenuBoard, paintTKTS, paintNeonSign,
   paintBeam, paintPlotBadge, paintLabel, paintTaxiStand, SANS, EMOJI,
-} from './art.js?v=20261113b';
+} from './art.js?v=20261116f';
 
 const tex = (canvas, aniso = 4) => {
   const t = new THREE.CanvasTexture(canvas);

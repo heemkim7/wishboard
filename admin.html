@@ -15,7 +15,8 @@
   h1 { margin: 0; font-size: 24px; font-weight: 900; letter-spacing: -.02em; }
   .sub { margin: 6px 0 0; font-size: 13px; color: var(--muted); font-weight: 600; line-height: 1.6; }
   .bar { margin-top: 20px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-  input[type=password] { flex: 1; min-width: 220px; height: 42px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--stroke); background: rgba(0,0,0,.3); color: var(--text); font: inherit; font-weight: 700; }
+  input[type=password], input[type=text], input[type=date], select, #downSlot, #actor, #opsId, #opsTitle, #opsCopy { flex: 1; min-width: 160px; height: 42px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--stroke); background: rgba(0,0,0,.3); color: var(--text); font: inherit; font-weight: 700; }
+  select { min-width: 120px; }
   button { height: 42px; padding: 0 16px; border-radius: 12px; border: 1px solid var(--stroke); background: var(--glass); color: var(--text); font: inherit; font-weight: 800; cursor: pointer; }
   button:hover { border-color: rgba(255,255,255,.3); }
   button:disabled { opacity: .45; cursor: default; }
@@ -41,6 +42,13 @@
   .hit b { color: var(--text); }
   .hit span { color: var(--muted); }
   ul { margin: 8px 0 0; padding-left: 18px; }
+  h2 { margin: 44px 0 0; font-size: 18px; font-weight: 900; }
+  .scroll { margin-top: 12px; overflow-x: auto; border-radius: 12px; border: 1px solid var(--stroke); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; font-weight: 700; white-space: nowrap; }
+  th, td { padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--stroke); }
+  th { color: var(--muted); font-weight: 800; background: var(--glass); }
+  th:first-child, td:first-child { text-align: left; }
+  td small { color: var(--dim); font-weight: 700; }
 </style>
 </head>
 <body>
@@ -67,6 +75,40 @@
   <div class="tabs" id="tabs"></div>
   <div class="msg" id="msg"></div>
   <div class="grid" id="grid"></div>
+  <h2>🚩 신고 <button id="modLoad" type="button">새로고침</button></h2>
+  <p class="sub">같은 계정은 같은 칸을 한국 시간으로 하루에 한 번만 신고합니다. S급 점령은 승인 전까지 칸을 바꾸지 않고, 거절하면 낸 코인을 그대로 돌려줍니다. 내리기는 문구와 링크만 지우고 코인은 되돌리지 않습니다.</p>
+  <div class="hits" id="reports"></div>
+  <h2>S급 대기</h2>
+  <div class="hits" id="reviews"></div>
+  <div class="bar">
+    <input id="downSlot" type="text" placeholder="내릴 슬롯 (MAIN_TOP)" autocomplete="off" />
+    <button id="down" class="no" type="button">전광판 내리기</button>
+  </div>
+  <div class="msg" id="modMsg"></div>
+  <h2>📅 운영 달력</h2>
+  <p class="sub">오늘(한국 시간)과 겹치는 한 줄이 광장에 나갑니다. 문구는 80자까지이고, 주제는 다섯 가지 중 하나입니다. 12월 31일 카운트다운도 이 폼으로만 넣습니다.</p>
+  <div class="bar">
+    <input id="opsId" type="text" placeholder="id (newyear-eve)" autocomplete="off" />
+    <input id="opsStart" type="date" />
+    <input id="opsEnd" type="date" />
+    <select id="opsTheme">
+      <option value="newyear">newyear</option>
+      <option value="xmas">xmas</option>
+      <option value="seollal">seollal</option>
+      <option value="valentine">valentine</option>
+      <option value="csat">csat</option>
+    </select>
+  </div>
+  <div class="bar">
+    <input id="opsTitle" type="text" maxlength="80" placeholder="제목" autocomplete="off" />
+    <input id="opsCopy" type="text" maxlength="80" placeholder="문구 80자" autocomplete="off" />
+    <button id="opsSave" type="button">달력 저장</button>
+  </div>
+  <div class="msg" id="opsMsg"></div>
+  <h2>📈 지표 <button id="statsLoad" type="button">새로고침</button></h2>
+  <p class="sub">한국 시간 기준 하루 단위. 방문자는 계정(게스트 포함) 수, 신규는 그날 처음 본 계정. D1·D7·D30은 그날 신규 가운데 1·7·30일 뒤에 다시 온 비율이고, 그 날짜가 지나야 채워집니다. 깔때기는 신규 방문자의 첫 화면 → 입장 → 첫 코인 → 첫 점령입니다.</p>
+  <div class="msg" id="statsMsg"></div>
+  <div class="scroll"><table id="stats"></table></div>
 </main>
 <script type="module">
 const $ = (id) => document.getElementById(id);
@@ -142,7 +184,119 @@ async function load() {
     }));
   } catch (e) { msg(e.message, true); }
 }
-$('save').onclick = () => { key = $('key').value.trim(); sessionStorage.setItem('kts-admin', key); load(); };
+// Daily metrics from GET /rt/admin/stats (x-admin-key). Only on open and on the button: the readout reads the day's raw events.
+const STAT_COLS = ['날짜', '방문자', '신규', '재방문', 'D1', 'D7', 'D30', '세션', '체류(중앙)', '신규 깔때기: 첫 화면 → 입장 → 첫 코인 → 첫 점령', '점령', '택시', '링크', '로그인'];
+const pct = (n, of) => of ? Math.round(n / of * 100) + '%' : '–';
+const span = (s) => s >= 60 ? Math.floor(s / 60) + '분 ' + (s % 60) + '초' : s + '초';
+async function loadStats() {
+  if (!key) { $('statsMsg').textContent = ''; $('stats').replaceChildren(); return; }
+  $('statsMsg').textContent = '불러오는 중…'; $('statsMsg').className = 'msg';
+  try {
+    const r = await api('/rt/admin/stats?days=30');
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) throw new Error('지표를 불러오지 못했어요.');
+    const row = (tag, cells) => { const tr = document.createElement('tr'); for (const c of cells) { const el = document.createElement(tag); el.textContent = c; tr.append(el); } return tr; };
+    const rows = d.days.map((s) => {
+      const f = s.funnel_new || [0, 0, 0, 0];
+      const back = (n) => s.ret?.[n] == null ? '…' : pct(s.ret[n], s.new);
+      const tr = row('td', [s.day === d.today ? s.day + ' (오늘)' : s.day, s.visitors, s.new, s.returning, back(1), back(7), back(30), s.sessions, span(s.len_med || 0),
+        `${f[0]} → ${f[1]} (${pct(f[1], f[0])}) → ${f[2]} (${pct(f[2], f[0])}) → ${f[3]} (${pct(f[3], f[0])})`, s.billboard_claims, s.taxi_trips, s.outbound_clicks, s.account_conversions]);
+      if (s.anon) { const sm = document.createElement('small'); sm.textContent = ` +계정 없는 세션 ${s.anon}`; tr.children[1].append(sm); }
+      return tr;
+    });
+    $('stats').replaceChildren(row('th', STAT_COLS), ...rows);
+    $('statsMsg').textContent = rows.length ? '' : '아직 기록된 이벤트가 없어요.';
+  } catch (e) { $('statsMsg').textContent = e.message; $('statsMsg').className = 'msg err'; }
+}
+$('statsLoad').onclick = loadStats;
+const REASON = { abuse: '욕설·혐오', ad: '광고', impersonation: '사칭', other: '기타' };
+function modNote(text, err) { $('modMsg').textContent = text || ''; $('modMsg').className = err ? 'msg err' : 'msg'; }
+function emptyNote(text) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = text; return e; }
+async function reviewSlot(id, approve, btns) {
+  if (!confirm(approve ? '이 S급 점령을 승인할까요? 승인하는 시점의 칸에 환불 규칙을 적용합니다.' : '거절하고 입찰 코인을 그대로 돌려줄까요?')) return;
+  for (const b of btns) b.disabled = true;
+  try {
+    const r = await api('/rt/admin/review', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, approve }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.ok === false) throw new Error(d.error || '처리하지 못했어요');
+    modNote(approve ? '승인했어요. 칸이 지금 바뀝니다.' : '거절하고 코인을 돌려줬어요.');
+    loadModeration();
+  } catch (e) { modNote(e.message, true); for (const b of btns) b.disabled = false; }
+}
+async function loadModeration() {
+  if (!key) { modNote(''); $('reports').replaceChildren(); $('reviews').replaceChildren(); return; }
+  modNote('불러오는 중…');
+  try {
+    const r = await api('/rt/admin/reports');
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) throw new Error('신고 목록을 불러오지 못했어요.');
+    const reports = d.items || [];
+    $('reports').replaceChildren(...(reports.length ? reports.map((row) => {
+      const el = document.createElement('div'); el.className = 'hit';
+      for (const t of [row.slot_id, REASON[row.reason] || row.reason, new Date(row.created_at).toLocaleString('ko-KR')]) {
+        const s = document.createElement('span'); s.textContent = t; el.append(s);
+      }
+      return el;
+    }) : [emptyNote('신고가 없어요')]));
+    const reviews = d.reviews || [];
+    $('reviews').replaceChildren(...(reviews.length ? reviews.map((row) => {
+      const p = row.payload || {};
+      const el = document.createElement('div'); el.className = 'hit';
+      const text = [p.nickname, p.line1, p.line2, p.line3].filter(Boolean).join(' · ') || '(문구 없음)';
+      for (const t of [row.slot_id, `${Number(row.bid).toLocaleString('ko-KR')} 코인`, text]) {
+        const s = document.createElement('span'); s.textContent = t; el.append(s);
+      }
+      const ok = document.createElement('button'); ok.type = 'button'; ok.className = 'ok'; ok.textContent = '승인';
+      const no = document.createElement('button'); no.type = 'button'; no.className = 'no'; no.textContent = '거절 · 환불';
+      ok.onclick = () => reviewSlot(row.id, true, [ok, no]);
+      no.onclick = () => reviewSlot(row.id, false, [ok, no]);
+      el.append(ok, no);
+      return el;
+    }) : [emptyNote('대기 중인 S급 점령이 없어요')]));
+    modNote('');
+  } catch (e) { modNote(e.message, true); }
+}
+$('modLoad').onclick = loadModeration;
+$('down').onclick = async () => {
+  key = $('key').value.trim();
+  sessionStorage.setItem('kts-admin', key);
+  const slot = $('downSlot').value.trim();
+  if (!key) { modNote('ADMIN_KEY를 입력하세요.', true); return; }
+  if (!slot) { modNote('슬롯 id를 입력하세요.', true); return; }
+  if (!confirm(`${slot} 문구를 내릴까요? 코인은 되돌리지 않습니다.`)) return;
+  $('down').disabled = true;
+  try {
+    const r = await api('/rt/admin/takedown', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slot }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.ok === false) throw new Error(d.error || '내리지 못했어요');
+    modNote(`${slot} 문구를 내렸어요.`);
+  } catch (e) { modNote(e.message, true); }
+  $('down').disabled = false;
+};
+$('save').onclick = () => { key = $('key').value.trim(); sessionStorage.setItem('kts-admin', key); load(); loadStats(); loadModeration(); };
+function opsNote(text, err) { $('opsMsg').textContent = text || ''; $('opsMsg').className = err ? 'msg err' : 'msg'; }
+$('opsSave').onclick = async () => {
+  key = $('key').value.trim();
+  sessionStorage.setItem('kts-admin', key);
+  if (!key) { opsNote('ADMIN_KEY를 입력하세요.', true); return; }
+  const body = {
+    id: $('opsId').value.trim(),
+    starts_on: $('opsStart').value,
+    ends_on: $('opsEnd').value,
+    theme: $('opsTheme').value,
+    title: $('opsTitle').value.trim(),
+    copy: $('opsCopy').value.trim(),
+  };
+  if ([...body.copy].length > 80) { opsNote('문구는 80자까지예요.', true); return; }
+  $('opsSave').disabled = true;
+  try {
+    const r = await api('/rt/admin/ops', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.ok === false) throw new Error(d.error || '저장하지 못했어요');
+    opsNote('운영 일정을 저장했어요.');
+  } catch (e) { opsNote(e.message, true); }
+  $('opsSave').disabled = false;
+};
 $('grant').onclick = async () => {
   key = $('key').value.trim();
   sessionStorage.setItem('kts-admin', key);
@@ -162,6 +316,8 @@ $('grant').onclick = async () => {
 $('key').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('save').click(); });
 renderTabs();
 load();
+loadStats();
+loadModeration();
 setInterval(() => { if (key && tab === 'pending' && !document.hidden) load(); }, 30000);
 </script>
 </body>

@@ -4,7 +4,7 @@
 // To move to a dedicated WebSocket server, reimplement these methods here; nothing else needs to change.
 // Fully optional: if the CDN or Supabase is unreachable, the game keeps running single-player.
 // v6: Seoul project (ap-northeast-2). Rooms = 행정동 code + scene; a shared lobby presence channel gives per-dong head counts.
-import { parseGuestHandover, GT_LS } from './plaza-account.js?v=20261113z';
+import { GT_LS, SESSION_LS, isInAppWebView } from './plaza-account.js?v=20261116f';
 export const SUPA_URL = 'https://yxddhpacuyaffaoutxjn.supabase.co';
 export const SUPA_KEY = 'sb_publishable_Vd-7c6e2f2s3G1d5Jbx9vw_0UCuHm-B'; // publishable key: public by design
 // v13: QA/test clients (?qa=1) live in a separate namespace and never appear in real players' rooms, lobby counts or chat history
@@ -33,10 +33,12 @@ export async function doToken(sb, fresh) { try { const c = (window.G?.net?.sb ||
     if (s?.access_token) return s.access_token; const g = await guestToken(fresh); if (g) return g.token; // v16: guests get a Worker-signed token (no Supabase anonymous user/MAU)
     if (!c?.auth?.signInAnonymously) return null; const r = await Promise.race([c.auth.signInAnonymously(), soon(2000)]); return r?.data?.session?.access_token || null; } catch { return null; } }
 // v16 guest identity: HMAC token from /rt/guest, cached in localStorage and renewed (same id) before it expires.
+// g.ticket = a handover ticket adopted from another browser's link (plaza-account.js adoptHandover): the server swaps it for that guest's token,
+// and only then does this browser's own guest get replaced. A guest id alone is never enough.
 export async function guestToken(fresh) { let g = null; try { g = JSON.parse(localStorage.getItem(GT_LS) || 'null'); } catch { }
   const live = g?.token && g.exp * 1000 > Date.now();
-  if (!fresh && live && g.exp * 1000 > Date.now() + 86400000) return g;
-  const body = {}; if (g?.token) body.t = g.token; const hand = parseGuestHandover(g?.sub); if (hand) body.h = hand;
+  if (!fresh && !g?.ticket && live && g.exp * 1000 > Date.now() + 86400000) return g;
+  const body = {}; if (g?.token) body.t = g.token; if (g?.ticket) body.h = g.ticket;
   try { const r = await fetch('/rt/guest', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); if (!r.ok) return live ? g : null;
     const n = await r.json(); if (!n?.token) return live ? g : null; localStorage.setItem(GT_LS, JSON.stringify(n)); return n; } catch { return live ? g : null; } }
 class DOChan {
@@ -50,7 +52,7 @@ class DOChan {
     ws.onmessage = e => this.msg(e.data); ws.onclose = () => this.closed(ws); ws.onerror = () => { };
     clearInterval(this.pt); this.pt = setInterval(() => { if (ws.readyState === 1) ws.send('ping'); }, 25000); } // server auto-responds (free, no DO wake); stale after 75s
   msg(d) { if (d === 'pong') return; let m; try { m = JSON.parse(d); } catch { return; }
-    if (m.t === 'ok') { this.st = m.s || {}; this.state = 'joined'; this.tries = 0; this.failAt = 0; this.rt.ev(this, { ok: true, live: m.live, cap: m.cap }); this.rt.cfg(m); this._trS = 0; this.cb('SUBSCRIBED'); if (m.air && this.rt.net) this.rt.net.emit('air', m.air); if (this.mine && !this._trS) this.raw({ t: 'tr', m: this.mine }); this.fire('presence', 'sync'); if (m.h && this.rt.net && this.topic === this.rt.net.topic) { const chat = []; for (const row of m.h) { if (row?.t === 'WORLD_UPDATE') this.rt.net.emit('world', { ...row, replay: true }); else if (row?.t === 'E') this.rt.net.emit('emoji', { id: row.k, e: row.e, replay: true }); else chat.push(row); } if (chat.length) this.rt.net.emit('history', chat); } }
+    if (m.t === 'ok') { this.st = m.s || {}; this.state = 'joined'; this.tries = 0; this.failAt = 0; this.rt.ev(this, { ok: true, live: m.live, cap: m.cap }); this.rt.cfg(m); this._trS = 0; this.cb('SUBSCRIBED'); if (m.air && this.rt.net) this.rt.net.emit('air', m.air); if (m.ball && this.rt.net) this.rt.net.emit('ball', m.ball); if (this.rt.net && (m.av != null || Array.isArray(m.equip))) this.rt.net.emit('profile', { av: m.av, equip: m.equip }); if (this.mine && !this._trS) this.raw({ t: 'tr', m: this.mine }); this.fire('presence', 'sync'); if (m.h && this.rt.net && this.topic === this.rt.net.topic) { const chat = []; for (const row of m.h) { if (row?.t === 'WORLD_UPDATE') this.rt.net.emit('world', { ...row, replay: true }); else if (row?.t === 'E') this.rt.net.emit('emoji', { id: row.k, e: row.e, replay: true }); else if (row?.t === 'GHOST') this.rt.net.emit('ghost', row); else chat.push(row); } if (chat.length) this.rt.net.emit('history', chat); } }
     else if (m.t === 'wait') {
       if (this.rt.net?.bumpShard?.()) { this.dead = true; try { this.ws.close(); } catch { } return; }
       this.state = 'waiting'; this.rt.ev(this, { pos: m.pos, live: m.live, cap: m.cap });
@@ -61,22 +63,26 @@ class DOChan {
     else if (m.t === 'b') this.fire('broadcast', m.e, { type: 'broadcast', event: m.e, payload: m.p });
     else if (m.t === 'cfg') this.rt.cfg(m);
     else if (m.t === 'down') { this.dead = true; this.rt.down(this); }
+    else if (m.t === 'moved') this.moved = true; // this account joined another channel elsewhere (one room per account): the server closes this socket next
     else if (m.t === 'WORLD_UPDATE') { if (this.rt.net) this.rt.net.emit('world', m); }
     else if (m.t === 'WALLET_SYNC') { if (this.rt.net) this.rt.net.emit('wallet', m); }
     else if (m.t === 'AD') { if (this.rt.net) this.rt.net.emit('ad', m); }
     else if (m.t === 'E') { this.fire('broadcast', 'emote', { type: 'broadcast', event: 'emote', payload: { id: m.k, e: m.e } }); if (this.rt.net) this.rt.net.emit('emoji', { id: m.k, e: m.e }); }
-    else if (m.t === 'TAKE' || m.t === 'MONO' || m.t === 'REV' || m.t === 'FEVER' || m.t === 'AIR') { if (this.rt.net) this.rt.net.emit(m.t.toLowerCase(), m); } }
+    else if (m.t === 'TAKE' || m.t === 'MONO' || m.t === 'REV' || m.t === 'FEVER' || m.t === 'AIR') { if (this.rt.net) this.rt.net.emit(m.t.toLowerCase(), m); }
+    else if (m.t === 'PAY' || m.t === 'DRAW' || m.t === 'SESS' || m.t === 'WELCOME' || m.t === 'INBOX' || m.t === 'BALL') { if (this.rt.net) this.rt.net.emit(m.t.toLowerCase(), m); }
+    else if (m.t === 'GHOST') { if (this.rt.net) this.rt.net.emit('ghost', m); } }
   raw(o) { if (this.ws?.readyState === 1) { this.ws.send(JSON.stringify(o)); return true; } return false; }
   send(o) { if (this.state !== 'joined') return Promise.resolve('error'); const p = o.payload; if (o.event === 'pos' && p) { this.raw({ t: 'p', a: [p.x, p.y, p.face, p.anim, p.fl, p.vx, p.vy] }); return Promise.resolve('ok'); } this.raw({ t: 'b', e: o.event, p: o.payload }); return Promise.resolve('ok'); }
   track(m) { this.mine = m; if (this.state === 'joined') { this._trS = 1; this.raw({ t: 'tr', m }); } return Promise.resolve('ok'); }
   untrack() { this.mine = null; this.raw({ t: 'ut' }); return Promise.resolve('ok'); }
   closed(ws, noTok) { if (!noTok && ws && ws !== this.ws) return; clearInterval(this.pt); const was = this.state; this.state = 'closed'; this.st = {}; if (this.dead) return;
     if (was === 'joined') { this.fire('presence', 'sync'); this.cb('CLOSED'); }
+    if (this.moved) { clearTimeout(this.rto); this.cb('CHANNEL_ERROR'); return; } // no retry timer, or two tabs would evict each other in a loop; kick() reopens when this tab is used again
     const n = this.tries++, now = Date.now(); if (!this.failAt) this.failAt = now;
     if (!this.downSent && n >= FAIL_N && now - this.failAt >= FAIL_MS && !document.hidden && navigator.onLine !== false) { this.downSent = true; this.cb('CHANNEL_ERROR'); this.rt.down(this); }
     const d = Math.min(DO_CAP, DO_BASE * 2 ** Math.min(n, 6)) * (0.8 + Math.random() * 0.4); // hidden tab: no faster than 30s (the browser throttles anyway)
     clearTimeout(this.rto); this.rto = setTimeout(() => this.open(), document.hidden ? Math.max(d, DO_CAP) : d); }
-  kick() { if (this.dead || this.state === 'joined' || this.opening || (this.ws && this.ws.readyState <= 1)) return; this.tries = Math.min(this.tries, 1); clearTimeout(this.rto); this.open(); }
+  kick() { if (this.dead || this.state === 'joined' || this.opening || (this.ws && this.ws.readyState <= 1)) return; this.moved = false; this.tries = Math.min(this.tries, 1); clearTimeout(this.rto); this.open(); }
   close() { this.dead = true; clearInterval(this.pt); clearTimeout(this.rto); try { this.ws?.close(1000); } catch { } }
 }
 export function rtPatch(sb, net) { if (!DO_MODE || !sb || sb.__do) return sb; const chans = new Set(), base = { POS: Net.POS_MS, FAR: Net.FAR_MS };
@@ -97,10 +103,11 @@ export class Net {
   on(ev, fn) { (this.h[ev] ||= []).push(fn); } emit(ev, ...a) { for (const f of this.h[ev] || []) f(...a); }
   async init() {
     if (DO_MODE) { Net.GRID_ON = 1e9; Net.GRID_OFF = 1e9 - 1; try { const g = await guestToken(); if (g?.sub) this.id = 'guest:' + g.sub; } catch { } }
+    if (DO_MODE && isInAppWebView(navigator.userAgent)) { const warm = () => { if (!document.hidden) this.handoverTicket(); }; warm(); setInterval(warm, 300000); document.addEventListener('visibilitychange', warm); } // the login sheet reads the ticket synchronously
     try { let m = globalThis.__SUPA_MOD; if (!m?.createClient) m = await Promise.race([import(CDN).then((mod) => { globalThis.__SUPA_MOD = mod; return mod; }), soon(4000)]);
       if (!m?.createClient) throw new Error('cdn timeout');
       const cfg = await this.loadConfig();
-      this.sb = m.createClient(cfg.url, cfg.key, { realtime: { params: { eventsPerSecond: 30 } }, auth: { persistSession: true, storageKey: 'maeul_auth', detectSessionInUrl: true, flowType: 'pkce' } }); rtPatch(this.sb, this);
+      this.sb = m.createClient(cfg.url, cfg.key, { realtime: { params: { eventsPerSecond: 30 } }, auth: { persistSession: true, storageKey: SESSION_LS, detectSessionInUrl: true, flowType: 'pkce' } }); rtPatch(this.sb, this);
     } catch (e) { console.warn('[net] offline:', e.message); this.setStatus('offline'); }
     if (DO_MODE && this.sb?.auth?.getSession) { try { const s = await Promise.race([this.sb.auth.getSession().then((x) => x?.data?.session || null).catch(() => null), soon(1500)]); if (s?.user?.id) this.id = 'user:' + s.user.id; } catch { } }
     return !!this.sb;
@@ -169,7 +176,7 @@ export class Net {
   upsert(k, m, fromPresence) {
     let p = this.peers.get(k); const now = performance.now();
     if (!p) { p = { id: k, buf: [] }; this.peers.set(k, p); this.emit('join', p, m); }
-    Object.assign(p, { name: m.name ?? p.name, outfit: m.outfit ?? p.outfit, equip: m.equip ?? p.equip, av: m.av ?? p.av, rank: m.rank ?? p.rank, fl: m.fl ?? p.fl });
+    Object.assign(p, { name: m.name ?? p.name, outfit: m.outfit ?? p.outfit, equip: m.equip ?? p.equip, av: m.av ?? p.av, rank: m.rank ?? p.rank, fl: m.fl ?? p.fl, seat: m.seat ?? p.seat });
     if (!fromPresence || !p.buf.length) { p.buf.push({ t: now, x: m.x, y: m.y, face: m.face, anim: m.anim, vx: m.vx, vy: m.vy }); if (p.buf.length > 20) p.buf.shift(); }
     this.emit('update', p);
   }
@@ -220,11 +227,17 @@ export class Net {
   async passwordAuth(kind, email, password) { const auth = this.sb?.auth; if (!auth) throw new Error('로그인 준비 중이에요'); const first = kind === 'up' ? await auth.signUp({ email, password }) : await auth.signInWithPassword({ email, password }); if (first.error) throw first.error; if (first.data?.session) return first.data.session; if (kind === 'up') { const again = await auth.signInWithPassword({ email, password }); if (again.data?.session) return again.data.session; const err = new Error('가입은 기록됐지만 이 창에서 바로 로그인되지 않았어요. 메일 확인이 켜져 있으면 확인 후 다시 로그인해 주세요.'); err.code = 'confirm'; throw err; } throw new Error('로그인에 실패했어요'); }
   async mergeGuest(guestId, guestToken, nickname) { const tok = await doToken(this.sb); if (!tok || String(tok).startsWith('g1.')) throw new Error('로그인 세션이 없어요'); const r = await fetch('/rt/auth/merge', { method: 'POST', headers: { authorization: 'Bearer ' + tok, 'content-type': 'application/json' }, body: JSON.stringify({ guest_id: guestId, guest_token: guestToken, nickname: nickname || '' }) }); const data = await r.json().catch(() => ({})); if (!r.ok || data.ok === false) throw new Error(data.error || data.err || '계정 연결에 실패했어요'); return data; }
   async withdrawAccount() { const tok = await doToken(this.sb); if (!tok || String(tok).startsWith('g1.')) throw new Error('로그인된 계정만 탈퇴할 수 있어요'); const r = await fetch('/rt/auth/withdraw', { method: 'POST', headers: { authorization: 'Bearer ' + tok, 'content-type': 'application/json' }, body: '{}' }); const data = await r.json().catch(() => ({})); if (!r.ok || data.ok === false) throw new Error(data.error || '탈퇴를 처리하지 못했어요'); try { await this.sb?.auth?.signOut(); } catch { } return data; }
+  // In-app browser → system browser. A guest id is public, so the handover link carries a 15-minute ticket that only this guest's own token can obtain
+  // (POST /rt/handover). Returns the cached ticket ('' until one is ready) and refreshes it in the background once under 10 minutes remain.
+  handoverTicket() { const h = this._ht, left = h ? h.exp * 1000 - Date.now() : 0;
+    if (left < 600000 && !this._htBusy && !String(this.id).startsWith('user:')) this._htBusy = (async () => { try { const g = await guestToken(); if (g?.token) { const r = await fetch('/rt/handover', { method: 'POST', headers: { authorization: 'Bearer ' + g.token } }); const j = r.ok ? await r.json() : null; if (j?.ticket) this._ht = j; } } catch { } this._htBusy = null; })();
+    return left > 60000 ? h.ticket : ''; }
   async world() { const r = await fetch('/rt/world', { cache: 'no-store' }); if (!r.ok) throw new Error('world ' + r.status); return r.json(); }
   async wallet(actorId) { const id = actorId || this.id; const tok = await doToken(this.sb); if (!tok) throw new Error('auth'); const r = await fetch('/rt/wallet?actor_id=' + encodeURIComponent(id), { cache: 'no-store', headers: { authorization: 'Bearer ' + tok } }); const data = await r.json().catch(() => ({})); if (!r.ok) throw new Error(data.err || data.error || ('wallet ' + r.status)); return data; }
-  sendMine(amount, nick) { if (!this.ch?.raw || this.status !== 'online') return false; const n = Math.floor(Number(amount)); if (!Number.isFinite(n) || n < 1) return false; return this.ch.raw({ t: 'MINE', amount: Math.min(15, n), nick: Array.from(String(nick ?? this.me?.name ?? '')).slice(0, 16).join('') }); }
-  sendBonus(kind, amount, nick) { if (!this.ch?.raw || this.status !== 'online') return false; const n = Math.floor(Number(amount)); if (!Number.isInteger(n) || n < 1) return false; return this.ch.raw({ t: 'BONUS', kind: String(kind || '').slice(0, 12), amount: n, nick: Array.from(String(nick ?? '')).slice(0, 16).join('') }); }
-  sendFare(amount, nick, slot, riders) { if (!this.ch?.raw || this.status !== 'online') return false; const n = Math.floor(Number(amount)); if (!Number.isInteger(n) || n < 1) return false; const msg = { t: 'FARE', amount: Math.min(25, n), nick: Array.from(String(nick ?? '')).slice(0, 16).join(''), slot: String(slot || '').slice(0, 16) }; const ridersN = Math.floor(Number(riders)); if (ridersN >= 1 && ridersN <= 5) msg.riders = ridersN; return this.ch.raw(msg); }
+  earned(ok, kind) { if (ok && kind !== 'hello' && kind !== 'attend') this.emit('earn'); return ok; } // a coin the player worked for (analytics.js: first_coin); hello and attendance pay on arrival
+  sendMine(amount, nick) { if (!this.ch?.raw || this.status !== 'online') return false; const n = Math.floor(Number(amount)); if (!Number.isFinite(n) || n < 1) return false; return this.earned(this.ch.raw({ t: 'MINE', amount: Math.min(15, n), nick: Array.from(String(nick ?? this.me?.name ?? '')).slice(0, 16).join('') })); }
+  sendBonus(kind, amount, nick) { if (!this.ch?.raw || this.status !== 'online') return false; const n = Math.floor(Number(amount)); if (!Number.isInteger(n) || n < 1) return false; return this.earned(this.ch.raw({ t: 'BONUS', kind: String(kind || '').slice(0, 12), amount: n, nick: Array.from(String(nick ?? '')).slice(0, 16).join('') }), kind); }
+  sendFare(amount, nick, slot, riders) { if (!this.ch?.raw || this.status !== 'online') return false; const n = Math.floor(Number(amount)); if (!Number.isInteger(n) || n < 1) return false; const msg = { t: 'FARE', amount: Math.min(25, n), nick: Array.from(String(nick ?? '')).slice(0, 16).join(''), slot: String(slot || '').slice(0, 16) }; const ridersN = Math.floor(Number(riders)); if (ridersN >= 1 && ridersN <= 5) msg.riders = ridersN; return this.earned(this.ch.raw(msg)); }
   sendRevenge() { if (!this.ch?.raw || this.status !== 'online') return false; return this.ch.raw({ t: 'REV' }); }
   sendFever() { if (!this.ch?.raw || this.status !== 'online') return false; return this.ch.raw({ t: 'FEVER' }); }
   sendAdClick(nick, slot) { if (!this.ch?.raw || this.status !== 'online') return false; return this.ch.raw({ t: 'ADCLICK', nick: Array.from(String(nick ?? '')).slice(0, 16).join(''), slot: String(slot || '').slice(0, 16) }); }

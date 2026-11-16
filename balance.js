@@ -14,12 +14,12 @@ export const BALANCE = {
   cheerGroup: 8,
   cheerSolo: 2,
   floors: { S: 3000, B: 500, C: 100 },
-  starterSlots: [],
+  starterSlots: ['STREET_8', 'STREET_9', 'STREET_10', 'STREET_11'],
   starterBid: 30,
   firstCoins: 40,
   bakeGold: 15,
   bakeGood: 5,
-  starCoin: 8,
+  starCoin: 6,
   danceShow: 2,
   missionEarn: 30,
   missionReward: 15,
@@ -69,9 +69,10 @@ export function tagsOf(board) {
   const text = [board?.line1, board?.line2, board?.line3].join(' ');
   return new Set(text.match(TAG_RE) || []);
 }
-function live(board, now = Date.now()) {
+export function live(board, now = Date.now()) {
   if (!board?.holder_id) return false;
-  const exp = board.expires_at ? new Date(board.expires_at).getTime() : 0;
+  const until = board.lit_until || board.expires_at;
+  const exp = until ? new Date(until).getTime() : 0;
   return exp > now;
 }
 export function buildingOf(slotId) {
@@ -81,7 +82,7 @@ export function chainsOf(boards, now = Date.now()) {
   const out = [];
   for (const bld of BUILDINGS) {
     const rows = bld.slots.map((id) => (boards || []).find((r) => r.slot_id === id));
-    if (rows.some((r) => !live(r, now) || String(r.holder_id).startsWith('rival:'))) continue;
+    if (rows.some((r) => !live(r, now))) continue;
     let name = '', holder = '', tag = '';
     if (rows.every((r) => r.holder_id === rows[0].holder_id)) {
       name = rows[0].holder_name || '누군가';
@@ -139,4 +140,87 @@ export function fareCredit(asked, revenge) {
   const n = Math.min(25, Math.floor(Number(asked)));
   if (!Number.isInteger(n) || n < 1) return 0;
   return n * (revenge ? 2 : 1);
+}
+
+export const PAY = Object.freeze({
+  bake: { miss: 0, good: 6, gold: 16, minS: 8, maxS: 40, perHour: 40, nearM: 12 },
+  dance: { minS: 25, maxS: 40, perHour: 6, nearM: 8 },
+  cheer: { base: 4, gapMs: 12000, perHour: 30 },
+  lounge: { base: 2, gapMs: 20000, perHour: 30 },
+  star: { base: 6, perHour: 8 },
+  stunt: { base: 8, gapMs: 20000, perHour: 8 },
+  hive: { base: 2, gapMs: 15000, perHour: 12 },
+  pouch: { base: 20, cap: 30, gapMs: 25000, perHour: 4, perDay: 8 },
+  fare: { base: 20, gapMs: 40000, perHour: 15, pickGapMs: 20000, pickMoveM: 15, pickMax: 4 },
+  lottery: { hit: 25, sides: 15 },
+  attend: 30,
+  mission: 15,
+  hello: 40,
+  quest: { fare: 50, cheer: 30, stunt: 40, all: 100 },
+  hourCap: 1200,
+  ballHourCap: 1600,
+  playFullS: 3600,
+  stall: { x: 21, z: 118 },
+  stage: { x: 0, z: 366 },
+});
+
+export function curveOf(playSeconds) {
+  return Number(playSeconds) < PAY.playFullS ? 1 : 0.3;
+}
+export function ballOpen(now = Date.now()) {
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(now));
+  const g = (t) => Number(parts.find((p) => p.type === t).value);
+  const sec = g('hour') * 3600 + g('minute') * 60 + g('second');
+  return sec >= 21 * 3600 && sec < 21 * 3600 + 600;
+}
+export function auctionClosed(slotId, now = Date.now()) {
+  return String(slotId || '').startsWith('MAIN_') && !ballOpen(now);
+}
+export function feverBall(fever, ball) {
+  return Math.min(2, (fever ? 2 : 1) * (ball ? 2 : 1));
+}
+export function scaledPay(base, state = {}) {
+  const scaled = Math.floor(Number(base) * curveOf(state.playSeconds || 0) * feverBall(!!state.fever, !!state.ball));
+  const cap = state.ball ? PAY.ballHourCap : PAY.hourCap;
+  return Math.max(0, Math.min(scaled, cap - (Number(state.earnedInWindow) || 0)));
+}
+export function claimSplit({ mode = 'claim', bid = 0, prevBid = 0, plot = false, landlordId = '', buyerId = '', prevId = '', live = false } = {}) {
+  const B = Math.max(0, Math.floor(Number(bid) || 0));
+  const prev = Math.max(0, Math.floor(Number(prevBid) || 0));
+  if (mode === 'starter') return { charge: 0, refund: 0, landlord: 0, burn: 0 };
+  if (mode === 'edit') {
+    const delta = Math.max(0, B - prev);
+    const landlord = plot && landlordId && landlordId !== buyerId ? Math.floor(delta / 2) : 0;
+    return { charge: delta, refund: 0, landlord, burn: delta - landlord };
+  }
+  if (!live) {
+    const landlord = plot && landlordId && landlordId !== buyerId ? Math.floor(B / 2) : 0;
+    return { charge: B, refund: 0, landlord, burn: B - landlord };
+  }
+  const refund = Math.min(B, Math.floor(prev * 80 / 100));
+  let landlord = Math.floor((B - refund) / 2);
+  if (!(plot && landlordId && landlordId !== buyerId && landlordId !== prevId)) landlord = 0;
+  return { charge: B, refund, landlord, burn: B - refund - landlord };
+}
+export function fareRaw(riders, revenge, fever, ball) {
+  const table = [1, 2.2, 3.8, 6, 10];
+  const n = Math.min(5, Math.max(1, Math.floor(Number(riders)) || 1));
+  return Math.round(PAY.fare.base * table[n - 1] * (revenge ? 2 : 1) * feverBall(!!fever, !!ball));
+}
+export function farePay(riders, state = {}) {
+  const curved = Math.floor(fareRaw(riders, state.revenge, state.fever, state.ball) * curveOf(state.playSeconds || 0));
+  const cap = state.ball ? PAY.ballHourCap : PAY.hourCap;
+  return Math.max(0, Math.min(curved, cap - (Number(state.earnedInWindow) || 0)));
+}
+export function bakeBase(result) {
+  if (result === 'gold') return PAY.bake.gold;
+  if (result === 'good') return PAY.bake.good;
+  return 0;
+}
+export function danceBase(score) {
+  const n = Math.max(0, Math.min(100, Math.floor(Number(score) || 0)));
+  if (n >= 90) return 12;
+  if (n >= 75) return 8;
+  if (n >= 55) return 4;
+  return 2;
 }

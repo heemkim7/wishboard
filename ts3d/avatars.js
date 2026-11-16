@@ -23,13 +23,19 @@ export const REACTIONS = [
 export const AVATAR_COLORS = ['#ff3d9a', '#3fe6ff', '#ffcf5a', '#39f58a', '#b84dff', '#ff6a3d', '#f4f6ff', '#4d7cff'];
 export const SPECIES = [
   { id: 1, label: '쥐', glyph: '🐭' },
+  { id: 2, label: '고양이', glyph: '🐱' },
+  { id: 3, label: '곰', glyph: '🐻' },
 ];
-export const speciesId = () => 1;
+export function speciesId(id) {
+  const n = Math.floor(Number(id));
+  return n === 2 || n === 3 ? n : 1;
+}
+const MODEL_URL = { 1: '/assets/models/Mousey.glb', 2: '/assets/models/Cat.glb', 3: '/assets/models/Bear.glb' };
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 export function createAvatars({ scene, urls, models, first, height = 1.8 }) {
-  const sources = models || { 1: urls?.[0] };
+  const sources = { ...MODEL_URL, ...(models || (urls?.[0] ? { 1: urls[0] } : {})) };
   const sys = { species: new Map(), missing: new Set(), pending: 0, failed: false, waiting: new Set(), all: new Set(), height };
   const loader = new GLTFLoader();
   const started = new Set();
@@ -69,6 +75,8 @@ export function createAvatars({ scene, urls, models, first, height = 1.8 }) {
       if (!o.isMesh) return;
       const m = o.material;
       if (!m) return;
+      // Coat, Fur, Belly and Paw stay as they are. Mousey's Ch14_Body is not renamed to Main.
+      if ((id === 2 || id === 3) && m.name === 'Main' && o.name !== 'Ch14_Body') m.name = 'Coat';
       if (m.name === 'Main') { m.metalness = 0.35; m.roughness = 0.32; }
       else if (m.name === 'Grey') { m.metalness = 0.7; m.roughness = 0.3; m.color.set('#c5cad3'); }
       else if (m.name === 'Black') { m.metalness = 0.45; m.roughness = 0.22; }
@@ -92,7 +100,7 @@ export function createAvatars({ scene, urls, models, first, height = 1.8 }) {
   }
 
   function loadId(id) {
-    const url = sources[id];
+    const url = sources[id] || MODEL_URL[id];
     if (!url || started.has(id)) return;
     started.add(id);
     sys.pending++;
@@ -216,6 +224,7 @@ class Avatar {
     this.modelSpecies = 0;
     this.name = name || '익명';
     this.color = color || '#3fe6ff';
+    this.cosmetics = [];
     this.root = new THREE.Group();
     this.holder = new THREE.Group();
     this.root.add(this.holder);
@@ -271,6 +280,7 @@ class Avatar {
     if (this.fallback) this.model.traverse((o) => { o.geometry?.dispose(); o.material?.dispose?.(); });
     this.mainMat?.dispose();
     this.mainMat = null;
+    this.hat = null;
     this.model = null;
     this.mixer = null;
     this.actions = null;
@@ -330,6 +340,34 @@ class Avatar {
       this.fadeTo(this.base, 0.3, true);
     });
     this.fadeTo(this.base, 0, true);
+    this.syncHat();
+  }
+
+  setEquip(ids) {
+    const src = Array.isArray(ids) ? ids : String(ids || '').split(',');
+    this.cosmetics = src.map((id) => String(id || '').trim()).filter((id) => id && id !== 'taxi').slice(0, 4);
+    this.syncHat();
+  }
+
+  syncHat() {
+    if (this.hat) {
+      this.hat.removeFromParent();
+      this.hat.geometry?.dispose();
+      this.hat.material?.dispose();
+      this.hat = null;
+    }
+    if (!this.cosmetics.includes('hat_ribbon') || !this.model || this.fallback) return;
+    const head = poseBones(this.model).Head;
+    if (!head) return;
+    const unit = 1 / (this.model.scale?.x || 1);
+    const mesh = new THREE.Mesh(
+      new THREE.TorusGeometry(0.16 * unit, 0.035 * unit, 8, 16),
+      new THREE.MeshStandardMaterial({ color: '#ff3d9a', roughness: 0.45, metalness: 0.05, name: 'Ribbon' }),
+    );
+    mesh.rotation.x = Math.PI / 2;
+    mesh.position.y = 0.12 * unit;
+    head.add(mesh);
+    this.hat = mesh;
   }
 
   attachFallback() {

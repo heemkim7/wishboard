@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  GT_LS, EVENT_NAMES, keysMatch, isInAppWebView, isAndroid, parseGuestHandover, adoptHandover,
+  GT_LS, EVENT_NAMES, keysMatch, isInAppWebView, isAndroid, parseGuestHandover, adoptHandover, ticketSub,
   handoverHref, chromeIntent, loginEmail, profileName, mergeCoins, protectMinutes, slotTier,
   linkedActor, statsFromCounts, LINK_BONUS,
 } from '../plaza-account.js';
@@ -29,19 +29,39 @@ assert.equal(parseGuestHandover(sub.toUpperCase()), sub);
 assert.equal(parseGuestHandover('guest:nope'), '');
 assert.equal(parseGuestHandover(''), '');
 
-const mem = { bag: new Map(), getItem(k) { return this.bag.has(k) ? this.bag.get(k) : null; }, setItem(k, v) { this.bag.set(k, v); } };
-assert.equal(adoptHandover('?handover=guest:' + sub + '&autologin=google', mem), sub);
-assert.equal(JSON.parse(mem.getItem(GT_LS)).sub, sub);
-mem.setItem(GT_LS, JSON.stringify({ sub, token: 'g1.keep', exp: 9 }));
-adoptHandover('?handover=' + sub, mem);
-assert.equal(JSON.parse(mem.getItem(GT_LS)).token, 'g1.keep');
+// The handover link carries a ticket (h1.<payload>.<signature>), never a bare guest id. The Worker signs and verifies it;
+// the browser only reads which guest it names. test/plaza.test.mjs covers the signature.
+const ticket = 'h1.' + Buffer.from(JSON.stringify({ s: sub, e: 1900000000 })).toString('base64url') + '.' + 'A'.repeat(43);
+assert.equal(ticketSub(ticket), sub);
+assert.equal(ticketSub(' ' + ticket + ' '), sub);
+for (const bad of [sub, 'guest:' + sub, 'g1.' + ticket.slice(3), ticket.split('.').slice(0, 2).join('.'), 'h1.' + Buffer.from('{"s":"nope"}').toString('base64url') + '.' + 'A'.repeat(43), 'h1.%%%.sig', '', null]) assert.equal(ticketSub(bad), '');
 
-const href = handoverHref('guest:' + sub, 'google');
-assert.equal(href, 'https://studio.wishboard.workers.dev/?handover=guest%3A' + sub + '&autologin=google');
+const mem = { bag: new Map(), getItem(k) { return this.bag.has(k) ? this.bag.get(k) : null; }, setItem(k, v) { this.bag.set(k, v); } };
+// A guest id in the link does nothing: it is public, so it proves nothing.
+assert.equal(adoptHandover('?handover=guest:' + sub + '&autologin=google', mem), '');
+assert.equal(adoptHandover('?handover=' + sub, mem), '');
+assert.equal(mem.getItem(GT_LS), null);
+// A ticket is stored for net.js to redeem.
+assert.equal(adoptHandover('?handover=' + encodeURIComponent(ticket) + '&autologin=google', mem), sub);
+assert.deepEqual(JSON.parse(mem.getItem(GT_LS)), { ticket });
+// This browser's own guest stays until the server accepts the ticket.
+const other = 'g-11111111-2222-4333-8444-555555555555';
+mem.setItem(GT_LS, JSON.stringify({ sub: other, token: 'g1.mine', exp: 9 }));
+assert.equal(adoptHandover('?handover=' + ticket, mem), sub);
+assert.deepEqual(JSON.parse(mem.getItem(GT_LS)), { sub: other, token: 'g1.mine', exp: 9, ticket });
+// Already this guest: nothing to redeem.
+mem.setItem(GT_LS, JSON.stringify({ sub, token: 'g1.keep', exp: 9 }));
+adoptHandover('?handover=' + ticket, mem);
+assert.deepEqual(JSON.parse(mem.getItem(GT_LS)), { sub, token: 'g1.keep', exp: 9 });
+
+const href = handoverHref(ticket, 'google');
+assert.equal(href, 'https://studio.wishboard.workers.dev/?handover=' + ticket + '&autologin=google');
+assert.equal(adoptHandover(new URL(href).search, { getItem: () => null, setItem() {} }), sub);
 const intent = chromeIntent(href);
 assert.match(intent, /^intent:\/\/studio\.wishboard\.workers\.dev\/\?/);
 assert.match(intent, /package=com\.android\.chrome/);
 assert.doesNotMatch(intent, /signInWithOAuth/);
+assert.equal(adoptHandover(new URL(intent.replace(/^intent:/, 'https:').split('#')[0]).search, { getItem: () => null, setItem() {} }), sub);
 
 assert.equal(loginEmail('Neon_1'), 'neon_1@id.wishboard.dev');
 assert.equal(loginEmail('a@b.co'), 'a@b.co');
@@ -74,6 +94,8 @@ const stats = statsFromCounts({ page_landing: 4, enter_square: 1, taxi_dropoff: 
 assert.deepEqual(stats, { visits: 4, enter_rate: 25, taxi_trips: 2, billboard_claims: 3, outbound_clicks: 5, account_conversions: 1 });
 assert.equal(statsFromCounts({}).enter_rate, 0);
 assert.equal(EVENT_NAMES.includes('auth_login_success'), true);
+assert.equal(EVENT_NAMES.includes('first_coin'), true);
+assert.equal(EVENT_NAMES.includes('session_end'), true);
 assert.equal(EVENT_NAMES.includes('flush_key'), false);
 
 const schema = readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');

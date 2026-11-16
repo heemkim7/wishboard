@@ -1,12 +1,16 @@
 // Plaza UI: glass HUD, wallet, news wire, emote dock, prompts, bungeo-ppang timing game, K-POP rhythm game,
 // taxi HUD, city map + minimap, billboard / plot / ATM / settings / credits sheets, onboarding, touch controls, SFX.
-import { paintBillboard, paintNeonSign, THEMES, makeCanvas, chars, fontsReady, tierOf, boardPhoto, photoReady } from './ts3d/art.js?v=20261113b';
+import { paintBillboard, paintNeonSign, THEMES, makeCanvas, chars, fontsReady, tierOf, boardPhoto, photoReady } from './ts3d/art.js?v=20261116f';
 import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, LANDMARKS } from './ts3d/layout.js?v=20261113b';
-import { BALANCE, askBid, buildingOf, floorOf, nextChainFace, slotName } from './balance.js?v=20261113y';
+import { BALANCE, askBid, buildingOf, floorOf, nextChainFace, slotName } from './balance.js?v=20261116f';
+import { claimWizard } from './ftue.js?v=20261116f';
+import { cardUrl, copyCard } from './share.js?v=20261116f';
 import { TILE, ROAD, AREA } from './ts3d/nyc.js';
-import { EMOTES, REACTIONS, AVATAR_COLORS, SPECIES } from './ts3d/avatars.js?v=20261113o';
-import { trackEvent } from './analytics.js?v=20261113z';
-import { linkedActor } from './plaza-account.js?v=20261113z';
+import { EMOTES, REACTIONS, AVATAR_COLORS, SPECIES } from './ts3d/avatars.js?v=20261116g';
+import { trackEvent } from './analytics.js?v=20261116f';
+import { CHEER_PHRASES, allowedLink, blockedText, linkedActor } from './plaza-account.js?v=20261116f';
+import { subscribePush } from './push.js?v=20261116e';
+import { bindSfx, play } from './audio.js?v=20261116j';
 
 const LEVELS = [
   { src: 'icons/lot.jpg', t: '빈 땅' },
@@ -112,6 +116,7 @@ export function createUI(root, hooks) {
   let wallet = { confirmed: 0, pending: 0, earned: 0 };
   let earnedSeen = 0;
   let plazaReady = false, starterToastShown = false;
+  let quietBlock = false, proofWait = null, pushQueued = false, pushOffered = false, replacingSheet = false;
   let people = 1, peopleCh = 1, statusKind = 'warn', statusText = '연결 중';
   let near = null, world = { billboards: [], plots: [] };
   let coolUntil = 0, baking = null, sheet = null, soundOn = recall('kts_sound', true);
@@ -169,10 +174,12 @@ export function createUI(root, hooks) {
     pickup: () => tone([{ f: 880, d: 0.12, type: 'sine', g: 0.07 }, { f: 1175, d: 0.28, type: 'sine', g: 0.06 }], { gap: 0.12 }),
     cash: () => tone([{ f: 988, d: 0.07, type: 'square', g: 0.04 }, { f: 1319, d: 0.08, type: 'square', g: 0.04 }, { f: 1568, d: 0.22, type: 'square', g: 0.035 }, { f: 2093, d: 0.18, type: 'sine', g: 0.03, at: 0.2 }]),
     whoosh: () => tone([{ f: 320, to: 880, d: 0.22, type: 'sine', g: 0.05 }, { f: 660, d: 0.12, type: 'triangle', g: 0.03, at: 0.04 }]),
+    boost: () => tone(play('boost') ? [] : [{ f: 160, to: 640, d: 0.3, type: 'sawtooth', g: 0.04 }, { f: 1175, d: 0.16, type: 'sine', g: 0.03, at: 0.1 }]),
     jackpot: () => tone([{ f: 523 }, { f: 659 }, { f: 784 }, { f: 1047, d: 0.45 }, { f: 1319, d: 0.35, at: 0.36 }, { f: 1568, d: 0.5, at: 0.5, type: 'sine', g: 0.05 }], { gap: 0.09, type: 'square', g: 0.05 }),
     drum: () => tone([{ f: 90, d: 0.12, type: 'sine', g: 0.08 }, { f: 110, d: 0.12, at: 0.14, type: 'sine', g: 0.08 }, { f: 130, d: 0.4, at: 0.28, type: 'triangle', g: 0.06 }]),
     siren: () => tone([{ f: 740, d: 0.16, type: 'sawtooth', g: 0.06 }, { f: 460, d: 0.16, type: 'sawtooth', g: 0.06, at: 0.18 }, { f: 740, d: 0.16, type: 'sawtooth', g: 0.05, at: 0.36 }, { f: 460, d: 0.22, type: 'sawtooth', g: 0.05, at: 0.54 }]),
   };
+  bindSfx(sfx);
   let lofi = null;
   function lofiStart() {
     const ctx = ac();
@@ -255,8 +262,9 @@ export function createUI(root, hooks) {
   const nextLine = h('span', { class: 'nextgoal' });
   const todayBtn = h('button', { class: 'chip', type: 'button', text: '미션', onclick: (e) => { e.stopPropagation(); openToday(); } });
   const holdBtn = h('button', { class: 'chip', type: 'button', text: '내 점령', onclick: (e) => { e.stopPropagation(); openHolds(); } });
+  const tribeBtn = h('button', { class: 'chip', type: 'button', text: '소속', onclick: (e) => { e.stopPropagation(); openTribeSheet(); } });
   const walletEl = h('div', { class: 'glass wallet', role: 'button', tabindex: '0', title: '지갑 · 정산 안내', onclick: () => openWalletInfo(), onkeydown: (e) => { if (e.key === 'Enter') openWalletInfo(); } }, coinIcon,
-    h('div', null, h('div', null, amtEl, h('span', { class: 'unit', text: 'COIN' })), h('div', { class: 'sub' }, h('span', { class: 'sub-fixed' }, todayBtn, holdBtn), h('span', { class: 'sub-live' }, sessionChip, pendingChip, protectLine), nextLine)));
+    h('div', null, h('div', null, amtEl, h('span', { class: 'unit', text: 'COIN' })), h('div', { class: 'sub' }, h('span', { class: 'sub-fixed' }, todayBtn, holdBtn, tribeBtn), h('span', { class: 'sub-live' }, sessionChip, pendingChip, protectLine), nextLine)));
   const rankRows = h('div', { class: 'rows' });
   const feedRows = h('div', { class: 'feed' });
   const liveBoard = h('div', { class: 'glass liveboard' },
@@ -270,7 +278,8 @@ export function createUI(root, hooks) {
     h('p', { text: '닫으면 코인이 사라질 수 있어요' }),
     h('button', { class: 'btn gold', type: 'button', text: '+300', onclick: (e) => { e.preventDefault(); e.stopPropagation(); openLogin(); } }),
   );
-  root.append(h('div', { class: 'hud-l' }, h('div', { class: 'glass ident' }, profile, channelCard), guestWarn, walletEl, liveBoard));
+  const nextLineEl = h('p', { class: 'nextline', hidden: true });
+  root.append(h('div', { class: 'hud-l' }, h('div', { class: 'glass ident' }, profile, channelCard), guestWarn, walletEl, nextLineEl, liveBoard));
   const feverEl = h('div', { class: 'glass fever', title: '택시 하차와 전광판 점령으로 쌓입니다. 20이 되면 잠시 코인이 2배가 되고 택시 부스트가 무제한입니다.', text: '🔮 광장 열기 0/20' });
   root.querySelector('.hud-l')?.append(feverEl);
 
@@ -314,7 +323,11 @@ export function createUI(root, hooks) {
   root.append(h('div', { class: 'hud-r' },
     h('div', { class: 'bar' },
       h('div', { class: 'glass tools' },
-        h('button', { class: 'btn icon', type: 'button', 'aria-label': '전광판 점령', title: '전광판 점령', text: '📢', onclick: () => openBillboard('MAIN_TOP') }),
+        h('button', { class: 'btn icon', type: 'button', 'aria-label': '전광판 점령', title: '전광판 점령', text: '📢', onclick: () => {
+          const slot = firstOpenStarter();
+          if (slot && !myBoards().length) openClaimStep(1, claimWizard(slot));
+          else openBillboard(slot || 'MAIN_TOP');
+        } }),
         h('button', { class: 'btn icon tool-more', type: 'button', 'aria-label': 'VIP 메뉴', title: 'VIP 메뉴', text: '👑', onclick: () => openVip() }),
         h('button', { class: 'btn icon tool-desk', type: 'button', 'aria-label': '사진 찍어 공유', title: '사진 찍어 공유', text: '📸', onclick: () => openShot() }),
         h('button', { class: 'btn icon', type: 'button', 'aria-label': '점령 순위', title: '점령 순위', text: '🏆', onclick: () => openRanks() }),
@@ -417,11 +430,15 @@ export function createUI(root, hooks) {
   const sponsorTitle = h('h3');
   const sponsorBody = h('p');
   const sponsorPay = h('b', { class: 'gold' });
-  const sponsorShout = h('input', { class: 'input', maxLength: 15, placeholder: '한 줄 응원, 15자', 'aria-label': '응원 한 줄' });
-  const sponsorGo = h('button', { class: 'btn gold go', type: 'button', text: '기운 보태기 +5' });
+  let phraseSlot = '';
+  const phraseRow = h('div', { class: 'chips' }, ...CHEER_PHRASES.map((text, i) => h('button', {
+    type: 'button',
+    text,
+    onclick: () => { if (phraseSlot) hooks.cheer?.(phraseSlot, i + 1); },
+  })));
   const sponsorLink = h('button', { class: 'btn ghost link', type: 'button', text: '작성자 링크' });
-  const sponsorActs = h('div', { class: 'row' }, sponsorGo, sponsorLink);
-  const sponsorEl = h('div', { class: 'glass sponsor', hidden: true }, sponsorTitle, sponsorBody, sponsorShout, sponsorPay, sponsorActs);
+  const sponsorActs = h('div', { class: 'row' }, sponsorLink);
+  const sponsorEl = h('div', { class: 'glass sponsor', hidden: true }, sponsorTitle, sponsorBody, phraseRow, sponsorPay, sponsorActs);
   root.append(sponsorEl);
   let sponsorTimer = 0;
   function hideSponsor() { sponsorEl.hidden = true; document.body.classList.remove('has-sponsor'); clearTimeout(sponsorTimer); }
@@ -432,16 +449,19 @@ export function createUI(root, hooks) {
     sponsorBody.textContent = lines.join(' · ') || '이 자리를 점령하세요';
     sponsorPay.hidden = !ev.fare;
     sponsorPay.textContent = ev.fare ? `운임 +${ev.fare} 코인` : '';
-    const url = /^https:\/\//.test(String(b.external_url || '')) ? b.external_url : '';
-    sponsorShout.hidden = !ev.slot;
-    sponsorGo.hidden = !ev.slot;
-    sponsorGo.onclick = () => { if (ev.slot) hooks.cheer?.(ev.slot, sponsorShout.value); sponsorShout.value = ''; };
+    const url = allowedLink(b.external_url) || '';
+    const until = b.lit_until || b.expires_at;
+    const exp = until ? new Date(until).getTime() : 0;
+    const live = !!b.holder_id && exp > Date.now();
+    const mine = live && b.holder_id === hooks.actorId?.();
+    phraseSlot = ev.slot && live && !mine ? ev.slot : '';
+    phraseRow.hidden = !phraseSlot;
     sponsorLink.hidden = !url;
     sponsorLink.onclick = () => { if (url) hooks.adClick?.(ev.slot, url); };
     sponsorEl.hidden = false;
     document.body.classList.add('has-sponsor');
     clearTimeout(sponsorTimer);
-    sponsorTimer = setTimeout(hideSponsor, ev.slot || url ? 12000 : 4200);
+    sponsorTimer = setTimeout(hideSponsor, phraseSlot || url || ev.fare ? 12000 : 4200);
   }
   const wayArrow = h('i', { class: 'arrow', text: '➤' });
   const wayText = h('span', { class: 'tnum' });
@@ -606,7 +626,7 @@ export function createUI(root, hooks) {
     taxi: ['E — 정차한 택시 탑승', '지나가는 택시는 타지 않아요', '탑승'],
     stand: ['E — 택시 호출', '오면 그 자리에서 탑승', '호출'],
     fountain: ['10코인으로 포춘쿠키', '빨간 계단 앞 분수', '뽑기'],
-    lounge: ['E — 빨간 계단에서 멍때리기', '켜 두면 10초마다 +3', '관람'],
+    lounge: ['E — 빨간 계단에서 멍때리기', '켜 두면 20초마다 +2', '관람'],
   };
   function renderPrompt() {
     const show = !!near && !baking && !sheet && !dance && !driving;
@@ -941,23 +961,30 @@ export function createUI(root, hooks) {
   }
   function closeSheet(fromPop) {
     if (!sheet) return;
+    const title = sheet.title || '';
+    const offer = !replacingSheet && /사진/.test(title);
     sheet.el.remove();
     sheet.cleanup?.();
     sheet = null;
     hooks.lockInput(false);
     renderPrompt();
     if (!fromPop && history.state?.ktsSheet) history.back();
+    if (offer) setTimeout(queuePushOffer, 0);
+    else if (pushQueued) setTimeout(maybeOfferPush, 0);
   }
   function openSheet(title, badge, build, narrow, variant) {
+    if (quietBlock && (title === '미션' || title === '계정 연결' || String(title || '').includes('알림'))) return;
     const nested = !!sheet;
+    replacingSheet = true;
     closeSheet(true);
+    replacingSheet = false;
     const content = h('div', { class: 'content' });
     const x = h('button', { class: 'x', type: 'button', 'aria-label': '닫기', text: '×', onclick: closeSheet });
     const box = h('div', { class: `glass sheet${narrow ? ' narrow' : ''}${variant ? ' ' + variant : ''}`, role: 'dialog', 'aria-label': title },
       h('header', null, h('h2', null, title, badge ? h('span', { class: 'badge', text: badge }) : null), x), content);
     const el = h('div', { class: 'modal', onclick: (e) => { if (e.target === el) closeSheet(); } }, box);
     document.body.append(el);
-    sheet = { el, cleanup: null };
+    sheet = { el, cleanup: null, title };
     hooks.lockInput(true);
     renderPrompt();
     sheet.cleanup = build(content) || null;
@@ -1044,7 +1071,8 @@ export function createUI(root, hooks) {
   const boardById = (id) => world.billboards.find(b => b.slot_id === id) || null;
   function boardActive(b) {
     if (!b?.holder_id) return false;
-    const exp = b.expires_at ? new Date(b.expires_at).getTime() : 0;
+    const until = b.lit_until || b.expires_at;
+    const exp = until ? new Date(until).getTime() : 0;
     return exp > Date.now();
   }
   function soonestProtect() {
@@ -1069,7 +1097,7 @@ export function createUI(root, hooks) {
     const has = (prefix) => held.some((b) => String(b.slot_id).startsWith(prefix));
     let price = floorOf('PLOT_1');
     let name = '분양 전광판';
-    if (!held.length && firstOpenStarter()) { price = BALANCE.starterBid; name = '신규 전광판'; }
+    if (!held.length && firstOpenStarter()) { price = 0; name = '무료 거리 칸'; }
     else if (has('PLOT_') && !has('STREET_') && !has('SUB_') && !has('MAIN_')) { price = floorOf('STREET_1'); name = '메인거리'; }
     else if ((has('STREET_') || has('PLOT_')) && !has('SUB_') && !has('MAIN_')) { price = floorOf('SUB_1B'); name = '코너 전광판'; }
     else if (has('SUB_') || has('MAIN_')) { price = floorOf('MAIN_LOW'); name = '메인 타워'; }
@@ -1098,7 +1126,10 @@ export function createUI(root, hooks) {
       earn: fresh ? 0 : (prev.earn || 0),
       bake: fresh ? 0 : (prev.bake || 0),
       cheer: fresh ? 0 : (prev.cheer || 0),
+      fare: fresh ? 0 : (prev.fare || 0),
+      stunt: fresh ? 0 : (prev.stunt || 0),
       paid: fresh ? {} : (prev.paid || {}),
+      qPaid: fresh ? {} : (prev.qPaid || {}),
       streak: prev.streak || 0,
       last: prev.last || '',
       score: prev.week === week ? (prev.score || 0) : 0,
@@ -1110,15 +1141,6 @@ export function createUI(root, hooks) {
   function missionBump(key, n = 1) {
     const d = today();
     d[key] = (d[key] || 0) + n;
-    const need = key === 'earn' ? BALANCE.missionEarn : 1;
-    if (d[key] >= need && !d.paid?.[key]) {
-      d.paid = d.paid || {};
-      d.paid[key] = 1;
-      d.score = (d.score || 0) + BALANCE.season.mission;
-      saveDay(d);
-      if (hooks.mine?.(BALANCE.missionReward, 'me')) note(`오늘 미션 +${BALANCE.missionReward}`, 'ok');
-      return;
-    }
     saveDay(d);
   }
   function attend() {
@@ -1128,16 +1150,57 @@ export function createUI(root, hooks) {
     d.streak = d.last === prev ? (d.streak || 0) + 1 : 1;
     d.last = d.day;
     saveDay(d);
-    const coins = BALANCE.attend[Math.min(d.streak - 1, BALANCE.attend.length - 1)];
-    if (hooks.mine?.(coins, 'me')) note(`출석 ${d.streak}일 +${coins}`, 'ok');
     todayBtn.textContent = `미션 · ${d.streak}일`;
   }
+  // Attendance and finished missions pay over the room socket. A reward is marked paid only once its send went out,
+  // so one that came due before the room was joined stays due and goes out later. One payout per call, 3 s apart.
+  const MISSION_NEED = { earn: BALANCE.missionEarn, bake: 1, cheer: 1 };
+  let dueAt = 0;
+  function payDue() {
+    if (!entered || performance.now() < dueAt) return;
+    const d = today();
+    const paid = d.paid || (d.paid = {});
+    let text = '';
+    if (d.last === d.day && !paid.attend) {
+      const coins = BALANCE.attend[Math.min((d.streak || 1) - 1, BALANCE.attend.length - 1)];
+      if (!hooks.bonus?.('attend', coins)) return;
+      paid.attend = 1;
+      text = `출석 ${d.streak || 1}일 +${coins}`;
+    } else {
+      const key = Object.keys(MISSION_NEED).find((k) => !paid[k] && (d[k] || 0) >= MISSION_NEED[k]);
+      if (!key || !hooks.bonus?.('mission', BALANCE.missionReward)) return;
+      paid[key] = 1;
+      d.score = (d.score || 0) + BALANCE.season.mission;
+      text = `오늘 미션 +${BALANCE.missionReward}`;
+    }
+    saveDay(d);
+    dueAt = performance.now() + 3000;
+    note(text, 'ok');
+  }
+  function attendWeek(streak) {
+    const n = Math.max(0, Math.floor(Number(streak) || 0));
+    const filled = n <= 0 ? 0 : ((n - 1) % 7) + 1;
+    const row = h('div', { class: 'attend-week' });
+    for (let i = 1; i <= 7; i++) row.append(h('span', { class: 'attend-day' + (i <= filled ? ' on' : ''), text: String(i) }));
+    return row;
+  }
+  function noteAttend(streak) {
+    const d = today();
+    const n = Math.floor(Number(streak));
+    if (!Number.isInteger(n) || n < 1) return;
+    d.streak = n;
+    d.last = d.day;
+    saveDay(d);
+    todayBtn.textContent = `미션 · ${n}일`;
+  }
   function openToday() {
+    if (quietBlock) return;
     const d = today();
     const row = (done, text) => h('p', { class: 'note', text: `${done ? '✅' : '☐'} ${text}` });
     const tomorrow = BALANCE.attend[Math.min(d.streak, BALANCE.attend.length - 1)];
     openSheet('미션', '매일 0시', (host) => {
-      host.append(
+      host.append(attendWeek(d.streak || 0));
+    host.append(
         row(d.earn >= BALANCE.missionEarn, `코인 ${BALANCE.missionEarn}개 모으기 (${Math.min(d.earn, BALANCE.missionEarn)}/${BALANCE.missionEarn})`),
         row(d.bake >= 1, '붕어빵 1판 (성공이든 실패든)'),
         row(!!(d.qPaid || {}).fare, `손님 내리기 (${Math.min(d.fare || 0, 3)}/3) +50`),
@@ -1186,13 +1249,8 @@ export function createUI(root, hooks) {
   }
   function maybeStarterToast() {
     if (starterToastShown || !plazaReady || !entered) return;
-    if (wallet.confirmed + wallet.pending < BALANCE.starterBid) return;
-    const slot = firstOpenStarter();
-    if (!slot) return;
+    if (!firstOpenStarter()) return;
     starterToastShown = true;
-    const show = () => note(`${money(BALANCE.starterBid)}코인으로 빈 거리 전광판에 이름을 올릴 수 있어요`, 'ok', () => openBillboard(slot));
-    if (document.getElementById('boot')) setTimeout(show, 950);
-    else show();
   }
   const plotById = (id) => world.plots.find(p => Number(p.plot_id) === Number(id)) || null;
   const myPlots = () => world.plots.filter(p => p.owner_id && p.owner_id === hooks.actorId()).map(p => PLOT_SLOTS[Number(p.plot_id) - 1]).filter(Boolean);
@@ -1267,7 +1325,7 @@ export function createUI(root, hooks) {
 
   function openAd(slotId) {
     const b = boardById(slotId);
-    if (!b?.holder_id) { openBillboard(slotId); return; }
+    if (!boardActive(b)) { openBillboard(slotId); return; }
     const mine = b.holder_id === hooks.actorId();
     const url = /^https:\/\//.test(String(b.external_url || '')) ? b.external_url : '';
     const canvas = makeCanvas(1024, 576);
@@ -1278,6 +1336,15 @@ export function createUI(root, hooks) {
         card ? h('div', { class: 'place' }, h('div', { class: 'where' }, h('b', { text: card.title }), h('span', { text: card.line }))) : null,
         h('div', { class: 'screen' }, canvas),
         h('p', { class: 'note', text: `${b.holder_name || '익명'}님이 걸어 둔 화면입니다.` }),
+        Math.max(0, Math.floor(Number(b.lit_days) || 0)) > 0 ? h('p', { class: 'note', text: `연속 ${Math.floor(Number(b.lit_days))}일` }) : null,
+        mine ? h('button', { type: 'button', class: 'btn gold', text: '불 켜기', onclick: async () => {
+          try {
+            const data = await hooks.relight?.(slotId);
+            const days = Math.max(0, Math.floor(Number(data?.lit_days) || Number(b.lit_days) || 0));
+            if (data?.lit_days != null) b.lit_days = data.lit_days;
+            note(days > 0 ? `연속 ${days}일` : '오늘 불을 켰어요', 'ok');
+          } catch (e) { note(e?.message || '불을 켜지 못했어요', 'err'); }
+        } }) : null,
         h('div', { class: 'holder' },
           h('div', { class: 'stat' }, h('small', { text: '택시 정차' }), h('b', { text: String(Math.floor(Number(b.views) || 0)) })),
           h('div', { class: 'stat' }, h('small', { text: '응원' }), h('b', { text: String(Math.floor(Number(b.cheers) || 0)) })),
@@ -1300,7 +1367,7 @@ export function createUI(root, hooks) {
       const seg = h('div', { class: 'seg' });
       const slotOption = (id) => {
         const b = boardById(id);
-        const who = !b?.holder_id ? '비어 있음' : b.holder_id === hooks.actorId() ? '내 것' : (b.holder_name || '점령');
+        const who = !boardActive(b) ? '비어 있음' : b.holder_id === hooks.actorId() ? '내 것' : (b.holder_name || '점령');
         return `${slotName(id)} · ${who}`;
       };
       const pick = h('select', { class: 'input slot-pick', 'aria-label': '전광판 자리' });
@@ -1310,7 +1377,8 @@ export function createUI(root, hooks) {
         choose(pick.value);
         sfx.click();
       });
-      const stHolder = h('b'), stBid = h('b', { class: 'gold' }), stProt = h('b'), stScore = h('b', { class: 'gold' });
+      const stHolder = h('b'), stBid = h('b', { class: 'gold' }), stProt = h('b'), stScore = h('b', { class: 'gold' }), stStreak = h('b', { class: 'gold' });
+      const relightBtn = h('button', { class: 'btn gold', type: 'button', text: '불 켜기', hidden: true });
       const emojiIn = h('input', { class: 'input', maxLength: 4, 'aria-label': '이모지' });
       const emo = h('div', { class: 'emo' });
       const themes = h('div', { class: 'themes' });
@@ -1335,7 +1403,24 @@ export function createUI(root, hooks) {
       const zoomIn = h('input', { type: 'range', min: '1', max: '4', step: '0.01', value: '1', 'aria-label': '사진 확대' });
       const agree = h('input', { type: 'checkbox' });
       const photoGo = h('button', { class: 'btn gold cta', type: 'button' });
-      const holds = (b) => !!b?.holder_id && b.holder_id === hooks.actorId() && (!b.expires_at || new Date(b.expires_at).getTime() > Date.now());
+      const holds = (b) => {
+        if (!b?.holder_id || b.holder_id !== hooks.actorId()) return false;
+        const until = b.lit_until || b.expires_at;
+        return !until || new Date(until).getTime() > Date.now();
+      };
+      relightBtn.addEventListener('click', async () => {
+        relightBtn.disabled = true;
+        try {
+          const data = await hooks.relight?.(slot);
+          const days = Math.max(0, Math.floor(Number(data?.lit_days) || 0));
+          stStreak.textContent = `연속 ${days}일`;
+          note(days > 0 ? `연속 ${days}일` : '오늘 불을 켰어요', 'ok');
+        } catch (e) {
+          note(e?.message || '불을 켜지 못했어요', 'err');
+        }
+        relightBtn.disabled = false;
+        fillStats();
+      });
 
       const data = () => ({
         slot_id: slot, emoji: chars(emojiIn.value || state.emoji, 4) || '🔥', bg_theme: state.theme, text_color: state.ink,
@@ -1360,11 +1445,12 @@ export function createUI(root, hooks) {
           const mine = holds(b);
           let photo = null;
           if (mine && pic.img && b?.photo_status !== 'pending') { drawCrop(pic.prev); photo = pic.prev; }
-          else if (b?.photo_status === 'approved' && b.photo_id) {
+          else if (boardActive(b) && b.photo_status === 'approved' && b.photo_id) {
             photo = photoReady(b.photo_id);
             if (!photo) boardPhoto(b.photo_id).then((img) => { if (img && boardById(slot)?.photo_id === b.photo_id) paint(); });
           }
-          const shown = state.gift || drafting || (mine && pic.img) ? data() : (b || data());
+          // A vacant slot (never held, or expired) previews the house notice the plaza screen shows, not the last holder's ad.
+          const shown = state.gift || drafting || (mine && pic.img) ? data() : boardActive(b) ? b : (hooks.boardView?.(slot) || data());
           paintBillboard(canvas, shown, { ticker: !state.gift && mine && !drafting ? `👑 ${hooks.nick()}님의 광고가 지금 타임스퀘어에 송출됩니다` : '', photo: state.gift || drafting ? null : photo, pending: !state.gift && !drafting && b?.photo_status === 'pending' });
           canvas.parentElement?.classList.toggle('cropping', mine && !!pic.img);
         });
@@ -1514,6 +1600,10 @@ export function createUI(root, hooks) {
         stBid.textContent = active ? `${money(b.current_bid)} 코인` : `${money(minBid(b?.slot_id ? b : { slot_id: slot }, world.billboards, hooks.actorId?.()))} 코인부터`;
         stProt.textContent = !on ? '시작 가격으로 점령' : pl > 0 ? `보호 ${fmtLeft(pl)} · 탈환 불가` : active ? '보호 끝 · +50이면 탈환' : '만료 · 시작 가격';
         stProt.className = pl > 0 ? 'red' : '';
+        const days = Math.max(0, Math.floor(Number(b?.lit_days) || 0));
+        const mineNow = active && b?.holder_id === hooks.actorId?.();
+        stStreak.textContent = days > 0 ? `연속 ${days}일` : '';
+        relightBtn.hidden = !mineNow;
         stScore.textContent = `택시 ${Math.floor(Number(b?.views) || 0)}번 · 링크 ${Math.floor(Number(b?.clicks) || 0)}번`;
         for (const o of pick.options) {
           const text = slotOption(o.value);
@@ -1534,7 +1624,8 @@ export function createUI(root, hooks) {
       const choose = (id) => {
         slot = id;
         const b = boardById(id) || {};
-        const alive = !!b.holder_id && (!b.expires_at || new Date(b.expires_at).getTime() > Date.now());
+        const aliveUntil = b.lit_until || b.expires_at;
+        const alive = !!b.holder_id && (!aliveUntil || new Date(aliveUntil).getTime() > Date.now());
         state.theme = alive && THEMES[b.bg_theme] ? b.bg_theme : 'cyber_navy';
         state.ink = alive && isColor(b.text_color) ? b.text_color : '#ffffff';
         emojiIn.value = alive && b.emoji ? b.emoji : '🔥';
@@ -1661,32 +1752,57 @@ export function createUI(root, hooks) {
       const steps = h('div', { class: 'steps' },
         ...[50, 100, 500].map(n => h('button', { type: 'button', text: `+${n}`, onclick: () => { bidIn.value = String((Math.floor(Number(bidIn.value)) || 0) + n); refreshBid(); } })),
         h('button', { type: 'button', text: '최소', onclick: () => { bidIn.value = String(minBid(boardById(slot) || { slot_id: slot }, world.billboards, hooks.actorId?.())); refreshBid(); } }));
-      go.addEventListener('click', async () => {
+      const tribeGo = h('button', { class: 'btn gold', type: 'button', text: '소속 코인으로 걸기' });
+      const pledgeRow = h('div', { class: 'row' }, ...[10, 20, 50].map((n) => h('button', {
+        type: 'button', class: 'btn ghost', text: `모금 ${n}`,
+        onclick: async () => {
+          try {
+            const res = await hooks.pledge?.(slot, n);
+            if (!res) { note('10, 20, 50만 모을 수 있어요', 'err'); return; }
+            note(`소속 모금 ${n}`, 'ok');
+          } catch (e) { note(e?.message || '모금하지 못했어요', 'err'); }
+        },
+      })));
+      const placeBoard = async (mode) => {
         const b = boardById(slot) || { slot_id: slot };
         const bid = Math.floor(Number(bidIn.value) || 0);
         const have = wallet.confirmed + wallet.pending;
         if (state.gift && !toName.value.trim()) { note('받는 사람 이름을 적어 주세요', 'err'); return; }
-        if (have < bid || bid < minBid(b, world.billboards, hooks.actorId?.(), [lines[0].value, lines[1].value, lines[2].value].join('\n'))) return;
+        const draft = data();
+        if (blockedText(draft.line1) || blockedText(draft.line2) || blockedText(draft.line3) || blockedText(hooks.nick?.())) {
+          note('그 문구는 올릴 수 없어요', 'err');
+          return;
+        }
+        const floor = minBid(b, world.billboards, hooks.actorId?.(), [lines[0].value, lines[1].value, lines[2].value].join('\n'));
+        if (mode !== 'tribe' && (have < bid || bid < floor)) return;
+        if (mode === 'tribe' && bid < floor) { note(`최소 ${money(floor)} 코인부터 입찰`, 'err'); return; }
         go.disabled = true;
+        tribeGo.disabled = true;
         go.textContent = '⏳ 점령 중…';
         let link = urlIn.value.trim();
         if (link && !/^https?:\/\//i.test(link)) link = 'https://' + link;
         if (link) {
-          try { link = new URL(link).protocol === 'https:' ? new URL(link).toString() : ''; }
-          catch { link = ''; }
-        }
-        if (urlIn.value.trim() && !link) {
-          note('링크는 https 주소만 저장됩니다. 예: https://threads.net/이름', 'err');
-          go.disabled = false;
-          return;
+          const kept = allowedLink(link);
+          if (!kept) {
+            note('인스타, 스레드, 유튜브, 스마트스토어 주소만 저장됩니다', 'ok');
+            link = '';
+          } else link = kept;
         }
         try {
           const d = data();
-          await hooks.claim({ slot_id: slot, bid, line1: d.line1, line2: d.line2, line3: d.line3, caption_y: d.caption_y, emoji: d.emoji, bg_theme: d.bg_theme, text_color: d.text_color, external_url: link });
+          const payload = { slot_id: slot, bid, line1: d.line1, line2: d.line2, line3: d.line3, caption_y: d.caption_y, emoji: d.emoji, bg_theme: d.bg_theme, text_color: d.text_color, external_url: link };
+          if (mode === 'tribe') payload.mode = 'tribe';
+          const res = await hooks.claim(payload);
+          if (res?.review_id) {
+            closeSheet();
+            note('S급은 확인 후 켜집니다. 거절되면 낸 코인이 그대로 돌아와요.', 'ok');
+            return;
+          }
         } catch (e) {
           note(e?.message || '점령에 실패했습니다', 'err');
           refreshBid();
           go.disabled = false;
+          tribeGo.disabled = false;
           return;
         }
         const giftName = state.gift ? toName.value.trim() : '';
@@ -1708,7 +1824,9 @@ export function createUI(root, hooks) {
             );
           }, true);
         }
-      });
+      };
+      go.addEventListener('click', () => placeBoard('claim'));
+      tribeGo.addEventListener('click', () => placeBoard('tribe'));
       const timer = setInterval(() => {
         fillStats();
         refreshBid();
@@ -1724,12 +1842,16 @@ export function createUI(root, hooks) {
           h('div', { class: 'holder' },
             h('div', { class: 'stat' }, h('small', { text: '현재 점령자' }), stHolder),
             h('div', { class: 'stat' }, h('small', { text: '현재 입찰가' }), stBid),
-            h('div', { class: 'stat' }, h('small', { text: '보호 시간' }), stProt)),
+            h('div', { class: 'stat' }, h('small', { text: '보호 시간' }), stProt),
+            h('div', { class: 'stat' }, h('small', { text: '연속' }), stStreak),
+            relightBtn),
         ),
         h('div', null,
           h('div', { class: 'field' }, h('label', null, '내 광고 문구'), h('div', { class: 'lines' }, ...lines)),
           h('div', { class: 'field' }, h('label', null, '입찰 코인'), h('div', { class: 'bid' }, bidIn, steps), balance),
           go,
+          tribeGo,
+          h('div', { class: 'field' }, h('label', null, '소속 모금', h('span', { text: '10 · 20 · 50' })), pledgeRow),
           (stickers = stickerBox(() => slot)),
           airBar(),
           h('details', { class: 'more' },
@@ -1776,6 +1898,7 @@ export function createUI(root, hooks) {
       const label = level >= 4 && mine ? '🏙️ 최고층 타워 완성!' : mine ? `⬆️ ${LEVELS[target].t}로 증축 · ${money(price)} 코인` : owned ? `💰 인수 시도 · ${money(price)} 코인` : `🏗️ 분양받기 · ${money(price)} 코인`;
       const go = h('button', { class: 'btn gold cta', type: 'button', text: label, disabled: level >= 4 && mine });
       go.addEventListener('click', async () => {
+        if (blockedText(signIn.value) || blockedText(hooks.nick?.())) { note('그 간판은 올릴 수 없어요', 'err'); return; }
         go.disabled = true;
         go.textContent = '⏳ 계약 중…';
         try {
@@ -1798,7 +1921,7 @@ export function createUI(root, hooks) {
         h('div', { class: 'holder' },
           h('div', { class: 'stat' }, h('small', { text: '건물주' }), h('b', { text: owned ? `👑 ${plot.owner_name || '익명'}${linkedActor(plot.owner_id) ? ' ✓' : ''}${mine ? ' (나)' : ''}` : '주인 없음' })),
           h('div', { class: 'stat' }, h('small', { text: owned ? '다음 증축가' : '분양가' }), h('b', { class: 'gold', text: `${money(price)} 코인` })),
-          h('div', { class: 'stat' }, h('small', { text: '외벽 전광판' }), h('b', { text: board?.holder_id ? `광고 중 · ${board.holder_name || ''}` : '광고 모집 중' }))),
+          h('div', { class: 'stat' }, h('small', { text: '외벽 전광판' }), h('b', { text: boardActive(board) ? `광고 중 · ${board.holder_name || ''}` : '광고 모집 중' }))),
         h('div', { class: 'callout' }, h('b', { text: '💸 건물주 패시브 수익' }), ' — 이 건물 외벽 전광판(', h('b', { text: `PLOT_${id}` }), ')에 다른 유저가 광고를 걸 때마다 입찰 코인의 ', h('b', { text: '50%' }), '가 내 지갑으로 자동 입금됩니다.'),
         h('div', { class: 'field' }, h('label', null, '네온 간판', h('span', { text: '광장에 실시간 반영' })), signIn, prev),
         h('div', { class: 'field' }, h('label', null, '네온 컬러'), sw),
@@ -1836,7 +1959,7 @@ export function createUI(root, hooks) {
         h('div', { class: 'holder' },
           h('div', { class: 'stat' }, h('small', { text: '내 지갑' }), h('b', { class: 'gold', text: `${money(wallet.confirmed + wallet.pending)} 코인` })),
           h('div', { class: 'stat' }, h('small', { text: '내 건물' }), h('b', { text: `${world.plots.filter(p => p.owner_id && p.owner_id === hooks.actorId()).length}채` })),
-          h('div', { class: 'stat' }, h('small', { text: '내 전광판' }), h('b', { text: `${world.billboards.filter(b => b.holder_id && b.holder_id === hooks.actorId()).length}개` }))),
+          h('div', { class: 'stat' }, h('small', { text: '내 전광판' }), h('b', { text: `${myBoards().length}개` }))),
         h('div', { class: 'hub', style: { marginTop: '14px' } },
           h('button', { type: 'button', onclick: () => openBillboard('MAIN_TOP') }, h('img', { class: 'big', src: 'icons/board.jpg?v=4', alt: '', draggable: 'false' }), h('h4', { text: '전광판 점령' }), h('p', { text: 'S급 메인 타워부터 거리 전광판까지. 내 문구가 광장 모두의 화면에 송출돼요.' })),
           h('button', { type: 'button', onclick: () => openPlot(PLOT_SLOTS.find(s => !plotById(s.id)?.owner_id)?.id || 1) }, h('img', { class: 'big', src: LEVELS[4].src, alt: '', draggable: 'false' }), h('h4', { text: '토지 분양 · 증축' }), h('p', { text: '텐트에서 타워까지 5단계. 외벽 광고 수익의 50%는 건물주 몫!' }))),
@@ -1860,7 +1983,8 @@ export function createUI(root, hooks) {
       const now = Date.now();
       const buyers = world.billboards.filter((b) => {
         if (!b.holder_id || b.holder_id === hooks.actorId()) return false;
-        const exp = b.expires_at ? new Date(b.expires_at).getTime() : 0;
+        const until = b.lit_until || b.expires_at;
+        const exp = until ? new Date(until).getTime() : 0;
         return !exp || exp > now;
       });
       const pick = h('select', { class: 'slot-pick', 'aria-label': '코인을 받을 사람' });
@@ -1929,7 +2053,11 @@ export function createUI(root, hooks) {
   const TAG_RE = /#[0-9A-Za-z가-힣_]{1,16}/g;
   function liveBoards() {
     const now = Date.now();
-    return world.billboards.filter((b) => b.holder_id && (!b.expires_at || new Date(b.expires_at).getTime() > now));
+    return world.billboards.filter((b) => {
+      if (!b.holder_id) return false;
+      const until = b.lit_until || b.expires_at;
+      return !until || new Date(until).getTime() > now;
+    });
   }
   function hotBoards() {
     return liveBoards()
@@ -2050,7 +2178,9 @@ export function createUI(root, hooks) {
       let color = hooks.color();
       let species = hooks.species();
       const save = h('button', { class: 'btn gold cta', type: 'button', text: '저장하기', onclick: () => {
-        hooks.rename(chars(input.value, 16).trim() || hooks.nick());
+        const name = chars(input.value, 16).trim() || hooks.nick();
+        if (blockedText(name)) { note('그 이름은 쓸 수 없어요', 'err'); return; }
+        hooks.rename(name);
         hooks.recolor(color);
         hooks.reshape(species);
         renderProfile();
@@ -2063,6 +2193,17 @@ export function createUI(root, hooks) {
         h('div', { class: 'field' }, h('label', null, '발밑 링 색', h('span', { text: '캐릭터 색이 아니라, 발밑 동그라미입니다' })), colorPicker(color, (c) => { color = c; })),
       ];
       if (SPECIES.length > 1) fields.splice(1, 0, h('div', { class: 'field' }, h('label', null, '캐릭터'), speciesPicker(species, (id) => { species = id; })));
+      const prof = hooks.profile?.() || { level: 1, reputation: 0, equip: [] };
+      const equipped = new Set(Array.isArray(prof.equip) ? prof.equip : []);
+      fields.push(h('p', { class: 'note', text: `레벨 ${Math.min(99, Math.max(1, Math.floor(Number(prof.level) || 1)))} · 명성 ${Math.max(0, Math.floor(Number(prof.reputation) || 0))}` }));
+      if (hooks.wear) {
+        const wearRow = h('div', { class: 'species' });
+        for (const [id, label] of [['hat_ribbon', '리본 모자'], ['cab_yellow', '노란 택시'], ['frame_streak', '연속 테두리']]) {
+          const b = h('button', { type: 'button', class: equipped.has(id) ? 'on' : '', text: label, onclick: async () => { if (await hooks.wear(id)) b.classList.add('on'); } });
+          wearRow.append(b);
+        }
+        fields.push(h('div', { class: 'field' }, h('label', null, '보관함'), wearRow));
+      }
       host.append(...fields, save);
       setTimeout(() => { if (!coarse) input.focus(); }, 50);
     }, true);
@@ -2076,8 +2217,8 @@ export function createUI(root, hooks) {
       h('a', { href: './?policy=privacy', target: '_blank', rel: 'noopener', text: '[개인정보처리방침]' }),
     );
   }
-  const prompted = new Set();
   function openLinkPrompt() {
+    if (quietBlock) return;
     openSheet('계정 연결', '+300', (host) => {
       host.append(
         h('div', { class: 'callout warn', style: { marginTop: 0 } }, '창을 닫기 전에 계정을 연결하면 전광판과 수익이 남아요. 연결하면 +300코인.'),
@@ -2086,13 +2227,106 @@ export function createUI(root, hooks) {
       );
     }, true);
   }
+  // The prompt is only queued here. pumpLink opens it once per session, after the screen has been quiet for a moment,
+  // so it never lands on a claim celebration, the proof bar, an intro or focus camera, or an arrival card.
+  let linkWant = false, linkQuietAt = 0, linkAsked = false;
+  try { linkAsked = sessionStorage.getItem('kts_link_asked') === '1'; } catch { /* private mode */ }
   function promptLink(reason) {
+    if (linkAsked || reason === 'vip') return;
     if (!accountView.ready || !accountView.guest || accountView.linked) return;
-    if (prompted.has(reason)) return;
     if (reason === 'coins' && (!entered || (wallet.confirmed + wallet.pending) < 100)) return;
-    prompted.add(reason);
-    if (reason === 'vip') return;
-    setTimeout(() => { if (accountView.guest && !accountView.linked) openLinkPrompt(); }, reason === 'coins' ? 1200 : 0);
+    linkWant = true;
+  }
+  function setQuietBlock(on) {
+    quietBlock = !!on;
+    if (!quietBlock) maybeOfferPush();
+    if (quietBlock || !proofWait) return;
+    const w = proofWait;
+    proofWait = null;
+    showProof(w.slot, w.gift);
+  }
+  function openCheerReply(slot) {
+    if (!slot) return;
+    openSheet('답례', null, (host) => {
+      host.append(h('p', { class: 'note', text: '정해진 문구만 보낼 수 있어요.' }));
+      host.append(h('div', { class: 'chips' }, ...CHEER_PHRASES.map((text, i) => h('button', {
+        type: 'button',
+        text,
+        onclick: () => { if (hooks.replyCheer?.(slot, i + 1)) closeSheet(); },
+      }))));
+    }, true);
+  }
+  function setNextLine(text, slot) {
+    if (!nextLineEl) return;
+    nextLineEl.replaceChildren();
+    if (text) nextLineEl.append(document.createTextNode(String(text)));
+    if (slot) {
+      nextLineEl.append(' ');
+      nextLineEl.append(h('button', { type: 'button', class: 'chip', text: '답례', onclick: (e) => { e.stopPropagation(); openCheerReply(slot); } }));
+    }
+    nextLineEl.hidden = !text && !slot;
+  }
+  function openTribeSheet() {
+    openSheet('소속', null, (host) => {
+      const tag = h('input', { class: 'input', maxLength: 16, placeholder: '#태그', 'aria-label': '소속 태그' });
+      const link = h('p', { class: 'note', hidden: true });
+      host.append(
+        h('p', { class: 'note', text: '계정당 소속은 하나예요. 초대 링크로 가입해요.' }),
+        tag,
+        h('button', { class: 'btn gold', type: 'button', text: '소속 만들기', onclick: async () => {
+          try {
+            const res = await hooks.createTribe?.(tag.value);
+            if (!res?.tribe_id) { note('소속을 만들지 못했어요', 'err'); return; }
+            const href = 'https://studio.wishboard.workers.dev/?tribe=' + res.tribe_id;
+            link.hidden = false;
+            link.textContent = href;
+            try { await navigator.clipboard.writeText(href); note('초대 링크를 복사했어요', 'ok'); }
+            catch { note(href, 'ok'); }
+          } catch (e) { note(e?.message || '소속을 만들지 못했어요', 'err'); }
+        } }),
+        link,
+      );
+    }, true);
+  }
+  function openClaimStep(n, model) {
+    if (!model) return;
+    openSheet('전광판 걸기', n + '/3', (host) => {
+      if (n === 1) {
+        const ids = [];
+        for (const id of [...BALANCE.starterSlots, model.slot]) if (id && !ids.includes(id)) ids.push(id);
+        for (const id of ids) host.append(h('button', { class: 'btn', type: 'button', text: id, onclick: () => { model.choose(id); openClaimStep(1, model); } }));
+        host.append(h('button', { class: 'btn gold', type: 'button', text: '다음', style: { position: 'sticky', bottom: '0' }, onclick: () => openClaimStep(2, model) }));
+      } else if (n === 2) {
+        const inputs = [0, 1, 2].map((i) => h('input', { class: 'input', maxLength: 16, placeholder: ['첫째 줄', '둘째 줄', '셋째 줄'][i], 'aria-label': ['첫째 줄', '둘째 줄', '셋째 줄'][i] }));
+        host.append(...inputs);
+        host.append(h('button', { class: 'btn gold', type: 'button', text: '다음', style: { position: 'sticky', bottom: '0' }, onclick: () => {
+          if (!model.linesOk(inputs[0].value, inputs[1].value, inputs[2].value)) { note('쓸 수 없는 문구예요', 'err'); return; }
+          openClaimStep(3, model);
+        } }));
+      } else {
+        host.append(h('p', { class: 'note', text: model.free ? '첫 칸은 코인이 들지 않아요' : '입찰이 필요해요' }));
+        host.append(h('button', { class: 'btn gold cta', type: 'button', text: model.free ? '무료로 걸기' : '걸기', style: { position: 'sticky', bottom: '0' }, onclick: () => {
+          const run = hooks.submitClaim?.(model.payload());
+          if (run && typeof run.then === 'function') run.then((res) => {
+            closeSheet();
+            if (!res?.review_id && res?.data) showProof(res.data.slot_id || model.slot);
+          }).catch((e) => note(e?.message || '점령에 실패했습니다', 'err'));
+        } }));
+      }
+    }, true);
+  }
+  function pumpLink(now) {
+    if (quietBlock) return;
+    if (!linkWant) return;
+    if (linkAsked || !accountView.guest || accountView.linked) { linkWant = false; return; }
+    const quiet = entered && !sheet && !baking && !dance && !driving && proof.hidden && sponsorEl.hidden && !hooks.cineOn?.();
+    if (!quiet) { linkQuietAt = 0; return; }
+    if (!linkQuietAt) linkQuietAt = now;
+    if (now - linkQuietAt < 1500) return;
+    linkWant = false;
+    linkAsked = true;
+    try { sessionStorage.setItem('kts_link_asked', '1'); } catch { /* private mode */ }
+    openLinkPrompt();
   }
   function linkCallout() {
     if (!accountView.ready || !accountView.guest || accountView.linked) return null;
@@ -2134,18 +2368,36 @@ export function createUI(root, hooks) {
           sync();
         }
       });
+      // In-app browsers block Google sign-in. The handover link carries this guest into the system browser; it can be empty until it is ready.
+      const browser = env.android ? '크롬' : '사파리';
       const google = h('button', { class: 'btn', type: 'button', text: 'Google로 계속' });
       google.addEventListener('click', async () => {
-        if (env.inApp && env.android && env.intent) { location.href = env.intent; return; }
-        if (env.inApp) { note('이 앱 안에서는 구글 로그인이 열리지 않아요. 아래에서 이메일로 가입하거나, 사파리 링크를 복사하세요.', 'err'); return; }
+        const intent = env.inApp && env.android ? (hooks.authEnv?.() || {}).intent : '';
+        if (intent) { location.href = intent; return; }
+        if (env.inApp) { note(`이 앱 안에서는 구글 로그인이 열리지 않아요. 아래에서 이메일로 가입하거나, ${browser} 링크를 복사하세요.`, 'err'); return; }
         try { await hooks.oauth?.('google'); }
         catch (e) { note(e?.message || '구글 로그인을 열지 못했어요', 'err'); }
+      });
+      const linkOut = h('input', { class: 'input', readOnly: true, hidden: true, 'aria-label': `${browser}에서 열 링크` });
+      const copy = h('button', { class: 'btn ghost', type: 'button', text: `🔗 ${browser}에서 열 링크 복사` });
+      copy.addEventListener('click', async () => {
+        const url = (hooks.authEnv?.() || {}).handoverUrl || '';
+        if (!url) { note('링크를 준비하는 중이에요. 잠시 뒤에 다시 눌러 주세요', 'err'); return; }
+        try {
+          await navigator.clipboard.writeText(url);
+          note(`링크를 복사했어요. ${browser} 주소창에 붙여 넣으세요`, 'ok');
+        } catch {
+          linkOut.value = url;
+          linkOut.hidden = false;
+          linkOut.select();
+          note('복사가 막혀 있어요. 아래 링크를 길게 눌러 복사하세요', 'err');
+        }
       });
       const kids = [
         h('p', { class: 'note', text: '연결하면 전광판과 코인이 남아요. 보상은 계정마다 한 번 +300.' }),
         google,
       ];
-      if (env.inApp) kids.push(h('p', { class: 'note', text: env.android ? '이 앱 안에서는 구글 로그인을 열지 않고, 크롬으로 넘어갑니다.' : '이 앱 안에서는 구글 로그인을 열지 않아요. 이메일로 가입하거나 사파리 링크를 여세요.' }), copy);
+      if (env.inApp) kids.push(h('p', { class: 'note', text: env.android ? '이 앱 안에서는 구글 로그인을 열지 않고, 크롬으로 넘어갑니다.' : '이 앱 안에서는 구글 로그인을 열지 않아요. 이메일로 가입하거나 사파리 링크를 여세요.' }), copy, linkOut);
       kids.push(id, pw, agreeRow, submit, swap, policyLinks());
       host.append(...kids);
     }, true);
@@ -2260,12 +2512,23 @@ export function createUI(root, hooks) {
     h('button', { class: 'btn gold', type: 'button', text: '🔗 초대 문구 복사하기', onclick: async () => {
       const slot = proof.dataset.slot || 'MAIN_TOP';
       const who = proof.dataset.gift || '';
-      const link = `https://studio.wishboard.workers.dev/?focus=${slot}${who ? '&gift=1' : ''}`;
+      const opts = who ? { gift: true } : {};
+      const link = cardUrl(slot, opts);
       const line = who
         ? `🎁 ${who}님! ${hooks.nick?.() || '친구'}님이 뉴욕 타임스퀘어 전광판에 당신만을 위한 깜짝 메시지를 걸었습니다! 지금 바로 링크를 눌러 타임스퀘어 한복판을 확인해 보세요 👉 ${link}`
         : `뉴욕 타임스퀘어 전광판에 내 광고 걸었습니다! 링크 누르면 내 전광판 앞으로 바로 이동합니다 👉 ${link}`;
-      try { await navigator.clipboard.writeText(line); note('초대 문구를 복사했어요', 'ok'); }
-      catch { note(line, 'err'); }
+      let ok = false;
+      try {
+        if (link && navigator.clipboard) {
+          await navigator.clipboard.writeText(line);
+          ok = true;
+        }
+      } catch { ok = false; }
+      if (!ok) ok = await copyCard(slot, opts).catch(() => false);
+      if (ok) {
+        trackEvent('share_send', { slot });
+        note('초대 문구를 복사했어요', 'ok');
+      } else note(line, 'err');
     } }),
     h('button', { class: 'btn ghost', type: 'button', text: '사진 찍어 공유', onclick: async () => {
       const d = today();
@@ -2273,12 +2536,17 @@ export function createUI(root, hooks) {
       proof.hidden = true;
       root.classList.remove('proofing');
       if (slot) hooks.frameBillboard?.(slot);
-      try { await openShot(); } finally { hooks.endFocus?.(); }
-      if (!d.paid?.shot) {
+      try {
+        let clip = null;
+        try { clip = await hooks.saveClip?.(); } catch { clip = null; }
+        if (clip) note('5초 영상을 기기에 저장했어요', 'ok');
+        else await openShot();
+      } finally { hooks.endFocus?.(); }
+      if (!d.paid?.shot && hooks.mine?.(BALANCE.shareShot, 'me')) {
         d.paid = d.paid || {};
         d.paid.shot = 1;
         saveDay(d);
-        if (hooks.mine?.(BALANCE.shareShot, 'me')) note(`공유 +${BALANCE.shareShot}`, 'ok');
+        note(`공유 +${BALANCE.shareShot}`, 'ok');
       }
     } }),
     h('button', { class: 'btn ghost', type: 'button', text: '📰 신문으로 저장', onclick: () => downloadPaper() }),
@@ -2290,8 +2558,29 @@ export function createUI(root, hooks) {
     root.classList.remove('proofing');
     hooks.lockInput?.(false);
     hooks.endFocus?.();
+    queuePushOffer();
+  }
+  function queuePushOffer() {
+    if (pushOffered) return;
+    pushQueued = true;
+    maybeOfferPush();
+  }
+  function maybeOfferPush() {
+    if (!pushQueued || pushOffered || quietBlock || sheet || !proof.hidden || proofWait) return;
+    pushOffered = true;
+    pushQueued = false;
+    openSheet('알림', null, (host) => {
+      const hint = h('p', { class: 'note', text: '전광판 소식만 보내요.' });
+      host.append(hint, h('button', { class: 'btn gold', type: 'button', text: '알림 받기', onclick: async () => {
+        const r = await subscribePush();
+        if (r?.hint) { hint.textContent = r.hint; return; }
+        if (r?.ok) { trackEvent('push_on'); closeSheet(); note('알림을 켰어요', 'ok'); }
+        else note('알림 권한이 필요해요', 'err');
+      } }));
+    }, true);
   }
   function showProof(slot, giftName = '') {
+    if (quietBlock) { proofWait = { slot, gift: giftName || '' }; return; }
     proof.dataset.slot = slot;
     proof.dataset.gift = giftName || '';
     proofText.textContent = giftName
@@ -2593,6 +2882,10 @@ export function createUI(root, hooks) {
     const dot = (x, z, rr, c) => { g.fillStyle = c; g.beginPath(); g.arc(X(x), Z(z), rr, 0, Math.PI * 2); g.fill(); };
     const tt = performance.now() / 300;
     for (const s of d.stars || []) dot(s.x, s.z, (3.5 + Math.sin(tt) * 1.2) * ui, '#ffe9a8');
+    if (d.pin && Number.isFinite(d.pin.x) && Number.isFinite(d.pin.z)) {
+      dot(d.pin.x, d.pin.z, 6 * ui, '#062028');
+      dot(d.pin.x, d.pin.z, 4.2 * ui, '#7cf6ff');
+    }
     for (const p of d.peers || []) { dot(p.x, p.z, 4.6 * ui, '#0b0d18'); dot(p.x, p.z, 3.4 * ui, p.color); }
     g.textAlign = 'center';
     g.textBaseline = 'middle';
@@ -2948,7 +3241,7 @@ export function createUI(root, hooks) {
     if (left > 0) coolSvg.fg.setAttribute('stroke-dashoffset', String(69.1 * (left / COOLDOWN)));
     if (now - mapAt > 125 && !document.hidden) { mapAt = now; drawMini(hooks.minimap?.()); }
     if (now - hudAt > 66 && !document.hidden) { hudAt = now; renderHud(hooks.hud?.()); }
-    if (now - rankAt > 1000 && !document.hidden) { rankAt = now; paintLive(); renderGoal(); maybeStarterToast(); }
+    if (now - rankAt > 1000 && !document.hidden) { rankAt = now; paintLive(); renderGoal(); maybeStarterToast(); payDue(); pumpLink(now); }
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
@@ -2984,7 +3277,7 @@ export function createUI(root, hooks) {
   const ticketEl = h('button', { class: 'stay-ticket', type: 'button' });
   const questEl = h('div', { class: 'stay-quest' });
   const balloonEl = h('button', { class: 'stay-balloon', type: 'button', hidden: true, onclick: () => hooks.throwPouch?.() });
-  const loungeBtn = h('button', { class: 'stay-lounge-btn', type: 'button', title: '전광판 관람. 8초마다 다른 전광판, 10초마다 +3. 움직이면 끝', onclick: () => hooks.toggleLounge?.() },
+  const loungeBtn = h('button', { class: 'stay-lounge-btn', type: 'button', title: '전광판 관람. 8초마다 다른 전광판, 20초마다 +2. 움직이면 끝', onclick: () => hooks.toggleLounge?.() },
     h('span', { class: 'e', text: '☕' }), h('span', { class: 'l', text: '멍때리기' }));
   const focusBtn = h('button', { class: 'stay-focus', type: 'button', hidden: true, onclick: () => hooks.endFocus?.() }, '시점 해제');
   dock.prepend(loungeBtn);
@@ -2992,19 +3285,23 @@ export function createUI(root, hooks) {
   root.querySelector('.hud-r')?.append(balloonEl);
   root.append(ticketEl, loungeEl, focusBtn);
   let loungeN = 0;
+  let loungeWatch = false;
+  const portraitMq = matchMedia('(orientation: portrait)');
+  function syncWatchPortrait() { hooks.watchPortrait?.(loungeWatch && portraitMq.matches); }
+  portraitMq.addEventListener?.('change', syncWatchPortrait);
   function paintLounge(on, n) {
     loungeEl.hidden = !on;
     loungeBtn.classList.toggle('on', !!on);
     const label = loungeBtn.querySelector('.l');
     if (label) label.textContent = on ? '그만' : '멍때리기';
     loungeN = n || 0;
-    if (on) loungeEl.textContent = `☕ 야경 감상 중. 전광판은 8초마다 알아서 바뀝니다. (10초마다 +3 | 누적 +${loungeN})`;
+    if (on) loungeEl.textContent = `☕ 야경 감상 중. 전광판은 8초마다 알아서 바뀝니다. (20초마다 +2 | 누적 +${loungeN})`;
   }
   function paintTickets(count, ms) {
     const s = Math.max(0, Math.ceil(ms / 1000));
     const mm = String(Math.floor(s / 60)).padStart(2, '0');
     const ss = String(s % 60).padStart(2, '0');
-    ticketEl.textContent = `🎟️ 내 보유 복권: ${count}장 | 다음 잭팟 추첨까지 ${mm}:${ss} · 창을 닫으면 복권은 사라집니다`;
+    ticketEl.textContent = `🎟️ 내 보유 추첨: ${count}장 | 다음 추첨까지 ${mm}:${ss} · 창을 닫으면 추첨은 사라집니다`;
   }
   function paintQuests() {
     const d = today();
@@ -3015,7 +3312,7 @@ export function createUI(root, hooks) {
     };
     questEl.replaceChildren(
       h('b', { text: '오늘의 드라이버' }),
-      row('fare', 3, '택시 타고 손님 3명 내리기 +50 · 복권 2장'),
+      row('fare', 3, '택시 타고 손님 3명 내리기 +50 · 추첨 2장'),
       row('cheer', 3, '전광판 기운 3회 +30'),
       row('stunt', 2, '길 위 황금 링을 걸어 통과 2회 +40'),
       h('div', { class: paid.all ? 'ok' : '', text: `${paid.all ? '🎁' : '☐'} 3개 완료 시 소형 전광판 등록비 100코인` }),
@@ -3031,17 +3328,16 @@ export function createUI(root, hooks) {
     saveDay(d);
     paintQuests();
     if (d[key] < need) return;
+    const pay = { fare: 50, cheer: 30, stunt: 40 }[key];
+    if (!hooks.claimQuest?.(key)) return;
     d.qPaid[key] = 1;
     saveDay(d);
-    const pay = { fare: 50, cheer: 30, stunt: 40 }[key];
-    hooks.bonus?.('quest', pay);
     if (key === 'fare') hooks.tickets?.(2);
     note(`미션 완료 +${pay}`, 'ok');
     paintQuests();
     if (d.qPaid.fare && d.qPaid.cheer && d.qPaid.stunt && !d.qPaid.all) {
       d.qPaid.all = 1;
       saveDay(d);
-      hooks.bonus?.('quest', 100);
       note('🎁 소형 전광판 등록비 100코인을 넣었어요', 'ok');
       paintQuests();
     }
@@ -3071,7 +3367,7 @@ export function createUI(root, hooks) {
     mission(kind) { if (kind === 'cheer' || kind === 'bake') missionBump(kind); },
     quest: questBump,
     tickets: paintTickets,
-    lounge(on, n) { paintLounge(on, n); if (on) lofiStart(); else lofiStop(); },
+    lounge(on, n) { paintLounge(on, n); loungeWatch = !!on; syncWatchPortrait(); if (on) lofiStart(); else lofiStop(); },
     focusLock(on) { focusBtn.hidden = !on; },
     revenge(ev) {
       sfx.siren();
@@ -3176,6 +3472,10 @@ export function createUI(root, hooks) {
       progress(p) { if (bootBar && !entered) bootBar.style.width = `${Math.round(Math.max(0.06, Math.min(1, p)) * 92)}%`; },
       ready: bootReady,
     },
+    openClaimStep,
+    setNextLine,
+    setQuietBlock,
+    noteAttend,
     news(kind, data) {
       if (kind === 'BILLBOARD') {
         const who = (data?.holder_name || '누군가') + (linkedActor(data?.holder_id, data?.linked) ? ' ✓' : '');
@@ -3186,7 +3486,7 @@ export function createUI(root, hooks) {
         const who = (data?.owner_name || '누군가') + (linkedActor(data?.owner_id) ? ' ✓' : '');
         const lv = LEVELS[Math.max(0, Math.min(4, Number(data?.level) || 0))];
         pushNews('REAL ESTATE', [h('em', { text: who }), `님의 ${data?.plot_id}번 토지에 ${lv.t}가 올라갔습니다`]);
-      } else if (kind === 'STAR') pushNews('EVENT · STARFALL', ['🌠 ', h('em', { text: '별똥별 코인 샤워' }), ' 시작! 먼저 닿는 사람이 +8 코인']);
+      } else if (kind === 'STAR') pushNews('EVENT · STARFALL', ['🌠 ', h('em', { text: '별똥별 코인 샤워' }), ' 시작! 먼저 닿는 사람이 +6 코인']);
       else if (kind === 'WELCOME') pushNews('WELCOME', ['🗽 ', h('em', { text: data?.nick || '' }), '님, 위시보드에 오신 걸 환영해요!'], false);
     },
   };
