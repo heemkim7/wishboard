@@ -19,6 +19,7 @@ it('offers the four starter streets before a paid slot', () => {
 
 it('ui exposes the wizard hooks', () => {
   const ui = readFileSync(new URL('../ui.js', import.meta.url), 'utf8');
+  assert.match(ui, /starterSlots\.includes\(id\) && !b\?\.holder_id/);
   assert.match(ui, /function openClaimStep/);
   assert.match(ui, /function setNextLine/);
   assert.match(ui, /function setQuietBlock/);

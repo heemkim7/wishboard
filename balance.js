@@ -128,6 +128,7 @@ export function askBid(board, boards, actorId, draft = '', now = Date.now()) {
   const floor = floorOf(board?.slot_id);
   if (!floor) return 0;
   const active = live(board, now);
+  if (active && actorId && board?.holder_id === actorId) return Math.max(0, Number(board.current_bid) || 0);
   let min = active ? Math.max(floor, Number(board.current_bid || 0) + 50) : floor;
   const mono = monopolyOf(boards, now);
   if (!mono || !String(board?.slot_id || '').startsWith('MAIN_')) return min;
@@ -183,6 +184,35 @@ export function scaledPay(base, state = {}) {
   const scaled = Math.floor(Number(base) * curveOf(state.playSeconds || 0) * feverBall(!!state.fever, !!state.ball));
   const cap = state.ball ? PAY.ballHourCap : PAY.hourCap;
   return Math.max(0, Math.min(scaled, cap - (Number(state.earnedInWindow) || 0)));
+}
+// Pending coins leave in order as the confirmed balance rises. A short server credit shrinks the front grant.
+export const STICKER_GLYPHS = Object.freeze(['🔥부럽다!', '👑성지순례', '💖하트폭탄', '👀내자리찜']);
+// op add appends one known glyph, pop drops the last, anything else only keeps known glyphs (max 8).
+export function stickerNext(list, glyph, op) {
+  const cur = [];
+  for (const item of Array.isArray(list) ? list : []) {
+    const g = typeof item === 'string' ? item : item?.g;
+    if (STICKER_GLYPHS.includes(g) && cur.length < 8) cur.push(g);
+  }
+  if (op === 'pop') return cur.slice(0, -1);
+  if (op === 'add' && STICKER_GLYPHS.includes(glyph) && cur.length < 8) return cur.concat(glyph);
+  return cur;
+}
+const PLAY_EARN = new Set(['bake', 'dance', 'lounge', 'fare', 'cheer', 'stunt', 'hive', 'star', 'pouch', 'mine']);
+export function countsAsPlay(kind) { return PLAY_EARN.has(kind); }
+export function cheerCount(prev, next) {
+  const a = Math.max(0, Math.floor(Number(prev)) || 0);
+  const b = Math.max(0, Math.floor(Number(next)) || 0);
+  return Math.max(a, b);
+}
+export function takeGrants(grants, gain) {
+  const left = (grants || []).map((g) => ({ n: Math.floor(Number(g?.n)) || 0, at: g?.at || 0 })).filter((g) => g.n > 0);
+  let rest = Math.max(0, Math.floor(Number(gain)) || 0);
+  while (left.length && rest > 0) {
+    if (left[0].n <= rest) rest -= left.shift().n;
+    else { left[0].n -= rest; rest = 0; }
+  }
+  return left;
 }
 export function claimSplit({ mode = 'claim', bid = 0, prevBid = 0, plot = false, landlordId = '', buyerId = '', prevId = '', live = false } = {}) {
   const B = Math.max(0, Math.floor(Number(bid) || 0));

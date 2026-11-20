@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { PAY, curveOf, ballOpen, auctionClosed, feverBall, scaledPay, claimSplit, fareRaw, farePay, bakeBase, danceBase, BALANCE } from '../balance.js';
+import { PAY, curveOf, ballOpen, auctionClosed, feverBall, scaledPay, claimSplit, fareRaw, farePay, bakeBase, danceBase, BALANCE, takeGrants, stickerNext, chainBoost, cheerCount, countsAsPlay, askBid } from '../balance.js';
 import { taxiTrainMult } from '../taxiTrain.js';
 
 describe('economy numbers', () => {
@@ -56,6 +56,52 @@ describe('economy numbers', () => {
     assert.match(sql, /auction_closed/);
     assert.match(sql, /prev_bid \* 80 \/ 100/);
     assert.equal(sql.includes('DROP TABLE'), false);
+  });
+
+  it('pays the bigger cheer only when one side holds the whole building', () => {
+    const now = Date.parse('2026-11-17T00:00:00Z');
+    const row = (id) => ({ slot_id: id, holder_id: 'a', holder_name: '힘', lit_until: '2026-11-18T00:00:00Z' });
+    const held = [row('SUB_1A'), row('SUB_1B')];
+    assert.equal(chainBoost(held, 'SUB_1A', now), true);
+    assert.equal(chainBoost(held, 'SUB_2A', now), false);
+    assert.equal(chainBoost([{ ...row('SUB_1A'), holder_id: 'b' }, row('SUB_1B')], 'SUB_1A', now), false);
+  });
+
+  it('counts taxi and bake toward the play mission, not attendance', () => {
+    assert.equal(countsAsPlay('fare'), true);
+    assert.equal(countsAsPlay('bake'), true);
+    assert.equal(countsAsPlay('attend'), false);
+    assert.equal(countsAsPlay('hello'), false);
+    assert.equal(countsAsPlay('quest'), false);
+  });
+
+  it('lets the holder edit at the current bid', () => {
+    const now = Date.parse('2026-11-17T03:00:00Z');
+    const board = { slot_id: 'STREET_8', holder_id: 'me', current_bid: 0, lit_until: '2026-11-18T00:00:00Z' };
+    assert.equal(askBid(board, [], 'me', '', now), 0);
+    assert.equal(askBid({ ...board, current_bid: 248 }, [], 'me', '', now), 248);
+    assert.equal(askBid({ ...board, current_bid: 248 }, [], 'other', '', now), 298);
+  });
+
+  it('keeps the higher cheer count when two rooms report', () => {
+    assert.equal(cheerCount(2, 4), 4);
+    assert.equal(cheerCount(5, 3), 5);
+    assert.equal(cheerCount(0, 1), 1);
+  });
+
+  it('keeps eight known stickers and drops the last on wash', () => {
+    const one = stickerNext([], '🔥부럽다!', 'add');
+    assert.deepEqual(one, ['🔥부럽다!']);
+    assert.equal(stickerNext(one, 'nope', 'add').length, 1);
+    const full = Array.from({ length: 8 }, () => '👀내자리찜');
+    assert.equal(stickerNext(full, '💖하트폭탄', 'add').length, 8);
+    assert.equal(stickerNext(one, '', 'pop').length, 0);
+  });
+
+  it('shrinks a pending grant when the server pays less', () => {
+    const left = takeGrants([{ n: 2, at: 1 }, { n: 1, at: 2 }], 1);
+    assert.deepEqual(left, [{ n: 1, at: 1 }, { n: 1, at: 2 }]);
+    assert.deepEqual(takeGrants([{ n: 2, at: 1 }], 5), []);
   });
 
   it('names the S-tier review RPCs', () => {

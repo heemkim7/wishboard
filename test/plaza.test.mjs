@@ -91,6 +91,7 @@ function meterStub() {
 
 function makeRoom(sql = sqliteStorage()) {
   const env = { FLUSH_KEY: 'flush-test-key', METER: meterStub() };
+  env.ROOM = { idFromName: (topic) => topic, get: () => ({ fetch: async () => new Response('{}', { headers: { 'content-type': 'application/json' } }) }) };
   const room = new Room(makeCtx(sql), env);
   return { room, env, sql };
 }
@@ -1031,7 +1032,7 @@ describe('times square plaza', { concurrency: false }, () => {
       assert.deepEqual(held(SQ), { delta: 10 + 15 + 15 + 15, n: 4 });
       await bonus(SQ, a, 'pouch', 99);
       assert.deepEqual(held(SQ), { delta: 75, n: 5 });
-      clock += 24999;
+      clock += 25000 - 401;
       await bonus(SQ, a2, 'pouch', 30);
       assert.equal(held(SQ).n, 5);
       clock += 1;

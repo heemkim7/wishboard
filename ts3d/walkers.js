@@ -8,5 +8,7 @@ export function walkerPoints(n) {
 }
 
 export function ghostPacket(src) {
-  return { t: 'GHOST', name: String(src?.name || '').slice(0, 12), x: Number(src?.x) || 0, y: Number(src?.y) || 0 };
+  const pkt = { t: 'GHOST', name: String(src?.name || '').slice(0, 12), x: Number(src?.x) || 0, y: Number(src?.y) || 0 };
+  if (src?.k) pkt.k = String(src.k).slice(0, 80);
+  return pkt;
 }

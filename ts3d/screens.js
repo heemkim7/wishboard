@@ -2,8 +2,10 @@
 // scrolling news tickers, and the slot registry (MAIN_S, SUB_B1..4, PLOT_1..20).
 import * as THREE from 'three';
 import { Kit, arcSlab } from './kit.js';
-import { THEMES, makeCanvas, paintBillboard, paintTicker, fontsReady, tierOf, boardPhoto, photoReady, SANS, rgba, chars } from './art.js?v=20261116f';
+import { THEMES, makeCanvas, paintBillboard, paintTicker, fontsReady, tierOf, boardPhoto, photoReady, SANS, rgba, chars } from './art.js?v=20261124f';
+import { askBid } from '../balance.js?v=20261118d';
 import { floorOf, live } from '../balance.js?v=20261116f';
+import { auctionClosed } from '../balance.js?v=20261124f';
 
 export const screenTime = { value: 0 };
 
@@ -104,8 +106,8 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
   const boards = new Map();
   const aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
   const plates = new WeakMap();
-  let liveHead = 'WISH  1,248 ▲2.4%      ·      소원 코인 +8      ·      붕어빵 +15      ·      NYSE ✦ LIVE      ·      타임스퀘어 점령전      ·      ';
-  let liveAcc = 0, liveTick = 0;
+  let liveHead = 'WISH BOARD  ·  모두의 전광판  ·  코인을 모아 이 화면을 점령하세요  ·  ';
+  let liveAcc = 0, liveTick = 0, towerOpen = !auctionClosed('MAIN_TOP');
   function tune(tex) {
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = aniso;
@@ -344,12 +346,24 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
     for (const m of b.mounts) m.screen.material = b.mat;
   }
 
-  // b.row keeps what the server said. b.data is what the screen shows: the holder's ad while the hold is live, the house notice otherwise.
+  // b.row keeps what the server said. A live hold shows that ad. A dark hold keeps the owner's name. An empty slot shows the house notice.
   function set(slotId, row, celebrate) {
     const b = ensure(slotId);
     b.row = { ...b.row, ...row, slot_id: slotId };
-    const vacant = !live(b.row);
-    const next = vacant ? { ...defaultData(slotId), views: b.row.views, clicks: b.row.clicks, ...(opsLine ? { line2: opsLine } : {}) } : b.row;
+    const held = !!b.row?.holder_id;
+    const next = live(b.row) ? b.row : held ? {
+      ...defaultData(slotId),
+      views: b.row.views,
+      clicks: b.row.clicks,
+      cheers: b.row.cheers,
+      notes: b.row.notes,
+      holder_id: b.row.holder_id,
+      holder_name: b.row.holder_name,
+      line1: '불 꺼짐',
+      line2: '주인이 다시 켤 수 있어요',
+      line3: (floorOf(slotId) || 0).toLocaleString('en-US') + ' 코인부터',
+      emoji: '💡',
+    } : { ...defaultData(slotId), views: b.row.views, clicks: b.row.clicks, cheers: b.row.cheers, ...(opsLine ? { line2: opsLine } : {}) };
     if (b.shared && !next.holder_id && !opsLine) { b.data = next; b.sig = sigOf(next); return false; }
     if (b.shared) ownCanvas(b);
     const sig = sigOf(next);
@@ -381,7 +395,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
   function setTicker(text) {
     paintTicker(tickerCanvas, text);
     tickerTex.needsUpdate = true;
-    if (text) liveHead = `${text}      ✦      WISH  1,248 ▲2.4%      ·      소원 코인      ·      붕어빵 +15      ·      `;
+    if (text) liveHead = `${text}      ✦      WISH BOARD  ·  모두의 전광판  ·  `;
   }
 
   function repaintAll() {
@@ -454,13 +468,15 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
     g.fillRect(0, body, W, th);
     g.fillStyle = accent;
     g.fillRect(0, body, W, Math.max(2, 2 * k));
-    g.fillStyle = '#ff2e4d';
+    const onAir = live(b.row);
+    const held = !!b.row?.holder_id;
+    g.fillStyle = onAir ? '#ff2e4d' : held ? '#5c657a' : '#2a6f9e';
     g.fillRect(0, body, 108 * k, th);
     g.fillStyle = '#fff';
     g.font = `900 ${Math.max(11, Math.round(20 * k))}px ${SANS}`;
     g.textAlign = 'center';
     g.textBaseline = 'middle';
-    g.fillText('LIVE', 54 * k, body + th / 2);
+    g.fillText(onAir ? 'LIVE' : held ? '꺼짐' : '빈칸', 54 * k, body + th / 2);
     g.save();
     g.beginPath();
     g.rect(112 * k, body, Math.max(1, W - 112 * k), th);
@@ -469,9 +485,10 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
     g.textAlign = 'left';
     g.fillStyle = '#ffcf5a';
     const views = Math.max(0, Math.floor(Number(b.data?.views) || 0));
+    const cheers = Math.max(0, Math.floor(Number(b.data?.cheers) || 0));
     const clicks = Math.max(0, Math.floor(Number(b.data?.clicks) || 0));
-    const notes = Array.isArray(b.data?.notes) ? b.data.notes.map((t) => chars(String(t || ''), 15)).filter(Boolean).slice(-5) : [];
-    const msg = notes.length ? `${notes.join('   ·   ')}   ·   ` : `👁 택시 정차 ${views}회   ·   🔗 링크 클릭 ${clicks}회   ·   ${liveHead}`;
+    const notes = Array.isArray(b.data?.notes) ? b.data.notes.map((t) => chars(String(t || ''), 16)).filter(Boolean).slice(-5) : [];
+    const msg = `👁 택시 정차 ${views}회   ·   🙌 응원 ${cheers}회   ·   🔗 링크 클릭 ${clicks}회   ·   ${notes.length ? notes.join('   ·   ') + '   ·   ' : ''}${liveHead}`;
     const tw = Math.max(8, g.measureText(msg).width);
     const x0 = 120 * k - ((t * 90) % tw);
     g.fillText(msg, x0, body + th / 2);
@@ -504,15 +521,18 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
   function shieldText(b) {
     const d = b.data;
     if (!d?.holder_id || !d.protected_until) return '';
-    const exp = d.expires_at ? new Date(d.expires_at).getTime() : 0;
+    const until = d.lit_until || d.expires_at;
+    const exp = until ? new Date(until).getTime() : 0;
     if (!(exp > Date.now())) return '';
     const left = new Date(d.protected_until).getTime() - Date.now();
     if (left > 60000) return '';
     if (left > 0) {
       const s = Math.ceil(left / 1000);
-      return `🚨 방어막 해제 임박! ${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')} (탈환 가능 대기중)`;
+      return `방어막 ${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
     }
-    return '⚡ 지금 빼기 가능! (+50 코인으로 즉시 강탈)';
+    const rows = [...boards.values()].map((row) => row.data).filter(Boolean);
+    const min = askBid(d, rows, '', '');
+    return min > 0 ? `지금 빼기 가능 · ${min.toLocaleString('ko-KR')}코인부터` : '지금 빼기 가능';
   }
   function update(dt, cam) {
     tickerTex.offset.x = (tickerTex.offset.x + dt * 0.035) % 1;
@@ -538,10 +558,17 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
       drawLive(b, screenTime.value);
     }
     if (liveTick % 8 === 0) {
+      const open = !auctionClosed('MAIN_TOP');
+      if (open !== towerOpen) {
+        towerOpen = open;
+        for (const b of boards.values()) {
+          if (String(b.slotId).startsWith('MAIN_') && !b.data?.holder_id && !b.shared) paint(b);
+        }
+      }
       for (const b of boards.values()) {
         const text = shieldText(b);
         if (text !== (b.shield || '')) { b.shield = text; paint(b); }
-        const warn = text.startsWith('🚨');
+        const warn = text.startsWith('방어막');
         for (const m of b.mounts) {
           if (!m.rim) continue;
           m.rim.visible = !!text || !!b.rimColor;
@@ -563,7 +590,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
     if (!b) return;
     b.rimColor = color || '';
     const text = shieldText(b);
-    const warn = text.startsWith('🚨');
+    const warn = text.startsWith('방어막');
     for (const m of b.mounts) {
       if (!m.rim) continue;
       m.rim.visible = !!text || !!b.rimColor;

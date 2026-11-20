@@ -161,6 +161,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS tribe_id TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS ring_set BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
 CREATE TABLE IF NOT EXISTS public.coin_ledger (
@@ -1130,8 +1131,8 @@ BEGIN
   END IF;
 
   UPDATE public.billboards
-  SET photo_id = CASE WHEN v_prev_id = v_holder THEN v_board.photo_id END,
-      photo_status = CASE WHEN v_prev_id = v_holder THEN v_board.photo_status END,
+  SET photo_id = CASE WHEN p_mode = 'edit' AND v_prev_id = v_holder THEN v_board.photo_id END,
+      photo_status = CASE WHEN p_mode = 'edit' AND v_prev_id = v_holder THEN v_board.photo_status END,
       holder_id = v_holder,
       holder_name = left(COALESCE(v_name, ''), 16),
       line1 = left(COALESCE(p_line1, ''), 16),
@@ -1195,6 +1196,26 @@ BEGIN
   );
 END;
 $$;
+
+CREATE OR REPLACE FUNCTION public.clear_billboard_photo(p_key TEXT, p_slot_id TEXT)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  UPDATE public.billboards
+  SET photo_id = NULL, photo_status = NULL, updated_at = now()
+  WHERE slot_id = p_slot_id;
+END;
+$$;
+GRANT EXECUTE ON FUNCTION public.clear_billboard_photo(TEXT, TEXT) TO anon, authenticated, service_role;
 
 CREATE OR REPLACE FUNCTION public.record_lottery_draw(p_key TEXT, p_bucket BIGINT, p_winning INT)
 RETURNS JSONB
@@ -1923,6 +1944,12 @@ DECLARE
   v_rep INT;
   v_species SMALLINT;
   v_equip JSONB;
+  v_owned JSONB;
+  v_color TEXT;
+  v_set BOOLEAN;
+  v_streak INT;
+  v_last DATE;
+  v_starter TEXT;
 BEGIN
   SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
   IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
@@ -1930,7 +1957,9 @@ BEGIN
   END IF;
   INSERT INTO public.wallets (actor_id) VALUES (p_actor_id) ON CONFLICT (actor_id) DO NOTHING;
   INSERT INTO public.profiles (actor_id) VALUES (p_actor_id) ON CONFLICT (actor_id) DO NOTHING;
-  SELECT reputation, species INTO v_rep, v_species FROM public.profiles WHERE actor_id = p_actor_id;
+  SELECT reputation, species, ring_color, ring_set, attend_streak, attend_last, starter_slot
+  INTO v_rep, v_species, v_color, v_set, v_streak, v_last, v_starter
+  FROM public.profiles WHERE actor_id = p_actor_id;
   SELECT COALESCE(jsonb_agg(s.cosmetic_id ORDER BY s.cosmetic_id), '[]'::jsonb)
   INTO v_equip
   FROM (
@@ -1939,12 +1968,25 @@ BEGIN
     ORDER BY cosmetic_id
     LIMIT 4
   ) s;
+  SELECT COALESCE(jsonb_agg(s.cosmetic_id ORDER BY s.cosmetic_id), '[]'::jsonb)
+  INTO v_owned
+  FROM (
+    SELECT cosmetic_id FROM public.inventory
+    WHERE actor_id = p_actor_id
+    ORDER BY cosmetic_id
+    LIMIT 12
+  ) s;
   RETURN jsonb_build_object(
     'ok', true,
     'level', LEAST(99, 1 + COALESCE(v_rep, 0) / 10),
     'reputation', COALESCE(v_rep, 0),
     'species', COALESCE(v_species, 1),
-    'equip', COALESCE(v_equip, '[]'::jsonb)
+    'equip', COALESCE(v_equip, '[]'::jsonb),
+    'owned', COALESCE(v_owned, '[]'::jsonb),
+    'color', CASE WHEN v_set THEN v_color ELSE NULL END,
+    'starter', v_starter IS NOT NULL,
+    'streak', COALESCE(v_streak, 0),
+    'attend_last', v_last
   );
 END;
 $$;
@@ -1968,6 +2010,57 @@ BEGIN
   INSERT INTO public.profiles (actor_id, species) VALUES (p_actor_id, v_species)
   ON CONFLICT (actor_id) DO UPDATE SET species = EXCLUDED.species;
   RETURN jsonb_build_object('ok', true, 'species', v_species);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.set_nickname(p_key TEXT, p_actor_id TEXT, p_nickname TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_name TEXT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  v_name := left(btrim(COALESCE(p_nickname, '')), 16);
+  IF v_name = '' THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'name');
+  END IF;
+  INSERT INTO public.wallets (actor_id, nickname) VALUES (p_actor_id, v_name)
+  ON CONFLICT (actor_id) DO UPDATE SET nickname = EXCLUDED.nickname, updated_at = now();
+  UPDATE public.billboards SET holder_name = v_name WHERE holder_id = p_actor_id;
+  UPDATE public.plots SET owner_name = v_name WHERE owner_id = p_actor_id;
+  RETURN jsonb_build_object('ok', true, 'nickname', v_name);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.set_ring_color(p_key TEXT, p_actor_id TEXT, p_color TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_color TEXT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  v_color := lower(left(btrim(COALESCE(p_color, '')), 7));
+  IF v_color !~ '^#[0-9a-f]{6}$' THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'color');
+  END IF;
+  INSERT INTO public.wallets (actor_id) VALUES (p_actor_id) ON CONFLICT (actor_id) DO NOTHING;
+  INSERT INTO public.profiles (actor_id, ring_color, ring_set) VALUES (p_actor_id, v_color, true)
+  ON CONFLICT (actor_id) DO UPDATE SET ring_color = EXCLUDED.ring_color, ring_set = true;
+  RETURN jsonb_build_object('ok', true, 'color', v_color);
 END;
 $$;
 
@@ -2035,10 +2128,12 @@ CREATE TABLE IF NOT EXISTS public.inbox (
   slot_id TEXT,
   phrase SMALLINT,
   from_name TEXT,
+  from_id TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   read_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS inbox_actor_idx ON public.inbox (actor_id, created_at DESC);
+ALTER TABLE public.inbox ADD COLUMN IF NOT EXISTS from_id TEXT;
 
 CREATE TABLE IF NOT EXISTS public.push_subs (
   endpoint TEXT PRIMARY KEY,
@@ -2082,13 +2177,14 @@ BEGIN
     IF COALESCE(v_item->>'phrase', '') ~ '^[0-9]+$' THEN
       v_phrase := LEAST(12, GREATEST(1, (v_item->>'phrase')::int));
     END IF;
-    INSERT INTO public.inbox (actor_id, kind, slot_id, phrase, from_name)
+    INSERT INTO public.inbox (actor_id, kind, slot_id, phrase, from_name, from_id)
     VALUES (
       v_actor,
       v_kind,
       NULLIF(left(COALESCE(v_item->>'slot_id', ''), 32), ''),
       v_phrase,
-      NULLIF(left(COALESCE(v_item->>'from_name', ''), 12), '')
+      NULLIF(left(COALESCE(v_item->>'from_name', ''), 12), ''),
+      NULLIF(left(COALESCE(v_item->>'from', ''), 80), '')
     );
     DELETE FROM public.inbox
     WHERE actor_id = v_actor
@@ -2124,11 +2220,12 @@ BEGIN
     'slot_id', s.slot_id,
     'phrase', s.phrase,
     'from_name', s.from_name,
+    'from', s.from_id,
     'created_at', s.created_at
   ) ORDER BY (s.read_at IS NULL) DESC, s.created_at DESC), '[]'::jsonb)
   INTO v_items
   FROM (
-    SELECT id, kind, slot_id, phrase, from_name, created_at, read_at
+    SELECT id, kind, slot_id, phrase, from_name, from_id, created_at, read_at
     FROM public.inbox
     WHERE actor_id = p_actor_id
     ORDER BY (read_at IS NULL) DESC, created_at DESC
@@ -2368,6 +2465,8 @@ GRANT EXECUTE ON FUNCTION public.touch_attend(TEXT, TEXT) TO anon, authenticated
 GRANT EXECUTE ON FUNCTION public.equip_cosmetic(TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.profile_read(TEXT, TEXT) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.save_species(TEXT, TEXT, INT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.set_nickname(TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.set_ring_color(TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.inbox_batch(TEXT, JSONB) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.inbox_list(TEXT, TEXT) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.inbox_read(TEXT, TEXT, JSONB) TO anon, authenticated, service_role;
@@ -2604,6 +2703,65 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.my_tribe(p_key TEXT, p_actor_id TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_id TEXT;
+  v_tag TEXT;
+  v_role TEXT;
+  v_coins BIGINT;
+  v_points INT;
+  v_members JSONB;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  SELECT t.id, t.tag, m.role INTO v_id, v_tag, v_role
+  FROM public.tribe_members m
+  JOIN public.tribes t ON t.id = m.tribe_id
+  WHERE m.actor_id = p_actor_id;
+  IF v_id IS NULL THEN
+    RETURN jsonb_build_object('ok', true, 'tribe_id', NULL);
+  END IF;
+  SELECT COALESCE(w.coins, 0) INTO v_coins FROM public.wallets w WHERE w.actor_id = 'tribe:' || v_id;
+  SELECT COALESCE(points, 0) INTO v_points
+  FROM public.tribe_scores
+  WHERE tribe_id = v_id
+    AND week = to_char(timezone('Asia/Seoul', now()), 'IYYY') || 'W' || to_char(timezone('Asia/Seoul', now()), 'IW');
+  SELECT COALESCE(jsonb_agg(s.obj ORDER BY s.owner_first DESC, s.joined_at), '[]'::jsonb) INTO v_members
+  FROM (
+    SELECT jsonb_build_object(
+      'name', left(COALESCE(NULLIF(w.nickname, ''), '익명'), 16),
+      'role', tm.role,
+      'me', tm.actor_id = p_actor_id
+    ) AS obj,
+    (tm.role = 'owner') AS owner_first,
+    tm.joined_at
+    FROM public.tribe_members tm
+    LEFT JOIN public.wallets w ON w.actor_id = tm.actor_id
+    WHERE tm.tribe_id = v_id
+    ORDER BY (tm.role = 'owner') DESC, tm.joined_at
+    LIMIT 40
+  ) s;
+  RETURN jsonb_build_object(
+    'ok', true,
+    'tribe_id', v_id,
+    'tag', v_tag,
+    'role', v_role,
+    'coins', COALESCE(v_coins, 0),
+    'points', COALESCE(v_points, 0),
+    'members', v_members
+  );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.my_tribe(TEXT, TEXT) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.pledge_tribe(TEXT, TEXT, TEXT, BIGINT, TEXT) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.refund_tribe_week(TEXT, TEXT) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.create_tribe(TEXT, TEXT, TEXT, TEXT) TO anon, authenticated, service_role;

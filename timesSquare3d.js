@@ -12,19 +12,19 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { toNetUnits, fromNetUnits } from './net.js?v=20261116j';
 import { walkerPoints } from './ts3d/walkers.js?v=20261116j';
 import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, SKIP_ZONES, NO_PROPS, NO_TREES, FAR_CLUSTERS, LANDMARKS, groundHeight, onStairs, fountainSpot } from './ts3d/layout.js?v=20261113b';
-import { BALANCE, chainsOf, slotName } from './balance.js?v=20261116f';
+import { BALANCE, PAY, chainsOf, slotName } from './balance.js?v=20261116f';
 import { kitMaterials } from './ts3d/kit.js';
 import { createReflection } from './ts3d/ground.js';
-import { createBoards, screenTime } from './ts3d/screens.js?v=20261116j';
+import { createBoards, screenTime } from './ts3d/screens.js?v=20261124f';
 import { loadNYC, ROAD } from './ts3d/nyc.js';
 import { createWorld, FAR_LAYER } from './ts3d/world.js';
 import { createTraffic } from './ts3d/traffic.js?v=20261116g';
-import { buildTimesSquare } from './ts3d/timesq.js?v=20261116j';
+import { buildTimesSquare } from './ts3d/timesq.js?v=20261124f';
 import { claimRockefeller, buildRockefeller } from './ts3d/rockefeller.js';
 import { claimIcons, buildIcons } from './ts3d/icons.js';
-import { buildLandmarks } from './ts3d/landmarks.js?v=20261116f';
+import { buildLandmarks } from './ts3d/landmarks.js?v=20261124e';
 import { createAvatars, EMOTES, REACTIONS, AVATAR_COLORS, speciesId } from './ts3d/avatars.js?v=20261116g';
-import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, paintLabel, fontsReady, chars, hashStr } from './ts3d/art.js?v=20261116f';
+import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, paintLabel, fontsReady, chars, hashStr } from './ts3d/art.js?v=20261124f';
 import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=20261114d';
 
 export { paintBillboard, THEMES, LAYOUT, PLOT_SLOTS, groundHeight, EMOTES, AVATAR_COLORS, taxiTrainMult, applyTaxiHardHit };
@@ -305,7 +305,7 @@ void main(){
   const camWant = camera.position.clone();
   const cineFrom = new THREE.Vector3(), cineTo = new THREE.Vector3(), cineL0 = new THREE.Vector3(), cineL1 = new THREE.Vector3();
   let cine = null, boostHeld = false, boostSnd = 0;
-  let lounge = false, loungeI = 0, loungeAt = 0, hopped = 0, hiveAt = 0, shake = 0;
+  let lounge = false, loungeI = 0, loungeAt = 0, hopped = 0, hiveAt = 0, hiveHint = false, shake = 0;
   let watchPortrait = false;
 
   // ---- input ----------------------------------------------------------------------------
@@ -406,7 +406,7 @@ void main(){
     const S = LAYOUT.stall, G = LAYOUT.stage;
     const spots = [
       { x: S.x, z: S.z + 4.4, yaw: Math.PI },
-      { x: G.spot.x, z: G.z0 - 3.6, yaw: 0 },
+      { x: G.spot.x, z: G.spot.z - 5, yaw: 0 },
       ...TAXI_STANDS.map((s) => ({ x: s.x, z: s.z, yaw: s.axis === 'x' ? Math.PI / 2 : 0 })),
     ];
     let best = null;
@@ -773,17 +773,21 @@ void main(){
   const COIN_HOME = [[14, 38], [21, 44], [11, 50], [23, 56], [16, 64], [8, 47], [27, 52], [18, 74]];
   const coinMat = new THREE.MeshStandardMaterial({ color: '#ffd56a', emissive: '#ffb020', emissiveIntensity: 1.4, metalness: 0.85, roughness: 0.25 });
   const coinGeo = new THREE.CylinderGeometry(0.28, 0.28, 0.08, 16);
+  const coinBeamMat = new THREE.MeshBasicMaterial({ color: 0xffd56a, transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide });
   const coins = COIN_HOME.map(([x, z], i) => {
     const mesh = new THREE.Mesh(coinGeo, coinMat);
     mesh.rotation.x = Math.PI / 2;
     mesh.position.set(x, 0.9, z);
-    scene.add(mesh);
-    return { i, x, z, mesh, back: 0 };
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.28, 8, 8, 1, true).translate(0, 4, 0), coinBeamMat);
+    beam.position.set(x, 0, z);
+    scene.add(mesh, beam);
+    return { i, x, z, mesh, beam, back: 0 };
   });
   function removeCoin(i) {
     const c = coins[i];
     if (!c || !c.mesh.visible) return;
     c.mesh.visible = false;
+    if (c.beam) c.beam.visible = false;
     c.back = performance.now() + 20000;
   }
   const STUNTS = [
@@ -791,10 +795,13 @@ void main(){
     { x: 16, z: 90 },
   ];
   const ringMat = new THREE.MeshBasicMaterial({ color: '#ffcf5a' });
+  const ringBeamMat = new THREE.MeshBasicMaterial({ color: 0xffcf5a, transparent: true, opacity: 0.32, depthWrite: false, side: THREE.DoubleSide });
   for (const s of STUNTS) {
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(2.1, 0.16, 10, 28), ringMat);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(2.1, 0.28, 10, 28), ringMat);
     ring.position.set(s.x, 2.3, s.z);
-    scene.add(ring);
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 1.2, 24, 12, 1, true).translate(0, 12, 0), ringBeamMat);
+    beam.position.set(s.x, 0, s.z);
+    scene.add(ring, beam);
     s.ry = ring;
     s.inside = false;
   }
@@ -832,15 +839,6 @@ void main(){
     burst(p, '#fff6d0', 60, 1);
     for (let i = 1; i <= 5; i++) setTimeout(() => burst(p.clone().setY(p.y - i * 9), i % 2 ? '#ffcf5a' : '#ff3d9a', 48, 1.2), i * 140);
     scene.remove(balloon.mesh);
-    for (let i = 0; i < 16; i++) {
-      const a = (i / 16) * Math.PI * 2;
-      const x = p.x + Math.cos(a) * 7, z = p.z + Math.sin(a) * 7;
-      const mesh = new THREE.Mesh(coinGeo, coinMat);
-      mesh.rotation.x = Math.PI / 2;
-      mesh.position.set(x, 1.2, z);
-      scene.add(mesh);
-      coins.push({ i: coins.length, x, z, mesh, back: 0 });
-    }
     opts.onBalloon?.(0, 25000);
     opts.onWish?.(WISH_LINES[(Math.random() * WISH_LINES.length) | 0]);
   }
@@ -889,7 +887,7 @@ void main(){
   function updateCoins(now, t) {
     for (const c of coins) {
       if (!c.mesh.visible) {
-        if (c.back && now >= c.back) { c.mesh.visible = true; c.back = 0; }
+        if (c.back && now >= c.back) { c.mesh.visible = true; if (c.beam) c.beam.visible = true; c.back = 0; }
         continue;
       }
       const gy = groundHeight(c.x, c.z) + 0.85 + Math.sin(t * 2.2 + c.i) * 0.12;
@@ -963,14 +961,10 @@ void main(){
     ctx.fillStyle = '#ffe9a0'; ctx.font = '700 40px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(title.slice(0, 18), 256, 64);
     const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
-    const sign = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
-    sign.scale.set(12, 3, 1); sign.position.y = 8;
-    const pole = new THREE.MeshBasicMaterial({ color: 0x3fe6ff });
-    for (const [x, z] of [[-4, -4], [4, -4], [-4, 4], [4, 4]]) {
-      const box = new THREE.Mesh(new THREE.BoxGeometry(0.35, 14, 0.35), pole);
-      box.position.set(x, 0, z);
-      g.add(box);
-    }
+    const sign = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false }));
+    sign.scale.set(18, 4.5, 1);
+    sign.position.y = 10;
+    sign.renderOrder = 20;
     g.add(sign);
     g.userData.tex = tex;
     g.userData.title = title;
@@ -1000,7 +994,7 @@ void main(){
       const x = pts.reduce((s, p) => s + p.x, 0) / pts.length;
       const z = pts.reduce((s, p) => s + p.z, 0) / pts.length;
       const y = Math.max(...pts.map((p) => p.y));
-      g.position.set(x, y, z);
+      g.position.set(x, y + 8, z);
       g.visible = true;
     }
     for (const [id, g] of chainMarks) if (!on.has(id)) g.visible = false;
@@ -1206,11 +1200,15 @@ void main(){
   crown.visible = false;
   scene.add(crown);
   let crownAt = 0;
+  function boardLit(d) {
+    const until = d?.lit_until || d?.expires_at;
+    return !!(d?.holder_id && until && new Date(until).getTime() > Date.now());
+  }
   function placeCrown() {
     let best = '', score = 0;
     for (const id of AD_IDS) {
       const d = boards.get(id)?.data;
-      if (!d?.holder_id) continue;
+      if (!boardLit(d)) continue;
       const s = (Number(d.views) || 0) + (Number(d.cheers) || 0);
       if (s > score) { score = s; best = id; }
     }
@@ -1223,7 +1221,7 @@ void main(){
     const re = /#[0-9A-Za-z가-힣_]{1,16}/g;
     for (const id of AD_IDS) {
       const d = boards.get(id)?.data;
-      if (!d?.holder_id) continue;
+      if (!boardLit(d)) continue;
       const tags = new Set([d.line1, d.line2, d.line3, d.holder_name].join(' ').match(re) || []);
       const s = (Number(d.views) || 0) + (Number(d.cheers) || 0);
       for (const tag of tags) map.set(tag, (map.get(tag) || 0) + s);
@@ -1251,6 +1249,8 @@ void main(){
       const pose = slotPose(pool[(Math.random() * pool.length) | 0], 12);
       if (pose && insideLoop(pose.front.x, pose.front.z, 4)) return { point: pose.front, slot: pose.slot, board: pose.board };
     }
+    const pose = slotPose('MAIN_LOW', 12) || slotPose('STREET_1', 12);
+    if (pose && insideLoop(pose.front.x, pose.front.z, 4)) return { point: pose.front, slot: pose.slot, board: pose.board };
     return { point: pickSpot(70, 200, { x: pos.x, z: pos.z }), slot: '', board: null };
   }
   function playIntroSweep() {
@@ -1367,7 +1367,7 @@ void main(){
   function boardExtra(t) {
     job.riders = Math.min(5, (job.riders || 1) + 1);
     job.extra = null;
-    job.extraAt = t + 1.6;
+    job.extraAt = t + PAY.fare.pickGapMs / 1000;
     markers.pickup.set(null);
     showPassenger(null);
     syncTrailers();
@@ -1399,7 +1399,7 @@ void main(){
         job.t0 = t;
         job.riders = 1;
         job.extra = null;
-        job.extraAt = t + 2;
+        job.extraAt = t + PAY.fare.pickGapMs / 1000;
         job.phase = 'ride';
         markers.drop.set(job.dest);
         syncTrailers();
@@ -1424,7 +1424,6 @@ void main(){
         const board = job.board;
         clearRide();
         job.nextAt = t + 2.5;
-        bumpFever('drop');
         opts.onJob?.({ type: 'done', fare, riders, mult: taxiTrainMult(riders), slot, board, at: screenOf(tmp.set(d.x, 2.4, d.z)) });
       }
     }
@@ -1447,13 +1446,16 @@ void main(){
       } else if (!nearRing) s.inside = false;
     }
     if (drive) {
-      if (performance.now() - hiveAt > 5000) {
-        for (const c of traffic?.positions?.() || []) {
-          if (c.mode === 'driven') continue;
-          if (Math.hypot(c.x - drive.x, c.z - drive.z) < 3.5) { hiveAt = performance.now(); opts.onHive?.(); break; }
-        }
+      let close = 99;
+      const pay = performance.now() - hiveAt > PAY.hive.gapMs;
+      for (const c of traffic?.positions?.() || []) {
+        if (c.mode === 'driven') continue;
+        const d = Math.hypot(c.x - drive.x, c.z - drive.z);
+        if (d < close) close = d;
+        if (pay && d < 3.5) { hiveAt = performance.now(); opts.onHive?.(); break; }
       }
-    }
+      hiveHint = close < 14;
+    } else hiveHint = false;
     ensureBalloon(performance.now());
     updateThrows(dt);
     if (balloon && balloon.hp > 0) {
@@ -1582,13 +1584,12 @@ void main(){
     // Proximity prompts.
     let nk = null;
     if (!drive) {
-      const S = LAYOUT.stall, A = LAYOUT.atm, G = LAYOUT.stage, spot = G.spot, F = fountainSpot();
-      const front = { x: spot.x, z: G.z0 - 3.6 };
+      const S = LAYOUT.stall, A = LAYOUT.atm, spot = LAYOUT.stage.spot, F = fountainSpot();
       if ((pos.x - S.x) ** 2 + (pos.z - S.z) ** 2 < BALANCE.stallR ** 2) nk = { kind: 'cart' };
       else if ((pos.x - A.x) ** 2 + (pos.z - A.z) ** 2 < A.r * A.r) nk = { kind: 'atm' };
-      else if ((pos.x - spot.x) ** 2 + (pos.z - spot.z) ** 2 < BALANCE.stageR ** 2 || (pos.x - front.x) ** 2 + (pos.z - front.z) ** 2 < BALANCE.stageFrontR ** 2) nk = { kind: 'stage' };
-      else if (pos.x > -34 && pos.x < -8 && pos.z > -122 && pos.z < -102) nk = { kind: 'lounge' };
+      else if ((pos.x - spot.x) ** 2 + (pos.z - spot.z) ** 2 < PAY.dance.nearM ** 2) nk = { kind: 'stage' };
       else if ((pos.x - F.x) ** 2 + (pos.z - F.z) ** 2 < 4.8 * 4.8) nk = { kind: 'fountain' };
+      else if (pos.x > -34 && pos.x < -8 && pos.z > -122 && pos.z < -102) nk = { kind: 'lounge' };
       else {
         const parked = traffic?.nearestTaxi(pos.x, pos.z, BALANCE.taxiParkedR, true);
         if (parked) nk = { kind: 'taxi', i: parked.i };
@@ -1604,6 +1605,11 @@ void main(){
               if ((pos.x - p.x) ** 2 + (pos.z - p.z) ** 2 < 3.6 * 3.6) { nk = { kind: 'plot', id: slot.id }; break; }
             }
           }
+        }
+      }
+      if (!nk) {
+        for (const s of STUNTS) {
+          if (Math.hypot(pos.x - s.x, pos.z - s.z) < 5) { nk = { kind: 'ring' }; break; }
         }
       }
       if (!nk) {
@@ -1862,20 +1868,36 @@ void main(){
     night.until = performance.now() + 10000;
   }
   function feverLive() { return fever.phase === 'party' && performance.now() < fever.until; }
+  function rejectFever() {
+    if (fever.phase !== 'party' && fever.phase !== 'count') return;
+    fever.phase = 'idle';
+    fever.gauge = Math.min(19, fever.gauge);
+    fever.until = 0;
+    lasers.visible = false;
+  }
   function feverHud() {
     const left = fever.phase === 'idle' ? 0 : Math.max(0, (fever.until - performance.now()) / 1000);
     return { gauge: fever.gauge, phase: fever.phase, left };
   }
-  function bumpFever() {
+  function setFever(gauge, untilMs) {
+    const end = Number(untilMs) || 0;
+    if (end > Date.now()) {
+      fever.phase = 'party';
+      fever.gauge = 20;
+      fever.until = performance.now() + (end - Date.now());
+      return fever.gauge;
+    }
     if (fever.phase !== 'idle') return fever.gauge;
-    fever.gauge = Math.min(20, fever.gauge + 1);
-    if (fever.gauge >= 20) {
+    const n = Math.max(0, Math.min(20, Math.floor(Number(gauge)) || 0));
+    fever.gauge = n;
+    if (n >= 20) {
       fever.phase = 'count';
       fever.until = performance.now() + 10000;
       opts.onFever?.({ phase: 'count', gauge: 20, left: 10 });
-    } else opts.onFever?.({ phase: 'gauge', gauge: fever.gauge });
+    }
     return fever.gauge;
   }
+  function bumpFever() { return setFever((fever.gauge || 0) + 1); }
   function stepFever(t) {
     const now = performance.now();
     ball.rotation.y += 0.01;
@@ -2037,10 +2059,8 @@ void main(){
   }
   function launchSticker(slot, glyph) {
     if (!STICKER_GLYPHS.includes(glyph)) return false;
-    const list = stickerMap.get(slot) || [];
-    if (list.length >= 8) return false;
     const to = boards.worldPos(slot);
-    if (!to) return commitSticker(slot, glyph);
+    if (!to) return false;
     const from = new THREE.Vector3(drive ? drive.x : pos.x, (drive ? drive.y : pos.y) + 1.5, drive ? drive.z : pos.z);
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: sparkTex, color: new THREE.Color('#ffcf5a').multiplyScalar(2.4), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
     sprite.scale.set(1.4, 1.4, 1);
@@ -2059,10 +2079,35 @@ void main(){
       if (u < 1) continue;
       scene.remove(s.sprite);
       s.sprite.material.dispose();
-      commitSticker(s.slot, s.glyph);
       burst(s.to.clone(), '#ffcf5a', 28, 0.45);
       shots.splice(i, 1);
     }
+  }
+  function glyphList(list) {
+    const out = [];
+    for (const item of Array.isArray(list) ? list : []) {
+      const g = typeof item === 'string' ? item : item?.g;
+      if (STICKER_GLYPHS.includes(g) && out.length < 8) out.push({ g, c: out.length % 4 });
+    }
+    return out;
+  }
+  function putStickers(slot, list) {
+    if (!list.length) stickerMap.delete(slot);
+    else stickerMap.set(slot, list);
+    boards.setDecals(slot, list);
+  }
+  function applyStk(msg) {
+    if (Array.isArray(msg?.all)) {
+      const keep = new Set();
+      for (const row of msg.all) {
+        const slot = String(row?.slot || '');
+        if (!slot) continue;
+        keep.add(slot);
+        putStickers(slot, glyphList(row.list));
+      }
+      for (const slot of [...stickerMap.keys()]) if (!keep.has(slot)) putStickers(slot, []);
+    } else if (msg?.slot) putStickers(String(msg.slot), glyphList(msg.list));
+    saveStickers();
   }
   function peelSticker(slot) {
     const list = stickerMap.get(slot);
@@ -2201,6 +2246,7 @@ void main(){
     ghostMarks.splice(i, 1);
   }
   function showGhost(msg) {
+    if (msg.k && opts.actorId?.() === msg.k) return;
     const name = chars(String(msg?.name || ''), 12);
     if (!name) return;
     const x = fromNetUnits(msg.x);
@@ -2268,7 +2314,16 @@ void main(){
     },
     giftPop,
     topTeam,
-    endFocus() { clearCine(); },
+    endFocus() {
+      if (!cine) { opts.onFocus?.(false); return; }
+      if (cine.back) { clearCine(); return; }
+      cineFrom.copy(camera.position);
+      cineL0.copy(controls.target);
+      cineTo.set(pos.x - Math.sin(yaw) * 8.2, pos.y + eye + 1.25, pos.z - Math.cos(yaw) * 8.2);
+      cineL1.set(pos.x, pos.y + 1.2, pos.z);
+      cine = { t0: performance.now(), dur: 700, hold: false, locked: true, until: 0, back: true };
+      if (!drive) me.root.visible = true;
+    },
     cineOn: () => !!cine || lounge,
     setBoost(on) { boostHeld = !!on; },
     setWaypoint,
@@ -2312,12 +2367,13 @@ void main(){
       yaw = 0;
       me.holder.rotation.y = 0;
     },
-    stopLounge() { lounge = false; cine = null; if (!drive) me.root.visible = true; },
+    stopLounge() { lounge = false; cine = null; if (!drive) me.root.visible = true; opts.onFocus?.(false); },
     throwPouch,
-    bumpFever,
+    bumpFever, setFever, rejectFever,
     openPlaza,
     setRoof: (name) => paintRoof(name),
     launchSticker,
+    applyStk,
     peelSticker,
     stickerList: (slot) => (stickerMap.get(slot) || []).slice(),
     beginAir,
@@ -2362,7 +2418,7 @@ void main(){
     onLand: (x, z) => (nyc ? nyc.onLand(x, z) : true),
     where,
     hud() {
-      const out = { driving: !!drive, speed: drive ? Math.abs(drive.v) * 3.6 : 0, fare: drive ? drive.fare : 0, job: null, waypoint: null, where: where(), train: null, fever: feverHud() };
+      const out = { driving: !!drive, speed: drive ? Math.abs(drive.v) * 3.6 : 0, fare: drive ? drive.fare : 0, job: null, waypoint: null, where: where(), train: null, fever: feverHud(), hive: hiveHint };
       if (drive && job.phase === 'ride' && job.riders > 0) out.train = { riders: job.riders, mult: taxiTrainMult(job.riders) };
       if (drive && job.phase !== 'none') {
         const aim = job.phase === 'pickup' ? job.target : job.dest;
@@ -2378,11 +2434,13 @@ void main(){
       for (const r of remotes.values()) peers.push({ x: r.x, z: r.z, color: r.av.color });
       const st = [];
       for (const s of stars.values()) if (s.g.visible) st.push({ x: s.x, z: s.z });
+      const coinDots = [];
+      for (const c of coins) if (c.mesh.visible) coinDots.push({ x: c.x, z: c.z });
       const lv = [];
       for (const rec of marks?.plots.values() || []) lv.push({ id: rec.id, level: rec.level, color: rec.color, mine: !!rec.data?.owner_id && rec.data.owner_id === opts.actorId?.() });
       const cd = camera.getWorldDirection(tmp);
       const jobTarget = drive && job.phase !== 'none' ? (job.phase === 'pickup' ? { ...job.target, kind: 'pickup' } : { ...job.dest, kind: 'drop' }) : null;
-      return { me: { x: pos.x, z: pos.z, yaw }, camYaw: Math.atan2(cd.x, cd.z), peers, stars: st, plots: lv, taxis: traffic?.positions() || [], driving: !!drive, job: jobTarget, waypoint, pin: mapPin };
+      return { me: { x: pos.x, z: pos.z, yaw }, camYaw: Math.atan2(cd.x, cd.z), peers, stars: st, coins: coinDots, plots: lv, taxis: traffic?.positions() || [], driving: !!drive, job: jobTarget, waypoint, pin: mapPin };
     },
   };
   loadStickers();

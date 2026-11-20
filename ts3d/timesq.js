@@ -7,8 +7,8 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { TILE } from './nyc.js';
 import { LAYOUT } from './layout.js?v=20261113b';
 import { Kit, cropPlane, imgCrop } from './kit.js';
-import { makeCanvas, paintAdAtlas, paintBlade, paintLabel, paintGlow, paintNeonSign } from './art.js?v=20261116f';
-import { screenTime } from './screens.js?v=20261116j';
+import { makeCanvas, paintAdAtlas, paintBlade, paintLabel, paintGlow, paintNeonSign } from './art.js?v=20261124f';
+import { screenTime } from './screens.js?v=20261124f';
 
 const ONE = new THREE.Vector3(1, 1, 1);
 const Y_AXIS = new THREE.Vector3(0, 1, 0);

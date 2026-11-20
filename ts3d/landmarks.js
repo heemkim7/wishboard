@@ -281,11 +281,6 @@ export function buildLandmarks(ctx) {
       root.add(s);
       steam.push(s);
     }
-    const ringMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.4, 1.2, 0.3), transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
-    const ring = new THREE.Mesh(new THREE.RingGeometry(LAYOUT.stall.r - 0.12, LAYOUT.stall.r, 64).rotateX(-Math.PI / 2), ringMat);
-    ring.position.y = 0.03;
-    ring.layers.set(1);
-    root.add(ring);
     const pops = [];
     updaters.push((dt, t) => {
       sign.rotation.y = Math.sin(t * 0.7) * 0.6;
@@ -320,7 +315,7 @@ export function buildLandmarks(ctx) {
     ground.pools([{ x: ox, z: oz + 1, r: 7, color: '#ff8a2a', k: 0.2 }]);
     return {
       root,
-      setNear(v, t) { ringMat.opacity = v ? 0.75 + Math.sin(t * 5) * 0.15 : 0.42; },
+      setNear() {},
       popFish(gold) {
         const mesh = new THREE.Mesh(fishGeo, gold ? goldMat : brown);
         root.add(mesh);
@@ -601,7 +596,7 @@ export function buildLandmarks(ctx) {
     group.add(built);
     own.forEach(o => group.add(o));
     const label = data?.sign_text || (level === 0 ? '분양 중' : data?.owner_name || `${slot.id}번 토지`);
-    const sMat = plotSign(level === 0 ? signSpec.text : label, color, level === 0 ? signSpec.sub : (data?.owner_name ? `OWNER · ${String(data.owner_name).slice(0, 10)}` : ''));
+    const sMat = plotSign(label, color, level === 0 ? signSpec.sub : (data?.owner_name ? `OWNER · ${String(data.owner_name).slice(0, 10)}` : ''));
     const sign = new THREE.Mesh(new THREE.PlaneGeometry(signSpec.w, signSpec.h), sMat);
     sign.position.set(signSpec.x, signSpec.y, signSpec.z);
     sign.userData.pick = { kind: 'plot', plotId: slot.id };

@@ -5,8 +5,8 @@
 // Meter DO: daily (UTC) estimate of billed DO requests -> lean mode at 80%, solo (down) at 95% of the Free 100k/day.
 // Supabase keeps auth, DB and RPCs only. No timers in DOs (hibernation-friendly); alarms only while someone waits.
 import { DurableObject } from 'cloudflare:workers';
-import { BALANCE, slotName, SLOT_IDS, PAY, scaledPay, bakeBase, danceBase, farePay, ballOpen, auctionClosed } from './balance.js';
-import { nextBallUntil } from './live.js';
+import { BALANCE, slotName, SLOT_IDS, PAY, scaledPay, bakeBase, danceBase, farePay, ballOpen, auctionClosed, stickerNext, chainBoost, cheerCount } from './balance.js';
+import { nextBallUntil, drawSpan } from './live.js';
 import { CHEER_PHRASES, EVENT_NAMES, allowedLink, blockedText, parseGuestHandover, statsFromCounts } from './plaza-account.js';
 import { renderCardPng } from './cardpng.js';
 import { ghostPacket } from './ts3d/walkers.js';
@@ -55,7 +55,7 @@ export async function resolveActor(env, token) {
   } catch { return null; }
 }
 const FLUSH_N = 20, FLUSH_MS = 30000;
-const MINE_GAP = 2000, MINE_CAP = 15;
+const MINE_GAP = 2000, MINE_CAP = 15, GAP_EARLY = 400;
 const AD_PAY = 15, AD_DAY = 5; // link visit: once per account per board per KST day, AD_DAY boards a day
 const MOVE_N = 8, MOVE_MS = 30000; // room moves per account: 8 in a row (a full queue bumps through square-2..8), then one per 30 s
 const RELAY = ['take', 'react', 'jump'], RELAY_N = 30, RELAY_MS = 10000; // client broadcasts the game uses, numbers only; 30 per 10 s per socket
@@ -209,8 +209,10 @@ export class Room extends DurableObject {
     if (u.pathname === '/world') return this.httpWorld(req);
     if (u.pathname === '/sync') return this.httpSync(req);
     if (u.pathname === '/air') return this.httpAir(req);
+    if (u.pathname === '/stk') return this.httpSticker(req);
+    if (u.pathname === '/chr') return this.httpCheer(req);
     if (u.pathname === '/fever') return this.httpFever(req);
-    const topic = u.searchParams.get('topic') || '', k = req.headers.get('x-uid') || ''; if (!k) return new Response('auth', { status: 401 });
+    const topic = u.searchParams.get('topic') || '', k = req.headers.get('x-uid') || ''; if (topic) this.topicName = topic; if (!k) return new Response('auth', { status: 401 });
     if (this.lvl >= 2) return new Response('down', { status: 503 });
     const sf = await this.sit(k, topic); if (sf < 0) return new Response('moved', { status: 429 });
     const room = (u.searchParams.get('room') || '').slice(0, 48), v2 = req.headers.get('x-v2') === '1';
@@ -223,7 +225,7 @@ export class Room extends DurableObject {
     this.arm(); this.meter(); return new Response(null, { status: 101, webSocket: c, headers: { 'Sec-WebSocket-Protocol': v2 ? 'masil2' : 'masil' } });
   }
   admit(w, a) { a.q = true; a.fl = 0; if (a.m) a.m.fl = 0; this.save(w, a); const st = {}; for (const b of this.socks().values()) if (b.q && b.m) { b.fl = 0; b.m.fl = 0; st[b.k] = b.m; }
-    const o = { t: 'ok', s: st, cap: a.lob ? 0 : CAP, live: this.adm(), lean: this.lvl >= 1 }; if (a.prof) { o.av = a.prof.av; o.equip = a.prof.equip; } const ghosts = this.ghostJoin(); if (a.v2 && this.hist) o.h = ghosts.length ? this.hist.concat(ghosts) : this.hist; else if (ghosts.length) o.h = ghosts; if (this.airShow && this.airShow.until > Date.now()) o.air = this.airShow; o.ball = this.ballFrame(); this.tx(w, o); }
+    const o = { t: 'ok', s: st, cap: a.lob ? 0 : CAP, live: this.adm(), lean: this.lvl >= 1 }; if (a.prof) { o.av = a.prof.av; o.equip = a.prof.equip; } try { const fg = this.gateAt('fg|' + a.k), fv = this.gateAt('fv|' + a.k), rv = this.gateAt('rev|' + a.k); if (fg) o.fg = fg; if (fv > Date.now()) o.fv = fv; if (rv > Date.now()) o.rv = rv; const lot = agGet(this.ctx.storage.sql, a.k, 'lot:' + Math.floor(Date.now() / 300000), ''); if (lot >= 1 && lot <= 15) o.lot = lot; } catch { /* the gauge follows the next fare */ } const ghosts = this.ghostJoin(); if (a.v2 && this.hist) o.h = ghosts.length ? this.hist.concat(ghosts) : this.hist; else if (ghosts.length) o.h = ghosts; if (this.airShow && this.airShow.until > Date.now()) o.air = this.airShow; o.stk = this.stkAll(); o.chr = this.chrAll(); o.ball = this.ballFrame(); this.tx(w, o); }
   waitMsgs() { const ws = this.waiters(), live = this.adm(); ws.forEach(([w], i) => this.tx(w, { t: 'wait', pos: i + 1, live, cap: CAP })); }
   promote() { let n = this.adm(); for (const [w, a] of this.waiters()) { if (n >= CAP) break; this.admit(w, a); n++; } this.waitMsgs(); }
   // One room per account (see Meter 'acct'). Returns the cooldown floor for this account's sockets here: 0, or the time it last moved in from another room,
@@ -277,6 +279,8 @@ export class Room extends DurableObject {
     q.exec('create table if not exists adstat(slot text primary key, views integer not null, clicks integer not null, dirty integer not null)');
     q.exec('create table if not exists seat(uid text primary key, fl integer not null)'); q.exec(AG);
     q.exec('create table if not exists sess(id text primary key, uid text not null, kind text not null, t0 integer not null, x integer not null, z integer not null)');
+    q.exec('create table if not exists stk(slot text primary key, g text not null)');
+    q.exec('create table if not exists chr(slot text primary key, n integer not null)');
     this._tdb = 1; this.syncPending(); this.moveHello(); }
   // One-time: hello gates written before the account registry existed move from `gate` to `ag` and are reported to the registry. '!ag1' marks the job done.
   moveHello() { if (this.gateAt('!ag1')) return; const q = this.ctx.storage.sql, old = q.exec("select k from gate where k like '%|hello' limit 2000").toArray().map(r => String(r.k));
@@ -284,21 +288,21 @@ export class Room extends DurableObject {
     const rows = old.map(k => [k.slice(0, -6), 'hello', '', 1]); for (const r of rows) agPut(q, ...r);
     try { this.acct().gatePut(rows).then(() => { for (const k of old) q.exec('delete from gate where k = ?', k); }).catch(() => { }); } catch { } }
   syncPending() { const q = this.ctx.storage.sql; this.tapN = Number(q.exec('select coalesce(sum(n),0) s from coin').one().s) || 0; const age = q.exec('select min(at) a from coin').one().a; if (age) this.tapAt = Number(age); }
-  addMine(a, amount, nick) { if (!a?.k || this.lvl >= 2) return false; this.tapDb(); const now = Date.now();
-    if (amount !== 1) return false;
-    if (now - (a.sf || 0) < MINE_GAP) return false; // just moved in from another room: the gap counts from the move
+  addMine(a, amount, nick) { if (!a?.k || this.lvl >= 2) return 0; this.tapDb(); const now = Date.now();
+    if (amount !== 1) return 0;
+    if (now - (a.sf || 0) < MINE_GAP) return -1; // just moved in from another room: the gap counts from the move
     const q = this.ctx.storage.sql;
-    // sidewalk coins: 12 per 2s, then the server table. Client amounts other than 1 are refused.
+    // sidewalk coins: 12 per 2s, then the server table. Client amounts other than 1 are refused. -1 = wait, 0 = no pay.
     const key = a.k + '#c';
     const prev = q.exec('select at from rate where uid = ?', key).toArray()[0];
     const raw = prev ? Number(prev.at) : 0;
     let start = Math.floor(raw / 100), n = raw % 100;
     if (!start || now - start >= 2000) { start = now; n = 0; }
-    if (n >= 12) return false;
+    if (n >= 12) return -1;
     q.exec('insert into rate(uid, at) values(?, ?) on conflict(uid) do update set at = excluded.at', key, start * 100 + n + 1);
     const gained = this.repeatPay(a, 1, nick, 'mine', 0, 30);
     if (gained > 0 && Math.random() < 0.02) { q.exec('delete from rate where at < ?', now - 86400000); q.exec("delete from gate where at > 1e12 and at < ? and k not like '%|hello'", now - 86400000); q.exec("delete from ag where d <> '' and d < ?", dayShift(kstDay(now), -2)); }
-    return gained > 0; }
+    return gained > 0 ? gained : 0; }
   credit(a, amount, nick, cap, kind) { if (!a?.k || this.lvl >= 2) return false; this.tapDb(); const now = Date.now();
     const creditN = Math.min(cap, Math.floor(Number(amount))); if (!Number.isInteger(creditN) || creditN < 1) return false;
     const q = this.ctx.storage.sql; const key = a.k + '|' + kind;
@@ -316,23 +320,24 @@ export class Room extends DurableObject {
     this.tapDb();
     const now = Date.now(), q = this.ctx.storage.sql;
     if (kind === 'attend') return this.attendPay(w, a, nick, now, q);
-    if (kind === 'mission' || kind === 'hello') {
+    if (kind === 'mission' || kind === 'hello' || kind === 'shot') {
       const day = kind === 'hello' ? '' : kstDay(now);
-      const spec = fixed[kind];
+      const spec = kind === 'shot' ? [5, 0, 1] : fixed[kind];
       const n = agGet(q, a.k, kind, day);
       if (n >= (spec[2] || 1)) return false;
-      agPut(q, a.k, kind, day, n + 1);
       const paid = this.grantFinal(a, spec[0], nick, kind, 'bonus');
-      if (paid > 0) this.tx(w, { t: 'PAY', kind, amount: paid });
-      return paid > 0;
+      if (paid < 1) return false;
+      agPut(q, a.k, kind, day, n + 1);
+      this.tx(w, { t: 'PAY', kind, amount: paid });
+      return true;
     }
     const row = { lounge: PAY.lounge, stunt: PAY.stunt, hive: PAY.hive, star: PAY.star, pouch: PAY.pouch }[kind];
     if (!row) return false;
-    if (kind === 'pouch' && agGet(q, a.k, 'pouch', kstDay(now)) >= PAY.pouch.perDay) return false;
+    if (kind === 'pouch' && agGet(q, a.k, 'pouch', kstDay(now)) >= PAY.pouch.perDay) { this.tx(w, { t: 'PAY', kind: 'pouch', amount: 0, why: 'pouchday' }); return false; }
     const gap = kind === 'pouch' ? fixed.pouch[1] : (row.gapMs || 0);
     if (gap > 0) {
       const key = a.k + '|' + kind;
-      if (now - Math.max(this.gateAt(key), a.sf || 0) < gap) return false;
+      if (now - Math.max(this.gateAt(key), a.sf || 0) < gap - GAP_EARLY) { this.tx(w, { t: 'PAY', kind, amount: 0, why: 'soon' }); return false; }
       this.gateSet(key, now);
     }
     const playAdd = { lounge: 10, star: 10, stunt: 15, hive: 15, pouch: 25 }[kind] || 0;
@@ -341,6 +346,7 @@ export class Room extends DurableObject {
     if (paid > 0 && kind === 'pouch') agPut(q, a.k, 'pouch', kstDay(now), agGet(q, a.k, 'pouch', kstDay(now)) + 1);
     if (paid > 0 && kind === 'stunt') agPut(q, a.k, 'qs', kstDay(now), agGet(q, a.k, 'qs', kstDay(now)) + 1);
     if (paid > 0) this.tx(w, { t: 'PAY', kind, amount: paid });
+    else this.tx(w, { t: 'PAY', kind, amount: 0, why: 'cap' });
     return paid > 0;
   }
   // touch_attend owns the ladder. A failed RPC does not spend today's ag count, and fever does not multiply the amount.
@@ -409,9 +415,11 @@ export class Room extends DurableObject {
     this.tapDb();
     const q = this.ctx.storage.sql;
     if (m.op === 'start' && (m.kind === 'bake' || m.kind === 'dance')) {
+      const hx = Number(m.a?.[0]), hy = Number(m.a?.[1]);
+      if (Number.isFinite(hx) && Number.isFinite(hy) && Math.abs(hx) < 100000 && Math.abs(hy) < 100000) a.m = Object.assign(a.m || {}, { x: Math.round(hx), y: Math.round(hy) });
       const point = m.kind === 'bake' ? PAY.stall : PAY.stage;
       const radius = m.kind === 'bake' ? PAY.bake.nearM : PAY.dance.nearM;
-      if (!this.near(a, point, radius)) { this.tx(w, { t: 'SESS', ok: false }); return; }
+      if (!this.near(a, point, radius)) { this.tx(w, { t: 'SESS', ok: false, why: 'place' }); return; }
       const id = crypto.randomUUID();
       const p = this.metersOf(a);
       q.exec('insert into sess(id, uid, kind, t0, x, z) values(?, ?, ?, ?, ?, ?)', id, a.k, m.kind, Date.now(), Math.round(p.x), Math.round(p.z));
@@ -424,44 +432,46 @@ export class Room extends DurableObject {
     if (!row || row.uid !== a.k) { this.tx(w, { t: 'SESS', ok: false }); return; }
     const dt = Date.now() - Number(row.t0);
     const spec = row.kind === 'bake' ? PAY.bake : PAY.dance;
-    if (dt < spec.minS * 1000 || dt > spec.maxS * 1000) { this.tx(w, { t: 'SESS', ok: false }); return; }
+    if (dt < spec.minS * 1000 - GAP_EARLY || dt > spec.maxS * 1000) { this.tx(w, { t: 'SESS', ok: false, why: 'time' }); return; }
     const base = row.kind === 'bake' ? bakeBase(m.result) : danceBase(m.result);
     const amount = this.repeatPay(a, base, '', row.kind, row.kind === 'bake' ? 8 : 25, spec.perHour);
     if (amount > 0) this.tx(w, { t: 'PAY', kind: row.kind, amount });
-    else this.tx(w, { t: 'SESS', ok: false });
+    else this.tx(w, { t: 'SESS', ok: false, why: 'cap' });
   }
   pick(a) {
     this.tapDb();
     const q = this.ctx.storage.sql, now = Date.now(), p = this.metersOf(a);
     const prevAt = agGet(q, a.k, 'pickAt', ''), prevX = agGet(q, a.k, 'pickX', ''), prevZ = agGet(q, a.k, 'pickZ', ''), n = agGet(q, a.k, 'pickN', '');
     if (n >= PAY.fare.pickMax) return;
-    if (prevAt && now - prevAt < PAY.fare.pickGapMs) return;
+    if (prevAt && now - prevAt < PAY.fare.pickGapMs - GAP_EARLY) return;
     if (prevAt && Math.hypot(p.x - prevX, p.z - prevZ) < PAY.fare.pickMoveM) return;
     agSet(q, a.k, 'pickAt', '', now); agSet(q, a.k, 'pickX', '', Math.round(p.x)); agSet(q, a.k, 'pickZ', '', Math.round(p.z)); agSet(q, a.k, 'pickN', '', n + 1);
   }
   fare(w, a, m) {
-    if (!AD_SLOT.test(String(m.slot || ''))) return;
+    if (!AD_SLOT.test(String(m.slot || ''))) { this.tx(w, { t: 'PAY', kind: 'fare', amount: 0, why: 'place' }); return; }
     this.tapDb();
     const q = this.ctx.storage.sql, now = Date.now(), n = agGet(q, a.k, 'pickN', '');
-    if (n < 1 || now - agGet(q, a.k, 'fareAt', '') < PAY.fare.gapMs) return;
+    if (n < 1) { this.tx(w, { t: 'PAY', kind: 'fare', amount: 0, why: 'nopick' }); return; }
+    if (now - agGet(q, a.k, 'fareAt', '') < PAY.fare.gapMs - GAP_EARLY) { this.tx(w, { t: 'PAY', kind: 'fare', amount: 0, why: 'soon' }); return; }
     const riders = n;
     agSet(q, a.k, 'pickN', '', 0); agSet(q, a.k, 'fareAt', '', now);
     const state = this.payState(a);
     state.revenge = this.fareMult(a.k) > 1;
     const amount = farePay(riders, state);
-    if (amount < 1) return;
+    if (amount < 1) { this.tx(w, { t: 'PAY', kind: 'fare', amount: 0, why: 'cap' }); return; }
     this.notePlay(a, 40, amount);
     this.grantFinal(a, amount, '', 'fare', 'fare');
-    this.bumpFeverCount(a.k);
+    const gauge = this.bumpFeverCount(a.k);
     this.bumpAd(m.slot, 'views', a.k);
-    this.tx(w, { t: 'PAY', kind: 'fare', amount });
     const day = kstDay(now);
     agPut(q, a.k, 'qf', day, agGet(q, a.k, 'qf', day) + 1);
     const bucket = Math.floor(now / 300000);
-    if (!agGet(q, a.k, 'lot:' + bucket, '')) {
-      const ticket = (crypto.getRandomValues(new Uint8Array(1))[0] % 15) + 1;
+    let ticket = agGet(q, a.k, 'lot:' + bucket, '');
+    if (!ticket) {
+      ticket = (crypto.getRandomValues(new Uint8Array(1))[0] % 15) + 1;
       agPut(q, a.k, 'lot:' + bucket, '', ticket);
     }
+    this.tx(w, { t: 'PAY', kind: 'fare', amount, gauge, lot: ticket });
   }
   quest(w, a, m) {
     const key = m.key;
@@ -487,21 +497,23 @@ export class Room extends DurableObject {
     const now = Date.now();
     const board = cachedBoard(slot);
     const until = Date.parse((board && (board.lit_until || board.expires_at)) || '');
-    if (board && (!board.holder_id || board.holder_id === a.k || !(until > now))) return;
+    if (board && (!board.holder_id || board.holder_id === a.k || !(until > now))) { this.tx(w, { t: 'PAY', kind: 'cheer', amount: 0, why: 'dark' }); return; }
     this.tapDb();
-    if (now - this.gateAt(a.k + '|cheer:' + slot) < PAY.cheer.gapMs) return;
+    if (now - this.gateAt(a.k + '|cheer:' + slot) < PAY.cheer.gapMs - GAP_EARLY) { this.tx(w, { t: 'PAY', kind: 'cheer', amount: 0, why: 'soon' }); return; }
     this.gateSet(a.k + '|cheer:' + slot, now);
-    const amount = this.repeatPay(a, PAY.cheer.base, '', 'cheer', 12, PAY.cheer.perHour);
-    if (amount < 1) return;
+    const base = chainBoost(cachedBoards(), slot, now) ? BALANCE.cheerGroup : PAY.cheer.base;
+    const amount = this.repeatPay(a, base, '', 'cheer', 12, PAY.cheer.perHour);
+    if (amount < 1) { this.tx(w, { t: 'PAY', kind: 'cheer', amount: 0, why: 'cap' }); return; }
     const q = this.ctx.storage.sql, day = kstDay();
     agPut(q, a.k, 'qc', day, agGet(q, a.k, 'qc', day) + 1);
     this.tx(w, { t: 'PAY', kind: 'cheer', amount });
+    this.shareCheer(slot, p);
     if (!this.inboxQ) this.inboxQ = [];
     const holder = board?.holder_id && board.holder_id !== a.k ? String(board.holder_id) : '';
     const fromName = clip(a.m?.name || '', 12);
-    this.inboxQ.push({ kind: 'cheer', slot_id: slot, phrase: p, from_name: fromName, to: holder });
+    this.inboxQ.push({ kind: 'cheer', slot_id: slot, phrase: p, from_name: fromName, from: a.k, to: holder });
     if (holder) {
-      const note = { t: 'INBOX', kind: 'cheer', slot_id: slot, phrase: p, from_name: fromName };
+      const note = { t: 'INBOX', kind: 'cheer', slot_id: slot, phrase: p, from_name: fromName, from: a.k };
       for (const [sock, peer] of this.socks()) if (peer.q && peer.k === holder) this.tx(sock, note);
     }
     this.noteTribe(a.k, 1);
@@ -509,6 +521,25 @@ export class Room extends DurableObject {
       const job = this.env.METER.get(this.env.METER.idFromName('ev'))?.touch?.(isoWeek(now), a.k);
       if (job && typeof job.then === 'function') job.catch(() => {});
     } catch { /* north-star touch is best-effort */ }
+  }
+  replyCheer(w, a, m) {
+    const p = Math.floor(Number(m?.p));
+    const slot = String(m?.slot || '');
+    const to = String(m?.to || '').slice(0, 80);
+    const ack = (ok) => this.tx(w, { t: 'INBOX', kind: 'reply_ack', ok: !!ok, phrase: p });
+    if (!AD_SLOT.test(slot) || p < 1 || p > 12 || !to || to === a.k) return ack(false);
+    const board = cachedBoard(slot);
+    if (!board || board.holder_id !== a.k) return ack(false);
+    const now = Date.now();
+    if (now - this.gateAt(a.k + '|reply') < 3000) return ack(false);
+    this.gateSet(a.k + '|reply', now);
+    const fromName = clip(a.m?.name || board.holder_name || '', 12);
+    let hit = false;
+    for (const [sock, peer] of this.socks()) if (peer.q && peer.k === to) {
+      this.tx(sock, { t: 'INBOX', kind: 'reply', slot_id: slot, phrase: p, from_name: fromName });
+      hit = true;
+    }
+    ack(hit);
   }
   noteTribe(uid, bit) {
     const n = Math.floor(Number(bit));
@@ -524,6 +555,16 @@ export class Room extends DurableObject {
     if (!uid) return J({ ok: false }, 401);
     let m = {};
     try { m = await req.json(); } catch { m = {}; }
+    if (m?.look) {
+      this.tapDb();
+      const q = this.ctx.storage.sql;
+      let pending = 0;
+      for (const row of q.exec("select d, v from ag where uid = ? and k = 'ts'", uid).toArray()) {
+        if (agGet(q, uid, 'tso', String(row.d || ''))) continue;
+        pending += tribePoints(row.v);
+      }
+      return J({ ok: true, pending });
+    }
     const bit = Math.floor(Number(m?.bit));
     if (bit !== 1 && bit !== 2 && bit !== 4) return J({ ok: false }, 400);
     if (m?.seated) {
@@ -560,20 +601,21 @@ export class Room extends DurableObject {
   async drawDue() {
     try {
       const bucket = Math.floor(Date.now() / 300000);
-      if (this.lotSeen == null) { this.lotSeen = bucket; return; }
-      if (bucket === this.lotSeen) return;
-      const closed = this.lotSeen;
-      this.lotSeen = bucket;
+      const closed = drawSpan(this.gateAt('lotSeen'), bucket);
+      if (!closed.length) return;
       const lotto = this.env.METER?.get?.(this.env.METER.idFromName('lotto'));
       if (!lotto?.draw) return;
-      const win = await lotto.draw(closed);
-      const seen = new Set();
-      for (const [w, a] of this.socks()) {
-        if (!a?.q || seen.has(a.k)) continue;
-        seen.add(a.k);
-        this.payDraw(w, a, closed, win);
+      for (const b of closed) {
+        const win = await lotto.draw(b);
+        const who = new Set();
+        for (const [w, a] of this.socks()) {
+          if (!a?.q || who.has(a.k)) continue;
+          who.add(a.k);
+          this.payDraw(w, a, b, win);
+        }
+        this.rememberDraw(b, win);
       }
-      this.rememberDraw(closed, win);
+      this.gateSet('lotSeen', bucket);
     } catch { /* the raffle must not stop the alarm */ }
   }
   payDraw(w, a, bucket, win) {
@@ -583,10 +625,11 @@ export class Room extends DurableObject {
     if (agGet(q, a.k, paid, '')) return;
     const ticket = agGet(q, a.k, 'lot:' + bucket, '');
     agPut(q, a.k, paid, '', 1);
+    if (ticket < 1) return;
     const hit = ticket >= 1 && ticket === Number(win);
     const amount = hit ? PAY.lottery.hit : 0;
     if (amount > 0) this.grantFinal(a, amount, '', 'lottery', 'lottery');
-    if (w) this.tx(w, { t: 'DRAW', bucket, win: Number(win), hit, amount });
+    if (w) this.tx(w, { t: 'DRAW', bucket, win: Number(win), hit, amount, lot: ticket });
   }
   async drawCheck(w, a) {
     const bucket = Math.floor(Date.now() / 300000) - 1;
@@ -646,10 +689,12 @@ export class Room extends DurableObject {
     this.bc({ t: 'AD', slot, kind: kind === 'clicks' ? 'clicks' : 'views', views: Number(row?.views) || 0, clicks: Number(row?.clicks) || 0, by });
     this.adDirty = 1; }
   // Link visit pays once per account per board per KST day, AD_DAY boards a day.
-  adClick(a, nick, slot) { if (!a?.k || !AD_SLOT.test(slot)) return false; this.tapDb(); const q = this.ctx.storage.sql, day = kstDay(), n = agGet(q, a.k, 'adn', day);
-    if (n >= AD_DAY || agGet(q, a.k, 'ad:' + slot, day)) return false;
+  adClick(w, a, nick, slot) { if (!a?.k || !AD_SLOT.test(slot)) return false; this.tapDb(); const q = this.ctx.storage.sql, day = kstDay(), n = agGet(q, a.k, 'adn', day);
+    if (n >= AD_DAY || agGet(q, a.k, 'ad:' + slot, day)) { if (w) this.tx(w, { t: 'PAY', kind: 'click', amount: 0, why: 'day', key: slot }); return false; }
     const pay = AD_PAY * this.feverScale(a.k); if (!this.credit(a, pay, nick, pay, 'click')) return false;
-    agPut(q, a.k, 'adn', day, n + 1); agPut(q, a.k, 'ad:' + slot, day, 1); this.bumpAd(slot, 'clicks', a.k); return true; }
+    agPut(q, a.k, 'adn', day, n + 1); agPut(q, a.k, 'ad:' + slot, day, 1); this.bumpAd(slot, 'clicks', a.k);
+    if (w) this.tx(w, { t: 'PAY', kind: 'click', amount: pay });
+    return true; }
   async flushAds() { this.tapDb(); const q = this.ctx.storage.sql; this.adFlushAt = Date.now();
     const rows = q.exec('select slot, views, clicks from adstat where dirty = 1 limit 40').toArray();
     if (!rows.length || typeof this.env.FLUSH_KEY !== 'string' || !this.env.FLUSH_KEY) { this.adDirty = rows.length ? 1 : 0; return; }
@@ -734,6 +779,47 @@ export class Room extends DurableObject {
     this.airShow = { nick, line, until };
     this.bc({ t: 'AIR', nick, line, until });
     return J({ ok: true }); }
+  stkRead(slot) { this.tapDb(); const row = this.ctx.storage.sql.exec('select g from stk where slot = ?', slot).toArray()[0]; if (!row) return []; try { return stickerNext(JSON.parse(row.g), '', 'set'); } catch { return []; } }
+  stkWrite(slot, list) { const q = this.ctx.storage.sql; if (!list.length) q.exec('delete from stk where slot = ?', slot); else q.exec('insert into stk(slot, g) values(?, ?) on conflict(slot) do update set g = excluded.g', slot, JSON.stringify(list)); }
+  stkAll() { this.tapDb(); const out = []; for (const row of this.ctx.storage.sql.exec('select slot, g from stk').toArray()) { let list = []; try { list = stickerNext(JSON.parse(row.g), '', 'set'); } catch { list = []; } if (SLOT_RE.test(String(row.slot)) && list.length) out.push({ slot: String(row.slot), list }); } return out; }
+  async httpSticker(req) { let m = null; try { m = await req.json(); } catch { return J({ err: 'json' }, 400); }
+    const slot = String(m?.slot || ''); if (!SLOT_RE.test(slot)) return J({ err: 'slot' }, 400);
+    const op = m?.op === 'pop' || m?.op === 'set' ? m.op : 'add';
+    const cur = this.stkRead(slot);
+    let list = cur;
+    if (op === 'pop') { if (!cur.length) return J({ ok: false, error: 'empty', list: cur }, 400); list = stickerNext(cur, '', 'pop'); }
+    else if (op === 'set') list = stickerNext(m?.list, '', 'set');
+    else { list = stickerNext(cur, String(m?.glyph || ''), 'add'); if (list.length === cur.length) return J({ ok: false, error: 'full', list: cur }, 400); }
+    this.stkWrite(slot, list); this.bc({ t: 'STK', slot, list }); return J({ ok: true, list }); }
+  chrAdd(slot) { this.tapDb(); const q = this.ctx.storage.sql; const row = q.exec('select n from chr where slot = ?', slot).toArray()[0]; const n = (row ? Number(row.n) : 0) + 1; q.exec('insert into chr(slot, n) values(?, ?) on conflict(slot) do update set n = excluded.n', slot, n); return n; }
+  chrSet(slot, n) { this.tapDb(); const q = this.ctx.storage.sql; const row = q.exec('select n from chr where slot = ?', slot).toArray()[0]; const next = cheerCount(row ? row.n : 0, n); if (next < 1) return 0; q.exec('insert into chr(slot, n) values(?, ?) on conflict(slot) do update set n = excluded.n', slot, next); return next; }
+  chrAll() { this.tapDb(); const out = []; for (const row of this.ctx.storage.sql.exec('select slot, n from chr').toArray()) if (SLOT_RE.test(String(row.slot)) && Number(row.n) > 0) out.push({ slot: String(row.slot), n: Number(row.n) }); return out; }
+  announceCheer(slot, n, phrase) {
+    const p = Math.floor(Number(phrase));
+    if (n > 0) this.bc({ t: 'CHEER_HIT', slot, n, ...(p >= 1 && p <= 12 ? { p } : {}) });
+  }
+  async httpCheer(req) { let m = null; try { m = await req.json(); } catch { return J({ err: 'json' }, 400); }
+    const slot = String(m?.slot || ''); if (!SLOT_RE.test(slot)) return J({ err: 'slot' }, 400);
+    const n = m?.op === 'set' ? this.chrSet(slot, m.n) : this.chrAdd(slot);
+    this.announceCheer(slot, n, m?.p); return J({ ok: true, n }); }
+  shareCheer(slot, phrase) {
+    const names = squareTopics(this.topicName || 'chapel:square');
+    const mine = this.topicName || names[0];
+    const send = (name, body) => this.env.ROOM.get(this.env.ROOM.idFromName(name)).fetch(new Request('https://room.internal/chr', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })).then((r) => r.json()).catch(() => null);
+    if (mine === names[0]) {
+      const n = this.chrAdd(slot);
+      this.announceCheer(slot, n, phrase);
+      for (const name of names.slice(1)) send(name, { op: 'set', slot, n, p: phrase });
+      return;
+    }
+    send(names[0], { op: 'add', slot, p: phrase }).then((data) => {
+      const n = Math.floor(Number(data?.n)) || 0;
+      if (n < 1) return;
+      this.chrSet(slot, n);
+      this.announceCheer(slot, n, phrase);
+      for (const name of names) if (name !== mine && name !== names[0]) send(name, { op: 'set', slot, n, p: phrase });
+    });
+  }
   httpFever(req) { const uid = String(req.headers.get('x-uid') || '').slice(0, 80); if (!uid) return J({ err: 'auth' }, 401); return J({ ok: true, gauge: this.bumpFeverCount(uid) }); }
   async loadProf(uid) {
     try {
@@ -791,17 +877,18 @@ export class Room extends DurableObject {
   async webSocketMessage(w, msg) { this.msgs++; const a = this.socks().get(w); if (!a || typeof msg !== 'string' || msg.length > 4000) return; a.ls = Date.now();
     let m; try { m = JSON.parse(msg); } catch { return; }
     if (m.t === 'p' && a.q && Array.isArray(m.a) && m.a.length <= 8) this.relayPos(w, a, posOf(m.a));
-    else if (m.t === 'MINE' && a.q) this.addMine(a, m.amount, m.nick);
+    else if (m.t === 'MINE' && a.q) { const gained = this.addMine(a, m.amount, m.nick); this.tx(w, gained > 0 ? { t: 'PAY', kind: 'mine', amount: gained } : { t: 'PAY', kind: 'mine', amount: 0, why: gained < 0 ? 'soon' : 'cap' }); }
     else if (m.t === 'BONUS' && a.q) await this.bonus(w, a, String(m.kind || ''), m.amount, m.nick);
     else if (m.t === 'SESS' && a.q) this.sess(w, a, m);
     else if (m.t === 'PICK' && a.q) this.pick(a);
     else if (m.t === 'FARE' && a.q) this.fare(w, a, m);
     else if (m.t === 'QUEST' && a.q) this.quest(w, a, m);
     else if (m.t === 'CHEER' && a.q) this.cheer(w, a, m);
+    else if (m.t === 'REPLY' && a.q) this.replyCheer(w, a, m);
     else if (m.t === 'DRAW_CHECK' && a.q) await this.drawCheck(w, a);
     else if (m.t === 'FEVER' && a.q) { this.tx(w, { t: 'FEVER', until: this.startFever(a.k) }); }
-    else if (m.t === 'REV' && a.q) { const until = this.startRevenge(a.k); if (until) this.tx(w, { t: 'REV', until }); }
-    else if (m.t === 'ADCLICK' && a.q) this.adClick(a, m.nick, String(m.slot || ''));
+    else if (m.t === 'REV' && a.q) { const until = this.startRevenge(a.k); this.tx(w, { t: 'REV', until: until || 0 }); }
+    else if (m.t === 'ADCLICK' && a.q) this.adClick(w, a, m.nick, String(m.slot || ''));
     else if (m.t === 'E' && a.q) { const e = m.e; if (Number.isInteger(e) && e >= 1 && e <= 4) { this.bc({ t: 'E', k: a.k, e }, w); this.pushEv({ t: 'E', k: a.k, e }); } }
     else if (m.t === 'b' && a.q) { const e = String(m.e || ''), p = m.p && typeof m.p === 'object' ? m.p : {}, now = Date.now();
       if (e === 'pos') this.relayPos(w, a, posOf([p.x, p.y, p.face, p.anim, p.fl, p.vx, p.vy]));
@@ -821,7 +908,7 @@ export class Room extends DurableObject {
     const now = Date.now();
     if (!this.ghosts) this.ghosts = [];
     this.ghosts = this.ghosts.filter((g) => now - g.at < 600000);
-    this.ghosts.push({ name: pkt.name, x: pkt.x, y: pkt.y, at: now });
+    this.ghosts.push({ name: pkt.name, k: a.k, x: pkt.x, y: pkt.y, at: now });
     if (this.ghosts.length > 8) this.ghosts.splice(0, this.ghosts.length - 8);
     this.bc(pkt, w);
   }
@@ -918,24 +1005,46 @@ async function publishProfile(env, actorId) {
   } catch { /* the next entry reads the five-minute cache */ }
   return prof;
 }
-async function profileApi(req, env, u) {
+async function profileApi(req, env, u, ctx) {
   const actor = await resolveActor(env, tokenOf(req));
   if (!actor) return J({ err: 'auth' }, 401);
   if (u.pathname === '/rt/profile' && req.method === 'GET') {
     const rpc = await supabaseRpc('profile_read', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id });
     if (!rpc.ok || !rpc.data || rpc.data.ok === false || rpc.data.species == null) return J({ err: 'profile' }, 502);
     const prof = normProf(rpc.data);
-    return J({ level: prof.level, reputation: prof.reputation, species: prof.av, equip: prof.equip });
+    const color = /^#[0-9a-fA-F]{6}$/.test(String(rpc.data.color || '')) ? String(rpc.data.color) : '';
+    const streak = Math.max(0, Math.floor(Number(rpc.data.streak) || 0));
+    const attendLast = /^\d{4}-\d{2}-\d{2}/.test(String(rpc.data.attend_last || '')) ? String(rpc.data.attend_last).slice(0, 10) : '';
+    return J({ level: prof.level, reputation: prof.reputation, species: prof.av, equip: prof.equip, owned: equipList(rpc.data.owned), starter: rpc.data.starter === true, streak, ...(attendLast ? { attend_last: attendLast } : {}), ...(color ? { color } : {}) });
   }
   if (u.pathname === '/rt/profile' && req.method === 'POST') {
     if (!env.FLUSH_KEY) return J({ err: 'profile' }, 503);
     const b = await readJson(req);
-    if (!b || b.species == null) return J({ err: 'species' }, 400);
-    const species = speciesOf(b.species);
-    const rpc = await supabaseRpc('save_species', { p_key: env.FLUSH_KEY, p_actor_id: actor.id, p_species: species });
-    if (!rpc.ok || rpc.data?.ok === false) return J({ ok: false, error: rpc.data?.error || 'profile' }, rpc.ok ? 400 : 502);
-    const prof = await publishProfile(env, actor.id);
-    return J({ ok: true, species: prof?.av || species });
+    if (!b || (b.species == null && typeof b.nickname !== 'string' && typeof b.color !== 'string')) return J({ err: 'profile' }, 400);
+    const out = {};
+    if (b.species != null) {
+      const species = speciesOf(b.species);
+      const rpc = await supabaseRpc('save_species', { p_key: env.FLUSH_KEY, p_actor_id: actor.id, p_species: species });
+      if (!rpc.ok || rpc.data?.ok === false) return J({ ok: false, error: rpc.data?.error || 'profile' }, rpc.ok ? 400 : 502);
+      const prof = await publishProfile(env, actor.id);
+      out.species = prof?.av || species;
+    }
+    if (typeof b.nickname === 'string') {
+      const nick = clip(b.nickname, 16);
+      if (!nick || rejectedCopy(nick)) return J({ ok: false, error: '그 이름은 쓸 수 없어요' }, 400);
+      const rpc = await supabaseRpc('set_nickname', { p_key: env.FLUSH_KEY, p_actor_id: actor.id, p_nickname: nick });
+      if (!rpc.ok || rpc.data?.ok === false) return J({ ok: false, error: '이름을 저장하지 못했어요' }, rpc.ok ? 400 : 502);
+      out.nickname = rpc.data?.nickname || nick;
+      try { await invalidateWorld(env, ctx); } catch { /* the next world read still picks up the name */ }
+    }
+    if (typeof b.color === 'string') {
+      const color = String(b.color).trim().toLowerCase();
+      if (!/^#[0-9a-f]{6}$/.test(color)) return J({ ok: false, error: '색을 고르지 못했어요' }, 400);
+      const rpc = await supabaseRpc('set_ring_color', { p_key: env.FLUSH_KEY, p_actor_id: actor.id, p_color: color });
+      if (!rpc.ok || rpc.data?.ok === false) return J({ ok: false, error: '색을 저장하지 못했어요' }, rpc.ok ? 400 : 502);
+      out.color = rpc.data?.color || color;
+    }
+    return J({ ok: true, ...out });
   }
   if (u.pathname === '/rt/equip' && req.method === 'POST') {
     if (!env.FLUSH_KEY) return J({ ok: false, error: 'missing' }, 503);
@@ -954,7 +1063,7 @@ async function inboxList(req, env) {
   const actor = await resolveActor(env, tokenOf(req)); if (!actor) return J({ err: 'auth' }, 401);
   const rpc = await supabaseRpc('inbox_list', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id });
   const rows = Array.isArray(rpc.data?.items) ? rpc.data.items : [];
-  const items = rows.slice(0, 20).map((row) => ({ id: row.id, kind: row.kind, slot_id: row.slot_id ?? null, phrase: row.phrase ?? null, from_name: row.from_name ?? null, created_at: row.created_at }));
+  const items = rows.slice(0, 20).map((row) => ({ id: row.id, kind: row.kind, slot_id: row.slot_id ?? null, phrase: row.phrase ?? null, from_name: row.from_name ?? null, from: row.from ?? null, created_at: row.created_at }));
   return J({ items });
 }
 async function inboxRead(req, env) {
@@ -968,6 +1077,8 @@ async function inboxRead(req, env) {
 }
 function pushHostOk(endpoint) { try { const x = new URL(endpoint); return x.protocol === 'https:' && PUSH_HOSTS.test(x.hostname) && String(endpoint).length < 600; } catch { return false; } }
 const GRP = { at: 0, w: '', v: null };
+let tribeRefundWeek = '';
+let tribeRoofWeek = '';
 const J = (o, s = 200, h = {}) => new Response(JSON.stringify(o), { status: s, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...h } });
 let GATE = { at: 0, r: null }; // per-isolate meter cache: /rt/gate no longer costs one Meter RPC per call
 const GATE_TTL = 15000, PC = new Map(); // PC: per-isolate world cache (Cache API is a no-op on *.workers.dev)
@@ -976,10 +1087,34 @@ const SLOT_RE = /^(MAIN_(UP|TOP|MID|BOT|LOW)|SUB_[1-4][AB]|STREET_([1-9]|[12]\d|
 const AD_SLOT = SLOT_RE;
 const REPORT_REASONS = ['abuse', 'ad', 'impersonation', 'other'];
 function clip(s, n) { return Array.from(String(s ?? '').replace(/[\u0000-\u001f]/g, '')).slice(0, n).join(''); }
+function playerErr(code, fallback) {
+  const map = {
+    holder: '이 칸의 주인만 할 수 있어요. 다른 계정으로 점령했다면 그 계정으로 들어오세요.',
+    edit: '지금 가진 칸의 문구만 고칠 수 있어요.',
+    blocked: '그 문구는 올릴 수 없어요.',
+    empty: '서버가 결과를 주지 않았어요. 잠시 뒤 다시 해 주세요.',
+    tag: '그 소속 이름은 쓸 수 없어요.',
+    id: '소속 링크가 맞지 않아요.',
+    slot: '그 자리는 없어요.',
+    auth: '입장한 뒤에 할 수 있어요.',
+    relight: '불을 켜지 못했어요.',
+    tribe: '이미 소속이 있거나, 소속에 들어간 뒤에만 할 수 있어요.',
+  };
+  const text = String(code || '');
+  return map[text] || text || fallback;
+}
 function tokenOf(req) { const a = req.headers.get('authorization') || ''; return a.startsWith('Bearer ') ? a.slice(7).trim() : ''; }
 function hexColor(s, d) { const t = String(s || '').trim(); return /^#[0-9a-fA-F]{3,8}$/.test(t) ? t : d; }
 function extUrl(s) { if (s == null || s === '') return null; const t = String(s).trim().slice(0, 200); try { const x = new URL(t); return x.protocol === 'https:' ? t : null; } catch { return null; } }
 function rejectedCopy(...parts) { return parts.some((part) => blockedText(part)); }
+function cachedBoards() {
+  const mem = PC.get('world');
+  if (!mem?.b) return [];
+  try {
+    const world = JSON.parse(mem.b);
+    return Array.isArray(world?.billboards) ? world.billboards : [];
+  } catch { return []; }
+}
 function cachedBoard(slot) {
   const mem = PC.get('world');
   if (!mem?.b) return null;
@@ -1119,15 +1254,36 @@ async function plaza(req, env, ctx, u) {
   if (u.pathname === '/rt/spend') {
     const kind = String(b.kind || '');
     const pay = String(b.pay || 'coins');
-    const stickers = ['🔥부럽다!', '👑성지순례', '💖하트폭탄', '👀내자리찜'];
     const glyph = String(b.glyph || '');
     const line = clip(b.line || '', 24);
     let coins = 0, tickets = 0;
+    if (kind === 'wash') {
+      const slot = String(b.slot_id || '');
+      if (!SLOT_RE.test(slot)) return J({ ok: false, error: '전광판 슬롯이 올바르지 않습니다.' }, 400);
+      let holder = cachedBoard(slot)?.holder_id || '';
+      if (!holder) {
+        const s = await fetch(SUPA + '/rest/v1/billboards?select=holder_id&slot_id=eq.' + encodeURIComponent(slot), { headers: { apikey: ANON, accept: 'application/json' } });
+        const rows = s.ok ? await s.json() : [];
+        holder = Array.isArray(rows) ? (rows[0]?.holder_id || '') : '';
+      }
+      if (!holder || holder !== actor.id) return J({ ok: false, error: '내 전광판만 씻을 수 있어요.' }, 400);
+      const peeled = await pushSticker(env, topic, { op: 'pop', slot });
+      if (!peeled.ok) return J({ ok: false, error: '지울 스티커가 없어요.' }, 400);
+      return J({ ok: true, kind: 'wash', slot_id: slot, list: peeled.list || [] });
+    }
     if (kind === 'sticker') {
       const slot = String(b.slot_id || '');
-      if (!stickers.includes(glyph)) return J({ ok: false, error: '그 스티커는 없어요.' }, 400);
+      if (!stickerNext([glyph], '', 'set').length) return J({ ok: false, error: '그 스티커는 없어요.' }, 400);
       if (!SLOT_RE.test(slot)) return J({ ok: false, error: '전광판 슬롯이 올바르지 않습니다.' }, 400);
-      coins = 30;
+      const added = await pushSticker(env, topic, { op: 'add', slot, glyph });
+      if (!added.ok) return J({ ok: false, error: added.error === 'full' ? '이 전광판 스티커가 가득 찼어요.' : '스티커를 붙이지 못했어요.' }, 400);
+      const spentSt = await supabaseRpc('spend_plaza', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_coins: 30, p_tickets: 0 });
+      const paidSt = spentSt.data || {};
+      if (!spentSt.ok || paidSt.ok === false) {
+        await pushSticker(env, topic, { op: 'pop', slot }).catch(() => {});
+        return J({ ok: false, error: paidSt.error || '코인을 쓰지 못했어요.' }, spentSt.ok ? 400 : 502);
+      }
+      return J({ ok: true, kind: 'sticker', glyph, slot_id: slot, list: added.list || [], remaining_coins: paidSt.remaining_coins ?? null, vip_tickets: paidSt.vip_tickets ?? null });
     } else if (kind === 'air') {
       if (!line) return J({ ok: false, error: '전광판에 올릴 한 줄을 적어 주세요.' }, 400);
       if (rejectedCopy(nick, line)) return J({ ok: false, error: 'blocked' }, 400);
@@ -1147,7 +1303,7 @@ async function plaza(req, env, ctx, u) {
       } catch { /* the buyer still applies the response locally */ }
       return J({ ok: true, kind: 'air', remaining_coins: paid.remaining_coins ?? null, vip_tickets: paid.vip_tickets ?? null, until, nick, line });
     }
-    return J({ ok: true, kind: 'sticker', glyph, slot_id: String(b.slot_id || ''), remaining_coins: paid.remaining_coins ?? null, vip_tickets: paid.vip_tickets ?? null });
+    return J({ ok: false, error: '그 금액은 쓸 수 없어요.' }, 400);
   }
   const claim = u.pathname === '/rt/claim-billboard';
   const sell = u.pathname === '/rt/sell-coins';
@@ -1169,17 +1325,26 @@ async function plaza(req, env, ctx, u) {
     mode = ['claim', 'edit', 'starter', 'tribe'].includes(b.mode) ? b.mode : 'claim';
     if (mode === 'starter') {
       if (b.bid !== 0) return J({ ok: false, error: 'starter' }, 400);
+      let held = false;
+      try {
+        const s = await fetch(SUPA + '/rest/v1/billboards?select=holder_id&slot_id=eq.' + encodeURIComponent(slot), { headers: { apikey: ANON, accept: 'application/json' } });
+        const rows = s.ok ? await s.json() : [];
+        held = !!(Array.isArray(rows) && rows[0]?.holder_id);
+      } catch { held = true; }
+      if (held) return J({ ok: false, error: '이 칸에는 주인이 있어요. 불이 꺼진 칸은 그 사람이 다시 켤 수 있어요' }, 400);
+    } else if (mode === 'edit') {
+      if (!Number.isInteger(b.bid) || b.bid < 0 || b.bid > 1000000000) return J({ ok: false, error: '입찰 금액이 올바르지 않습니다.' }, 400);
     } else if (!Number.isInteger(b.bid) || b.bid < 1 || b.bid > 1000000000) return J({ ok: false, error: '입찰 금액이 올바르지 않습니다.' }, 400);
-    if ((mode === 'claim' || mode === 'starter' || mode === 'tribe') && auctionClosed(slot, Date.now())) return J({ ok: false, error: 'auction_closed' }, 400);
+    if ((mode === 'claim' || mode === 'starter' || mode === 'tribe') && auctionClosed(slot, Date.now())) return J({ ok: false, error: '메인 타워는 밤 9시부터 10분 동안만 점령할 수 있어요' }, 400);
     if (mode === 'starter' && !String(actor.id).startsWith('user:')) {
       let hello = false;
       try { hello = await env.ROOM.get(env.ROOM.idFromName(topic)).hasHello(actor.id); } catch { hello = false; }
-      if (!hello) return J({ ok: false, error: 'starter' }, 400);
+      if (!hello) return J({ ok: false, error: '무료 칸은 광장에 연결된 뒤에 열려요. 잠시 뒤 다시 눌러 주세요' }, 400);
     }
     if (mode === 'starter') {
       let used = 0;
       try { used = await acct(env).sipGet(await ipHash(env, req), kstDay()); } catch { used = 0; }
-      if (used >= 3) return J({ ok: false, error: 'starter' }, 400);
+      if (used >= 3) return J({ ok: false, error: '오늘 무료 점령은 이 연결에서 세 번까지예요' }, 400);
     }
     const theme = String(b.bg_theme || '');
     if (rejectedCopy(nick, b.line1, b.line2, b.line3)) return J({ ok: false, error: 'blocked' }, 400);
@@ -1190,13 +1355,19 @@ async function plaza(req, env, ctx, u) {
     rpc = await supabaseRpc('buy_or_upgrade_plot', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_nickname: nick, p_plot_id: b.plot_id, p_sign_text: clip(b.sign_text, 14), p_theme_color: hexColor(b.theme_color, '#00ffcc') });
   }
   const data = rpc.data || {};
-  if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || data.message || '요청을 처리하지 못했습니다.' }, rpc.ok ? 400 : 502);
+  const claimErr = data.error === 'tribe' ? '소속에 들어간 뒤에 소속 코인으로 걸 수 있어요' : data.error === 'starter' ? '무료 칸은 계정당 한 번이고, 비어 있는 거리 칸만 돼요' : playerErr(data.error, data.message || '요청을 처리하지 못했습니다.');
+  if (!rpc.ok || data.ok === false) return J({ ok: false, error: claimErr }, rpc.ok ? 400 : 502);
   if (claim && data.review_id) {
     try { await env.ROOM.get(env.ROOM.idFromName(topic)).fetch(new Request('https://room.internal/sync', { method: 'POST', headers: { 'x-uid': actor.id } })); } catch { }
     return J({ ok: true, review_id: data.review_id, remaining_coins: data.remaining_coins ?? null });
   }
   const kind = claim ? 'BILLBOARD' : 'PLOT'; const row = claim ? data.billboard : data.plot;
   if (!row || typeof row !== 'object') return J({ ok: false, error: 'empty' }, 502);
+  if (claim && mode !== 'edit' && row.photo_id) {
+    try { await supabaseRpc('clear_billboard_photo', { p_key: env.FLUSH_KEY || '', p_slot_id: row.slot_id }); } catch { /* the screen still drops the photo below */ }
+    row.photo_id = null;
+    row.photo_status = null;
+  }
   if (claim) {
     try { await acct(env).wish(kstDay()); } catch { }
     if (mode === 'claim' || mode === 'starter' || mode === 'tribe') {
@@ -1211,6 +1382,7 @@ async function plaza(req, env, ctx, u) {
   }
   let fresh = null; try { fresh = await invalidateWorld(env, ctx); } catch { }
   let broadcast = false;
+  let feverGauge = 0;
   try {
     const buyer = claim && mode === 'tribe' ? String(row.holder_id || actor.id) : actor.id;
     const take = claim && data.prev_holder_id && data.prev_holder_id !== buyer ? { victim: data.prev_holder_id, attacker: nick, slot: row.slot_id, name: slotName(row.slot_id), price: Number(data.reclaim_bid) || 0, line1: data.prev_line1, line2: data.prev_line2, line3: data.prev_line3, emoji: data.prev_emoji, theme: data.prev_theme, color: data.prev_color } : null;
@@ -1224,15 +1396,32 @@ async function plaza(req, env, ctx, u) {
       broadcast = broadcast || br.ok;
     }
     await env.ROOM.get(env.ROOM.idFromName(topic)).fetch(new Request('https://room.internal/sync', { method: 'POST', headers: { 'x-uid': actor.id } }));
-    if (claim) await env.ROOM.get(env.ROOM.idFromName(topic)).fetch(new Request('https://room.internal/fever', { method: 'POST', headers: { 'x-uid': actor.id } }));
+    if (claim) {
+      try {
+        const fr = await env.ROOM.get(env.ROOM.idFromName(topic)).fetch(new Request('https://room.internal/fever', { method: 'POST', headers: { 'x-uid': actor.id } }));
+        const body = await fr.json();
+        const n = Math.floor(Number(body?.gauge));
+        if (Number.isInteger(n) && n > 0) feverGauge = n;
+      } catch { /* the gauge follows the next fare */ }
+    }
   } catch { broadcast = false; }
-  return J({ ok: true, kind, data: row, remaining_coins: data.remaining_coins ?? null, broadcast });
+  return J({ ok: true, kind, data: row, remaining_coins: data.remaining_coins ?? null, broadcast, ...(feverGauge ? { fever: feverGauge } : {}) });
 }
 // Photo billboards (operator-approved). The holder uploads a browser re-encoded JPEG (≤300 KB, EXIF already gone);
 // Supabase keeps the bytes in billboard_photos (no public read) and charges the tier fee in the same RPC.
 // Players only receive approved photos from /rt/photo/<id>; the Worker secret ADMIN_KEY unlocks review.
 const PHOTO_MAX = 300000, PHOTO_ID_RE = /^[0-9a-f]{40}$/, PHOTO_GAP = 10000, PHOTO_TTL = 300000;
 const PHOTO_C = new Map(), PHOTO_AT = new Map();
+async function pushSticker(env, topic, body) {
+  const names = squareTopics(topic);
+  const send = (name, payload) => env.ROOM.get(env.ROOM.idFromName(name)).fetch(new Request('https://room.internal/stk', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }));
+  let primary; try { primary = await send(names[0], body); } catch { return { ok: false, error: 'room' }; }
+  let data = {}; try { data = await primary.json(); } catch { data = {}; }
+  if (!primary.ok || data.ok === false) return { ok: false, error: data.error || 'room', list: data.list || [] };
+  const set = { op: 'set', slot: body.slot, list: data.list || [] };
+  await Promise.all(names.slice(1).map((name) => send(name, set).catch(() => {})));
+  return { ok: true, list: data.list || [] };
+}
 function squareTopics(topic) {
   const m = /^(chapel(?:qa)?):square(?:-(\d+))?$/.exec(topic || '');
   if (!m) return topic ? [topic] : ['chapel:square'];
@@ -1318,8 +1507,37 @@ async function tribeApi(req, env, u) {
     }
     const rpc = await supabaseRpc('pledge_tribe', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_slot_id: slot, p_amount: amount, p_week: isoWeek() });
     const data = rpc.data || {};
-    if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || data.message || '모금하지 못했어요.' }, rpc.ok ? 400 : 502);
+    const pledgeErr = data.error === 'tribe' ? '소속에 들어간 뒤에 모금할 수 있어요' : data.error === 'amount' ? '10, 20, 50코인만 모을 수 있어요' : data.error === 'week' ? '이번 주 모금을 열지 못했어요' : (data.error || data.message || '모금하지 못했어요.');
+    if (!rpc.ok || data.ok === false) return J({ ok: false, error: pledgeErr }, rpc.ok ? 400 : 502);
     return J({ ok: true, tribe_id: data.tribe_id, amount: data.amount });
+  }
+  if (b.look) {
+    const prev = isoWeek(Date.now() - 7 * 864e5);
+    if (tribeRefundWeek !== prev) {
+      try {
+        const back = await supabaseRpc('refund_tribe_week', { p_key: env.FLUSH_KEY || '', p_week: prev });
+        if (back.ok && back.data?.ok !== false) tribeRefundWeek = prev;
+      } catch { /* the sheet still opens; the next look retries the refund */ }
+    }
+    if (kstDow() === 0 && tribeRoofWeek !== isoWeek()) {
+      try {
+        const roof = await supabaseRpc('award_tribe_roof', { p_key: env.FLUSH_KEY || '', p_week: isoWeek() });
+        if (roof.ok && roof.data?.ok !== false) tribeRoofWeek = isoWeek();
+      } catch { /* next Sunday open retries */ }
+    }
+    const rpc = await supabaseRpc('my_tribe', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id });
+    const data = rpc.data || {};
+    if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || '소속을 불러오지 못했어요' }, rpc.ok ? 400 : 502);
+    let pending = 0;
+    try {
+      const room = await acct(env).roomOf(actor.id);
+      if (room) {
+        const got = await env.ROOM.get(env.ROOM.idFromName(room)).fetch(new Request('https://room.internal/score', { method: 'POST', headers: { 'x-uid': actor.id, 'content-type': 'application/json' }, body: JSON.stringify({ look: true }) }));
+        const body = await got.json();
+        pending = Math.max(0, Math.floor(Number(body?.pending) || 0));
+      }
+    } catch { /* the saved week score still shows */ }
+    return J({ ok: true, tribe_id: data.tribe_id || null, tag: data.tag || '', role: data.role || '', coins: Number(data.coins) || 0, points: (Number(data.points) || 0) + pending, members: Array.isArray(data.members) ? data.members : [] });
   }
   if (typeof b.tag === 'string' && b.tag.trim()) {
     const tag = b.tag.replace(/^#/, '').slice(0, 16);
@@ -1331,13 +1549,13 @@ async function tribeApi(req, env, u) {
       if (rpc.ok && last.ok !== false) return J({ tribe_id: last.tribe_id, tag: last.tag });
       if (last.error !== 'id') break;
     }
-    return J({ ok: false, error: last.error || 'tribe' }, 400);
+    return J({ ok: false, error: playerErr(last.error, '소속을 만들지 못했어요') }, 400);
   }
   const id = String(b.id || '');
   if (!/^[a-z0-9]{8}$/.test(id)) return J({ ok: false, error: 'id' }, 400);
   const rpc = await supabaseRpc('join_tribe', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_id: id });
   const data = rpc.data || {};
-  if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || data.message || '가입하지 못했어요.' }, rpc.ok ? 400 : 502);
+  if (!rpc.ok || data.ok === false) return J({ ok: false, error: playerErr(data.error, data.message || '가입하지 못했어요.') }, rpc.ok ? 400 : 502);
   return J({ tribe_id: data.tribe_id, tag: data.tag });
 }
 async function relightBoard(req, env, ctx) {
@@ -1350,7 +1568,7 @@ async function relightBoard(req, env, ctx) {
   if (!SLOT_RE.test(slot)) return J({ ok: false, error: 'slot' }, 400);
   const rpc = await supabaseRpc('relight_billboard', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_slot_id: slot });
   const data = rpc.data || {};
-  if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || data.message || 'relight' }, rpc.ok ? 400 : 502);
+  if (!rpc.ok || data.ok === false) return J({ ok: false, error: playerErr(data.error, data.message || '불을 켜지 못했어요') }, rpc.ok ? 400 : 502);
   try { await env.METER.get(env.METER.idFromName('ev')).touch(isoWeek(), actor.id); } catch { /* the light already moved */ }
   if (data.scored === true) {
     const lightTopic = PLAZA_TOPICS.includes(b.topic) ? b.topic : 'chapel:square';
@@ -1363,7 +1581,7 @@ async function relightBoard(req, env, ctx) {
     const topic = PLAZA_TOPICS.includes(b.topic) ? b.topic : 'chapel:square';
     if (row) await announce(env, ctx, squareTopics(topic), actor.id, row);
   } catch { /* the caller still has lit_until */ }
-  return J({ ok: true, lit_until: data.lit_until, lit_days: data.lit_days });
+  return J({ ok: true, lit_until: data.lit_until, lit_days: data.lit_days, scored: data.scored === true });
 }
 async function announce(env, ctx, topics, uid, row) {
   try { await invalidateWorld(env, ctx); } catch { }
@@ -1762,9 +1980,13 @@ export default {
     if (u.pathname === '/rt/grp') { const M = env.METER.get(env.METER.idFromName('grp'));
       if (req.method === 'GET') { const w = isoWeek(); if (GRP.w !== w || Date.now() - GRP.at > 60000) { GRP.v = await M.grpTop(w); GRP.at = Date.now(); GRP.w = w; } return J({ w, top: GRP.v }); }
       if (req.method !== 'POST') return J({ err: 'method' }, 405); let b = null; try { b = await req.json(); } catch { }
-      if (!b || !/^[A-Z2-9]{6}$/.test(b.c || '')) return J({ err: 'code' }, 400); const G = await guestVerify(env, b.t).catch(() => null); if (!G) return J({ err: 'auth' }, 401);
-      const r = await M.grpAdd(b.c, G.s, kstDay(), isoWeek()); GRP.at = 0; return J(r); }
-    if (u.pathname === '/rt/profile' || u.pathname === '/rt/equip') return profileApi(req, env, u);
+      if (!b || !/^[A-Z2-9]{6}$/.test(b.c || '')) return J({ ok: false, error: '코드는 영문 대문자와 숫자 6자리예요' }, 400);
+      let sub = '';
+      if (typeof b.t === 'string') { const G = await guestVerify(env, b.t).catch(() => null); if (G) sub = G.s; }
+      if (!sub) { const actor = await resolveActor(env, tokenOf(req)); if (actor) sub = actor.id; }
+      if (!sub) return J({ err: 'auth' }, 401);
+      const r = await M.grpAdd(b.c, sub, kstDay(), isoWeek()); GRP.at = 0; return J({ ok: true, dup: !!r.dup }); }
+    if (u.pathname === '/rt/profile' || u.pathname === '/rt/equip') return profileApi(req, env, u, ctx);
     if (u.pathname === '/rt/inbox' && req.method === 'GET') return inboxList(req, env);
     if (u.pathname === '/rt/inbox/read') return inboxRead(req, env);
     if (u.pathname === '/rt/push/key') return J({ k: VAPID_PUB }, 200, { 'cache-control': 'public, max-age=3600' });

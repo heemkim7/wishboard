@@ -52,7 +52,7 @@ class DOChan {
     ws.onmessage = e => this.msg(e.data); ws.onclose = () => this.closed(ws); ws.onerror = () => { };
     clearInterval(this.pt); this.pt = setInterval(() => { if (ws.readyState === 1) ws.send('ping'); }, 25000); } // server auto-responds (free, no DO wake); stale after 75s
   msg(d) { if (d === 'pong') return; let m; try { m = JSON.parse(d); } catch { return; }
-    if (m.t === 'ok') { this.st = m.s || {}; this.state = 'joined'; this.tries = 0; this.failAt = 0; this.rt.ev(this, { ok: true, live: m.live, cap: m.cap }); this.rt.cfg(m); this._trS = 0; this.cb('SUBSCRIBED'); if (m.air && this.rt.net) this.rt.net.emit('air', m.air); if (m.ball && this.rt.net) this.rt.net.emit('ball', m.ball); if (this.rt.net && (m.av != null || Array.isArray(m.equip))) this.rt.net.emit('profile', { av: m.av, equip: m.equip }); if (this.mine && !this._trS) this.raw({ t: 'tr', m: this.mine }); this.fire('presence', 'sync'); if (m.h && this.rt.net && this.topic === this.rt.net.topic) { const chat = []; for (const row of m.h) { if (row?.t === 'WORLD_UPDATE') this.rt.net.emit('world', { ...row, replay: true }); else if (row?.t === 'E') this.rt.net.emit('emoji', { id: row.k, e: row.e, replay: true }); else if (row?.t === 'GHOST') this.rt.net.emit('ghost', row); else chat.push(row); } if (chat.length) this.rt.net.emit('history', chat); } }
+    if (m.t === 'ok') { this.st = m.s || {}; this.state = 'joined'; this.tries = 0; this.failAt = 0; this.rt.ev(this, { ok: true, live: m.live, cap: m.cap }); this.rt.cfg(m); this._trS = 0; this.cb('SUBSCRIBED'); if (m.air && this.rt.net) this.rt.net.emit('air', m.air); if (Array.isArray(m.stk) && this.rt.net) this.rt.net.emit('stk', { all: m.stk }); if (Array.isArray(m.chr) && this.rt.net) this.rt.net.emit('cheer', { all: m.chr }); if (m.ball && this.rt.net) this.rt.net.emit('ball', m.ball); if ((m.fg != null || m.fv || m.rv) && this.rt.net) this.rt.net.emit('fever', { gauge: m.fg || 0, until: m.fv || 0, revenge: m.rv || 0, sync: true }); if (m.lot && this.rt.net) this.rt.net.emit('lot', { n: m.lot }); if (this.rt.net && (m.av != null || Array.isArray(m.equip))) this.rt.net.emit('profile', { av: m.av, equip: m.equip }); if (this.mine && !this._trS) this.raw({ t: 'tr', m: this.mine }); this.fire('presence', 'sync'); if (m.h && this.rt.net && this.topic === this.rt.net.topic) { const chat = []; for (const row of m.h) { if (row?.t === 'WORLD_UPDATE') this.rt.net.emit('world', { ...row, replay: true }); else if (row?.t === 'E') this.rt.net.emit('emoji', { id: row.k, e: row.e, replay: true }); else if (row?.t === 'GHOST') this.rt.net.emit('ghost', row); else chat.push(row); } if (chat.length) this.rt.net.emit('history', chat); } }
     else if (m.t === 'wait') {
       if (this.rt.net?.bumpShard?.()) { this.dead = true; try { this.ws.close(); } catch { } return; }
       this.state = 'waiting'; this.rt.ev(this, { pos: m.pos, live: m.live, cap: m.cap });
@@ -69,6 +69,8 @@ class DOChan {
     else if (m.t === 'AD') { if (this.rt.net) this.rt.net.emit('ad', m); }
     else if (m.t === 'E') { this.fire('broadcast', 'emote', { type: 'broadcast', event: 'emote', payload: { id: m.k, e: m.e } }); if (this.rt.net) this.rt.net.emit('emoji', { id: m.k, e: m.e }); }
     else if (m.t === 'TAKE' || m.t === 'MONO' || m.t === 'REV' || m.t === 'FEVER' || m.t === 'AIR') { if (this.rt.net) this.rt.net.emit(m.t.toLowerCase(), m); }
+    else if (m.t === 'STK') { if (this.rt.net) this.rt.net.emit('stk', m); }
+    else if (m.t === 'CHEER_HIT') { if (this.rt.net) this.rt.net.emit('cheer', m); }
     else if (m.t === 'PAY' || m.t === 'DRAW' || m.t === 'SESS' || m.t === 'WELCOME' || m.t === 'INBOX' || m.t === 'BALL') { if (this.rt.net) this.rt.net.emit(m.t.toLowerCase(), m); }
     else if (m.t === 'GHOST') { if (this.rt.net) this.rt.net.emit('ghost', m); } }
   raw(o) { if (this.ws?.readyState === 1) { this.ws.send(JSON.stringify(o)); return true; } return false; }
@@ -242,6 +244,7 @@ export class Net {
   sendFever() { if (!this.ch?.raw || this.status !== 'online') return false; return this.ch.raw({ t: 'FEVER' }); }
   sendAdClick(nick, slot) { if (!this.ch?.raw || this.status !== 'online') return false; return this.ch.raw({ t: 'ADCLICK', nick: Array.from(String(nick ?? '')).slice(0, 16).join(''), slot: String(slot || '').slice(0, 16) }); }
   sendEmoji(emojiId) { if (!this.ch?.raw || this.status !== 'online') return false; const e = Number(emojiId); if (!Number.isInteger(e) || e < 1 || e > 4) return false; return this.ch.raw({ t: 'E', e }); }
+  sendSess(op, extra = {}) { if (!this.ch?.raw || this.status !== 'online') return false; const msg = { t: 'SESS', op, kind: extra.kind || 'bake' }; if (extra.id) msg.id = extra.id; if (extra.result) msg.result = extra.result; if (Array.isArray(extra.a) && extra.a.length >= 2) msg.a = [Math.round(Number(extra.a[0])), Math.round(Number(extra.a[1]))]; return this.ch.raw(msg); }
   onWorldUpdate(fn) { this.on('world', fn); return this; }
   async claimBillboard(payload) { return this._plazaPost('/rt/claim-billboard', payload); }
   async buyPlot(payload) { return this._plazaPost('/rt/buy-plot', payload); }

@@ -1,3 +1,4 @@
+import { auctionClosed } from '../balance.js?v=20261121k';
 // Canvas painters for every procedural texture in the plaza:
 // billboard artwork, LED tickers, neon signs, K-brand ads, facades, decals, name tags.
 export const SANS = '"Pretendard Variable", Pretendard, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
@@ -557,7 +558,7 @@ export function paintBillboard(canvas, data = {}, opts = {}) {
   }
 
   const vacant = !data.holder_id;
-  const who = vacant ? '✨ 빈 자리 · 지금 걸 수 있어요' : `👑 ${chars(data.holder_name || '익명', 14)}`;
+  const who = !vacant ? `👑 ${chars(data.holder_name || '익명', 14)}` : auctionClosed(data.slot_id) ? '🌙 밤 9시에 10분만 열려요' : '✨ 빈 자리 · 지금 걸 수 있어요';
   g.font = `800 ${Math.round(34 * k)}px ${SANS}`;
   const pw = g.measureText(who).width + 40 * k;
   roundRect(g, 28 * k, 26 * k, pw, 46 * k, 23 * k);
@@ -651,18 +652,19 @@ export function paintBillboard(canvas, data = {}, opts = {}) {
     g.shadowBlur = 0;
   }
   if (opts.shield) {
-    g.fillStyle = 'rgba(40,0,0,0.62)';
-    g.fillRect(0, body * 0.58, W, body * 0.42);
-    g.font = `900 ${Math.round(42 * k)}px ${SANS}`;
+    const y = body * 0.88;
+    const h = body - y;
+    g.fillStyle = 'rgba(40,0,0,0.82)';
+    g.fillRect(0, y, W, h);
     g.textAlign = 'center';
     g.textBaseline = 'middle';
     g.fillStyle = '#ff2a2a';
     g.shadowColor = '#ff2a2a';
-    g.shadowBlur = 16 * k;
+    g.shadowBlur = 12 * k;
     const text = String(opts.shield);
-    const size = fit(g, text, W * 0.92, 48 * k, 900, SANS, 22 * k);
+    const size = fit(g, text, W * 0.92, 36 * k, 900, SANS, 18 * k);
     g.font = `900 ${Math.round(size)}px ${SANS}`;
-    g.fillText(text, W / 2, body * 0.78);
+    g.fillText(text, W / 2, y + h / 2);
     g.shadowBlur = 0;
   }
 
@@ -846,7 +848,7 @@ export function paintMenuBoard(canvas) {
   neon(g, '황금 붕어빵', W / 2, 92 * k, Math.round(70 * k), SANS, 900, '#ffcf5a', { align: 'center', glow: 0.6 });
   g.font = `${Math.round(70 * k)}px ${EMOJI}`;
   g.fillText('🐟', W / 2, 190 * k);
-  const rows = [['팥 붕어빵', '+5 코인'], ['슈크림 붕어빵', '+5 코인'], ['황금 붕어빵', '+15 코인!']];
+  const rows = [['팥 붕어빵', '+6 코인'], ['슈크림 붕어빵', '+6 코인'], ['황금 붕어빵', '+16 코인!']];
   rows.forEach(([a, b], i) => {
     const y = 290 * k + i * 74 * k;
     g.font = `800 ${Math.round(38 * k)}px ${SANS}`;

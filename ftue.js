@@ -33,9 +33,52 @@ export function claimWizard(slot) {
   };
 }
 
+export function ftueStillDue(flag, daily) {
+  if (flag) return false;
+  if (!daily || typeof daily !== 'object') return true;
+  return !((daily.earn | 0) || (daily.bake | 0) || (daily.streak | 0) || (daily.play | 0));
+}
+
 export function startFtue(ctx) {
   const { ui, world, balance } = ctx;
   ui.setNextLine?.('붕어빵 포차로 가 보세요');
   world.setWaypoint?.(balance ? { x: 21, z: 118 } : { x: 21, z: 118 });
-  return { onBakePay() { world.setWaypoint?.(null); ui.setNextLine?.('메인거리 무료 칸에 이름을 걸어 보세요'); } };
+  let here = false;
+  return {
+    onArrive() {
+      if (here) return;
+      here = true;
+      ui.setNextLine?.('여기서 E를 눌러 붕어빵을 구우세요');
+      ui.startBake?.();
+    },
+    onBakePay() {
+      const id = ['STREET_8', 'STREET_9', 'STREET_10', 'STREET_11'].find((slot) => !world.boardView?.(slot)?.holder_id);
+      const card = id ? world.slotCard?.(id) : null;
+      if (card && Number.isFinite(card.x) && Number.isFinite(card.z)) {
+        world.setWaypoint?.({ x: card.x, z: card.z });
+        ui.setNextLine?.('하늘색 기둥을 따라 무료 칸으로 가세요');
+        return;
+      }
+      world.setWaypoint?.(null);
+      ui.setNextLine?.('메인거리 무료 칸에 이름을 걸어 보세요');
+    },
+  };
+}
+
+if (typeof process !== 'undefined' && process.argv[1]?.includes('ftue.js')) {
+  if (ftueStillDue('', null) !== true) throw new Error('new');
+  if (ftueStillDue('1', null) !== false) throw new Error('flag');
+  if (ftueStillDue('', { earn: 2 }) !== false) throw new Error('earn');
+  if (ftueStillDue('', { streak: 1 }) !== false) throw new Error('streak');
+const calls = [];
+startFtue({
+  ui: { setNextLine: (t) => calls.push(t) },
+  world: {
+    setWaypoint: (p) => calls.push(p),
+    boardView: (id) => (id === 'STREET_11' ? {} : { holder_id: 'x' }),
+    slotCard: (id) => (id === 'STREET_11' ? { x: 3, z: 4 } : null),
+  },
+}).onBakePay();
+if (!calls.some((c) => c && c.x === 3 && c.z === 4)) throw new Error('wp');
+if (calls.at(-1) !== '하늘색 기둥을 따라 무료 칸으로 가세요') throw new Error('line');
 }
