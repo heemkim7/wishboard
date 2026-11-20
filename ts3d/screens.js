@@ -1,11 +1,11 @@
 // LED billboard screens: shader-animated materials, curved screens with bezels and
 // scrolling news tickers, and the slot registry (MAIN_S, SUB_B1..4, PLOT_1..20).
 import * as THREE from 'three';
-import { Kit, arcSlab } from './kit.js';
-import { THEMES, makeCanvas, paintBillboard, paintTicker, fontsReady, tierOf, boardPhoto, photoReady, SANS, rgba, chars } from './art.js?v=20261124f';
-import { askBid } from '../balance.js?v=20261118d';
-import { floorOf, live } from '../balance.js?v=20261116f';
-import { auctionClosed } from '../balance.js?v=20261124f';
+import { Kit, arcSlab } from './kit.js?v=202611210015';
+import { THEMES, makeCanvas, paintBillboard, paintTicker, fontsReady, tierOf, boardPhoto, photoReady, SANS, rgba, chars, paintWish, wishOrd, wishRotates, wishStrip, cleanWishes, sameWishes, rowUntil, wishPlan, wishRelist, wishFontTargets, wishPinPlan, freshWish, wishSettled, WISH_CYCLE, WISH_CYCLE_LOW, WISH_BUDGET, WISH_BUDGET_LOW, WISH_NOW, WISH_DROPS } from './art.js?v=202611210015';
+import { askBid } from '../balance.js';
+import { floorOf, live } from '../balance.js';
+import { auctionClosed } from '../balance.js';
 
 export const screenTime = { value: 0 };
 
@@ -102,12 +102,31 @@ function defaultData(slotId) {
 
 const sigOf = (d) => [d.line1, d.line2, d.line3, d.emoji, d.bg_theme, d.text_color, d.holder_name, d.holder_id, d.photo_id, d.photo_status, d.external_url, d.views, d.clicks, d.cheers, d.lit_days, d.taken_from, ...(d.notes || [])].join('\u0001');
 
-export function createBoards({ renderer, kitMats, onBurst, pick }) {
+export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   const boards = new Map();
   const aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
   const plates = new WeakMap();
   let liveHead = 'WISH BOARD  ·  모두의 전광판  ·  코인을 모아 이 화면을 점령하세요  ·  ';
   let liveAcc = 0, liveTick = 0, towerOpen = !auctionClosed('MAIN_TOP');
+  // 오늘의 소원: idle boards alternate their notice with a wish card. Rotation repaints happen only on the 0.64 s cadence
+  // (update() → wishPlan): at most wishBudget per tick (nearest first, then oldest waiting) plus WISH_DROPS clears of boards
+  // whose wish left the list. A list change or a loaded font repaints at most the WISH_NOW nearest boards in that call.
+  // Pins (a just-posted wish, pinWish) repaint at most WISH_PINS boards.
+  const wishCyc = quality === 'low' ? WISH_CYCLE_LOW : WISH_CYCLE;
+  const wishBudget = quality === 'low' ? WISH_BUDGET_LOW : WISH_BUDGET;
+  const wishSeen = new Set(), wishFonts = new Set();
+  const wishFontsOk = new Set();
+  const planCfg = { list: [], now: 0, cyc: wishCyc, budget: wishBudget, drops: WISH_DROPS, since: new Array(64), rank: new Array(64), who: new Array(64), pick: [], delta: 0 };
+  const nearB = [], nearOk = [], planOut = [], relistRes = { delta: 0 };
+  let wishes = [], wishShown = 0, wishFirstAt = 0, wishNonEmpty = false, lastNear = [];
+  const fontKey = (w) => w.id + '\u0001' + w.txt + '\u0001' + w.nick;
+  // The nearest-first boards of the last update() into nearB (reused array); returns how many.
+  function fillNear() {
+    const near = lastNear;
+    for (let i = 0; i < near.length; i++) nearB[i] = near[i].b;
+    nearB.length = near.length;
+    return near.length;
+  }
   function tune(tex) {
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = aniso;
@@ -193,7 +212,8 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
       return;
     }
     const list = b.decals || [];
-    if (!list.length) return;
+    // Stickers stay on the notice; a wish card is left clean (corner 0 would cover its chip, the side ones its text).
+    if (!list.length || b.wish) return;
     const g = b.canvas.getContext('2d');
     for (let i = 0; i < list.length; i++) drawBadge(g, b.canvas.width, b.canvas.height, list[i], i);
   }
@@ -215,7 +235,28 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
     return true;
   }
 
+  function wishOk(b) { return wishes.length > 0 && !b.shared && b.mounts.length > 0 && wishRotates(b.slotId, b.row, airOn(), towerOpen, Date.now(), b.untilMs); }
+  function dropWish(b) {
+    if (b.wish) wishShown--;
+    b.wish = null;
+    b.wishPin = 0;
+    b.wishKey = -1;
+    b.wishDue = 0;
+    b.wishDrop = false;
+  }
+  // The card replaces only the artwork; b.data (the notice), decals and the click target stay as they are.
+  function paintCard(b) {
+    b.wishMsg = wishStrip(b.slotId, b.row, towerOpen);
+    paintWish(b.canvas, b.wish, { strip: b.wishMsg, dark: !!b.row?.holder_id });
+    b.wishFontOk = wishFontsOk.has(fontKey(b.wish));
+    remember(b.canvas);
+    applyOverlay(b);
+    b.tex.needsUpdate = true;
+  }
   function paint(b) {
+    // A board marked by setWishes (its wish left the list or was edited) paints the notice, never the old wish.
+    if (b.wish && (b.wishDrop || !wishOk(b))) dropWish(b);
+    if (b.wish) { paintCard(b); return; }
     const d = b.data, id = d.photo_status === 'approved' && d.holder_id ? d.photo_id : null;
     const photo = id ? photoReady(id) : null;
     paintBillboard(b.canvas, d, { photo, pending: d.photo_status === 'pending', shield: b.shield || '' });
@@ -238,7 +279,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
     const canvas = tier === 'C' ? makeCanvas(512, 288) : makeCanvas(1024, 576);
     const tex = tune(new THREE.CanvasTexture(canvas));
     const mat = screenMaterial(tex, { gain: tier === 'S' ? 1.16 : tier === 'B' ? 1.12 : 1.06, grid: tier === 'C' ? [128, 72] : [256, 144] });
-    b = { slotId, tier, canvas, tex, mat, data: defaultData(slotId), sig: '', mounts: [] };
+    b = { slotId, tier, canvas, tex, mat, data: defaultData(slotId), sig: '', mounts: [], wish: null, wishKey: -1, wishPin: 0, wishDue: 0, wishDrop: false, wishFontOk: false, wishOrd: wishOrd(slotId), wishMsg: '', untilMs: 0 };
     b.sig = sigOf(b.data);
     boards.set(slotId, b);
     paint(b);
@@ -321,6 +362,8 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
     const b = boards.get(slotId);
     if (!b) return;
     b.mounts = b.mounts.filter(m => m.group !== group);
+    // Off the map: forget the card so the wish tick can stop, and leave the canvas on the notice for a later mount.
+    if (!b.mounts.length && b.wish) { dropWish(b); paint(b); }
     group.traverse(o => {
       const i = pick.indexOf(o);
       if (i >= 0) pick.splice(i, 1);
@@ -350,6 +393,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
   function set(slotId, row, celebrate) {
     const b = ensure(slotId);
     b.row = { ...b.row, ...row, slot_id: slotId };
+    b.untilMs = rowUntil(b.row);
     const held = !!b.row?.holder_id;
     const next = live(b.row) ? b.row : held ? {
       ...defaultData(slotId),
@@ -424,12 +468,13 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
     const accent = theme.accent || '#3fe6ff';
     const accent2 = theme.accent2 || '#ff3d9a';
     const photoOn = b.data?.photo_status === 'approved' && b.data?.holder_id && b.data?.photo_id;
+    const wishOn = !!b.wish;
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.drawImage(plate, 0, 0);
 
     const th = Math.max(18, Math.round(46 * k));
     const body = H - th;
-    if (!photoOn) {
+    if (!photoOn && !wishOn) {
       g.save();
       g.beginPath();
       g.rect(0, H * 0.58, W, body - H * 0.58);
@@ -470,13 +515,13 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
     g.fillRect(0, body, W, Math.max(2, 2 * k));
     const onAir = live(b.row);
     const held = !!b.row?.holder_id;
-    g.fillStyle = onAir ? '#ff2e4d' : held ? '#5c657a' : '#2a6f9e';
+    g.fillStyle = wishOn ? '#9a5a24' : onAir ? '#ff2e4d' : held ? '#5c657a' : '#2a6f9e';
     g.fillRect(0, body, 108 * k, th);
     g.fillStyle = '#fff';
     g.font = `900 ${Math.max(11, Math.round(20 * k))}px ${SANS}`;
     g.textAlign = 'center';
     g.textBaseline = 'middle';
-    g.fillText(onAir ? 'LIVE' : held ? '꺼짐' : '빈칸', 54 * k, body + th / 2);
+    g.fillText(wishOn ? '소원' : onAir ? 'LIVE' : held ? '꺼짐' : '빈칸', 54 * k, body + th / 2);
     g.save();
     g.beginPath();
     g.rect(112 * k, body, Math.max(1, W - 112 * k), th);
@@ -488,7 +533,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
     const cheers = Math.max(0, Math.floor(Number(b.data?.cheers) || 0));
     const clicks = Math.max(0, Math.floor(Number(b.data?.clicks) || 0));
     const notes = Array.isArray(b.data?.notes) ? b.data.notes.map((t) => chars(String(t || ''), 16)).filter(Boolean).slice(-5) : [];
-    const msg = `👁 택시 정차 ${views}회   ·   🙌 응원 ${cheers}회   ·   🔗 링크 클릭 ${clicks}회   ·   ${notes.length ? notes.join('   ·   ') + '   ·   ' : ''}${liveHead}`;
+    const msg = wishOn ? `🌠 오늘의 소원   ·   ${b.wishMsg}   ·   ${liveHead}` : `👁 택시 정차 ${views}회   ·   🙌 응원 ${cheers}회   ·   🔗 링크 클릭 ${clicks}회   ·   ${notes.length ? notes.join('   ·   ') + '   ·   ' : ''}${liveHead}`;
     const tw = Math.max(8, g.measureText(msg).width);
     const x0 = 120 * k - ((t * 90) % tw);
     g.fillText(msg, x0, body + th / 2);
@@ -548,6 +593,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
       near.push({ b, d });
     }
     near.sort((a, b) => a.d - b.d);
+    lastNear = near;
     const hot = new Set(near.slice(0, 10).map((r) => r.b));
     const seen = new Set();
     for (const b of boards.values()) {
@@ -562,7 +608,8 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
       if (open !== towerOpen) {
         towerOpen = open;
         for (const b of boards.values()) {
-          if (String(b.slotId).startsWith('MAIN_') && !b.data?.holder_id && !b.shared) paint(b);
+          // Vacant ones change their notice; any main board showing a card (held or not) must lose it inside the window.
+          if (String(b.slotId).startsWith('MAIN_') && (!b.data?.holder_id || b.wish) && !b.shared) paint(b);
         }
       }
       for (const b of boards.values()) {
@@ -576,11 +623,91 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
           m.rim.material.color.set(warn ? 0xff1a1a : (b.rimColor || 0xffcf5a));
         }
       }
+      if (wishes.length || wishShown) wishTick();
       if (showMeshes[1]?.visible) {
         const hues = [0xff3d4a, 0xffcf5a, 0x39f58a, 0x3fe6ff, 0xb84dff, 0xff7ad9];
         showMeshes[1].material.color.set(hues[(liveTick / 8) % hues.length | 0]);
       }
     }
+  }
+
+  // Runs on the 0.64 s cadence only while wishes exist or a card is still up. The decisions are wishPlan's (tested);
+  // this only gathers the states and paints what it lists.
+  function wishTick() {
+    const now = Date.now(), n = wishes.length, air = airOn();
+    const count = fillNear();
+    for (let i = 0; i < count; i++) {
+      const b = nearB[i];
+      nearOk[i] = n > 0 && !b.shared && b.mounts.length > 0 && wishRotates(b.slotId, b.row, air, towerOpen, now, b.untilMs);
+    }
+    planCfg.list = wishes;
+    planCfg.now = now;
+    const k = wishPlan(nearB, nearOk, count, planCfg, planOut);
+    wishShown += planCfg.delta;
+    for (let j = 0; j < k; j++) paint(nearB[planOut[j]]);
+  }
+  // Puts wish w on the nearest boards that may rotate (at most WISH_PINS) for one card duration. Unbudgeted, bounded.
+  function pinOn(id) {
+    const now = Date.now(), air = airOn(), near = lastNear, cands = [];
+    for (let i = 0; i < near.length; i++) {
+      const b = near[i].b;
+      cands.push({ ok: b.mounts.length > 0 && !b.shared && wishes.length > 0 && wishRotates(b.slotId, b.row, air, towerOpen, now, b.untilMs), pinId: b.wish?.id ?? null, pinUntil: b.wishPin });
+    }
+    const plan = wishPinPlan(wishes, id, cands, now);
+    if (!plan) return false;
+    for (const i of plan.paint) {
+      const b = near[i].b;
+      if (!b.wish) wishShown++;
+      b.wish = plan.wish;
+      b.wishPin = now + wishCyc.wish;
+      b.wishKey = -2;
+      b.wishDue = 0;
+      b.wishDrop = false;
+      paintCard(b);
+    }
+    return plan.covered > 0;
+  }
+  /** Shows the wish with this id (must be in the current list) on up to 4 nearest idle boards now, for one card duration.
+   *  Repeated calls inside that time repaint nothing. False when the id is unknown or no board may show it. */
+  function pinWish(id) { return pinOn(String(id ?? '')); }
+  /** list: 0–24 {id, nick, txt, hearts}. Unchanged list → no work. Boards whose wish left the list or was edited: the
+   *  WISH_NOW nearest are repainted in this call, the rest are marked and cleared by the tick (WISH_DROPS per tick). */
+  function setWishes(list) {
+    const next = cleanWishes(list);
+    const now = Date.now();
+    const settled = wishSettled(wishFirstAt, wishNonEmpty, now);
+    if (Array.isArray(list) && !wishFirstAt) wishFirstAt = now;
+    if (sameWishes(wishes, next)) return false;
+    const fresh = freshWish(wishSeen, next, settled);
+    if (wishSeen.size > 600) wishSeen.clear();
+    for (const w of next) wishSeen.add(w.id);
+    if (next.length) wishNonEmpty = true;
+    wishes = next;
+    const byId = new Map(next.map((w) => [w.id, w]));
+    // Cards live only on mounted boards (unmount drops them), and lastNear lists every mounted board.
+    const count = fillNear();
+    const k = wishRelist(nearB, count, byId, WISH_NOW, relistRes, planOut);
+    wishShown += relistRes.delta;
+    for (let j = 0; j < k; j++) paint(nearB[planOut[j]]);
+    // Fonts per wish (the loader samples 80 characters), once per id and text; boards already showing it repaint once.
+    if (wishFonts.size > 300) wishFonts.clear();
+    for (const w of next) {
+      const key = w.id + '\u0001' + w.txt + '\u0001' + w.nick;
+      if (wishFonts.has(key)) continue;
+      wishFonts.add(key);
+      fontsReady(w.txt + ' ' + w.nick).then(() => {
+        if (wishFontsOk.size > 300) wishFontsOk.clear();
+        wishFontsOk.add(key);
+        // The fresh wish goes up on the nearest boards (pinOn no-ops if it already left the list), painted with the font;
+        // a font that took longer than one card duration no longer counts as "just posted".
+        if (w === fresh && Date.now() - now < wishCyc.wish) pinOn(w.id);
+        // Then the nearest boards already showing exactly this wish in the fallback font (pins are skipped: already ok).
+        const count = fillNear();
+        const k = wishFontTargets(nearB, count, w, WISH_NOW, planOut);
+        for (let j = 0; j < k; j++) paint(nearB[planOut[j]]);
+      });
+    }
+    return true;
   }
 
   function accentOf(slotId) { return THEMES[boards.get(slotId)?.data.bg_theme]?.accent || '#3fe6ff'; }
@@ -599,5 +726,5 @@ export function createBoards({ renderer, kitMats, onBurst, pick }) {
     }
   }
 
-  return { boards, ensure, mount, unmount, set, expire, get: (id) => boards.get(id), worldPos, setTicker, setOps, repaintAll, update, accentOf, tickerCanvas, watchShow, setShow, setAir, setDecals, decalsOf: (id) => (boards.get(id)?.decals || []).slice(), setRim };
+  return { boards, ensure, mount, unmount, set, expire, get: (id) => boards.get(id), worldPos, setTicker, setOps, repaintAll, update, accentOf, tickerCanvas, watchShow, setShow, setAir, setDecals, setWishes, pinWish, decalsOf: (id) => (boards.get(id)?.decals || []).slice(), setRim };
 }

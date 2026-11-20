@@ -3,11 +3,11 @@
 // Also the player's taxi, taxis called to stands, parked taxis and remote players' taxis.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { Kit } from './kit.js';
-import { makeCanvas, paintTaxiSign, paintTaxiDecal, paintBeam } from './art.js';
-import { GROUND_LAYER } from './ground.js';
-import { ROAD } from './nyc.js';
-import { LAYOUT } from './layout.js';
+import { Kit } from './kit.js?v=202611210015';
+import { makeCanvas, paintTaxiSign, paintTaxiDecal, paintBeam } from './art.js?v=202611210015';
+import { GROUND_LAYER } from './ground.js?v=202611210015';
+import { ROAD } from './nyc.js?v=202611210015';
+import { LAYOUT } from './layout.js?v=202611210015';
 
 export function signalPhase(t) {
   const c = t % 36;

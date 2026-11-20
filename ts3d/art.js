@@ -1,4 +1,4 @@
-import { auctionClosed } from '../balance.js?v=20261121k';
+import { auctionClosed, live, floorOf, SLOT_IDS } from '../balance.js';
 // Canvas painters for every procedural texture in the plaza:
 // billboard artwork, LED tickers, neon signs, K-brand ads, facades, decals, name tags.
 export const SANS = '"Pretendard Variable", Pretendard, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
@@ -1493,4 +1493,374 @@ export function fontsReady(text = '타임스퀘어 붕어빵 전광판 점령 �
   if (!document.fonts?.load) return Promise.resolve();
   const sample = String(text || '').slice(0, 80) || 'A';
   return Promise.all([700, 800, 900].map(w => document.fonts.load(`${w} 64px "Pretendard Variable"`, sample))).catch(() => {});
+}
+
+// ---- 오늘의 소원 on idle billboards ---------------------------------------------------------------------------
+// Pure rules first (no DOM, no three: test/wish-boards.test.mjs imports this file in Node), then the card painter.
+// A board that is not live alternates its normal notice with a wish card. Wish text is untrusted: it only reaches fillText.
+export const WISH_CYCLE = Object.freeze({ wish: 9000, rest: 5000 });
+export const WISH_CYCLE_LOW = Object.freeze({ wish: 15000, rest: 9000 });
+// The repaint cadence (screens.js update(): every 8th 0.08 s tick) and the canvases repainted per tick for rotation.
+// Demand with all 61 boards idle: 61 * 2 flips per cycle = 5.58 per tick (normal, 14 s), 3.25 (low, 24 s); supply 7 / 4.
+export const WISH_TICK_MS = 640, WISH_BUDGET = 7, WISH_BUDGET_LOW = 4;
+// Boards ranked among the nearest WISH_NEAR jump the queue by WISH_NEAR_MS; everyone else is first come, first served.
+// The nearest WISH_START boards show a card at once when wishes (re)appear; the rest wait for their own next wish phase.
+export const WISH_NEAR = 10, WISH_NEAR_MS = 1280, WISH_PINS = 4, WISH_START = 4;
+// After the first (possibly empty) list, this long with nothing non-empty and the next new wish counts as freshly posted.
+export const WISH_SETTLE_MS = 8000;
+const WISH_MAX_CP = 24, WISH_ONE_LINE = 12, WISH_SLOTS = SLOT_IDS.length;
+// Phase lane: (order * 11) mod 61, so neighbours sit 11/61 of a cycle apart (no two flip within 2 s of each other).
+const WISH_STRIDE = 11;
+const WISH_ORD = new Map(SLOT_IDS.map((id, i) => [id, i]));
+const WISH_CTRL = /[\u0000-\u001f\u007f-\u009f]/g;
+const WISH_INVIS = /[​‌‎‏‪-‮⁠-⁤⁦-⁩﻿]/g;
+
+/** Stable order of a claimable slot (0..60); other ids hash into the same range. */
+export function wishOrd(slotId) {
+  const i = WISH_ORD.get(String(slotId));
+  return i ?? hashStr(slotId) % WISH_SLOTS;
+}
+const wishLane = (ord) => (ord * WISH_STRIDE) % WISH_SLOTS;
+/** Rotation step at time ms: even = wish card, odd = normal notice. Changes twice per cycle. No allocation. */
+export function wishStep(ord, ms, cyc = WISH_CYCLE) {
+  const P = cyc.wish + cyc.rest;
+  const u = ms + Math.floor(wishLane(ord) * P / WISH_SLOTS);
+  const c = Math.floor(u / P);
+  return c * 2 + (u - c * P < cyc.wish ? 0 : 1);
+}
+/** Which of n wishes a slot shows during a step (-1 when there are none).
+ *  idx = ord + C where C = cycle + floor(11*ord/61) is the cycle counted on the unwrapped lane 11*ord/61. Adjacent ords
+ *  differ by 11/61 of a cycle on that unwrapped lane, which is less than the notice share (5/14, 8/20), so whenever both are
+ *  in the wish phase they are in the same C and their indices differ by exactly 1: never the same wish for n >= 2. */
+export function wishIndex(ord, step, n) {
+  return n > 0 ? (ord + Math.floor(step / 2) + Math.floor(ord * WISH_STRIDE / WISH_SLOTS)) % n : -1;
+}
+/** lit_until / expires_at as ms (0 when missing or unparsable). Parse once per row change, not per tick. */
+export function rowUntil(row) {
+  const until = row?.lit_until || row?.expires_at;
+  const ms = until ? new Date(until).getTime() : 0;
+  return ms > 0 ? ms : 0;
+}
+/** True when the slot's screen may rotate wishes: claimable, not live, no photo pending/approved, no air show, and not
+ *  a main-tower slot while its 21:00–21:10 window is open. until = rowUntil(row) (same rule as balance.js live()). */
+export function wishRotates(slotId, row, air, mainOpen, now = Date.now(), until = rowUntil(row)) {
+  if (air || !WISH_ORD.has(String(slotId))) return false;
+  if (row?.holder_id && until > now) return false;
+  if (row?.holder_id && (row.photo_status === 'pending' || row.photo_status === 'approved')) return false;
+  if (mainOpen && String(slotId).startsWith('MAIN_')) return false;
+  return true;
+}
+/** The claim cue the wish card keeps in its bottom strip (same price the house notice uses). */
+export function wishStrip(slotId, row, mainOpen) {
+  if (row?.holder_id) return '불 꺼짐 · 주인이 다시 켤 수 있어요';
+  const price = (floorOf(slotId) || 0).toLocaleString('en-US') + '코인부터';
+  return String(slotId).startsWith('MAIN_') && !mainOpen ? '밤 9시에 10분만 열려요 · ' + price : '빈 자리 · ' + price;
+}
+/** What a board needs this tick. 'drop': its card must go now (not allowed to rotate, or nothing to show) — never budgeted.
+ *  'reset': not allowed and nothing shown. 'none': step already painted. 'quiet': notice phase and the notice is up.
+ *  'due': a repaint for the new step, served by wishPick. A board that has painted nothing yet (key -1: first list, or after
+ *  a drop) and is not among the nearest waits quietly for its own next wish phase, so a (re)start is no 61-board burst. */
+export function wishWork(hasWish, ok, step, key, near = true) {
+  if (!ok) return hasWish ? 'drop' : 'reset';
+  if (step === key) return 'none';
+  if (!hasWish && (step % 2 === 1 || (key === -1 && !near))) return 'quiet';
+  return 'due';
+}
+/** Chooses up to budget of count waiting boards: since[i] = when board i became due (ms), rank[i] = its place in the
+ *  nearest-first list. Earliest effective time first, where the nearest WISH_NEAR boards count WISH_NEAR_MS earlier; ties go
+ *  to the nearer board. Writes indices into out and returns how many. No allocation. */
+export function wishPick(since, rank, count, budget, out) {
+  let k = 0;
+  out.length = 0;
+  while (k < budget) {
+    let best = -1, bk = Infinity, br = Infinity;
+    for (let i = 0; i < count; i++) {
+      let taken = false;
+      for (let j = 0; j < k; j++) if (out[j] === i) { taken = true; break; }
+      if (taken) continue;
+      const key = since[i] - (rank[i] < WISH_NEAR ? WISH_NEAR_MS : 0);
+      if (key < bk || (key === bk && rank[i] < br)) { best = i; bk = key; br = rank[i]; }
+    }
+    if (best < 0) break;
+    out[k++] = best;
+  }
+  return k;
+}
+// Boards repainted at once when the list changes or a font lands (the nearest ones); the rest are marked (wishDrop) and
+// the tick clears up to WISH_DROPS of them per tick, nearest first.
+export const WISH_NOW = 10, WISH_DROPS = 8;
+function wishClear(s, res) {
+  if (s.wish) res.delta--;
+  s.wish = null;
+  s.wishPin = 0;
+  s.wishKey = -1;
+  s.wishDue = 0;
+  s.wishDrop = false;
+}
+/** The whole decision loop of one 0.64 s wish tick (screens.js runs exactly this). states: board-like objects in
+ *  nearest-first order with {wish, wishKey, wishPin, wishDue, wishDrop, wishOrd}; oks[i]: may board i rotate now.
+ *  cfg: {list, now, cyc, budget, drops, since[], rank[], who[], pick[]} (scratch arrays reused, no allocation).
+ *  Mutates the states (wish shown, key, due, pin, drop flag), writes the indices to repaint into out and returns how many;
+ *  cfg.delta = change in boards showing a card. Per tick: at most budget rotation repaints + drops marked clears +
+ *  boards that stopped being allowed since the last tick (those are already repainted by the event that caused it). */
+export function wishPlan(states, oks, count, cfg, out) {
+  const { list, now, cyc, budget, drops } = cfg;
+  const n = list.length;
+  let k = 0, c = 0, dropped = 0;
+  cfg.delta = 0;
+  for (let i = 0; i < count; i++) {
+    const s = states[i], ok = oks[i];
+    if (s.wishDrop) {
+      if (dropped < drops) { dropped++; wishClear(s, cfg); out[k++] = i; }
+      continue;
+    }
+    if (s.wishPin) {
+      if (ok && s.wishPin > now) continue;
+      s.wishPin = 0;
+    }
+    const step = ok ? wishStep(s.wishOrd, now, cyc) : -1;
+    const work = wishWork(!!s.wish, ok, step, s.wishKey, i < WISH_START);
+    if (work === 'none') continue;
+    if (work === 'drop') { wishClear(s, cfg); out[k++] = i; continue; }
+    if (work === 'reset') { s.wishKey = -1; s.wishDue = 0; continue; }
+    if (work === 'quiet') { s.wishKey = step; s.wishDue = 0; continue; }
+    if (!s.wishDue) s.wishDue = now;
+    if (c < cfg.since.length) { cfg.since[c] = s.wishDue; cfg.rank[c] = i; cfg.who[c] = i; c++; }
+  }
+  const m = wishPick(cfg.since, cfg.rank, c, budget, cfg.pick);
+  for (let j = 0; j < m; j++) {
+    const i = cfg.who[cfg.pick[j]], s = states[i];
+    const step = wishStep(s.wishOrd, now, cyc);
+    const w = step % 2 === 0 ? list[wishIndex(s.wishOrd, step, n)] : null;
+    s.wishKey = step;
+    s.wishDue = 0;
+    if (w && !s.wish) cfg.delta++;
+    else if (!w && s.wish) cfg.delta--;
+    s.wish = w;
+    out[k++] = i;
+  }
+  return k;
+}
+/** A new list: boards (nearest-first) whose wish left the list or was edited. The nearest nearN are fixed now (edited →
+ *  the new text, gone → the notice) and listed in out; the rest get wishDrop so the tick clears them and no paint shows the
+ *  old wish meanwhile. Unchanged wishes swap to the new object (hearts) without a repaint. Returns how many are in out;
+ *  res.delta = change in boards showing a card. */
+export function wishRelist(states, count, byId, nearN, res, out) {
+  let k = 0;
+  res.delta = 0;
+  for (let i = 0; i < count; i++) {
+    const s = states[i];
+    if (!s.wish || s.wishDrop) continue;
+    const nw = byId.get(s.wish.id);
+    const edited = !!nw && (nw.txt !== s.wish.txt || nw.nick !== s.wish.nick);
+    if (nw && !edited) { s.wish = nw; continue; }
+    if (i < nearN) {
+      if (nw) { s.wish = nw; s.wishFontOk = false; } else wishClear(s, res);
+      out[k++] = i;
+    } else s.wishDrop = true;
+  }
+  return k;
+}
+/** When the font for wish w has loaded: which of the nearest nearN boards to repaint (showing exactly w, not yet painted
+ *  with the loaded font, not marked for a drop). Farther boards pick the font up at their next step. */
+export function wishFontTargets(states, count, w, nearN, out) {
+  let k = 0;
+  for (let i = 0; i < count && i < nearN; i++) {
+    const s = states[i], x = s.wish;
+    if (x && !s.wishDrop && !s.wishFontOk && x.id === w.id && x.txt === w.txt && x.nick === w.nick) out[k++] = i;
+  }
+  return k;
+}
+/** Boards to pin a wish on: cands in nearest-first order, {ok, pinId, pinUntil}. Up to max boards that may rotate; a board
+ *  already pinned to this id (pin not expired) counts but is not repainted. Returns {covered, paint: [indices to paint]}. */
+export function wishPinPick(cands, id, now, max = WISH_PINS) {
+  const paint = [];
+  let covered = 0;
+  for (let i = 0; i < cands.length && covered < max; i++) {
+    const c = cands[i];
+    if (!c.ok) continue;
+    covered++;
+    if (!(c.pinId === id && c.pinUntil > now)) paint.push(i);
+  }
+  return { covered, paint };
+}
+/** pinWish(id): null when id is not in the current list (no-op), otherwise {wish, covered, paint}. */
+export function wishPinPlan(list, id, cands, now, max = WISH_PINS) {
+  const key = String(id ?? '');
+  let wish = null;
+  for (const w of list) if (w.id === key) { wish = w; break; }
+  if (!wish) return null;
+  const r = wishPinPick(cands, key, now, max);
+  return { wish, covered: r.covered, paint: r.paint };
+}
+/** The first wish of next whose id is not in seen, once the initial load is over (loaded). */
+export function freshWish(seen, next, loaded) {
+  if (!loaded) return null;
+  for (const w of next) if (!seen.has(w.id)) return w;
+  return null;
+}
+/** Whether the initial load is over: a non-empty list arrived, or the first list (firstAt, ms) was WISH_SETTLE_MS ago. */
+export function wishSettled(firstAt, nonEmptySeen, now) {
+  return !!nonEmptySeen || (firstAt > 0 && now - firstAt >= WISH_SETTLE_MS);
+}
+/** User-perceived characters: code points glued by ZWJ, variation selectors, skin tones, keycaps, tags, combining marks,
+ *  and regional-indicator pairs (flags). */
+export function wishGlyphs(text) {
+  const out = [];
+  let glue = false, ri = false;
+  for (const ch of String(text ?? '')) {
+    const cp = ch.codePointAt(0);
+    const isRi = cp >= 0x1f1e6 && cp <= 0x1f1ff;
+    const joins = cp === 0x200d || (cp >= 0xfe00 && cp <= 0xfe0f) || (cp >= 0x1f3fb && cp <= 0x1f3ff) || cp === 0x20e3 || (cp >= 0xe0020 && cp <= 0xe007f) || (cp >= 0x300 && cp <= 0x36f);
+    if (out.length && (joins || glue || (isRi && ri))) {
+      out[out.length - 1] += ch;
+      ri = false;
+    } else {
+      out.push(ch);
+      ri = isRi;
+    }
+    glue = cp === 0x200d;
+  }
+  return out;
+}
+// Capped first (24 code points never need more than 400 UTF-16 units even with long emoji sequences), control characters
+// become spaces so "행복\n하자" keeps its two words, invisible and bidi marks go, whitespace runs collapse.
+const wishClean = (text) => String(text ?? '').slice(0, 400).replace(WISH_CTRL, ' ').replace(WISH_INVIS, '').replace(/\s+/g, ' ').trim();
+// Up to 24 code points without cutting a glyph, as glyphs.
+function wishClip(text) {
+  const g = [];
+  let n = 0;
+  for (const c of wishGlyphs(wishClean(text))) { n += Array.from(c).length; if (n > WISH_MAX_CP) break; g.push(c); }
+  while (g.length && g[g.length - 1] === ' ') g.pop();
+  return g;
+}
+/** The wish as 1–2 lines: up to 24 code points (never cutting a glyph), one line up to 12 glyphs, otherwise a break at
+ *  the space nearest the middle (within the middle half), else by glyphs. Never an empty line. */
+export function wishLines(text) {
+  const g = wishClip(text);
+  if (!g.length) return [];
+  if (g.length <= WISH_ONE_LINE) return [g.join('')];
+  const mid = g.length / 2;
+  let cut = -1, best = Infinity;
+  for (let i = 1; i < g.length - 1; i++) {
+    if (g[i] !== ' ' || i < g.length * 0.25 || i > g.length * 0.75) continue;
+    const d = Math.abs(i - mid);
+    if (d < best) { best = d; cut = i; }
+  }
+  const a = (cut > 0 ? g.slice(0, cut) : g.slice(0, Math.ceil(mid))).join('').trim();
+  const b = (cut > 0 ? g.slice(cut + 1) : g.slice(Math.ceil(mid))).join('').trim();
+  return b ? [a, b] : [a];
+}
+/** setWishes input → at most 24 distinct {id, nick, txt, hearts}; rows without an id or text are dropped. */
+export function cleanWishes(list) {
+  const out = [], seen = new Set();
+  if (!Array.isArray(list)) return out;
+  for (const w of list) {
+    if (out.length >= 24) break;
+    if (!w || w.id == null || w.id === '') continue;
+    const id = String(w.id);
+    const txt = wishClip(w.txt).join('');
+    if (!txt || seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, nick: chars(wishClean(w.nick), 16) || '누군가', txt, hearts: Math.max(0, Math.floor(Number(w.hearts) || 0)) });
+  }
+  return out;
+}
+/** Same ids, text, names and hearts in the same order: setWishes has nothing to do. */
+export function sameWishes(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i], y = b[i];
+    if (x.id !== y.id || x.hearts !== y.hearts || x.txt !== y.txt || x.nick !== y.nick) return false;
+  }
+  return true;
+}
+
+/** Wish card on a billboard canvas. data: {id, nick, txt, hearts}. opts.strip: bottom claim cue, opts.dark: owner's light is out.
+ *  One calm look for every board: deep plum night, warm ink, so forty of them sit quietly next to the live ads. */
+export function paintWish(canvas, data = {}, opts = {}) {
+  const g = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height, k = W / 1024;
+  const statsH = Math.max(28, 42 * k);
+  const body = H - statsH;
+  const gold = '#ffcf5a';
+  g.save();
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.clearRect(0, 0, W, H);
+  const bg = g.createLinearGradient(0, 0, 0, body);
+  bg.addColorStop(0, '#0a0814');
+  bg.addColorStop(0.6, '#160d1c');
+  bg.addColorStop(1, '#24131b');
+  g.fillStyle = bg;
+  g.fillRect(0, 0, W, body);
+  glowDot(g, W / 2, body * 0.52, W * 0.42, '#ffb35a', 0.16);
+  const r = rng(hashStr(`wish|${data.id}`));
+  for (let i = 0; i < 26; i++) {
+    g.fillStyle = `rgba(255,236,200,${0.12 + r() * 0.35})`;
+    const s = (r() * 1.6 + 0.6) * k;
+    g.fillRect(r() * W, r() * body * 0.92, s, s);
+  }
+  sparkle(g, W * 0.91, body * 0.24, 9 * k, '#ffe2a8');
+  sparkle(g, W * 0.08, body * 0.8, 7 * k, '#ffe2a8');
+
+  const chip = '🌠 오늘의 소원';
+  g.font = `800 ${Math.round(34 * k)}px ${SANS}`;
+  roundRect(g, 28 * k, 26 * k, g.measureText(chip).width + 40 * k, 46 * k, 23 * k);
+  g.fillStyle = 'rgba(4,5,18,0.72)';
+  g.fill();
+  g.lineWidth = 2 * k;
+  g.strokeStyle = rgba(gold, 0.75);
+  g.stroke();
+  g.fillStyle = '#ffe9a8';
+  g.textAlign = 'left';
+  g.textBaseline = 'middle';
+  g.fillText(chip, 48 * k, 50 * k);
+
+  g.strokeStyle = rgba(gold, 0.55);
+  g.lineWidth = 4 * k;
+  const bm = 18 * k, L = 46 * k;
+  for (const [x, y, dx, dy] of [[bm, bm, 1, 1], [W - bm, bm, -1, 1], [bm, body - bm, 1, -1], [W - bm, body - bm, -1, -1]]) {
+    g.beginPath();
+    g.moveTo(x, y + dy * L);
+    g.lineTo(x, y);
+    g.lineTo(x + dx * L, y);
+    g.stroke();
+  }
+
+  const lines = wishLines(data.txt);
+  const top = 92 * k, bottom = body - 96 * k, avail = bottom - top, maxW = W * 0.86;
+  let size = lines.length > 1 ? 112 * k : 150 * k;
+  for (const line of lines) size = Math.min(size, fit(g, line, maxW, size, 900, SANS, 30 * k));
+  size = Math.round(Math.min(size, avail / (lines.length > 1 ? 2.36 : 1.2)));
+  const lh = size * 1.18;
+  let y = top + avail / 2 - (lines.length - 1) * lh / 2;
+  for (const line of lines) {
+    neon(g, line, W / 2, y, size, SANS, 900, '#fff1d6', { glow: 0.55, align: 'center' });
+    y += lh;
+  }
+
+  const nick = '— ' + (chars(wishClean(data.nick), 16) || '누군가');
+  const heart = '♥ ' + Math.max(0, Math.floor(Number(data.hearts) || 0)).toLocaleString('en-US');
+  const gap = '     ';
+  const ns = fit(g, nick + gap + heart, W * 0.8, 40 * k, 800, SANS, 16 * k);
+  g.font = `800 ${ns}px ${SANS}`;
+  const wn = g.measureText(nick).width, wg = g.measureText(gap).width, wh = g.measureText(heart).width;
+  const x0 = W / 2 - (wn + wg + wh) / 2, ry = body - 58 * k;
+  g.textAlign = 'left';
+  g.textBaseline = 'middle';
+  g.fillStyle = '#ffcf8a';
+  g.fillText(nick, x0, ry);
+  g.fillStyle = '#ff7a9a';
+  g.fillText(heart, x0 + wn + wg, ry);
+
+  g.fillStyle = '#05060f';
+  g.fillRect(0, body, W, statsH);
+  const strip = String(opts.strip || '🌠 하루 한 줄, 누구나 무료');
+  const ss = fit(g, strip, W - 36 * k, Math.max(14, 22 * k), 800, SANS, 11);
+  g.font = `800 ${ss}px ${SANS}`;
+  g.fillStyle = opts.dark ? '#aab3c8' : gold;
+  g.textAlign = 'center';
+  g.fillText(strip, W / 2, H - statsH / 2);
+  g.restore();
+  return canvas;
 }

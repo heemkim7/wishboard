@@ -771,6 +771,102 @@ visualViewport?.addEventListener('scroll', fitVV);
     .stay-balloon { position: static; left: auto; right: auto; bottom: auto; top: auto; transform: none; width: 100%; max-width: 184px; }
     .stay-lounge { top: calc(310px + var(--safe-t)); }
   }
+  /* Newcomer focus mode: ui.js toggles #ui.newbie until kts_grad is set. Hidden, not removed. */
+  #ui.newbie .liveboard, #ui.newbie .fever, #ui.newbie .stay-quest, #ui.newbie .stay-ticket, #ui.newbie .stay-balloon, #ui.newbie .channel-card, #ui.newbie .tool-adv, #ui.newbie .guestwarn, #ui.newbie .nextline { display: none !important; }
+  .newbie-more { display: none; }
+  #ui.newbie .newbie-more { display: inline-flex; align-items: center; align-self: flex-start; min-height: 40px; pointer-events: auto; padding: 0 14px; border-radius: 999px; background: rgba(8,10,22,.84); border: 1px solid var(--stroke-hi); color: var(--text); font: 700 12px/1.3 var(--font); cursor: pointer; }
+  .newbie-more:focus-visible, #ui .nextgoal.task:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+  #ui .nextgoal.task { flex: none; display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; width: 100%; padding: 10px 12px; border-radius: 14px; pointer-events: auto; background: rgba(8,10,22,.84); border: 1px solid rgba(255,207,90,.6); box-shadow: 0 10px 24px -16px rgba(0,0,0,.7); color: #fff6d8; font: 800 14px/1.35 var(--font); white-space: normal; overflow: visible; text-align: left; }
+  #ui .nextgoal.task small { flex: 1 0 100%; font-size: 11px; font-weight: 800; letter-spacing: .04em; color: var(--gold); }
+  #ui .nextgoal.task span { flex: 1; min-width: 0; }
+  #ui .nextgoal.task i { flex: none; font-style: normal; font-size: 22px; line-height: 1; color: var(--gold); }
+  #ui .nextgoal.task:hover { border-color: var(--gold); }
+  #ui.reveal .liveboard, #ui.reveal .fever, #ui.reveal .stay-quest, #ui.reveal .stay-ticket, #ui.reveal .stay-balloon, #ui.reveal .tool-adv { animation: revealIn .8s ease-out both; }
+  @keyframes revealIn { from { opacity: 0; } to { opacity: 1; } }
+  .waypill.nudge { animation: wayNudge .9s ease-out; }
+  @keyframes wayNudge { from { box-shadow: 0 0 0 0 rgba(63,230,255,.85); } to { box-shadow: 0 0 0 16px rgba(63,230,255,0); } }
+  /* The tutorial waypoint pill would sit on the bake and dance panels in portrait; it hides while they are open (the proof bar already hides it). */
+  #ui:has(.bake.show) .waypill, #ui:has(.rhythm.show) .waypill { display: none; }
+  /* 오늘의 소원: the 🌠 tool (never folded behind ⋯), and its sheet. Buttons stay ≥ 40px tall on phones. */
+  .tools .tool-wish { position: relative; }
+  .tool-wish .wish-dot { position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: #ff3d6e; box-shadow: 0 0 0 2px rgba(10,14,30,.9); pointer-events: none; }
+  .tool-wish .wish-dot[hidden] { display: none; }
+  #boot #bootWish { color: #ffe9a8; overflow-wrap: anywhere; }
+  .sheet.wish h3 { margin: 16px 0 8px; font: 800 15px/1.3 var(--font); }
+  .sheet.wish .btn { height: auto; min-height: 44px; padding: 8px 16px; white-space: normal; text-align: center; justify-content: center; line-height: 1.3; }
+  .sheet.wish .wish-go { width: 100%; margin-top: 10px; font-size: 15px; }
+  .sheet.wish .wish-edit { margin-top: 8px; }
+  .wish-card { padding: 14px 16px; border-radius: 14px; background: rgba(255,255,255,.05); border: 1px solid var(--stroke); }
+  .wish-card + .wish-mine { margin-top: 14px; }
+  .wish-focus { border-color: rgba(255,207,90,.6); background: rgba(255,207,90,.08); }
+  .wish-card p { margin: 0; }
+  .wish-card .note { margin-top: 8px; }
+  .wish-tag { font-size: 11px; font-weight: 800; letter-spacing: .04em; color: var(--gold); }
+  .wish-quote { font: 800 19px/1.4 var(--font); color: #fff6d8; overflow-wrap: anywhere; }
+  .wish-by { margin-top: 4px; color: var(--muted); font-weight: 700; overflow-wrap: anywhere; }
+  .wish-hearts { margin-top: 6px; color: #ff7aa0; font-weight: 900; font-size: 15px; }
+  .wish-field { display: flex; align-items: center; gap: 8px; }
+  .wish-field .input { flex: 1; min-width: 0; font-size: 16px; }
+  .wish-n { flex: none; min-width: 40px; text-align: right; font-size: 12px; font-weight: 700; color: var(--muted); }
+  .wish-chips button { min-height: 40px; }
+  .wish-err { color: #ff8d9e; }
+  .wish-share { margin-top: 10px; }
+  .wish-share .input { font-size: 13px; }
+  /* 🔔 받은 소식: in the bar only while something is unread; on phones too (not .tool-more), never in newcomer mode. */
+  .tools .tool-inbox { position: relative; }
+  .tools .tool-inbox[hidden], #ui.newbie .tools .tool-inbox { display: none !important; }
+  .tool-inbox .inbox-dot { position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: #ff3d6e; box-shadow: 0 0 0 2px rgba(10,14,30,.9); pointer-events: none; }
+  /* Manual-copy fallback (read-only, selected link) and the 다녀간 사이 / 알림 sheets. */
+  .manual-copy { margin-top: 10px; }
+  .manual-copy[hidden] { display: none; }
+  .manual-copy .input { width: 100%; font-size: 13px; }
+  .manual-copy .note { margin: 6px 0 0; }
+  .wish-push { margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: rgba(255,207,90,.08); border: 1px solid rgba(255,207,90,.35); }
+  .wish-push .wish-push-q { margin: 0; font-weight: 800; }
+  .wish-push-act { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+  .sheet.wish .wish-push-act .btn { width: auto; margin: 0; }
+  .wish-push-later { min-height: 40px; padding: 0 6px; background: none; border: 0; color: var(--muted); font: 700 13px/1 var(--font); text-decoration: underline; cursor: pointer; }
+  .push-why { margin: 0 0 6px; font: 800 16px/1.4 var(--font); color: #fff6d8; }
+  .away-list { display: flex; flex-direction: column; gap: 10px; }
+  .away-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,.05); border: 1px solid var(--stroke); }
+  .away-row p { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; line-height: 1.4; }
+  .away-row .btn { flex: none; min-height: 40px; height: auto; padding: 8px 12px; white-space: nowrap; }
+  @media (max-width: 420px) { .away-row { flex-direction: column; align-items: stretch; } .away-row .btn { width: 100%; } }
+  .wish-tabs { display: flex; gap: 6px; margin-top: 18px; }
+  .wish-tab { flex: 1; min-height: 40px; border-radius: 10px; font: 800 14px/1 var(--font); color: var(--muted); background: var(--glass-hi); border: 1px solid var(--stroke); cursor: pointer; }
+  .wish-tab.on { color: #2a1800; background: #e6b325; border-color: #e6b325; }
+  .wish-left { margin: 8px 0 4px; }
+  .wish-list { display: flex; flex-direction: column; gap: 6px; }
+  .wish-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 8px 10px; border-radius: 12px; background: rgba(255,255,255,.04); border: 1px solid var(--stroke); }
+  .wish-row.mine { border-color: rgba(255,207,90,.5); }
+  .wish-row .n { flex: none; width: 22px; text-align: center; font-weight: 900; color: var(--gold-2, var(--gold)); }
+  .wish-row .wt { flex: 1 1 160px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .wish-row .wt b { font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
+  .wish-row .wt small { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+  .wish-row .wh { flex: none; color: #ff7aa0; font-weight: 800; font-size: 13px; }
+  .wish-row .wa { flex: none; display: flex; align-items: center; gap: 6px; margin-left: auto; }
+  .wish-heart, .wish-report { min-height: 40px; min-width: 44px; padding: 0 12px; border-radius: 999px; font: 800 13px/1 var(--font); cursor: pointer; }
+  .wish-heart { color: #2a1800; background: #ff9cb8; border: 0; }
+  .wish-heart:disabled { color: var(--muted); background: var(--glass-hi); border: 1px solid var(--stroke); cursor: default; }
+  .wish-report { color: var(--muted); background: none; border: 1px solid transparent; font-weight: 700; font-size: 12px; }
+  .wish-report.arm { color: #ff8d9e; border-color: rgba(255,141,158,.5); }
+  .wish-y { margin-top: 6px; }
+  .wish-yrow { margin: 4px 0; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+  .wish-foot { margin-top: 18px; font-size: 12px; }
+  .claimline { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  .claimline .input { flex: 1; min-width: 0; }
+  .claimline .count { flex: none; min-width: 38px; text-align: right; font-size: 11px; font-weight: 700; color: var(--muted); }
+  /* Touch: the left column always sits on a dark panel, never bare text over the scene. No blur: it redraws over WebGL every frame. */
+  html.touch .hud-l > .glass, html.touch .hud-l > .nextline, html.touch .hud-l > .stay-quest { background: rgba(10,14,30,.86); }
+  html.touch .hud-l > .guestwarn { background: rgba(58,12,24,.9); }
+  html.touch #ui .nextgoal.task { padding: 8px 10px; font-size: 12px; }
+  html.touch #ui .nextgoal.task small { font-size: 10px; }
+  html.touch #ui .nextgoal.task i { font-size: 18px; }
+  @media (orientation: portrait) {
+    html.touch .hud-l { min-width: 0; max-width: min(56vw, calc(100vw - 188px)); }
+    /* The pill moves below the prompt, between the joystick and the right-hand buttons, clear of the left column and the tools. */
+    html.touch .waypill { top: auto; bottom: calc(142px + var(--safe-b)); max-width: calc(100vw - 240px); }
+  }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
   }
@@ -809,7 +905,7 @@ const CLARITY_ID = '';
     <div class="badge">✨ NEW YORK WISH SQUARE</div>
     <h1>모두의 전광판</h1>
     <div class="tag">내 소원을 타임스퀘어에 거세요.<br>자랑하고, 응원하고, 명당은 빼앗으세요.</div>
-    <div class="bootlive" id="bootLive"><div id="bootKing">👑 지금 메인 타워의 소원: 확인 중…</div><div id="bootStat">빈 자리와 오늘 다녀간 사람을 세는 중…</div></div>
+    <div class="bootlive" id="bootLive"><div id="bootWish" hidden></div><div id="bootKing">👑 지금 메인 타워의 소원: 확인 중…</div><div id="bootStat">빈 자리와 오늘 다녀간 사람을 세는 중…</div></div>
     <div class="prog" aria-hidden="true"><i id="bootBar"></i></div>
     <div class="msg" id="bootMsg">타임스퀘어로 이동하는 중…</div>
     <div class="enter" id="bootEnter" hidden></div>
@@ -818,7 +914,7 @@ const CLARITY_ID = '';
 <script>
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js?v=7');
 </script>
-<script type="module" src="./legal.js?v=20261113z"></script>
-<script type="module" src="./main.js?v=20261124g"></script>
+<script type="module" src="./legal.js?v=202611210015"></script>
+<script type="module" src="./main.js?v=202611210015"></script>
 </body>
 </html>

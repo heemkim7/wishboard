@@ -1,4 +1,4 @@
-import { EVENT_NAMES, GT_LS, SESSION_LS } from './plaza-account.js?v=20261116f';
+import { EVENT_NAMES, GT_LS, SESSION_LS } from './plaza-account.js';
 
 // Each major event goes to POST /rt/event with a session id (this tab) and, when one exists, the account's token:
 // the Supabase session when signed in, else the guest token. The Worker derives the account from the token and stores

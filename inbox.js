@@ -3,7 +3,7 @@ import { CHEER_PHRASES } from './plaza-account.js';
 
 async function bearer() {
   try {
-    const { doToken } = await import('./net.js?v=20261118a');
+    const { doToken } = await import('./net.js?v=202611210015');
     const tok = await doToken();
     if (tok) return tok;
   } catch { /* node tests have no session */ }
@@ -28,7 +28,7 @@ const COPY = {
     const who = m.from_name || '주인';
     return phrase ? `${who}님의 답례: ${phrase}` : `${who}님이 답례를 보냈어요`;
   },
-  gift: (m) => `${m.from_name}님이 전광판을 선물했어요`,
+  gift: (m) => `${m.from_name || '누군가'}님이 전광판을 선물했어요`,
   tribe: () => '이번 주 소속 결과가 나왔어요',
   ball: () => '21시 볼 드랍이 곧 시작돼요',
 };

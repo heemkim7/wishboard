@@ -9,23 +9,23 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { toNetUnits, fromNetUnits } from './net.js?v=20261116j';
-import { walkerPoints } from './ts3d/walkers.js?v=20261116j';
-import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, SKIP_ZONES, NO_PROPS, NO_TREES, FAR_CLUSTERS, LANDMARKS, groundHeight, onStairs, fountainSpot } from './ts3d/layout.js?v=20261113b';
-import { BALANCE, PAY, chainsOf, slotName } from './balance.js?v=20261116f';
-import { kitMaterials } from './ts3d/kit.js';
-import { createReflection } from './ts3d/ground.js';
-import { createBoards, screenTime } from './ts3d/screens.js?v=20261124f';
-import { loadNYC, ROAD } from './ts3d/nyc.js';
-import { createWorld, FAR_LAYER } from './ts3d/world.js';
-import { createTraffic } from './ts3d/traffic.js?v=20261116g';
-import { buildTimesSquare } from './ts3d/timesq.js?v=20261124f';
-import { claimRockefeller, buildRockefeller } from './ts3d/rockefeller.js';
-import { claimIcons, buildIcons } from './ts3d/icons.js';
-import { buildLandmarks } from './ts3d/landmarks.js?v=20261124e';
-import { createAvatars, EMOTES, REACTIONS, AVATAR_COLORS, speciesId } from './ts3d/avatars.js?v=20261116g';
-import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, paintLabel, fontsReady, chars, hashStr } from './ts3d/art.js?v=20261124f';
-import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=20261114d';
+import { toNetUnits, fromNetUnits } from './net.js?v=202611210015';
+import { walkerPoints } from './ts3d/walkers.js';
+import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, SKIP_ZONES, NO_PROPS, NO_TREES, FAR_CLUSTERS, LANDMARKS, groundHeight, onStairs, fountainSpot } from './ts3d/layout.js?v=202611210015';
+import { BALANCE, PAY, chainsOf, slotName } from './balance.js';
+import { kitMaterials } from './ts3d/kit.js?v=202611210015';
+import { createReflection } from './ts3d/ground.js?v=202611210015';
+import { createBoards, screenTime } from './ts3d/screens.js?v=202611210015';
+import { loadNYC, ROAD } from './ts3d/nyc.js?v=202611210015';
+import { createWorld, FAR_LAYER } from './ts3d/world.js?v=202611210015';
+import { createTraffic } from './ts3d/traffic.js?v=202611210015';
+import { buildTimesSquare } from './ts3d/timesq.js?v=202611210015';
+import { claimRockefeller, buildRockefeller } from './ts3d/rockefeller.js?v=202611210015';
+import { claimIcons, buildIcons } from './ts3d/icons.js?v=202611210015';
+import { buildLandmarks } from './ts3d/landmarks.js?v=202611210015';
+import { createAvatars, EMOTES, REACTIONS, AVATAR_COLORS, speciesId } from './ts3d/avatars.js?v=202611210015';
+import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, paintLabel, fontsReady, chars, hashStr } from './ts3d/art.js?v=202611210015';
+import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=202611210015';
 
 export { paintBillboard, THEMES, LAYOUT, PLOT_SLOTS, groundHeight, EMOTES, AVATAR_COLORS, taxiTrainMult, applyTaxiHardHit };
 export const PLAZA = LAYOUT;
@@ -189,7 +189,7 @@ void main(){
   const pick = [];
   const fireworks = [];
   const sparkTex = new THREE.CanvasTexture(paintGlow(makeCanvas(64, 64)));
-  const boards = createBoards({ renderer, kitMats, pick, onBurst: (p, color, tier) => celebrateAt(p, color, tier) });
+  const boards = createBoards({ renderer, kitMats, pick, quality, onBurst: (p, color, tier) => celebrateAt(p, color, tier) });
   const avatars = createAvatars({ scene, models: MODELS, first: opts.species });
   {
     const S = LAYOUT.stairs, G = LAYOUT.stage;
@@ -2357,6 +2357,10 @@ void main(){
     },
     bake(amount) { marks?.stall.popFish(amount >= 15); },
     setTicker(text) { boards.setTicker(text); },
+    // 오늘의 소원 on every screen that is not live: list is 0–24 {id, nick, txt, hearts}; [] or missing turns it off.
+    setWishes(list) { boards.setWishes(list); },
+    // Shows that wish (must be in the current list) on up to 4 nearest idle boards now, for one card duration; true if shown.
+    pinWish(id) { return boards.pinWish(id); },
     showGhost,
     setWatchPortrait,
     startLounge() {

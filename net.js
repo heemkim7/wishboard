@@ -4,7 +4,8 @@
 // To move to a dedicated WebSocket server, reimplement these methods here; nothing else needs to change.
 // Fully optional: if the CDN or Supabase is unreachable, the game keeps running single-player.
 // v6: Seoul project (ap-northeast-2). Rooms = 행정동 code + scene; a shared lobby presence channel gives per-dong head counts.
-import { GT_LS, SESSION_LS, isInAppWebView } from './plaza-account.js?v=20261116f';
+import { GT_LS, SESSION_LS, isInAppWebView } from './plaza-account.js';
+import { snapQuery } from './share.js?v=202611210015';
 export const SUPA_URL = 'https://yxddhpacuyaffaoutxjn.supabase.co';
 export const SUPA_KEY = 'sb_publishable_Vd-7c6e2f2s3G1d5Jbx9vw_0UCuHm-B'; // publishable key: public by design
 // v13: QA/test clients (?qa=1) live in a separate namespace and never appear in real players' rooms, lobby counts or chat history
@@ -71,7 +72,7 @@ class DOChan {
     else if (m.t === 'TAKE' || m.t === 'MONO' || m.t === 'REV' || m.t === 'FEVER' || m.t === 'AIR') { if (this.rt.net) this.rt.net.emit(m.t.toLowerCase(), m); }
     else if (m.t === 'STK') { if (this.rt.net) this.rt.net.emit('stk', m); }
     else if (m.t === 'CHEER_HIT') { if (this.rt.net) this.rt.net.emit('cheer', m); }
-    else if (m.t === 'PAY' || m.t === 'DRAW' || m.t === 'SESS' || m.t === 'WELCOME' || m.t === 'INBOX' || m.t === 'BALL') { if (this.rt.net) this.rt.net.emit(m.t.toLowerCase(), m); }
+    else if (m.t === 'PAY' || m.t === 'DRAW' || m.t === 'SESS' || m.t === 'WELCOME' || m.t === 'INBOX' || m.t === 'BALL' || m.t === 'WISH') { if (this.rt.net) this.rt.net.emit(m.t.toLowerCase(), m); }
     else if (m.t === 'GHOST') { if (this.rt.net) this.rt.net.emit('ghost', m); } }
   raw(o) { if (this.ws?.readyState === 1) { this.ws.send(JSON.stringify(o)); return true; } return false; }
   send(o) { if (this.state !== 'joined') return Promise.resolve('error'); const p = o.payload; if (o.event === 'pos' && p) { this.raw({ t: 'p', a: [p.x, p.y, p.face, p.anim, p.fl, p.vx, p.vy] }); return Promise.resolve('ok'); } this.raw({ t: 'b', e: o.event, p: o.payload }); return Promise.resolve('ok'); }
@@ -250,9 +251,18 @@ export class Net {
   async buyPlot(payload) { return this._plazaPost('/rt/buy-plot', payload); }
   async sellCoins(payload) { return this._plazaPost('/rt/sell-coins', payload); }
   async flushWallet() { return this._plazaPost('/rt/flush-wallet', {}); }
-  async publishShot(blob) { const tok = await doToken(this.sb); if (!tok) throw new Error('auth'); const r = await fetch('/rt/snap', { method: 'POST', headers: { authorization: 'Bearer ' + tok, 'content-type': 'image/jpeg' }, body: blob }); const data = await r.json().catch(() => ({})); if (!r.ok || !data.url) throw new Error(data.err || 'snap'); return data.url; }
+  // ctx { slot } or { wish } tells the server what the picture shows. Resolves to { url (the JPEG), page (the preview page to share) }.
+  async publishShot(blob, ctx) { const tok = await doToken(this.sb); if (!tok) throw new Error('auth'); const r = await fetch('/rt/snap' + snapQuery(ctx), { method: 'POST', headers: { authorization: 'Bearer ' + tok, 'content-type': 'image/jpeg' }, body: blob }); const data = await r.json().catch(() => ({})); if (!r.ok || !data.url) throw new Error(data.err || 'snap'); return { url: String(data.url), page: typeof data.page === 'string' ? data.page : '' }; }
   async shareBonus() { return this.authed('/rt/share-bonus', {}); }
   async redeemCode(code) { return this.authed('/rt/redeem-code', { code }); }
+  // 오늘의 소원. None of these throw: GET gives the body or null, POSTs give the body even on 4xx/5xx so the sheet can show `error`.
+  // anon: no token at all (the deep link before entering), so no guest is made just to read one wish.
+  // 8 s cap: a hung GET must not leave the wish sheet waiting forever (null = could not load).
+  async wishes(id, anon) { let timer = 0; try { const tok = anon ? null : await doToken(this.sb); let signal; if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) signal = AbortSignal.timeout(8000); else if (typeof AbortController !== 'undefined') { const c = new AbortController(); timer = setTimeout(() => c.abort(), 8000); signal = c.signal; } const r = await fetch('/rt/wishes' + (id ? '?id=' + encodeURIComponent(id) : ''), { cache: 'no-store', headers: tok ? { authorization: 'Bearer ' + tok } : {}, signal }); const data = await r.json().catch(() => null); return data && typeof data === 'object' ? data : null; } catch { return null; } finally { clearTimeout(timer); } }
+  async postWish(text, nick) { return this._wishPost('/rt/wish', { text: String(text ?? ''), nick: Array.from(String(nick ?? this.me?.name ?? '')).slice(0, 16).join(''), topic: this.topic || (NS + 'square') }); }
+  async heartWish(id) { return this._wishPost('/rt/wish/heart', { id: String(id || '') }); }
+  async reportWish(id) { return this._wishPost('/rt/wish/report', { id: String(id || '') }); }
+  async _wishPost(path, payload) { try { const tok = await doToken(this.sb); if (!tok) return { ok: false, code: 'auth', error: '입장한 뒤에 할 수 있어요.' }; const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + tok }, body: JSON.stringify(payload || {}) }); const data = await r.json().catch(() => null); if (data && typeof data === 'object') return data; return { ok: false, code: 'down', error: '소원을 처리하지 못했어요. 잠시 뒤 다시 해 주세요.' }; } catch { return { ok: false, code: 'down', error: '소원을 처리하지 못했어요. 잠시 뒤 다시 해 주세요.' }; } }
   async sponsorUrl() { const r = await fetch('/rt/sponsor', { cache: 'no-store' }); const d = await r.json().catch(() => ({})); return d.url || ''; }
   async authed(path, payload) { const tok = await doToken(this.sb); if (!tok) throw new Error('입장한 뒤에 사용할 수 있어요'); const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + tok }, body: JSON.stringify(payload || {}) }); const data = await r.json().catch(() => ({})); if (!r.ok || data.ok === false) throw new Error(data.error || data.err || '요청을 처리하지 못했습니다.'); return data; }
   async submitBillboardPhoto(payload) { return this._plazaPost('/rt/billboard-photo', payload); }

@@ -1,5 +1,6 @@
 .git
 .gitignore
+.claude
 .wrangler
 node_modules
 out

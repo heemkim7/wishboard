@@ -1,20 +1,21 @@
 // Times Square K-점령전 — app wiring: realtime net (DO), 3D world, UI, wallet, world state, star shower.
-import { Net, CDN, guestToken } from './net.js?v=20261122w';
-import { createTimesSquare, AVATAR_COLORS, taxiTrainMult } from './timesSquare3d.js?v=20261124f';
-import { speciesId } from './ts3d/avatars.js?v=20261116g';
-import { equip, loadProfile, saveColor, saveNick, saveSpecies, setSpecies } from './profile.js?v=20261122v';
-import { starSpot, insideLoop } from './ts3d/layout.js?v=20261113b';
-import { createUI } from './ui.js?v=20261124f';
-import { haptic, startMusic } from './audio.js?v=20261116j';
-import { BALANCE, PAY, chainsOf, live, monopolyOf, slotName, slotOf, takeGrants, cheerCount, countsAsPlay } from './balance.js?v=20261118d';
-import { auctionClosed } from './balance.js?v=20261124f';
-import { trackEvent } from './analytics.js?v=20261116f';
-import { adoptHandover, allowedLink, blockedText, chromeIntent, handoverHref, isAndroid, isInAppWebView, loginEmail, profileName, CHEER_PHRASES, GT_LS, slotTier } from './plaza-account.js?v=20261116f';
-import { saveClip } from './share.js?v=20261116f';
-import { ftueStillDue, lockCelebration, startFtue } from './ftue.js?v=20261123u';
-import { applyInboxPush, loadInbox, readInbox } from './inbox.js?v=20261118h';
-import { openTribe, pledge, sendCheer } from './tribe.js?v=20261116h';
-import { applyOps, ballNotice, sessionEndPlan } from './live.js?v=20261121w';
+import { Net, CDN, guestToken } from './net.js?v=202611210015';
+import { createTimesSquare, AVATAR_COLORS, taxiTrainMult } from './timesSquare3d.js?v=202611210015';
+import { speciesId } from './ts3d/avatars.js?v=202611210015';
+import { equip, loadProfile, saveColor, saveNick, saveSpecies, setSpecies } from './profile.js?v=202611210015';
+import { starSpot, insideLoop } from './ts3d/layout.js?v=202611210015';
+import { createUI } from './ui.js?v=202611210015';
+import { haptic, startMusic } from './audio.js?v=202611210015';
+import { BALANCE, PAY, chainsOf, live, monopolyOf, slotName, slotOf, takeGrants, cheerCount, countsAsPlay } from './balance.js';
+import { auctionClosed } from './balance.js';
+import { trackEvent } from './analytics.js?v=202611210015';
+import { adoptHandover, allowedLink, blockedText, chromeIntent, handoverHref, isAndroid, isInAppWebView, loginEmail, profileName, CHEER_PHRASES, GT_LS, slotTier } from './plaza-account.js';
+import { saveClip, dropParams } from './share.js?v=202611210015';
+import { ftueDue, crowdFacts, kstDay, lockCelebration, startFtue, wishAutoOpen, wishBootLine, awayRows, inboxUnread, seenAdd, liveKey, liveSeenAdd } from './ftue.js?v=202611210015';
+import { WISH, cleanWish } from './wish.js';
+import { applyInboxPush, loadInbox, readInbox } from './inbox.js?v=202611210015';
+import { openTribe, pledge, sendCheer } from './tribe.js?v=202611210015';
+import { applyOps, ballNotice, sessionEndPlan } from './live.js';
 
 adoptHandover(location.search, localStorage);
 
@@ -35,18 +36,40 @@ const FOCUS_REF = (() => {
   const r = new URLSearchParams(location.search).get('ref') || '';
   return /^[a-z0-9]{8}$/.test(r) ? r : '';
 })();
+// ?wish=<id> from a shared wish link (/rt/w/<id> redirects here). Read once at load; removed from the address bar after entering.
+const WISH_RE = /^[0-9a-z]{10}$/;
+const WISH_ID = (() => {
+  const w = new URLSearchParams(location.search).get('wish') || '';
+  return WISH_RE.test(w) ? w : '';
+})();
+let bootData = null, bootHere = null, deepWish = null, deepDay = '';
 // First screen: only what the server reported. A count that is missing or zero is left out, and with no answer the box is hidden.
 function paintBootLive(data, here) {
+  bootData = data;
+  bootHere = here;
   const box = document.getElementById('bootLive');
   const king = document.getElementById('bootKing');
   const stat = document.getElementById('bootStat');
+  const wishEl = document.getElementById('bootWish');
   if (!box || !king || !stat) return;
-  if (!Array.isArray(data?.billboards)) { box.hidden = true; return; }
+  // 오늘의 소원: the linked wish, else yesterday's winner, else today's count from its threshold (ftue.js wishBootLine).
+  const wishLine = wishBootLine({ deep: deepWish, ...(data?.wish ?? { board: [], king: null, count: 0 }), day: deepDay || kstDay(), focus: !!FOCUS });
+  if (wishEl) { wishEl.textContent = wishLine.text; wishEl.hidden = !wishLine.text; }
+  ui.boot?.label?.(wishLine.enter);
+  if (!Array.isArray(data?.billboards)) {
+    box.hidden = !wishLine.text;
+    king.hidden = true;
+    stat.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  king.hidden = false;
+  stat.hidden = false;
   const boards = data.billboards.filter((b) => slotOf(b.slot_id));
   const main = boards.find((b) => b.slot_id === 'MAIN_TOP');
   const open = boards.filter((b) => !b.holder_id && !auctionClosed(b.slot_id)).length;
-  const count = (v) => Math.max(0, Math.floor(Number(v)) || 0);
-  const visitors = count(data.today?.visitors), wishes = count(data.today?.wishes), crowd = count(here?.live);
+  // Small counts read as an empty plaza, so each one shows only from its threshold (ftue.js PUBLIC_MIN).
+  const { visitors, wishes, crowd } = crowdFacts({ visitors: data.today?.visitors, wishes: data.today?.wishes, crowd: here?.live });
   king.textContent = live(main)
     ? `👑 지금 메인 타워의 소원: ${main.holder_name || '익명'} — "${main.line1 || '소원 대기'}"`
     : main?.holder_id
@@ -55,7 +78,7 @@ function paintBootLive(data, here) {
   stat.textContent = [
     open ? `지금 걸 수 있는 빈 자리 ${open}곳` : '지금은 빈 자리가 없어요',
     visitors ? `오늘 다녀간 사람 ${visitors.toLocaleString('ko-KR')}명` : '',
-    wishes ? `오늘 걸린 소원 ${wishes.toLocaleString('ko-KR')}개` : '',
+    wishes && wishLine.kind !== 'count' ? `오늘 걸린 소원 ${wishes.toLocaleString('ko-KR')}개` : '',
     crowd ? `지금 광장 ${crowd}명` : '',
   ].filter(Boolean).join(' · ');
 }
@@ -114,6 +137,8 @@ const state = {
   notes: {},
   vipTickets: 0,
   starterUsed: null,
+  // 오늘의 소원. board/king/count come with every /rt/world; the rest from GET /rt/wishes (known once that answered).
+  wish: { known: false, at: 0, day: '', board: [], king: null, count: 0, mine: null, left: 0, given: [], top: [], recent: [], yesterday: [], focus: null, miss: '' },
 };
 const gfx = (() => {
   try {
@@ -126,11 +151,32 @@ const headlines = [];
 let world = null;
 let entered = false, queuePos = 0, walletGen = 0, shower = null;
 let sessionUser = null, accountReady = false;
+// 다녀간 사이 / 🔔: inbox ids seen in this browser, my wish's heart count when I last saw it, the day yesterday's prize was shown.
+const INBOX_SEEN_KEY = 'kts_inbox_seen', WISH_SEEN_KEY = 'kts_wish_seen', WISH_PRIZE_KEY = 'kts_wish_prize', INBOX_LIVE_KEY = 'kts_inbox_live';
+function readJson(key, dflt) { try { const v = JSON.parse(recall(key) || 'null'); return v ?? dflt; } catch { return dflt; } }
+let focusedSlot = '', inboxRows = [], inboxHandled = new Set();
+let introDone = () => {};
+const introReady = new Promise((resolve) => { introDone = resolve; });
+let linkWishDone = () => {};
+const linkWishClosed = new Promise((resolve) => { linkWishDone = resolve; });
+function dropDeep(keys) {
+  try {
+    const next = dropParams(location.href, keys);
+    if (next) history.replaceState(history.state, '', next);
+  } catch { /* the link just stays */ }
+}
 
 // Start the supabase-js download before the scene build ties up the main thread; net.init() reuses it.
 const supaLoaded = import(CDN).then((m) => { globalThis.__SUPA_MOD = m; return true; }).catch(() => false);
 const net = new Net();
 window.G = { net };
+// A shared wish is read before entering with no token, so the boot card can show it without making a guest.
+if (WISH_ID) net.wishes(WISH_ID, true).then((r) => {
+  const w = r?.focus && WISH_RE.test(String(r.focus.id || '')) ? r.focus : null;
+  deepWish = w && !w.hidden ? { id: String(w.id), nick: chars(w.nick, 16), txt: cleanWish(w.txt), hearts: Math.max(0, Math.floor(Number(w.hearts) || 0)), day: String(w.day || '') } : null;
+  deepDay = String(r?.day || '');
+  if (deepWish && !entered) paintBootLive(bootData, bootHere);
+}).catch(() => {});
 const netReady = (async () => {
   let ready = false;
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -146,6 +192,8 @@ const netReady = (async () => {
   return ready;
 })();
 
+// The tutorial decides "first visit" from kts_daily as it was before this session's attend() writes streak 1.
+const DAILY_BEFORE = (() => { try { return JSON.parse(recall('kts_daily') || 'null'); } catch { return null; } })();
 const ui = createUI(document.getElementById('ui'), {
   nick: () => state.nick,
   color: () => state.color,
@@ -177,7 +225,10 @@ const ui = createUI(document.getElementById('ui'), {
   submitPhoto: (payload) => submitPhoto(payload),
   capture: () => world?.capture() || null,
   saveClip: () => saveClip(document.getElementById('view')),
-  publishShot: (blob) => net.publishShot(blob),
+  publishShot: (blob, ctx) => net.publishShot(blob, ctx),
+  // The camera's current board (focus or frame), so a photo of my own board links back to it.
+  focusedSlot: () => focusedSlot,
+  pinWish: (id) => world?.pinWish?.(id),
   buy: (payload) => buy(payload),
   sell: (payload) => sellCoins(payload),
   rename(name) {
@@ -230,22 +281,35 @@ const ui = createUI(document.getElementById('ui'), {
   syncCrown: () => paintCrown(),
   interact: () => world?.interact(),
   enter: (p) => enter(p),
+  wishData: () => state.wish,
+  loadWishes: (id) => loadWishes(id),
+  postWish: (text) => postWish(text),
+  heartWish: (id) => heartWish(id),
+  reportWish: (id) => reportWish(id),
+  wishUrl: (id) => location.origin + '/rt/w/' + encodeURIComponent(id),
   arrive() {
     if (FOCUS) trackEvent('focus_enter', { slot: FOCUS, ref: FOCUS_REF });
+    // Used once: a reload must not replay the gift toast or the focus camera (?tribe= goes after joinTribeLink).
+    dropDeep(['focus', 'gift', 'ref']);
     if (!FOCUS) {
       world?.playIntro();
-      setTimeout(armFtue, 3000);
+      // Mark the tutorial before ui's enter handler runs maybeStarterToast, so the two do not compete.
+      if (ftueDue(recall('kts_ftue'), DAILY_BEFORE, kstDay())) ui.tutorial?.('start');
+      // A shared wish link opens that wish instead; a newcomer without a wish gets the wish sheet before the bake tutorial.
+      if (WISH_ID) { landWish(); return; }
+      setTimeout(() => { introDone(); afterIntro(); }, 3000);
       return;
     }
     const pose = world?.focusSlot(FOCUS, GIFT ? 4500 : 2500);
-    if (!pose) return;
+    if (!pose) { introDone(); return; }
+    focusedSlot = FOCUS;
     if (GIFT) {
       world?.giftPop?.(FOCUS);
       ui.note('🎉 당신을 위해 준비된 타임스퀘어 스페셜 전광판입니다!', 'ok');
     }
-    setTimeout(() => ui.job({ type: 'focus', slot: FOCUS, board: pose.board || {}, fare: 0 }), GIFT ? 700 : 2500);
+    setTimeout(() => { ui.job({ type: 'focus', slot: FOCUS, board: pose.board || {}, fare: 0 }); introDone(); }, GIFT ? 700 : 2500);
   },
-  focusShot: (slot) => world?.focusSlot(slot),
+  focusShot: (slot) => { const pose = world?.focusSlot(slot); if (pose) focusedSlot = String(slot || ''); return pose; },
   endFocus: () => world?.endFocus(),
   cineOn: () => !!world?.cineOn?.(),
   boardView: (slot) => world?.boardView?.(slot) || null,
@@ -255,7 +319,7 @@ const ui = createUI(document.getElementById('ui'), {
     ui.setPeople(1, ch);
   },
   slotCard: (id) => world?.slotCard(id),
-  frameBillboard: (slot) => world?.frameBillboard?.(slot),
+  frameBillboard: (slot) => { const ok = world?.frameBillboard?.(slot); if (ok) focusedSlot = String(slot || ''); return ok; },
   giftPop: (slot) => world?.giftPop?.(slot),
   shareBonus: async () => { const r = await net.shareBonus(); refreshWallet(); return r; },
   redeemCode: async (code) => { const r = await net.redeemCode(code); refreshWallet(); return r; },
@@ -338,7 +402,7 @@ world = createTimesSquare(document.getElementById('view'), {
   },
   onWish: (line) => ui.note(`🧧 ${line}`, 'ok'),
   onLoungeEnd: () => setLounge(false),
-  onFocus: (on) => { ui.focusLock(on); if (!on) armFtue(); },
+  onFocus: (on) => { if (!on) focusedSlot = ''; ui.focusLock(on); if (!on) armFtue(); },
   onWaypoint: (wp) => ui.setWaypoint(wp),
   onJob(ev) {
     if (ev.type === 'board' || ev.type === 'chain') { try { net.ch?.raw?.({ t: 'PICK' }); } catch { /* the fare still asks */ } }
@@ -370,12 +434,15 @@ let ftueApi = null;
 let ftueArmed = false;
 let bakeGuided = false;
 function armFtue() {
-  if (ftueArmed || !entered || !world) return;
+  if (ftueArmed || !entered || !world || wishHold) return;
   ftueArmed = true;
-  let daily = null;
-  try { daily = JSON.parse(recall('kts_daily') || 'null'); } catch { daily = null; }
-  if (!ftueStillDue(recall('kts_ftue'), daily)) { keep('kts_ftue', '1'); return; }
-  ftueApi = startFtue({ ui, world, net, balance: BALANCE });
+  if (!ftueDue(recall('kts_ftue'), DAILY_BEFORE, kstDay())) { keep('kts_ftue', '1'); ui.tutorial?.('skip'); return; }
+  // Tutorial lines go to the newcomer card, so other setNextLine callers cannot overwrite them.
+  const tutorUi = Object.assign(Object.create(ui), { setNextLine: (t) => ui.setTutorialLine(t) });
+  // Tutorial waypoints are remembered by ui, so a tap on the card can put a cleared one back and the free-slot walk can end the tutorial.
+  const tutorWorld = { setWaypoint: (p) => { ui.setTutorialWaypoint?.(p); world?.setWaypoint?.(p); }, boardView: (id) => world?.boardView?.(id), slotCard: (id) => world?.slotCard?.(id) };
+  ftueApi = startFtue({ ui: tutorUi, world: tutorWorld, net, balance: BALANCE, touch: matchMedia('(pointer: coarse)').matches });
+  ui.tutorial?.('start');
   if (ui.nearKind?.() === 'cart') ftueApi.onArrive();
   if (bakeGuided) ftueApi.onBakePay();
 }
@@ -383,6 +450,8 @@ function noteBakePay() {
   if (bakeGuided) return;
   bakeGuided = true;
   keep('kts_ftue', '1');
+  // ui marks bake pay before the tutorial points at the free slot, so that waypoint counts as the last walk.
+  ui.tutorial?.('bakePay');
   ftueApi?.onBakePay();
 }
 
@@ -483,7 +552,7 @@ const FORTUNES = [
   '🥠 가장 밝은 화면이 네 이름을 연습 중이에요.',
   '🥠 보낸 마음이 전광판보다 먼저 도착해요.',
   '🥠 월요일이 한 박자 늦습니다.',
-  '🥠 로또 영수증이 주머니에서 따뜻해요.',
+  '🥠 추첨 번호표가 주머니에서 따뜻해요.',
   '🥠 택시가 초록불에 걸리는 날이에요.',
 ];
 function drawFortune() {
@@ -524,6 +593,7 @@ async function openInbox() {
     from: row.kind === 'cheer' ? String(row.from || '') : '',
   })).filter((row) => row.text);
   await readInbox(rows.map((row) => row.id));
+  markInboxSeen(items.map((row) => row.id));
   return rows;
 }
 async function joinCode(code) {
@@ -571,6 +641,7 @@ async function joinTribeLink() {
   if (!/^[a-z0-9]{8}$/.test(id)) return;
   try {
     const res = await net.authed('/rt/tribe', { id });
+    dropDeep(['tribe']); // only once the join went through; a failed one can be retried with a reload
     if (res?.tag) ui.note(`#${res.tag} 소속에 들어왔어요`, 'ok');
   } catch (e) {
     ui.note(e?.message || '소속에 들어가지 못했어요', 'err');
@@ -652,8 +723,11 @@ async function relight(slot) {
 }
 
 function celebrateClaim(slot) {
+  // End the tutorial first: graduating with it still on would leave its line on the full HUD.
+  ui.tutorial?.('claim');
+  ui.graduate?.();
   ui.setQuietBlock(true);
-  world.focusSlot(slot);
+  if (world.focusSlot(slot)) focusedSlot = String(slot || '');
   const ms = lockCelebration(5000);
   setTimeout(() => ui.setQuietBlock(false), ms);
 }
@@ -686,6 +760,8 @@ async function claim(payload) {
   if (res?.ok !== false && res?.data) {
     trackEvent('board_claim', { tier: slotTier(res.data.slot_id || payload?.slot_id) });
     const mode = payload?.mode;
+    // The profile pull that reports starter use comes later; without this the free-slot toast would offer a second one.
+    if (mode === 'starter') state.starterUsed = true;
     if (mode === 'starter' || mode === 'claim') celebrateClaim(res.data.slot_id || payload?.slot_id);
     ui.promptLink?.('own');
     if (res.fever != null) world?.setFever?.(res.fever);
@@ -762,6 +838,7 @@ function readPlaza() {
       ranks: Array.isArray(j.ranks) ? j.ranks : [],
       ...(typeof j.roof === 'string' ? { roof: j.roof } : {}),
       ...(j.ops && j.ops.copy ? { ops: j.ops } : {}),
+      ...(j.wish && typeof j.wish === 'object' ? { wish: j.wish } : {}),
     };
   } catch { return null; }
 }
@@ -774,6 +851,7 @@ function writePlaza(remote) {
       ranks: remote.ranks || [],
       ...(typeof remote.roof === 'string' ? { roof: remote.roof } : {}),
       ...(remote.ops ? { ops: remote.ops } : {}),
+      ...(remote.wish ? { wish: remote.wish } : {}),
     }));
   } catch { /* private mode */ }
 }
@@ -792,6 +870,7 @@ function applyPlaza(remote) {
   if (Array.isArray(remote.ranks)) state.ranks = remote.ranks;
   if (remote.today) state.today = { visitors: Math.max(0, Math.floor(Number(remote.today.visitors) || 0)), wishes: Math.max(0, Math.floor(Number(remote.today.wishes) || 0)) };
   if (typeof remote.roof === 'string') state.roof = remote.roof;
+  applyWishWorld(remote.wish);
   const opsCopy = applyOps(remote.ops);
   state.ops = opsCopy ? { copy: opsCopy } : null;
   if (opsCopy) ui.setNextLine(opsCopy);
@@ -813,6 +892,160 @@ async function refreshWorld() {
     writePlaza(remote);
     applyPlaza(remote);
   } catch { /* keep the cached plaza */ }
+}
+
+// ---- 오늘의 소원 ------------------------------------------------------------------------
+// No timer refetches wishes (daily request budget): /rt/world carries the board, GET /rt/wishes runs once after entering,
+// when the sheet opens (5 s cache), and after a post. Hearts and reports patch the local copy from the POST answer.
+const wishRow = (w) => (w && typeof w === 'object' && WISH_RE.test(String(w.id || ''))
+  ? { ...w, id: String(w.id), nick: chars(w.nick, 16), txt: cleanWish(w.txt), hearts: Math.max(0, Math.floor(Number(w.hearts) || 0)) }
+  : null);
+const wishRows = (list, max) => (Array.isArray(list) ? list : []).map(wishRow).filter(Boolean).slice(0, max);
+function paintWish() {
+  world?.setWishes?.(state.wish.board.map((w) => ({ id: w.id, nick: w.nick, txt: w.txt, hearts: w.hearts })));
+  ui.setWish?.(state.wish);
+}
+function applyWishWorld(src) {
+  const w = src ?? { board: [], king: null, count: 0 };
+  state.wish.board = wishRows(w.board, WISH.boardMax);
+  state.wish.king = w.king?.txt ? { nick: chars(w.king.nick, 16), txt: cleanWish(w.king.txt), hearts: Math.max(0, Math.floor(Number(w.king.hearts) || 0)) } : null;
+  state.wish.count = Math.max(0, Math.floor(Number(w.count)) || 0);
+  wishStale();
+  paintWish();
+}
+function mergeWishes(r, id) {
+  const w = state.wish;
+  w.known = true;
+  w.at = Date.now();
+  w.day = String(r.day || '');
+  w.top = wishRows(r.top, WISH.topMax);
+  w.recent = wishRows(r.recent, WISH.recentMax);
+  w.mine = r.mine ? wishRow({ ...r.mine, mine: true }) : null;
+  w.left = Math.max(0, Math.floor(Number(r.left)) || 0);
+  w.given = Array.isArray(r.given) ? r.given.map(String) : [];
+  w.yesterday = (Array.isArray(r.yesterday) ? r.yesterday : []).slice(0, 3).map((y) => ({
+    id: String(y?.id || ''), rank: Math.floor(Number(y?.rank)) || 0, nick: chars(y?.nick, 16), txt: cleanWish(y?.txt),
+    hearts: Math.max(0, Math.floor(Number(y?.hearts) || 0)), prize: Math.max(0, Math.floor(Number(y?.prize) || 0)), mine: !!y?.mine,
+  })).filter((y) => y.txt);
+  if (Number.isFinite(Number(r.count))) w.count = Math.max(0, Math.floor(Number(r.count)));
+  if (id) {
+    w.focus = r.focus && !r.focus.hidden ? wishRow(r.focus) : null;
+    w.miss = w.focus ? '' : id; // an unknown or hidden linked wish: one line in the sheet, no refetch on every open
+  }
+  paintWish();
+}
+// One request in flight per id. A forced reload (after a post) waits for the current one, so it never gets an answer
+// that started before the POST. After 0시 KST the copy is stale: it is marked unknown and the next open refetches.
+let wishLoad = null, wishLoadId = '';
+function wishStale() {
+  const w = state.wish;
+  if (!w.known || !w.day || w.day === kstDay()) return false;
+  Object.assign(w, { known: false, mine: null, given: [], left: 0, top: [], recent: [], yesterday: [], focus: null, miss: '' });
+  return true;
+}
+function loadWishes(id = '', force = false) {
+  const w = state.wish;
+  if (wishStale()) paintWish();
+  const fresh = w.known && Date.now() - w.at < 5000 && (!id || w.focus?.id === id || w.miss === id);
+  if (!force && fresh) return Promise.resolve(w);
+  if (wishLoad && !force && wishLoadId === id) return wishLoad;
+  const before = wishLoad;
+  const run = (async () => {
+    if (before) await before.catch(() => {});
+    const r = await net.wishes(id);
+    if (r && Array.isArray(r.top)) mergeWishes(r, id);
+    else throw new Error('wishes');
+    return state.wish;
+  })();
+  wishLoad = run;
+  wishLoadId = id;
+  run.catch(() => {}).finally(() => { if (wishLoad === run) { wishLoad = null; wishLoadId = ''; } });
+  return run;
+}
+function patchWish(id, fields) {
+  const w = state.wish;
+  for (const list of [w.board, w.top, w.recent]) for (const row of list) if (row.id === id) Object.assign(row, fields);
+  if (w.focus?.id === id) Object.assign(w.focus, fields);
+  if (w.mine?.id === id) Object.assign(w.mine, fields);
+}
+// true when the wish is new to this client (the socket and the POST answer both bring my own new wish).
+function addWish(row) {
+  const w = state.wish;
+  if (w.board.some((x) => x.id === row.id) || w.recent.some((x) => x.id === row.id) || w.top.some((x) => x.id === row.id)) { patchWish(row.id, { txt: row.txt, nick: row.nick }); return false; }
+  w.board = [row, ...w.board].slice(0, WISH.boardMax);
+  w.recent = [{ ...row }, ...w.recent].slice(0, WISH.recentMax);
+  w.count += 1;
+  return true;
+}
+let wishSending = '';
+async function postWish(text) {
+  const line = cleanWish(text);
+  wishSending = line;
+  let res;
+  try { res = await net.postWish(line, state.nick); } finally { wishSending = ''; }
+  if (!res?.ok || !res.wish) return res || { ok: false, error: '소원을 걸지 못했어요. 잠시 뒤 다시 해 주세요.' };
+  const mine = wishRow({ ...res.wish, mine: true });
+  if (mine) {
+    state.wish.known = true;
+    state.wish.mine = mine;
+    if (!addWish({ ...mine })) patchWish(mine.id, { txt: mine.txt, mine: true });
+    paintWish();
+    loadWishes('', true).catch(() => {}); // the rank comes from the list
+  }
+  return res;
+}
+async function heartWish(id) {
+  const res = await net.heartWish(id);
+  if (res?.ok) {
+    patchWish(id, { hearts: Math.max(0, Math.floor(Number(res.hearts) || 0)) });
+    state.wish.left = Math.max(0, Math.floor(Number(res.left)) || 0);
+    if (!state.wish.given.includes(id)) state.wish.given.push(id);
+    paintWish();
+  }
+  return res;
+}
+async function reportWish(id) {
+  const res = await net.reportWish(id);
+  if (res?.ok) {
+    const w = state.wish;
+    w.board = w.board.filter((x) => x.id !== id);
+    w.top = w.top.filter((x) => x.id !== id);
+    w.recent = w.recent.filter((x) => x.id !== id);
+    paintWish();
+  }
+  return res;
+}
+function dropWishParam() {
+  try {
+    const u = new URL(location.href);
+    if (!u.searchParams.has('wish')) return;
+    u.searchParams.delete('wish');
+    history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+  } catch { /* the link just stays */ }
+}
+// While the wish sheet that opened on arrival is up, the bake tutorial waits; it starts once that sheet closes.
+let wishHold = false, wishBoot = null;
+function releaseWish() { wishHold = false; armFtue(); }
+async function landWish() {
+  trackEvent('wish_land', { found: deepWish ? 1 : 0 });
+  introDone();
+  dropWishParam();
+  wishHold = true;
+  await sleep(1200);
+  await Promise.race([wishBoot || loadWishes(WISH_ID, true), sleep(4000)]).catch(() => {});
+  if (ui.openWish) ui.openWish({ focus: WISH_ID, from: 'link', onClose: () => { releaseWish(); linkWishDone(); } });
+  else { releaseWish(); linkWishDone(); }
+}
+async function afterIntro() {
+  if (wishAutoOpen({ newbie: ui.isNewbie?.(), known: state.wish.known, mine: !!state.wish.mine, deep: !!(WISH_ID || FOCUS) })) {
+    if (!state.wish.known) await Promise.race([wishBoot || loadWishes(), sleep(2500)]).catch(() => {});
+    if (!state.wish.mine && !ui.isBusy?.() && ui.openWish) {
+      wishHold = true;
+      ui.openWish({ from: 'auto', onClose: releaseWish });
+      return;
+    }
+  }
+  armFtue();
 }
 
 let crownSig = '';
@@ -1059,6 +1292,12 @@ net.on('inbox', (m) => {
     return;
   }
   const line = applyInboxPush(m);
+  if (line) {
+    ui.setInboxDot?.(true);
+    // Seen live: the stored copy of this news (no id on the socket) will not come back in 다녀간 사이.
+    const key = liveKey(m, Date.now());
+    if (key) keep(INBOX_LIVE_KEY, JSON.stringify(liveSeenAdd(readJson(INBOX_LIVE_KEY, []), key)));
+  }
   const reply = m?.kind === 'cheer' && m.from && m.slot_id ? { slot: m.slot_id, to: m.from } : '';
   if (line) ui.setNextLine(line, reply);
 });
@@ -1080,6 +1319,16 @@ net.on('ball', (m) => {
   }
 });
 net.on('ghost', (m) => world?.showGhost?.(m));
+// Someone posted a new wish (edits are not sent). Mine comes back too: no news line for it.
+net.on('wish', (m) => {
+  const row = wishRow(m?.w);
+  if (!row) return;
+  const self = row.id === state.wish.mine?.id || (!!wishSending && row.txt === wishSending);
+  if (self) row.mine = true;
+  const fresh = addWish(row);
+  paintWish();
+  if (fresh && !self) ui.news('WISH', { nick: row.nick });
+});
 net.on('draw', (m) => {
   creditNow(m?.amount);
   ui.showDraw?.(m?.win, !!m?.hit, Math.floor(Number(m?.amount)) || 0, m?.lot);
@@ -1338,14 +1587,48 @@ async function withdrawAccount() {
 }
 
 // ---- lifecycle ------------------------------------------------------------------------------
-async function showAwayInbox() {
-  try {
-    const items = await loadInbox();
-    const shown = items.filter((row) => applyInboxPush(row)).slice(0, 3);
-    const line = shown.map((row) => applyInboxPush(row)).join(' · ');
-    const cheerRow = shown.find((row) => row.kind === 'cheer' && row.slot_id && row.from);
-    if (line) ui.setNextLine(line, cheerRow ? { slot: cheerRow.slot_id, to: cheerRow.from } : '');
-  } catch { /* the square still opens when the inbox is down */ }
+function markInboxSeen(ids) {
+  keep(INBOX_SEEN_KEY, JSON.stringify(seenAdd(readJson(INBOX_SEEN_KEY, []), ids)));
+  syncInboxDot();
+}
+function syncInboxDot() {
+  ui.setInboxDot?.(inboxUnread(inboxRows.filter((row) => applyInboxPush(row) && !inboxHandled.has(Math.floor(Number(row.id)))), readJson(INBOX_SEEN_KEY, [])) > 0);
+}
+// 다녀간 사이: once after entering, after the intro (and after a linked wish sheet closed), never for newcomers.
+// Rows come from ftue.js awayRows; ui queues the sheet until no other sheet, celebration or focus camera is up.
+async function showAway() {
+  try { inboxRows = await loadInbox(); } catch { inboxRows = []; }
+  syncInboxDot();
+  await Promise.race([wishBoot || Promise.resolve(), sleep(4000)]).catch(() => {});
+  await Promise.race([introReady, sleep(12000)]);
+  if (WISH_ID && !FOCUS) await Promise.race([linkWishClosed, sleep(6000)]);
+  const day = kstDay();
+  const plan = awayRows({
+    newbie: !!ui.isNewbie?.(),
+    inbox: inboxRows,
+    seen: readJson(INBOX_SEEN_KEY, []),
+    copy: applyInboxPush,
+    wish: state.wish.known ? state.wish : null,
+    wishSeen: readJson(WISH_SEEN_KEY, null),
+    prizeDay: recall(WISH_PRIZE_KEY),
+    day,
+    holder: (slot) => state.billboards.find((b) => b.slot_id === slot)?.holder_id || world?.boardView?.(slot)?.holder_id || '',
+    me: net.id,
+    liveSeen: readJson(INBOX_LIVE_KEY, []),
+  });
+  // Rows already handled (board held again, seen live, folded duplicates) do not light the 🔔 either.
+  const shownIds = new Set(plan.rows.map((r) => r.id));
+  inboxHandled = new Set(plan.inboxIds.filter((id) => !shownIds.has(id)));
+  syncInboxDot();
+  if (!plan.rows.length) return;
+  ui.openAway?.(plan.rows, () => {
+    if (plan.inboxIds.length) {
+      readInbox(plan.inboxIds).catch(() => {});
+      markInboxSeen(plan.inboxIds);
+    }
+    if (plan.wishSeen) keep(WISH_SEEN_KEY, JSON.stringify(plan.wishSeen));
+    if (plan.prizeDay) keep(WISH_PRIZE_KEY, plan.prizeDay);
+  });
 }
 
 async function pullProfile() {
@@ -1426,15 +1709,18 @@ async function enter({ nick, color, species }) {
     };
     setTimeout(hello, 2500);
   }
-  setTimeout(() => { if (!shower) startShower(bucketKey(), true); }, 15000);
+  setTimeout(() => { if (!shower && !ui.isNewbie?.()) startShower(bucketKey(), true); }, 15000);
   let ready = false;
   try { ready = await netReady; } catch { ready = false; }
+  // Once, after the guest token exists: my wish today, hearts left, hearts given (and the linked wish).
+  wishBoot = loadWishes(WISH_ID, true).catch(() => state.wish);
   if (ready === false) { ui.setStatus('혼자 걷는 중', 'off'); return; }
   try {
     await net.join('square', world.netState());
     bindTake();
-    showAwayInbox();
+    showAway();
     joinTribeLink();
+    ui.resendPush?.();
     if (!queuePos) ui.setStatus(net.status === 'online' ? '실시간 연결됨' : '광장 연결 중', net.status === 'online' ? 'ok' : 'warn');
   } catch { ui.setStatus('혼자 걷는 중', 'off'); }
 }

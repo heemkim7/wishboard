@@ -16,10 +16,30 @@ self.addEventListener('activate', (event) => {
   })());
 });
 
+// Payload { title?, body, url? } (older pushes carry only body; a non-JSON payload is shown as its text). url is same-origin only, default '/'.
+function sameOriginPath(u) {
+  try { const x = new URL(String(u || '/'), self.location.origin); return x.origin === self.location.origin ? x.pathname + x.search + x.hash : '/'; } catch { return '/'; }
+}
 self.addEventListener('push', (event) => {
-  let body = '';
-  try { body = event.data ? (event.data.json().body || '') : ''; } catch { try { body = event.data ? event.data.text() : ''; } catch { body = ''; } }
-  event.waitUntil(self.registration.showNotification('모두의 전광판', { body: String(body || '') }));
+  let d = {};
+  try { d = event.data ? event.data.json() : {}; } catch { try { d = { body: event.data ? event.data.text() : '' }; } catch { d = {}; } }
+  if (!d || typeof d !== 'object') d = { body: String(d ?? '') };
+  event.waitUntil(self.registration.showNotification(String(d.title || '') || '모두의 전광판', { body: String(d.body || ''), data: { url: sameOriginPath(d.url) } }));
+});
+
+// Click: bring an open game tab (path / or /index.html, never admin.html or a share page) there with navigate + focus, else open a new one.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = sameOriginPath(event.notification.data && event.notification.data.url);
+  event.waitUntil((async () => {
+    const list = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of list) {
+      let same = false; try { const x = new URL(c.url); same = x.origin === self.location.origin && (x.pathname === '/' || x.pathname === '/index.html'); } catch { same = false; }
+      if (!same) continue;
+      try { const n = 'navigate' in c ? await c.navigate(url) : c; return (n || c).focus(); } catch { /* not controlled by this worker: open a window instead */ }
+    }
+    return self.clients.openWindow(url);
+  })());
 });
 
 self.addEventListener('fetch', (event) => {

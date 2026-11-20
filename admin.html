@@ -85,6 +85,13 @@
     <button id="down" class="no" type="button">전광판 내리기</button>
   </div>
   <div class="msg" id="modMsg"></div>
+  <h2>🌠 소원 <button id="wishLoad" type="button">새로고침</button></h2>
+  <p class="sub">한국 시간 하루의 소원을 가려진 것까지 최근 것부터 200개 보여 줍니다. 신고 수는 신고한 IP 망 수이고, 3곳이 되면 저절로 가려집니다. 가린 소원은 목록·전광판·공유 페이지에서 빠지고 상금도 받지 않습니다. 되살리면 다시 보입니다.</p>
+  <div class="bar">
+    <input id="wishDay" type="date" />
+  </div>
+  <div class="msg" id="wishMsg"></div>
+  <div class="hits" id="wishes"></div>
   <h2>📅 운영 달력</h2>
   <p class="sub">오늘(한국 시간)과 겹치는 한 줄이 광장에 나갑니다. 문구는 80자까지이고, 주제는 다섯 가지 중 하나입니다. 12월 31일 카운트다운도 이 폼으로만 넣습니다.</p>
   <div class="bar">
@@ -273,7 +280,48 @@ $('down').onclick = async () => {
   } catch (e) { modNote(e.message, true); }
   $('down').disabled = false;
 };
-$('save').onclick = () => { key = $('key').value.trim(); sessionStorage.setItem('kts-admin', key); load(); loadStats(); loadModeration(); };
+// 오늘의 소원: GET /rt/admin/wishes?day= (hidden ones included), hide / unhide through POST /rt/admin/wish. User text goes in with textContent only.
+const kstToday = () => new Date(Date.now() + 9 * 36e5).toISOString().slice(0, 10);
+$('wishDay').value = kstToday();
+function wishNote(text, err) { $('wishMsg').textContent = text || ''; $('wishMsg').className = err ? 'msg err' : 'msg'; }
+async function hideWish(id, hide, btn) {
+  btn.disabled = true;
+  try {
+    const r = await api('/rt/admin/wish', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, hide }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.ok === false) throw new Error(d.code === 'locked' ? '되살릴 수 없는 소원이에요' : '처리하지 못했어요');
+    wishNote(hide ? '소원을 가렸어요.' : '소원을 되살렸어요.');
+    loadWishes();
+  } catch (e) { wishNote(e.message, true); btn.disabled = false; }
+}
+async function loadWishes() {
+  if (!key) { wishNote(''); $('wishes').replaceChildren(); return; }
+  const day = $('wishDay').value || kstToday();
+  wishNote('불러오는 중…');
+  try {
+    const r = await api('/rt/admin/wishes?day=' + encodeURIComponent(day));
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) throw new Error('소원 목록을 불러오지 못했어요.');
+    const list = d.wishes || [];
+    $('wishes').replaceChildren(...(list.length ? list.map((w) => {
+      const el = document.createElement('div'); el.className = 'hit';
+      const txt = document.createElement('b'); txt.textContent = w.txt || '(글 없음)';
+      el.append(txt);
+      for (const t of [w.nick || '(이름 없음)', `♥ ${Number(w.hearts) || 0}`, `신고 ${Number(w.reports) || 0}곳`, new Date(Number(w.at) || 0).toLocaleTimeString('ko-KR'), w.gone ? '되살릴 수 없음(탈퇴·계정 연결)' : w.hidden ? '가려짐' : '보임']) {
+        const s = document.createElement('span'); s.textContent = t; el.append(s);
+      }
+      if (w.gone) return el; // withdrawn or a merge duplicate: no button
+      const btn = document.createElement('button'); btn.type = 'button'; btn.className = w.hidden ? 'ok' : 'no'; btn.textContent = w.hidden ? '되살리기' : '가리기';
+      btn.onclick = () => hideWish(w.id, !w.hidden, btn);
+      el.append(btn);
+      return el;
+    }) : [emptyNote('이 날 올라온 소원이 없어요')]));
+    wishNote(list.length ? `${d.day} · ${list.length}개` : '');
+  } catch (e) { wishNote(e.message, true); }
+}
+$('wishLoad').onclick = loadWishes;
+$('wishDay').onchange = loadWishes;
+$('save').onclick = () => { key = $('key').value.trim(); sessionStorage.setItem('kts-admin', key); load(); loadStats(); loadModeration(); loadWishes(); };
 function opsNote(text, err) { $('opsMsg').textContent = text || ''; $('opsMsg').className = err ? 'msg err' : 'msg'; }
 $('opsSave').onclick = async () => {
   key = $('key').value.trim();
@@ -318,6 +366,7 @@ renderTabs();
 load();
 loadStats();
 loadModeration();
+loadWishes();
 setInterval(() => { if (key && tab === 'pending' && !document.hidden) load(); }, 30000);
 </script>
 </body>

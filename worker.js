@@ -9,6 +9,7 @@ import { BALANCE, slotName, SLOT_IDS, PAY, scaledPay, bakeBase, danceBase, fareP
 import { nextBallUntil, drawSpan } from './live.js';
 import { CHEER_PHRASES, EVENT_NAMES, allowedLink, blockedText, parseGuestHandover, statsFromCounts } from './plaza-account.js';
 import { renderCardPng } from './cardpng.js';
+import { WISH, WISH_ERR, cleanWish, cleanNick, wishFault, wishNickFault, ipNet, rankWishes, prizeFor, boardMix, wishShareText } from './wish.js';
 import { ghostPacket } from './ts3d/walkers.js';
 // v16 cost pass: ping 25s (client) / STALE 75s, idle scan alarm 60s, meter report 60s, compact pos ('p'/'P'), nearby fanout, event ring + world cache, HMAC guest tokens.
 const CAP = 50, MEM = 0.125, LEAN = 0.8, HARD = 0.95, STALE = 75000, SCAN = 5000, IDLE_SCAN = 60000, REP = 60000;
@@ -61,6 +62,7 @@ const MOVE_N = 8, MOVE_MS = 30000; // room moves per account: 8 in a row (a full
 const RELAY = ['take', 'react', 'jump'], RELAY_N = 30, RELAY_MS = 10000; // client broadcasts the game uses, numbers only; 30 per 10 s per socket
 const EV_STEP = { page_landing: 1, enter_square: 2, first_coin: 4, board_claim: 8 }, EV_RET = [1, 7, 30], EV_KEEP = 14;
 // Once-only and per-day gates per account: (uid, k, d) -> count, d = KST day or '' for ever. Counts only grow, so copies merge by max.
+const PS_MAX = 50000, PS_TTL = 60 * 864e5; // immediate-push subscriptions kept in the 'push' instance, and how long one lives without a re-subscribe
 const AG = 'create table if not exists ag(uid text, k text, d text, v integer not null, primary key(uid, k, d))';
 const agGet = (q, uid, k, d) => { const r = q.exec('select v from ag where uid = ? and k = ? and d = ?', uid, k, d).toArray()[0]; return r ? Number(r.v) : 0; };
 const agPut = (q, uid, k, d, v) => { q.exec('insert into ag(uid, k, d, v) values(?, ?, ?, ?) on conflict(uid, k, d) do update set v = max(v, excluded.v)', uid, k, d, v); };
@@ -82,9 +84,51 @@ export class Meter extends DurableObject {
   pushAdd(e) { this.grpInit(); const q = this.ctx.storage.sql; const n = q.exec('select count(*) as n from ps').one().n; if (n >= 20000) return { full: 1 }; q.exec('insert or ignore into ps(e, at) values(?,?)', e, Date.now()); return { ok: 1 }; }
   pushDel(e) { this.grpInit(); this.ctx.storage.sql.exec('delete from ps where e = ?', e); return { ok: 1 }; }
   pushBatch(n, tag) { this.grpInit(); const q = this.ctx.storage.sql; const r = [...q.exec('select e from ps where sent < ? order by sent asc limit ?', tag, n)].map(x => x.e); for (const e of r) q.exec('update ps set sent = ? where e = ?', tag, e); return r; }
-  snapInit() { if (this.sp) return; this.sp = 1; this.ctx.storage.sql.exec('create table if not exists snap(id text primary key, jpeg blob, at integer)'); }
-  snapPut(id, bytes) { this.snapInit(); const q = this.ctx.storage.sql; q.exec('insert into snap values(?,?,?)', id, bytes, Date.now()); q.exec('delete from snap where at < ?', Date.now() - 7 * 86400000); const n = Number(q.exec('select count(*) n from snap').one().n) || 0; if (n > 400) q.exec('delete from snap where id in (select id from snap order by at asc limit ?)', n - 300); return { ok: true }; }
+  // snx (new table, snap itself is older): what a snapshot was taken of, k 'slot' | 'wish', the validated id, and u the uploader (the holder / author
+  // the Worker checked). u never leaves the Worker. Pruned with snap.
+  snapInit() { if (this.sp) return; this.sp = 1; const q = this.ctx.storage.sql; q.exec('create table if not exists snap(id text primary key, jpeg blob, at integer)');
+    q.exec("create table if not exists snx(id text primary key, k text not null, r text not null, u text not null default '', at integer not null)");
+    try { q.exec("alter table snx add column u text not null default ''"); } catch { /* column already exists */ } q.exec('create index if not exists snx_kr on snx(k, r, u, at)'); }
+  snapPut(id, bytes, k = '', r = '', u = '') { this.snapInit(); const q = this.ctx.storage.sql; q.exec('insert into snap values(?,?,?)', id, bytes, Date.now()); if (k && r && u) q.exec('insert or replace into snx(id, k, r, u, at) values(?, ?, ?, ?, ?)', id, String(k), String(r), String(u), Date.now());
+    q.exec('delete from snap where at < ?', Date.now() - 7 * 86400000); const n = Number(q.exec('select count(*) n from snap').one().n) || 0; if (n > 400) q.exec('delete from snap where id in (select id from snap order by at asc limit ?)', n - 300);
+    q.exec('delete from snx where id not in (select id from snap)'); return { ok: true }; }
   snapGet(id) { this.snapInit(); const row = this.ctx.storage.sql.exec('select jpeg from snap where id = ?', id).toArray()[0]; return row?.jpeg || null; }
+  // null = no such snapshot (or pruned); otherwise its context, { k: '', r: '' } when it was uploaded without one.
+  snapCtx(id) { this.snapInit(); const q = this.ctx.storage.sql; if (!q.exec('select id from snap where id = ?', String(id || '')).toArray()[0]) return null;
+    const x = q.exec('select k, r, u from snx where id = ?', String(id)).toArray()[0]; return { k: String(x?.k || ''), r: String(x?.r || ''), u: String(x?.u || '') }; }
+  // Newest snapshot of (k, r) uploaded by u (the board's current holder / the wish's author), so a takeover never previews the old holder's shot.
+  // Account merge: the guest's shots now belong to the user id that merge_guest_account moved its boards to.
+  snapMove(from, to) { this.snapInit(); const f = String(from || ''), t = String(to || ''); if (!f || !t || f === t) return { ok: false }; this.ctx.storage.sql.exec('update snx set u = ? where u = ?', t, f); return { ok: true }; }
+  // Account withdrawal: every shot recorded as this account's upload goes, image and context. A shot stored without an uploader (no context) cannot be
+  // attributed and stays until the 7-day prune.
+  snapForget(uid) { this.snapInit(); const u = String(uid || ''); if (!u) return { ok: false }; const q = this.ctx.storage.sql;
+    q.exec('delete from snap where id in (select id from snx where u = ?)', u); q.exec('delete from snx where u = ?', u); return { ok: true }; }
+  snapFor(k, r, u) { this.snapInit(); if (!u) return null; const x = this.ctx.storage.sql.exec('select x.id from snx x join snap s on s.id = x.id where x.k = ? and x.r = ? and x.u = ? order by x.at desc limit 1', String(k), String(r), String(u)).toArray()[0]; return x ? String(x.id) : null; }
+  // Immediate push (instance 'push', new tables). pss: up to 3 subscriptions per actor, keyed by endpoint (a browser belongs to its latest subscriber).
+  // psg: last notice per (actor, kind), the minimum gap. Endpoints and actor ids never leave the Worker.
+  psInit() { if (this.pi) return; this.pi = 1; const q = this.ctx.storage.sql;
+    q.exec('create table if not exists pss(e text primary key, uid text not null, p text not null, a text not null, at integer not null)'); q.exec('create index if not exists pss_u on pss(uid, at)'); q.exec('create index if not exists pss_at on pss(at)');
+    q.exec('create table if not exists psg(uid text, k text, at integer not null, primary key(uid, k))'); }
+  psTrim(uid) { const q = this.ctx.storage.sql; q.exec('delete from pss where uid = ? and e not in (select e from pss where uid = ? order by at desc, e desc limit 3)', uid, uid); }
+  // Rows not (re)subscribed for PS_TTL go first (a live browser re-sends its subscription each session, which refreshes at). Then, full (PS_MAX rows):
+  // a new endpoint is refused rather than evicting other actors' rows; an endpoint already stored may still update.
+  psAdd(uid, e, p, a) { this.psInit(); const q = this.ctx.storage.sql, u = String(uid || ''); if (!u) return { ok: false };
+    q.exec('delete from pss where at < ?', Date.now() - PS_TTL);
+    if (!q.exec('select e from pss where e = ?', String(e)).toArray()[0] && (Number(q.exec('select count(*) n from pss').one().n) || 0) >= PS_MAX) return { ok: false, full: true };
+    q.exec('insert into pss(e, uid, p, a, at) values(?, ?, ?, ?, ?) on conflict(e) do update set uid = excluded.uid, p = excluded.p, a = excluded.a, at = excluded.at', String(e), u, String(p), String(a), Date.now()); this.psTrim(u);
+    return { ok: true }; }
+  psDel(uid, e) { this.psInit(); this.ctx.storage.sql.exec('delete from pss where e = ? and uid = ?', String(e), String(uid || '')); return { ok: true }; }
+  psDrop(e) { this.psInit(); this.ctx.storage.sql.exec('delete from pss where e = ?', String(e)); return { ok: true }; }
+  psMove(from, to) { this.psInit(); const f = String(from || ''), t = String(to || ''); if (!f || !t || f === t) return { ok: false }; this.ctx.storage.sql.exec('update pss set uid = ? where uid = ?', t, f); this.psTrim(t); return { ok: true }; }
+  // Account withdrawal: its subscriptions and notice gaps go. e: the endpoints removed, for the Worker to drop the Supabase copies (never sent on).
+  psForget(uid) { this.psInit(); const u = String(uid || ''); if (!u) return { ok: false, e: [] }; const q = this.ctx.storage.sql, e = q.exec('select e from pss where uid = ?', u).toArray().map(r => String(r.e));
+    q.exec('delete from pss where uid = ?', u); q.exec('delete from psg where uid = ?', u); return { ok: true, e }; }
+  // The actor's subscriptions if a notice of this kind may go now (and that notice is recorded), else []. No subscription records nothing.
+  psDue(uid, k, gap, now = Date.now()) { this.psInit(); const q = this.ctx.storage.sql, u = String(uid || ''), kind = String(k || '');
+    const subs = q.exec('select e, p, a from pss where uid = ? order by at desc limit 3', u).toArray(); if (!subs.length) return [];
+    const g = q.exec('select at from psg where uid = ? and k = ?', u, kind).toArray()[0]; if (g && now - Number(g.at) < gap) return [];
+    q.exec('insert into psg(uid, k, at) values(?, ?, ?) on conflict(uid, k) do update set at = excluded.at', u, kind, now); if (Math.random() < 0.02) q.exec('delete from psg where at < ?', now - 864e5);
+    return subs.map(r => ({ endpoint: String(r.e), p256dh: String(r.p), auth: String(r.a) })); }
   // Account registry (instance 'acct'). An account sits in one room at a time. A room asks here only when the account is not already seated with it,
   // so there is no request per message. Moving closes the account's sockets in the old room, settles its pending coins and carries its once/daily
   // gates over (copies merge by max), so opening more topics or sockets never multiplies a limit.
@@ -102,6 +146,9 @@ export class Meter extends DurableObject {
       s = { n, fl: Date.now() }; q.exec('update seat set room = ?, n = ?, fl = ?, mv = ?, mt = ? where uid = ?', room, n, s.fl, left - 1, mt, uid); }
     this.visit(uid, day); if (Math.random() < 0.02) q.exec("delete from ag where d <> '' and d < ?", dayShift(day, -2));
     return { n: Number(s.n), fl: Number(s.fl), gates: agAll(q, uid) }; }
+  // Rooms that seat an account seen on this KST day or the one before (vis), for the wish fan-out. A seat row stays after its sockets close, so this
+  // over-counts a little, never under-counts a connected account.
+  liveRooms(day) { this.acInit(); return this.ctx.storage.sql.exec('select distinct room from seat where uid in (select uid from vis where d >= ?)', dayShift(day, -1)).toArray().map(r => String(r.room)); }
   roomOf(uid) { this.acInit(); return String(this.ctx.storage.sql.exec('select room from seat where uid = ?', uid).toArray()[0]?.room || ''); }
   // Profile for the next 5 minutes. Entry reads Supabase once; messages do not.
   profileOf(uid) {
@@ -137,6 +184,8 @@ export class Meter extends DurableObject {
   // A linked guest keeps its history: its sessions count as the user, and the user inherits the guest's first-seen day.
   evAlias(guest, user) { this.evInit(); const q = this.ctx.storage.sql; q.exec('insert or replace into alias(guest, user) values(?, ?)', guest, user);
     const d0 = q.exec('select d0 from seen where uid = ?', guest).toArray()[0]?.d0; if (d0) q.exec('insert into seen(uid, d0) values(?, ?) on conflict(uid) do update set d0 = min(d0, excluded.d0)', user, d0); return { ok: 1 }; }
+  // Guests linked to this user (account withdrawal clears what they left in the other instances).
+  evGuests(user) { this.evInit(); return this.ctx.storage.sql.exec('select guest from alias where user = ?', String(user || '')).toArray().map(r => String(r.guest)); }
   // One day's rows (ids lo..hi) -> summary. A session is a tab (sid) and belongs to the last account it reported; a visitor is an account.
   // funnel = [landing, enter, first coin, claim] over visitors plus account-less sessions; funnel_new = the same over accounts first seen that day.
   evSum(day, lo, hi) { const q = this.ctx.storage.sql, S = new Map(), events = {};
@@ -187,6 +236,116 @@ export class Meter extends DurableObject {
   cardPut(key, bytes) { this.cardInit(); const png = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []); if (png.byteLength > 40000) return { ok: false };
     const q = this.ctx.storage.sql, k = String(key || ''); if (!q.exec('select k from cards where k = ?', k).toArray()[0]) { const n = Number(q.exec('select count(*) n from cards').one().n) || 0; if (n >= 61) q.exec('delete from cards where k in (select k from cards order by at asc limit ?)', n - 60); }
     q.exec('insert into cards(k, png, at) values(?, ?, ?) on conflict(k) do update set png = excluded.png, at = excluded.at', k, png, Date.now()); return { ok: true }; }
+  // 오늘의 소원 (instance 'wish'). One line per account per KST day (a few spaced edits while it has no hearts); hearts per actor per day and per IP net per
+  // wish; reports hide at WISH.reportHide distinct IP nets. wst keeps each settled day's winners (JSON). A winner is marked paid when it is handed out for
+  // payment and un-marked only on a clear refusal, so a prize is paid at most once. uid never leaves this object except to settlement, to the
+  // Worker's heart push (wHeart's au) and to its snapshot checks (wAuthor), and never reaches an HTTP response.
+  wInit() { if (this.wi) return; this.wi = 1; const q = this.ctx.storage.sql;
+    q.exec('create table if not exists wsh(id text primary key, day text not null, uid text not null, nick text, txt text, at integer, et integer, ed integer not null default 0, hearts integer not null default 0, rep integer not null default 0, hid integer not null default 0, unique(day, uid))');
+    q.exec('create index if not exists wsh_d on wsh(day, hid, hearts)'); q.exec('create table if not exists wht(wid text, uid text, day text, primary key(wid, uid))'); q.exec('create index if not exists wht_u on wht(uid, day)');
+    q.exec('create table if not exists wip(day text, wid text, ip text, n integer not null, primary key(day, wid, ip))'); q.exec('create table if not exists wrp(wid text, uid text, ip text, primary key(wid, uid))');
+    q.exec('create table if not exists wst(day text primary key, j text not null)'); q.exec('create table if not exists wpi(day text, ip text, n integer not null, primary key(day, ip))'); // fresh wishes per IP net per day
+    // An earlier build made wsh without et/ed and wrp without ip; create-if-not-exists keeps that shape, so add the columns (an existing column throws).
+    for (const s of ['alter table wsh add column et integer', 'alter table wsh add column ed integer not null default 0', 'alter table wrp add column ip text', 'alter table wsh add column dup integer not null default 0']) { try { q.exec(s); } catch { /* column already exists */ } } }
+  wRow(id) { this.wInit(); return this.ctx.storage.sql.exec('select * from wsh where id = ?', String(id || '')).toArray()[0] || null; }
+  wPub(r, uid = '', rank = 0) { const o = { id: String(r.id), day: String(r.day), nick: String(r.nick || ''), txt: String(r.txt || ''), hearts: Number(r.hearts) || 0, at: Number(r.at) || 0, mine: !!uid && r.uid === uid }; if (rank) o.rank = rank; if (r.hid) o.hidden = true; return o; }
+  wRank(r) { return 1 + (Number(this.ctx.storage.sql.exec('select count(*) n from wsh where day = ? and hid = 0 and (hearts > ? or (hearts = ? and (at < ? or (at = ? and id < ?))))', r.day, r.hearts, r.hearts, r.at, r.at, r.id).one().n) || 0); }
+  wTop(day, n) { return rankWishes(this.ctx.storage.sql.exec('select * from wsh where day = ? and hid = 0 order by hearts desc, at asc, id asc limit ?', day, n).toArray()); }
+  wNew(day, n) { return this.ctx.storage.sql.exec('select * from wsh where day = ? and hid = 0 order by at desc, id desc limit ?', day, n).toArray(); }
+  wUsed(uid, day) { return Number(this.ctx.storage.sql.exec('select count(*) n from wht where uid = ? and day = ?', uid, day).one().n) || 0; }
+  wIps(wid) { return Number(this.ctx.storage.sql.exec('select count(distinct ip) n from wip where wid = ?', wid).one().n) || 0; }
+  // ip: the hashed IP net; a fresh wish (not an edit) counts against WISH.ipPostsPerDay for it. No ip (direct calls) counts nothing.
+  wPost(uid, nick, txt, day, now, ip = '') { this.wInit(); const q = this.ctx.storage.sql, cur = q.exec('select * from wsh where day = ? and uid = ?', day, uid).toArray()[0], t = Math.floor(Number(now) || Date.now());
+    if (cur) { if (cur.hid) return { ok: false, error: 'hidden' }; if (Number(cur.hearts) > 0) return { ok: false, error: 'already' }; if (Number(cur.ed) >= WISH.editsPerDay) return { ok: false, error: 'edits' };
+      if (t - (Number(cur.et) || Number(cur.at) || 0) < WISH.editGapMs) return { ok: false, error: 'soon' };
+      q.exec('update wsh set txt = ?, nick = ?, ed = ed + 1, et = ? where id = ?', txt, nick, t, cur.id); return { ok: true, wish: this.wPub(this.wRow(cur.id), uid), fresh: false }; }
+    const ipk = String(ip || '').slice(0, 16); if (ipk && (Number(q.exec('select n from wpi where day = ? and ip = ?', day, ipk).toArray()[0]?.n) || 0) >= WISH.ipPostsPerDay) return { ok: false, error: 'ipposts' };
+    const b = crypto.getRandomValues(new Uint8Array(10)); let id = ''; for (const x of b) id += (x % 36).toString(36);
+    q.exec('insert into wsh(id, day, uid, nick, txt, at, et) values(?, ?, ?, ?, ?, ?, ?)', id, day, uid, nick, txt, t, t);
+    if (ipk) q.exec('insert into wpi(day, ip, n) values(?, ?, 1) on conflict(day, ip) do update set n = n + 1', day, ipk); return { ok: true, wish: this.wPub(this.wRow(id), uid), fresh: true }; }
+  wHeart(uid, wid, ip, day) { const q = this.ctx.storage.sql, w = this.wRow(wid);
+    if (!w || w.hid) return { ok: false, error: 'gone' }; if (w.day !== day) return { ok: false, error: 'closed' }; if (w.uid === uid) return { ok: false, error: 'own' };
+    if (q.exec('select wid from wht where wid = ? and uid = ?', w.id, uid).toArray()[0]) return { ok: false, error: 'dup' };
+    const used = this.wUsed(uid, day); if (used >= WISH.heartsPerDay) return { ok: false, error: 'limit' };
+    const ipk = String(ip || 'x').slice(0, 16), n = Number(q.exec('select n from wip where day = ? and wid = ? and ip = ?', day, w.id, ipk).toArray()[0]?.n) || 0; if (n >= WISH.ipHeartsPerWish) return { ok: false, error: 'ip' };
+    q.exec('insert into wht(wid, uid, day) values(?, ?, ?)', w.id, uid, day); q.exec('insert into wip(day, wid, ip, n) values(?, ?, ?, 1) on conflict(day, wid, ip) do update set n = n + 1', day, w.id, ipk);
+    q.exec('update wsh set hearts = hearts + 1 where id = ?', w.id); return { ok: true, hearts: Number(w.hearts) + 1, left: WISH.heartsPerDay - used - 1, au: String(w.uid) }; } // au: the author, for the Worker's push only
+  // What settlement picks for a day: the top three by hearts, each with a prize only if prizeFor(rank, hearts, distinct IP nets) gives one.
+  wPick(day) { return this.wTop(day, 3).map(r => ({ r, prize: prizeFor(r.rank, r.hearts, this.wIps(r.id)) })).filter(x => x.prize > 0)
+    .map(({ r, prize }) => ({ id: String(r.id), uid: String(r.uid), nick: String(r.nick || ''), txt: String(r.txt || ''), hearts: Number(r.hearts) || 0, rank: r.rank, prize, paid: 0, tries: 0, at: 0 })); }
+  // Stored winners of a settled day, or (not settled yet) what settlement would pick. Either way only wishes visible now: a later hide drops that winner.
+  // Ranks are kept as settled, so a hidden first place leaves no king that day.
+  wWin(day) { const row = this.ctx.storage.sql.exec('select j from wst where day = ?', day).toArray()[0]; let list = [];
+    if (row) { try { list = JSON.parse(row.j); } catch { list = []; } } else list = this.wPick(day);
+    return list.filter(w => { const r = this.wRow(w.id); return r && !r.hid; }); }
+  wList(day, uid = '') { this.wInit(); const q = this.ctx.storage.sql, top = this.wTop(day, WISH.topMax), rk = new Map(top.map(r => [r.id, r.rank]));
+    const me = uid ? q.exec('select * from wsh where day = ? and uid = ?', day, uid).toArray()[0] : null;
+    return { day, count: Number(q.exec('select count(*) n from wsh where day = ? and hid = 0', day).one().n) || 0, top: top.map(r => this.wPub(r, uid, r.rank)), recent: this.wNew(day, WISH.recentMax).map(r => this.wPub(r, uid, rk.get(r.id) || 0)),
+      mine: me ? this.wPub(me, uid, me.hid ? 0 : this.wRank(me)) : null, left: uid ? Math.max(0, WISH.heartsPerDay - this.wUsed(uid, day)) : 0,
+      given: uid ? q.exec('select wid from wht where uid = ? and day = ?', uid, day).toArray().map(r => String(r.wid)) : [],
+      yesterday: this.wWin(dayShift(day, -1)).map(w => ({ id: w.id, rank: w.rank, nick: w.nick, txt: w.txt, hearts: w.hearts, prize: w.prize, mine: !!uid && w.uid === uid })) }; }
+  wOne(wid, uid = '') { const r = this.wRow(wid); return r && !r.hid ? this.wPub(r, uid, this.wRank(r)) : null; }
+  // The author of a visible wish, for the Worker's snapshot checks only ('' when missing or hidden). Never sent to a client.
+  wAuthor(wid) { const r = this.wRow(wid); return r && !r.hid ? String(r.uid) : ''; }
+  wBoard(day) { this.wInit(); const n = WISH.boardMax, top = this.wTop(day, n); let out = boardMix(top, this.wNew(day, n), n);
+    if (out.length < 6) out = boardMix(out, this.wTop(dayShift(day, -1), n), n);
+    return out.map(r => ({ id: String(r.id), nick: String(r.nick || ''), txt: String(r.txt || ''), hearts: Number(r.hearts) || 0 })); }
+  wWorld(day) { this.wInit(); const k = this.wWin(dayShift(day, -1)).find(w => w.rank === 1);
+    return { board: this.wBoard(day), king: k ? { nick: k.nick, txt: k.txt, hearts: k.hearts } : null, count: Number(this.ctx.storage.sql.exec('select count(*) n from wsh where day = ? and hid = 0', day).one().n) || 0 }; }
+  // One report per account per wish; the wish hides when reports come from WISH.reportHide distinct IP nets (fresh guests on one IP count once).
+  wReport(uid, wid, ip) { const q = this.ctx.storage.sql, w = this.wRow(wid); if (!w || w.hid) return { ok: false, error: 'gone' }; if (w.uid === uid) return { ok: false, error: 'own' };
+    if (q.exec('insert or ignore into wrp(wid, uid, ip) values(?, ?, ?)', w.id, uid, String(ip || 'x').slice(0, 16)).rowsWritten < 1) return { ok: true, hidden: false, dup: true };
+    const rep = Number(q.exec('select count(distinct ip) n from wrp where wid = ?', w.id).one().n) || 0, hid = rep >= WISH.reportHide ? 1 : 0;
+    q.exec('update wsh set rep = ?, hid = max(hid, ?) where id = ?', rep, hid, w.id); return { ok: true, hidden: !!hid }; }
+  // A forgotten wish (withdrawal, uid 'gone:') or a merge duplicate (dup) stays hidden: { ok:false, locked:true } on an unhide.
+  wHide(wid, hidden) { this.wInit(); const q = this.ctx.storage.sql, id = String(wid || '');
+    if (!hidden && q.exec("select 1 from wsh where id = ? and (dup = 1 or uid like 'gone:%')", id).toArray()[0]) return { ok: false, locked: true };
+    return { ok: q.exec('update wsh set hid = ? where id = ?', hidden ? 1 : 0, id).rowsWritten > 0 }; }
+  // Operator list of one day, hidden ones included: reports = distinct reporting IP nets, gone = can never be unhidden (withdrawn or merge duplicate).
+  // No uid, no IP hash.
+  wAdmin(day) { this.wInit(); return this.ctx.storage.sql.exec("select w.id, w.nick, w.txt, w.hearts, w.hid, w.at, (w.dup = 1 or w.uid like 'gone:%') gone, (select count(distinct ip) from wrp r where r.wid = w.id) reports from wsh w where w.day = ? order by w.at desc, w.id desc limit 200", String(day || '')).toArray()
+    .map(r => ({ id: String(r.id), nick: String(r.nick || ''), txt: String(r.txt || ''), hearts: Number(r.hearts) || 0, reports: Number(r.reports) || 0, hidden: !!r.hid, gone: !!r.gone, at: Number(r.at) || 0 })); }
+  // Stored winner lists (wst) rewritten by f(list) -> list; only changed days are written.
+  wStored(f) { const q = this.ctx.storage.sql; for (const r of q.exec('select day, j from wst').toArray()) { let list; try { list = JSON.parse(r.j); } catch { continue; } const j = JSON.stringify(f(list)); if (j !== r.j) q.exec('update wst set j = ? where day = ?', j, r.day); } }
+  // Account merge: the guest's wishes, hearts, reports and stored winner entries become the user's. One wish per day per actor: where the user already
+  // has that day's wish, the user's stays and the guest's is hidden for good (dup). A heart both gave to one wish, and a heart that would become a
+  // heart on one's own wish, is taken back (row gone, that wish's count one lower). Reports both filed on one wish stay as one row.
+  wMove(from, to) { this.wInit(); const q = this.ctx.storage.sql, f = String(from || ''), t = String(to || ''); if (!f || !t || f === t) return { ok: false };
+    const unheart = (uid, sel, ...a) => { for (const r of q.exec(sel, ...a).toArray()) { q.exec('update wsh set hearts = max(0, hearts - 1) where id = ?', r.wid); q.exec('delete from wht where wid = ? and uid = ?', r.wid, uid); } };
+    this.ctx.storage.transactionSync(() => {
+      unheart(f, 'select wid from wht where uid = ? and wid in (select wid from wht where uid = ?)', f, t); // both hearted it: the user's heart stays
+      q.exec('update or ignore wsh set uid = ? where uid = ?', t, f); q.exec('update wsh set hid = 1, dup = 1 where uid = ?', f);
+      q.exec('update or ignore wht set uid = ? where uid = ?', t, f); q.exec('delete from wht where uid = ?', f);
+      unheart(t, 'select wid from wht where uid = ? and wid in (select id from wsh where uid = ?)', t, t); // hearts on what is now the user's own wish
+      q.exec('update or ignore wrp set uid = ? where uid = ?', t, f); q.exec('delete from wrp where uid = ?', f);
+      this.wStored(list => list.map(w => w.uid === f ? { ...w, uid: t } : w)); });
+    return { ok: true }; }
+  // Account withdrawal: its wishes hidden for good and emptied (no uid, nick or text left, never listed or paid), its hearts taken back, its reports
+  // dropped (a wish already hidden by reports stays hidden), its stored winner entries removed.
+  wForget(uid) { this.wInit(); const q = this.ctx.storage.sql, u = String(uid || ''); if (!u) return { ok: false };
+    this.ctx.storage.transactionSync(() => {
+      q.exec("update wsh set uid = 'gone:' || id, nick = '', txt = '', hid = 1 where uid = ?", u);
+      q.exec('update wsh set hearts = max(0, hearts - 1) where id in (select wid from wht where uid = ?)', u); q.exec('delete from wht where uid = ?', u);
+      const reported = q.exec('select wid from wrp where uid = ?', u).toArray().map(r => String(r.wid)); q.exec('delete from wrp where uid = ?', u);
+      for (const wid of reported) q.exec('update wsh set rep = (select count(distinct ip) from wrp where wid = ?) where id = ?', wid, wid);
+      this.wStored(list => list.filter(w => w.uid !== u)); });
+    return { ok: true }; }
+  // Lazy settlement. Every day before `day` that still has rows (within keepDays) and no wst row is snapshotted, so a day nobody visited after is not lost.
+  // Then winners not yet handed out (visible now, under 5 attempts, 60 s apart) are returned AND marked paid in the same step: at most once even if the payer dies.
+  wSettle(day, now = Date.now()) { this.wInit(); const q = this.ctx.storage.sql, cut = dayShift(day, -WISH.keepDays);
+    if (this.wPr !== day) { this.wPr = day; q.exec('delete from wsh where day < ?', cut); q.exec('delete from wht where day < ?', cut); q.exec('delete from wip where day < ?', cut); q.exec('delete from wst where day < ?', cut); q.exec('delete from wpi where day < ?', cut);
+      q.exec('delete from wrp where wid not in (select id from wsh)'); }
+    for (const r of q.exec('select distinct day from wsh where day < ? and day >= ? and day not in (select day from wst) order by day', day, cut).toArray()) q.exec('insert or ignore into wst(day, j) values(?, ?)', r.day, JSON.stringify(this.wPick(String(r.day))));
+    const due = [];
+    for (const r of q.exec('select day, j from wst where day < ? order by day', day).toArray()) { let list = []; try { list = JSON.parse(r.j); } catch { continue; } let ch = 0;
+      for (const w of list) { if (w.paid || (w.tries || 0) >= 5 || now - (w.at || 0) < 60000) continue; const row = this.wRow(w.id); if (!row || row.hid) continue;
+        w.paid = 1; w.tries = (w.tries || 0) + 1; w.at = now; ch = 1; due.push({ day: String(r.day), id: w.id, uid: w.uid, rank: w.rank, prize: w.prize }); }
+      if (ch) q.exec('update wst set j = ? where day = ?', JSON.stringify(list), r.day); }
+    return due; }
+  // Supabase clearly said no (HTTP ok, data.ok === false: no wallet row yet): hand the winner out again later, attempts permitting.
+  wUnpay(day, wid) { this.wInit(); const q = this.ctx.storage.sql, r = q.exec('select j from wst where day = ?', day).toArray()[0]; if (!r) return { ok: false };
+    let list = []; try { list = JSON.parse(r.j); } catch { return { ok: false }; } const w = list.find(x => x.id === wid); if (!w) return { ok: false };
+    w.paid = 0; q.exec('update wst set j = ? where day = ?', JSON.stringify(list), day); return { ok: true }; }
 }
 
 export class Room extends DurableObject {
@@ -209,6 +368,7 @@ export class Room extends DurableObject {
     if (u.pathname === '/world') return this.httpWorld(req);
     if (u.pathname === '/sync') return this.httpSync(req);
     if (u.pathname === '/air') return this.httpAir(req);
+    if (u.pathname === '/wish') return this.httpWish(req);
     if (u.pathname === '/stk') return this.httpSticker(req);
     if (u.pathname === '/chr') return this.httpCheer(req);
     if (u.pathname === '/fever') return this.httpFever(req);
@@ -779,6 +939,10 @@ export class Room extends DurableObject {
     this.airShow = { nick, line, until };
     this.bc({ t: 'AIR', nick, line, until });
     return J({ ok: true }); }
+  // A new 오늘의 소원 for the boards in this room (from POST /rt/wish). Nothing is stored here; the next /rt/world carries it too.
+  async httpWish(req) { let m = null; try { m = await req.json(); } catch { return J({ err: 'json' }, 400); }
+    const w = m?.w, id = String(w?.id || ''); if (m?.t !== 'WISH' || !/^[0-9a-z]{10}$/.test(id)) return J({ err: 'wish' }, 400);
+    this.bc({ t: 'WISH', w: { id, nick: clip(w.nick, 16), txt: clip(w.txt, WISH.maxLen), hearts: Math.max(0, Math.floor(Number(w.hearts)) || 0) } }); return J({ ok: true }); }
   stkRead(slot) { this.tapDb(); const row = this.ctx.storage.sql.exec('select g from stk where slot = ?', slot).toArray()[0]; if (!row) return []; try { return stickerNext(JSON.parse(row.g), '', 'set'); } catch { return []; } }
   stkWrite(slot, list) { const q = this.ctx.storage.sql; if (!list.length) q.exec('delete from stk where slot = ?', slot); else q.exec('insert into stk(slot, g) values(?, ?) on conflict(slot) do update set g = excluded.g', slot, JSON.stringify(list)); }
   stkAll() { this.tapDb(); const out = []; for (const row of this.ctx.storage.sql.exec('select slot, g from stk').toArray()) { let list = []; try { list = stickerNext(JSON.parse(row.g), '', 'set'); } catch { list = []; } if (SLOT_RE.test(String(row.slot)) && list.length) out.push({ slot: String(row.slot), list }); } return out; }
@@ -931,9 +1095,9 @@ const dayShift = (day, n) => new Date(Date.parse(day) + n * 864e5).toISOString()
 const isoWeek = (t = Date.now()) => { const d = new Date(t + 9 * 36e5), w = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())), dn = (w.getUTCDay() + 6) % 7; w.setUTCDate(w.getUTCDate() - dn + 3); const y = w.getUTCFullYear(), f = new Date(Date.UTC(y, 0, 4)); return y + 'W' + String(1 + Math.round(((w - f) / 864e5 - 3 + ((f.getUTCDay() + 6) % 7)) / 7)).padStart(2, '0'); };
 const tribePoints = (mask) => { const m = Number(mask) || 0; return Math.min(7, (m & 1 ? 1 : 0) + (m & 2 ? 1 : 0) + (m & 4 ? 5 : 0)); };
 let VK = null;
-async function vapidAuth(env, endpoint) { if (!env.VAPID_PRIV) return null; if (!VK) VK = await crypto.subtle.importKey('jwk', JSON.parse(env.VAPID_PRIV), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+async function vapidAuth(env, endpoint) { if (!env.VAPID_PRIV) return null; if (!VK || VK.raw !== env.VAPID_PRIV) VK = { raw: env.VAPID_PRIV, k: await crypto.subtle.importKey('jwk', JSON.parse(env.VAPID_PRIV), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']) };
   const enc = o => b64e(new TextEncoder().encode(JSON.stringify(o))), h = enc({ typ: 'JWT', alg: 'ES256' }), p = enc({ aud: new URL(endpoint).origin, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: 'https://studio.wishboard.workers.dev' });
-  const g = new Uint8Array(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, VK, new TextEncoder().encode(h + '.' + p))); return `vapid t=${h}.${p}.${b64e(g)}, k=${VAPID_PUB}`; }
+  const g = new Uint8Array(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, VK.k, new TextEncoder().encode(h + '.' + p))); return `vapid t=${h}.${p}.${b64e(g)}, k=${VAPID_PUB}`; }
 function cat(...parts) { const n = parts.reduce((s, p) => s + p.length, 0), out = new Uint8Array(n); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; } return out; }
 async function hkdf(salt, ikm, info, len) {
   const key = await crypto.subtle.importKey('raw', salt, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
@@ -969,6 +1133,15 @@ function pushText(row) {
   if (row?.kind === 'gift') return `${name}님이 전광판을 선물했어요`;
   if (row?.kind === 'tribe') return '이번 주 소속 결과가 나왔어요';
   if (row?.kind === 'ball') return '21시 볼 드랍이 곧 시작돼요';
+  if (row?.kind === 'wish') { const n = Math.floor(Number(row.n)) || 0; return n <= 1 ? '내 소원에 첫 하트가 왔어요' : `내 소원이 하트 ${n}개를 받았어요`; }
+  if (row?.kind === 'wishwin') return `어제 소원이 ${Math.max(1, Math.floor(Number(row.rank)) || 1)}위였어요. +${Math.max(0, Math.floor(Number(row.prize)) || 0)}코인이 들어왔어요`;
+  return '';
+}
+// Where a notification click lands (same origin, validated ids only); '' leaves it to the service worker's default '/'.
+function pushUrl(row) {
+  const slot = String(row?.slot_id || ''), wid = String(row?.wid || '');
+  if (row?.kind === 'taken' && SLOT_RE.test(slot)) return '/?focus=' + slot;
+  if ((row?.kind === 'wish' || row?.kind === 'wishwin') && WISH_ID.test(wid)) return '/?wish=' + wid;
   return '';
 }
 function speciesOf(id) {
@@ -1141,6 +1314,18 @@ function queueTaken(env, ctx, victim, fromName, slotId) {
   if (!victim) return;
   const job = supabaseRpc('inbox_batch', { p_key: env.FLUSH_KEY || '', p_items: [{ kind: 'taken', slot_id: slotId, from_name: clip(fromName, 12), to: String(victim) }] }).catch(() => {});
   try { ctx?.waitUntil?.(job); } catch { /* the claim still stands */ }
+  pushNow(env, ctx, String(victim), { kind: 'taken', slot_id: String(slotId || ''), from_name: clip(fromName, 12) });
+}
+// Immediate web push without the cron. Subscriptions live in the Meter instance 'push' (filled by /rt/push), because Supabase push_subs cannot be read
+// per actor with the publishable key. One notice per (actor, kind) per PUSH_GAP; everything runs in waitUntil and never touches the triggering response.
+const PUSH_GAP = { taken: 60000, wish: 600000, wishwin: 60000 }, WISH_PUSH_AT = [1, 3, 5, 10, 20, 30, 50, 100];
+const pushM = env => env.METER.get(env.METER.idFromName('push'));
+function pushNow(env, ctx, actorId, note) {
+  if (!env?.VAPID_PRIV || !actorId || !PUSH_GAP[note?.kind]) return Promise.resolve();
+  const job = (async () => { const P = pushM(env), subs = await P.psDue(String(actorId), note.kind, PUSH_GAP[note.kind], Date.now());
+    if (Array.isArray(subs) && subs.length) await sendPushItems(env, subs.map(s => ({ ...note, endpoint: s.endpoint, p256dh: s.p256dh, auth: s.auth })), e => P.psDrop(e)); })().catch(() => { });
+  try { ctx?.waitUntil?.(job); } catch { /* the request already answered */ }
+  return job;
 }
 // Event properties: at most 6 short keys, numbers or strings up to 40 characters.
 function evProps(p) { const o = {}; let n = 0; if (p && typeof p === 'object') for (const [k, v] of Object.entries(p)) { if (n >= 6) break; if (!/^[a-z_]{1,16}$/.test(k)) continue;
@@ -1148,12 +1333,13 @@ function evProps(p) { const o = {}; let n = 0; if (p && typeof p === 'object') f
 // today = { visitors, wishes } for the boot screen comes from the account registry: one DO call per cache refill (15 s), never per request.
 async function readWorld(env) {
   const h = { apikey: ANON, accept: 'application/json' };
-  const [bs, ps, rs, tally, live] = await Promise.all([
+  const [bs, ps, rs, tally, live, wish] = await Promise.all([
     fetch(SUPA + '/rest/v1/billboards?select=*&slot_id=in.(' + SLOT_IDS.join(',') + ')&order=slot_id.asc', { headers: h }),
     fetch(SUPA + '/rest/v1/plots?select=*&order=plot_id.asc', { headers: h }),
     fetch(SUPA + '/rest/v1/wallets?select=actor_id, nickname, spent, linked&spent=gt.0&order=spent.desc&limit=20', { headers: h }),
     Promise.resolve().then(() => acct(env).tallyOf(kstDay())).catch(() => null),
     supabaseRpc('plaza_live', { p_key: env.FLUSH_KEY || '' }).catch(() => null),
+    Promise.resolve().then(() => wishM(env).wWorld(kstDay())).catch(() => null),
   ]);
   if (!bs.ok || !ps.ok) return { err: 'upstream ' + (bs.ok ? ps.status : bs.status) };
   const [billboards, plots, ranks] = await Promise.all([bs.json(), ps.json(), rs.ok ? rs.json() : null]);
@@ -1162,7 +1348,13 @@ async function readWorld(env) {
   const row = live?.ok && live.data && typeof live.data === 'object' ? live.data : null;
   if (row?.ops?.id) world.ops = { id: String(row.ops.id), theme: String(row.ops.theme || ''), title: String(row.ops.title || ''), copy: String(row.ops.copy || '') };
   if (row && typeof row.roof === 'string') world.roof = row.roof;
+  const ww = wishWorld(wish); if (ww.count || ww.board.length || ww.king) world.wish = ww; // left out while empty or failing: clients read a missing key as { board: [], king: null, count: 0 }
   return { body: JSON.stringify(world), world, ranked: Array.isArray(ranks) };
+}
+function wishWorld(v) {
+  const card = (w) => ({ nick: clip(w?.nick, 16), txt: clip(w?.txt, WISH.maxLen), hearts: Math.max(0, Math.floor(Number(w?.hearts)) || 0) });
+  try { return { board: (Array.isArray(v?.board) ? v.board : []).filter(w => WISH_ID.test(String(w?.id || ''))).slice(0, WISH.boardMax).map(w => ({ id: String(w.id), ...card(w) })), king: v?.king ? card(v.king) : null, count: Math.max(0, Math.floor(Number(v?.count)) || 0) }; }
+  catch { return { board: [], king: null, count: 0 }; }
 }
 async function invalidateWorld(env, ctx) {
   PC.delete('world');
@@ -1216,6 +1408,119 @@ async function promo(req, env, u) {
   if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || '코인을 넣지 못했습니다.' }, rpc.ok ? 400 : 502);
   PROMO.set(key, 1);
   return J({ ok: true, coins: data.coins, amount: 10000 });
+}
+// 오늘의 소원 HTTP. State lives in the Meter instance 'wish' (DO SQLite), never in Supabase; prizes go through grant_coins like promo().
+const wishM = env => env.METER.get(env.METER.idFromName('wish'));
+const WISH_ID = /^[0-9a-z]{10}$/, WISH_PATHS = new Set(['/rt/wishes', '/rt/wish', '/rt/wish/heart', '/rt/wish/report', '/rt/admin/wish', '/rt/admin/wishes']);
+const WISHC = { at: 0, day: '', v: null }; // anonymous list, 10 s per isolate; cleared on post / hide
+const WONE = new Map(); // single wish by id (share page, ?id=), 10 s per isolate, misses too
+let WSET = { day: '', at: 0, more: false }; // settlement: once per isolate per day, again every 60 s after a clear refusal
+let WFULL = 0; // last full world refill caused by a wish, so a burst of wishes refills at most once per 10 s per isolate
+let WLIVE = { at: 0, day: '', v: null }; // rooms with seated accounts (Meter 'acct' liveRooms), 30 s per isolate, for the fresh-wish fan-out
+// The shards of topic a fresh wish is sent to: the poster's own room, plus shards the seat registry says someone sits in. A failed lookup: own room only.
+async function wishRooms(env, topic) {
+  const day = kstDay(); let live = WLIVE.v;
+  if (!live || WLIVE.day !== day || Date.now() - WLIVE.at > 30000) { try { live = new Set(await acct(env).liveRooms(day)); WLIVE = { at: Date.now(), day, v: live }; } catch { live = null; } }
+  return squareTopics(topic).filter(name => name === topic || (live && live.has(name)));
+}
+// Wish limits count IP nets (IPv6 by /64). The shared ipHash stays as it is for the other features.
+async function wishIp(env, req) {
+  const dig = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(ipNet(req.headers.get('cf-connecting-ip') || '') + String(env.GUEST_KEY || ''))));
+  let hex = ''; for (const b of dig) hex += b.toString(16).padStart(2, '0'); return hex.slice(0, 16);
+}
+// With req, a cache miss first passes EVENT_RL (random ids must not reach the instance unthrottled): undefined = refused, null = no such wish.
+async function wishOne(env, id, req) {
+  const hit = WONE.get(id); if (hit && Date.now() - hit.at < 10000) return hit.v;
+  if (req && !(await rateOk(env.EVENT_RL, req))) return undefined;
+  const v = await wishM(env).wOne(id); if (WONE.size > 500) WONE.clear(); WONE.set(id, { at: Date.now(), v }); return v;
+}
+// At most once: wSettle marks a winner paid when it hands it out. Only Supabase's clear refusal (HTTP ok, data.ok === false, e.g. no wallet row yet)
+// un-marks it for a later attempt. A thrown fetch, a 5xx or a failed DO call leaves it marked, so a prize is never paid twice.
+function wishSettle(env, ctx, day) {
+  if (WSET.day === day && (!WSET.more || Date.now() - WSET.at < 60000)) return;
+  WSET = { day, at: Date.now(), more: false };
+  const job = (async () => { const M = wishM(env), due = await M.wSettle(day, Date.now()); let more = false;
+    for (const w of Array.isArray(due) ? due : []) {
+      try { const rpc = await supabaseRpc('grant_coins', { p_key: env.FLUSH_KEY || '', p_actor_id: w.uid, p_amount: w.prize });
+        if (rpc.ok && rpc.data && typeof rpc.data === 'object' && rpc.data.ok === false) { more = true; await M.wUnpay(w.day, w.id); }
+        else if (rpc.ok) await pushNow(env, ctx, w.uid, { kind: 'wishwin', rank: w.rank, prize: w.prize, wid: w.id }); } catch { /* unknown outcome: stays paid */ } }
+    if (WSET.day === day) WSET.more = more; })().catch(() => { if (WSET.day === day) WSET.more = true; }); // a failed run is tried again 60 s later (payment stays at most once)
+  try { ctx?.waitUntil?.(job); } catch { /* the next request retries */ }
+}
+// The list and single-wish copies always go. full = a wish appeared or disappeared: refill the world once per 10 s per isolate (that refill replaces the
+// isolate's world copy). An edit or a throttled change leaves the world copy alone: it shows with the next world read (15 s cache).
+function wishFresh(env, ctx, full, id) {
+  WISHC.at = 0; if (id) WONE.delete(id); if (!full) return;
+  try { if (Date.now() - WFULL >= 10000) { WFULL = Date.now(); ctx?.waitUntil?.(invalidateWorld(env, ctx).catch(() => null)); }
+    else ctx?.waitUntil?.(caches.default.delete(new Request(WORLD_CACHE)).catch(() => null)); } catch { }
+}
+const wishNo = (code, s = 400) => J({ ok: false, code, error: WISH_ERR[code] || WISH_ERR.down }, s);
+async function wishPage(req, env, u) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return new Response('method', { status: 405 });
+  const id = u.pathname.slice('/rt/w/'.length); let w = null;
+  if (WISH_ID.test(id)) { try { w = await wishOne(env, id, req); } catch { w = null; } }
+  if (!w) return Response.redirect(new URL('/', req.url).href, 302);
+  const s = wishShareText(w), dest = '/?wish=' + id, title = esc(s.title), desc = esc(w.txt), shot = await snapFor(env, 'wish', id, await wishAuthor(env, id)); // only the author's own shot
+  const html = '<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>' + title + '</title>'
+    + '<meta property="og:title" content="' + title + '">'
+    + '<meta property="og:description" content="' + desc + '">'
+    + '<meta property="og:image" content="' + esc(new URL(shot ? '/rt/snap/' + shot : '/og.jpg', req.url).href) + '">'
+    + '<meta property="og:url" content="' + esc(new URL('/rt/w/' + id, req.url).href) + '">'
+    + '<meta name="twitter:card" content="summary_large_image">'
+    + '<meta http-equiv="refresh" content="0;url=' + esc(dest) + '">'
+    + '<script>location.replace(' + JSON.stringify(dest) + ')</script>'
+    + '</head><body><p><a href="' + esc(dest) + '">타임스퀘어에서 이 소원 보기</a></p></body></html>';
+  return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=30' } });
+}
+async function wishApi(req, env, ctx, u) {
+  const day = kstDay(), M = wishM(env);
+  if (u.pathname === '/rt/wishes') {
+    if (req.method !== 'GET') return J({ err: 'get' }, 405);
+    wishSettle(env, ctx, day);
+    const tok = tokenOf(req), actor = tok ? await resolveActor(env, tok) : null, id = String(u.searchParams.get('id') || '');
+    if (actor && !(await rateOk(env.EVENT_RL, req))) return wishNo('rate', 429);
+    try { let v;
+      if (actor) v = await M.wList(day, actor.id);
+      else { if (WISHC.day !== day || !WISHC.v || Date.now() - WISHC.at > 10000) { WISHC.v = await M.wList(day, ''); WISHC.at = Date.now(); WISHC.day = day; } v = WISHC.v; }
+      if (WISH_ID.test(id)) { const f = await wishOne(env, id, actor ? null : req); if (f !== undefined) v = { ...v, focus: f ? { ...f, mine: !!(v.mine && v.mine.id === f.id) } : null }; } // undefined: rate refused, no focus
+      return J(v);
+    } catch { return J({ err: 'wish' }, 502); }
+  }
+  if (u.pathname === '/rt/admin/wishes') {
+    if (req.method !== 'GET') return J({ err: 'get' }, 405);
+    if (!adminOk(env, req)) return J({ err: 'admin' }, 401);
+    const d = String(u.searchParams.get('day') || ''), on = /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : day;
+    try { return J({ ok: true, day: on, wishes: await M.wAdmin(on) }); } catch { return J({ ok: false, err: 'wish' }, 502); }
+  }
+  if (req.method !== 'POST') return J({ err: 'post' }, 405);
+  try {
+    if (u.pathname === '/rt/admin/wish') {
+      if (!adminOk(env, req)) return J({ err: 'admin' }, 401);
+      const b = await readJson(req), id = String(b?.id || ''); if (!WISH_ID.test(id) || typeof b.hide !== 'boolean') return J({ ok: false, error: 'id' }, 400);
+      const r = await M.wHide(id, b.hide); if (r.locked) return J({ ok: false, code: 'locked', error: '되살릴 수 없는 소원이에요' }, 409);
+      if (r.ok) wishFresh(env, ctx, true, id); return J({ ok: !!r.ok }, r.ok ? 200 : 404);
+    }
+    if (!(await rateOk(env.EVENT_RL, req))) return wishNo('rate', 429);
+    const actor = await resolveActor(env, tokenOf(req)); if (!actor) return J({ err: 'auth', code: 'auth', error: WISH_ERR.auth }, 401);
+    const b = await readJson(req); if (!b) return J({ err: 'json' }, 400);
+    if (u.pathname === '/rt/wish') {
+      wishSettle(env, ctx, day);
+      const fault = wishFault(b.text); if (fault) return wishNo(fault);
+      const nick = cleanNick(b.nick ?? b.nickname ?? '') || '네온손님'; if (wishNickFault(nick)) return wishNo('nick');
+      const r = await M.wPost(actor.id, nick, cleanWish(b.text), day, Date.now(), await wishIp(env, req)); if (!r.ok) return wishNo(r.error || 'already', 409);
+      wishFresh(env, ctx, !!r.fresh, r.wish.id); // an edit (fresh false) reaches boards with the next world read; no refill, no fan-out
+      const topic = typeof b.topic === 'string' ? b.topic : '';
+      if (r.fresh && PLAZA_TOPICS.includes(topic)) { const body = JSON.stringify({ t: 'WISH', w: { id: r.wish.id, nick: r.wish.nick, txt: r.wish.txt, hearts: r.wish.hearts } });
+        ctx.waitUntil(wishRooms(env, topic).then(names => Promise.all(names.map(name => env.ROOM.get(env.ROOM.idFromName(name)).fetch(new Request('https://room.internal/wish', { method: 'POST', headers: { 'content-type': 'application/json' }, body })).catch(() => null)))).catch(() => null)); }
+      return J({ ok: true, wish: r.wish, fresh: !!r.fresh });
+    }
+    const id = String(b.id || ''); if (!WISH_ID.test(id)) return wishNo('gone');
+    if (u.pathname === '/rt/wish/heart') { const r = await M.wHeart(actor.id, id, await wishIp(env, req), day); if (!r.ok) return wishNo(r.error);
+      if (r.au && WISH_PUSH_AT.includes(r.hearts)) pushNow(env, ctx, r.au, { kind: 'wish', n: r.hearts, wid: id }); // r.au stays here: the response lists its fields
+      return J({ ok: true, hearts: r.hearts, left: r.left }); }
+    if (u.pathname === '/rt/wish/report') { const r = await M.wReport(actor.id, id, await wishIp(env, req)); if (!r.ok) return wishNo(r.error); if (r.hidden) wishFresh(env, ctx, true, id); return J({ ok: true, hidden: !!r.hidden }); }
+    return J({ err: 'path' }, 404);
+  } catch { return wishNo('down', 502); }
 }
 async function plaza(req, env, ctx, u) {
   if (u.pathname === '/rt/world') {
@@ -1808,8 +2113,10 @@ async function accountApi(req, env, ctx, u) {
     if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || '탈퇴를 처리하지 못했습니다.' }, rpc.ok ? 400 : 502);
     try { await fetch(SUPA + '/auth/v1/user', { method: 'DELETE', headers: { apikey: ANON, Authorization: 'Bearer ' + tokenOf(req) } }); } catch { }
     try { await invalidateWorld(env, ctx); } catch { }
+    // What the Worker keeps outside Supabase goes too (see forgetActor), before the rooms are told, so their refetch no longer shows the wish.
+    const gone = forgetActor(env, actor.id).catch(() => { }); ctx.waitUntil(gone);
     // The account's boards and plots were cleared in bulk: tell every room so connected clients refetch the world.
-    ctx.waitUntil(Promise.all(PLAZA_TOPICS.map(async t => { try { await env.ROOM.get(env.ROOM.idFromName(t)).fetch(new Request('https://room.internal/world', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"t":"WORLD_UPDATE"}' })); } catch { } })));
+    ctx.waitUntil(gone.then(() => Promise.all(PLAZA_TOPICS.map(async t => { try { await env.ROOM.get(env.ROOM.idFromName(t)).fetch(new Request('https://room.internal/world', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"t":"WORLD_UPDATE"}' })); } catch { } }))));
     return J({ ok: true });
   }
   const b = await readJson(req);
@@ -1823,7 +2130,21 @@ async function accountApi(req, env, ctx, u) {
   if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || '계정을 연결하지 못했습니다.' }, rpc.ok ? 400 : 502);
   try { await invalidateWorld(env, ctx); } catch { }
   ctx.waitUntil(Promise.resolve().then(() => env.METER.get(env.METER.idFromName('ev')).evAlias(guestId, actor.id)).catch(() => { })); // return and funnel numbers follow the person across the link
+  // Pushes to the user: id reach the guest's browsers, and the guest's board shots stay the holder's own (card page, share-page title).
+  // The guest's wish, hearts, reports and unpaid prizes become the user's (wMove), so mine, the one-wish-a-day rule and the prize follow the person.
+  ctx.waitUntil(Promise.resolve().then(() => Promise.all([pushM(env).psMove(guestId, actor.id), snapM(env).snapMove(guestId, actor.id).then(() => { SNX.clear(); SNC.clear(); }),
+    wishM(env).wMove(guestId, actor.id).then(() => { WISHC.at = 0; WONE.clear(); WAU.clear(); })])).catch(() => { }));
   return J({ ok: true, actor_id: actor.id, coins: data.coins, bonus: data.bonus || 0, linked: true, nickname: data.nickname || '' });
+}
+// Account withdrawal, outside Supabase: push subscriptions and gaps, wishes (hidden and emptied), hearts given, reports filed, and the uploader link of
+// snapshot contexts, for the user and for every guest linked to it (the 'ev' alias). Then this isolate's copies that could still show the wish.
+async function forgetActor(env, uid) {
+  let ids = [uid]; try { ids = ids.concat(await env.METER.get(env.METER.idFromName('ev')).evGuests(uid)); } catch { /* the user's own rows still go */ }
+  const dropSubs = async (id) => { const r = await pushM(env).psForget(id); // the Supabase copies of the endpoints this instance knew (older ones only Supabase knows stay)
+    await Promise.all((r?.e || []).map(e => supabaseRpc('push_unsubscribe', { p_key: env.FLUSH_KEY || '', p_actor_id: id, p_endpoint: e }).catch(() => null))); };
+  await Promise.all(ids.map(id => Promise.all([dropSubs(id), wishM(env).wForget(id), snapM(env).snapForget(id)].map(p => p.catch(() => null)))));
+  WISHC.at = 0; WONE.clear(); WAU.clear(); SNX.clear(); SNC.clear(); PC.delete('world');
+  try { await caches.default.delete(new Request(WORLD_CACHE)); } catch { }
 }
 function esc(s) { return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function pngBytes(png) {
@@ -1868,7 +2189,7 @@ async function loadCard(env, slot) {
         if (/^[a-z0-9]{8}$/.test(code)) ref = code;
       } catch { ref = ''; }
     }
-    return { ref, holder_name: String(row.holder_name || ''), line1: String(row.line1 || ''), line2: String(row.line2 || ''), line3: String(row.line3 || ''), tier: String(row.tier || ''), updated_at: String(row.updated_at || '') };
+    return { ref, holder: holder, holder_name: String(row.holder_name || ''), line1: String(row.line1 || ''), line2: String(row.line2 || ''), line3: String(row.line3 || ''), tier: String(row.tier || ''), updated_at: String(row.updated_at || '') };
   } catch { return empty; }
 }
 async function cardPage(req, env, u) {
@@ -1890,7 +2211,8 @@ async function cardPage(req, env, u) {
       return new Response(png, { headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=300' } });
     } catch { return new Response('not found', { status: 404 }); }
   }
-  const image = env.PLAN === 'paid' ? new URL('/rt/card/' + parsed.slot + '.png', req.url).href : 'https://studio.wishboard.workers.dev/og.jpg';
+  const shot = await snapFor(env, 'slot', parsed.slot, card.holder); // only the current holder's own shot
+  const image = shot ? new URL('/rt/snap/' + shot, req.url).href : env.PLAN === 'paid' ? new URL('/rt/card/' + parsed.slot + '.png', req.url).href : 'https://studio.wishboard.workers.dev/og.jpg';
   const page = new URL('/rt/card/' + parsed.slot, req.url).href;
   const dest = cardTarget(parsed.slot, u.searchParams, card.ref);
   const title = esc([clip(card.holder_name, 16), clip(card.line1, 16)].filter(Boolean).join(' ') || '타임스퀘어 전광판');
@@ -1904,19 +2226,76 @@ async function cardPage(req, env, u) {
     + '</head><body><p><a href="' + esc(dest) + '">타임스퀘어에서 이 전광판 보기</a></p></body></html>';
   return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
 }
-async function sendPushItems(env, items) {
+// Payload { body, url? } (the service worker defaults the title to 모두의 전광판). drop(endpoint) also forgets a gone endpoint in the 'push' instance.
+async function sendPushItems(env, items, drop) {
   const dead = [];
   for (const row of items) {
     const body = pushText(row);
     if (!body || !row?.endpoint) continue;
     try {
-      const enc = await encryptPush(row, new TextEncoder().encode(JSON.stringify({ body })));
+      const url = pushUrl(row), enc = await encryptPush(row, new TextEncoder().encode(JSON.stringify(url ? { body, url } : { body })));
       if (!enc) continue;
       const r = await fetch(row.endpoint, { method: 'POST', headers: { TTL: '1800', Urgency: 'high', Authorization: await vapidAuth(env, row.endpoint), 'Content-Encoding': 'aes128gcm', 'Content-Type': 'application/octet-stream' }, body: enc });
       if (r.status === 404 || r.status === 410) dead.push(row.endpoint);
     } catch { /* skip this send; the inbox row stays */ }
   }
-  for (const endpoint of dead) { try { await supabaseRpc('push_drop', { p_key: env.FLUSH_KEY, p_endpoint: endpoint }); } catch { /* the next hour retries */ } }
+  for (const endpoint of dead) { if (drop) { try { await drop(endpoint); } catch { /* the next 410 drops it */ } } try { await supabaseRpc('push_drop', { p_key: env.FLUSH_KEY, p_endpoint: endpoint }); } catch { /* the next hour retries */ } }
+}
+// Share pages for snapshots. A snapshot keeps its context only when the uploader is entitled to it (the board's holder, the wish's author), and the
+// card / wish pages use it only while that uploader still is. SNX: newest snapshot per 'k:r:uploader' (misses too); SNC: a snapshot's context;
+// WAU: a wish's author. All 60 s per isolate, ≤300 keys; uploader and author ids stay in the Worker.
+const snapM = env => env.METER.get(env.METER.idFromName('snaps'));
+const SNX = new Map(), SNC = new Map(), WAU = new Map(), SNAP_HEX = /^[0-9a-f]{32}$/;
+const SITE = { title: 'WISH BOARD : 모두의 전광판', desc: '붕어빵 구워 뉴욕 타임스퀘어 전광판과 건물을 차지하세요!' }; // index.html's og:title / og:description
+const memo = (m, key, v) => { if (m.size > 300) m.clear(); m.set(key, { at: Date.now(), v }); return v; };
+const memoHit = (m, key) => { const hit = m.get(key); return hit && Date.now() - hit.at < 60000 ? hit : null; };
+async function snapFor(env, k, r, owner) {
+  if (!owner) return ''; const key = k + ':' + r + ':' + owner, hit = memoHit(SNX, key); if (hit) return hit.v;
+  let id = ''; try { id = String(await snapM(env).snapFor(k, r, owner) || ''); } catch { return ''; }
+  return memo(SNX, key, id);
+}
+async function snapCtx(env, id) { const hit = memoHit(SNC, id); if (hit) return hit.v; return memo(SNC, id, await snapM(env).snapCtx(id)); }
+// '' when the wish is missing, hidden or the instance fails.
+async function wishAuthor(env, wid) { const hit = memoHit(WAU, wid); if (hit) return hit.v; let a = ''; try { a = String(await wishM(env).wAuthor(wid) || ''); } catch { return ''; } return memo(WAU, wid, a); }
+// The holder and first line of a board: the isolate's world copy while it is under a minute old, else one row from Supabase.
+// fresh: skip the isolate copy (an upload whose cached holder is someone else re-reads, the copy may predate the claim).
+async function snapBoard(slot, fresh = false) {
+  const mem = PC.get('world'); if (!fresh && mem && Date.now() - mem.at < 60000) return cachedBoard(slot);
+  try { const s = await fetch(SUPA + '/rest/v1/billboards?select=slot_id,holder_id,holder_name,line1&slot_id=eq.' + encodeURIComponent(slot), { headers: { apikey: ANON, accept: 'application/json' } });
+    const rows = s.ok ? await s.json() : []; return Array.isArray(rows) ? rows[0] || null : null; } catch { return null; }
+}
+async function snapPage(req, env, u) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return new Response('method', { status: 405 });
+  const id = u.pathname.slice('/rt/s/'.length), home = () => Response.redirect(new URL('/', req.url).href, 302); let c = null;
+  if (!SNAP_HEX.test(id) || !(await rateOk(env.EVENT_RL, req))) return home();
+  try { c = await snapCtx(env, id); } catch { c = null; }
+  if (!c) return home();
+  let title = SITE.title, desc = SITE.desc, dest = '/', shot = true, age = 300;
+  if (c.k === 'slot' && SLOT_RE.test(c.r)) {
+    dest = '/?focus=' + c.r; const b = await snapBoard(c.r);
+    // The holder's name and line go over the photo only while its uploader still holds the board.
+    if (b?.holder_id && c.u && String(b.holder_id) === c.u) { title = [clip(b.holder_name, 16), clip(b.line1, 16)].filter(Boolean).join(' ') || '타임스퀘어 전광판'; desc = '타임스퀘어 ' + slotName(c.r) + ' 전광판에서 찍었어요'; }
+    else { title = '타임스퀘어 전광판'; desc = slotName(c.r) + ' 전광판에서 찍었어요'; }
+  } else if (c.k === 'wish' && WISH_ID.test(c.r)) {
+    age = 30; let w = null; try { w = await wishOne(env, c.r); } catch { w = null; } // rate already checked above
+    if (w && !w.hidden) { const s = wishShareText(w); title = s.title; desc = s.text; dest = '/?wish=' + c.r; }
+    else shot = false; // a hidden or gone wish: the photo likely shows its text
+  }
+  const t = esc(title), d = esc(desc), img = esc(new URL(shot ? '/rt/snap/' + id : '/og.jpg', req.url).href);
+  const html = '<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>' + t + '</title>'
+    + '<meta property="og:title" content="' + t + '">'
+    + '<meta property="og:description" content="' + d + '">'
+    + '<meta property="og:image" content="' + img + '">'
+    + (shot ? '<meta property="og:image:type" content="image/jpeg">' : '')
+    + '<meta property="og:url" content="' + esc(new URL('/rt/s/' + id, req.url).href) + '">'
+    + '<meta name="twitter:card" content="summary_large_image">'
+    + '<meta name="twitter:title" content="' + t + '">'
+    + '<meta name="twitter:description" content="' + d + '">'
+    + '<meta name="twitter:image" content="' + img + '">'
+    + '<meta http-equiv="refresh" content="0;url=' + esc(dest) + '">'
+    + '<script>location.replace(' + JSON.stringify(dest) + ')</script>'
+    + '</head><body><p><a href="' + esc(dest) + '">타임스퀘어에서 보기</a></p></body></html>';
+  return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=' + age } });
 }
 export default {
   async fetch(req, env, ctx) {
@@ -1928,9 +2307,16 @@ export default {
       const u8 = new Uint8Array(buf);
       if (u8[0] !== 0xff || u8[1] !== 0xd8) return J({ err: 'jpeg' }, 400);
       const id = crypto.randomUUID().replace(/-/g, '');
-      await env.METER.get(env.METER.idFromName('snaps')).snapPut(id, u8);
-      return J({ ok: true, url: new URL('/rt/snap/' + id, req.url).href });
+      let sl = String(u.searchParams.get('slot') || ''), wi = String(u.searchParams.get('wish') || ''); if (!SLOT_RE.test(sl)) sl = ''; if (sl || !WISH_ID.test(wi)) wi = '';
+      // A context is kept only for the board's current holder or the wish's author; anyone else's upload is stored plain (generic page, redirect to /).
+      let sk = '', sr = '';
+      if (sl) { const mem = PC.get('world'), cached = !!mem && Date.now() - mem.at < 60000; let b = await snapBoard(sl); if (cached && String(b?.holder_id || '') !== actor.id) b = await snapBoard(sl, true); if (b?.holder_id && String(b.holder_id) === actor.id) { sk = 'slot'; sr = sl; } }
+      else if (wi && (await wishAuthor(env, wi)) === actor.id) { sk = 'wish'; sr = wi; }
+      await snapM(env).snapPut(id, u8, sk, sr, sk ? actor.id : '');
+      if (sk) memo(SNX, sk + ':' + sr + ':' + actor.id, id);
+      return J({ ok: true, url: new URL('/rt/snap/' + id, req.url).href, page: new URL('/rt/s/' + id, req.url).href });
     }
+    if (u.pathname.startsWith('/rt/s/')) return snapPage(req, env, u);
     const snapId = u.pathname.startsWith('/rt/snap/') ? u.pathname.slice('/rt/snap/'.length) : '';
     if (snapId && /^[0-9a-f]{32}$/.test(snapId) && req.method === 'GET') {
       const jpeg = await env.METER.get(env.METER.idFromName('snaps')).snapGet(snapId);
@@ -1976,6 +2362,8 @@ export default {
     if (u.pathname === '/rt/relight') return relightBoard(req, env, ctx);
     if (u.pathname === '/rt/tribe' || u.pathname === '/rt/tribe/pledge') return tribeApi(req, env, u);
     if (u.pathname === '/rt/world' || u.pathname === '/rt/wallet' || u.pathname === '/rt/claim-billboard' || u.pathname === '/rt/buy-plot' || u.pathname === '/rt/sell-coins' || u.pathname === '/rt/flush-wallet' || u.pathname === '/rt/spend') return plaza(req, env, ctx, u);
+    if (WISH_PATHS.has(u.pathname)) return wishApi(req, env, ctx, u);
+    if (u.pathname.startsWith('/rt/w/')) return wishPage(req, env, u);
     if (u.pathname === '/rt/billboard-photo' || u.pathname.startsWith('/rt/photo/') || u.pathname.startsWith('/rt/admin/')) return photos(req, env, ctx, u);
     if (u.pathname === '/rt/grp') { const M = env.METER.get(env.METER.idFromName('grp'));
       if (req.method === 'GET') { const w = isoWeek(); if (GRP.w !== w || Date.now() - GRP.at > 60000) { GRP.v = await M.grpTop(w); GRP.at = Date.now(); GRP.w = w; } return J({ w, top: GRP.v }); }
@@ -1995,15 +2383,19 @@ export default {
       let b = null; try { b = await req.json(); } catch { b = null; }
       const endpoint = req.method === 'DELETE' ? b?.e : b?.s?.endpoint;
       if (!pushHostOk(endpoint)) return J({ err: 'endpoint' }, 400);
+      // Supabase keeps its copy for the (paid-plan) cron; the 'push' instance keeps the one the Worker can read for pushNow. Either one landing is success.
       if (req.method === 'DELETE') {
-        const rpc = await supabaseRpc('push_unsubscribe', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_endpoint: endpoint });
-        return J({ ok: !!(rpc.ok && rpc.data?.ok !== false) }, rpc.ok ? 200 : 502);
+        let dok = false; try { dok = !!(await pushM(env).psDel(actor.id, endpoint))?.ok; } catch { dok = false; }
+        let rpc = { ok: false, data: null }; try { rpc = await supabaseRpc('push_unsubscribe', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_endpoint: endpoint }); } catch { }
+        return J({ ok: dok || !!(rpc.ok && rpc.data?.ok !== false) }, rpc.ok || dok ? 200 : 502);
       }
       if (req.method !== 'POST') return J({ err: 'method' }, 405);
       const p256dh = b?.s?.keys?.p256dh, authKey = b?.s?.keys?.auth;
       if (typeof p256dh !== 'string' || typeof authKey !== 'string' || p256dh.length < 8 || authKey.length < 8) return J({ err: 'keys' }, 400);
-      const rpc = await supabaseRpc('push_subscribe', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_endpoint: endpoint, p_p256dh: p256dh, p_auth: authKey });
-      return J({ ok: !!(rpc.ok && rpc.data?.ok !== false) }, rpc.ok ? 200 : 502);
+      const fit = p256dh.length <= 200 && authKey.length <= 100 && /^[\w+/-]+=*$/.test(p256dh) && /^[\w+/-]+=*$/.test(authKey); // only well-formed keys are kept here
+      let dok = false; if (fit) { try { dok = !!(await pushM(env).psAdd(actor.id, endpoint, p256dh, authKey))?.ok; } catch { dok = false; } }
+      let rpc = { ok: false, data: null }; try { rpc = await supabaseRpc('push_subscribe', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_endpoint: endpoint, p_p256dh: p256dh, p_auth: authKey }); } catch { }
+      return J({ ok: dok || !!(rpc.ok && rpc.data?.ok !== false) }, rpc.ok || dok ? 200 : 502);
     }
     if (u.pathname === '/rt/room') { const t = u.searchParams.get('topic') || ''; if (!/^chapelqa:/.test(t) || !PLAZA_TOPICS.includes(t)) return J({ err: 'qa only' }, 403);
       return J(await env.ROOM.get(env.ROOM.idFromName(t)).stats()); }

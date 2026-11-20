@@ -2,11 +2,11 @@
 // procedural windows, wet streets with lane paint and crosswalks, parks and rivers, lamps, trees and
 // rooftop water towers — plus the far shores and a skyline layer that stays when tiles unload.
 import * as THREE from 'three';
-import { TILE, ROAD, AREA } from './nyc.js';
-import { LOOP } from './layout.js';
-import { patchWet, GROUND_LAYER } from './ground.js';
-import { Kit } from './kit.js';
-import { makeCanvas, paintPuddles, paintGlow } from './art.js';
+import { TILE, ROAD, AREA } from './nyc.js?v=202611210015';
+import { LOOP } from './layout.js?v=202611210015';
+import { patchWet, GROUND_LAYER } from './ground.js?v=202611210015';
+import { Kit } from './kit.js?v=202611210015';
+import { makeCanvas, paintPuddles, paintGlow } from './art.js?v=202611210015';
 
 export const FAR_LAYER = 3;
 const SKY_H = 150;

@@ -1,6 +1,9 @@
+import { BALANCE } from './balance.js';
+import { WISH, cleanWish } from './wish.js';
+
 let blockedText = () => false;
 try {
-  ({ blockedText } = await import('./plaza-account.js?v=20261116f'));
+  ({ blockedText } = await import('./plaza-account.js'));
 } catch {
   ({ blockedText } = await import('./plaza-account.js'));
 }
@@ -11,7 +14,7 @@ export function lockCelebration(ms) {
 }
 
 export function claimWizard(slot) {
-  const freeIds = ['STREET_8', 'STREET_9', 'STREET_10', 'STREET_11'];
+  const freeIds = BALANCE.starterSlots;
   const state = { step: 1, slot: String(slot || ''), lines: ['', '', ''], emoji: '✨', theme: 'cyber_navy' };
   return {
     get step() { return state.step; },
@@ -33,14 +36,279 @@ export function claimWizard(slot) {
   };
 }
 
-export function ftueStillDue(flag, daily) {
+// KST calendar day, YYYY-MM-DD. The daily missions and the tutorial both count days this way.
+export function kstDay(ms = Date.now()) {
+  return new Date(ms + 9 * 36e5).toISOString().slice(0, 10);
+}
+
+// Pass the kts_daily snapshot read before this session's attend(), which writes streak 1 for everyone.
+export function playedEarlierDay(before, day) {
+  return !!(before && typeof before === 'object' && before.last && before.last !== day);
+}
+export function ftueDue(flag, before, day) {
   if (flag) return false;
-  if (!daily || typeof daily !== 'object') return true;
-  return !((daily.earn | 0) || (daily.bake | 0) || (daily.streak | 0) || (daily.play | 0));
+  if (!before || typeof before !== 'object') return true;
+  if (playedEarlierDay(before, day)) return false;
+  return !((before.earn | 0) || (before.bake | 0) || (before.play | 0));
+}
+
+// Newcomer mode: no board held and no kts_grad flag. It ends on the first claim, 30 play coins today, or the tap.
+export const GRAD_EARN = 30;
+export function newcomer({ grad, held } = {}) { return !grad && !(held > 0); }
+// Boards unknown is not "no boards": decide only once the plaza and the real actor id are in.
+// net.id starts as a temporary client id; only guest:/user: ids say whose boards to count.
+export function newcomerKnown({ plazaReady, actor } = {}) { return !!(plazaReady && /^(guest|user):/.test(String(actor || ''))); }
+// Silent graduation at load: someone who played on an earlier day, or an old player whose kts_daily predates the `last` field.
+// A kts_ftue written today (armFtue writes it when the tutorial is not due) is not enough on its own.
+export function silentGrad({ ftue, daily, day } = {}) {
+  if (playedEarlierDay(daily, day)) return true;
+  return !!ftue && !(daily && typeof daily === 'object' && daily.last);
+}
+export function graduation({ grad, held, earn } = {}) {
+  if (grad) return '';
+  if (held > 0) return 'claim';
+  return (Number(earn) || 0) >= GRAD_EARN ? 'earn' : '';
+}
+
+// Tutorial flag lifecycle: on at start; off when armFtue skips it, on the first claim, on graduation,
+// or when the walk to the free slot after the bake pay ends (waypoint reached or cleared). Bake pay itself keeps it on,
+// so the line that points at the free slot stays on the card.
+export function tutorialNext(on, ev) {
+  if (ev === 'start') return true;
+  if (ev === 'skip' || ev === 'claim' || ev === 'grad' || ev === 'walkDone') return false;
+  return !!on;
+}
+// What tapping the tutorial line does: bake at the cart, put back a cleared tutorial waypoint, else the next goal.
+export function tutorialTap({ atCart, waypoint, tutorialWp } = {}) {
+  if (atCart) return 'bake';
+  if (tutorialWp && !waypoint) return 'waypoint';
+  if (waypoint) return 'pulse';
+  return 'goal';
+}
+
+// The newcomer card shows the first step that has something to say.
+export function firstStep(steps) {
+  for (const step of steps || []) {
+    const s = step();
+    if (s) return s;
+  }
+  return null;
+}
+
+// Public counts are shown only once they help: a lone visitor reads "1명" as an empty plaza.
+export const PUBLIC_MIN = { visitors: 20, crowd: 3, wishes: 5 };
+export function crowdFacts(src) {
+  const out = {};
+  for (const k of Object.keys(PUBLIC_MIN)) {
+    const n = Math.max(0, Math.floor(Number(src?.[k])) || 0);
+    out[k] = n >= PUBLIC_MIN[k] ? n : 0;
+  }
+  return out;
+}
+export function peopleTag(n) {
+  const v = Math.floor(Number(n)) || 0;
+  return v > 1 ? `${v}명` : '';
+}
+
+export function goalLine(goal) {
+  if (!goal?.name) return '코인을 모아 전광판에 이름을 걸어 보세요';
+  const left = Math.max(0, Math.floor(Number(goal.left) || 0));
+  return left ? `${goal.name}까지 ${left.toLocaleString('ko-KR')}코인 더 모으면 걸 수 있어요` : `${goal.name}에 이름을 걸 수 있어요`;
+}
+
+// ---- 오늘의 소원: decisions the wish screens make, kept here so they can be tested without a DOM.
+// The newcomer card asks for a wish first, but only once the server said there is none and the sheet was not closed this session.
+export const WISH_STEP = '오늘의 소원 한 줄 걸기 (무료)';
+export function wishStep({ known, mine, skipped } = {}) { return known && !mine && !skipped ? WISH_STEP : ''; }
+// Right after the arrival intro a newcomer gets the wish sheet once, unless a link brought them somewhere else or a wish is already up.
+export function wishAutoOpen({ newbie, known, mine, deep } = {}) { return !!newbie && !deep && !(known && mine); }
+// Boot card: a friend's wish from the link, else yesterday's winner, else today's count once it is big enough, else nothing.
+// The heart label only when a heart can follow: a wish from today (day unknown counts as today) and no ?focus= taking over.
+export function wishBootLine({ deep, king, count, day, focus } = {}) {
+  const who = (w) => String(w?.nick || '') || '누군가';
+  const hearts = (w) => Math.max(0, Math.floor(Number(w?.hearts) || 0));
+  if (deep?.txt && !deep.hidden) {
+    const open = !focus && !(deep.day && day && deep.day !== day);
+    return { kind: 'deep', text: `🌠 ${who(deep)}님의 소원 · “${deep.txt}” · ♥ ${hearts(deep)}`, enter: open ? '입장해서 하트 보내기' : '' };
+  }
+  if (king?.txt) return { kind: 'king', text: `👑 어제의 소원왕 ${who(king)} · “${king.txt}”`, enter: '' };
+  const n = Math.max(0, Math.floor(Number(count)) || 0);
+  if (n >= PUBLIC_MIN.wishes) return { kind: 'count', text: `오늘 걸린 소원 ${n.toLocaleString('ko-KR')}개`, enter: '' };
+  return { kind: '', text: '', enter: '' };
+}
+// Can this player send a heart to this wish? ok, the reason shown under a big button, and a short label for a list row.
+export function wishHeart({ wish, given, left, day } = {}) {
+  if (!wish?.id) return { ok: false, why: '', short: '♥' };
+  if (wish.mine) return { ok: false, why: '내 소원이에요', short: '내 소원' };
+  if (Array.isArray(given) && given.includes(wish.id)) return { ok: false, why: '이미 하트를 보냈어요', short: '♥ 보냄' };
+  if (wish.hidden) return { ok: false, why: '가려진 소원이에요', short: '가려짐' };
+  if (day && wish.day && wish.day !== day) return { ok: false, why: '어제 소원이라 하트는 닫혔어요', short: '닫힘' };
+  if (!(Number(left) > 0)) return { ok: false, why: '오늘 하트를 다 썼어요. 내일 다시 5개가 생겨요.', short: '♥' };
+  return { ok: true, why: '', short: '♥ 보내기' };
+}
+// The input as typed: n = code points the server will keep (cleanWish), value = what the box should hold.
+// Under the limit the box is left alone (spaces mid-typing survive); at the limit it is cut to the shortest prefix that cleans to the same line.
+export function wishDraft(raw) {
+  const s = String(raw ?? '');
+  const text = cleanWish(s);
+  const n = Array.from(text).length;
+  if (n < WISH.maxLen) return { text, n, value: s };
+  const cps = Array.from(s);
+  for (let i = 1; i <= cps.length; i++) {
+    const head = cps.slice(0, i).join('');
+    if (cleanWish(head) === text) return { text, n, value: head };
+  }
+  return { text, n, value: s };
+}
+// Share sheet first; a cancel stops there. Then the clipboard; then the caller shows the link to copy by hand.
+export async function shareWish({ nav, clip, data } = {}) {
+  if (typeof nav?.share === 'function') {
+    try { await nav.share(data); return 'shared'; }
+    catch (e) { if (e?.name === 'AbortError') return 'cancel'; }
+  }
+  let ok = false;
+  try { ok = !!(await clip?.(`${data?.text || ''} ${data?.url || ''}`.trim())); } catch { ok = false; }
+  return ok ? 'copied' : 'manual';
+}
+
+// DOM replaceChildren/append turn null into the text "null". Every optional child goes through this first.
+export function present(...nodes) { return nodes.flat(Infinity).filter((n) => n != null && n !== false && n !== ''); }
+// A message line: missing text is an empty line, never "null" or "undefined".
+export function msgText(v) { return v == null || v === false ? '' : String(v); }
+
+// ---- 알림 제안: when the push sheet may open by itself.
+// 'open' now, 'wait' until the screen is free (another sheet, the proof bar, a celebration), or 'no' for this moment.
+export const PUSH_BACKOFF = 3 * 864e5;
+// placement 'inline' (the row in the my-wish card) is not a pop-up: allowed in newcomer mode and while a sheet is up,
+// but only when the browser would really ask (permission 'default'). queuedAt: a queued sheet offer expires after PUSH_QUEUE_MS.
+export const PUSH_QUEUE_MS = 60e3;
+export function pushAsk({ supported, permission, offered, dismissedAt, now = Date.now(), busy, newbie, placement, queuedAt } = {}) {
+  if (!supported) return 'no';
+  if (permission === 'denied' || permission === 'granted') return 'no';
+  if (offered) return 'no';
+  const at = Number(dismissedAt) || 0;
+  if (at > 0 && now >= at && now - at < PUSH_BACKOFF) return 'no';
+  if (placement === 'inline') return permission === 'default' ? 'open' : 'no';
+  if (newbie) return 'no';
+  const q = Number(queuedAt) || 0;
+  if (q > 0 && now - q > PUSH_QUEUE_MS) return 'no';
+  return busy ? 'wait' : 'open';
+}
+// The line at the top of the push sheet for each moment.
+export const PUSH_WHY = Object.freeze({
+  wish: '하트가 오면 바로 알려 드릴까요?',
+  claim: '빼앗기면 바로 알려 드릴까요?',
+  share: '전광판을 빼앗기거나 소원에 하트가 오면 바로 알려 드릴까요?',
+});
+
+// ---- 다녀간 사이: what the sheet after entering shows. Pure; main.js stores what it returns.
+export const AWAY_MAX = 6;
+export const AWAY_DAYS = 7;
+const AWAY_LOOK = new Set(['cheer', 'reply', 'gift', 'dark']);
+// Live INBOX socket messages carry no id. When one is shown in play, this key (kind, slot, second) is kept, and the
+// stored row of the same kind and slot within LIVE_WINDOW of it counts as already seen.
+export const LIVE_WINDOW = 5 * 60e3;
+export function liveKey(m, at = Date.now()) {
+  const kind = String(m?.kind || ''), slot = String(m?.slot_id || '');
+  return kind && slot ? `${kind}|${slot}|${Math.floor(Number(at) / 1000)}` : '';
+}
+export function liveSeenAdd(list, key, cap = 30) {
+  const out = (Array.isArray(list) ? list : []).filter((k) => typeof k === 'string' && k);
+  if (key && !out.includes(key)) out.push(key);
+  return out.slice(-cap);
+}
+function seenLive(liveSeen, kind, slot, at) {
+  if (!Number.isFinite(at)) return false;
+  for (const k of Array.isArray(liveSeen) ? liveSeen : []) {
+    const [a, b, c] = String(k).split('|');
+    if (a === kind && b === slot && Math.abs(Number(c) * 1000 - at) <= LIVE_WINDOW) return true;
+  }
+  return false;
+}
+// holder(slot) -> who holds that board now (rows about a board I hold again are already handled); me -> my actor id.
+export function awayRows({ newbie, inbox, seen, copy, wish, wishSeen, prizeDay, day, now = Date.now(), holder, me, liveSeen } = {}) {
+  const none = { rows: [], inboxIds: [], wishSeen: null, prizeDay: '' };
+  if (newbie) return none;
+  const read = new Set((Array.isArray(seen) ? seen : []).map((id) => Math.floor(Number(id))));
+  const text = typeof copy === 'function' ? copy : () => '';
+  const rows = [];
+  const handled = [];
+  const byKey = new Map();
+  for (const m of Array.isArray(inbox) ? inbox : []) {
+    const id = Math.floor(Number(m?.id));
+    const slot = String(m?.slot_id || '');
+    if (!(id > 0) || read.has(id) || !slot) continue;
+    const at = Date.parse(m.created_at || '');
+    if (Number.isFinite(at) && now - at > AWAY_DAYS * 864e5) continue;
+    const line = String(text(m) || '');
+    if (!line) continue;
+    const kind = m.kind === 'taken' ? 'taken' : AWAY_LOOK.has(m.kind) ? 'look' : '';
+    if (!kind) continue;
+    // Already handled: a board I hold again, or the same news seen live during play.
+    if ((kind === 'taken' && me && typeof holder === 'function' && holder(slot) === me) || seenLive(liveSeen, m.kind, slot, at)) { handled.push(id); continue; }
+    const row = { kind, id, slot, text: line, label: kind === 'taken' ? '되찾으러 가기' : '보러가기', at: Number.isFinite(at) ? at : 0, also: [] };
+    const key = m.kind + '|' + slot;
+    const prev = byKey.get(key);
+    if (prev) {
+      // One row per kind and board: the newest stays, the older ids ride along so they are marked read with it.
+      if (row.at > prev.at) { row.also = [prev.id, ...prev.also]; rows[rows.indexOf(prev)] = row; byKey.set(key, row); }
+      else prev.also.push(id);
+      continue;
+    }
+    byKey.set(key, row);
+    rows.push(row);
+  }
+  const mine = wish?.mine;
+  const hearts = Math.max(0, Math.floor(Number(mine?.hearts) || 0));
+  let nextSeen = null;
+  if (mine?.id && !mine.hidden) {
+    const base = wishSeen && wishSeen.id === mine.id ? Math.max(0, Math.floor(Number(wishSeen.hearts) || 0)) : 0;
+    const gain = hearts - base;
+    if (gain > 0) {
+      rows.push({ kind: 'wish', id: 0, slot: '', text: `내 소원에 하트가 ${gain}개 늘었어요 (지금 ${hearts}개)`, label: '내 소원 보기', at: now });
+      nextSeen = { id: mine.id, hearts };
+    }
+  }
+  const won = (Array.isArray(wish?.yesterday) ? wish.yesterday : []).find((y) => y?.mine && Math.floor(Number(y.rank)) > 0);
+  let nextPrize = '';
+  if (won && day && prizeDay !== day) {
+    const rank = Math.floor(Number(won.rank));
+    const prize = Math.max(0, Math.floor(Number(won.prize) || 0));
+    const at = Date.parse(day + 'T00:00:00+09:00');
+    rows.push({ kind: 'prize', id: 0, slot: '', text: prize ? `어제 소원이 ${rank}위였어요. +${prize}코인` : `어제 소원이 ${rank}위였어요`, label: mine?.id ? '내 소원 보기' : '오늘 소원 걸기', at: Number.isFinite(at) ? at : now - 1 });
+    nextPrize = day;
+  }
+  rows.sort((a, b) => b.at - a.at);
+  const shown = rows.slice(0, AWAY_MAX);
+  return {
+    rows: shown,
+    inboxIds: [...shown.filter((r) => r.id > 0).flatMap((r) => [r.id, ...(r.also || [])]), ...handled],
+    wishSeen: shown.some((r) => r.kind === 'wish') ? nextSeen : null,
+    prizeDay: shown.some((r) => r.kind === 'prize') ? nextPrize : '',
+  };
+}
+// Inbox rows the 🔔 tool counts as new: not seen in this browser and from the last AWAY_DAYS days.
+export function inboxUnread(inbox, seen, now = Date.now()) {
+  const read = new Set((Array.isArray(seen) ? seen : []).map((id) => Math.floor(Number(id))));
+  return (Array.isArray(inbox) ? inbox : []).filter((m) => {
+    const id = Math.floor(Number(m?.id));
+    if (!(id > 0) || read.has(id)) return false;
+    const at = Date.parse(m.created_at || '');
+    return !(Number.isFinite(at) && now - at > AWAY_DAYS * 864e5);
+  }).length;
+}
+// Seen inbox ids kept in this browser (newest last, capped).
+export function seenAdd(seen, ids, cap = 60) {
+  const out = (Array.isArray(seen) ? seen : []).map((id) => Math.floor(Number(id))).filter((id) => id > 0);
+  for (const raw of Array.isArray(ids) ? ids : []) {
+    const id = Math.floor(Number(raw));
+    if (id > 0 && !out.includes(id)) out.push(id);
+  }
+  return out.slice(-cap);
 }
 
 export function startFtue(ctx) {
-  const { ui, world, balance } = ctx;
+  const { ui, world, balance, touch } = ctx;
   ui.setNextLine?.('붕어빵 포차로 가 보세요');
   world.setWaypoint?.(balance ? { x: 21, z: 118 } : { x: 21, z: 118 });
   let here = false;
@@ -48,11 +316,14 @@ export function startFtue(ctx) {
     onArrive() {
       if (here) return;
       here = true;
-      ui.setNextLine?.('여기서 E를 눌러 붕어빵을 구우세요');
+      ui.setNextLine?.(touch ? '여기서 붕어빵을 구워 보세요' : '여기서 E를 눌러 붕어빵을 구우세요');
       ui.startBake?.();
     },
     onBakePay() {
-      const id = ['STREET_8', 'STREET_9', 'STREET_10', 'STREET_11'].find((slot) => !world.boardView?.(slot)?.holder_id);
+      // ui.nextGoal() knows whether this player may still take a starter slot; without it, trust the boards.
+      const goal = ui.nextGoal?.() || null;
+      const starterOk = !goal || goal.free;
+      const id = starterOk ? BALANCE.starterSlots.find((slot) => !world.boardView?.(slot)?.holder_id) : '';
       const card = id ? world.slotCard?.(id) : null;
       if (card && Number.isFinite(card.x) && Number.isFinite(card.z)) {
         world.setWaypoint?.({ x: card.x, z: card.z });
@@ -60,16 +331,20 @@ export function startFtue(ctx) {
         return;
       }
       world.setWaypoint?.(null);
-      ui.setNextLine?.('메인거리 무료 칸에 이름을 걸어 보세요');
+      ui.setNextLine?.(id ? '메인거리 무료 칸에 이름을 걸어 보세요' : goalLine(goal && !goal.free ? goal : null));
+      // No walk to wait for, so 'walkDone' would never come: end the tutorial here and let the card show the next goal.
+      ui.tutorial?.('walkDone');
     },
   };
 }
 
 if (typeof process !== 'undefined' && process.argv[1]?.includes('ftue.js')) {
-  if (ftueStillDue('', null) !== true) throw new Error('new');
-  if (ftueStillDue('1', null) !== false) throw new Error('flag');
-  if (ftueStillDue('', { earn: 2 }) !== false) throw new Error('earn');
-  if (ftueStillDue('', { streak: 1 }) !== false) throw new Error('streak');
+  const day = '2026-11-20';
+  if (ftueDue('', null, day) !== true) throw new Error('new');
+  if (ftueDue('1', null, day) !== false) throw new Error('flag');
+  if (ftueDue('', { last: day, earn: 2 }, day) !== false) throw new Error('earn');
+  if (ftueDue('', { last: day, streak: 1 }, day) !== true) throw new Error('streak today');
+  if (ftueDue('', { last: '2026-11-19', streak: 1 }, day) !== false) throw new Error('earlier day');
 const calls = [];
 startFtue({
   ui: { setNextLine: (t) => calls.push(t) },

@@ -1,12 +1,12 @@
 // Plaza landmarks: TKTS red stairs, Times Square Station exit 1, the golden bungeo-ppang pocha,
 // the Golden ATM and the 20 plot buildings (levels 0–4).
 import * as THREE from 'three';
-import { LAYOUT, LOOP, PLOT_SLOTS, TAXI_STANDS, fountainSpot, insideLoop } from './layout.js?v=20261113b';
-import { Kit, fishGeometry } from './kit.js';
+import { LAYOUT, LOOP, PLOT_SLOTS, TAXI_STANDS, fountainSpot, insideLoop } from './layout.js?v=202611210015';
+import { Kit, fishGeometry } from './kit.js?v=202611210015';
 import {
   makeCanvas, paintStationSign, paintPylon, paintMenuBoard, paintTKTS, paintNeonSign,
   paintBeam, paintPlotBadge, paintLabel, paintTaxiStand, SANS, EMOJI,
-} from './art.js?v=20261116f';
+} from './art.js?v=202611210015';
 
 const tex = (canvas, aniso = 4) => {
   const t = new THREE.CanvasTexture(canvas);
