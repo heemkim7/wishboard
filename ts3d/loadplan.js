@@ -1,7 +1,9 @@
 // What the plaza downloads, and when. Pure: no three.js, so tests and tools/load-budget.mjs read the same table.
 // Own species model and the city load at boot; another species loads the first time an avatar of it is on screen
 // (the stand-in body shows meanwhile), or in an idle prefetch a while after entering.
-export const MODEL_URL = { 1: '/assets/models/Mousey.glb', 2: '/assets/models/Cat.glb', 3: '/assets/models/Bear.glb' };
+// New model files get new names: sw.js serves /assets/* cache-first by URL, so a file replaced under the same name
+// stays stale for returning players until the sw.js?v= revision changes.
+export const MODEL_URL = { 1: '/assets/models/MouseToy.glb', 2: '/assets/models/CatToy.glb', 3: '/assets/models/BearToy.glb' };
 
 // The real night photos only light the PMREM environment (cube faces are 256 px), so one small copy serves every tier.
 export const ENV_PHOTOS = ['night-2025', 'night-pano', 'night-steps', 'night-canyon'];

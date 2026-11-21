@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { register } from 'node:module';
 import { describe, it } from 'node:test';
 import { loadBudget, BUDGET } from '../tools/load-budget.mjs';
@@ -14,13 +14,10 @@ register('data:text/javascript,' + encodeURIComponent(`export async function res
 }`));
 
 const CLIPS = ['Idle', 'Walking', 'Running', 'Dance', 'Sitting', 'Wave', 'Jump', 'ThumbsUp', 'Yes', 'No'];
-// Material names as shipped before re-encoding. Only the bear has `Main`; Mousey's body is Ch14_Body and the cat has
-// no Main at all, so its fur, belly and paws keep their colours.
-const MATERIALS = {
-  1: ['Ch14_Body'],
-  2: ['Black', 'CatEar', 'CatEye', 'CatFur', 'CatMuzzle', 'CatNose', 'CatWhite'],
-  3: ['BearEar', 'BearMuzzle', 'BearNose', 'Black', 'EyeWhite', 'Main'],
-};
+// The three toys from tools/blender/build_animal.py share one material list. `Main` is the hoodie, the only material
+// the game tints; Fur, Muzzle, Eye and Accent keep the colours in the file.
+const TOY = ['Accent', 'Eye', 'Fur', 'Main', 'Muzzle'];
+const MATERIALS = { 1: TOY, 2: TOY, 3: TOY };
 const JOINTS = ['Hips', 'Spine', 'Spine1', 'Spine2', 'Neck', 'Head',
   ...['Left', 'Right'].flatMap((s) => [`${s}Shoulder`, `${s}Arm`, `${s}ForeArm`, `${s}Hand`, `${s}UpLeg`, `${s}Leg`, `${s}Foot`, `${s}ToeBase`,
     ...['Thumb', 'Index', 'Middle', 'Ring'].flatMap((f) => [1, 2, 3].map((i) => `${s}Hand${f}${i}`))])]
@@ -78,7 +75,13 @@ describe('first load budget', () => {
   });
 });
 
-describe('re-encoded avatar models', () => {
+describe('avatar models', () => {
+  it('are the three toy files, and the old ones are gone from the served folder', () => {
+    assert.deepEqual(MODEL_URL, { 1: '/assets/models/MouseToy.glb', 2: '/assets/models/CatToy.glb', 3: '/assets/models/BearToy.glb' });
+    for (const old of ['Mousey.glb', 'Cat.glb', 'Bear.glb']) assert.equal(existsSync(new URL('../assets/models/' + old, import.meta.url)), false, old);
+    // The Mixamo armature and clips the build script starts from live under tools/, which is not served.
+    assert.equal(existsSync(new URL('../tools/blender/src/Mousey.glb', import.meta.url)), true);
+  });
   for (const id of [1, 2, 3]) {
     it(`${MODEL_URL[id]} keeps clips, materials and joints and needs no decoder`, () => {
       const { size, json, bin } = glb(id);
@@ -86,6 +89,7 @@ describe('re-encoded avatar models', () => {
       for (const c of CLIPS) assert.ok(clips.includes(c), c);
       assert.deepEqual(json.materials.map((m) => m.name).sort(), MATERIALS[id]);
       assert.equal(json.skins.length, 1);
+      assert.equal(json.skins[0].joints.length, 46);
       assert.deepEqual(json.skins[0].joints.map((j) => json.nodes[j].name).sort(), JOINTS);
       const used = json.extensionsUsed || [];
       assert.deepEqual(used.filter((e) => !['EXT_texture_webp', 'KHR_mesh_quantization', 'KHR_materials_specular'].includes(e)), []);
@@ -101,10 +105,18 @@ describe('re-encoded avatar models', () => {
       assert.ok(size < 1_000_000, `${size} bytes`);
     });
   }
-  it('never renames the cat or bear coat to Main and keeps Mousey untinted', () => {
-    assert.equal(MATERIALS[2].includes('Main'), false);
+  it('tints the hoodie of every species: one neutral grey Main primitive each, and avatars.js renames nothing', () => {
+    for (const id of [1, 2, 3]) {
+      const { json } = glb(id);
+      const main = json.materials.findIndex((m) => m.name === 'Main');
+      assert.equal(json.meshes.flatMap((m) => m.primitives).filter((p) => p.material === main).length, 1, MODEL_URL[id]);
+      const [r, g, b] = json.materials[main].pbrMetallicRoughness.baseColorFactor;
+      assert.ok(r > 0.7 && Math.abs(r - g) < 0.01 && Math.abs(g - b) < 0.01, `${MODEL_URL[id]} Main is ${r} ${g} ${b}`);
+    }
     const av = readFileSync(new URL('../ts3d/avatars.js', import.meta.url), 'utf8');
-    assert.match(av, /m\.name === 'Main' && o\.name !== 'Ch14_Body'\) m\.name = 'Coat'/);
+    assert.match(av, /o\.material\?\.name === 'Main'/);
+    assert.doesNotMatch(av, /\bm\.name\s*=[^=]/);
+    assert.doesNotMatch(av, /'Coat'|Ch14_Body/);
   });
 });
 
@@ -187,7 +199,7 @@ describe('avatar system downloads lazily', async () => {
     assert.doesNotMatch(ui, /prefetchModels/);
   });
 
-  it('shows Mousey for an avatar whose species failed to load', () => {
+  it('shows the mouse for an avatar whose species failed to load', () => {
     calls = [];
     const av = createAvatars({ scene: new THREE.Scene(), first: 1 });
     av.create({ id: 'me', local: true, species: 1 });

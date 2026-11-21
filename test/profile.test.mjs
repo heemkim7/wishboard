@@ -15,11 +15,10 @@ it('keeps species inside 1..3 and names the equip RPC', () => {
   assert.match(sql, /'frame_streak'/);
 });
 
-it('does not rename fur materials to Main', () => {
+it('tints only the material named Main and renames no material', () => {
   const src = readFileSync(new URL('../ts3d/avatars.js', import.meta.url), 'utf8');
   assert.match(src, /id:\s*2,\s*label:\s*'고양이'/);
   assert.match(src, /id:\s*3,\s*label:\s*'곰'/);
   assert.match(src, /o\.material\?\.name === 'Main'/);
-  assert.equal(src.includes("Ch14_Body"), true);
-  assert.equal(/Ch14_Body'\)\s*=\s*'Main'/.test(src), false);
+  assert.equal(/\.name\s*=\s*'(Main|Coat)'/.test(src), false);
 });

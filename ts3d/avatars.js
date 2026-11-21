@@ -1,4 +1,5 @@
-// Animated GLTF characters. Mousey is the Mixamo rig; Cat and Bear reuse its clips.
+// Animated GLTF characters: the mouse, cat and bear toys from tools/blender/build_animal.py. All three sit on the
+// Mixamo rig (46 joints) and carry the same ten Mixamo clips.
 // One AnimationMixer per avatar; locomotion states cross-fade and emotes play once on top.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -77,9 +78,9 @@ export function createAvatars({ scene, urls, models, first, height = 1.8 }) {
       if (!o.isMesh) return;
       const m = o.material;
       if (!m) return;
-      // Coat, Fur, Belly and Paw stay as they are. Mousey's Ch14_Body is not renamed to Main.
-      if ((id === 2 || id === 3) && m.name === 'Main' && o.name !== 'Ch14_Body') m.name = 'Coat';
-      if (m.name === 'Main') { m.metalness = 0.35; m.roughness = 0.32; }
+      // Main is the hoodie in every species and the only material that takes the player colour (see attach).
+      // Fur, Muzzle, Eye and Accent keep the colours in the file. The hoodie is cloth: no metal, fairly rough.
+      if (m.name === 'Main') { m.metalness = 0; m.roughness = 0.6; }
       else if (m.name === 'Grey') { m.metalness = 0.7; m.roughness = 0.3; m.color.set('#c5cad3'); }
       else if (m.name === 'Black') { m.metalness = 0.45; m.roughness = 0.22; }
       m.envMapIntensity = 1.25;

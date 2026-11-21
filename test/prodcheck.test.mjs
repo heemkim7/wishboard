@@ -107,9 +107,9 @@ describe('prod-e2e pure helpers', () => {
 describe('prod-check ignore list comes from .assetsignore', () => {
   const rules = C.parseIgnore(readFileSync(new URL('../.assetsignore', import.meta.url), 'utf8'));
   it('drops what wrangler does not upload and keeps the game files', () => {
-    for (const p of ['worker.js', 'AGENTS.md', 'docs/pending/x.md', 'tools/prod-e2e.mjs', 'test/wish.test.mjs', 'schema.sql', '.dev.vars', '.env.local', 'cf_release.py', 'assets/models/Mousey.fbx', '.git/HEAD', '.claude/worktrees/a/index.html', 'node_modules/x/y.js', 'out/a.png', 'wrangler.jsonc', 'a.pem'])
+    for (const p of ['worker.js', 'AGENTS.md', 'docs/pending/x.md', 'tools/prod-e2e.mjs', 'test/wish.test.mjs', 'schema.sql', '.dev.vars', '.env.local', 'cf_release.py', 'assets/models/Mousey.fbx', 'tools/blender/src/Mousey.glb', 'tools/blender/build_animal.py', '.git/HEAD', '.claude/worktrees/a/index.html', 'node_modules/x/y.js', 'out/a.png', 'wrangler.jsonc', 'a.pem'])
       assert.equal(C.ignoredBy(rules, p), true, p);
-    for (const p of ['index.html', 'main.js', 'ts3d/screens.js', 'assets/models/Cat.glb', 'og.jpg', 'sw.js', 'vendor/three.module.js', 'admin.html'])
+    for (const p of ['index.html', 'main.js', 'ts3d/screens.js', 'assets/models/CatToy.glb', 'og.jpg', 'sw.js', 'vendor/three.module.js', 'admin.html'])
       assert.equal(C.ignoredBy(rules, p), false, p);
     assert.equal(C.ignoredBy(rules, 'tools', true), true); assert.equal(C.ignoredBy(rules, 'ts3d', true), false);
     assert.equal(C.ignoredBy(C.parseIgnore('out/\n!keep.md\n*.md'), 'out', false), false); // dir-only rule, a file named out

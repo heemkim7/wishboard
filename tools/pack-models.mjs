@@ -1,11 +1,13 @@
-// Re-encodes the avatar GLBs without anything that needs a decoder (no Draco, no Meshopt).
+// Re-encodes an avatar GLB without anything that needs a decoder (no Draco, no Meshopt).
+// Not part of the current pipeline: MouseToy/CatToy/BearToy come straight out of tools/blender/build_animal.py, which
+// thins the animation keys itself and stays under the size limit in test/load.test.mjs. This tool made the earlier
+// Mousey/Cat/Bear files (tools/blender/src/Mousey.glb is one of its outputs) and is kept for a textured model.
 // glTF-Transform is not a dependency of this repo; install it somewhere outside and point GLTF_DEPS there:
 //   npm i --prefix %TEMP%\kts\gltf @gltf-transform/core@4.5.1 @gltf-transform/extensions@4.5.1 @gltf-transform/functions@4.5.1 sharp
 //   set GLTF_DEPS=%TEMP%\kts\gltf
-//   git show df5a739:assets/models/Cat.glb > %TEMP%\kts\Cat.glb      (run on the originals, not on packed files)
-//   node tools/pack-models.mjs %TEMP%\kts\Cat.glb assets/models/Cat.glb
+//   node tools/pack-models.mjs <original.glb> <packed.glb>      (run on originals, not on packed files)
 // Steps:
-//  - node extras stripped; weld (Mousey was an unindexed triangle soup); resample (drops redundant keys);
+//  - node extras stripped; weld (the Mixamo export was an unindexed triangle soup); resample (drops redundant keys);
 //  - animation tracks that hold the node's rest value for the whole clip are dropped (three's mixer restores the
 //    rest value of a property no running clip binds, so this is exact);
 //  - prune; dedup of accessors, meshes and textures only, so every material keeps its own name;

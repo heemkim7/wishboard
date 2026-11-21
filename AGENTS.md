@@ -37,8 +37,8 @@
 - 좌표계는 미터. 원점은 7번가 × W 45th St. 북쪽은 -Z, 동쪽은 +X.
 - `ts3d/nycmeta.js`는 `node tools/build-nyc.mjs`가 만든다. 손으로 고치지 마라.
 - 지도 원본은 OSM이다. Google 지도/어스에서 따온 지형·건물은 넣지 마라.
-- 아바타 종은 프레즌스 `av`다. `1` 쥐(Mousey, Mixamo), `2` 고양이, `3` 곰. 고양이·곰은 Mousey 뼈와 같은 클립 이름(`Idle`, `Walking`, `Running`, `Dance`, `Sitting`, `Wave`, `Jump`, `ThumbsUp`, `Yes`, `No`)을 쓴다.
-- 재질 이름이 `Main`인 메시만 이름표 색으로 칠해진다. 고양이 털·배·발은 그 이름이 아니어야 색이 유지된다.
+- 아바타 종은 프레즌스 `av`다. `1` 쥐, `2` 고양이, `3` 곰. 모델 셋(`MouseToy.glb`, `CatToy.glb`, `BearToy.glb`)은 `tools/blender/build_animal.py`가 Mixamo 뼈대(관절 46개) 위에 만든다. 클립은 Mixamo 것 그대로 열 개(`Idle`, `Walking`, `Running`, `Dance`, `Sitting`, `Wave`, `Jump`, `ThumbsUp`, `Yes`, `No`)이고 세 종이 같은 이름을 쓴다. 뼈대와 클립 원본은 `tools/blender/src/Mousey.glb`다.
+- 재질 이름이 `Main`인 메시만 이름표 색으로 칠해진다. 세 종 모두 `Main`은 후드티다. 털·주둥이·눈·귀 안쪽(`Fur`, `Muzzle`, `Eye`, `Accent`)은 그 이름이 아니어야 색이 유지된다.
 - 사진 전광판은 점령자만 올리고, `ADMIN_KEY`로 `admin.html`에서 승인한 것만 송출한다.
 
 ## 운영 DB와 스위치

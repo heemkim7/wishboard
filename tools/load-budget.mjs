@@ -30,7 +30,7 @@ export const RULES = [
   [/^icons\/bokjumeoni\.png$/, 'boot'], // the pouch balloon floats over the plaza from the first frame
   [/^icons\/coin\.jpg$/, 'boot'], // wallet icon, built with the HUD
   [/^assets\/times-square\/\$\{name\}\.env\.jpg$/, 'boot', () => ENV_PHOTOS.map((n) => clean(envPhotoUrl(n)))],
-  [/^assets\/models\/(Mousey|Cat|Bear)\.glb$/, (lit, ctx) => (lit === clean(MODEL_URL[ctx.species]) ? 'boot' : 'first')],
+  [/^assets\/models\/(Mouse|Cat|Bear)Toy\.glb$/, (lit, ctx) => (lit === clean(MODEL_URL[ctx.species]) ? 'boot' : 'first')],
   [/^assets\/audio\/(sfx\/)?$/, 'first', () => []], // 'assets/audio/' + id + '.ogg': no such files in the repo, the browser gets 404s
   [/^icons\/(lot|tent|pocha|shop|tower)\.jpg$/, 'later'],
   [/^icons\/board\.jpg$/, 'later'],
