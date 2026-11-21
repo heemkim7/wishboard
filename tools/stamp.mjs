@@ -44,15 +44,17 @@ export function workerModules(root = ROOT) {
 // Every local import in a file: { spec, query, target }.
 export function importsOf(file, root = ROOT) {
   const src = fs.readFileSync(path.join(root, file), 'utf8');
-  const re = file.endsWith('.html') ? HTML_SRC : JS_IMPORT;
   const out = [];
-  for (const m of src.matchAll(re)) {
+  for (const re of patternsFor(file)) for (const m of src.matchAll(re)) {
     const target = targetOf(file, m[3]);
     if (target.startsWith('vendor/') || target === 'sw.js') continue;
     out.push({ spec: m[3], query: m[4] || '', target });
   }
   return out;
 }
+
+// An HTML page loads modules two ways: <script src> and imports inside an inline module script.
+function patternsFor(file) { return file.endsWith('.html') ? [HTML_SRC, JS_IMPORT] : [JS_IMPORT]; }
 
 export function stamp(build, { root = ROOT, write = true } = {}) {
   const shared = workerModules(root);
@@ -61,13 +63,13 @@ export function stamp(build, { root = ROOT, write = true } = {}) {
   for (const file of files) {
     const full = path.join(root, file);
     const src = fs.readFileSync(full, 'utf8');
-    const re = file.endsWith('.html') ? HTML_SRC : JS_IMPORT;
-    const next = src.replace(re, (all, head, quote, spec, query = '') => {
+    const fix = (all, head, quote, spec, query = '') => {
       const target = targetOf(file, spec);
       if (target.startsWith('vendor/') || target === 'sw.js') return all;
       const want = file === 'worker.js' || shared.has(file) || shared.has(target) ? '' : '?v=' + build;
       return query === want ? all : head + quote + spec + want + quote;
-    });
+    };
+    const next = patternsFor(file).reduce((text, re) => text.replace(re, fix), src);
     if (next !== src) {
       changed.push(file);
       if (write) fs.writeFileSync(full, next);
