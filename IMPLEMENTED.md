@@ -367,7 +367,7 @@
 - 운영 DB는 `npx wrangler deploy`로 바뀌지 않는다. `migrations/`의 SQL을 운영자가 Supabase SQL 편집기에서 손으로 돌린다. `.assetsignore`의 `**/*.sql` 때문에 정적 에셋으로 나가지 않는다. Worker와 화면은 돌리기 전에도 뒤에도 동작한다. 돌리기 전에는 아래 각 부분의 "전" 동작이다.
 - `migrations/2026-11-21-mid.sql`: 한 번에 붙여 실행하는 파일. 네 부분이 각자 `BEGIN … COMMIT`이고, 부분 안의 `DO` 블록이 바깥 예외를 잡아 그 부분만 되돌리고 `WARNING`을 남긴 뒤 다음 부분으로 간다. 몇 번을 돌려도 같다.
   - 1부 무료 첫 칸 12개: 전에는 `STREET_8`~`STREET_11` 네 칸이고 Worker는 `starter_slot_list`가 없어 기본 네 칸을 쓴다. 뒤에는 `starter_slots()`의 12칸을 `claim_billboard`가 받고 `/rt/config` `starter`로 화면에 간다(`전광판` › 무료 첫 칸).
-  - 2부 탈퇴 때 `push_subs`: 뒤에는 `withdraw_account`가 지갑을 지우기 전에 그 계정의 `push_subs` 줄도 지운다(다시 불러도 같다). 전에는 `pss`가 생기기 전에 Supabase에만 들어간 구독이 탈퇴 뒤에도 남는다(`즉시 알림`).
+  - 2부 탈퇴 때 `push_subs`: 뒤에는 `withdraw_account`가 지갑을 지우기 전에 그 계정의 `push_subs` 줄도 지운다(다시 불러도 같다). 전에는 `pss`가 생기기 전에 Supabase에만 들어간 구독이 탈퇴 뒤에도 남는다(`즉시 알림`). **운영 DB에는 2026-11-21에 2부만 적용되어 있다**(1·3·4부는 아직 "전" 상태). 운영의 `withdraw_account` 본문은 `schema.sql`과 문장 사이 빈 줄 4개만 다르다.
   - 3부 `inbox_list`의 `read`: 뒤에는 줄마다 `read`가 온다. 전에는 그 키가 없고 화면은 줄 순서로 추론한다(`다녀간 사이와 받은 소식`).
   - 4부 소속 지붕 주마다 한 번: 뒤에는 `award_tribe_roof`가 끝난 주를 `tribe_roofs`에 한 번 정한다. 전에는 일요일에만 그 주를 정한다(`소속 정산`).
   - 1~3부는 큰 함수를 다시 쓰지 않는다. `pg_get_functiondef`로 지금 운영 정의를 읽어, 새 글이 이미 있으면 아무것도 하지 않고, 바꿀 글이 정확히 한 번 있을 때만 그 글만 바꿔 `EXECUTE`한다. 아니면 `중단: 운영 DB의 <함수>에서 바꿀 줄을 N번 찾았습니다(1번이어야 함). 이 부분은 바뀌지 않았습니다.` 운영에서 다른 곳을 손으로 고친 것은 남고, `SECURITY DEFINER`, `search_path`, 권한은 그대로다. 1부는 `starter_slots`, `starter_slot_list`(둘 다 `anon, authenticated, service_role` EXECUTE)도 같은 블록에서 만들어서, 검사 줄을 못 바꾸면 이 둘도 생기지 않는다(그때 Worker는 기본 네 칸).
