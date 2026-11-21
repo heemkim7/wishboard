@@ -6,6 +6,8 @@ node_modules
 out
 test
 tools
+docs
+migrations
 worker.js
 wrangler.jsonc
 cf_release.py

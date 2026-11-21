@@ -19,6 +19,9 @@
 --
 -- 편집기가 "destructive operation" 경고를 띄울 수 있다. 2부가 넣는 withdraw_account 본문에 DELETE가 있어서다.
 -- 이 파일은 표나 데이터를 지우지 않는다. 경고는 예상한 것이니 그대로 실행하면 된다.
+--
+-- 순서: 이번 코드를 배포한 뒤에 실행한다. 4부를 실행한 뒤 예전 코드로 되돌리면(rollback) 예전 코드는 일요일에
+-- '지금 주'만 묻기 때문에 소속 지붕이 정해지지 않는다. 다시 새 코드를 올리면 끝난 주부터 이어서 정해진다.
 
 -- 멈춘 부분의 이유를 마지막 표에 보이려고 이 실행 동안만 쓰는 임시 표.
 CREATE TEMP TABLE IF NOT EXISTS kts_mid (part INT PRIMARY KEY, why TEXT);
