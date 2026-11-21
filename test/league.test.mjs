@@ -479,8 +479,9 @@ describe('budget hard (lvlNow 2)', () => {
 });
 
 describe('review regressions', () => {
+  // Half through each of two isolates: one edit per account per 3 s gets past each isolate's EDIT_GAP, so two reach the DO at once.
   const edits = async (env, g, bids) => { const waits = [], ctx = { waitUntil(p) { waits.push(Promise.resolve(p)); } };
-    const res = await Promise.all(bids.map((bid) => worker.fetch(new Request('https://sq.example/rt/claim-billboard', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + g.token }, body: JSON.stringify({ topic: 'chapel:square', slot_id: 'STREET_3', bid, mode: 'edit', line1: 'x', nickname: '공격자' }) }), env, ctx)));
+    const res = await Promise.all(bids.map((bid, i) => (i % 2 ? worker2 : worker).fetch(new Request('https://sq.example/rt/claim-billboard', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + g.token }, body: JSON.stringify({ topic: 'chapel:square', slot_id: 'STREET_3', bid, mode: 'edit', line1: 'x', nickname: '공격자' }) }), env, ctx)));
     while (waits.length) await Promise.all(waits.splice(0)); return res; };
   it('parallel edits with one bid count the raise once', async () => {
     const { state, done } = setup();
@@ -489,7 +490,7 @@ describe('review regressions', () => {
       const env = makeEnv(), H = harness(env), a = await H.guest();
       assert.equal((await H.claim(a, 'STREET_3', 100, '공격자')).status, 200); state.charged = 0;
       const res = await edits(env, a, Array(50).fill(200));
-      assert.equal(res.filter((r) => r.status === 200).length, 50);
+      assert.equal(res.filter((r) => r.status === 200).length, 2); assert.equal(res.filter((r) => r.status === 429).length, 48); // the gap refuses before any RPC
       assert.equal(state.charged, 100);
       assert.equal((await (await H.get('/rt/league', a.token)).json()).me.spent, 200);
     } finally { done(); }

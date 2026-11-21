@@ -391,7 +391,8 @@ const STEPS = {
     const w = await walletOf(c, g1);
     t.check('the wallet dropped by the bid', w.coins === coins - bid, `wallet ${w.coins}, want ${coins - bid}; ${w.r.brief}`, `${coins} -> ${w.coins}`);
     if (g2.sock) { const u = await g2.sock.maybe((m) => m.t === 'WORLD_UPDATE' && m.kind === 'BILLBOARD' && m.data?.slot_id === slot, 8000, from2); t.check('the room got WORLD_UPDATE for the board', u, 'guest 2 saw no WORLD_UPDATE in 8 s'); }
-    const rl = await c.api(g1, 'POST', '/rt/relight', { slot, topic: TOPIC });
+    let rl = await c.api(g1, 'POST', '/rt/relight', { slot, topic: TOPIC });
+    if (rl.status === 429) { await new Promise((ok) => setTimeout(ok, 3200)); rl = await c.api(g1, 'POST', '/rt/relight', { slot, topic: TOPIC }); } // one relight per account per 3 s (real time): an earlier run's, retried once
     if (kstDay(c.now()) !== day) t.skip('same-day relight keeps the clock', 'the KST day changed since the claim');
     else t.expect('a same-day relight keeps the clock', rl, 200, (j) => j.ok === true && Math.abs(Date.parse(j.lit_until) - Date.parse(litUntil)) < 1000 && j.scored !== true, (j) => `lit_until ${j.lit_until}, lit_days ${j.lit_days}`);
     // main.js cheer() -> tribe.js sendCheer: {t:'CHEER', slot, p} over the socket; the Room pays PAY kind cheer and queues an inbox row for the holder.
@@ -439,7 +440,7 @@ const STEPS = {
       // shows one of our guests as holder, inside the claim's protection window (nobody else can have taken it then). Anything else is left for a person.
       const pending = st.slots.filter((x) => x.status === 'held');
       const pause = (ms) => new Promise((r) => setTimeout(r, c.ms(ms))); // not c.sleep: cleanup also runs after Ctrl+C
-      const guestOf = (id) => [...st.guests, ...st.retired].find((g) => 'guest:' + g.sub === id) || null;
+      const guestOf = (id) => [...st.guests, ...st.retired].find((g) => 'guest:' + g.sub === id) || null, lastEdit = new Map();
       let world = pending.length ? (await worldNow(c)).world : null;
       const rowOf = (slot) => world?.billboards?.find((x) => x.slot_id === slot);
       // no holder shown: the isolate's world copy (15 s) may predate the claim; read again once it has aged out (the second read must succeed too)
@@ -451,7 +452,11 @@ const STEPS = {
         if (why) { s.hand = why; c.save(); t.skip(`clean ${s.slot}`, `handle by hand: ${s.slot} (${why})`); continue; }
         // first choice: the holder's own edit to neutral lines (ui.js edit: mode 'edit', bid = current bid, so nothing is charged)
         const edit = { slot_id: s.slot, bid: Number(b.current_bid) || 0, line1: NEUTRAL_LINES[0], line2: NEUTRAL_LINES[1], line3: NEUTRAL_LINES[2], caption_y: 72, emoji: '🌠', bg_theme: b.bg_theme || 'cyber_navy', text_color: b.text_color || '#ffffff', external_url: '', mode: 'edit', nickname: g.nick, topic: TOPIC };
-        let r = await c.api(g, 'POST', '/rt/claim-billboard', edit), done = r.json?.ok === true && r.json.data?.line1 === NEUTRAL_LINES[0] && r.json.data.holder_id === holder;
+        // the Worker answers 429 to a second edit by one account inside 3 s (real time, so not c.ms): wait between this guest's edits, retry a 429 once
+        const gap = (lastEdit.get(g.sub) || 0) + 3200 - Date.now(); if (gap > 0) await new Promise((r) => setTimeout(r, gap));
+        let r = await c.api(g, 'POST', '/rt/claim-billboard', edit); lastEdit.set(g.sub, Date.now());
+        if (r.status === 429) { await new Promise((ok) => setTimeout(ok, 3200)); r = await c.api(g, 'POST', '/rt/claim-billboard', edit); lastEdit.set(g.sub, Date.now()); }
+        let done = r.json?.ok === true && r.json.data?.line1 === NEUTRAL_LINES[0] && r.json.data.holder_id === holder;
         if (!r.json) { await pause(16000); const nb = (await worldNow(c)).world?.billboards?.find((y) => y.slot_id === s.slot); done = nb?.holder_id === holder && nb.line1 === NEUTRAL_LINES[0]; if (done) r = { json: { data: nb } }; } // no answer: did the edit land?
         if (done) { s.status = 'neutral'; s.lit = r.json.data.lit_until || ''; delete s.hand; c.save(); t.pass(`edit ${s.slot} to neutral lines as its holder`, `held by ${g.nick} until ${s.lit || '?'}`); continue; }
         t.fail(`edit ${s.slot} to neutral lines as its holder`, 'refused, taking it down instead; ' + r.brief);

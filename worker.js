@@ -87,6 +87,7 @@ export async function resolveActor(env, token) {
   } catch { return null; }
 }
 const FLUSH_N = 20, FLUSH_MS = 30000;
+const TRIBE_FLUSH_N = 20; // Room flushTribeScores: add_tribe_score fetches per pass
 const MINE_GAP = 2000, MINE_CAP = 15, GAP_EARLY = 400;
 const AD_PAY = 15, AD_DAY = 5; // link visit: once per account per board per KST day, AD_DAY boards a day
 const MOVE_N = 8, MOVE_MS = 30000; // room moves per account: 8 in a row (a full queue bumps through square-2..8), then one per 30 s
@@ -214,7 +215,7 @@ export class Meter extends DurableObject {
   // Account registry (instance 'acct'). An account sits in one room at a time. A room asks here only when the account is not already seated with it,
   // so there is no request per message. Moving closes the account's sockets in the old room, settles its pending coins and carries its once/daily
   // gates over (copies merge by max), so opening more topics or sockets never multiplies a limit.
-  acInit() { if (this.ai) return; this.ai = 1; const q = this.ctx.storage.sql; q.exec(AG);
+  acInit() { if (this.acOk) return; this.acOk = 1; const q = this.ctx.storage.sql; q.exec(AG);
     q.exec('create table if not exists seat(uid text primary key, room text not null, n integer not null, fl integer not null, mv integer not null, mt integer not null)');
     q.exec('create table if not exists vis(d text, uid text, primary key(d, uid))'); q.exec('create table if not exists tal(d text, k text, n integer not null, primary key(d, k))'); }
   seat(uid, room, day) { const job = (this.sq.get(uid) || Promise.resolve()).then(() => this.seatNow(uid, room, day)), tail = job.then(() => { }, () => { }); // one move at a time per account
@@ -425,13 +426,14 @@ export class Meter extends DurableObject {
     return { ok: true }; }
   // Lazy settlement. Every day before `day` that still has rows (within keepDays) and no wst row is snapshotted, so a day nobody visited after is not lost.
   // Then winners not yet handed out (visible now, under 5 attempts, 60 s apart) are returned AND marked paid in the same step: at most once even if the payer dies.
-  wSettle(day, now = Date.now()) { this.wInit(); const q = this.ctx.storage.sql, cut = dayShift(day, -WISH.keepDays);
+  // max: winners handed out (and marked) in this call; the rest stay unmarked for the next call.
+  wSettle(day, now = Date.now(), max = Infinity) { this.wInit(); const q = this.ctx.storage.sql, cut = dayShift(day, -WISH.keepDays);
     if (this.wPr !== day) { this.wPr = day; q.exec('delete from wsh where day < ?', cut); q.exec('delete from wht where day < ?', cut); q.exec('delete from wip where day < ?', cut); q.exec('delete from wst where day < ?', cut); q.exec('delete from wpi where day < ?', cut);
       q.exec('delete from wrp where wid not in (select id from wsh)'); }
     for (const r of q.exec('select distinct day from wsh where day < ? and day >= ? and day not in (select day from wst) order by day', day, cut).toArray()) q.exec('insert or ignore into wst(day, j) values(?, ?)', r.day, JSON.stringify(this.wPick(String(r.day))));
     const due = [];
     for (const r of q.exec('select day, j from wst where day < ? order by day', day).toArray()) { let list = []; try { list = JSON.parse(r.j); } catch { continue; } let ch = 0;
-      for (const w of list) { if (w.paid || (w.tries || 0) >= 5 || now - (w.at || 0) < 60000) continue; const row = this.wRow(w.id); if (!row || row.hid) continue;
+      for (const w of list) { if (due.length >= max) break; if (w.paid || (w.tries || 0) >= 5 || now - (w.at || 0) < 60000) continue; const row = this.wRow(w.id); if (!row || row.hid) continue;
         w.paid = 1; w.tries = (w.tries || 0) + 1; w.at = now; ch = 1; due.push({ day: String(r.day), id: w.id, uid: w.uid, rank: w.rank, prize: w.prize }); }
       if (ch) q.exec('update wst set j = ? where day = ?', JSON.stringify(list), r.day); }
     return due; }
@@ -1065,12 +1067,14 @@ export class Room extends DurableObject {
     const q = this.ctx.storage.sql, today = kstDay();
     let rows = [];
     try { rows = q.exec("select uid, d, v from ag where k = 'ts'").toArray(); } catch { return; }
+    let sent = 0; // at most TRIBE_FLUSH_N fetches per pass (a claim's settle waits for this flush); the rest stay for the next flush
     for (const row of rows) {
       const uid = String(row.uid || ''), day = String(row.d || ''), pts = tribePoints(row.v);
       if (!uid || !/^\d{4}-\d{2}-\d{2}$/.test(day) || pts < 1) continue;
       if (agGet(q, uid, 'tso', day)) continue;
       if (day >= today && pts < 7) continue;
       const week = isoWeek(Date.parse(day + 'T12:00:00+09:00'));
+      if (sent++ >= TRIBE_FLUSH_N) return;
       try {
         const r = await fetch(SUPA + '/rest/v1/rpc/add_tribe_score', { method: 'POST', headers: { apikey: ANON, 'content-type': 'application/json' }, body: JSON.stringify({ p_key: key, p_actor_id: uid, p_week: week, p_points: pts }) });
         const text = await r.text();
@@ -1558,7 +1562,7 @@ async function profileApi(req, env, u, ctx) {
       const rpc = await supabaseRpc('set_nickname', { p_key: env.FLUSH_KEY, p_actor_id: actor.id, p_nickname: nick });
       if (!rpc.ok || rpc.data?.ok === false) return J({ ok: false, error: '이름을 저장하지 못했어요' }, rpc.ok ? 400 : 502);
       out.nickname = rpc.data?.nickname || nick;
-      try { ctx?.waitUntil?.(Promise.resolve().then(() => lgM(env).lgNick(isoWeek(), actor.id, out.nickname)).then(() => { LGW.at = 0; LGC.at = 0; }).catch(() => null)); } catch { /* the week's list shows the new name at the next spend */ }
+      try { ctx?.waitUntil?.(Promise.resolve().then(() => lgM(env).lgNick(isoWeek(), actor.id, out.nickname)).then(lgDrop).catch(() => null)); } catch { /* the week's list shows the new name at the next spend */ }
       try { await invalidateWorld(env, ctx); } catch { /* the next world read still picks up the name */ }
     }
     if (typeof b.color === 'string') {
@@ -1604,6 +1608,7 @@ const GRP = { at: 0, w: '', v: null };
 const J = (o, s = 200, h = {}) => new Response(JSON.stringify(o), { status: s, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...h } });
 let GATE = { at: 0, r: null }; // per-isolate meter cache: /rt/gate no longer costs one Meter RPC per call
 const GATE_TTL = 15000, PC = new Map(); // PC: per-isolate world cache (Cache API is a no-op on *.workers.dev)
+const HERE = new Map(); // GET /rt/here: { at, v } per topic, 5 s per isolate
 const WORLD_CACHE = 'https://cache.masil/rt/world';
 const SLOT_RE = /^(MAIN_(UP|TOP|MID|BOT|LOW)|SUB_[1-4][AB]|STREET_([1-9]|[12]\d|30)|PLOT_([1-9]|1[0-8]))$/;
 const AD_SLOT = SLOT_RE;
@@ -1662,7 +1667,8 @@ async function ipHash(env, req) {
   return hex.slice(0, 16);
 }
 // Workers Rate Limiting binding (wrangler.jsonc "ratelimits"), keyed by client IP. Counts are per Cloudflare location and approximate. No binding (tests) = no limit.
-async function rateOk(rl, req) { if (!rl) return true; try { return (await rl.limit({ key: req.headers.get('cf-connecting-ip') || 'x' })).success !== false; } catch { return true; } }
+async function rateOk(rl, req) { return rateKey(rl, req.headers.get('cf-connecting-ip') || 'x'); }
+async function rateKey(rl, key) { if (!rl) return true; try { return (await rl.limit({ key })).success !== false; } catch { return true; } }
 // WALLET_SYNC to one account, in the room it sits in (two DO calls). For balances moved by somebody else's request.
 async function nudge(env, uid) { try { const room = await acct(env).roomOf(uid); if (room) await env.ROOM.get(env.ROOM.idFromName(room)).fetch(new Request('https://room.internal/sync', { method: 'POST', headers: { 'x-uid': uid } })); } catch { } }
 function queueTaken(env, ctx, victim, fromName, slotId) {
@@ -1805,7 +1811,8 @@ const WISH_ID = /^[0-9a-z]{10}$/, WISH_PATHS = new Set(['/rt/wishes', '/rt/wish'
 const WISHC = { at: 0, day: '', v: null }; // anonymous list, 10 s per isolate; cleared on post / hide
 const WONE = new Map(); // single wish by id (share page, ?id=), 10 s per isolate, misses too
 let WWLAST = { day: '', v: null }; // the last wWorld answer, served instead of the wish DO while the budget is hard
-let WSET = { day: '', at: 0, more: false }; // settlement: once per isolate per day, again every 60 s after a clear refusal
+let WSET = { day: '', at: 0, more: false }; // settlement: once per isolate per day, again every 60 s after a clear refusal or a full batch
+const WISH_PAY_N = 3; // prizes paid per settlement run (grant_coins + its push each): the subrequest limit of one invocation
 let WFULL = 0; // last full world refill caused by a wish, so a burst of wishes refills at most once per 10 s per isolate
 let WLIVE = { at: 0, day: '', v: null }; // rooms with seated accounts (Meter 'acct' liveRooms), 30 s per isolate, for the fresh-wish fan-out
 // The shards of topic a fresh wish is sent to: the poster's own room, plus shards the seat registry says someone sits in. A failed lookup: own room only.
@@ -1831,7 +1838,7 @@ async function wishOne(env, id, req) {
 function wishSettle(env, ctx, day) {
   if (WSET.day === day && (!WSET.more || Date.now() - WSET.at < 60000)) return;
   WSET = { day, at: Date.now(), more: false };
-  const job = (async () => { const M = wishM(env), due = await M.wSettle(day, Date.now()); let more = false;
+  const job = (async () => { const M = wishM(env), due = await M.wSettle(day, Date.now(), WISH_PAY_N); let more = Array.isArray(due) && due.length >= WISH_PAY_N; // a full batch: the rest 60 s later
     for (const w of Array.isArray(due) ? due : []) {
       try { const rpc = await supabaseRpc('grant_coins', { p_key: env.FLUSH_KEY || '', p_actor_id: w.uid, p_amount: w.prize });
         if (rpc.ok && rpc.data && typeof rpc.data === 'object' && rpc.data.ok === false) { more = true; await M.wUnpay(w.day, w.id); }
@@ -1987,11 +1994,13 @@ const invTail = (u, first) => { const c = invCode(u.searchParams.get('inv')); re
 const lgM = env => env.METER.get(env.METER.idFromName('lg'));
 const LGW = { at: 0, w: '', v: null }; // /rt/world's league part, 60 s per isolate; this isolate's spends clear it
 const LGC = { at: 0, w: '', v: null }; // the anonymous /rt/league answer, 10 s per isolate
+const LGA = new Map(); let LGG = 0; // a signed-in /rt/league answer per week and account, 10 s per isolate, at most 500; LGG: bumped when it is cleared
+const lgDrop = () => { LGW.at = 0; LGC.at = 0; LGA.clear(); LGG++; }; // after a spend, link or withdrawal in this isolate: the next read is fresh
 // The nick a spend may write on the public list: '' (keep the stored one) when it is banned or the bots' shape. Sticker and photo routes never check it.
 const BOT_NAME_ERR = '그 이름은 쓸 수 없어요. 프로필에서 이름을 바꿔 주세요.'; // claims, plots, air: the name comes from the profile
 const leagueNick = (nick) => { const n = clip(nick, 16); return !n || rejectedCopy(n) || botNick(n) ? '' : n; };
 function leagueRun(env, ctx, run) {
-  const t = Date.now(), job = Promise.resolve().then(() => run(lgM(env), t)).then(() => { LGW.at = 0; LGC.at = 0; }).catch(() => null);
+  const t = Date.now(), job = Promise.resolve().then(() => run(lgM(env), t)).then(lgDrop).catch(() => null);
   try { ctx?.waitUntil?.(job); } catch { /* the spend stands; this week's tally misses it */ }
 }
 // A spend with no board behind it (plot, sticker, air, photo fee, an S-tier bid held for review). key: remember it for a later refund (lgBack).
@@ -2011,7 +2020,8 @@ async function leagueApi(req, env) {
   const tok = tokenOf(req), actor = tok ? await resolveActor(env, tok) : null, now = Date.now(), w = isoWeek(now);
   if ((await lvlNow(env)) >= 2) return LGC.w === w && LGC.v ? J({ ok: true, week: w, ends: weekEnds(now), top: LGC.v.top }) : J({ ok: false, err: 'busy' }, 503); // hard budget: the anonymous copy, no DO call
   try { let v;
-    if (actor) v = await lgM(env).lgTop(w, actor.id);
+    if (actor) { const k = w + '|' + actor.id, hit = LGA.get(k); if (hit && now - hit.at < 10000) v = hit.v; // a token is no way past the memo: one lg-DO call per account per 10 s
+      else { const g = LGG; v = await lgM(env).lgTop(w, actor.id); if (g === LGG) { if (LGA.size >= 500) LGA.clear(); LGA.set(k, { at: now, v }); } } } // a spend that landed meanwhile: not kept
     else { if (LGC.w !== w || !LGC.v || now - LGC.at > 10000) { LGC.v = await lgM(env).lgTop(w, ''); LGC.at = now; LGC.w = w; } v = LGC.v; }
     return J({ ok: true, week: w, ends: weekEnds(now), top: v.top, ...(actor ? { me: v.me } : {}) });
   } catch { return J({ ok: false, err: 'league' }, 502); }
@@ -2074,6 +2084,9 @@ async function plaza(req, env, ctx, u) {
   const b = await readJson(req); if (!b) return J({ err: 'json' }, 400);
   const topic = typeof b.topic === 'string' ? b.topic : '';
   if (!PLAZA_TOPICS.includes(topic)) return J({ ok: false, error: '광장 접속 정보가 없습니다. 다시 입장한 뒤 시도해 주세요.', pending: true }, 400);
+  // An edit with the same bid costs nothing, so edits (a raise of one's own bid too) are spaced per account before any Durable Object call; a claim or
+  // takeover is never slowed. A refusal above this line does not count; one after settle does.
+  if (u.pathname === '/rt/claim-billboard' && b.mode === 'edit' && gapHit('edit:' + actor.id)) return J({ ok: false, error: GAP_ERR }, 429);
   const settled = await settle(env, topic, actor.id);
   if (!settled.ok) return J({ ok: false, error: settled.error, pending: true }, 409);
   const nick = clip(b.nickname || b.nick || '', 16) || '네온손님';
@@ -2233,7 +2246,8 @@ async function plaza(req, env, ctx, u) {
     const owner = claim && row.plot_id != null ? fresh?.world.plots.find(p => p.plot_id === row.plot_id)?.owner_id : null;
     const sync = claim ? [data.prev_holder_id, owner].filter(id => id && id !== actor.id) : [];
     const ranks = claim && fresh?.ranked ? fresh.world.ranks : undefined;
-    for (const name of squareTopics(topic)) {
+    const hard = await budgetHard(env); // budget hard: the sockets were closed when the level was set; no shard fan-out (the world copy above is still refilled)
+    for (const name of hard ? [] : squareTopics(topic)) {
       try { // one shard failing must not keep the update from the shards after it
         const br = await env.ROOM.get(env.ROOM.idFromName(name)).fetch(new Request('https://room.internal/world', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ t: 'WORLD_UPDATE', kind, data: row, ranks, sync, take, mono: data.monopoly_name || '' }) }));
         broadcast = broadcast || br.ok;
@@ -2256,6 +2270,10 @@ async function plaza(req, env, ctx, u) {
 // Players only receive approved photos from /rt/photo/<id>; the Worker secret ADMIN_KEY unlocks review.
 const PHOTO_MAX = 300000, PHOTO_ID_RE = /^[0-9a-f]{40}$/, PHOTO_GAP = 10000, PHOTO_TTL = 300000;
 const PHOTO_C = new Map(), PHOTO_AT = new Map();
+// Per-account gaps for free repeats (/rt/claim-billboard mode 'edit', /rt/relight): one per key per 3 s per isolate. true = too soon; otherwise recorded.
+const LIT_MS = 72 * 3600e3; // the lifetime a claim or a relight gives a board (schema.sql: now() + interval '72 hours')
+const EDIT_GAP = 3000, EDIT_AT = new Map(), GAP_ERR = '조금만 천천히요. 3초 뒤에 다시 해 주세요.';
+function gapHit(k) { const now = Date.now(); if (now - (EDIT_AT.get(k) || 0) < EDIT_GAP) return true; if (EDIT_AT.size >= 5000) EDIT_AT.clear(); EDIT_AT.set(k, now); return false; }
 async function pushSticker(env, topic, body) {
   const names = squareTopics(topic);
   const send = (name, payload) => env.ROOM.get(env.ROOM.idFromName(name)).fetch(new Request('https://room.internal/stk', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }));
@@ -2398,9 +2416,14 @@ async function relightBoard(req, env, ctx) {
   if (!b) return J({ err: 'json' }, 400);
   const slot = String(b.slot || b.slot_id || '');
   if (!SLOT_RE.test(slot)) return J({ ok: false, error: 'slot' }, 400);
+  if (gapHit('relight:' + actor.id)) return J({ ok: false, error: GAP_ERR }, 429); // a same-day relight is free: spaced per account before the RPC and any DO call
   const rpc = await supabaseRpc('relight_billboard', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_slot_id: slot });
   const data = rpc.data || {};
   if (!rpc.ok || data.ok === false) return J({ ok: false, error: playerErr(data.error, data.message || '불을 켜지 못했어요') }, rpc.ok ? 400 : 502);
+  // A repeat on the same KST day: relight_billboard leaves the clock. The clock moved when the answer says scored, or (a database without that key) its
+  // lit_until is within 2 minutes of now + 72 h. Neither: nothing changed, so no board read, ledger note, touch or room is told.
+  const moved = data.scored === true || Math.abs(Date.parse(String(data.lit_until || '')) - (Date.now() + LIT_MS)) < 120000;
+  if (!moved) return J({ ok: true, lit_until: data.lit_until, lit_days: data.lit_days, scored: false });
   try { await env.METER.get(env.METER.idFromName('ev')).touch(isoWeek(), actor.id); } catch { /* the light already moved */ }
   if (data.scored === true) {
     const lightTopic = PLAZA_TOPICS.includes(b.topic) ? b.topic : 'chapel:square';
@@ -2427,6 +2450,7 @@ async function adReportApi(req, env, u) {
   const actor = await resolveActor(env, tokenOf(req)); if (!actor) return J({ ok: false, error: playerErr('auth') }, 401);
   if (!(await rateOk(env.EVENT_RL, req))) return J({ ok: false, error: 'rate' }, 429);
   const slot = String(u.searchParams.get('slot') || ''); if (!SLOT_RE.test(slot)) return J({ ok: false, error: playerErr('slot') }, 400);
+  const mk = actor.id + '|' + slot, hit = ADR.get(mk); if (hit && Date.now() - hit.at < 10000) return J(hit.v); // a holder's answer, 10 s: no Supabase read, no DO call
   let b = null; try { const s = await fetch(SUPA + '/rest/v1/billboards?select=slot_id,holder_id&slot_id=eq.' + encodeURIComponent(slot), { headers: { apikey: ANON, accept: 'application/json' } }); const rows = s.ok ? await s.json() : null; if (!Array.isArray(rows)) throw new Error('board'); b = rows[0] || {}; } catch { b = null; }
   if (!b) return J({ ok: false, error: '리포트를 불러오지 못했어요. 잠시 뒤 다시 해 주세요.' }, 503); // could not read the holder: not a 403
   const holder = String(b.holder_id || '');
@@ -2435,10 +2459,13 @@ async function adReportApi(req, env, u) {
   if (!ok) return J({ ok: false, error: playerErr('holder') }, 403);
   let r = null; try { r = await adM(env).adRead(slot, holder); } catch { r = null; }
   if (!r) return J({ ok: false, error: '리포트를 불러오지 못했어요. 잠시 뒤 다시 해 주세요.' }, 503);
-  return J({ ok: true, slot, days: r.days, total: r.total, since: r.since, today: r.today });
+  const v = { ok: true, slot, days: r.days, total: r.total, since: r.since, today: r.today }; if (ADR.size >= 500) ADR.clear(); ADR.set(mk, { at: Date.now(), v });
+  return J(v);
 }
+const ADR = new Map(); // GET /rt/ad-report answers per (account, slot), 10 s per isolate, at most 500; only a holder's 200 is kept
 async function announce(env, ctx, topics, uid, row) {
   try { await invalidateWorld(env, ctx); } catch { }
+  if (await budgetHard(env)) return; // budget hard: every socket was closed when the level was set, so no room is told (the world copy is still refilled)
   for (const topic of topics) {
     try {
       const room = env.ROOM.get(env.ROOM.idFromName(topic));
@@ -2666,10 +2693,11 @@ async function accountApi(req, env, ctx, u) {
     return J({ ok: true });
   }
   if (req.method !== 'POST') return J({ err: 'post' }, 405);
-  // A link is done once per person; a replay loop must not reach the RPC or any Durable Object (GUEST_RL: 10 a minute per client IP).
-  if (u.pathname === '/rt/auth/merge' && !(await rateOk(env.GUEST_RL, req))) return J({ ok: false, err: 'rate', error: '계정을 연결하지 못했어요. 잠시 뒤 다시 해 주세요.' }, 429, { 'retry-after': '60' });
-  const actor = await resolveActor(env, tokenOf(req));
+  const actor = await resolveActor(env, tokenOf(req)); // the JWT check: cached JWKS, no Durable Object call
   if (!actor || actor.guest || !actor.id.startsWith('user:')) return J({ err: 'auth' }, 401);
+  // A link or a withdrawal is done once per account; a replay loop must not reach the RPC or any Durable Object (GUEST_RL: 10 a minute per account,
+  // keyed by account so a shared IP's signed-in boots never use up the guest mints).
+  if (!(await rateKey(env.GUEST_RL, (u.pathname === '/rt/auth/merge' ? 'merge:' : 'withdraw:') + actor.id))) return J({ ok: false, err: 'rate', error: u.pathname === '/rt/auth/merge' ? '계정을 연결하지 못했어요. 잠시 뒤 다시 해 주세요.' : '탈퇴를 처리하지 못했어요. 잠시 뒤 다시 해 주세요.' }, 429, { 'retry-after': '60' });
   if (u.pathname === '/rt/auth/withdraw') {
     const rpc = await supabaseRpc('withdraw_account', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id });
     const data = rpc.data || {};
@@ -2703,7 +2731,7 @@ async function accountApi(req, env, ctx, u) {
   // Pushes to the user: id reach the guest's browsers, and the guest's board shots stay the holder's own (card page, share-page title).
   // The guest's wish, hearts, reports and unpaid prizes become the user's (wMove), so mine, the one-wish-a-day rule and the prize follow the person.
   ctx.waitUntil(Promise.resolve().then(() => Promise.all([pushM(env).psMove(guestId, actor.id), snapM(env).snapMove(guestId, actor.id).then(() => { SNX.clear(); SNC.clear(); }),
-    wishM(env).wMove(guestId, actor.id).then(() => { WISHC.at = 0; WONE.clear(); WAU.clear(); }), darkM(env).dkMove(guestId, actor.id), lgM(env).lgMove(guestId, actor.id).then(() => { LGW.at = 0; LGC.at = 0; }), invM(env).ivMove(guestId, actor.id)])).catch(() => { })); // the invite code, counts and pending rewards too
+    wishM(env).wMove(guestId, actor.id).then(() => { WISHC.at = 0; WONE.clear(); WAU.clear(); }), darkM(env).dkMove(guestId, actor.id), lgM(env).lgMove(guestId, actor.id).then(lgDrop), invM(env).ivMove(guestId, actor.id)])).catch(() => { })); // the invite code, counts and pending rewards too
   await adSoon(ctx, () => adM(env).adMove(guestId, actor.id)); // the moved boards keep their report; waited for (up to 0.8 s) so a report right after the link finds it
   return J({ ok: true, actor_id: actor.id, coins: data.coins, bonus: data.bonus || 0, linked: true, nickname: data.nickname || '' });
 }
@@ -2715,7 +2743,7 @@ async function forgetActor(env, uid) {
     await Promise.all((r?.e || []).map(e => supabaseRpc('push_unsubscribe', { p_key: env.FLUSH_KEY || '', p_actor_id: id, p_endpoint: e }).catch(() => null))); };
   await Promise.all(ids.map(id => Promise.all([dropSubs(id), wishM(env).wForget(id), snapM(env).snapForget(id), darkM(env).dkForget(id), lgM(env).lgForget(id), invM(env).ivForget(id)].map(p => p.catch(() => null)))));
   await Promise.all(ids.map(id => adM(env).adForget(id).catch(() => null))); // the board reports of their tenures go too
-  WISHC.at = 0; WONE.clear(); WAU.clear(); SNX.clear(); SNC.clear(); PC.delete('world'); LGW.at = 0; LGC.at = 0;
+  WISHC.at = 0; WONE.clear(); WAU.clear(); SNX.clear(); SNC.clear(); PC.delete('world'); lgDrop();
   try { await caches.default.delete(new Request(WORLD_CACHE)); } catch { }
 }
 function esc(s) { return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
@@ -2921,11 +2949,10 @@ export default {
       const actor = await resolveActor(env, tokenOf(req)); if (!actor?.guest) return J({ err: 'auth' }, 401);
       const exp = Math.floor(Date.now() / 1000) + TICKET_S; return J({ ticket: await seal(env, 'h1', { s: actor.sub, e: exp }), exp }); }
     if (u.pathname === '/rt/config' || u.pathname === '/rt/event' || u.pathname === '/rt/auth/merge' || u.pathname === '/rt/auth/withdraw') return accountApi(req, env, ctx, u);
-    if (u.pathname === '/rt/here' && req.method === 'GET') {
-      try {
-        const s = await env.ROOM.get(env.ROOM.idFromName('chapel:square')).stats();
-        return J({ live: Number(s?.live) || 0 });
-      } catch { return J({ live: 0 }); }
+    if (u.pathname === '/rt/here' && req.method === 'GET') { // no token: the answer per topic is kept 5 s in the isolate (at most one room call per 5 s)
+      const t = 'chapel:square', hit = HERE.get(t); if (hit && Date.now() - hit.at < 5000) return J({ live: hit.v });
+      let live = 0; try { const s = await env.ROOM.get(env.ROOM.idFromName(t)).stats(); live = Number(s?.live) || 0; } catch { live = 0; }
+      HERE.set(t, { at: Date.now(), v: live }); return J({ live });
     }
     if (u.pathname === '/rt/gate') { try { const now = Date.now(); if (!GATE.r || now - GATE.at > GATE_TTL) { GATE = { at: now, r: await tallyAdd(env) }; }
         const r = GATE.r, l = r.lvl, used = Math.round(r.n), gbs = Math.round(r.g);

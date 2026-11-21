@@ -294,7 +294,7 @@ describe('a cheer reaches the board holder', { concurrency: false }, () => {
     } finally { done(); }
   });
 
-  it('an account link tells only the live rooms, only when a board moved, and is rate-limited per IP before any DO call', async () => {
+  it('an account link tells only the live rooms, only when a board moved, and is rate-limited per account before any DO call', async () => {
     const { clock, state, done } = setup();
     try {
       const hits = new Map(), GUEST_RL = { async limit({ key }) { hits.set(key, (hits.get(key) || 0) + 1); return { success: hits.get(key) <= 10 }; } };
@@ -323,14 +323,15 @@ describe('a cheer reaches the board holder', { concurrency: false }, () => {
       assert.equal((await merge()).status, 200);
       assert.equal(roomGets, 0); assert.deepEqual(told, []);
       env.ROOM.get = r0;
-      // One IP, 11 calls in a minute: the 11th is refused before any Durable Object call or RPC.
-      for (let i = 0; i < 10; i++) assert.equal((await merge('3.3.3.3')).status, 200, 'call ' + (i + 1));
+      // One account, 11 calls in a minute (the two above count): the 11th is refused before any Durable Object call or RPC, from any network.
+      for (let i = 2; i < 10; i++) assert.equal((await merge('3.3.3.3')).status, 200, 'call ' + (i + 1));
       const d0 = doCalls, rpc0 = state.calls.filter((x) => x.includes('/rpc/')).length, f0 = state.calls.length;
       const no = await merge('3.3.3.3');
       assert.equal(no.status, 429); assert.equal(no.headers.get('retry-after'), '60');
       assert.deepEqual(await no.json(), { ok: false, err: 'rate', error: '계정을 연결하지 못했어요. 잠시 뒤 다시 해 주세요.' });
       assert.equal(doCalls, d0); assert.equal(state.calls.filter((x) => x.includes('/rpc/')).length, rpc0); assert.equal(state.calls.length, f0);
-      assert.equal((await merge('4.4.4.4')).status, 200); // another network is not affected
+      assert.equal((await merge('4.4.4.4')).status, 429); // keyed by account, not by network
+      assert.deepEqual([...hits.keys()].filter((k) => k !== 'x'), ['merge:' + U.id]); // ('x': the guest mint above, no IP header) never the client IP, so a shared IP's signed-in boots do not use up its guest mints
     } finally { done(); }
   });
 

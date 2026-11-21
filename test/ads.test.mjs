@@ -126,6 +126,7 @@ describe('board report', { concurrency: false }, () => {
       // Nothing reaches the report until the room flushes, in the ad_stat_batch rhythm.
       assert.deepEqual((await report('STREET_5', A.token)).body.total, { views: 0, clicks: 0, cheers: 0, people: 0 });
       await room.flushAds();
+      clock.add(10001); // past the isolate's 10 s memo of the holder's answer (ADR)
       const r = await report('STREET_5', A.token);
       assert.equal(r.status, 200); assert.equal(r.body.ok, true); assert.equal(r.body.slot, 'STREET_5');
       const today = kst(clock.now());
@@ -135,7 +136,7 @@ describe('board report', { concurrency: false }, () => {
       // Sent rows leave the room; a second flush sends nothing new.
       assert.equal(env.room(SQ).sql.db.prepare('select count(*) n from adq').get().n, 0);
       assert.equal(env.room(SQ).sql.db.prepare('select count(*) n from adw').get().n, 0);
-      await room.flushAds();
+      await room.flushAds(); clock.add(10001);
       assert.deepEqual((await report('STREET_5', A.token)).body.total, { views: 1, clicks: 1, cheers: 3, people: 3 });
       // The same people again the same day are not counted twice; the ids kept are hashes, not account ids.
       clock.add(13000); await cheer(room, c, 'STREET_5'); await room.flushAds();
@@ -148,8 +149,10 @@ describe('board report', { concurrency: false }, () => {
       assert.equal((await report('STREET_5', '')).status, 401);
       assert.equal((await report('MAIN_S', A.token)).status, 400);
       assert.equal((await post('/rt/ad-report?slot=STREET_5', {}, A.token)).status, 405);
-      // The holder is read from Supabase on every report, never from the isolate's world copy.
-      const before = state.boardReads; await report('STREET_5', A.token); assert.equal(state.boardReads, before + 1);
+      // The holder is read from Supabase, never from the isolate's world copy; a holder's own answer is kept 10 s (no Supabase read, no DO call).
+      clock.add(10001); const before = state.boardReads; await report('STREET_5', A.token); assert.equal(state.boardReads, before + 1);
+      await report('STREET_5', A.token); assert.equal(state.boardReads, before + 1);
+      clock.add(10001); await report('STREET_5', A.token); assert.equal(state.boardReads, before + 2);
     } finally { done(); }
   });
 
@@ -284,7 +287,7 @@ describe('board report', { concurrency: false }, () => {
       await cheer(room, c, 'SUB_1A'); await room.flushAds();
       assert.equal((await report('SUB_1A', A.token)).body.total.cheers, 1);
       assert.equal((await report('SUB_1A', B.token)).status, 403);
-      state.tribes = {}; assert.equal((await report('SUB_1A', A.token)).status, 403); // left the tribe
+      state.tribes = {}; clock.add(10001); assert.equal((await report('SUB_1A', A.token)).status, 403); // left the tribe (once the 10 s memo of A's answer is over)
       // Guest G holds STREET_20, then links to a Google account: merge_guest_account moves the board, the report follows.
       state.boards.push(board('STREET_20', G.id));
       await post('/rt/claim-billboard', CLAIM('STREET_20'), G.token);

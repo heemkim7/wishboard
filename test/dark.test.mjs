@@ -79,7 +79,7 @@ function fakeNet(state) {
       const lit = a.p_mode === 'edit' && prev ? prev.lit_until : iso(Date.now() + 72 * 3600e3), holder = a.p_mode === 'tribe' ? 'tribe:abcd1234' : a.p_actor_id;
       return json({ ok: true, billboard: put({ slot_id: a.p_slot_id, holder_id: holder, holder_name: a.p_nickname, line1: a.p_line1, lit_until: lit, expires_at: lit }), remaining_coins: 10, prev_holder_id: prev?.holder_id || null }); }
     if (u.includes('/rpc/relight_billboard')) { const a = JSON.parse(opt.body), b = (state.boards || []).find((x) => x.slot_id === a.p_slot_id);
-      if (!b || b.holder_id !== a.p_actor_id) return json({ ok: false, error: 'holder' }); b.lit_until = b.expires_at = iso(Date.now() + 72 * 3600e3); return json({ ok: true, lit_until: b.lit_until, lit_days: 2 }); }
+      if (!b || b.holder_id !== a.p_actor_id) return json({ ok: false, error: 'holder' }); b.lit_until = b.expires_at = iso(Date.now() + 72 * 3600e3); return json({ ok: true, lit_until: b.lit_until, lit_days: 2, scored: true }); } // schema.sql: a moved clock answers scored
     if (u.includes('/rpc/review_slot_claim')) { const a = JSON.parse(opt.body), r = state.review; const lit = iso(Date.now() + 72 * 3600e3), prev = (state.boards || []).find((x) => x.slot_id === r.slot);
       return json({ ok: true, actor_id: r.actor, prev_holder_id: prev?.holder_id || null, billboard: a.p_approve ? put({ slot_id: r.slot, holder_id: r.actor, holder_name: '승인', lit_until: lit, expires_at: lit }) : null }); }
     if (u.includes('/rpc/takedown_billboard')) { const a = JSON.parse(opt.body); return json({ ok: true, billboard: (state.boards || []).find((x) => x.slot_id === a.p_slot_id) || null }); }
@@ -247,7 +247,7 @@ describe('dark registry', () => {
     } finally { done(); }
   });
 
-  it('20 rows due at once go out exactly once over several passes of at most 8, each within the subrequest limit', async () => {
+  it('20 rows due at once go out exactly once over several passes of at most 6, each within the subrequest limit', async () => {
     const { state, clock, done } = setup('11:00');
     try {
       const env = makeEnv({ VAPID_PRIV: VAPID }), { guest, post } = harness(env), slots = Array.from({ length: 20 }, (_, i) => 'STREET_' + (i + 1));
@@ -256,7 +256,7 @@ describe('dark registry', () => {
       const calls = spyMeter(env, 'push'), passes = [];
       for (let i = 0; i < 6 && alarmOf(env) <= clock.now() + 1000; i++) { clock.to(Math.max(clock.now(), alarmOf(env))); const c0 = state.calls.length, d0 = state.inbox.length, p0 = calls.psDue || 0; await fire(env);
         passes.push({ rows: state.inbox.length - d0, fetches: state.calls.length - c0 + (calls.psDue || 0) - p0, inbox: state.calls.slice(c0).filter((x) => x.url.includes('inbox_batch')).length }); }
-      assert.deepEqual(passes.map((p) => p.rows), [8, 8, 4]);
+      assert.deepEqual(passes.map((p) => p.rows), [6, 6, 6, 2]);
       for (const p of passes) { assert.ok(p.fetches + 1 <= 50, JSON.stringify(p)); assert.equal(p.inbox, 1); } // + the day meter call
       assert.deepEqual(state.inbox.map((x) => x.slot_id).sort(), slots.slice().sort());
       assert.equal(state.pushes.length, 60);

@@ -2,7 +2,7 @@
 // rows (slot, holder, lit_until, notice flags) and one alarm at the earliest pending notice.
 import { slotName } from './balance.js';
 
-export const DARK = Object.freeze({ preMs: 6 * 3600e3, quietFrom: 23, quietTo: 8, retryMs: 30 * 60e3, passMax: 8 }); // passMax: due rows per alarm pass
+export const DARK = Object.freeze({ preMs: 6 * 3600e3, quietFrom: 23, quietTo: 8, retryMs: 30 * 60e3, passMax: 6 }); // passMax: due rows per alarm pass
 const KST = 9 * 3600e3, H = 3600e3, D = 864e5;
 // t, or the next 08:00 KST when t falls in the quiet hours 23:00–08:00 KST.
 export function quietShift(t) { const k = Number(t) + KST, h = new Date(k).getUTCHours(); if (h >= DARK.quietTo && h < DARK.quietFrom) return Number(t);
