@@ -39,6 +39,8 @@ function usedNames(src) {
   for (const a of callArgs(src, 'setIconText', 1)) namesIn(a).forEach((n) => used.add(n));
   for (const m of src.matchAll(/\bico: '([A-Za-z]+)'/g)) used.add(m[1]);
   for (const m of src.matchAll(/openSheet\(\['([A-Za-z]+)'/g)) used.add(m[1]);
+  // const EMOTE_ICONS = { 1: 'pray', … }
+  for (const m of src.matchAll(/const \w+_ICONS = \{([^}]*)\}/g)) namesIn(m[1]).forEach((n) => used.add(n));
   // const [labelIcon, label] = cond ? ['building', '…'] : …
   for (const m of src.matchAll(/const \[\w+Icon, \w+\] = ([^;]+);/g)) for (const t of m[1].matchAll(/\['([A-Za-z]*)', /g)) if (t[1]) used.add(t[1]);
   return used;
@@ -146,6 +148,23 @@ describe('interface icons (uiicons.js)', () => {
     assert.ok(used.size >= 35, `found ${used.size} names`);
     const missing = [...used].filter((n) => !ICON_NAMES.includes(n));
     assert.deepEqual(missing, []);
+  });
+
+  it('gives every emote dock button a line icon, while the emote itself stays the emoji', () => {
+    // ts3d/avatars.js needs three.js, so read EMOTES from its source.
+    const av = read('ts3d/avatars.js');
+    const block = av.slice(av.indexOf('export const EMOTES = {'), av.indexOf('};', av.indexOf('export const EMOTES = {')));
+    const EMOTES = Object.fromEntries([...block.matchAll(/(\d+): \{[^}]*glyph: '([^']+)'/g)].map((m) => [m[1], { glyph: m[2] }]));
+    assert.equal(Object.keys(EMOTES).length, 4);
+    const src = read('ui.js');
+    const map = src.match(/const EMOTE_ICONS = \{([^}]*)\}/);
+    assert.ok(map, 'EMOTE_ICONS in ui.js');
+    const pairs = Object.fromEntries([...map[1].matchAll(/(\d+): '([A-Za-z]+)'/g)].map((m) => [m[1], m[2]]));
+    assert.deepEqual(Object.keys(pairs).sort(), Object.keys(EMOTES).sort());
+    assert.deepEqual(Object.values(pairs), ['pray', 'firework', 'cheer', 'dance']);
+    for (const n of Object.values(pairs)) assert.ok(ICON_NAMES.includes(n), n);
+    for (const e of Object.values(EMOTES)) assert.match(e.glyph, /\p{Extended_Pictographic}/u); // what other players see is unchanged
+    assert.match(src, /h\('span', \{ class: 'e' \}, EMOTE_ICONS\[id\] \? icon\(EMOTE_ICONS\[id\]\) : e\.glyph\)/);
   });
 
   it('draws every icon with stroke geometry only, inside the 24×24 box', () => {

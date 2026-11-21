@@ -52,6 +52,15 @@ export const ICONS = Object.freeze({
   fish: ['M3.5 12C6 7.5 12 6.5 16 10L20.5 7V17L16 14C12 17.5 6 16.5 3.5 12Z', 'M11 9.5A4 4 0 0 1 11 14.5', ['circle', 7.5, 11.2, 0.5]],
   music: ['M9 17.5V5.5L19 3.5V15.5', 'M9 9.5L19 7.5', ['circle', 6.5, 17.5, 2.5], ['circle', 16.5, 15.5, 2.5]],
   coffee: ['M5 9.5H16V14.5A4.5 4.5 0 0 1 11.5 19H9.5A4.5 4.5 0 0 1 5 14.5Z', 'M16 11H17.5A2.25 2.25 0 0 1 17.5 15.5H16', 'M8.5 4V6.5', 'M12.5 4V6.5'],
+  // Emote dock faces (the glyph sent to other players stays the emoji in avatars.js EMOTES).
+  // 대박기원: two palms pressed together, cuffs at the wrists
+  pray: ['M12 4C10.6 4 9.5 5.4 9.5 7V12.2L6 15.7L8.8 18.5L12 15.3', 'M12 4C13.4 4 14.5 5.4 14.5 7V12.2L18 15.7L15.2 18.5L12 15.3', 'M12 4V15.3', 'M7.4 17.1L4.5 20', 'M16.6 17.1L19.5 20'],
+  // 폭죽발사: a burst of short rays over a dotted trail
+  firework: ['M12 7.3V3', 'M12 11.7V13.5', 'M14.2 9.5H18.5', 'M9.8 9.5H5.5', 'M13.56 7.94L16.6 4.9', 'M10.44 7.94L7.4 4.9', 'M13.56 11.06L16.6 14.1', 'M10.44 11.06L7.4 14.1', ['circle', 12, 17, 0.5], ['circle', 12, 20, 0.5]],
+  // 만세: a figure with both arms raised
+  cheer: [['circle', 12, 5.5, 2], 'M12 9.5V15', 'M12 10.5L7 6.5', 'M12 10.5L17 6.5', 'M12 15L8.5 20.5', 'M12 15L15.5 20.5'],
+  // K-댄스: a figure mid-step, one arm up
+  dance: [['circle', 13.5, 5, 2], 'M13 9L11.5 14.5', 'M12.8 10L17 7', 'M12.8 10L8 11.5', 'M11.5 14.5L15 17L14 20.5', 'M11.5 14.5L8 19.5'],
   smile: [['circle', 12, 12, 8.5], 'M8.5 14A4 4 0 0 0 15.5 14', ['circle', 9, 10, 0.5], ['circle', 15, 10, 0.5]],
   // 붉은 봉투 (복주머니 풍선)
   packet: [['rect', 5.5, 3.5, 13, 17, 2], 'M5.5 8L12 12L18.5 8', ['circle', 12, 12.5, 1.6]],
