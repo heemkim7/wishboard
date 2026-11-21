@@ -48,6 +48,15 @@ describe('auto-open after the intro', () => {
     assert.equal(wishAutoOpen({ newbie: true, known: true, mine: false, deep: true }), false);
     assert.equal(wishAutoOpen({ newbie: false, known: true, mine: false, deep: false }), false);
   });
+  it('a sheet closed without a wish this session does not open by itself again', () => {
+    assert.equal(wishAutoOpen({ newbie: true, known: true, mine: false, deep: false, skipped: true }), false);
+    assert.equal(wishAutoOpen({ newbie: true, known: false, mine: false, deep: false, skipped: true }), false);
+    assert.equal(wishAutoOpen({ newbie: true, known: true, mine: false, deep: false, skipped: false }), true);
+    const main = read('main.js');
+    const fn = main.slice(main.indexOf('async function afterIntro()'), main.indexOf('let crownSig'));
+    assert.match(fn, /sessionStorage\.getItem\('kts_wish_skip'\) === '1'/);
+    assert.match(fn, /wishAutoOpen\(\{[^}]*skipped \}\)/);
+  });
   it('main.js holds the bake tutorial until that sheet closes', () => {
     const main = read('main.js');
     assert.match(main, /if \(ftueArmed \|\| !entered \|\| !world \|\| wishHold\) return;/);

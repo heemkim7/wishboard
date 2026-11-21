@@ -14,6 +14,7 @@ import { authErrorText, cleanAddress, externalRoutes, oauthErrorText, oauthMessa
 import { invCode, inviteFrom, inviteView } from './invite.js';
 import { saveClip, dropParams } from './share.js?v=202611211159';
 import { ftueDue, crowdFacts, kstDay, lockCelebration, startFtue, wishAutoOpen, wishBootLine, awayRows, inboxUnread, seenAdd, liveKey, liveSeenAdd } from './ftue.js?v=202611211159';
+import { photoVerdicts } from './ftue.js?v=202611211159';
 import { WISH, cleanWish } from './wish.js';
 import { applyInboxPush, loadInbox, readInbox, liveOnly, handledRead, liveSeeable } from './inbox.js?v=202611211159';
 import { openTribe, pledge, sendCheer } from './tribe.js?v=202611211159';
@@ -600,9 +601,21 @@ function payFare(slot, riders = 1) {
 
 function adClick(slot, url) {
   if (!/^https:\/\//.test(String(url || ''))) return;
-  trackEvent('outlink_click', { slot: String(slot || '') });
-  window.open(url, '_blank', 'noopener');
-  if (!net.sendAdClick(state.nick, slot)) { ui.note('링크는 열렸고, 보너스 코인은 광장 연결 후 기록됩니다', 'err'); return; }
+  const go = () => {
+    trackEvent('outlink_click', { slot: String(slot || '') });
+    window.open(url, '_blank', 'noopener');
+    if (!net.sendAdClick(state.nick, slot)) { ui.note('링크는 열렸고, 보너스 코인은 광장 연결 후 기록됩니다', 'err'); return; }
+  };
+  // In-app browsers (KakaoTalk, Instagram, ...) often open the link over the game in the same view. Save where the avatar
+  // stands first, and ask with one tappable line; the tap is the gesture that opens it.
+  if (isInAppWebView(navigator.userAgent)) {
+    savePlace();
+    let where = '';
+    try { where = new URL(url).hostname.replace(/^www\./, ''); } catch { where = ''; }
+    ui.note(`${where || '게임 밖'} 링크로 나가요. 광장 자리는 저장했어요 · 눌러서 열기`, '', go);
+    return;
+  }
+  go();
 }
 
 const FORTUNES = [
@@ -877,10 +890,48 @@ async function submitPhoto(payload) {
   if (res?.data) {
     upsert(state.billboards, 'slot_id', res.data);
     world.updateBillboardTexture(res.data.slot_id || payload.slot_id, res.data, false);
+    photoRemember(res.data);
   }
   settle(res);
   if (res?.data) leagueSoon();
   return res;
+}
+
+// Photo review results. The review can come hours later, often while the player is away, so the photo sent from this device
+// is remembered (kts_photo_wait, ftue.js photoVerdicts) and the result is told once: a toast that opens the board, the HUD line,
+// and the photo row of the billboard sheet. A result seen live (onWorldUpdate) goes the same way.
+const PHOTO_WAIT_KEY = 'kts_photo_wait';
+const photoSaid = new Set();
+function photoRemember(row) {
+  if (!row?.slot_id || !row.photo_id || row.photo_status !== 'pending') return;
+  const list = readJson(PHOTO_WAIT_KEY, []);
+  const rest = (Array.isArray(list) ? list : []).filter((w) => w?.slot !== row.slot_id);
+  keep(PHOTO_WAIT_KEY, JSON.stringify([...rest, { slot: row.slot_id, id: row.photo_id, who: net.id, at: Date.now() }].slice(-8)));
+}
+function tellPhoto(slot, id, kind) {
+  const key = `${slot}|${id}|${kind}`;
+  if (!slot || photoSaid.has(key)) return;
+  photoSaid.add(key);
+  const list = readJson(PHOTO_WAIT_KEY, []);
+  if (Array.isArray(list)) keep(PHOTO_WAIT_KEY, JSON.stringify(list.filter((w) => !(w?.slot === slot && w?.id === id))));
+  const name = slotName(slot);
+  const text = kind === 'on' ? `📷 ${name} 사진 광고가 검수를 통과해 송출 중이에요`
+    : kind === 'down' ? `${name}에 송출 중이던 사진이 내려갔어요`
+      : kind === 'lost' ? `검수 전에 ${name} 주인이 바뀌어 사진이 내려갔어요. 사진 요금은 돌아왔어요`
+        : `${name} 사진이 거절됐어요. 사진 요금은 지갑으로 돌아왔어요`;
+  ui.photoNews?.(slot, kind, text);
+  ui.setNextLine(text);
+  // Losing the board has its own notice; the refund line stays on the HUD and in the sheet without a second toast.
+  if (kind !== 'lost') ui.note(text, kind === 'on' ? 'ok' : 'err', () => ui.openBillboard(slot));
+  if (kind === 'off' || kind === 'lost') refreshWallet();
+}
+function photoNotice() {
+  if (!entered) return;
+  const wait = readJson(PHOTO_WAIT_KEY, []);
+  if (!Array.isArray(wait) || !wait.length) return;
+  const v = photoVerdicts(wait, state.billboards, net.id);
+  keep(PHOTO_WAIT_KEY, JSON.stringify(v.wait));
+  for (const t of v.told) tellPhoto(t.slot, t.id, t.kind);
 }
 
 async function buy(payload) {
@@ -954,6 +1005,7 @@ function applyPlaza(remote) {
   world.setMonopoly?.(!!monopolyOf(state.billboards));
   markMine();
   paintCrown();
+  photoNotice();
 }
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -1172,7 +1224,10 @@ async function landWish() {
   else { releaseWish(); linkWishDone(); }
 }
 async function afterIntro() {
-  if (wishAutoOpen({ newbie: ui.isNewbie?.(), known: state.wish.known, mine: !!state.wish.mine, deep: !!(WISH_ID || FOCUS) })) {
+  // kts_wish_skip: the wish sheet was closed without a wish earlier this session; it does not open by itself again.
+  let skipped = false;
+  try { skipped = sessionStorage.getItem('kts_wish_skip') === '1'; } catch { /* private mode: the card still asks */ }
+  if (wishAutoOpen({ newbie: ui.isNewbie?.(), known: state.wish.known, mine: !!state.wish.mine, deep: !!(WISH_ID || FOCUS), skipped })) {
     if (!state.wish.known) await Promise.race([wishBoot || loadWishes(), sleep(2500)]).catch(() => {});
     if (!state.wish.mine && !ui.isBusy?.() && ui.openWish) {
       wishHold = true;
@@ -1585,14 +1640,15 @@ net.onWorldUpdate((ev) => {
   ui.setWorld(state);
   if (ev?.kind === 'BILLBOARD') markMine();
   world.updateWorld?.(state);
+  if (ev?.kind === 'BILLBOARD') photoNotice();
   if (!ev?.kind || ev.replay) return;
   if (sameClaim) {
-    if (ev.data.photo_status === 'approved' && prev.photo_status !== 'approved') headline(`📷 ${chars(ev.data.holder_name || '누군가', 12)}님의 사진 광고 송출 시작!`);
-    else if (prev.photo_id && !ev.data.photo_id && prev.holder_id === net.id) {
-      if (prev.photo_status === 'pending') {
-        ui.note('사진이 거절되었습니다. 사진 요금은 지갑으로 돌아왔어요.', 'err');
-        refreshWallet();
-      } else ui.note('송출 중이던 사진이 내려갔습니다.', 'err');
+    // Photos sent from another device are not in kts_photo_wait: the live change tells those (tellPhoto says each once).
+    if (ev.data.photo_status === 'approved' && prev.photo_status !== 'approved') {
+      headline(`📷 ${chars(ev.data.holder_name || '누군가', 12)}님의 사진 광고 송출 시작!`);
+      if (ev.data.holder_id === net.id) tellPhoto(ev.data.slot_id, ev.data.photo_id, 'on');
+    } else if (prev.photo_id && !ev.data.photo_id && prev.holder_id === net.id) {
+      tellPhoto(ev.data.slot_id, prev.photo_id, prev.photo_status === 'pending' ? 'off' : 'down');
     }
     return;
   }
