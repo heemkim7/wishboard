@@ -122,7 +122,7 @@
   <div class="scroll"><table id="grow"></table></div>
 </main>
 <script type="module">
-import { GROW_STEPS, growDays, growSum, stepPct } from './growth.js?v=202611210015';
+import { GROW_STEPS, growDays, growSum, stepPct } from './growth.js?v=202611211159';
 const $ = (id) => document.getElementById(id);
 const TABS = [['pending', '⏳ 검수 대기'], ['approved', '✅ 송출 중'], ['rejected', '거절함'], ['removed', '내림']];
 const SLOT = (s) => s === 'MAIN_TOP' ? '메인 타워 정상' : s === 'MAIN_MID' ? '메인 타워 중앙' : s === 'MAIN_BOT' ? '메인 타워 하단' : s.startsWith('SUB_') ? `코너 ${s.slice(4)}` : `거리 ${s.replace('PLOT_', '')}번`;

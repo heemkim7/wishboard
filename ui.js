@@ -1,23 +1,23 @@
 // Plaza UI: glass HUD, wallet, news wire, emote dock, prompts, bungeo-ppang timing game, K-POP rhythm game,
 // taxi HUD, city map + minimap, billboard / plot / ATM / settings / credits sheets, onboarding, touch controls, SFX.
-import { paintBillboard, paintNeonSign, THEMES, makeCanvas, chars, fontsReady, tierOf, boardPhoto, photoReady } from './ts3d/art.js?v=202611210015';
-import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, LANDMARKS } from './ts3d/layout.js?v=202611210015';
+import { paintBillboard, paintNeonSign, THEMES, makeCanvas, chars, fontsReady, tierOf, boardPhoto, photoReady } from './ts3d/art.js?v=202611211159';
+import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, LANDMARKS } from './ts3d/layout.js?v=202611211159';
 import { BALANCE, PAY, askBid, auctionClosed, buildingOf, chainBoost, floorOf, nextChainFace, slotName } from './balance.js';
-import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, tutorialTap, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611210015';
+import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, tutorialTap, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611211159';
 import { WISH, WISH_ERR, cleanWish, wishRejected, wishShareText } from './wish.js';
 import { botNick, leagueLine, leagueWeek, liveSig } from './league.js';
-import { backFields, returnGap } from './growth.js?v=202611210015';
+import { backFields, returnGap } from './growth.js?v=202611211159';
 import { nineSlot, nowMs } from './live.js';
-import { cardUrl, vipShareLink, composeWishShot, kakaoFeed, kakaoSend, loadKakao, invited } from './share.js?v=202611210015';
+import { cardUrl, vipShareLink, composeWishShot, kakaoFeed, kakaoSend, loadKakao, invited } from './share.js?v=202611211159';
 import { inviteView } from './invite.js';
-import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611210015';
-import { EMOTES, REACTIONS, AVATAR_COLORS, SPECIES } from './ts3d/avatars.js?v=202611210015';
-import { trackEvent } from './analytics.js?v=202611210015';
+import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611211159';
+import { EMOTES, REACTIONS, AVATAR_COLORS, SPECIES } from './ts3d/avatars.js?v=202611211159';
+import { trackEvent } from './analytics.js?v=202611211159';
 import { CHEER_PHRASES, allowedLink, blockedText, linkedActor } from './plaza-account.js';
-import { subscribePush, resendPush } from './push.js?v=202611210015';
-import { bindSfx, play } from './audio.js?v=202611210015';
+import { subscribePush, resendPush } from './push.js?v=202611211159';
+import { bindSfx, play } from './audio.js?v=202611211159';
 import { AD, AD_TEMPLATES, adSums, adBars } from './adreport.js';
-import { qrEncode, paintQr } from './qr.js?v=202611210015';
+import { qrEncode, paintQr } from './qr.js?v=202611211159';
 
 const LEVELS = [
   { src: 'icons/lot.jpg', t: '빈 땅' },
