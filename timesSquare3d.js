@@ -173,7 +173,9 @@ void main(){
   // Night: the ambient terms are low and only slightly cool, so walls (dark albedo, see ts3d/world.js) sit in the dark
   // while the avatars, whose albedo is several times higher, keep their own colours. Signs, shop bands and the
   // coloured point lights do the rest of the lighting.
-  const hemi = new THREE.HemisphereLight(0xb0b8d8, 0x3a2c3c, low ? 3.2 : 2.8);
+  // Both hemisphere colours are close to neutral: the tone map's toe already turns a dim grey-blue into navy, and a
+  // blue sky term plus a plum ground term pushed the walls to violet.
+  const hemi = new THREE.HemisphereLight(0xb4b8c8, 0x2c2e36, low ? 3.2 : 2.8);
   const moon = new THREE.DirectionalLight(0xd0dcff, 1.0);
   moon.position.set(-40, 90, 30);
   scene.add(hemi, moon);
@@ -182,7 +184,8 @@ void main(){
   mainLight.position.set(LAYOUT.oneTimes.x, 18, LAYOUT.oneTimes.z - 26);
   const stallLight = new THREE.PointLight(0xff8a2a, 40, 16, 2);
   stallLight.position.set(LAYOUT.stall.x, 2.3, LAYOUT.stall.z + 0.4);
-  const westLight = new THREE.PointLight(0xff3d9a, low ? 1000 : 700, 85, 2);
+  // magenta wash kept at its old strength (it covers most of the bowtie and tinted the walls violet when raised)
+  const westLight = new THREE.PointLight(0xff3d9a, low ? 760 : 520, 85, 2);
   westLight.position.set(low ? 16 : -22, 16, low ? 60 : -40);
   scene.add(mainLight, stallLight, westLight);
   let eastLight = null;

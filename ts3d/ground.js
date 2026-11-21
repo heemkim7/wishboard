@@ -83,8 +83,10 @@ export function createReflection(renderer, { enabled = true, scale = 0.5 } = {})
  * Wet-street shader patch for MeshStandardMaterial: puddle mask, darker damp albedo, glossy puddles, planar reflection.
  * `pave: [sizeX, sizeZ, strength, bond]` draws large low-contrast paver joints in world space (bond 1 = running bond);
  * the joints and the slight per-slab value change fade out once a slab is under a few pixels, so the far field is flat.
+ * `vary` is the amplitude of a very soft wet/dry value variation (two octaves of value noise, 23 m and 7.7 m).
+ * Without the reflection pass (low tier) puddles darken the albedo to 0.62 instead of 0.3, so they do not read as holes.
  */
-export function patchWet(mat, refl, puddleTex, { wet = 0.7, puddles = 1, reflect = 1, pave = [1, 1, 0, 0] } = {}) {
+export function patchWet(mat, refl, puddleTex, { wet = 0.7, puddles = 1, reflect = 1, pave = [1, 1, 0, 0], vary = 0 } = {}) {
   const puddleU = { value: puddleTex };
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uRefl = refl.uniforms.map;
@@ -95,11 +97,12 @@ export function patchWet(mat, refl, puddleTex, { wet = 0.7, puddles = 1, reflect
     sh.uniforms.uPud = { value: puddles };
     sh.uniforms.uReflK = { value: reflect };
     sh.uniforms.uPave = { value: new THREE.Vector4(...pave) };
+    sh.uniforms.uVary = { value: vary };
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nuniform mat4 uReflMat;\nvarying vec4 vReflUv;\nvarying vec2 vWxz;')
       .replace('#include <fog_vertex>', '#include <fog_vertex>\n{ vec4 wp = modelMatrix * vec4( transformed, 1.0 ); vWxz = wp.xz; vReflUv = uReflMat * wp; }');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform sampler2D uRefl;\nuniform sampler2D uPuddle;\nuniform float uReflOn;\nuniform float uWet;\nuniform float uPud;\nuniform float uReflK;\nuniform vec4 uPave;\nvarying vec4 vReflUv;\nvarying vec2 vWxz;\nfloat gPud = 0.0;')
+      .replace('#include <common>', '#include <common>\nuniform sampler2D uRefl;\nuniform sampler2D uPuddle;\nuniform float uReflOn;\nuniform float uWet;\nuniform float uPud;\nuniform float uReflK;\nuniform vec4 uPave;\nuniform float uVary;\nvarying vec4 vReflUv;\nvarying vec2 vWxz;\nfloat gPud = 0.0;\nfloat gVar = 0.0;\nfloat gH( vec2 p ) { p = fract( p * vec2( 0.1031, 0.1137 ) ); p += dot( p, p.yx + 33.33 ); return fract( ( p.x + p.y ) * p.x ); }\nfloat gN( vec2 p ) { vec2 i = floor( p ), f = fract( p ); f = f * f * ( 3.0 - 2.0 * f ); return mix( mix( gH( i ), gH( i + vec2( 1.0, 0.0 ) ), f.x ), mix( gH( i + vec2( 0.0, 1.0 ) ), gH( i + vec2( 1.0, 1.0 ) ), f.x ), f.y ); }')
       .replace('#include <map_fragment>', `#include <map_fragment>
 if ( uPave.z > 0.0 ) {
   vec2 pc = vWxz / uPave.xy;
@@ -118,10 +121,15 @@ if ( uPave.z > 0.0 ) {
   float p1 = texture2D( uPuddle, vWxz * 0.031 ).r;
   float p2 = texture2D( uPuddle, vWxz * 0.0123 + vec2( 0.37, 0.71 ) ).r;
   gPud = smoothstep( 0.42, 0.64, p1 * 0.55 + p2 * 0.65 ) * uPud;
-  diffuseColor.rgb *= mix( 1.0 - 0.38 * uWet, 0.3, gPud );
+  diffuseColor.rgb *= mix( 1.0 - 0.38 * uWet, mix( 0.62, 0.3, uReflOn ), gPud );
+}
+if ( uVary > 0.0 ) {
+  float wv = gN( vWxz / 23.0 ) * 0.65 + gN( vWxz / 7.7 + 3.1 ) * 0.35;
+  gVar = uVary * 2.0 * ( wv - 0.5 );
+  diffuseColor.rgb *= 1.0 + gVar;
 }`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-roughnessFactor = mix( roughnessFactor * ( 1.0 - 0.5 * uWet ), 0.03, gPud );`)
+roughnessFactor = mix( roughnessFactor * ( 1.0 - 0.5 * uWet ) * ( 1.0 + gVar ), 0.03, gPud );`)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
 normal = normalize( mix( normal, nonPerturbedNormal, gPud * 0.92 ) );`)
       .replace('#include <opaque_fragment>', `if ( uReflOn > 0.5 ) {
