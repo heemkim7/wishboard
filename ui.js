@@ -8,7 +8,8 @@ import { WISH, WISH_ERR, cleanWish, wishRejected, wishShareText } from './wish.j
 import { botNick, leagueLine, leagueWeek } from './league.js';
 import { backFields, returnGap } from './growth.js?v=202611210015';
 import { nineSlot, nowMs } from './live.js';
-import { cardUrl, vipShareLink, composeWishShot, kakaoFeed, kakaoKey, kakaoSend, loadKakao } from './share.js?v=202611210015';
+import { cardUrl, vipShareLink, composeWishShot, kakaoFeed, kakaoKey, kakaoSend, loadKakao, invited } from './share.js?v=202611210015';
+import { inviteView } from './invite.js';
 import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611210015';
 import { EMOTES, REACTIONS, AVATAR_COLORS, SPECIES } from './ts3d/avatars.js?v=202611210015';
 import { trackEvent } from './analytics.js?v=202611210015';
@@ -1200,7 +1201,7 @@ export function createUI(root, hooks) {
       } });
       const share = h('button', { class: 'btn gold', type: 'button', text: '공유하기', disabled: true, onclick: async () => {
         if (!page || shareBusy) return;
-        const payload = { title: 'WISH BOARD : 모두의 전광판', text: SHARE_TEXT, url: page };
+        const payload = { title: 'WISH BOARD : 모두의 전광판', text: SHARE_TEXT, url: invited(page, hooks.inviteCode?.()) };
         if (navigator.share && navigator.canShare?.({ files: [file] })) {
           shareBusy = true;
           try {
@@ -1257,6 +1258,7 @@ export function createUI(root, hooks) {
   async function sendLink({ kind, text = '', url = '', title = 'WISH BOARD : 모두의 전광판', native = false, into = null }) {
     if (shareBusy) return 'busy';
     shareBusy = true;
+    url = invited(url, hooks.inviteCode?.()); // every link is also my invite
     let how;
     try { how = await shareWish({ nav: native ? navigator : null, clip: writeClip, data: { title, text, url } }); }
     finally { shareBusy = false; }
@@ -1271,7 +1273,7 @@ export function createUI(root, hooks) {
     if (shareBusy) return 'busy';
     shareBusy = true;
     let ok = false;
-    try { ok = await kakaoSend(await kakaoKey(), kakaoFeed({ title, text, url, origin: location.origin })); } catch { ok = false; }
+    try { ok = await kakaoSend(await kakaoKey(), kakaoFeed({ title, text, url: invited(url, hooks.inviteCode?.()), origin: location.origin })); } catch { ok = false; } // the cached code only: no wait here
     finally { shareBusy = false; }
     if (ok) trackEvent('share_link', { kind, how: 'kakao' });
     return ok ? 'kakao' : '';
@@ -1827,7 +1829,8 @@ export function createUI(root, hooks) {
       const leftEl = h('p', { class: 'note wish-left' });
       const listBox = h('div', { class: 'wish-list' });
       const yBox = h('div', { class: 'wish-y', hidden: true });
-      host.append(focusBox, mineBox, h('div', { class: 'wish-tabs', role: 'group', 'aria-label': '소원 목록' }, tabTop, tabNew), leftEl, listBox, yBox, h('p', { class: 'note wish-foot', text: WISH_FOOT }));
+      const invBox = h('p', { class: 'note wish-inv-n', hidden: true }); // 초대한 친구 n명 · 받은 코인 m, only once n > 0
+      host.append(focusBox, mineBox, invBox, h('div', { class: 'wish-tabs', role: 'group', 'aria-label': '소원 목록' }, tabTop, tabNew), leftEl, listBox, yBox, h('p', { class: 'note wish-foot', text: WISH_FOOT }));
 
       const isOwn = (w) => !!(w?.mine || (wishView.mine && w?.id === wishView.mine.id));
       // The view = the last server state plus the hearts still in flight (never written into wishView, so a failed one
@@ -1842,7 +1845,7 @@ export function createUI(root, hooks) {
         const i = wishView.top.findIndex((x) => x.id === m?.id);
         return i < 0 ? 0 : Math.floor(Number(wishView.top[i].rank)) || i + 1;
       };
-      function paint() { paintFocus(); paintMine(); paintList(); paintYesterday(); }
+      function paint() { paintFocus(); paintMine(); paintList(); paintYesterday(); const t = inviteView({ on: !!hooks.inviteOn?.(), sum: hooks.inviteSum?.() }).box; invBox.textContent = t; invBox.hidden = !t; }
       async function sendHeart(id) {
         if (pending.has(id)) return false;
         pending.add(id);
@@ -1968,6 +1971,7 @@ export function createUI(root, hooks) {
           kids.push(rankEl);
           const share = h('button', { class: 'btn gold wish-go', type: 'button', text: '친구에게 하트 부탁하기', onclick: () => shareMine(m, share) });
           kids.push(share, kakaoButton((b) => shareMine(m, b, true)));
+          const invLine = inviteView({ on: !!hooks.inviteOn?.(), sum: hooks.inviteSum?.() }).line; if (invLine) kids.push(h('p', { class: 'note wish-inv', text: invLine }));
           if (!(Number(m.hearts) > 0)) kids.push(h('button', { class: 'btn ghost wish-edit', type: 'button', text: '고쳐 쓰기', onclick: () => { editing = true; paintMine(true); input?.focus(); } }));
           if (justPosted) { justPosted = false; setTimeout(() => { if (share.isConnected) share.focus(); }, 80); }
           kids.push(pushRow());
@@ -1984,8 +1988,11 @@ export function createUI(root, hooks) {
         const plain = hooks.wishUrl?.(m.id) || (location.origin + '/rt/w/' + encodeURIComponent(m.id));
         const label = btn?.textContent || '친구에게 하트 부탁하기';
         if (btn) { btn.disabled = true; btn.textContent = '전광판에 올리는 중…'; }
+        // My code if it is not cached yet; never waited for on the Kakao path (its 1 s tap budget): that sends the cached code or none.
+        const code = viaKakao ? null : Promise.race([Promise.resolve(hooks.ensureInvite?.()), new Promise((r) => setTimeout(() => r(''), 1500))]).catch(() => '');
         let pic = '';
         try { pic = await Promise.race([wishPicture(m), new Promise((r) => setTimeout(() => r(''), 4000)), ...(viaKakao ? [new Promise((r) => setTimeout(() => r(''), 1000))] : [])]); } catch { pic = ''; } // Kakao's popup needs the tap still fresh: ~1 s at most for the picture
+        if (code) await code;
         if (btn) { btn.disabled = false; btn.textContent = label; }
         const url = pic || plain;
         const { title, text } = wishShareText(m);
@@ -1993,7 +2000,7 @@ export function createUI(root, hooks) {
         if (how === 'cancel' || how === 'busy') return;
         trackEvent('wish_share', { how, pic: pic ? 1 : 0 });
         if (how === 'copied') note('링크를 복사했어요. 친구에게 붙여 넣어 보내세요.', 'ok');
-        if (how === 'manual') manualLink = url;
+        if (how === 'manual') manualLink = invited(url, hooks.inviteCode?.());
       }
       function armReport(id) {
         if (armed === id) {

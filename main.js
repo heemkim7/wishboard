@@ -9,7 +9,8 @@ import { haptic, startMusic } from './audio.js?v=202611210015';
 import { BALANCE, PAY, chainsOf, live, monopolyOf, slotName, slotOf, takeGrants, cheerCount, countsAsPlay } from './balance.js';
 import { auctionClosed } from './balance.js';
 import { trackEvent } from './analytics.js?v=202611210015';
-import { adoptHandover, allowedLink, blockedText, chromeIntent, handoverHref, isAndroid, isInAppWebView, loginEmail, profileName, CHEER_PHRASES, GT_LS, slotTier } from './plaza-account.js';
+import { adoptHandover, allowedLink, blockedText, chromeIntent, handoverHref, isAndroid, isInAppWebView, loginEmail, profileName, CHEER_PHRASES, GT_LS, SESSION_LS, slotTier } from './plaza-account.js';
+import { invCode, inviteFrom, inviteView } from './invite.js';
 import { saveClip, dropParams } from './share.js?v=202611210015';
 import { ftueDue, crowdFacts, kstDay, lockCelebration, startFtue, wishAutoOpen, wishBootLine, awayRows, inboxUnread, seenAdd, liveKey, liveSeenAdd } from './ftue.js?v=202611210015';
 import { WISH, cleanWish } from './wish.js';
@@ -18,6 +19,19 @@ import { openTribe, pledge, sendCheer } from './tribe.js?v=202611210015';
 import { applyOps, ballNotice, sessionEndPlan, nineBanner, kingMinute, clockSkew, clock, nowMs } from './live.js';
 
 adoptHandover(location.search, localStorage);
+// 친구 초대: ?inv=<code> is kept (kts_inv_from, first one wins) only when this browser had no account of its own before this visit,
+// and goes out once with the first wish post. kts_inv_code is my own code, kts_inv_seen the newest reward the away sheet showed.
+const INV_FROM_KEY = 'kts_inv_from', INV_CODE_KEY = 'kts_inv_code', INV_SEEN_KEY = 'kts_inv_seen', INV_GOT_KEY = 'kts_inv_got', INV_WAIT_KEY = 'kts_inv_wait';
+(() => {
+  const c = invCode(new URLSearchParams(location.search).get('inv'));
+  if (!c) return;
+  let kept = 0;
+  try {
+    const had = localStorage.getItem(GT_LS) || localStorage.getItem(SESSION_LS) || localStorage.getItem(INV_CODE_KEY) || localStorage.getItem('kts_daily');
+    if (!had && !inviteFrom(localStorage.getItem(INV_FROM_KEY))) { localStorage.setItem(INV_FROM_KEY, JSON.stringify({ c, at: Date.now() })); kept = 1; } // forgotten after INVITE.fromDays
+  } catch { /* private mode: no invite */ }
+  trackEvent('invite_land', { kept });
+})();
 
 const NICK_KEY = 'kts_nick';
 const COLOR_KEY = 'kts_color';
@@ -144,6 +158,7 @@ const state = {
   starterUsed: null,
   // 오늘의 소원. board/king/count come with every /rt/world; the rest from GET /rt/wishes (known once that answered).
   wish: { known: false, at: 0, day: '', board: [], king: null, count: 0, mine: null, left: 0, given: [], top: [], recent: [], yesterday: [], focus: null, miss: '' },
+  invite: null, // GET/POST /rt/invite summary once read
 };
 const gfx = (() => {
   try {
@@ -296,10 +311,15 @@ const ui = createUI(document.getElementById('ui'), {
   heartWish: (id) => heartWish(id),
   reportWish: (id) => reportWish(id),
   wishUrl: (id) => location.origin + '/rt/w/' + encodeURIComponent(id),
+  inviteOn: () => inviteIsOn(),
+  inviteCode: () => inviteView({ on: inviteIsOn(), code: recall(INV_CODE_KEY) }).code,
+  inviteSum: () => state.invite,
+  ensureInvite: () => ensureInvite(),
   arrive() {
     if (FOCUS) trackEvent('focus_enter', { slot: FOCUS, ref: FOCUS_REF });
     // Used once: a reload must not replay the gift toast or the focus camera (?tribe= goes after joinTribeLink).
     dropDeep(['focus', 'gift', 'ref']);
+    dropDeep(['inv']); // already kept at load (kts_inv_from)
     if (!FOCUS) {
       world?.playIntro();
       // Mark the tutorial before ui's enter handler runs maybeStarterToast, so the two do not compete.
@@ -1021,8 +1041,11 @@ async function postWish(text) {
   const line = cleanWish(text);
   wishSending = line;
   let res;
-  try { res = await net.postWish(line, state.nick); } finally { wishSending = ''; }
+  const inv = inviteView({ on: inviteIsOn(), from: inviteFrom(recall(INV_FROM_KEY)) }).send; // '' once older than 7 days, or while the switch is off (then kept)
+  try { res = await (inv ? net.postWishInv(line, state.nick, inv) : net.postWish(line, state.nick)); } finally { wishSending = ''; }
   if (!res?.ok || !res.wish) return res || { ok: false, error: '소원을 걸지 못했어요. 잠시 뒤 다시 해 주세요.' };
+  if (inv) { try { localStorage.removeItem(INV_FROM_KEY); } catch { /* private mode */ } if (res.fresh) watchInviteGift(); }
+  if (res.fresh) ensureInvite(); // my own link carries my code from the first share on
   const mine = wishRow({ ...res.wish, mine: true });
   if (mine) {
     state.wish.known = true;
@@ -1032,6 +1055,57 @@ async function postWish(text) {
     loadWishes('', true).catch(() => {}); // the rank comes from the list
   }
   return res;
+}
+// 친구 초대. My code: POST /rt/invite once (one request in flight), cached in kts_inv_code. readInvite: the GET summary; no code there drops the cache.
+let invAsk = null;
+// The master switch: /rt/config carried invite: true (the Worker's INVITE_ON). Off: no code, no lines, no polls; a landing ?inv= is still kept 7 days.
+const inviteIsOn = () => net.inviteOn === true;
+function ensureInvite() {
+  if (!inviteIsOn()) return Promise.resolve('');
+  const have = invCode(recall(INV_CODE_KEY));
+  if (have) return Promise.resolve(have);
+  if (!invAsk) invAsk = net.invite(true).then((s) => { if (s) state.invite = s; if (invCode(s?.code)) keep(INV_CODE_KEY, s.code); return invCode(s?.code); }).finally(() => { invAsk = null; });
+  return invAsk;
+}
+async function readInvite() {
+  if (!inviteIsOn()) return null;
+  const s = await net.invite(false);
+  if (!s) return null;
+  state.invite = s;
+  if (invCode(s.code)) keep(INV_CODE_KEY, s.code);
+  else if (!invAsk) { try { localStorage.removeItem(INV_CODE_KEY); } catch { /* private mode */ } }
+  return s;
+}
+// The invitee's gift is paid after the post answered (again later when the wallet row was late): look at 8 s, 70 s, 140 s and 280 s. On a full
+// day the pair waits for a later day, so until the gift shows (kts_inv_wait, 8 days) each entry looks once more (inviteGiftOnEntry).
+function inviteGiftShown(s) {
+  const gift = Math.max(0, Math.floor(Number(s?.gift) || 0));
+  if (!(gift > 0)) return false;
+  try { localStorage.removeItem(INV_WAIT_KEY); } catch { /* private mode */ }
+  if (recall(INV_GOT_KEY)) return true;
+  keep(INV_GOT_KEY, '1');
+  ui.note(`초대 선물 ${gift}코인을 받았어요`, 'ok');
+  trackEvent('invite_reward', { side: 'invitee', amount: gift });
+  refreshWallet().catch(() => {});
+  return true;
+}
+function watchInviteGift() {
+  const at = [8000, 70000, 140000, 280000];
+  let i = 0;
+  keep(INV_WAIT_KEY, String(Date.now()));
+  const look = async () => {
+    if (inviteGiftShown(await readInvite().catch(() => null))) return;
+    i += 1;
+    if (i < at.length) setTimeout(look, at[i] - at[i - 1]);
+  };
+  setTimeout(look, at[0]);
+}
+function inviteGiftOnEntry() {
+  if (!inviteIsOn()) return;
+  const w = Number(recall(INV_WAIT_KEY)) || 0;
+  if (!w) return;
+  if (Date.now() - w > 8 * 864e5 || recall(INV_GOT_KEY)) { try { localStorage.removeItem(INV_WAIT_KEY); } catch { /* private mode */ } return; }
+  setTimeout(() => { readInvite().then(inviteGiftShown).catch(() => {}); }, 6000);
 }
 async function heartWish(id) {
   const res = await net.heartWish(id);
@@ -1614,7 +1688,8 @@ async function passwordSign(kind, id, password) {
 async function withdrawAccount() {
   await net.withdrawAccount();
   sessionUser = null;
-  try { localStorage.removeItem(GT_LS); } catch { /* private mode */ }
+  try { localStorage.removeItem(GT_LS); localStorage.removeItem(INV_CODE_KEY); } catch { /* private mode */ }
+  state.invite = null;
   const g = await guestToken(true);
   if (g?.sub) net.id = 'guest:' + g.sub;
   accountReady = true;
@@ -1641,7 +1716,10 @@ function syncInboxDot() {
 async function showAway() {
   try { inboxRows = await loadInbox(); } catch { inboxRows = []; }
   syncInboxDot();
+  // Friends who came through my links since last time: only someone who already has a code can have any, so newcomers never ask.
+  const inviteRead = !ui.isNewbie?.() && invCode(recall(INV_CODE_KEY)) ? readInvite().catch(() => null) : Promise.resolve(null);
   await Promise.race([wishBoot || Promise.resolve(), sleep(4000)]).catch(() => {});
+  const invite = await Promise.race([inviteRead, sleep(3000)]).catch(() => null);
   await Promise.race([introReady, sleep(12000)]);
   if (WISH_ID && !FOCUS) await Promise.race([linkWishClosed, sleep(6000)]);
   const day = kstDay();
@@ -1658,6 +1736,8 @@ async function showAway() {
     holder: holderOf,
     me: net.id,
     liveSeen: readJson(INBOX_LIVE_KEY, []),
+    invite,
+    invSeen: Number(recall(INV_SEEN_KEY)) || 0,
   });
   // Rows already handled (board held again, seen live, folded duplicates) do not light the 🔔 either.
   const shownIds = new Set(plan.rows.map((r) => r.id));
@@ -1676,6 +1756,7 @@ async function showAway() {
     }
     if (plan.wishSeen) keep(WISH_SEEN_KEY, JSON.stringify(plan.wishSeen));
     if (plan.prizeDay) keep(WISH_PRIZE_KEY, plan.prizeDay);
+    if (plan.invSeen) { keep(INV_SEEN_KEY, String(plan.invSeen)); trackEvent('invite_reward', { side: 'inviter' }); }
   });
 }
 
@@ -1763,6 +1844,9 @@ async function enter({ nick, color, species }) {
   try { ready = await netReady; } catch { ready = false; }
   // Once, after the guest token exists: my wish today, hearts left, hearts given (and the linked wish).
   wishBoot = loadWishes(WISH_ID, true).catch(() => state.wish);
+  // My invite code, lazily: not in a newcomer's first minute (a fresh wish asks for it sooner).
+  setTimeout(() => { ensureInvite().catch(() => {}); }, ui.isNewbie?.() ? 90000 : 20000);
+  inviteGiftOnEntry(); // a gift that waited for a full day shows on the next entry
   if (ready === false) { ui.setStatus('혼자 걷는 중', 'off'); return; }
   try {
     await net.join('square', world.netState());

@@ -1,5 +1,13 @@
 import { SLOT_IDS } from './balance.js';
 import { SITE } from './plaza-account.js';
+import { withInvite } from './invite.js';
+
+// Every link a player hands out is also an invite: ?inv=<my code> (kts_inv_code) on this site's links. The one place it is added (ui.js sendLink).
+export function invited(url, code) {
+  let here = '';
+  try { here = typeof location !== 'undefined' ? location.origin : ''; } catch { here = ''; }
+  return withInvite(url, code, [SITE, here].filter(Boolean));
+}
 
 export function cardUrl(slot, opts = {}) {
   if (!SLOT_IDS.includes(String(slot || ''))) return '';

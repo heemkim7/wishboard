@@ -13,6 +13,7 @@ import { WISH, WISH_ERR, cleanWish, cleanNick, wishFault, wishNickFault, ipNet, 
 import { ghostPacket } from './ts3d/walkers.js';
 import { LEAGUE, leagueBoard, leagueCut, weekEnds, botNick } from './league.js';
 import { DARK, quietShift, darkNext, darkHours, darkText, litOf } from './dark.js';
+import { INVITE, invCode, newCode, inviteFault, inviteWaits, inviteOn, ipWide } from './invite.js';
 import { adTables, adIngest, adTenure, adRename, adForget, adReport } from './adreport.js';
 // v16 cost pass: ping 25s (client) / STALE 75s, idle scan alarm 60s, meter report 60s, compact pos ('p'/'P'), nearby fanout, event ring + world cache, HMAC guest tokens.
 const CAP = 50, MEM = 0.125, LEAN = 0.8, HARD = 0.95, STALE = 75000, SCAN = 5000, IDLE_SCAN = 60000, REP = 60000;
@@ -267,6 +268,12 @@ export class Meter extends DurableObject {
     const d0 = q.exec('select d0 from seen where uid = ?', guest).toArray()[0]?.d0; if (d0) q.exec('insert into seen(uid, d0) values(?, ?) on conflict(uid) do update set d0 = min(d0, excluded.d0)', user, d0); return { ok: 1 }; }
   // Guests linked to this user (account withdrawal clears what they left in the other instances).
   evGuests(user) { this.evInit(); return this.ctx.storage.sql.exec('select guest from alias where user = ?', String(user || '')).toArray().map(r => String(r.guest)); }
+  // Invite checks: the account with its link group (a guest, the user it was linked to, that user's other guests), and whether any of them was
+  // first seen (folded into `seen`) on a day before `day` (the caller passes today minus INVITE.newDays).
+  evGroup(id, day) { this.evInit(); const q = this.ctx.storage.sql, u = String(id || ''), ids = new Set([u]);
+    const user = u.startsWith('user:') ? u : String(q.exec('select user from alias where guest = ?', u).toArray()[0]?.user || '');
+    if (user) { ids.add(user); for (const r of q.exec('select guest from alias where user = ?', user).toArray()) ids.add(String(r.guest)); }
+    const list = [...ids]; return { ids: list, old: !!q.exec('select 1 from seen where uid in (' + list.map(() => '?').join(',') + ') and d0 < ? limit 1', ...list, String(day || '')).toArray()[0] }; }
   // One day's rows (ids lo..hi) -> summary. A session is a tab (sid) and belongs to the last account it reported; a visitor is an account.
   // funnel = [landing, enter, first coin, claim] over visitors plus account-less sessions; funnel_new = the same over accounts first seen that day.
   evSum(day, lo, hi) { const q = this.ctx.storage.sql, S = new Map(), events = {};
@@ -432,6 +439,131 @@ export class Meter extends DurableObject {
   wUnpay(day, wid) { this.wInit(); const q = this.ctx.storage.sql, r = q.exec('select j from wst where day = ?', day).toArray()[0]; if (!r) return { ok: false };
     let list = []; try { list = JSON.parse(r.j); } catch { return { ok: false }; } const w = list.find(x => x.id === wid); if (!w) return { ok: false };
     w.paid = 0; q.exec('update wst set j = ? where day = ?', JSON.stringify(list), day); return { ok: true }; }
+  // 친구 초대 (instance 'inv'). ivc: codes (an account can own several after a merge; its first is the one handed out), ivip: IP nets an account used
+  // per KST day (code requests and wish posts), ivs: accounts seen posting a fresh wish (d0 = first day) or tried as an invitee, ivr: rewarded invitees
+  // (one row each, ever), ivp: the two payments of each reward, marked paid when handed out and done once Supabase took them, iva: guest→user links
+  // from merges, ivq: pairs refused only for the service-wide day cap, waiting for a later day. ivr.wide is the invitee's coarse prefix (IPv6 /48,
+  // IPv4 /24, hashed), added to older tables by alter table. Ids and IP hashes never leave the Worker; the summary has counts and times only.
+  ivInit() { if (this.ii) return; this.ii = 1; const q = this.ctx.storage.sql;
+    q.exec('create table if not exists ivc(code text primary key, uid text not null, d text not null, ip text not null, at integer not null)'); q.exec('create index if not exists ivc_u on ivc(uid, at)');
+    q.exec('create table if not exists ivip(uid text, day text, ip text, primary key(uid, day, ip))');
+    q.exec("create table if not exists ivs(uid text primary key, d0 text not null default '', tried integer not null default 0)");
+    q.exec('create table if not exists ivr(invitee text primary key, inviter text not null, day text not null, at integer not null, ip text not null)'); q.exec('create index if not exists ivr_i on ivr(inviter, day)'); q.exec('create index if not exists ivr_ip on ivr(ip, day)');
+    q.exec('create table if not exists ivp(id text primary key, uid text not null, side text not null, amount integer not null, paid integer not null default 0, done integer not null default 0, tries integer not null default 0, at integer not null default 0, dt integer not null default 0)');
+    q.exec('create index if not exists ivp_u on ivp(uid, side, done)'); q.exec('create index if not exists ivp_d on ivp(done, paid, at)'); q.exec('create table if not exists iva(guest text primary key, user text not null)');
+    try { q.exec("alter table ivr add column wide text not null default ''"); } catch { /* column already exists */ } q.exec('create index if not exists ivr_w on ivr(wide, day)'); q.exec('create index if not exists ivr_d on ivr(day)');
+    // ivq.td: the day a pass last held the pair back for a daily limit (it is looked at once per day)
+    q.exec("create table if not exists ivq(invitee text primary key, inviter text not null, ip text not null, wide text not null, day text not null, at integer not null, td text not null default '')");
+    try { q.exec("alter table ivq add column td text not null default ''"); } catch { /* column already exists */ }
+    for (const s of ['create index if not exists ivq_d on ivq(day)', 'create index if not exists ivq_w on ivq(wide, at)', 'create index if not exists ivq_ip on ivq(day, ip)', 'create index if not exists ivq_wd on ivq(day, wide)', 'create index if not exists ivq_i on ivq(day, inviter)']) q.exec(s); }
+  // The invitee with every account linked to it by merges seen here (two hops: guest → user → the user's other guests).
+  ivGroup(seed) { const q = this.ctx.storage.sql, ids = new Set(seed.map(String).filter(Boolean));
+    for (let hop = 0; hop < 2; hop++) for (const x of [...ids]) for (const r of q.exec('select guest, user from iva where guest = ? or user = ?', x, x).toArray()) { ids.add(String(r.guest)); ids.add(String(r.user)); }
+    return [...ids]; }
+  // inviteFault's count fields for a pair judged on day d.
+  ivCaps(inviter, ip, wide, d) { const q = this.ctx.storage.sql, n = (s, ...a) => Number(q.exec(s, ...a).toArray()[0]?.n) || 0;
+    return { perDay: n('select count(*) n from ivr where inviter = ? and day = ?', inviter, d), total: n('select count(*) n from ivr where inviter = ?', inviter), ipDay: n('select count(*) n from ivr where ip = ? and day = ?', ip, d),
+      ipTotal: n('select count(*) n from ivr where ip = ?', ip), wideDay: wide ? n('select count(*) n from ivr where wide = ? and day = ?', wide, d) : 0, dayAll: n('select count(*) n from ivr where day = ?', d) }; }
+  // The reward row and its two payments, written together; the payments wait (pending, at 0) for ivHand. A guest already linked is paid as its user.
+  ivPay(u, inviter, ip, wide, d, t) { const q = this.ctx.storage.sql, to = String(q.exec('select user from iva where guest = ?', u).toArray()[0]?.user || '') || u;
+    this.ctx.storage.transactionSync(() => { q.exec('insert into ivr(invitee, inviter, day, at, ip, wide) values(?, ?, ?, ?, ?, ?)', u, inviter, d, t, ip, wide);
+      for (const [uid, side, amount] of [[inviter, 'inviter', INVITE.inviter], [to, 'invitee', INVITE.invitee]]) q.exec('insert into ivp(id, uid, side, amount, paid, tries, at) values(?, ?, ?, ?, 0, 0, 0)', crypto.randomUUID(), uid, side, amount); }); }
+  // Hands out (marks paid, at most once: the Worker pays what this returns) up to n payments that are due: new ones first, then refused ones 60 s
+  // after their refusal, INVITE.tries attempts in all. n is the invocation's budget, so one request never pays more than a few.
+  ivHand(n, t) { const q = this.ctx.storage.sql, k = Math.max(0, Math.floor(Number(n) || 0)); if (!k) return [];
+    const due = q.exec('select id, uid, side, amount from ivp where done = 0 and paid = 0 and tries < ? and at <= ? order by at, rowid limit ?', INVITE.tries, t - INVITE.retryMs, k).toArray().map(r => ({ id: String(r.id), uid: String(r.uid), side: String(r.side), amount: Number(r.amount) || 0 }));
+    for (const p of due) q.exec('update ivp set paid = 1, tries = tries + 1, at = ? where id = ?', t, p.id);
+    return due; }
+  // Waiting pairs from earlier days, served before anything new is accepted on d. Round-robin by coarse prefix: every prefix's earliest pair before
+  // anyone's second, then arrival. Each is judged under d's caps (inviter, per-net, coarse prefix, day, self via merges): rewarded through ivPay (its
+  // payments wait for ivHand); held back to the next day (td = d) on a daily limit; dropped for good on a permanent one or once older than queueDays.
+  // One call looks at passRows pairs at most and rewards `pairs` at most; d's counters are read once per call. ivqDay = d once nothing is left, or d is full.
+  ivQueue(d, t, pairs = INVITE.passPairs) { if (!d || this.ivqDay === d) return 0; const q = this.ctx.storage.sql; let out = 0;
+    q.exec('delete from ivq where day < ?', dayShift(d, -INVITE.queueDays));
+    // round = the prefix's rewards today + the pair's rank within its prefix, so a prefix served earlier today (by this pass, a past call or a live post) waits its turn
+    const rows = q.exec('select w.invitee, w.inviter, w.ip, w.wide from (select invitee, inviter, ip, wide, at, row_number() over (partition by wide order by at, invitee) rk from ivq where day < ? and td <> ?) w'
+      + ' left join (select wide, count(*) n from ivr where day = ? group by wide) r on r.wide = w.wide order by coalesce(r.n, 0) + w.rk, w.at, w.invitee limit ?', d, d, d, INVITE.passRows).toArray();
+    const by = (col) => new Map(q.exec('select ' + col + ' k, count(*) n from ivr where day = ? group by ' + col, d).toArray().map(r => [String(r.k), Number(r.n) || 0]));
+    const perDay = by('inviter'), ipDay = by('ip'), wideDay = by('wide'), tot = new Map(), bump = (m, k) => m.set(k, (m.get(k) || 0) + 1);
+    const total = (col, k) => { const key = col + '|' + k; if (!tot.has(key)) tot.set(key, Number(q.exec('select count(*) n from ivr where ' + col + ' = ?', k).one().n) || 0); return tot.get(key); };
+    let dayAll = [...perDay.values()].reduce((s, x) => s + x, 0);
+    for (const r of rows) {
+      const u = String(r.invitee), inviter = String(r.inviter), ip = String(r.ip), wide = String(r.wide);
+      const fault = inviteFault({ inviter, invitee: u, group: this.ivGroup([u]), seen: !!q.exec('select 1 from ivr where invitee = ?', u).toArray()[0], ip,
+        perDay: perDay.get(inviter) || 0, total: inviter ? total('inviter', inviter) : 0, ipDay: ipDay.get(ip) || 0, ipTotal: total('ip', ip), wideDay: wide ? wideDay.get(wide) || 0 : 0, dayAll });
+      if (fault === 'full') { this.ivqDay = d; return out; }
+      if (!fault && out >= pairs) return out; // the rest on the next call
+      if (inviteWaits(fault)) { q.exec('update ivq set td = ? where invitee = ?', d, u); continue; }
+      q.exec('delete from ivq where invitee = ?', u); q.exec('insert into ivs(uid, tried) values(?, 1) on conflict(uid) do update set tried = 1', u);
+      if (fault) continue;
+      this.ivPay(u, inviter, ip, wide, d, t); out += 1; bump(perDay, inviter); bump(ipDay, ip); bump(wideDay, wide); bump(tot, 'inviter|' + inviter); bump(tot, 'ip|' + ip); dayAll += 1;
+    }
+    if (!q.exec('select 1 from ivq where day < ? and td <> ? limit 1', d, d).toArray()[0]) this.ivqDay = d;
+    return out; }
+  // May a pair refused for a daily limit wait? Today's arrivals in the queue: one per IP net, wideDay per coarse prefix, perDay per inviter, and
+  // queueMax waiting pairs in all. No: it is refused for good.
+  ivAdmit(inviter, ip, wide, d) { const q = this.ctx.storage.sql, n = (s, ...a) => Number(q.exec(s, ...a).toArray()[0]?.n) || 0;
+    return n('select count(*) n from ivq where day = ? and ip = ?', d, ip) < INVITE.ipDay && (!wide || n('select count(*) n from ivq where day = ? and wide = ?', d, wide) < INVITE.wideDay)
+      && n('select count(*) n from ivq where day = ? and inviter = ?', d, inviter) < INVITE.perDay && n('select count(*) n from ivq') < INVITE.queueMax; }
+  ivIp(uid, ip, day) { const q = this.ctx.storage.sql, d = String(day || ''); if (this.ivPr !== d) { this.ivPr = d; q.exec('delete from ivip where day < ?', dayShift(d, -1)); }
+    if (uid && ip && d) q.exec('insert or ignore into ivip(uid, day, ip) values(?, ?, ?)', String(uid), d, String(ip).slice(0, 16)); }
+  // ip given: the account's net is noted for today, but only once it owns a code (an inviter).
+  ivSum(uid, day, recent = false, ip = '') { this.ivInit(); const q = this.ctx.storage.sql, u = String(uid || ''), n = (s, ...a) => Number(q.exec(s, ...a).toArray()[0]?.n) || 0;
+    const c = q.exec('select code from ivc where uid = ? order by at asc, code asc limit 1', u).toArray()[0]; if (c && ip) this.ivIp(u, ip, day);
+    const o = { code: c ? String(c.code) : '', count: n('select count(*) n from ivr where inviter = ?', u), today: n('select count(*) n from ivr where inviter = ? and day = ?', u, String(day || '')),
+      earned: n("select coalesce(sum(amount), 0) n from ivp where uid = ? and side = 'inviter' and done = 1", u), gift: n("select coalesce(sum(amount), 0) n from ivp where uid = ? and side = 'invitee' and done = 1", u) };
+    if (recent) o.recent = q.exec("select dt from ivp where uid = ? and side = 'inviter' and done = 1 order by dt desc limit ?", u, INVITE.recentMax).toArray().map(r => Number(r.dt) || 0);
+    return o; }
+  // The caller's code (made on the first call: random, never derived from the id) and its summary. The net it was asked from counts as the inviter's.
+  ivCode(uid, ip, day, now = Date.now()) { this.ivInit(); const q = this.ctx.storage.sql, u = String(uid || ''); if (!u) return null; const ipk = String(ip || '').slice(0, 16);
+    if (!q.exec('select code from ivc where uid = ? limit 1', u).toArray()[0]) for (let i = 0; i < 5; i++) if (q.exec('insert or ignore into ivc(code, uid, d, ip, at) values(?, ?, ?, ?, ?)', newCode(), u, String(day || ''), ipk, Math.floor(Number(now) || Date.now())).rowsWritten) break;
+    return this.ivSum(u, day, false, ipk); }
+  // A wish post. Every post notes the poster's net for today; a fresh one notes the poster's first wish day. A fresh wish with a code is judged once
+  // for this invitee (tried, whatever the outcome) after the waiting queue was served; refused only for a daily limit, it waits in ivq instead (when
+  // ivAdmit lets it) and is not tried. Counting and writing run in this one synchronous call, so no cap can be overrun. group/old: the 'ev' link group and history the
+  // Worker looked up; merges seen here add to it. wide: the hashed coarse prefix of the invitee's address.
+  // budget: payments this call may hand out (the invocation's share); pay is what the Worker pays now, more/left say whether anything still waits.
+  ivPost({ uid, ip = '', wide = '', day, now = Date.now(), fresh = false, code = '', group = [], old = false, budget = 0 } = {}) { this.ivInit(); const q = this.ctx.storage.sql, u = String(uid || ''), d = String(day || ''), ipk = String(ip || '').slice(0, 16), wk = String(wide || '').slice(0, 16), t = Math.floor(Number(now) || Date.now());
+    if (!u || !d) return { pay: [] }; this.ivIp(u, ipk, d);
+    if (fresh) q.exec("insert into ivs(uid, d0) values(?, ?) on conflict(uid) do update set d0 = case when d0 = '' then excluded.d0 else d0 end", u, d);
+    const c = invCode(code); if (!fresh || !c) return { pay: [] };
+    this.ivQueue(d, t); // earlier days' waiting pairs first
+    const out = (r) => ({ ...r, pay: this.ivHand(budget, t), ...this.ivLeft(d) });
+    const list = this.ivGroup([u, ...(Array.isArray(group) ? group : [])]), inl = list.map(() => '?').join(',');
+    const inviter = String(q.exec('select uid from ivc where code = ?', c).toArray()[0]?.uid || '');
+    const seen = !!q.exec('select 1 from ivs where uid in (' + inl + ') and tried = 1 union all select 1 from ivr where invitee in (' + inl + ') union all select 1 from ivq where invitee in (' + inl + ') limit 1', ...list, ...list, ...list).toArray()[0];
+    const older = !!old || !!q.exec("select 1 from ivs where uid in (" + inl + ") and d0 <> '' and d0 < ? limit 1", ...list, d).toArray()[0];
+    const ips = inviter ? q.exec('select ip from ivip where uid = ? and day = ? union select ip from ivc where uid = ?', inviter, d, inviter).toArray().map(r => String(r.ip)).filter(Boolean) : [];
+    const fault = inviteFault({ inviter, invitee: u, group: list, seen, old: older, ip: ipk, inviterIps: ips, ...this.ivCaps(inviter, ipk, wk, d) });
+    if (inviteWaits(fault) && this.ivAdmit(inviter, ipk, wk, d)) { q.exec('insert or ignore into ivq(invitee, inviter, ip, wide, day, at) values(?, ?, ?, ?, ?, ?)', u, inviter, ipk, wk, d, t); return out({ fault, wait: true }); }
+    q.exec('insert into ivs(uid, tried) values(?, 1) on conflict(uid) do update set tried = 1', u);
+    if (fault) return out({ fault });
+    this.ivPay(u, inviter, ipk, wk, d, t); return out({}); }
+  // left: payments not yet handed out that may still be (pending or refused, under INVITE.tries); more: the queue pass is not done for d.
+  ivLeft(d) { return { left: Number(this.ctx.storage.sql.exec('select count(*) n from ivp where done = 0 and paid = 0 and tries < ?', INVITE.tries).one().n) || 0, more: !!d && this.ivqDay !== d }; }
+  // The lazy pass: the waiting queue for day first (rewards written, payments pending), then up to budget due payments handed out (paid) for the Worker.
+  ivDue(now = Date.now(), day = '', budget = INVITE.payMax) { this.ivInit(); const t = Math.floor(Number(now) || Date.now()), d = String(day || ''); this.ivQueue(d, t);
+    return { due: this.ivHand(budget, t), ...this.ivLeft(d) }; }
+  // Supabase clearly said no (HTTP ok, data.ok === false: no wallet row yet): hand it out again later. A guest that has been linked since (to, from the
+  // 'ev' aliases, or a merge seen here) is paid as its user: still one row, so still at most once.
+  ivUnpay(id, to = '') { this.ivInit(); const q = this.ctx.storage.sql, r = q.exec('select uid from ivp where id = ? and done = 0', String(id || '')).toArray()[0]; if (!r) return { ok: false };
+    const u = String(r.uid), t = String(to || '').startsWith('user:') ? String(to) : String(q.exec('select user from iva where guest = ?', u).toArray()[0]?.user || '') || u;
+    return { ok: q.exec('update ivp set paid = 0, uid = ? where id = ? and done = 0', t, String(id)).rowsWritten > 0 }; }
+  ivDone(id, now = Date.now()) { this.ivInit(); this.ctx.storage.sql.exec('update ivp set done = 1, dt = ? where id = ?', Math.floor(Number(now) || Date.now()), String(id || '')); return { ok: true }; }
+  // Account merge: the guest's codes, nets, rewards (both sides) and pending payments become the user's; the link is kept for the self-invite check.
+  ivMove(from, to) { this.ivInit(); const q = this.ctx.storage.sql, f = String(from || ''), t = String(to || ''); if (!f || !t || f === t) return { ok: false };
+    this.ctx.storage.transactionSync(() => { q.exec('insert or replace into iva(guest, user) values(?, ?)', f, t); q.exec('update ivc set uid = ? where uid = ?', t, f);
+      q.exec('update or ignore ivip set uid = ? where uid = ?', t, f); q.exec('delete from ivip where uid = ?', f);
+      const g = q.exec('select d0, tried from ivs where uid = ?', f).toArray()[0];
+      if (g) { q.exec("insert into ivs(uid, d0, tried) values(?, ?, ?) on conflict(uid) do update set d0 = case when d0 = '' or (excluded.d0 <> '' and excluded.d0 < d0) then excluded.d0 else d0 end, tried = max(tried, excluded.tried)", t, String(g.d0 || ''), Number(g.tried) || 0); q.exec('delete from ivs where uid = ?', f); }
+      q.exec('update ivr set inviter = ? where inviter = ?', t, f); q.exec('update or ignore ivr set invitee = ? where invitee = ?', t, f); q.exec('update ivp set uid = ? where uid = ?', t, f);
+      q.exec('update ivq set inviter = ? where inviter = ?', t, f); q.exec('update or ignore ivq set invitee = ? where invitee = ?', t, f); q.exec('delete from ivq where invitee = ?', f); });
+    return { ok: true }; }
+  // Account withdrawal: its codes, nets, links and payments go; reward rows lose the id but stay, so the caps of the others still count them.
+  ivForget(uid) { this.ivInit(); const q = this.ctx.storage.sql, u = String(uid || ''); if (!u) return { ok: false };
+    this.ctx.storage.transactionSync(() => { for (const s of ['delete from ivc where uid = ?', 'delete from ivip where uid = ?', 'delete from ivs where uid = ?', 'delete from ivp where uid = ?']) q.exec(s, u);
+      q.exec('delete from iva where guest = ? or user = ?', u, u); q.exec('delete from ivq where invitee = ? or inviter = ?', u, u); q.exec("update ivr set inviter = 'gone:' || rowid where inviter = ?", u); q.exec("update ivr set invitee = 'gone:' || rowid where invitee = ?", u); });
+    return { ok: true }; }
   // 주간 리그 (instance 'lg'). lg: coins an account really spent per KST ISO week (at = when the row last grew, the tie-break). lgm: once-a-week
   // markers of the lazy tribe settlement (st 1 done, 0 claimed at `at`). uid never leaves this object except as mine (true/false).
   // lgs: what a refund needs to find the week it belongs to. Key = a slot id (its holder as tallied, the week its claim was tallied in or '' when the league never counted it, the last bid), 'r:<review
@@ -1311,6 +1443,7 @@ function pushText(row) {
   if (row?.kind === 'ball') return '21시 볼 드랍이 곧 시작돼요';
   if (row?.kind === 'wish') { const n = Math.floor(Number(row.n)) || 0; return n <= 1 ? '내 소원에 첫 하트가 왔어요' : `내 소원이 하트 ${n}개를 받았어요`; }
   if (row?.kind === 'wishwin') return `어제 소원이 ${Math.max(1, Math.floor(Number(row.rank)) || 1)}위였어요. +${Math.max(0, Math.floor(Number(row.prize)) || 0)}코인이 들어왔어요`;
+  if (row?.kind === 'invite') return `초대한 친구가 소원을 걸었어요. +${Math.max(0, Math.floor(Number(row.amount)) || 0)}코인이 들어왔어요`;
   return '';
 }
 // Where a notification click lands (same origin, validated ids only); '' leaves it to the service worker's default '/'.
@@ -1493,7 +1626,7 @@ function queueTaken(env, ctx, victim, fromName, slotId) {
 }
 // Immediate web push without the cron. Subscriptions live in the Meter instance 'push' (filled by /rt/push), because Supabase push_subs cannot be read
 // per actor with the publishable key. One notice per (actor, kind) per PUSH_GAP; everything runs in waitUntil and never touches the triggering response.
-const PUSH_GAP = { taken: 60000, wish: 600000, wishwin: 60000, dark: 1 }, WISH_PUSH_AT = [1, 3, 5, 10, 20, 30, 50, 100]; // dark: no gap, each notice is once per (slot, lit_until) already
+const PUSH_GAP = { taken: 60000, wish: 600000, wishwin: 60000, dark: 1, invite: 60000 }, WISH_PUSH_AT = [1, 3, 5, 10, 20, 30, 50, 100]; // dark: no gap, each notice is once per (slot, lit_until) already
 const pushM = env => env.METER.get(env.METER.idFromName('push'));
 function pushNow(env, ctx, actorId, note) {
   if (!env?.VAPID_PRIV || !actorId || !PUSH_GAP[note?.kind]) return Promise.resolve();
@@ -1671,8 +1804,8 @@ async function wishPage(req, env, u) {
   if (req.method !== 'GET' && req.method !== 'HEAD') return new Response('method', { status: 405 });
   const id = u.pathname.slice('/rt/w/'.length); let w = null;
   if (WISH_ID.test(id)) { try { w = await wishOne(env, id, req); } catch { w = null; } }
-  if (!w) return Response.redirect(new URL('/', req.url).href, 302);
-  const s = wishShareText(w), dest = '/?wish=' + id, title = esc(s.title), desc = esc(w.txt), shot = await snapFor(env, 'wish', id, await wishAuthor(env, id)); // only the author's own shot
+  if (!w) return Response.redirect(new URL('/' + invTail(u, true), req.url).href, 302);
+  const s = wishShareText(w), dest = '/?wish=' + id + invTail(u), title = esc(s.title), desc = esc(w.txt), shot = await snapFor(env, 'wish', id, await wishAuthor(env, id)); // only the author's own shot
   const html = '<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>' + title + '</title>'
     + '<meta property="og:title" content="' + title + '">'
     + '<meta property="og:description" content="' + desc + '">'
@@ -1691,7 +1824,7 @@ async function wishApi(req, env, ctx, u) {
     if (lv >= 2) { const id = String(u.searchParams.get('id') || ''), f = WONE.get(id); // budget hard: copies only, no wish-DO call and no settlement (the next request after the drop settles)
       const v = WISHC.day === day && WISHC.v ? WISHC.v : { day, count: 0, top: [], recent: [], mine: null, left: 0, given: [], yesterday: [] };
       return J({ ...v, ...(f?.v ? { focus: f.v } : {}), busy: true }); }
-    wishSettle(env, ctx, day);
+    wishSettle(env, ctx, day); invRetry(env, ctx, day);
     const tok = tokenOf(req), actor = tok ? await resolveActor(env, tok) : null, id = String(u.searchParams.get('id') || '');
     if (actor && !(await rateOk(env.EVENT_RL, req))) return wishNo('rate', 429);
     try { let v;
@@ -1720,11 +1853,14 @@ async function wishApi(req, env, ctx, u) {
     const actor = await resolveActor(env, tokenOf(req)); if (!actor) return J({ err: 'auth', code: 'auth', error: WISH_ERR.auth }, 401);
     const b = await readJson(req); if (!b) return J({ err: 'json' }, 400);
     if (u.pathname === '/rt/wish') {
-      wishSettle(env, ctx, day);
+      if (!(inviteOn(env) && invCode(b.inv))) wishSettle(env, ctx, day); // a post that runs the invite step leaves the prize settlement to GET /rt/wishes (subrequest budget)
       const fault = wishFault(b.text); if (fault) return wishNo(fault);
       const nick = cleanNick(b.nick ?? b.nickname ?? '') || '네온손님'; if (wishNickFault(nick)) return wishNo('nick');
-      const r = await M.wPost(actor.id, nick, cleanWish(b.text), day, Date.now(), await wishIp(env, req)); if (!r.ok) return wishNo(r.error || 'already', 409);
+      const ip = await wishIp(env, req), r = await M.wPost(actor.id, nick, cleanWish(b.text), day, Date.now(), ip); if (!r.ok) return wishNo(r.error || 'already', 409);
+      const wc = PC.get('world'); // the world copy before wishFresh drops it, for the invite step
       wishFresh(env, ctx, !!r.fresh, r.wish.id); // an edit (fresh false) reaches boards with the next world read; no refill, no fan-out
+      if (inviteOn(env)) { ctx.waitUntil(inviteStep(env, ctx, actor.id, b.inv, !!r.fresh, day, ip, wc, req.headers.get('cf-connecting-ip') || '')); // never part of the answer
+        if (!(r.fresh && invCode(b.inv))) invRetry(env, ctx, day, INVITE.payWish); } // one paying step per invocation: the code's own step, or the lazy pass
       const topic = typeof b.topic === 'string' ? b.topic : ''; // at budget lean (lv 1) the fresh wish goes to the poster's own room only
       if (r.fresh && PLAZA_TOPICS.includes(topic)) { const body = JSON.stringify({ t: 'WISH', w: { id: r.wish.id, nick: r.wish.nick, txt: r.wish.txt, hearts: r.wish.hearts } });
         ctx.waitUntil((lv >= 1 ? Promise.resolve([topic]) : wishRooms(env, topic)).then(names => Promise.all(names.map(name => env.ROOM.get(env.ROOM.idFromName(name)).fetch(new Request('https://room.internal/wish', { method: 'POST', headers: { 'content-type': 'application/json' }, body })).catch(() => null)))).catch(() => null)); }
@@ -1738,6 +1874,67 @@ async function wishApi(req, env, ctx, u) {
     return J({ err: 'path' }, 404);
   } catch { return wishNo('down', 502); }
 }
+// 친구 초대. State lives in the Meter instance 'inv', never in Supabase. Payments go through grant_coins at most once each, like the wish prize:
+// marked paid when handed out, un-marked only on Supabase's clear refusal (HTTP ok, data.ok === false: no wallet row yet), tried again 60 s apart.
+const invM = env => env.METER.get(env.METER.idFromName('inv'));
+let INVP = { day: '', at: 0, more: false }; // retries: once per isolate per day, then every 60 s while refused payments wait
+// The one budget check of this feature: the guard's level (lvlNow, its isolate reading), hard = 2.
+async function budgetHard(env) { try { return (await lvlNow(env)) >= 2; } catch { return false; } }
+// The invitee's coarse prefix (invite.js ipWide: IPv6 /48, IPv4 /24), hashed like wishIp, for the INVITE.wideDay cap.
+async function wideIp(env, raw) { const dig = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(ipWide(raw) + String(env.GUEST_KEY || ''))));
+  let hex = ''; for (const b of dig) hex += b.toString(16).padStart(2, '0'); return hex.slice(0, 16); }
+// From the isolate's world copy only (no Supabase read): any of ids holds a board it bid for (the free first board, bid 0, does not count), owns a plot,
+// or is on the spend ranking.
+function invHeld(ids, mem = PC.get('world')) { if (!mem?.b) return false;
+  try { const w = JSON.parse(mem.b), s = new Set(ids.map(String)); return (w.billboards || []).some(b => s.has(String(b?.holder_id || '')) && Number(b?.current_bid) > 0) || (w.plots || []).some(p => s.has(String(p?.owner_id || ''))) || (w.ranks || []).some(r => s.has(String(r?.actor_id || ''))); } catch { return false; } }
+// Pays what ivHand handed out (at most INVITE.payWish / payMax per invocation) and pushes at most INVITE.pushMax inviters, so one invocation stays
+// far under the Workers subrequest limit: a grant whose fetch failed for that reason would count as an unknown outcome and never be retried.
+async function invPay(env, ctx, rows) { const M = invM(env); let pushes = 0;
+  for (const p of Array.isArray(rows) ? rows.slice(0, INVITE.payMax) : []) {
+    try { const rpc = await supabaseRpc('grant_coins', { p_key: env.FLUSH_KEY || '', p_actor_id: p.uid, p_amount: p.amount });
+      if (rpc.ok && rpc.data && typeof rpc.data === 'object' && rpc.data.ok === false) { INVP.more = true; let to = '';
+        if (String(p.uid).startsWith('guest:')) { try { to = String((await env.METER.get(env.METER.idFromName('ev')).evGroup(p.uid, ''))?.ids?.find(x => String(x).startsWith('user:')) || ''); } catch { /* the merges the inv instance saw still count */ } }
+        await M.ivUnpay(p.id, to); continue; } // a guest linked since posting is paid as its user next time
+      if (!rpc.ok) continue; // 5xx: unknown outcome, stays paid
+      await M.ivDone(p.id, Date.now()); await nudge(env, p.uid);
+      if (p.side === 'inviter' && pushes < INVITE.pushMax) { pushes += 1; pushNow(env, ctx, p.uid, { kind: 'invite', amount: p.amount }); } } catch { /* unknown outcome: stays paid */ } } }
+// The lazy pass (queue, then due payments), at most once per isolate per day and then every 60 s while something waits. Only with the switch on.
+function invRetry(env, ctx, day = kstDay(), budget = INVITE.payMax) {
+  if (!inviteOn(env)) return;
+  if (INVP.day === day && (!INVP.more || Date.now() - INVP.at < INVITE.retryMs)) return;
+  INVP = { day, at: Date.now(), more: false };
+  const job = (async () => { if (await budgetHard(env)) { INVP.more = true; return; } // hard: no queue pass and nothing goes out, tried again later
+    const r = await invM(env).ivDue(Date.now(), day, budget); if (Number(r?.left) > 0 || r?.more) INVP.more = true; await invPay(env, ctx, r?.due); })().catch(() => { INVP.more = true; });
+  try { ctx?.waitUntil?.(job); } catch { /* the next request retries */ }
+}
+// After a wish post, in waitUntil: notes the poster's IP net and, for a fresh wish that came with a code, judges and pays the invite. Skipped at budget
+// level hard. A refusal is silent: the invitee just gets no coins.
+async function inviteStep(env, ctx, uid, raw, fresh, day, ip, wc, addr = '') {
+  try { const code = fresh ? invCode(raw) : '';
+    if (!inviteOn(env) || await budgetHard(env)) return;
+    let group = [], old = false;
+    if (code) { try { const g = await env.METER.get(env.METER.idFromName('ev')).evGroup(uid, dayShift(day, -INVITE.newDays)); group = Array.isArray(g?.ids) ? g.ids : []; old = !!g?.old; } catch { /* merges the inv instance saw still count */ }
+      old = old || invHeld([uid, ...group], wc || PC.get('world')); }
+    const r = await invM(env).ivPost({ uid, ip, wide: code ? await wideIp(env, addr) : '', day, now: Date.now(), fresh, code, group, old, budget: code ? INVITE.payWish : 0 });
+    if (Number(r?.left) > 0 || r?.more) INVP.more = true; // the next lazy pass picks up what this invocation could not pay
+    if (r?.pay?.length) await invPay(env, ctx, r.pay);
+  } catch { /* the wish stands either way */ }
+}
+// GET: the caller's summary with `recent` (payment times). POST: the same, making the code on the first call. Counts and times only, no ids.
+async function inviteApi(req, env, ctx) {
+  if (!inviteOn(env)) return J({ ok: false, code: 'off' }, 404); // master switch off: nothing touches the inv instance
+  if (req.method !== 'GET' && req.method !== 'POST') return J({ err: 'method' }, 405);
+  const actor = await resolveActor(env, tokenOf(req)); if (!actor) return J({ err: 'auth' }, 401);
+  if (!(await rateOk(env.EVENT_RL, req))) return J({ err: 'rate' }, 429);
+  if (await budgetHard(env)) return req.method === 'GET' ? J({ ok: true, busy: true }) : J({ ok: false, code: 'busy' }, 503); // no inv DO call at hard
+  const day = kstDay(), ip = await wishIp(env, req); invRetry(env, ctx, day);
+  try { const s = req.method === 'POST' ? await invM(env).ivCode(actor.id, ip, day, Date.now()) : await invM(env).ivSum(actor.id, day, true, ip); if (!s) return J({ err: 'auth' }, 401);
+    const o = { ok: true, code: invCode(s.code), count: Number(s.count) || 0, today: Number(s.today) || 0, earned: Number(s.earned) || 0, gift: Number(s.gift) || 0 };
+    if (Array.isArray(s.recent)) o.recent = s.recent.map(Number).filter(Number.isFinite);
+    return J(o); } catch { return J({ ok: false, err: 'invite' }, 502); }
+}
+// ?inv= on a share page, re-checked, for its redirect into the game ('' when missing or malformed: never reflected as given).
+const invTail = (u, first) => { const c = invCode(u.searchParams.get('inv')); return c ? (first ? '?' : '&') + 'inv=' + c : ''; };
 // 주간 리그. The tally lives in the Meter instance 'lg': one DO call per spend the Worker mediates, in waitUntil, with the amount the RPC charged;
 // refunds subtract. Tribe pledges (refundable, refund_tribe_week does not say to whom) and coins sent to an advertiser are not counted.
 const lgM = env => env.METER.get(env.METER.idFromName('lg'));
@@ -2410,7 +2607,7 @@ async function accountApi(req, env, ctx, u) {
     const kakao = String(env.KAKAO_JS_KEY || '').trim(); // a public JavaScript key (not a secret); the share button exists only when it is set
     // On every visitor's boot path: never wait for Supabase. A stale list (or the old four, a subset) is safe; refresh behind the response.
     if (Date.now() - STARTER_C.at >= STARTER_C.ttl) ctx?.waitUntil?.(starterSlots(env));
-    return J(/^[\w-]{16,80}$/.test(kakao) ? { url: SUPA, key: ANON, kakao, starter: STARTER_C.list } : { url: SUPA, key: ANON, starter: STARTER_C.list });
+    return J({ ...(/^[\w-]{16,80}$/.test(kakao) ? { url: SUPA, key: ANON, kakao, starter: STARTER_C.list } : { url: SUPA, key: ANON, starter: STARTER_C.list }), ...(inviteOn(env) ? { invite: true } : {}) }); // invite: the master switch INVITE_ON
   }
   if (u.pathname === '/rt/event') {
     if (req.method !== 'POST') return J({ err: 'post' }, 405);
@@ -2453,7 +2650,7 @@ async function accountApi(req, env, ctx, u) {
   // Pushes to the user: id reach the guest's browsers, and the guest's board shots stay the holder's own (card page, share-page title).
   // The guest's wish, hearts, reports and unpaid prizes become the user's (wMove), so mine, the one-wish-a-day rule and the prize follow the person.
   ctx.waitUntil(Promise.resolve().then(() => Promise.all([pushM(env).psMove(guestId, actor.id), snapM(env).snapMove(guestId, actor.id).then(() => { SNX.clear(); SNC.clear(); }),
-    wishM(env).wMove(guestId, actor.id).then(() => { WISHC.at = 0; WONE.clear(); WAU.clear(); }), darkM(env).dkMove(guestId, actor.id), lgM(env).lgMove(guestId, actor.id).then(() => { LGW.at = 0; LGC.at = 0; })])).catch(() => { }));
+    wishM(env).wMove(guestId, actor.id).then(() => { WISHC.at = 0; WONE.clear(); WAU.clear(); }), darkM(env).dkMove(guestId, actor.id), lgM(env).lgMove(guestId, actor.id).then(() => { LGW.at = 0; LGC.at = 0; }), invM(env).ivMove(guestId, actor.id)])).catch(() => { })); // the invite code, counts and pending rewards too
   await adSoon(ctx, () => adM(env).adMove(guestId, actor.id)); // the moved boards keep their report; waited for (up to 0.8 s) so a report right after the link finds it
   return J({ ok: true, actor_id: actor.id, coins: data.coins, bonus: data.bonus || 0, linked: true, nickname: data.nickname || '' });
 }
@@ -2463,7 +2660,7 @@ async function forgetActor(env, uid) {
   let ids = [uid]; try { ids = ids.concat(await env.METER.get(env.METER.idFromName('ev')).evGuests(uid)); } catch { /* the user's own rows still go */ }
   const dropSubs = async (id) => { const r = await pushM(env).psForget(id); // the Supabase copies of the endpoints this instance knew (older ones only Supabase knows stay)
     await Promise.all((r?.e || []).map(e => supabaseRpc('push_unsubscribe', { p_key: env.FLUSH_KEY || '', p_actor_id: id, p_endpoint: e }).catch(() => null))); };
-  await Promise.all(ids.map(id => Promise.all([dropSubs(id), wishM(env).wForget(id), snapM(env).snapForget(id), darkM(env).dkForget(id), lgM(env).lgForget(id)].map(p => p.catch(() => null)))));
+  await Promise.all(ids.map(id => Promise.all([dropSubs(id), wishM(env).wForget(id), snapM(env).snapForget(id), darkM(env).dkForget(id), lgM(env).lgForget(id), invM(env).ivForget(id)].map(p => p.catch(() => null)))));
   await Promise.all(ids.map(id => adM(env).adForget(id).catch(() => null))); // the board reports of their tenures go too
   WISHC.at = 0; WONE.clear(); WAU.clear(); SNX.clear(); SNC.clear(); PC.delete('world'); LGW.at = 0; LGC.at = 0;
   try { await caches.default.delete(new Request(WORLD_CACHE)); } catch { }
@@ -2491,6 +2688,7 @@ function cardTarget(slot, search, holderRef) {
   const fromQuery = String(search.get('ref') || '');
   const ref = /^[a-z0-9]{8}$/.test(fromQuery) ? fromQuery : (/^[a-z0-9]{8}$/.test(holderRef) ? holderRef : '');
   if (ref) q.set('ref', ref);
+  const inv = invCode(search.get('inv')); if (inv) q.set('inv', inv);
   return '/?' + q.toString();
 }
 // The live billboard row is the previous screen. A pending S-tier review stays in billboard_reviews and is not drawn here.
@@ -2588,7 +2786,7 @@ async function snapBoard(slot, fresh = false) {
 }
 async function snapPage(req, env, u) {
   if (req.method !== 'GET' && req.method !== 'HEAD') return new Response('method', { status: 405 });
-  const id = u.pathname.slice('/rt/s/'.length), home = () => Response.redirect(new URL('/', req.url).href, 302); let c = null;
+  const id = u.pathname.slice('/rt/s/'.length), home = () => Response.redirect(new URL('/' + invTail(u, true), req.url).href, 302); let c = null;
   if (!SNAP_HEX.test(id) || !(await rateOk(env.EVENT_RL, req))) return home();
   try { c = await snapCtx(env, id); } catch { c = null; }
   if (!c) return home();
@@ -2603,6 +2801,7 @@ async function snapPage(req, env, u) {
     if (w && !w.hidden) { const s = wishShareText(w); title = s.title; desc = s.text; dest = '/?wish=' + c.r; }
     else shot = false; // a hidden or gone wish: the photo likely shows its text
   }
+  dest += invTail(u, dest === '/');
   const t = esc(title), d = esc(desc), img = esc(new URL(shot ? '/rt/snap/' + id : '/og.jpg', req.url).href);
   const html = '<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>' + t + '</title>'
     + '<meta property="og:title" content="' + t + '">'
@@ -2689,6 +2888,7 @@ export default {
     if (u.pathname === '/rt/world' || u.pathname === '/rt/wallet' || u.pathname === '/rt/claim-billboard' || u.pathname === '/rt/buy-plot' || u.pathname === '/rt/sell-coins' || u.pathname === '/rt/flush-wallet' || u.pathname === '/rt/spend') return plaza(req, env, ctx, u);
     if (WISH_PATHS.has(u.pathname)) return wishApi(req, env, ctx, u);
     if (u.pathname.startsWith('/rt/w/')) return wishPage(req, env, u);
+    if (u.pathname === '/rt/invite') return inviteApi(req, env, ctx);
     if (u.pathname === '/rt/billboard-photo' || u.pathname.startsWith('/rt/photo/') || u.pathname.startsWith('/rt/admin/')) return photos(req, env, ctx, u);
     if (u.pathname === '/rt/grp') { const M = env.METER.get(env.METER.idFromName('grp'));
       if (req.method === 'GET') { const w = isoWeek(); if (GRP.w !== w || Date.now() - GRP.at > 60000) { GRP.v = await M.grpTop(w); GRP.at = Date.now(); GRP.w = w; } return J({ w, top: GRP.v }); }

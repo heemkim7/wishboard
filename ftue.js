@@ -1,5 +1,6 @@
 import { BALANCE } from './balance.js';
 import { WISH, cleanWish } from './wish.js';
+import { inviteNews } from './invite.js';
 
 let blockedText = () => false;
 try {
@@ -225,7 +226,8 @@ function seenLive(liveSeen, kind, slot, at) {
   return false;
 }
 // holder(slot) -> who holds that board now (rows about a board I hold again are already handled); me -> my actor id.
-export function awayRows({ newbie, inbox, seen, copy, wish, wishSeen, prizeDay, day, now = Date.now(), holder, me, liveSeen } = {}) {
+// invite: the GET /rt/invite summary (recent = payment times), invSeen: the newest payment time shown before (kts_inv_seen).
+export function awayRows({ newbie, inbox, seen, copy, wish, wishSeen, prizeDay, day, now = Date.now(), holder, me, liveSeen, invite, invSeen } = {}) {
   const none = { rows: [], inboxIds: [], wishSeen: null, prizeDay: '' };
   if (newbie) return none;
   const read = new Set((Array.isArray(seen) ? seen : []).map((id) => Math.floor(Number(id))));
@@ -277,6 +279,8 @@ export function awayRows({ newbie, inbox, seen, copy, wish, wishSeen, prizeDay, 
     rows.push({ kind: 'prize', id: 0, slot: '', text: prize ? `어제 소원이 ${rank}위였어요. +${prize}코인` : `어제 소원이 ${rank}위였어요`, label: mine?.id ? '내 소원 보기' : '오늘 소원 걸기', at: Number.isFinite(at) ? at : now - 1 });
     nextPrize = day;
   }
+  const inv = inviteNews(invite, invSeen);
+  if (inv) rows.push(inv);
   rows.sort((a, b) => b.at - a.at);
   const shown = rows.slice(0, AWAY_MAX);
   return {
@@ -284,6 +288,7 @@ export function awayRows({ newbie, inbox, seen, copy, wish, wishSeen, prizeDay, 
     inboxIds: [...shown.filter((r) => r.id > 0).flatMap((r) => [r.id, ...(r.also || [])]), ...handled],
     wishSeen: shown.some((r) => r.kind === 'wish') ? nextSeen : null,
     prizeDay: shown.some((r) => r.kind === 'prize') ? nextPrize : '',
+    ...(inv && shown.includes(inv) ? { invSeen: inv.at } : {}),
   };
 }
 // Inbox rows the 🔔 tool counts as new: not seen in this browser and from the last AWAY_DAYS days.
