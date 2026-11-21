@@ -527,6 +527,15 @@ describe('service worker notifications', () => {
     await sw.fire('notificationclick', { notification: { data: { url: '/?focus=STREET_5' }, close() {} } });
     assert.equal(focused, 1); assert.deepEqual(sw.opened.at(-1), '/?focus=STREET_5');
   });
+  it('a tab that got the message but could not be focused is not doubled by a new window', async () => {
+    const sw = loadSw(), posted = [];
+    const deaf = { url: 'https://sq.example/', postMessage() { throw new Error('gone'); }, async focus() { return this; } };
+    const shy = { url: 'https://sq.example/index.html', postMessage(m) { posted.push(m.url); }, async focus() { throw new Error('not allowed to focus'); } };
+    const next = { url: 'https://sq.example/', postMessage(m) { posted.push('second ' + m.url); }, async focus() { return this; } };
+    sw.self.clients.list = [deaf, shy, next]; // the unreachable tab is skipped, the next one is told, and it ends there
+    await sw.fire('notificationclick', { notification: { data: { url: '/?wish=abcde12345' }, close() {} } });
+    assert.deepEqual(posted, ['/?wish=abcde12345']); assert.deepEqual(sw.opened, []);
+  });
   it('protocol-relative, backslash, javascript: and external urls all open /', async () => {
     const sw = loadSw(), bad = ['//evil.com', '/\\evil.com', 'javascript:alert(1)', 'https://evil.example/x', '\\\\evil.com/x'];
     for (const url of bad) await sw.fire('push', { data: data({ body: 'x', url }) });
