@@ -18,6 +18,7 @@ import { WISH, cleanWish } from './wish.js';
 import { applyInboxPush, loadInbox, readInbox, liveOnly, handledRead, liveSeeable } from './inbox.js?v=202611211159';
 import { openTribe, pledge, sendCheer } from './tribe.js?v=202611211159';
 import { applyOps, ballNotice, sessionEndPlan, nineBanner, kingMinute, clockSkew, clock, nowMs } from './live.js';
+import { pushRoute, awayRead } from './overlay.js?v=202611211159';
 
 adoptHandover(location.search, localStorage);
 // Back from a full-page sign-in (the fallback when the Google window could not open): read once here, because supabase-js takes
@@ -252,7 +253,9 @@ const ui = createUI(document.getElementById('ui'), {
   revenge: () => { if (!net.sendRevenge()) ui.note('광장에 연결된 뒤에 복수 운임을 켤 수 있어요', 'err'); },
   submitPhoto: (payload) => submitPhoto(payload),
   capture: () => world?.capture() || null,
-  saveClip: () => saveClip(document.getElementById('view')),
+  saveClip: (opts) => saveClip(document.getElementById('view'), opts),
+  // The celebration focus (fireworks) for something just bought; ui falls back to focusShot when this is missing.
+  celebrateShot: (slot) => { const pose = world?.focusSlot(slot, { celebrate: true }); if (pose) focusedSlot = String(slot || ''); return pose; },
   publishShot: (blob, ctx) => net.publishShot(blob, ctx),
   // The camera's current board (focus or frame), so a photo of my own board links back to it.
   focusedSlot: () => focusedSlot,
@@ -721,7 +724,7 @@ async function refreshWallet() {
     if (state.walletKnown && coins > state.confirmed) state.grants = takeGrants(state.grants, coins - state.confirmed);
     const now = Date.now();
     const kept = state.grants.filter(g => now - g.at < BALANCE.grantKeepMs);
-    if (kept.length < state.grants.length) ui.note('정산에 안 들어온 코인이 빠져 나갔어요', 'err');
+    if (kept.length < state.grants.length) ui.note('서버에 기록되지 않은 코인이 지갑에서 빠졌어요. 연결 표시가 초록색일 때 번 코인은 그대로 남아요', 'err');
     state.grants = kept;
     state.confirmed = coins;
     state.vipTickets = Number(w.vip_tickets) || 0;
@@ -785,12 +788,18 @@ async function relight(slot) {
   return data;
 }
 
-function celebrateClaim(slot) {
-  // End the tutorial first: graduating with it still on would leave its line on the full HUD.
-  ui.tutorial?.('claim');
-  ui.graduate?.();
-  ui.setQuietBlock(true);
-  if (world.focusSlot(slot)) focusedSlot = String(slot || '');
+// Every claim that puts my words on a board gets the one celebration focus (camera on the board, fireworks). The wizard's
+// first claim also ends the tutorial and holds other pop-ups back for five seconds; ui.js then shows the proof bar, or only
+// a notice when the player has walked on meanwhile.
+function celebrateClaim(slot, wizard) {
+  if (wizard) {
+    // End the tutorial first: graduating with it still on would leave its line on the full HUD.
+    ui.tutorial?.('claim');
+    ui.graduate?.();
+    ui.setQuietBlock(true);
+  }
+  if (world.focusSlot(slot, { celebrate: true })) focusedSlot = String(slot || '');
+  if (!wizard) return;
   const ms = lockCelebration(5000);
   setTimeout(() => ui.setQuietBlock(false), ms);
 }
@@ -827,7 +836,7 @@ async function claim(payload) {
     const mode = payload?.mode;
     // The profile pull that reports starter use comes later; without this the free-slot toast would offer a second one.
     if (mode === 'starter') state.starterUsed = true;
-    if (mode === 'starter' || mode === 'claim') celebrateClaim(res.data.slot_id || payload?.slot_id);
+    if (mode !== 'edit') celebrateClaim(res.data.slot_id || payload?.slot_id, mode === 'starter' || mode === 'claim');
     ui.promptLink?.('own');
     if (res.fever != null) world?.setFever?.(res.fever);
   }
@@ -1488,7 +1497,8 @@ net.on('welcome', (m) => {
 });
 net.on('take', (m) => {
   if (!m || m.victim !== net.id) return;
-  ui.revenge({ slot: m.slot, slotName: m.name || slotName(m.slot), attacker: m.attacker, price: m.price, line1: m.line1, line2: m.line2, line3: m.line3, emoji: m.emoji, theme: m.theme, color: m.color });
+  // Never a modal: ui queues one tappable notice ("○○님이 △△을 가져갔어요 · 되찾기") until the screen is quiet.
+  ui.taken({ slot: m.slot, attacker: m.attacker, price: m.price, line1: m.line1, line2: m.line2, line3: m.line3, emoji: m.emoji });
 });
 net.on('mono', (m) => { if (m?.name) ui.note(`${m.name}님이 메인 타워 3칸을 모두 독점하여 타임스퀘어를 지배했습니다!`, 'ok'); });
 net.on('rev', (m) => {
@@ -1560,11 +1570,17 @@ function resync() {
   refreshWallet();
   refreshWorld();
 }
+let movedTold = false;
 net.on('status', (s) => {
-  if (s === 'online') resync();
+  if (s === 'online') { resync(); movedTold = false; }
   if (queuePos) return;
   if (s === 'online') { ui.setStatus('실시간 연결됨', 'ok'); bindTake(); try { net.ch?.raw?.({ t: 'DRAW_CHECK' }); } catch { /* the next connect asks again */ } }
   else if (s === 'connecting') ui.setStatus('광장 연결 중', 'warn');
+  else if (net.ch?.moved) {
+    // This account joined from another window, so the room closed this one (net.js keeps it closed until the tab is used again).
+    ui.setStatus('다른 창에서 접속 중', 'off');
+    if (!movedTold) { movedTold = true; ui.note('다른 창에서 접속해서 이 창은 연결이 끊겼어요', 'err'); }
+  }
   else ui.setStatus('혼자 걷는 중', 'off');
 });
 net.on('gate', (g) => {
@@ -1894,14 +1910,17 @@ async function showAway() {
   if (done.local.length) markInboxSeen(done.local);
   syncInboxDot();
   if (!plan.rows.length) return;
-  ui.openAway?.(plan.rows, () => {
-    if (plan.inboxIds.length) {
-      readInbox(plan.inboxIds).catch(() => {});
-      markInboxSeen(plan.inboxIds);
+  // how: { acted, explicit } from ui.js. Closed by the player: every shown row is read. Left by going to look at one row:
+  // only the rows acted on (overlay.js awayRead); the others come back next time and stay in 받은 소식.
+  ui.openAway?.(plan.rows, (rows, how) => {
+    const read = awayRead(plan, how?.acted, how?.explicit !== false);
+    if (read.inboxIds.length) {
+      readInbox(read.inboxIds).catch(() => {});
+      markInboxSeen(read.inboxIds);
     }
-    if (plan.wishSeen) keep(WISH_SEEN_KEY, JSON.stringify(plan.wishSeen));
-    if (plan.prizeDay) keep(WISH_PRIZE_KEY, plan.prizeDay);
-    if (plan.invSeen) { keep(INV_SEEN_KEY, String(plan.invSeen)); trackEvent('invite_reward', { side: 'inviter' }); }
+    if (read.wishSeen) keep(WISH_SEEN_KEY, JSON.stringify(read.wishSeen));
+    if (read.prizeDay) keep(WISH_PRIZE_KEY, read.prizeDay);
+    if (read.invSeen) { keep(INV_SEEN_KEY, String(read.invSeen)); trackEvent('invite_reward', { side: 'inviter' }); }
   });
 }
 
@@ -2002,6 +2021,26 @@ async function enter({ nick, color, species }) {
     if (!queuePos) ui.setStatus(net.status === 'online' ? '실시간 연결됨' : '광장 연결 중', net.status === 'online' ? 'ok' : 'warn');
   } catch { ui.setStatus('혼자 걷는 중', 'off'); }
 }
+
+// A notification clicked while the game is open: sw.js posts { t: 'push', url } and focuses this tab instead of reloading it.
+// /?focus=<slot> moves the focus camera there, /?wish=<id> opens that wish. Before entering it waits for the plaza.
+function goPush(r) {
+  if (r.kind === 'focus' && slotOf(r.slot)) {
+    const look = () => { const pose = world?.focusSlot(r.slot); if (pose) focusedSlot = r.slot; };
+    // Under a sheet or a mini-game the camera would move unseen: offer it as a notice the player can take.
+    if (ui.isBusy?.()) ui.note(`${slotName(r.slot)} 보러가기`, 'ok', () => { ui.closeSheets?.(); look(); });
+    else look();
+  } else if (r.kind === 'wish') {
+    loadWishes(r.id, true).catch(() => {}).then(() => ui.openWish?.({ focus: r.id, from: 'push' }));
+  }
+}
+function onPushClick(url) {
+  const r = pushRoute(url, location.origin);
+  if (r.kind === 'none') return;
+  if (entered) { goPush(r); return; }
+  const wait = setInterval(() => { if (!entered) return; clearInterval(wait); setTimeout(() => goPush(r), 1500); }, 500);
+}
+try { navigator.serviceWorker?.addEventListener('message', (e) => { if (e.data?.t === 'push') onPushClick(e.data.url); }); } catch { /* no service worker here */ }
 
 ui.setStatus('광장 연결 중', 'warn');
 ui.setWallet(state);

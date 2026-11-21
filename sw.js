@@ -27,7 +27,8 @@ self.addEventListener('push', (event) => {
   event.waitUntil(self.registration.showNotification(String(d.title || '') || '모두의 전광판', { body: String(d.body || ''), data: { url: sameOriginPath(d.url) } }));
 });
 
-// Click: bring an open game tab (path / or /index.html, never admin.html or a share page) there with navigate + focus, else open a new one.
+// Click: an open game tab (path / or /index.html, never admin.html or a share page) is told where to go ({ t: 'push', url },
+// main.js moves there in place) and focused; it is never navigated, which would reboot the game. No game tab: open a new one.
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const url = sameOriginPath(event.notification.data && event.notification.data.url);
@@ -36,7 +37,7 @@ self.addEventListener('notificationclick', (event) => {
     for (const c of list) {
       let same = false; try { const x = new URL(c.url); same = x.origin === self.location.origin && (x.pathname === '/' || x.pathname === '/index.html'); } catch { same = false; }
       if (!same) continue;
-      try { const n = 'navigate' in c ? await c.navigate(url) : c; return (n || c).focus(); } catch { /* not controlled by this worker: open a window instead */ }
+      try { c.postMessage({ t: 'push', url }); return await c.focus(); } catch { /* this tab cannot be reached: open a window instead */ }
     }
     return self.clients.openWindow(url);
   })());

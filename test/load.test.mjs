@@ -71,7 +71,7 @@ describe('first load budget', () => {
 
   it('bumps the service worker cache with the new assets', () => {
     const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-    assert.match(html, /register\('\/sw\.js\?v=8'\)/);
+    assert.match(html, /register\('\/sw\.js\?v=9'\)/);
   });
 });
 

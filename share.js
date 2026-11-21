@@ -70,7 +70,8 @@ function portraitCanvas(canvas) {
   return { node, stop() { clearInterval(timer); } };
 }
 
-export async function saveClip(canvas) {
+// opts.signal: aborting stops the recording early and saves nothing (returns null).
+export async function saveClip(canvas, { signal, ms = 5000 } = {}) {
   if (typeof MediaRecorder === 'undefined' || !canvas?.captureStream) return null;
   const view = portraitCanvas(canvas);
   let stream = null;
@@ -81,9 +82,13 @@ export async function saveClip(canvas) {
     rec.ondataavailable = (ev) => { if (ev.data?.size) chunks.push(ev.data); };
     const done = new Promise((resolve) => { rec.onstop = () => resolve(new Blob(chunks, { type: rec.mimeType || 'video/webm' })); });
     rec.start();
-    await new Promise((r) => setTimeout(r, 5000));
+    await new Promise((r) => {
+      const t = setTimeout(r, ms);
+      signal?.addEventListener?.('abort', () => { clearTimeout(t); r(); }, { once: true });
+    });
     rec.stop();
     const blob = await done;
+    if (signal?.aborted) return null;
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = 'wishboard.webm';
