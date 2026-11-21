@@ -156,6 +156,8 @@ describe('desktop windows', () => {
     // the dock: bottom 18px, 70px buttons, 8px padding and 1px border each side
     const dockTop = 18 + 70 + 16 + 2;
     assert.ok(px(help, 'bottom') >= dockTop + 12);
+    // the E prompt sits in the same band (bottom 118px, up to two lines, about 66px): the card stays above it too
+    assert.ok(px(help, 'bottom') >= 118 + 66 + 12);
     // 4 emotes + more + lounge at 74px, a 5px separator, 6 gaps of 8px, 8px padding and 1px border each side
     const dockW = 6 * 74 + 5 + 6 * 8 + 16 + 2;
     assert.equal(dockW, 515);
@@ -233,5 +235,20 @@ describe('dead rules are gone', () => {
     assert.match(css, /\.sheet \.more \.emo-row \{/);
     assert.match(css, /\.locpill \{/);
     assert.match(css, /\.waypill \{/);
+  });
+});
+
+describe('멍때리기 clears the view', () => {
+  it('ui.js marks the HUD while the tour runs, and the stylesheet hides what lies over the boards but keeps the way out', () => {
+    const ui = read('ui.js');
+    const paint = ui.slice(ui.indexOf('function paintLounge('), ui.indexOf('function paintLounge(') + 500);
+    assert.match(paint, /root\.classList\.toggle\('lounging', !!on\);/);
+    const m = css.match(/#ui\.lounging > \.hud-l,([^{]*)\{([^}]*)\}/);
+    assert.ok(m, 'no #ui.lounging rule');
+    const sel = '#ui.lounging > .hud-l,' + m[1];
+    for (const gone of ['.hud-l', '.hud-r > :not(.bar)', '.news', '.stay-ticket', '.help']) assert.ok(sel.includes('#ui.lounging > ' + gone), gone);
+    assert.match(m[2], /visibility: hidden !important;/);
+    // the lounge line, the dock (그만) and 시점 해제 are not in the list
+    for (const kept of ['.dock', '.stay-lounge', '.stay-focus', '.bar,']) assert.equal(sel.includes('#ui.lounging > ' + kept), false, kept);
   });
 });

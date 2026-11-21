@@ -77,6 +77,17 @@ export function setStarterSlots(raw) { STARTER = starterList(raw); return BALANC
 export function slotOf(slotId) { return SLOT_BY.get(String(slotId || '')) || null; }
 export function floorOf(slotId) { return slotOf(slotId)?.bid || 0; }
 export function slotName(slotId) { return slotOf(slotId)?.name || String(slotId || ''); }
+// "5번 메인거리를", "메인 타워 하단을": the particle follows the last sound of a name known only at run time.
+// A Hangul syllable with a final consonant takes `closed` (을 · 은 · 이), one without takes `open` (를 · 는 · 가).
+// A trailing digit is read aloud (0 영, 1 일, 3 삼, 6 육, 7 칠, 8 팔 are closed); anything else takes `open`.
+export function josa(word, closed, open) {
+  const s = String(word ?? '').trim();
+  const ch = s.charCodeAt(s.length - 1);
+  let final = false;
+  if (ch >= 0xac00 && ch <= 0xd7a3) final = (ch - 0xac00) % 28 !== 0;
+  else if (ch >= 48 && ch <= 57) final = '013678'.includes(s[s.length - 1]);
+  return s + (final ? closed : open);
+}
 export function tagsOf(board) {
   const text = [board?.line1, board?.line2, board?.line3].join(' ');
   return new Set(text.match(TAG_RE) || []);

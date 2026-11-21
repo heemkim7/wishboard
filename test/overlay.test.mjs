@@ -643,7 +643,7 @@ describe('proof bar', () => {
     const ui = read('ui.js');
     assert.match(ui, /if \(nxt && up\) \{\s*proofNext = \(\) => openSheet\('연속 점령', 'CHAIN'/);
     assert.equal(ui.includes("openSheet('전광판을 빼앗겼어요'"), false);
-    assert.match(ui, /note\(`\$\{t\.by\}님이 \$\{slotName\(t\.slot\)\}을 가져갔어요 · 되찾기`, 'err', \(\) => retake\(t\)\)/);
+    assert.match(ui, /note\(`\$\{t\.by\}님이 \$\{josa\(slotName\(t\.slot\), '을', '를'\)\} 가져갔어요 · 되찾기`, 'err', \(\) => retake\(t\)\)/);
     const main = read('main.js');
     assert.match(main, /world\.focusSlot\(slot, \{ celebrate: true \}\)/);
     assert.equal(main.includes('ui.revenge('), false);

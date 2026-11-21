@@ -1864,6 +1864,8 @@ void main(){
         if (cine.arc) camera.position.y += Math.sin(Math.PI * e) * cine.arc;
         look.lerpVectors(cineL0, cineL1, e);
         camera.lookAt(look);
+        // On a board the player's own name tag would lie over the board's text (the orbit block shows it again).
+        me.tag.visible = false;
         if (cine.until && now >= cine.until) endCine();
       }
     }

@@ -309,7 +309,7 @@ describe('immediate push', () => {
       assert.equal(state.pushes.length, 1);
       const p = state.pushes[0]; assert.equal(p.url, s.endpoint); assert.match(p.headers.Authorization, /^vapid t=[\w-]+\.[\w-]+\.[\w-]+, k=/);
       assert.equal(p.headers['Content-Encoding'], 'aes128gcm');
-      assert.deepEqual(await decrypt(p.body, s), { body: `도둑님이 ${slotName('STREET_5')}을 가져갔어요`, url: '/?focus=STREET_5' });
+      assert.deepEqual(await decrypt(p.body, s), { body: `도둑님이 ${slotName('STREET_5')}를 가져갔어요`, url: '/?focus=STREET_5' });
       // Within the 60 s gap: no second push. After it: one more.
       await post('/rt/claim-billboard', CLAIM('도둑'), a.token); assert.equal(state.pushes.length, 1);
       clock.add(61000);

@@ -112,3 +112,33 @@ describe('economy numbers', () => {
     assert.match(sql, /운영자가 내렸습니다/);
   });
 });
+
+describe('조사: the particle after a name that is only known at run time', () => {
+  it('follows the last sound: a final consonant takes the closed form, a vowel the open one', async () => {
+    const { josa, slotName } = await import('../balance.js');
+    assert.equal(josa('5번 메인거리', '을', '를'), '5번 메인거리를');
+    assert.equal(josa('메인 타워 하단', '을', '를'), '메인 타워 하단을');
+    assert.equal(josa('6번 분양 전광판', '은', '는'), '6번 분양 전광판은');
+    assert.equal(josa('교차로 코너', '이', '가'), '교차로 코너가');
+    // a trailing number is read aloud: 1 일, 3 삼, 6 육, 7 칠, 8 팔, 0 영 close; 2 이, 4 사, 5 오, 9 구 do not
+    assert.equal(josa('PLOT 6', '을', '를'), 'PLOT 6을');
+    assert.equal(josa('PLOT 5', '을', '를'), 'PLOT 5를');
+    assert.equal(josa('room 10', '은', '는'), 'room 10은');
+    // anything else (Latin letters, nothing at all) takes the open form and never throws
+    assert.equal(josa('Times', '을', '를'), 'Times를');
+    assert.equal(josa('', '을', '를'), '를');
+    assert.equal(josa(null, '을', '를'), '를');
+    // every board name the game has reads right with it
+    for (const id of ['MAIN_TOP', 'MAIN_LOW', 'SUB_1A', 'STREET_5', 'STREET_12', 'PLOT_6']) {
+      const s = josa(slotName(id), '을', '를');
+      assert.ok(s.startsWith(slotName(id)) && /[을를]$/.test(s), id);
+    }
+  });
+  it('is what the "taken" lines use, in the game, the inbox and the push text', () => {
+    const read = (p) => readFileSync(new URL('../' + p, import.meta.url), 'utf8');
+    assert.match(read('ui.js'), /josa\(slotName\(t\.slot\), '을', '를'\)\} 가져갔어요/);
+    assert.match(read('inbox.js'), /josa\(slotName\(m\.slot_id\), '을', '를'\)\} 가져갔어요/);
+    assert.match(read('worker.js'), /josa\(slot, '을', '를'\)\} 가져갔어요/);
+    for (const f of ['ui.js', 'main.js', 'inbox.js', 'worker.js']) assert.equal(/\}을 (가져갔어요|점령했습니다|완전 점령)/.test(read(f)), false, f);
+  });
+});

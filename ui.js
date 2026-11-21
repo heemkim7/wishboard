@@ -2,7 +2,7 @@
 // taxi HUD, city map + minimap, billboard / plot / ATM / settings / credits sheets, onboarding, touch controls, SFX.
 import { paintBillboard, paintNeonSign, THEMES, makeCanvas, chars, fontsReady, tierOf, boardPhoto, photoReady } from './ts3d/art.js?v=202611211159';
 import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, LANDMARKS } from './ts3d/layout.js?v=202611211159';
-import { BALANCE, PAY, askBid, auctionClosed, buildingOf, chainBoost, floorOf, nextChainFace, slotName } from './balance.js';
+import { BALANCE, PAY, askBid, auctionClosed, buildingOf, chainBoost, floorOf, nextChainFace, slotName, josa } from './balance.js';
 import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, tutorialTap, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611211159';
 import { WISH, WISH_ERR, cleanWish, wishRejected, wishShareText } from './wish.js';
 import { botNick, leagueLine, leagueWeek, liveSig } from './league.js';
@@ -2000,7 +2000,7 @@ export function createUI(root, hooks) {
     if (boardById(t.slot)?.holder_id === hooks.actorId?.()) return; // already mine again
     takenSeen.set(t.slot, Date.now());
     sfx.siren();
-    note(`${t.by}님이 ${slotName(t.slot)}을 가져갔어요 · 되찾기`, 'err', () => retake(t));
+    note(`${t.by}님이 ${josa(slotName(t.slot), '을', '를')} 가져갔어요 · 되찾기`, 'err', () => retake(t));
   }
   // The ordinary billboard sheet for that board with my old lines filled in; its priced button is the confirmation.
   function retake(t) {
@@ -3200,7 +3200,7 @@ export function createUI(root, hooks) {
             box.append(
               h('p', { text: nxt.left === 1
                 ? `🔥 ${nxt.building}의 ${slotName(nxt.id)}까지 점령하면 이 빌딩 전체가 회원님의 독점 타워로 합체됩니다.`
-                : `🔥 ${nxt.building}의 ${slotName(nxt.id)}를 이으면 독점에 한 칸 더 가까워집니다.` }),
+                : `🔥 ${nxt.building}의 ${josa(slotName(nxt.id), '을', '를')} 이으면 독점에 한 칸 더 가까워집니다.` }),
               h('p', { class: 'note', text: `필요 코인 ${money(nxt.price)}부터` }),
               h('button', { class: 'btn primary', type: 'button', onclick: () => { closeSheet(); openBillboard(nxt.id); } }, ...withIcon('bolt', '연속으로 점령하기')),
             );
@@ -3658,7 +3658,6 @@ export function createUI(root, hooks) {
           h('div', { class: 'credits' },
             h('div', { class: 'c' }, h('b', { text: '쥐 · 고양이 · 곰' }), ' — 이 게임에서 만든 모델'),
             h('div', { class: 'c' }, h('b', { text: '캐릭터 동작과 뼈대' }), ' — Adobe Mixamo (걷기·뛰기·춤 등 동작 열 가지)'),
-            h('div', { class: 'c' }, h('b', { text: 'Asphalt 01 · Large Grey Tiles · Concrete Pavement' }), ' — Poly Haven · CC0'),
             h('div', { class: 'c' }, h('b', { text: 'three.js' }), ' — MIT License'))),
       );
       fetch('/assets/times-square/credits.json').then(r => r.json()).then((rows) => {
@@ -4026,7 +4025,7 @@ export function createUI(root, hooks) {
             h('div', null, h('small', { text: '자리' }), h('b', { text: slotName(model.slot) })),
             h('div', null, h('small', { text: '가격' }), h('b', { class: 'gold', text: free ? '무료' : `${money(floor)}코인` })),
             host2 ? h('div', null, h('small', { text: '링크' }), h('b', { text: host2 })) : null),
-          h('p', { class: 'note', text: free ? '첫 칸은 코인이 들지 않아요. 계정마다 한 번이에요.' : `${slotName(model.slot)}은 ${money(floor)}코인으로 겁니다.` }),
+          h('p', { class: 'note', text: free ? '첫 칸은 코인이 들지 않아요. 계정마다 한 번이에요.' : `${josa(slotName(model.slot), '은', '는')} ${money(floor)}코인으로 겁니다.` }),
           h('div', { class: 'wiz-nav', style: { position: 'sticky', bottom: '0' } }, prev, go, err));
       }
     }, true);
@@ -5536,6 +5535,8 @@ export function createUI(root, hooks) {
   portraitMq.addEventListener?.('change', syncWatchPortrait);
   function paintLounge(on, n) {
     loungeEl.hidden = !on;
+    // The boards are the view now: the stylesheet moves the left column, the map and the news bar out of the way.
+    root.classList.toggle('lounging', !!on);
     loungeBtn.classList.toggle('on', !!on);
     const label = loungeBtn.querySelector('.l');
     if (label) label.textContent = on ? '그만' : '멍때리기';
@@ -5821,7 +5822,7 @@ export function createUI(root, hooks) {
         const who = (data?.holder_name || '누군가') + (linkedActor(data?.holder_id, data?.linked) ? ' ✓' : '');
         const id = data?.slot_id || '';
         const where = slotName(id);
-        pushNews('BILLBOARD TAKEOVER', [h('em', { text: who }), `님이 ${where}을 점령했습니다! `, data?.line1 ? `“${chars(data.line1, 16)}”` : ''], true, id);
+        pushNews('BILLBOARD TAKEOVER', [h('em', { text: who }), `님이 ${josa(where, '을', '를')} 점령했습니다! `, data?.line1 ? `“${chars(data.line1, 16)}”` : ''], true, id);
       } else if (kind === 'PLOT') {
         const who = (data?.owner_name || '누군가') + (linkedActor(data?.owner_id) ? ' ✓' : '');
         const lv = LEVELS[Math.max(0, Math.min(4, Number(data?.level) || 0))];

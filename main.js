@@ -7,7 +7,7 @@ import { starSpot, insideLoop } from './ts3d/layout.js?v=202611211159';
 import { createUI } from './ui.js?v=202611211159';
 import { haptic, startMusic } from './audio.js?v=202611211159';
 import { coinGate, COIN_WAIT_MS, COIN_CAP_MS, isTouchUI } from './interact.js?v=202611211159';
-import { BALANCE, PAY, chainsOf, live, monopolyOf, slotName, slotOf, takeGrants, cheerCount, countsAsPlay } from './balance.js';
+import { BALANCE, PAY, chainsOf, live, monopolyOf, slotName, slotOf, takeGrants, cheerCount, countsAsPlay, josa } from './balance.js';
 import { auctionClosed } from './balance.js';
 import { trackEvent } from './analytics.js?v=202611211159';
 import { adoptHandover, allowedLink, blockedText, handoverHref, isAndroid, isInAppWebView, loginEmail, CHEER_PHRASES, GT_LS, SESSION_LS, slotTier } from './plaza-account.js';
@@ -1017,7 +1017,7 @@ let chainReady = false, chainSeen = new Set();
 function noteChains() {
   const list = chainsOf(state.billboards);
   if (!chainReady) { chainSeen = new Set(list.map((c) => c.id)); chainReady = true; return; }
-  for (const c of list) if (!chainSeen.has(c.id)) ui.note(`${c.name}님이 ${c.building}을 완전 점령했습니다. 그 건물 응원은 +${BALANCE.cheerGroup}`, 'ok');
+  for (const c of list) if (!chainSeen.has(c.id)) ui.note(`${c.name}님이 ${josa(c.building, '을', '를')} 완전 점령했습니다. 그 건물 응원은 +${BALANCE.cheerGroup}`, 'ok');
   chainSeen = new Set(list.map((c) => c.id));
 }
 function applyPlaza(remote) {

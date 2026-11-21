@@ -5,7 +5,7 @@
 // Meter DO: daily (UTC) estimate of billed DO requests -> lean mode at 80%, solo (down) at 95% of the Free 100k/day.
 // Supabase keeps auth, DB and RPCs only. No timers in DOs (hibernation-friendly); alarms only while someone waits.
 import { DurableObject } from 'cloudflare:workers';
-import { BALANCE, slotName, SLOT_IDS, PAY, scaledPay, bakeBase, danceBase, farePay, ballOpen, auctionClosed, stickerNext, chainBoost, buildingOf, cheerCount, STARTER_DEFAULT, starterList } from './balance.js';
+import { BALANCE, slotName, josa, SLOT_IDS, PAY, scaledPay, bakeBase, danceBase, farePay, ballOpen, auctionClosed, stickerNext, chainBoost, buildingOf, cheerCount, STARTER_DEFAULT, starterList } from './balance.js';
 import { nextBallUntil, drawSpan } from './live.js';
 import { CHEER_PHRASES, EVENT_NAMES, allowedLink, blockedText, parseGuestHandover, statsFromCounts } from './plaza-account.js';
 import { renderCardPng } from './cardpng.js';
@@ -1514,7 +1514,7 @@ async function encryptPush(sub, bytes) {
 function pushText(row) {
   const slot = slotName(String(row?.slot_id || ''));
   const name = clip(row?.from_name, 12);
-  if (row?.kind === 'taken') return `${name}님이 ${slot}을 가져갔어요`;
+  if (row?.kind === 'taken') return `${name}님이 ${josa(slot, '을', '를')} 가져갔어요`;
   if (row?.kind === 'cheer') return CHEER_PHRASES[Math.floor(Number(row.phrase)) - 1] || '';
   if (row?.kind === 'dark') return row.stage ? darkText(row.stage, row.slot_id, row.h) : `${slot} 불이 곧 꺼져요`; // stage: the registry's notices; none: the (paid-plan) cron
   if (row?.kind === 'gift') return `${name}님이 전광판을 선물했어요`;

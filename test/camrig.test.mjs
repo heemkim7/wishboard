@@ -414,17 +414,27 @@ describe('framing a board', () => {
     assert.ok(near(at(24, 13.5, 0), 13.5 / (2 * tan(55) * 0.84), 1e-9));
     assert.ok(near(at(24, 13.5, 2), 24 / (9 / 16) / (2 * tan(72) * 0.84), 1e-9));
   });
-  it('a board camera keeps its own distance for a small board, moves out for a wide one, and stops at the cap', () => {
+  it('a board camera moves out for a wide board, comes in for a small one, and stops at the cap', () => {
     assert.equal(FRAME.max, 48);
-    // today's distances stay for a face that already fits: 18 m (보기, the claim), 8 m (the photo)
-    assert.equal(boardRange(18, 5.84), 18);
-    assert.equal(boardRange(8, 5.84), 8);
+    assert.equal(FRAME.loose, 1.7);
+    assert.equal(FRAME.near, 6);
+    // the caller's distance stays while the face is neither cut nor lost: 18 m (보기, the claim), 8 m (the photo)
     assert.equal(boardRange(18, 14.15), 18);
+    assert.equal(boardRange(8, 5.84), 8);
+    // a wide face pushes the camera out to its fit, up to the cap
     assert.ok(near(boardRange(8, 14.15), 14.15));
     assert.ok(near(boardRange(18, 42.74), 42.74));
     assert.equal(boardRange(18, 70), 48);
-    assert.equal(boardRange(60, 20), 60); // a caller that asked for more than the cap keeps it
+    // a small face pulls it in: 18 m would leave a lot board a quarter of the frame wide, so 1.7 x the fit, never under 6 m
+    assert.ok(near(boardRange(18, 5.84), 5.84 * 1.7));
+    assert.ok(near(boardRange(18, 4.2), 7.14));
+    assert.equal(boardRange(18, 2.1), 6);
+    assert.equal(boardRange(8, 2.1), 6);
+    assert.equal(boardRange(4, 2.1), 4); // a caller that asked for less keeps it
+    // from that range the face is at least 0.84 / 1.7 = 49% of the frame in the dimension that fits last
+    assert.ok((1 - 2 * FRAME.margin) / FRAME.loose > 0.49);
     assert.equal(boardRange(18, NaN), 18);
+    assert.equal(boardRange(18, 0), 18);
     // every face of the plaza fits under the cap on a 0.46 phone
     assert.ok(frameDistance({ w: 24, h: 13.5, aspect: 0.46, vfov: 72 }) < FRAME.max);
   });

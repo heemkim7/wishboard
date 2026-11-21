@@ -69,7 +69,9 @@ export function fitDistance(dist, fovFrom, fovTo) {
 // ---- framing a board -----------------------------------------------------------------------------------------
 // One rule for every scripted board camera (보기, the claim focus, the lounge tour, the photo frame): the whole face is
 // in the frame with `margin` of the frame left free on each side, for the frame's aspect and its settled vertical FOV.
-export const FRAME = { margin: 0.08, max: 48 };
+// A small face must not end up as a far, empty frame either: the caller's own distance counts only up to `loose` times
+// the fit (never under `near`), so a lot board is about half the frame wide instead of a quarter.
+export const FRAME = { margin: 0.08, max: 48, loose: 1.7, near: 6 };
 /** Range (m) from which a w x h face fits the frame: the larger of the width fit and the height fit. vfov in degrees. */
 export function frameDistance({ w = 0, h = 0, aspect = 1, vfov = 55, margin = FRAME.margin } = {}) {
   const t = Math.tan((clamp(num(vfov, 55), 10, 150) * Math.PI) / 360);
@@ -77,10 +79,16 @@ export function frameDistance({ w = 0, h = 0, aspect = 1, vfov = 55, margin = FR
   const keep = 1 - 2 * clamp(num(margin), 0, 0.4);
   return Math.max(Math.max(0, num(w)) / a, Math.max(0, num(h))) / (2 * t * keep);
 }
-/** The range a board camera uses: the caller's own distance, farther when the face would not fit, never past `max`. */
+/**
+ * The range a board camera uses: the caller's own distance, farther when the face would not fit (up to `max`), and
+ * nearer when the face would be lost in the frame from there (the caller's distance is cut to `loose` x the fit).
+ */
 export function boardRange(dist, fit, max = FRAME.max) {
   const d = Math.max(0, num(dist));
-  return Math.max(d, Math.min(num(fit), max));
+  const f = num(fit);
+  if (!(f > 0)) return d;
+  const far = Math.max(FRAME.near, f * FRAME.loose);
+  return Math.max(Math.min(d, far), Math.min(f, max));
 }
 
 // ---- driving camera ------------------------------------------------------------------------------------------

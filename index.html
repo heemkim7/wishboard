@@ -704,6 +704,9 @@ visualViewport?.addEventListener('scroll', fitVV);
   .proof p { flex: 1 1 100%; margin: 0; font-weight: 700; }
   .proof .btn { height: 44px; }
   #ui.proofing > :not(.proof) { visibility: hidden !important; }
+  /* 멍때리기: the boards are the view. The left column, the map column (the tool row stays) and the news lines step aside;
+     the lounge line, the dock with 그만 and 시점 해제 stay. Moving ends the tour and brings them back. */
+  #ui.lounging > .hud-l, #ui.lounging > .hud-r > :not(.bar), #ui.lounging > .news, #ui.lounging > .stay-ticket, #ui.lounging > .help { visibility: hidden !important; }
   #boot .enter-go { color: var(--on-accent); font-weight: 700; border-color: transparent;
     background: var(--accent); }
   #boot .enter-go:active { background: var(--accent-press); }
@@ -831,12 +834,12 @@ visualViewport?.addEventListener('scroll', fitVV);
     html:not(.touch) .hud-l { max-width: calc(100vw - 282px); }
   }
   /* Desktop under 1127px: the centred dock (515px wide, its top 106px from the bottom) reaches the controls card (294px
-     from the left), so the card sits above the dock. The E prompt shares that band (118px up) and is drawn over the
-     card: the card is a legend with no controls, so it is under everything else in the HUD (z-index -1). Under 641px the
+     from the left), so the card sits above the dock and above the E prompt (118px up, up to about 66px tall). The card
+     is a legend with no controls, so it is also under everything else in the HUD (z-index -1). Under 641px the
      dock is in the right-hand column and the ticker (to 42px) and the news bar (to 90px) run along the bottom instead. */
   .help { z-index: -1; }
   @media (min-width: 641px) and (max-width: 1126px) {
-    html:not(.touch) .help { bottom: calc(118px + var(--safe-b)); }
+    html:not(.touch) .help { bottom: calc(196px + var(--safe-b)); }
   }
   @media (max-width: 640px) {
     html:not(.touch) .help { bottom: calc(102px + var(--safe-b)); }

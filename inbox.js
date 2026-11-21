@@ -1,4 +1,4 @@
-import { slotName } from './balance.js';
+import { slotName, josa } from './balance.js';
 import { CHEER_PHRASES } from './plaza-account.js';
 
 async function bearer() {
@@ -16,7 +16,7 @@ async function bearer() {
 }
 
 const COPY = {
-  taken: (m) => `${m.from_name || '누군가'}님이 ${slotName(m.slot_id)}을 가져갔어요`,
+  taken: (m) => `${m.from_name || '누군가'}님이 ${josa(slotName(m.slot_id), '을', '를')} 가져갔어요`,
   cheer: (m) => {
     const phrase = CHEER_PHRASES[Math.floor(Number(m.phrase)) - 1] || '';
     const who = m.from_name || '누군가';
