@@ -157,13 +157,51 @@ export function cleanAddress(href) {
 }
 
 // A line for the player when the provider sent an error back. Pressing cancel in the Google window is access_denied.
-export function oauthErrorText(r) {
-  const error = String(r?.error || ''), code = String(r?.errorCode || '');
-  const d = Array.from(String(r?.description || '')).map((c) => (c < ' ' ? ' ' : c)).join('').trim().slice(0, 120);
-  const all = code + ' ' + d;
-  if (/signup/i.test(all) && /disabled|not allowed/i.test(all)) return '지금은 새 계정을 만들 수 없어요';
-  if (error === 'access_denied' && !/banned|disabled|provider/i.test(all)) return '구글 로그인을 취소했어요';
-  return d ? `로그인하지 못했어요 (${d})` : '로그인하지 못했어요. 다시 시도해 주세요.';
+// error, error_code and error_description come from the address (or from oauth.html, which read them there): anyone can write a
+// link with them. They only choose one of the fixed lines below; none of their text is ever shown.
+export const OAUTH_ERR = Object.freeze({
+  cancel: '구글 로그인을 취소했어요',
+  signup: '지금은 새 계정을 만들 수 없어요',
+  banned: '이 계정으로는 로그인할 수 없어요. 다른 계정으로 해 주세요.',
+  provider: '지금은 구글 로그인을 쓸 수 없어요. 아이디로 로그인해 주세요.',
+  expired: '로그인 시간이 지났어요. 다시 시도해 주세요.',
+  rate: '요청이 너무 많아요. 잠시 뒤에 다시 해 주세요.',
+  verify: '메일 확인이 끝나지 않은 계정이에요. 구글에서 메일을 확인한 뒤 다시 해 주세요.',
+  exists: '이미 다른 방법으로 가입한 메일이에요. 그 방법으로 로그인해 주세요.',
+  other: '로그인하지 못했어요. 다시 시도해 주세요.',
+});
+const OAUTH_ERR_CODES = Object.freeze({
+  signup_disabled: 'signup',
+  user_banned: 'banned',
+  provider_disabled: 'provider', oauth_provider_not_supported: 'provider',
+  bad_oauth_state: 'expired', bad_oauth_callback: 'expired', flow_state_expired: 'expired', flow_state_not_found: 'expired', otp_expired: 'expired',
+  over_request_rate_limit: 'rate', over_email_send_rate_limit: 'rate',
+  provider_email_needs_verification: 'verify', email_not_confirmed: 'verify',
+  identity_already_exists: 'exists', email_exists: 'exists', user_already_exists: 'exists',
+});
+export function oauthErrorKind(r) {
+  const error = String(r?.error || '').toLowerCase(), code = String(r?.errorCode || '').toLowerCase();
+  const known = OAUTH_ERR_CODES[code] || OAUTH_ERR_CODES[error];
+  if (known) return known;
+  const all = code + ' ' + String(r?.description || '').slice(0, 200);
+  if (/signup/i.test(all) && /disabled|not allowed/i.test(all)) return 'signup';
+  if (/banned/i.test(all)) return 'banned';
+  if (error === 'access_denied' && !/disabled|provider/i.test(all)) return 'cancel';
+  return 'other';
+}
+export function oauthErrorText(r) { return OAUTH_ERR[oauthErrorKind(r)]; }
+
+// One account (or one guest) per window: what a window does when the session in shared storage is not the one it shows.
+// have: the account id this window shows ('' for a guest). known: the stored session could be read (false after a failed
+// refresh or with no client: nothing is done then, a network error must never sign anyone out). user: the stored
+// account id ('' when no session is stored).
+//   'in'    another window signed in: link here too        'out'   another window signed out: go on as a guest
+//   'swap'  another account is stored: leave this one, then link that one        'none'  nothing to do
+export function sessionDrift({ have, known, user } = {}) {
+  const mine = String(have || ''), theirs = String(user || '');
+  if (!known || mine === theirs) return 'none';
+  if (!mine) return 'in';
+  return theirs ? 'swap' : 'out';
 }
 
 // Supabase auth errors in Korean. Our own Korean messages pass through; anything else becomes one plain line.
@@ -196,14 +234,6 @@ export function loginEmail(raw) {
   if (s.includes('@')) return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s) ? s : '';
   if (!/^[a-z0-9._-]{3,32}$/.test(s)) return '';
   return `${s}@id.wishboard.dev`;
-}
-
-export function profileName(user) {
-  const ids = Array.isArray(user?.identities) ? user.identities : [];
-  const google = user?.app_metadata?.provider === 'google' || ids.some((i) => i?.provider === 'google');
-  if (!google) return '';
-  const m = user?.user_metadata || {};
-  return String(m.full_name || m.name || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 16);
 }
 
 export function mergeCoins({ userCoins = 0, guestCoins = 0, bonusPaid = false } = {}) {

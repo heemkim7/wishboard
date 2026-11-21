@@ -21,7 +21,7 @@ import { stickVec, isTouchUI, STICK_W, STICK_H, STICK_THROW, STICK_ENGAGE, bakeF
 import { AD, AD_TEMPLATES, adSums, adBars } from './adreport.js';
 import { qrEncode, paintQr } from './qr.js?v=202611211159';
 import { icon } from './uiicons.js?v=202611211159';
-import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, proofOffers } from './overlay.js?v=202611211159';
+import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, proofOffers, proofPlan, TOAST } from './overlay.js?v=202611211159';
 import { linesFault, LINES_ERR, airAsk } from './ftue.js?v=202611211159'; // the board-line and takeover checks
 
 const LEVELS = [
@@ -157,8 +157,8 @@ export function createUI(root, hooks) {
   let near = null, world = { billboards: [], plots: [] };
   let coolUntil = 0, baking = null, sheet = null, soundOn = recall('kts_sound', true);
   let dance = null, driving = false, waypoint = null, rideLine = '', offerTold = 0;
-  // Movement is locked by owner (overlay.js): it comes back only when no sheet, mini-game, proof bar or countdown still wants it.
-  // A caller that names no owner (hooks.lockInput(true)) shares the 'other' slot.
+  // Movement is locked by owner (overlay.js): 'sheet', 'bake', 'dance', 'proof', 'city' (entered before the city is built).
+  // It comes back only when no owner is left. A caller that names no owner shares the 'other' slot; nothing here uses it.
   const inputLock = createInputLock(typeof hooks.lockInput === 'function' ? hooks.lockInput.bind(hooks) : () => {});
   hooks.lockInput = (on, owner) => inputLock.set(owner, !!on);
 
@@ -658,8 +658,9 @@ export function createUI(root, hooks) {
     const end = (ev) => {
       if (ev.pointerId !== jp) return;
       jp = null;
-      // The world decides whether this was a tap (it moved 7 px or less, under 450 ms); a cancelled touch never is.
-      if (ev.type === 'pointercancel') hooks.tapUp?.(origin.x + 999, origin.y);
+      // The world decides whether this was a tap (it moved 7 px or less, under 450 ms). A cancelled touch never is, and
+      // neither is one that became the stick: a quick flick that ends near where it began must not pick a board.
+      if (ev.type === 'pointercancel' || engaged) hooks.tapUp?.(origin.x + 999, origin.y);
       else hooks.tapUp?.(ev.clientX, ev.clientY);
       origin = null;
       if (engaged) hooks.joystick(0, 0);
@@ -948,7 +949,7 @@ export function createUI(root, hooks) {
     cheerBtn.disabled = state !== 'other';
     const el = h('div', { class: 'farcard', role: 'status' },
       h('div', { class: 'where' }, h('b', { text: slotName(slot) }), h('span', { text: who + far })),
-      h('div', { class: 'acts' },
+      h('div', { class: 'far-acts' }, // not 'acts': that class is the touch button column (absolute, pointer-events: none)
         act('보기', () => hooks.focusShot?.(slot)),
         cheerBtn,
         act(state === 'mine' ? '수정' : '걸기', () => (state === 'mine' ? openAd(slot) : openBillboard(slot)), 'go')));
@@ -1504,7 +1505,7 @@ export function createUI(root, hooks) {
           sfx.shutter();
           let blob = null;
           try { blob = hooks.capture?.() || null; } catch { blob = null; }
-          setTimeout(() => { el.remove(); document.body.classList.remove('posing'); hooks.lockInput?.(false); resolve(blob); }, 120);
+          setTimeout(() => { el.remove(); document.body.classList.remove('posing'); resolve(blob); }, 120);
           return;
         }
         el.textContent = String(n);
@@ -3176,10 +3177,11 @@ export function createUI(root, hooks) {
         } catch (e) {
           placing = false;
           const msg = e?.message === 'tribe' ? '소속에 들어간 뒤에 소속 코인으로 걸 수 있어요' : (e?.message || '점령에 실패했습니다');
-          if (msg.startsWith('소속에 들어간')) { note(msg, 'err'); openTribeSheet(); return; }
+          // Both buttons come back before anything else: the 소속 sheet opens on top and this sheet is returned to.
           go.disabled = false;
           tribeGo.disabled = false;
           refreshBid();
+          if (msg.startsWith('소속에 들어간')) { note(msg, 'err'); openTribeSheet(); return; }
           say(goErr, msg);
           if (sheet !== meSheet) note(msg, 'err'); // the sheet was closed while the claim was out
           return;
@@ -3351,6 +3353,7 @@ export function createUI(root, hooks) {
       if (level >= 4 && mine) signIn.disabled = true;
       const go = h('button', { class: 'btn gold cta', type: 'button', disabled: (level >= 4 && mine) || busy });
       setIconText(go, labelIcon, label);
+      const me = sheet; // a late answer must not close a sheet opened after this one
       go.addEventListener('click', async () => {
         if (blockedText(signIn.value) || blockedText(hooks.nick?.())) { note('그 간판은 올릴 수 없어요', 'err'); return; }
         if ((wallet.confirmed + wallet.pending) < price) { note(`코인이 부족해요. 지금 ${money(wallet.confirmed + wallet.pending)}, ${money(price)} 필요`, 'err'); return; }
@@ -3358,7 +3361,8 @@ export function createUI(root, hooks) {
         setIconText(go, '', '계약 중…');
         try {
           await hooks.buy({ plot_id: id, sign_text: chars(signIn.value, 14), theme_color: color });
-          closeSheet();
+          if (sheet === me) closeSheet();
+          else setIconText(go, '', '계약 완료'); // still open under another sheet: the button stays off, its price is the old one
           sfx.jackpot();
           note(mine ? '건물이 한 층 더 올라갔습니다!' : '이 땅의 주인이 되었습니다!', 'ok');
           (hooks.celebrateShot || hooks.focusShot)?.('PLOT_' + id);
@@ -3691,6 +3695,7 @@ export function createUI(root, hooks) {
       const input = h('input', { class: 'input', maxLength: 16, value: hooks.nick(), placeholder: '닉네임 (16자)' });
       let color = hooks.color();
       let species = hooks.species();
+      const me = sheet; // a late answer must not close a sheet opened after this one
       const save = h('button', { class: 'btn gold cta', type: 'button', text: '저장하기', onclick: async () => {
         if (save.disabled) return;
         const name = chars(input.value, 16).trim() || hooks.nick();
@@ -3700,7 +3705,8 @@ export function createUI(root, hooks) {
         try {
           await Promise.all([hooks.rename(name), hooks.recolor(color), hooks.reshape(species)]);
           renderProfile();
-          closeSheet();
+          if (sheet === me) closeSheet();
+          else { save.disabled = false; save.textContent = '저장하기'; } // still open under another sheet
           note('프로필을 저장했어요', 'ok');
         } catch (e) {
           note(e?.message || '프로필을 저장하지 못했어요', 'err');
@@ -4275,14 +4281,16 @@ export function createUI(root, hooks) {
     if (!coarse) setTimeout(() => go.focus(), 60);
   }
   setTimeout(() => bootReady(true), BOOT_FALLBACK_MS);
+  // Entered before the city (and its collision) is in: movement waits under its own owner, 'city', and that owner is
+  // released as soon as the city is built, whatever else (a sheet, bake, dance) holds a lock of its own at that moment.
   function lockUntilBuilt() {
     if (!hooks.built || hooks.built()) return;
-    hooks.lockInput(true);
+    hooks.lockInput(true, 'city');
     note('도시를 불러오는 중…');
     const t = setInterval(() => {
       if (!hooks.built()) return;
       clearInterval(t);
-      if (!baking && !dance) hooks.lockInput(false);
+      hooks.lockInput(false, 'city');
     }, 250);
   }
   if (!window.__ktsLand && !new URLSearchParams(location.search).get('policy')) {
@@ -4466,12 +4474,16 @@ export function createUI(root, hooks) {
     } catch (err) { note(err?.message || '이 브라우저에서는 알림을 켤 수 없어요', 'err'); }
     finally { proofPush.disabled = false; }
   }
-  // Push offer moments: 'share' (after a photo share), 'wish' (first wish of the day), 'claim'. ftue.js pushAsk decides.
+  // Push offer moments: 'share' (after a photo share), 'wish' (first wish of the day), 'claim' (only when the proof bar,
+  // which carries that ask as a button, was skipped). ftue.js pushAsk decides. holdMs: not before this long from now; the
+  // 60 s a queued offer may wait (PUSH_QUEUE_MS) then run from the end of the hold. frame() pumps a waiting offer every second.
   try { pushOffered = sessionStorage.getItem('kts_push_offered') === '1'; } catch { /* private mode: per page */ }
-  function queuePushOffer(kind = 'share') {
+  let pushHoldUntil = 0;
+  function queuePushOffer(kind = 'share', holdMs = 0) {
     if (pushOffered) return;
     pushQueued = PUSH_WHY[kind] ? kind : 'share';
-    pushQueuedAt = Date.now();
+    pushHoldUntil = Date.now() + Math.max(0, Number(holdMs) || 0);
+    pushQueuedAt = pushHoldUntil;
     pumpQueued();
   }
   function pushSupported() {
@@ -4520,7 +4532,9 @@ export function createUI(root, hooks) {
       offered: pushOffered,
       dismissedAt: recall(PUSH_ASK_KEY, 0),
       now: Date.now(),
-      busy: quietBlock || !!sheet || !proof.hidden || !!proofWait || !!awayWant || focusOn,
+      // Never on top of play (screenBusy: a sheet, a celebration or its bar, the focus camera, bake/dance, a taxi, lounge, the
+      // photo countdown), never before 다녀간 사이, and not while a hold runs.
+      busy: screenBusy() || !!awayWant || Date.now() < pushHoldUntil,
       newbie: !!newbieOn,
       queuedAt: pushQueuedAt,
     });
@@ -4620,11 +4634,15 @@ export function createUI(root, hooks) {
     // This moment's "계정 연결" ask is the button on the bar (the notice below leads to it too): its sheet stays closed.
     if (offers.link) linkWant = false;
     // The player walked on while the celebration ran (the focus camera is gone), or opened a sheet: nothing is locked and
-    // nothing is covered; a tappable notice brings the bar up when they want it.
-    if (!opts.force && ((opts.waited && (!focusOn || opts.skip)) || sheet)) {
+    // nothing is covered; a tappable notice brings the bar up when they want it (overlay.js proofPlan).
+    const plan = proofPlan({ force: opts.force, waited: opts.waited, focus: focusOn, skip: opts.skip, sheet: !!sheet, offers });
+    if (!plan.bar) {
       proofNext = null;
       syncBack();
       note('전광판에 등록됐어요 · 친구에게 자랑하기', 'ok', () => showProof(slot, giftName, { force: true }));
+      // The bar's "알림 받기" was never on screen: that ask is queued as the push sheet, after the notice has had its time.
+      // Tapping the notice brings the bar and its button, which takes the queued sheet back (one push offer per session).
+      if (plan.pushLater) queuePushOffer('claim', TOAST.hit + 1000);
       return false;
     }
     if (sheet) closeSheet();
@@ -4679,12 +4697,14 @@ export function createUI(root, hooks) {
         } catch (e) { note(e?.message || '오늘은 이미 받았거나, 아직 입장 전이에요', 'err'); share.disabled = false; }
       });
       const redeem = h('button', { class: 'btn ghost', type: 'button', text: '코드 사용' });
+      const me = sheet; // a late answer must not close a sheet opened after this one
       redeem.addEventListener('click', async () => {
         redeem.disabled = true;
         try {
           const r = await hooks.redeemCode?.(code.value);
           note(`+10000 코인 충전 · 잔액 ${r?.coins ?? ''}`, 'ok');
-          closeSheet();
+          if (sheet === me) closeSheet();
+          else { code.value = ''; redeem.disabled = false; } // still open under another sheet
         } catch (e) { note(e?.message || '코드가 맞지 않아요', 'err'); redeem.disabled = false; }
       });
       // The address is asked for when the sheet opens and shown as a real link: a window.open after an await is a pop-up
@@ -5438,7 +5458,7 @@ export function createUI(root, hooks) {
     if (left > 0) coolSvg.fg.setAttribute('stroke-dashoffset', String(69.1 * (left / COOLDOWN)));
     if (now - mapAt > 125 && !document.hidden) { mapAt = now; drawMini(hooks.minimap?.()); }
     if (now - hudAt > 66 && !document.hidden) { hudAt = now; renderHud(hooks.hud?.()); }
-    if (now - rankAt > 1000 && !document.hidden) { rankAt = now; paintLive(); renderGoal(); maybeStarterToast(); payDue(); pumpLink(now); pumpTaken(now); }
+    if (now - rankAt > 1000 && !document.hidden) { rankAt = now; paintLive(); renderGoal(); maybeStarterToast(); payDue(); pumpLink(now); pumpTaken(now); if (pushQueued) maybeOfferPush(); }
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
@@ -5719,10 +5739,19 @@ export function createUI(root, hooks) {
       accountView = { ready: next?.ready !== false, guest: !!next?.guest, linked: !!next?.linked };
       renderAccount();
     },
+    // Another actor plays in this window now (sign-out, withdrawal, another window's sign-out): what was the old one's goes.
+    // The 소속 chip showed its #tag; kts_taken and the waiting "…가져갔어요" notices are the boards taken from it.
+    forgetActor() {
+      tribeBtn.textContent = '소속';
+      store('kts_taken', []);
+      takenWant.length = 0;
+      takenSeen.clear();
+    },
     promptLink,
     openLogin,
     setLogin,
     closeLogin,
+    loginOpen: () => !!sheet?.login,
     handoverMoved,
     setRevenge(until) { revengeUntil = Number(until) || 0; },
     setBall(open, until) { ballOpenFlag = !!open; ballUntil = Number(until) || 0; },
@@ -5772,7 +5801,8 @@ export function createUI(root, hooks) {
       if (text && nineEl.textContent !== text) nineEl.textContent = text;
       nineEl.classList.toggle('open', ninePhase === 'open');
     },
-    resendPush: () => resendPush(),
+    // { force: true }: post the subscription again even if this session already did (the actor changed: main.js becomeGuest).
+    resendPush: (opts) => resendPush(opts),
     openClaimStep,
     setNextLine,
     photoNews,

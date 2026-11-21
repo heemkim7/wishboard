@@ -230,6 +230,16 @@ export class Net {
   // The Kakao key loadConfig kept from that one /rt/config answer ('' without one). Waits for it; never a request of its own.
   kakaoKey() { if (!this.kakaoP) this.kakaoP = new Promise((r) => { this.kakaoSet = r; }); return this.kakaoP; }
   async currentSession() { try { const s = await this.sb?.auth?.getSession(); return s?.data?.session || null; } catch { return null; } }
+  // What the shared storage holds, for a window that follows another window's sign-in or sign-out (main.js syncActor): { session } with the stored
+  // session, { session: null } when none is stored, and null when that cannot be told now (no client, a refresh that failed, no answer in 3 s, a stored
+  // session the client did not return). "Cannot tell" must never be read as "signed out".
+  async storedSession() { const auth = this.sb?.auth; if (!auth?.getSession) return null;
+    try { const r = await Promise.race([auth.getSession(), soon(3000)]); if (!r) return null; if (r.data?.session?.user?.id) return { session: r.data.session }; if (r.error) return null;
+      return localStorage.getItem(SESSION_LS) ? null : { session: null }; } catch { return null; } }
+  // fn(event) after every sign-in and sign-out this client hears of, its own or another window's (supabase-js tells every window of the browser, and says
+  // SIGNED_IN again each time a signed-in tab is looked at). fn runs in a later task: calling the client from inside its own callback can deadlock it.
+  onAuth(fn) { const auth = this.sb?.auth; if (!auth?.onAuthStateChange) return false;
+    try { auth.onAuthStateChange((ev) => { if (ev === 'SIGNED_IN' || ev === 'SIGNED_OUT') setTimeout(() => { try { fn(ev); } catch { } }, 0); }); return true; } catch { return false; } }
   // Google sign-in. The game tab stays: oauthUrl() only asks supabase-js for the provider address (skipBrowserRedirect) so main.js can load it in a
   // second window, which comes back to /oauth (oauth.html) and hands the code to this tab; exchangeCode() then finishes here. PKCE: the code verifier
   // is in localStorage under the client's storage key, so whichever same-origin tab ends up with the code can exchange it.

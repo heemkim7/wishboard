@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { oauthMessage, OAUTH_ACK, OAUTH_CHANNEL } from '../plaza-account.js';
+import { oauthMessage, oauthReturn, oauthErrorText, oauthErrorKind, sessionDrift, OAUTH_ACK, OAUTH_CHANNEL, OAUTH_ERR, GT_LS, SESSION_LS } from '../plaza-account.js';
 import { policyDoc, policyKind } from '../legal.js';
 
 const read = (p) => readFileSync(new URL('../' + p, import.meta.url), 'utf8');
@@ -139,12 +139,12 @@ describe('oauth.html: the second window of the Google sign-in', () => {
 
 const plain = (v) => JSON.parse(JSON.stringify(v)); // objects made inside the stub page belong to another realm
 // The game-tab half (main.js, from OAUTH_KEEP_MS to passwordSign) run with stubs for the window, the channel, net and ui.
-function opener({ blocked = false, inApp = false, session = { user: { id: 'u-1' } }, exchange = 'ok', stored = null } = {}) {
+function opener({ blocked = false, inApp = false, session = { user: { id: 'u-1' } }, exchange = 'ok', stored = null, sheetOpen = true } = {}) {
   const src = between(read('main.js').replace(/\r\n/g, '\n'), '\nconst OAUTH_KEEP_MS = 10 * 60000;', '\nasync function passwordSign(');
   let clock = 5000;
   const intervals = new Map(), winListeners = {}, channels = [];
   let seq = 0;
-  const calls = { open: [], setLogin: [], closeLogin: 0, finishLink: [], exchange: [], oauthUrl: [], startOAuth: [], savePlace: 0, order: [] };
+  const calls = { open: [], setLogin: [], closeLogin: 0, finishLink: [], exchange: [], oauthUrl: [], startOAuth: [], savePlace: 0, order: [], notes: [], ops: 0 };
   const popup = { closed: false, location: null, posted: [], closeCalls: 0, document: { title: '', body: { style: {}, textContent: '' } }, postMessage(m, o) { this.posted.push([m, o]); }, close() { this.closeCalls += 1; this.closed = true; } };
   let urlDone = null;
   class BC { constructor(name) { this.name = name; this.sent = []; this.onmessage = null; channels.push(this); } postMessage(m) { this.sent.push(m); } }
@@ -163,7 +163,8 @@ function opener({ blocked = false, inApp = false, session = { user: { id: 'u-1' 
     sleep: () => Promise.resolve(),
     savePlace: () => { calls.savePlace += 1; calls.order.push('savePlace'); },
     finishLink: async (s, fresh) => { calls.finishLink.push([s, fresh]); },
-    ui: { setLogin: (v) => calls.setLogin.push(v), closeLogin: () => { calls.closeLogin += 1; } },
+    actorOp: async (run) => { calls.ops += 1; return run(); }, // main.js: syncActor waits while one of these runs
+    ui: { setLogin: (v) => calls.setLogin.push(v), closeLogin: () => { calls.closeLogin += 1; }, loginOpen: () => sheetOpen, note: (text, kind) => calls.notes.push([text, kind]) },
     net: {
       oauthUrl: (provider, redirectTo) => { calls.oauthUrl.push([provider, redirectTo]); return new Promise((resolve, reject) => { urlDone = { resolve, reject }; }); },
       exchangeCode: async (code) => { calls.exchange.push(code); if (exchange !== 'ok') throw new Error('used'); return session; },
@@ -281,6 +282,33 @@ describe('the game tab during a Google sign-in (main.js, stubbed)', () => {
     assert.equal(down.popup.closeCalls, 1);
     assert.equal(down.last().err, 'AUTH:로그인 준비 중이에요');
     assert.equal(down.polls(), 0);
+    // With the sheet on screen every one of these is a line in it, never a toast as well.
+    assert.deepEqual([o.calls.notes, bad.calls.notes, late.calls.notes, down.calls.notes], [[], [], [], []]);
+  });
+  it('says a sign-in error as a toast when the login sheet was closed meanwhile (the sheet clears its line when it opens again)', async () => {
+    const o = opener({ sheetOpen: false });
+    o.start();
+    await o.url('https://accounts.example/a');
+    await o.byChannel({ t: 'kts-oauth', error: 'access_denied' });
+    assert.deepEqual(o.calls.notes, [['ERR:access_denied', 'err']]);
+    assert.equal(o.last().err, 'ERR:access_denied'); // and still in the sheet's state, for a sheet that is only covered
+    const bad = opener({ exchange: 'fail', sheetOpen: false });
+    bad.start();
+    await bad.url('https://accounts.example/a');
+    await bad.byChannel({ t: 'kts-oauth', code: CODE });
+    assert.deepEqual(bad.calls.notes, [['AUTH:used', 'err']]);
+    const down = opener({ sheetOpen: false });
+    down.start();
+    await down.urlFail(new Error('로그인 준비 중이에요'));
+    assert.deepEqual(down.calls.notes, [['AUTH:로그인 준비 중이에요', 'err']]);
+    // A sign-in that worked says nothing more than finishLink does.
+    const ok = opener({ sheetOpen: false });
+    ok.start();
+    await ok.url('https://accounts.example/a');
+    await ok.byChannel({ t: 'kts-oauth', code: CODE });
+    assert.deepEqual(ok.calls.notes, []);
+    assert.equal(ok.calls.ops, 1, 'the exchange and the link run as one actorOp');
+    assert.match(read('ui.js'), /loginOpen: \(\) => !!sheet\?\.login,/);
   });
   it('falls back to the full-page sign-in when the window is blocked, after saving the place, and does nothing in an in-app browser', async () => {
     const o = opener({ blocked: true });
@@ -294,6 +322,232 @@ describe('the game tab during a Google sign-in (main.js, stubbed)', () => {
     const app = opener({ inApp: true });
     app.start();
     assert.equal(app.calls.open.length + app.calls.startOAuth.length + app.calls.setLogin.length, 0);
+  });
+});
+
+describe('a provider error is said with a fixed line', () => {
+  const FIXED = new Set(Object.values(OAUTH_ERR));
+  it('maps the known codes, and everything else to one plain line', () => {
+    assert.equal(oauthErrorText({ error: 'access_denied' }), '구글 로그인을 취소했어요');
+    assert.equal(oauthErrorText({ error: 'access_denied', errorCode: 'signup_disabled' }), '지금은 새 계정을 만들 수 없어요');
+    assert.equal(oauthErrorText({ error: 'access_denied', errorCode: 'user_banned', description: 'User is banned' }), OAUTH_ERR.banned);
+    assert.equal(oauthErrorText({ error: 'access_denied', errorCode: 'provider_disabled' }), OAUTH_ERR.provider);
+    for (const code of ['bad_oauth_state', 'bad_oauth_callback', 'flow_state_expired', 'flow_state_not_found']) assert.equal(oauthErrorText({ error: 'invalid_request', errorCode: code }), '로그인 시간이 지났어요. 다시 시도해 주세요.', code);
+    assert.equal(oauthErrorText({ error: 'server_error', errorCode: 'over_request_rate_limit' }), OAUTH_ERR.rate);
+    assert.equal(oauthErrorText({ error: 'access_denied', errorCode: 'provider_email_needs_verification' }), OAUTH_ERR.verify);
+    assert.equal(oauthErrorText({ error: 'server_error', errorCode: 'identity_already_exists' }), OAUTH_ERR.exists);
+    for (const r of [{ error: 'server_error', errorCode: 'unexpected_failure' }, { error: 'no_code' }, { error: 'whatever' }, {}, null, undefined]) assert.equal(oauthErrorText(r), '로그인하지 못했어요. 다시 시도해 주세요.');
+    assert.equal(oauthErrorKind({ error: 'ACCESS_DENIED', errorCode: 'SIGNUP_DISABLED' }), 'signup');
+    for (const line of FIXED) assert.match(line, /[가-힣]/);
+  });
+  it('never shows text from the address: not in the toast after a full-page return, not in the sheet after the Google window', () => {
+    const lure = '계정이 잠겼어요. evil.example 로 가서 비밀번호를 다시 넣으세요 <b>지금</b>';
+    for (const error of ['access_denied', 'server_error', 'invalid_request', lure, '']) {
+      for (const errorCode of ['', 'user_banned', 'unexpected_failure', lure]) {
+        const q = '?error=' + encodeURIComponent(error) + '&error_code=' + encodeURIComponent(errorCode) + '&error_description=' + encodeURIComponent(lure);
+        const arrived = oauthReturn(q, '');                       // main.js bootAccount: ui.note(oauthErrorText(ARRIVED), 'err')
+        const text = oauthErrorText(arrived);
+        assert.ok(FIXED.has(text), text);
+        const said = oauthMessage({ t: 'kts-oauth', error: error || 'no_code', errorCode, description: lure }); // what oauth.html posts for /oauth?error=
+        assert.ok(FIXED.has(oauthErrorText(said)), oauthErrorText(said));
+      }
+    }
+    assert.ok(FIXED.has(oauthErrorText(oauthReturn('', '#error=server_error&error_description=' + encodeURIComponent(lure)))));
+    // The window itself only ever says one of its two own lines.
+    assert.match(OAUTH_JS, /say\(error === 'access_denied' \? '로그인을 취소했어요\.' : '로그인을 마치지 못했어요\. 게임에서 다시 시도해 주세요\.', true\);/);
+    assert.doesNotMatch(OAUTH_JS, /say\([^)]*description/);
+    assert.doesNotMatch(read('plaza-account.js'), /로그인하지 못했어요 \(/);
+  });
+});
+
+describe('one actor per window: what a window does about the session other windows share', () => {
+  it('follows a sign-in, a sign-out and another account; does nothing when it cannot tell', () => {
+    assert.equal(sessionDrift({ have: '', known: true, user: 'u-1' }), 'in');
+    assert.equal(sessionDrift({ have: 'u-1', known: true, user: '' }), 'out');
+    assert.equal(sessionDrift({ have: 'u-1', known: true, user: 'u-2' }), 'swap');
+    assert.equal(sessionDrift({ have: 'u-1', known: true, user: 'u-1' }), 'none');
+    assert.equal(sessionDrift({ have: '', known: true, user: '' }), 'none');
+    // A refresh that failed or a missing client is not a sign-out.
+    assert.equal(sessionDrift({ have: 'u-1', known: false, user: '' }), 'none');
+    assert.equal(sessionDrift({ have: '', known: false, user: 'u-1' }), 'none');
+    assert.equal(sessionDrift(), 'none');
+  });
+  it('net.js tells "none stored" from "cannot tell", and hands auth events on in a later task', () => {
+    const net = read('net.js');
+    const stored = between(net, 'async storedSession() {', 'onAuth(fn) {');
+    assert.match(stored, /if \(r\.data\?\.session\?\.user\?\.id\) return \{ session: r\.data\.session \}; if \(r\.error\) return null;/);
+    assert.match(stored, /return localStorage\.getItem\(SESSION_LS\) \? null : \{ session: null \};/);
+    const on = between(net, 'onAuth(fn) {', '\n  // Google sign-in.');
+    assert.match(on, /auth\.onAuthStateChange\(\(ev\) => \{ if \(ev === 'SIGNED_IN' \|\| ev === 'SIGNED_OUT'\) setTimeout\(/);
+    assert.doesNotMatch(on, /getSession|await /); // nothing of the client is called inside its own callback
+    const main = read('main.js');
+    assert.match(main, /net\.onAuth\(\(\) => askSync\(0\)\);/);
+    assert.match(main, /try \{ await actorOp\(bootAccount\); \}/);
+  });
+});
+
+// The part of main.js that keeps one actor per window (its header to withdrawAccount), run with stubs. stored: what the shared
+// storage holds as net.storedSession() answers it. look() is the page being looked at again; run() lets the queued sync finish.
+function actorWin({ user = '', guest = { sub: 'g-old', token: 't-old' }, linked = '' } = {}) {
+  const src = between(read('main.js').replace(/\r\n/g, '\n'), '\n// ---- one actor per window', '\nasync function withdrawAccount() {');
+  const bag = new Map();
+  if (guest) bag.set(GT_LS, JSON.stringify(guest));
+  const timers = new Map(), listeners = {};
+  let seq = 0;
+  const calls = { finishLink: [], notes: [], setAccount: [], resendPush: [], guestToken: [], forget: 0, dropTry: 0, closeLogin: 0, wallet: 0, removed: [] };
+  const w = { stored: { session: null }, calls, bag };
+  const ctx = {
+    GT_LS, SESSION_LS, INV_CODE_KEY: 'kts_inv_code', sessionDrift, console: { warn() {} },
+    localStorage: { getItem: (k) => (bag.has(k) ? bag.get(k) : null), setItem: (k, v) => bag.set(k, String(v)), removeItem: (k) => { calls.removed.push(k); bag.delete(k); } },
+    sessionStorage: { removeItem() {} },
+    setTimeout: (fn) => { timers.set(++seq, fn); return seq; },
+    clearTimeout: (id) => { timers.delete(id); },
+    sleep: () => Promise.resolve(),
+    window: { addEventListener: (type, fn) => { listeners[type] = fn; } },
+    document: { visibilityState: 'visible', addEventListener: (type, fn) => { listeners[type] = fn; } },
+    Net: { cid: () => 'cid' },
+    net: { id: user ? 'user:' + user : (guest ? 'guest:' + guest.sub : 'cid'), storedSession: async () => w.stored },
+    state: { grants: [{ n: 5, at: 1 }], pending: 5, confirmed: 120, vipTickets: 1, walletKnown: true, invite: {}, league: {}, starterUsed: true },
+    ui: {
+      setWallet() {}, forgetActor: () => { calls.forget += 1; }, setAccount: (v) => calls.setAccount.push(v), refreshProfile() {},
+      note: (text) => calls.notes.push(text), setLogin() {}, closeLogin: () => { calls.closeLogin += 1; }, openLogin() {},
+      resendPush: (o) => calls.resendPush.push(o),
+    },
+    guestToken: async (fresh) => { calls.guestToken.push(!!fresh); const g = { sub: 'g-made' + calls.guestToken.length, token: 't-made' }; bag.set(GT_LS, JSON.stringify(g)); return g; },
+    guestActor: () => { try { const g = JSON.parse(bag.get(GT_LS) || 'null'); return g?.sub ? { id: 'guest:' + g.sub, token: g.token || '' } : null; } catch { return null; } },
+    refreshWallet: async () => { calls.wallet += 1; }, refreshWorld: async () => {}, rejoin: async () => {}, pullProfile() {}, loadWishes: async () => {},
+    dropOAuthTry: () => { calls.dropTry += 1; },
+  };
+  ctx.finishLink = async (s, fresh, echo) => { calls.finishLink.push([s.user.id, fresh, echo]); ctx.api.setUser(s.user); };
+  const pre = `let sessionUser = ${user ? JSON.stringify({ id: user }) : 'null'}, accountReady = true, linkedGuest = ${JSON.stringify(linked)}, actorOps = 0, syncAsked = false, syncing = false, syncTimer = 0, walletGen = 0;\n`;
+  runInNewContext(pre + src + '\nthis.api = { syncActor, actorOp, becomeGuest, who: () => (sessionUser ? sessionUser.id : \'\'), setUser: (u) => { sessionUser = u; } };', ctx);
+  const settle = () => new Promise((r) => setImmediate(r));
+  w.api = ctx.api;
+  w.net = ctx.net;
+  w.state = ctx.state;
+  w.look = () => listeners.visibilitychange();
+  w.storage = (key) => listeners.storage({ key });
+  w.pending = () => timers.size;
+  w.run = async () => { for (let i = 0; i < 20 && timers.size; i++) { const fns = [...timers.values()]; timers.clear(); for (const fn of fns) await fn(); await settle(); } await settle(); };
+  return w;
+}
+
+describe('one actor per window (main.js, stubbed)', () => {
+  it('a sign-in another window stored is followed once: linked here, the pending Google attempt dropped, the sheet closed', async () => {
+    const w = actorWin();
+    w.stored = { session: { user: { id: 'u-1' } } };
+    w.look();
+    await w.run();
+    assert.deepEqual(w.calls.finishLink, [['u-1', true, true]]); // fresh (it says so), echo (not counted as a second sign-in)
+    assert.equal(w.calls.dropTry, 1);
+    assert.equal(w.calls.closeLogin, 1);
+    assert.equal(w.api.who(), 'u-1');
+    // Looked at again, the client's own SIGNED_IN on every refocus, a storage event: nothing more to do.
+    w.look();
+    w.storage(SESSION_LS);
+    await w.run();
+    await w.api.syncActor();
+    assert.equal(w.calls.finishLink.length, 1);
+    assert.equal(w.pending(), 0, 'no sync left queued: it does not loop');
+  });
+  it("waits for this window's own sign-in path instead of running beside it", async () => {
+    const w = actorWin();
+    let open = null;
+    const gate = new Promise((r) => { open = r; });
+    // The normal Google result: the exchange stores the session (and raises the event) before finishLink has run.
+    const own = w.api.actorOp(async () => { w.stored = { session: { user: { id: 'u-1' } } }; await gate; w.api.setUser({ id: 'u-1' }); });
+    await w.api.syncActor();
+    w.look();
+    await w.run();
+    assert.deepEqual(w.calls.finishLink, [], 'the sync only noted that it was asked');
+    open();
+    await own;
+    await w.run();
+    assert.deepEqual(w.calls.finishLink, [], 'afterwards it finds this window already on that account');
+    assert.equal(w.pending(), 0);
+  });
+  it('a sign-out in another window: this window takes the guest that window made, and makes none of its own', async () => {
+    const w = actorWin({ user: 'u-1', linked: 'guest:g-old', guest: { sub: 'g-fresh', token: 't-fresh' } });
+    w.stored = { session: null };
+    w.look();
+    await w.run();
+    assert.equal(w.api.who(), '');
+    assert.equal(w.net.id, 'guest:g-fresh');
+    assert.deepEqual(w.calls.guestToken, []);
+    assert.deepEqual(w.calls.removed.filter((k) => k === GT_LS), [], 'the other window\'s new guest is not thrown away');
+    assert.deepEqual(w.calls.resendPush, [], 'the window that signed out already moved the push subscription');
+    assert.deepEqual(plain(w.calls.setAccount.at(-1)), { ready: true, guest: true, linked: false });
+    assert.equal(w.calls.forget, 1);
+    assert.deepEqual([w.state.grants.length, w.state.pending, w.state.confirmed, w.state.walletKnown], [0, 0, 0, false]);
+    assert.equal(w.calls.notes.length, 1);
+    assert.match(w.calls.notes[0], /^로그아웃됐어요/);
+    w.look();
+    await w.run();
+    assert.equal(w.calls.notes.length, 1, 'said once');
+  });
+  it('a sign-out nobody made a guest for (the session ended by itself): the merged guest goes and this window makes the new one', async () => {
+    const w = actorWin({ user: 'u-1', linked: 'guest:g-old' });
+    w.stored = { session: null };
+    w.storage(SESSION_LS);
+    await w.run();
+    assert.deepEqual(w.calls.guestToken, [true]);
+    assert.ok(w.calls.removed.includes(GT_LS));
+    assert.equal(w.net.id, 'guest:g-made1');
+    assert.deepEqual(plain(w.calls.resendPush), [{ force: true }]);
+  });
+  it('does nothing when the stored session cannot be read', async () => {
+    const w = actorWin({ user: 'u-1', linked: 'guest:g-old' });
+    w.stored = null;
+    w.look();
+    await w.run();
+    assert.equal(w.api.who(), 'u-1');
+    assert.equal(w.net.id, 'user:u-1');
+    assert.deepEqual([w.calls.guestToken.length, w.calls.finishLink.length, w.calls.notes.length, w.calls.forget], [0, 0, 0, 0]);
+  });
+  it('another account in storage: this one is left first, then that one is linked', async () => {
+    const w = actorWin({ user: 'u-1' });
+    w.stored = { session: { user: { id: 'u-2' } } };
+    w.look();
+    await w.run();
+    assert.equal(w.calls.forget, 1);
+    assert.deepEqual(w.calls.finishLink, [['u-2', true, true]]);
+    assert.equal(w.api.who(), 'u-2');
+  });
+  it('two guest windows play as the same stored guest', async () => {
+    const w = actorWin({ guest: { sub: 'g-old', token: 't-old' } });
+    w.bag.set(GT_LS, JSON.stringify({ sub: 'g-other', token: 't-other' })); // another window signed out and stored its new guest
+    w.storage(GT_LS);
+    await w.run();
+    assert.equal(w.net.id, 'guest:g-other');
+    assert.deepEqual([w.calls.guestToken.length, w.calls.notes.length, w.calls.resendPush.length], [0, 0, 0]);
+    w.storage('kts_nick'); // some other key: not asked
+    assert.equal(w.pending(), 0);
+  });
+  it("this window's own sign-out makes the new guest and moves the push subscription to it; a withdrawal does not", async () => {
+    const out = actorWin({ user: 'u-1', linked: 'guest:g-old' });
+    assert.equal(await out.api.becomeGuest(), true);
+    assert.deepEqual(out.calls.guestToken, [true]);
+    assert.equal(out.net.id, 'guest:g-made1');
+    assert.deepEqual(plain(out.calls.resendPush), [{ force: true }]);
+    assert.deepEqual([out.state.grants.length, out.state.pending, out.state.confirmed, out.state.walletKnown], [0, 0, 0, false]);
+    const gone = actorWin({ user: 'u-1', linked: 'guest:g-old' });
+    await gone.api.becomeGuest({ push: false });
+    assert.deepEqual(gone.calls.resendPush, []);
+  });
+  it('main.js: finishLink is a no-op for the account this window already shows, so no path can merge twice', () => {
+    const main = read('main.js');
+    const fl = between(main, 'async function finishLink(', 'async function bootAccount(');
+    assert.ok(fl.indexOf('if (sessionUser?.id === user.id) return null;') > 0);
+    assert.ok(fl.indexOf('if (sessionUser?.id === user.id) return null;') < fl.indexOf('sessionUser = user;'));
+    assert.ok(fl.indexOf('sessionUser = user;') < fl.indexOf('await '), 'set before the first await');
+    assert.match(fl, /mergedMark !== mark/); // the kts_merged guard stays
+    assert.match(fl, /sessionStorage\.setItem\('kts_merged', mark\)/);
+    assert.match(fl, /if \(fresh && !echo\) trackEvent\('auth_login_success'/);
+    // Every path of this window's own that changes the actor is an actorOp.
+    assert.match(between(main, 'async function finishOAuth(msg) {', 'async function popupOAuth('), /await actorOp\(async \(\) => \{/);
+    assert.match(between(main, 'async function passwordSign(', '\n// ---- one actor per window'), /await actorOp\(async \(\) => \{/);
+    assert.match(between(main, 'async function signOutAccount() {', '\n// In-app browser: after the player was sent'), /await actorOp\(async \(\) => \{/);
+    assert.match(between(main, 'async function withdrawAccount() {', '// 로그아웃'), /await actorOp\(async \(\) => \{/);
   });
 });
 
@@ -404,7 +658,7 @@ describe('account: nickname, sign-out, settings, handover, withdrawal', () => {
     assert.doesNotMatch(fl, /state\.nick =|NICK_KEY|setName/);
   });
   it('signs out to a brand-new guest: the old guest token and the merged mark go, the account keeps its boards', () => {
-    const guest = between(main, 'async function becomeGuest() {', 'async function withdrawAccount() {');
+    const guest = between(main, 'async function becomeGuest(', 'async function withdrawAccount() {');
     assert.match(guest, /localStorage\.removeItem\(GT_LS\)/);
     assert.match(guest, /sessionStorage\.removeItem\('kts_merged'\)/);
     assert.ok(guest.indexOf('localStorage.removeItem(GT_LS)') < guest.indexOf('guestToken(true)'));
@@ -413,8 +667,18 @@ describe('account: nickname, sign-out, settings, handover, withdrawal', () => {
     assert.match(out, /await net\.signOut\(\);/);
     assert.ok(out.indexOf('net.signOut()') < out.indexOf('becomeGuest()'));
     assert.doesNotMatch(out, /withdraw/i); // no server call that removes anything
-    assert.match(between(main, 'async function withdrawAccount() {', '// 로그아웃'), /await net\.withdrawAccount\(\);\s+await becomeGuest\(\);/);
+    assert.match(between(main, 'async function withdrawAccount() {', '// 로그아웃'), /await net\.withdrawAccount\(\);\s+await becomeGuest\(\{ push: false \}\);/);
     assert.match(read('net.js'), /async signOut\(\) \{[^\n]*auth\.signOut\(\{ scope: 'local' \}\)/);
+  });
+  it('leaves nothing of the account behind: wallet figures, the 소속 chip, the boards taken from it', () => {
+    const forget = between(main, '\nfunction forgetActor() {', '\n// The new guest another window stored');
+    for (const line of ['walletGen += 1;', 'state.grants = [];', 'state.pending = 0;', 'state.confirmed = 0;', 'state.walletKnown = false;', 'ui.setWallet(state);', 'ui.forgetActor?.();']) assert.ok(forget.includes(line), line);
+    const guest = between(main, 'async function becomeGuest(', 'async function withdrawAccount() {');
+    assert.ok(guest.indexOf('forgetActor();') > 0 && guest.indexOf('forgetActor();') < guest.indexOf('refreshWallet()'), 'before the new wallet is read');
+    const gone = between(ui, '    forgetActor() {', '    promptLink,');
+    assert.match(gone, /tribeBtn\.textContent = '소속';/);
+    assert.match(gone, /store\('kts_taken', \[\]\);/);
+    assert.match(gone, /takenWant\.length = 0;/);
   });
   it('gives a guest and a linked account a visible way in and out', () => {
     assert.match(ui, /h\('button', \{ class: 'btn gold', type: 'button', text: '계정 연결 \+300', onclick/); // the guest banner, same class

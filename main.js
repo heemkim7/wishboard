@@ -10,8 +10,8 @@ import { coinGate, COIN_WAIT_MS, COIN_CAP_MS, isTouchUI } from './interact.js?v=
 import { BALANCE, PAY, chainsOf, live, monopolyOf, slotName, slotOf, takeGrants, cheerCount, countsAsPlay } from './balance.js';
 import { auctionClosed } from './balance.js';
 import { trackEvent } from './analytics.js?v=202611211159';
-import { adoptHandover, allowedLink, blockedText, chromeIntent, handoverHref, isAndroid, isInAppWebView, loginEmail, CHEER_PHRASES, GT_LS, SESSION_LS, slotTier } from './plaza-account.js';
-import { authErrorText, cleanAddress, externalRoutes, oauthErrorText, oauthMessage, oauthReturn, OAUTH_ACK, OAUTH_CHANNEL } from './plaza-account.js';
+import { adoptHandover, allowedLink, blockedText, handoverHref, isAndroid, isInAppWebView, loginEmail, CHEER_PHRASES, GT_LS, SESSION_LS, slotTier } from './plaza-account.js';
+import { authErrorText, cleanAddress, externalRoutes, oauthErrorText, oauthMessage, oauthReturn, sessionDrift, OAUTH_ACK, OAUTH_CHANNEL } from './plaza-account.js';
 import { invCode, inviteFrom, inviteView } from './invite.js';
 import { saveClip, dropParams } from './share.js?v=202611211159';
 import { ftueDue, crowdFacts, kstDay, lockCelebration, startFtue, wishAutoOpen, wishBootLine, awayRows, inboxUnread, seenAdd, liveKey, liveSeenAdd } from './ftue.js?v=202611211159';
@@ -178,6 +178,9 @@ const headlines = [];
 let world = null;
 let entered = false, queuePos = 0, walletGen = 0, shower = null;
 let sessionUser = null, accountReady = false;
+// linkedGuest: the stored guest (guest:<sub>) as it was when this window linked to its account. actorOps / syncAsked / syncing:
+// see syncActor (one actor per window).
+let linkedGuest = '', actorOps = 0, syncAsked = false, syncing = false, syncTimer = 0;
 // 다녀간 사이 / 🔔: inbox ids seen in this browser, my wish's heart count when I last saw it, the day yesterday's prize was shown.
 const INBOX_SEEN_KEY = 'kts_inbox_seen', WISH_SEEN_KEY = 'kts_wish_seen', WISH_PRIZE_KEY = 'kts_wish_prize', INBOX_LIVE_KEY = 'kts_inbox_live';
 function readJson(key, dflt) { try { const v = JSON.parse(recall(key) || 'null'); return v ?? dflt; } catch { return dflt; } }
@@ -208,8 +211,9 @@ const netReady = (async () => {
   let ready = false;
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   try { ready = await net.init(); } catch { ready = false; }
+  net.onAuth(() => askSync(0)); // a sign-in or sign-out, this window's or another's: see syncActor
   try { await Promise.race([Promise.all([refreshWallet(), refreshWorld()]), wait(3000)]); } catch { /* wallet shows once the guest token answers */ }
-  try { await bootAccount(); } catch { /* login can finish after the plaza is up */ }
+  try { await actorOp(bootAccount); } catch { /* login can finish after the plaza is up */ }
   try {
     if (!state.billboards.length && !state.plots.length) {
       const again = readPlaza();
@@ -351,15 +355,18 @@ const ui = createUI(document.getElementById('ui'), {
     }
     // The link says "이 전광판 앞으로": the avatar goes to the board's front first (a local teleport, like the map's), then
     // the camera looks at the board and stays until the player moves. Fireworks only for a gift link.
-    world?.goToSlot?.(FOCUS);
-    const pose = world?.focusSlot(FOCUS, { hold: 0, celebrate: false });
-    if (!pose) { introDone(); return; }
-    focusedSlot = FOCUS;
-    if (GIFT) {
-      world?.giftPop?.(FOCUS, true);
-      ui.note('당신을 위해 준비된 타임스퀘어 스페셜 전광판입니다!', 'ok');
-    }
-    setTimeout(() => { ui.job({ type: 'focus', slot: FOCUS, board: pose.board || {}, fare: 0 }); introDone(); }, 700);
+    // Entered before the city is built: board positions come from the built city, so the link waits for it (whenBuilt).
+    whenBuilt(() => {
+      world?.goToSlot?.(FOCUS);
+      const pose = world?.focusSlot(FOCUS, { hold: 0, celebrate: false });
+      if (!pose) { introDone(); return; }
+      focusedSlot = FOCUS;
+      if (GIFT) {
+        world?.giftPop?.(FOCUS, true);
+        ui.note('당신을 위해 준비된 타임스퀘어 스페셜 전광판입니다!', 'ok');
+      }
+      setTimeout(() => { ui.job({ type: 'focus', slot: FOCUS, board: pose.board || {}, fare: 0 }); introDone(); }, 700);
+    }, () => introDone());
   },
   focusShot: (slot) => { const pose = world?.focusSlot(slot); if (pose) focusedSlot = String(slot || ''); return pose; },
   endFocus: () => world?.endFocus(),
@@ -1776,7 +1783,7 @@ function authEnv() {
   const href = ticket ? handoverHref(ticket, 'google') : '';
   // routes: what to open, in order, to reach the system browser (KakaoTalk's own way out, then the Android intent).
   // routed: this in-app browser has such a way at all, known before the ticket is ready.
-  return { inApp, android: isAndroid(ua), handoverUrl: href, intent: href ? chromeIntent(href) : '', routes: href ? externalRoutes(ua, href) : [], routed: inApp && externalRoutes(ua, handoverHref('', '')).length > 0 };
+  return { inApp, android: isAndroid(ua), handoverUrl: href, routes: href ? externalRoutes(ua, href) : [], routed: inApp && externalRoutes(ua, handoverHref('', '')).length > 0 };
 }
 function authMessage(e) { return authErrorText(e); }
 async function rejoin() {
@@ -1786,9 +1793,14 @@ async function rejoin() {
   net.room = null;
   try { await net.join(room, me); } catch { /* the socket retries on its own */ }
 }
-async function finishLink(session, fresh) {
+// fresh: the sign-in happened now (a toast says so). echo: it happened in another window and this one only follows (syncActor),
+// so it is not counted again.
+async function finishLink(session, fresh, echo = false) {
   const user = session?.user;
   if (!user?.id) return null;
+  // Already this account here: the same sign-in reached this window twice (its own result and the notice every window gets).
+  // sessionUser is set before anything asynchronous below, so a second call can never start a second merge.
+  if (sessionUser?.id === user.id) return null;
   sessionUser = user;
   accountReady = true;
   net.id = 'user:' + user.id;
@@ -1798,6 +1810,7 @@ async function finishLink(session, fresh) {
     const issued = await guestToken();
     if (issued?.sub) guest = { id: 'guest:' + issued.sub, token: issued.token || '' };
   }
+  linkedGuest = guest?.id || ''; // the stored guest as this account found it (becomeGuest: a new one must not be this one)
   let merged = null;
   const mark = user.id + ':' + (guest?.id || '');
   let mergedMark = '';
@@ -1809,11 +1822,12 @@ async function finishLink(session, fresh) {
       try { sessionStorage.setItem('kts_merged', mark); } catch { /* private mode */ }
     } catch (e) { failed = true; ui.note(authMessage(e), 'err'); } // not kept: the next boot tries again
   }
+  if (sessionUser !== user) return merged; // signed out (or another account) while the merge was out: that path paints the window
   ui.setAccount?.({ ready: true, guest: false, linked: true });
   ui.refreshProfile?.();
   try { await refreshWallet(); } catch { /* balance paints on the next sync */ }
   try { await refreshWorld(); } catch { /* boards refresh on the next poll */ }
-  if (fresh) trackEvent('auth_login_success', { method: user.app_metadata?.provider || 'email' });
+  if (fresh && !echo) trackEvent('auth_login_success', { method: user.app_metadata?.provider || 'email' });
   if (merged?.bonus) ui.note(`계정을 연결했어요. +${merged.bonus}코인`, 'ok');
   else if (fresh && !failed) ui.note('계정을 연결했어요', 'ok'); // after a failed merge the error toast stands alone
   await rejoin();
@@ -1847,6 +1861,19 @@ async function bootAccount() {
 // One result per attempt; with no attempt pending a message is ignored and oauth.html finishes on its own (/?code=).
 const OAUTH_KEEP_MS = 10 * 60000;
 let oauthTry = null, oauthChan = null;
+// A sign-in error goes on the login sheet's own line. With that sheet closed (the player went on while the Google window was open)
+// nobody would read it there, and the sheet clears the line when it opens again: then it is also a toast.
+function loginFail(text, more) {
+  ui.setLogin?.({ wait: false, text: '', ...more, err: text });
+  if (!ui.loginOpen?.()) ui.note?.(text, 'err');
+}
+// The pending attempt is over without a message from its window (syncActor: the session arrived through another window).
+function dropOAuthTry() {
+  const t = oauthTry;
+  if (!t) return;
+  oauthTry = null;
+  clearInterval(t.timer);
+}
 function onOAuthMessage(data, source) {
   const msg = oauthMessage(data);
   const t = oauthTry;
@@ -1864,17 +1891,20 @@ window.addEventListener('message', (e) => { if (e.origin === location.origin) on
 // Back from the provider through the browser's back button after the full-page fallback: the button must not stay disabled.
 window.addEventListener('pageshow', (e) => { if (e.persisted && !oauthTry) ui.setLogin?.({ wait: false, info: '' }); });
 async function finishOAuth(msg) {
-  if (msg.error) { ui.setLogin?.({ wait: false, text: '', err: oauthErrorText(msg) }); return; }
+  if (msg.error) { loginFail(oauthErrorText(msg)); return; }
   ui.setLogin?.({ wait: true, text: '로그인하는 중…', err: '', info: '' });
-  let session = null;
-  try { session = await net.exchangeCode(msg.code); }
-  catch (e) {
-    // The code may have been used already by the window itself (it waited too long for this tab): its session is in shared storage.
-    try { session = await net.currentSession(); } catch { session = null; }
-    if (!session?.user) { ui.setLogin?.({ wait: false, text: '', err: authMessage(e) }); return; }
-  }
-  try { await finishLink(session, true); }
-  finally { ui.setLogin?.({ wait: false, text: '', err: '', info: '' }); ui.closeLogin?.(); }
+  // actorOp: the exchange raises the client's sign-in event in this window too; syncActor waits until this path is done.
+  await actorOp(async () => {
+    let session = null;
+    try { session = await net.exchangeCode(msg.code); }
+    catch (e) {
+      // The code may have been used already by the window itself (it waited too long for this tab): its session is in shared storage.
+      try { session = await net.currentSession(); } catch { session = null; }
+      if (!session?.user) { loginFail(authMessage(e)); return; }
+    }
+    try { await finishLink(session, true); }
+    finally { ui.setLogin?.({ wait: false, text: '', err: '', info: '' }); ui.closeLogin?.(); }
+  });
 }
 async function popupOAuth(provider, w) {
   if (oauthTry) clearInterval(oauthTry.timer); // a new attempt replaces the old one (its code verifier is overwritten anyway)
@@ -1896,7 +1926,7 @@ async function popupOAuth(provider, w) {
   } catch (e) {
     if (oauthTry === t) { oauthTry = null; clearInterval(t.timer); }
     try { w.close(); } catch { /* already gone */ }
-    ui.setLogin?.({ wait: false, text: '', err: authMessage(e) });
+    loginFail(authMessage(e));
   }
 }
 // The second window was blocked: say so in the sheet, keep the player's place, and let this tab go to the provider (the old path).
@@ -1908,7 +1938,7 @@ async function redirectOAuth(provider) {
     await net.startOAuth(provider);
     await sleep(8000); // the page should be gone by now; if it is not, the button must not stay disabled
     ui.setLogin?.({ wait: false, text: '', info: '' });
-  } catch (e) { ui.setLogin?.({ wait: false, text: '', info: '', err: authMessage(e) }); }
+  } catch (e) { loginFail(authMessage(e), { info: '' }); }
 }
 // Not async: window.open has to run in the same task as the click or the browser blocks it.
 function startOAuth(provider) {
@@ -1927,22 +1957,110 @@ async function passwordSign(kind, id, password) {
   const email = loginEmail(id);
   if (!email) throw new Error('이메일 또는 아이디를 확인해 주세요');
   if (String(password || '').length < 6) throw new Error('비밀번호는 6자 이상이어야 해요');
-  let session;
-  try { session = await net.passwordAuth(kind, email, password); }
-  catch (e) { throw new Error(authMessage(e)); }
-  await finishLink(session, true);
+  await actorOp(async () => {
+    let session;
+    try { session = await net.passwordAuth(kind, email, password); }
+    catch (e) { throw new Error(authMessage(e)); }
+    await finishLink(session, true);
+  });
 }
-// After a withdrawal or a sign-out this device goes on as a brand-new guest. The stored guest token goes first: that guest was already
-// merged into the account, and keeping it would offer the same guest to the next sign-in again. Resolves false when no new guest came.
-async function becomeGuest() {
-  sessionUser = null;
-  try { localStorage.removeItem(GT_LS); localStorage.removeItem(INV_CODE_KEY); } catch { /* private mode */ }
-  try { sessionStorage.removeItem('kts_merged'); } catch { /* private mode */ }
+// ---- one actor per window ---------------------------------------------------------------------
+// The windows of one browser share the Supabase session (localStorage, SESSION_LS) and the stored guest (GT_LS); each window
+// keeps its own sessionUser and net.id. When another window changes the shared ones (the Google window became a game window
+// and signed in there; 로그아웃 or 탈퇴 in another tab), this window would go on showing the old actor while its requests
+// carry the new one's token. syncActor() makes the window follow. It is asked for by the client's sign-in and sign-out
+// events (net.onAuth: supabase-js tells every window), by a change of either stored value (the storage event), and whenever
+// the page is looked at again.
+// actorOp() wraps this window's own paths that change who it is (boot, the Google result, id sign-in, 로그아웃, 탈퇴). While
+// one runs, a sync is only noted, and runs once after the last one ended: by then that path has set sessionUser, so the
+// event its own sign-in or sign-out raised finds nothing to do. One result per attempt, one merge per sign-in, no loop.
+async function actorOp(run) {
+  actorOps += 1;
+  try { return await run(); }
+  finally {
+    actorOps -= 1;
+    if (!actorOps && syncAsked) askSync(0);
+  }
+}
+function askSync(ms = 300) {
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(syncActor, ms);
+}
+async function syncActor() {
+  if (!accountReady || actorOps || syncing) { syncAsked = true; return; }
+  syncAsked = false;
+  syncing = true;
+  try {
+    // null: what is stored cannot be told right now (no client, a refresh that failed). Nothing changes here then.
+    const stored = await net.storedSession();
+    if (actorOps) { syncAsked = true; return; } // a path of this window's own began meanwhile: it decides
+    const drift = sessionDrift({ have: sessionUser?.id || '', known: !!stored, user: stored?.session?.user?.id || '' });
+    if (drift === 'in' || drift === 'swap') {
+      dropOAuthTry(); // the sign-in this window may still be waiting for arrived another way: that attempt is over
+      if (drift === 'swap') { sessionUser = null; forgetActor(); }
+      try { await finishLink(stored.session, true, true); }
+      finally { ui.setLogin?.({ wait: false, text: '', err: '', info: '' }); ui.closeLogin?.(); }
+    } else if (drift === 'out') {
+      await becomeGuest({ adopt: true });
+      ui.note('로그아웃됐어요 · 다시 로그인', '', () => ui.openLogin?.());
+    } else if (stored && !sessionUser) {
+      // Guests in every window: this one plays as the stored guest. Another window replaced it (its sign-out, a handover it took).
+      const g = guestActor();
+      if (g?.id && g.token && g.id !== net.id) await becomeGuest({ adopt: true });
+    }
+  } catch (e) { console.warn('[auth] sync', e?.message || e); }
+  finally {
+    syncing = false;
+    if (syncAsked && !actorOps) askSync(0);
+  }
+}
+window.addEventListener('storage', (e) => { if (e.key === GT_LS || e.key === SESSION_LS || e.key === null) askSync(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') askSync(); });
+window.addEventListener('pageshow', (e) => { if (e.persisted) askSync(); }); // back from the page cache: other windows went on meanwhile
+// What this window knew about the actor it was until now. The wallet figures go so the next actor's balance is not compared with
+// them (coins still pending for the old one would be reported as lost); with them the invite, the league line, the starter
+// flag, and in the UI the 소속 chip and the list of boards taken from the old actor.
+function forgetActor() {
+  walletGen += 1; // a wallet answer still on its way belongs to the old actor
+  state.grants = [];
+  state.pending = 0;
+  state.confirmed = 0;
+  state.vipTickets = 0;
+  state.walletKnown = false;
   state.invite = null;
   state.league = null;
   state.starterUsed = null;
-  let g = await guestToken(true);
-  if (!g?.sub) { await sleep(1500); g = await guestToken(true); }
+  ui.setWallet(state);
+  ui.forgetActor?.();
+}
+// The new guest another window stored after its sign-out: a stored guest with a token that is not `old` (the one this window's
+// account had merged). That window removes the old one first and stores the new one a moment later: up to 3 s of waiting.
+async function sharedGuest(old) {
+  for (let i = 0; i < 10; i++) {
+    let g = null;
+    try { g = JSON.parse(localStorage.getItem(GT_LS) || 'null'); } catch { g = null; }
+    if (g?.sub && g.token && 'guest:' + g.sub !== old) return g;
+    await sleep(300);
+  }
+  return null;
+}
+// After a withdrawal or a sign-out this device goes on as a brand-new guest. The stored guest token goes first: that guest was already
+// merged into the account, and keeping it would offer the same guest to the next sign-in again. Resolves false when no new guest came.
+// adopt: the sign-out happened in another window (syncActor), which makes the new guest; this window takes that one instead of
+// making a second, and makes one only when none came. push: false after a withdrawal (its subscriptions were deleted on purpose).
+async function becomeGuest({ adopt = false, push = true } = {}) {
+  sessionUser = null;
+  const old = linkedGuest;
+  linkedGuest = '';
+  try { sessionStorage.removeItem('kts_merged'); } catch { /* private mode */ }
+  forgetActor();
+  let g = adopt ? await sharedGuest(old) : null;
+  const made = !g;
+  if (made) {
+    try { localStorage.removeItem(GT_LS); localStorage.removeItem(INV_CODE_KEY); } catch { /* private mode */ }
+    g = await guestToken(true);
+    if (!g?.sub) { await sleep(1500); g = await guestToken(true); }
+  }
   net.id = g?.sub ? 'guest:' + g.sub : Net.cid(); // never keep presenting the account's id
   accountReady = true;
   ui.setAccount?.({ ready: true, guest: true, linked: false });
@@ -1950,20 +2068,30 @@ async function becomeGuest() {
   try { await refreshWallet(); } catch { /* the new guest balance follows */ }
   try { await refreshWorld(); } catch { /* boards clear on the next fetch */ }
   await rejoin();
-  if (g?.sub) { pullProfile(); loadWishes('', true).catch(() => {}); }
+  if (g?.sub) {
+    pullProfile();
+    loadWishes('', true).catch(() => {});
+    // The browser's push subscription is still bound to the account on the server: post it again as the new guest (POST /rt/push
+    // rebinds an endpoint to whoever posts it). An adopted guest was already given it by the window that made it.
+    if (made && push) ui.resendPush?.({ force: true });
+  }
   return !!g?.sub;
 }
 async function withdrawAccount() {
-  await net.withdrawAccount();
-  await becomeGuest();
+  await actorOp(async () => {
+    await net.withdrawAccount();
+    await becomeGuest({ push: false });
+  });
   ui.note('탈퇴했고, 내 전광판과 토지 소유를 비웠어요', 'ok');
 }
 // 로그아웃: this device only. Coins, boards and plots stay with the account; signing in again brings them back.
 async function signOutAccount() {
   if (!sessionUser) return;
-  try { await net.signOut(); }
-  catch (e) { console.warn('[auth] sign-out', e?.message || e); throw new Error('로그아웃하지 못했어요. 연결을 확인하고 다시 해 주세요.'); }
-  const ok = await becomeGuest();
+  const ok = await actorOp(async () => {
+    try { await net.signOut(); }
+    catch (e) { console.warn('[auth] sign-out', e?.message || e); throw new Error('로그아웃하지 못했어요. 연결을 확인하고 다시 해 주세요.'); }
+    return becomeGuest();
+  });
   ui.note(ok ? '로그아웃했어요. 코인과 전광판은 계정에 남아 있어요' : '로그아웃했어요. 새로고침하면 새 손님으로 이어져요', ok ? 'ok' : 'err');
 }
 // In-app browser: after the player was sent to the system browser, that browser adopts this guest and links it to an account, which
@@ -2157,11 +2285,27 @@ async function enter({ nick, color, species }) {
   } catch { ui.setStatus('혼자 걷는 중', 'off'); }
 }
 
+// Run something that needs board positions (a ?focus= link, a clicked notification). They come from the built city, so before
+// that the ask is kept and run once world.built() says yes (one ask at a time, the newest wins); after BUILT_WAIT_MS it is
+// dropped (giveUp).
+const BUILT_WAIT_MS = 20000;
+let builtWait = 0, builtDrop = null;
+function whenBuilt(run, giveUp) {
+  const drop = () => { clearInterval(builtWait); const d = builtDrop; builtDrop = null; d?.(); };
+  drop(); // an older ask that still waits is given up
+  if (!world?.built || world.built()) { run(); return; }
+  const until = Date.now() + BUILT_WAIT_MS;
+  builtDrop = giveUp || null;
+  builtWait = setInterval(() => {
+    if (world.built()) { clearInterval(builtWait); builtDrop = null; run(); }
+    else if (Date.now() > until) drop();
+  }, 250);
+}
 // A notification clicked while the game is open: sw.js posts { t: 'push', url } and focuses this tab instead of reloading it.
 // /?focus=<slot> moves the focus camera there, /?wish=<id> opens that wish. Before entering it waits for the plaza.
 function goPush(r) {
   if (r.kind === 'focus' && slotOf(r.slot)) {
-    const look = () => { const pose = world?.focusSlot(r.slot); if (pose) focusedSlot = r.slot; };
+    const look = () => whenBuilt(() => { const pose = world?.focusSlot(r.slot); if (pose) focusedSlot = r.slot; });
     // Under a sheet or a mini-game the camera would move unseen: offer it as a notice the player can take.
     if (ui.isBusy?.()) ui.note(`${slotName(r.slot)} 보러가기`, 'ok', () => { ui.closeSheets?.(); look(); });
     else look();
@@ -2169,11 +2313,21 @@ function goPush(r) {
     loadWishes(r.id, true).catch(() => {}).then(() => ui.openWish?.({ focus: r.id, from: 'push' }));
   }
 }
+// Clicked before the plaza is entered: the newest click waits for 입장, at most PUSH_ENTER_MS (a boot card left open is not
+// polled forever, and a click that old no longer moves the camera by surprise).
+const PUSH_ENTER_MS = 60000;
+let pushWait = 0;
 function onPushClick(url) {
   const r = pushRoute(url, location.origin);
   if (r.kind === 'none') return;
+  clearInterval(pushWait);
   if (entered) { goPush(r); return; }
-  const wait = setInterval(() => { if (!entered) return; clearInterval(wait); setTimeout(() => goPush(r), 1500); }, 500);
+  const until = Date.now() + PUSH_ENTER_MS;
+  pushWait = setInterval(() => {
+    if (!entered) { if (Date.now() > until) clearInterval(pushWait); return; }
+    clearInterval(pushWait);
+    setTimeout(() => goPush(r), 1500);
+  }, 500);
 }
 try { navigator.serviceWorker?.addEventListener('message', (e) => { if (e.data?.t === 'push') onPushClick(e.data.url); }); } catch { /* no service worker here */ }
 

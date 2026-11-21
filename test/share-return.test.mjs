@@ -49,11 +49,13 @@ describe('push offer decision', () => {
     assert.ok(PUSH_WHY.share);
     assert.match(PUSH_DONE, /전광판을 빼앗기거나 내 소원에 하트가 오면 알려 드려요\./);
   });
-  // The claim moment no longer opens the push sheet: its ask is the "알림 받기" button on the proof bar (test/overlay.test.mjs
-  // proofOffers), and showing that button is this session's offer.
+  // The claim moment does not open the push sheet: its ask is the "알림 받기" button on the proof bar (test/overlay.test.mjs
+  // proofOffers), and showing that button is this session's offer. Only when the bar is skipped (the player walked on: its
+  // notice goes out instead) is the ask queued as the sheet, held until the notice has had its time (overlay.js proofPlan).
   it('ui.js wires the share and wish moments through queuePushOffer, the claim moment through the proof bar, and stores the back-off', () => {
     const ui = read('ui.js');
-    assert.equal(/queuePushOffer\('claim'\)/.test(ui), false);
+    assert.equal(/queuePushOffer\('claim'\)/.test(ui), false, 'never at once on a claim');
+    assert.match(ui, /if \(plan\.pushLater\) queuePushOffer\('claim', TOAST\.hit \+ 1000\);/);
     assert.match(ui, /proofPush\.hidden = !offers\.push;/);
     assert.match(ui, /if \(offers\.push\) \{\s*pushQueued = false;\s*pushOffered = true;/);
     assert.match(ui, /if \(postedFresh\) queuePushOffer\('wish'\)/);
@@ -86,6 +88,23 @@ describe('push re-send', () => {
     assert.equal(await resendPush({ Notification: { permission: 'granted' }, navigator: {}, session: session(), token: 't', fetch }), false);
     assert.equal(await resendPush({ Notification: { permission: 'granted' }, navigator: nav(null), session: session(), token: 't', fetch }), false);
     assert.equal(n, 0);
+  });
+  // After a sign-out the subscription is still bound to the account on the server. POST /rt/push binds an endpoint to whoever
+  // posts it, so main.js becomeGuest posts it once more as the new guest, although this session already posted it.
+  it('force posts it again in the same session, with the token of whoever plays now', async () => {
+    const calls = [];
+    const ss = session();
+    const env = (token, force) => ({ Notification: { permission: 'granted' }, navigator: nav(sub), session: ss, token, force, fetch: async (u, o) => { calls.push(o.headers.authorization); return { ok: true }; } });
+    assert.equal(await resendPush(env('account')), true);
+    assert.equal(await resendPush(env('guest')), false);
+    assert.equal(await resendPush(env('guest', true)), true);
+    assert.deepEqual(calls, ['Bearer account', 'Bearer guest']);
+    assert.equal(await resendPush({ ...env('guest', true), Notification: { permission: 'default' } }), false, 'still never without permission');
+    const main = read('main.js');
+    const guest = main.slice(main.indexOf('async function becomeGuest('), main.indexOf('async function withdrawAccount() {'));
+    assert.match(guest, /if \(made && push\) ui\.resendPush\?\.\(\{ force: true \}\);/);
+    assert.match(main, /await becomeGuest\(\{ push: false \}\);/, 'a withdrawal deleted the subscriptions on purpose');
+    assert.match(read('ui.js'), /resendPush: \(opts\) => resendPush\(opts\),/);
   });
   it('push.js takes the token from doToken like profile.js, with the stored guest as fallback', () => {
     const src = read('push.js');

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
-import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, pushRoute, proofOffers, awayRead, TOAST, SHEET_MAX, SPARE_MS } from '../overlay.js';
+import { runInNewContext } from 'node:vm';
+import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, pushRoute, proofOffers, proofPlan, awayRead, TOAST, SHEET_MAX, SPARE_MS } from '../overlay.js';
 
 const read = (f) => readFileSync(new URL('../' + f, import.meta.url), 'utf8');
 
@@ -334,6 +335,37 @@ describe('sheet stack', () => {
   });
 });
 
+describe('ui.js: taps, late answers, buttons that come back', () => {
+  const ui = read('ui.js');
+  it('a touch that became the stick is never a tap on the world', () => {
+    const end = ui.slice(ui.indexOf('const end = (ev) => {'), ui.indexOf("joyZone.addEventListener('pointerup', end);"));
+    assert.match(end, /if \(ev\.type === 'pointercancel' \|\| engaged\) hooks\.tapUp\?\.\(origin\.x \+ 999, origin\.y\);\s+else hooks\.tapUp\?\.\(ev\.clientX, ev\.clientY\);/);
+    assert.ok(end.indexOf('hooks.tapUp') < end.indexOf('rest();'), 'engaged is read before rest() clears it');
+  });
+  it("the far-tap card's buttons are not in the touch button column's class", () => {
+    const card = ui.slice(ui.indexOf('function showFarCard('), ui.indexOf('function levelOf('));
+    assert.match(card, /h\('div', \{ class: 'far-acts' \},/);
+    assert.equal(/class: 'acts'/.test(card), false);
+    assert.match(ui, /h\('div', \{ class: 'acts' \}, boostBtn, actBtn, jumpBtn\)/); // the column keeps its own class
+  });
+  it('an answer that comes back late closes only its own sheet (plot purchase, profile, sponsor code)', () => {
+    for (const [from, to] of [['  function openPlot(', '  function openHub('], ['  function openProfile(', '  // ---------------------------------------------------------------- boot / onboarding'], ['  function openVip(', '  // ---------------------------------------------------------------- city map']]) {
+      const src = ui.slice(ui.indexOf(from), ui.indexOf(to));
+      assert.ok(src.length > 200, from);
+      assert.match(src, /const me = sheet;/, from);
+      assert.match(src, /if \(sheet === me\) closeSheet\(\);/, from);
+      const bare = src.split(/\r?\n/).filter((line) => /(^|[^.\w])closeSheet\(\);/.test(line) && !/onclick: \(\) =>|if \(sheet === me\) closeSheet\(\);/.test(line));
+      assert.deepEqual(bare, [], from + ': closeSheet() after an await without the check');
+    }
+  });
+  it('the tribe error gives both claim buttons back before the 소속 sheet opens', () => {
+    const place = ui.slice(ui.indexOf('const placeBoard = async (mode) => {'), ui.indexOf("const more = h('details', { class: 'more' },"));
+    const back = place.indexOf('tribeGo.disabled = false;'), tribe = place.indexOf("if (msg.startsWith('소속에 들어간')) { note(msg, 'err'); openTribeSheet(); return; }");
+    assert.ok(back > 0 && tribe > back, [back, tribe].join());
+    assert.ok(place.indexOf('go.disabled = false;') < tribe);
+  });
+});
+
 describe('input lock', () => {
   it('unlocks only when no owner is left', () => {
     const seen = [];
@@ -347,15 +379,51 @@ describe('input lock', () => {
     assert.equal(seen.at(-1), false);
     lock.set('sheet', false); // unlocking twice is harmless
     assert.equal(lock.locked(), false);
-    lock.set(undefined, true); // a caller with no owner (the photo countdown)
+    lock.set(undefined, true); // a caller with no owner
     lock.set('bake', true);
     lock.set(undefined, false);
     assert.deepEqual(lock.owners(), ['bake']);
   });
-  it('ui.js names its owners', () => {
+  it("an owner's release never frees another owner's lock, and a no-owner release frees only 'other'", () => {
+    const seen = [];
+    const lock = createInputLock((on) => seen.push(on));
+    // Entered before the city was built, then a bake: the bake closing must leave the city's lock, and the city's release the bake's.
+    lock.set('city', true);
+    lock.set('bake', true);
+    lock.set('bake', false);
+    assert.deepEqual(lock.owners(), ['city']);
+    assert.equal(seen.at(-1), true);
+    lock.set('bake', true);
+    lock.set('city', false);
+    assert.deepEqual(lock.owners(), ['bake'], 'the city is built while a bake is on: only the city lets go');
+    assert.equal(lock.locked(), true);
+    lock.set('bake', false);
+    assert.equal(seen.at(-1), false);
+    // A release that names no owner is the slot 'other': it frees no named owner.
+    for (const owner of ['sheet', 'proof', 'bake', 'dance', 'city']) lock.set(owner, true);
+    lock.set(undefined, false);
+    lock.set('', false);
+    lock.set('other', false);
+    assert.deepEqual(lock.owners(), ['sheet', 'proof', 'bake', 'dance', 'city']);
+    lock.set(undefined, true);
+    assert.deepEqual(lock.owners().at(-1), 'other');
+    lock.set('city', false);
+    assert.ok(lock.owners().includes('other'), "a named release does not free 'other' either");
+    lock.set(undefined, false);
+    assert.equal(lock.owners().includes('other'), false);
+  });
+  it('ui.js names its owners, every call has one, and each owner lets go by itself', () => {
     const ui = read('ui.js');
-    for (const owner of ['sheet', 'proof', 'bake', 'dance']) assert.match(ui, new RegExp(`hooks\\.lockInput\\??\\.?\\((true|false|sheets\\.length > 0), '${owner}'\\)`), owner);
+    for (const owner of ['sheet', 'proof', 'bake', 'dance', 'city']) assert.match(ui, new RegExp(`hooks\\.lockInput\\??\\.?\\((true|false|sheets\\.length > 0), '${owner}'\\)`), owner);
     assert.match(ui, /hooks\.lockInput = \(on, owner\) => inputLock\.set\(owner, !!on\);/);
+    const calls = [...ui.matchAll(/hooks\.lockInput\??\.?\(([^)]*)\)/g)].map((m) => m[1]);
+    assert.ok(calls.length >= 8, String(calls.length));
+    for (const args of calls) assert.match(args, /, '(sheet|proof|bake|dance|city)'$/, `lockInput(${args}) names no owner`);
+    // The city lock is released as soon as the city is built, whatever else holds a lock then (it used to stay forever behind a bake).
+    const built = ui.slice(ui.indexOf('function lockUntilBuilt()'), ui.indexOf("if (!window.__ktsLand"));
+    assert.match(built, /hooks\.lockInput\(true, 'city'\);/);
+    assert.match(built, /if \(!hooks\.built\(\)\) return;\s+clearInterval\(t\);\s+hooks\.lockInput\(false, 'city'\);/);
+    assert.equal(/baking|dance/.test(built.replace(/\/\/[^\n]*/g, '')), false, 'the release does not look at who else holds a lock');
   });
 });
 
@@ -404,6 +472,122 @@ describe('notification click', () => {
   });
 });
 
+// main.js from whenBuilt to onPushClick, run with a stub world and a hand-driven clock. tick(ms, n) advances the clock n times
+// and runs the intervals; run() fires the pending timeouts.
+function linkWin({ built = true, entered = true } = {}) {
+  const main = read('main.js').replace(/\r\n/g, '\n');
+  const a = main.indexOf('\nconst BUILT_WAIT_MS = 20000;'), b = main.indexOf("\ntry { navigator.serviceWorker?.addEventListener('message'");
+  assert.ok(a > 0 && b > a);
+  let clock = 0, seq = 0;
+  const intervals = new Map(), timeouts = [];
+  const calls = { focus: [], notes: [], wish: [] };
+  const world = { ok: built, built() { return this.ok; }, focusSlot(slot) { calls.focus.push(slot); return this.ok ? { board: {} } : null; } };
+  const ctx = {
+    world, pushRoute,
+    slotOf: (s) => s, slotName: (s) => s,
+    loadWishes: async () => {},
+    location: { origin: 'https://sq.example' },
+    ui: { isBusy: () => false, note: (...args) => calls.notes.push(args), closeSheets() {}, openWish: (o) => calls.wish.push(o) },
+    Date: { now: () => clock },
+    setInterval: (fn) => { intervals.set(++seq, fn); return seq; },
+    clearInterval: (id) => { intervals.delete(id); },
+    setTimeout: (fn) => { timeouts.push(fn); return 0; },
+  };
+  runInNewContext(`let entered = ${entered}, focusedSlot = '';\n${main.slice(a, b)}\nthis.api = { whenBuilt, onPushClick, enter() { entered = true; }, slot: () => focusedSlot };`, ctx);
+  return {
+    calls, world, api: ctx.api,
+    waits: () => intervals.size,
+    tick(ms, n = 1) { for (let i = 0; i < n; i++) { clock += ms; for (const fn of [...intervals.values()]) fn(); } },
+    run() { for (const fn of timeouts.splice(0)) fn(); },
+  };
+}
+
+describe('a board asked for before the plaza is ready (main.js, stubbed)', () => {
+  it('a board link taken before the city is built is kept and run once the city is built', () => {
+    const w = linkWin({ built: false });
+    let ran = 0, gaveUp = 0;
+    w.api.whenBuilt(() => { ran += 1; }, () => { gaveUp += 1; });
+    w.tick(250, 10);
+    assert.equal(ran, 0);
+    assert.equal(w.waits(), 1);
+    w.world.ok = true;
+    w.tick(250);
+    assert.equal(ran, 1);
+    assert.equal(w.waits(), 0);
+    w.tick(250, 200);
+    assert.deepEqual([ran, gaveUp], [1, 0], 'once');
+    // Already built: at once, nothing to wait for.
+    const now = linkWin();
+    now.api.whenBuilt(() => { ran += 1; });
+    assert.equal(ran, 2);
+    assert.equal(now.waits(), 0);
+  });
+  it('gives the link up after 20 s, and an older ask when a newer one comes', () => {
+    const w = linkWin({ built: false });
+    let ran = 0, gaveUp = 0;
+    w.api.whenBuilt(() => { ran += 1; }, () => { gaveUp += 1; });
+    w.tick(250, 80); // 20 s
+    assert.deepEqual([ran, gaveUp, w.waits()], [0, 0, 1]);
+    w.tick(250);
+    assert.deepEqual([ran, gaveUp, w.waits()], [0, 1, 0]);
+    w.world.ok = true;
+    w.tick(250, 8);
+    assert.equal(ran, 0, 'a link that old does not move the camera later');
+    const two = linkWin({ built: false });
+    const seen = [];
+    two.api.whenBuilt(() => seen.push('first'), () => seen.push('first dropped'));
+    two.api.whenBuilt(() => seen.push('second'), () => seen.push('second dropped'));
+    assert.deepEqual(seen, ['first dropped']);
+    assert.equal(two.waits(), 1);
+    two.world.ok = true;
+    two.tick(250);
+    assert.deepEqual(seen, ['first dropped', 'second']);
+  });
+  it('a notification clicked before entering waits for 입장 for a minute, then stops', () => {
+    const w = linkWin({ entered: false });
+    w.api.onPushClick('/?focus=STREET_5');
+    w.api.onPushClick('/?focus=SUB_2'); // the newest click is the one that waits
+    assert.equal(w.waits(), 1);
+    w.tick(500, 60);
+    w.api.enter();
+    w.tick(500);
+    assert.equal(w.waits(), 0);
+    w.run();
+    assert.deepEqual(w.calls.focus, ['SUB_2']);
+    assert.equal(w.api.slot(), 'SUB_2');
+    const late = linkWin({ entered: false });
+    late.api.onPushClick('/?focus=STREET_5');
+    late.tick(500, 120); // 60 s
+    assert.equal(late.waits(), 1);
+    late.tick(500);
+    assert.equal(late.waits(), 0, 'no poll left behind a boot card that stays open');
+    late.api.enter();
+    late.tick(500, 4);
+    late.run();
+    assert.deepEqual(late.calls.focus, []);
+    // A link that routes nowhere never starts a wait.
+    const none = linkWin({ entered: false });
+    none.api.onPushClick('https://evil.example/?focus=STREET_5');
+    assert.equal(none.waits(), 0);
+  });
+  it('a notification clicked in the plaza before the city is built looks at the board once it is', () => {
+    const w = linkWin({ built: false });
+    w.api.onPushClick('/?focus=STREET_5');
+    assert.deepEqual(w.calls.focus, []);
+    w.world.ok = true;
+    w.tick(250);
+    assert.deepEqual(w.calls.focus, ['STREET_5']);
+    assert.equal(w.api.slot(), 'STREET_5');
+  });
+  it('main.js: ?focus= goes through the same wait, and the intro is released either way', () => {
+    const main = read('main.js');
+    const arrive = main.slice(main.indexOf('arrive() {'), main.indexOf('focusShot:'));
+    assert.match(arrive, /whenBuilt\(\(\) => \{\s+world\?\.goToSlot\?\.\(FOCUS\);/);
+    assert.match(arrive, /if \(!pose\) \{ introDone\(\); return; \}/);
+    assert.match(arrive, /\}, \(\) => introDone\(\)\);/);
+  });
+});
+
 describe('proof bar', () => {
   it('carries the link offer for a guest and the push offer while the browser has not answered', () => {
     const base = { ready: true, guest: true, linked: false, gift: '', slot: 'STREET_8', pushSupported: true, permission: 'default' };
@@ -426,7 +610,34 @@ describe('proof bar', () => {
     assert.match(ui, /text: '5초 영상 저장', onclick: \(\) => recordClip\(\)/);
     assert.match(ui, /recText\.textContent = `녹화 중 \$\{left\}`/);
     assert.match(ui, /text: '취소', onclick: \(\) => clipStop\?\.\(\)/);
-    assert.equal(/queuePushOffer\('claim'\)/.test(ui), false, 'the claim moment asks on the bar, not with a sheet');
+  });
+  it('comes up after a claim unless the player walked on or a sheet is open; then only the notice goes out', () => {
+    const push = { push: true }, none = { push: false };
+    assert.deepEqual(proofPlan({ offers: push }), { bar: true, pushLater: false }, 'straight after a claim');
+    assert.deepEqual(proofPlan({ waited: true, focus: true, offers: push }), { bar: true, pushLater: false }, 'the celebration ended with the camera still on the board');
+    assert.deepEqual(proofPlan({ waited: true, focus: false, offers: push }), { bar: false, pushLater: true }, 'walked on during the celebration');
+    assert.deepEqual(proofPlan({ waited: true, focus: true, skip: true, offers: push }), { bar: false, pushLater: true }, 'back was pressed during the celebration');
+    assert.deepEqual(proofPlan({ sheet: true, offers: push }), { bar: false, pushLater: true }, 'another sheet is open');
+    assert.deepEqual(proofPlan({ force: true, waited: true, focus: false, sheet: true, offers: push }), { bar: true, pushLater: false }, 'the notice was tapped');
+    // The push ask is queued only when the bar would have carried it (not a gift, not a plot, permission still open).
+    assert.deepEqual(proofPlan({ waited: true, focus: false, offers: none }), { bar: false, pushLater: false });
+    assert.deepEqual(proofPlan({ waited: true, focus: false }), { bar: false, pushLater: false });
+    assert.deepEqual(proofPlan(), { bar: true, pushLater: false });
+  });
+  it('ui.js: the claim moment asks on the bar; with the bar skipped the ask is queued once, after the notice, and never on top of play', () => {
+    const ui = read('ui.js');
+    assert.equal((ui.match(/queuePushOffer\('claim'/g) || []).length, 1, 'one place queues the claim offer');
+    const show = ui.slice(ui.indexOf('function showProof('), ui.indexOf('function openVip()'));
+    assert.match(show, /const plan = proofPlan\(\{ force: opts\.force, waited: opts\.waited, focus: focusOn, skip: opts\.skip, sheet: !!sheet, offers \}\);/);
+    assert.match(show, /if \(!plan\.bar\) \{[\s\S]*?if \(plan\.pushLater\) queuePushOffer\('claim', TOAST\.hit \+ 1000\);\s+return false;\s+\}/);
+    // The bar's own button is this session's offer: it takes a queued sheet back.
+    assert.match(show, /if \(offers\.push\) \{\s*pushQueued = false;\s*pushOffered = true;/);
+    const queue = ui.slice(ui.indexOf('function queuePushOffer('), ui.indexOf('function pushSupported()'));
+    assert.match(queue, /if \(pushOffered\) return;/);
+    assert.match(queue, /pushHoldUntil = Date\.now\(\) \+ Math\.max\(0, Number\(holdMs\) \|\| 0\);\s+pushQueuedAt = pushHoldUntil;/);
+    const offer = ui.slice(ui.indexOf('function maybeOfferPush()'), ui.indexOf('let pushInlineMsg'));
+    assert.match(offer, /busy: screenBusy\(\) \|\| !!awayWant \|\| Date\.now\(\) < pushHoldUntil,/);
+    assert.match(ui, /pumpTaken\(now\); if \(pushQueued\) maybeOfferPush\(\); \}/, 'a waiting offer is tried again every second');
   });
   it('the chain upsell waits for the bar, and a taken board is a notice, never a sheet', () => {
     const ui = read('ui.js');
