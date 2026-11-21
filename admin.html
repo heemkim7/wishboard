@@ -116,8 +116,13 @@
   <p class="sub">한국 시간 기준 하루 단위. 방문자는 계정(게스트 포함) 수, 신규는 그날 처음 본 계정. D1·D7·D30은 그날 신규 가운데 1·7·30일 뒤에 다시 온 비율이고, 그 날짜가 지나야 채워집니다. 깔때기는 신규 방문자의 첫 화면 → 입장 → 첫 코인 → 첫 점령입니다.</p>
   <div class="msg" id="statsMsg"></div>
   <div class="scroll"><table id="stats"></table></div>
+  <h2>🚀 성장 퍼널</h2>
+  <p class="sub">한국 시간 하루마다 단계별로 몇 명(계정 수, 계정 없는 세션은 하나씩)이 거쳤는지 세고, % 는 기준 단계 대비입니다. 기준 단계가 20 미만이면 숫자가 흔들려 '—'로 둡니다. 공유는 소원 공유·사진 공유·초대 문구 복사 중 하나라도 한 사람이고 입장 대비입니다. 공유로 들어옴은 공유 링크(소원·전광판 카드)로 열고 온 사람이고 공유 대비이며, 100%를 넘을 수 있습니다. 재방문은 이전 접속일이 따로 있는 브라우저가 입장한 수이고 입장 대비입니다. 7일·14일 합계는 일별 인원을 더한 연인원이라 같은 사람이 여러 날이면 여러 번 셉니다. 지표 표의 새로고침 버튼이 이 표도 다시 불러옵니다.</p>
+  <div class="msg" id="growMsg"></div>
+  <div class="scroll"><table id="grow"></table></div>
 </main>
 <script type="module">
+import { GROW_STEPS, growDays, growSum, stepPct } from './growth.js?v=202611210015';
 const $ = (id) => document.getElementById(id);
 const TABS = [['pending', '⏳ 검수 대기'], ['approved', '✅ 송출 중'], ['rejected', '거절함'], ['removed', '내림']];
 const SLOT = (s) => s === 'MAIN_TOP' ? '메인 타워 정상' : s === 'MAIN_MID' ? '메인 타워 중앙' : s === 'MAIN_BOT' ? '메인 타워 하단' : s.startsWith('SUB_') ? `코너 ${s.slice(4)}` : `거리 ${s.replace('PLOT_', '')}번`;
@@ -213,7 +218,25 @@ async function loadStats() {
     });
     $('stats').replaceChildren(row('th', STAT_COLS), ...rows);
     $('statsMsg').textContent = rows.length ? '' : '아직 기록된 이벤트가 없어요.';
+    renderGrow(d);
   } catch (e) { $('statsMsg').textContent = e.message; $('statsMsg').className = 'msg err'; }
+}
+// 성장 퍼널: the same /rt/admin/stats answer (`grow` per day), laid out by growth.js. Plain text cells only.
+function renderGrow(d) {
+  const cols = growDays(d.days, d.today, 14), shown = cols.slice(0, 7), s7 = growSum(cols, 7), s14 = growSum(cols, 14);
+  const cell = (counts, i) => !counts ? '—' : stepPct(counts, i) ? `${counts[i]} (${stepPct(counts, i)})` : String(counts[i]);
+  const head = ['단계', '기준', ...shown.map((c, i) => i === 0 ? c.day + ' (오늘)' : c.day), `최근 7일 합계 (${s7.known}일)`, `최근 14일 합계 (${s14.known}일)`];
+  const rows = GROW_STEPS.map((st, i) => {
+    const tr = document.createElement('tr');
+    const cells = [st.label, st.base < 0 ? '' : GROW_STEPS[st.base].label, ...shown.map((c) => cell(c.counts, i)), s7.known ? cell(s7.counts, i) : '—', s14.known ? cell(s14.counts, i) : '—'];
+    cells.forEach((t) => { const td = document.createElement('td'); td.textContent = t; tr.append(td); });
+    return tr;
+  });
+  const hr = document.createElement('tr');
+  head.forEach((t) => { const th = document.createElement('th'); th.textContent = t; hr.append(th); });
+  $('grow').replaceChildren(hr, ...rows);
+  const unknown = cols.filter((c) => !c.counts).length;
+  $('growMsg').textContent = unknown ? `이 퍼널을 기록하기 전에 집계된 ${unknown}일은 '—'이고 합계에서 뺍니다.` : '';
 }
 $('statsLoad').onclick = loadStats;
 const REASON = { abuse: '욕설·혐오', ad: '광고', impersonation: '사칭', other: '기타' };

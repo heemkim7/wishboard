@@ -61,6 +61,8 @@ const AD_PAY = 15, AD_DAY = 5; // link visit: once per account per board per KST
 const MOVE_N = 8, MOVE_MS = 30000; // room moves per account: 8 in a row (a full queue bumps through square-2..8), then one per 30 s
 const RELAY = ['take', 'react', 'jump'], RELAY_N = 30, RELAY_MS = 10000; // client broadcasts the game uses, numbers only; 30 per 10 s per socket
 const EV_STEP = { page_landing: 1, enter_square: 2, first_coin: 4, board_claim: 8 }, EV_RET = [1, 7, 30], EV_KEEP = 14;
+// Growth funnel steps (admin 성장 퍼널), one bit each: landing, entered, posted a wish, shared a link, arrived by a shared link, came back on a later day.
+const EV_GROW = { page_landing: 1, enter_square: 2, wish_post: 4, wish_share: 8, share_link: 8, share_send: 8, wish_land: 16, focus_enter: 16, return_visit: 32 };
 // Once-only and per-day gates per account: (uid, k, d) -> count, d = KST day or '' for ever. Counts only grow, so copies merge by max.
 const PS_MAX = 50000, PS_TTL = 60 * 864e5; // immediate-push subscriptions kept in the 'push' instance, and how long one lives without a re-subscribe
 const AG = 'create table if not exists ag(uid text, k text, d text, v integer not null, primary key(uid, k, d))';
@@ -190,19 +192,21 @@ export class Meter extends DurableObject {
   // funnel = [landing, enter, first coin, claim] over visitors plus account-less sessions; funnel_new = the same over accounts first seen that day.
   evSum(day, lo, hi) { const q = this.ctx.storage.sql, S = new Map(), events = {};
     for (const r of q.exec('select t, sid, uid, k, p from evt where id >= ? and id < ?', lo, hi).toArray()) { const k = String(r.k); events[k] = (events[k] || 0) + 1; if (!r.sid) continue;
-      let s = S.get(r.sid); if (!s) S.set(r.sid, s = { uid: '', t0: Number(r.t), t1: 0, dur: 0, f: 0, share: 0, claim: 0, focus: 0 }); if (r.uid) s.uid = String(r.uid); s.t1 = Number(r.t); s.f |= EV_STEP[k] || 0;
+      let s = S.get(r.sid); if (!s) S.set(r.sid, s = { uid: '', t0: Number(r.t), t1: 0, dur: 0, f: 0, g: 0, share: 0, claim: 0, focus: 0 }); if (r.uid) s.uid = String(r.uid); s.t1 = Number(r.t); s.f |= EV_STEP[k] || 0; s.g |= EV_GROW[k] || 0;
       if (k === 'share_send') s.share = 1; else if (k === 'board_claim') s.claim = 1; else if (k === 'focus_enter') s.focus = 1;
       if (k === 'session_end') { try { s.dur = Math.max(s.dur, Math.min(86400, Number(JSON.parse(r.p).dur) || 0)); } catch { } } }
-    const who = new Map(), al = new Map(), lens = [], fAll = [0, 0, 0, 0], fNew = [0, 0, 0, 0], fresh = [], back = [], shareIds = new Set(), claimIds = new Set(), focusIds = new Set(); let anon = 0;
+    const who = new Map(), whoG = new Map(), al = new Map(), lens = [], fAll = [0, 0, 0, 0], fNew = [0, 0, 0, 0], grow = [0, 0, 0, 0, 0, 0], fresh = [], back = [], shareIds = new Set(), claimIds = new Set(), focusIds = new Set(); let anon = 0;
     const step = (f, to) => { for (let i = 0; i < 4; i++) if (f & (1 << i)) to[i]++; };
+    const stepG = (g) => { for (let i = 0; i < 6; i++) if (g & (1 << i)) grow[i]++; };
     for (const s of S.values()) { lens.push(Math.round(s.dur || (s.t1 - s.t0) / 1000)); let id = s.uid;
       if (id.startsWith('guest:')) { if (!al.has(id)) al.set(id, String(q.exec('select user from alias where guest = ?', id).toArray()[0]?.user || id)); id = al.get(id); }
-      if (id) { who.set(id, (who.get(id) || 0) | s.f); if (s.share) shareIds.add(id); if (s.claim) claimIds.add(id); if (s.focus) focusIds.add(id); } else { anon++; step(s.f, fAll); } }
+      if (id) { who.set(id, (who.get(id) || 0) | s.f); whoG.set(id, (whoG.get(id) || 0) | s.g); if (s.share) shareIds.add(id); if (s.claim) claimIds.add(id); if (s.focus) focusIds.add(id); } else { anon++; step(s.f, fAll); stepG(s.g); } }
+    for (const g of whoG.values()) stepG(g); // accounts (guests folded into their user) count once a day; account-less sessions count one each
     let focus_new = 0;
     for (const [id, f] of who) { step(f, fAll); const d0 = q.exec('select d0 from seen where uid = ?', id).toArray()[0]?.d0;
       if (!d0 || d0 >= day) { fresh.push(id); step(f, fNew); if (focusIds.has(id)) focus_new++; } else back.push(Math.round((Date.parse(day) - Date.parse(d0)) / 864e5)); }
     lens.sort((a, b) => a - b); const len_avg = lens.length ? Math.round(lens.reduce((a, b) => a + b, 0) / lens.length) : 0, len_med = lens.length ? lens[lens.length >> 1] : 0;
-    return { fresh, back, sum: { visitors: who.size, new: fresh.length, returning: back.length, anon, sessions: S.size, len_avg, len_med, funnel: fAll, funnel_new: fNew, events, share_accounts: shareIds.size, claim_accounts: claimIds.size, focus_new } }; }
+    return { fresh, back, sum: { visitors: who.size, new: fresh.length, returning: back.length, anon, sessions: S.size, len_avg, len_med, funnel: fAll, funnel_new: fNew, grow, events, share_accounts: shareIds.size, claim_accounts: claimIds.size, focus_new } }; }
   evFold(today) { const q = this.ctx.storage.sql;
     for (const m of q.exec('select day, id0 from mark where day < ? and day not in (select day from daily) order by day', today).toArray()) this.ctx.storage.transactionSync(() => {
       const hi = q.exec('select min(id0) hi from mark where day > ?', m.day).one().hi ?? Number.MAX_SAFE_INTEGER, { fresh, back, sum } = this.evSum(String(m.day), m.id0, hi);
@@ -2090,7 +2094,8 @@ async function fileReport(req, env) {
 async function accountApi(req, env, ctx, u) {
   if (u.pathname === '/rt/config') {
     if (req.method !== 'GET') return J({ err: 'get' }, 405);
-    return J({ url: SUPA, key: ANON });
+    const kakao = String(env.KAKAO_JS_KEY || '').trim(); // a public JavaScript key (not a secret); the share button exists only when it is set
+    return J(/^[\w-]{16,80}$/.test(kakao) ? { url: SUPA, key: ANON, kakao } : { url: SUPA, key: ANON });
   }
   if (u.pathname === '/rt/event') {
     if (req.method !== 'POST') return J({ err: 'post' }, 405);

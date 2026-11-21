@@ -177,3 +177,78 @@ export async function composeWishShot(blob, { text, nick } = {}) {
     return null;
   } finally { bmp.close?.(); }
 }
+
+// ---- 카카오톡으로 보내기. Absent until GET /rt/config carries `kakao` (the Worker var KAKAO_JS_KEY, a public JavaScript key).
+// Only the SDK's Share.sendDefault is used: no Kakao login, no other Kakao API. Pinned SDK version with its documented SRI hash
+// (Kakao Developers > JavaScript > 다운로드). Any failure returns false so the caller falls back to the ordinary link share.
+export const KAKAO_SDK = Object.freeze({
+  version: '2.7.9',
+  src: 'https://t1.kakaocdn.net/kakao_js_sdk/2.7.9/kakao.min.js',
+  integrity: 'sha384-JpLApTkB8lPskhVMhT+m5Ln8aHlnS0bsIexhaak0jOhAkMYedQoVghPfSpjNi9K1',
+});
+const SNAP_PAGE = /\/rt\/s\/([0-9a-f]{32})(?:[/?#]|$)/;
+// The picture Kakao shows: the uploaded snapshot when the shared link is a snapshot page, else the site's og.jpg.
+export function kakaoImage(url, origin = SITE) {
+  const base = String(origin || SITE).replace(/\/+$/, '');
+  const m = SNAP_PAGE.exec(String(url || ''));
+  return m ? base + '/rt/snap/' + m[1] : base + '/og.jpg';
+}
+// Share.sendDefault payload (feed template). title and text are the words the link share uses; the link is the same share URL.
+export function kakaoFeed({ title, text, url, origin = SITE } = {}) {
+  const link = String(url || '');
+  const to = { mobileWebUrl: link, webUrl: link };
+  return {
+    objectType: 'feed',
+    content: { title: String(title || '').slice(0, 200), description: String(text || '').slice(0, 200), imageUrl: kakaoImage(link, origin), imageWidth: 1200, imageHeight: 630, link: to },
+    buttons: [{ title: '광장에서 보기', link: to }],
+  };
+}
+let kakaoCfg = null;
+// The public key from /rt/config, or ''. One request per page load; a failed request is tried again on the next call.
+export function kakaoKey(fetchFn = typeof fetch === 'function' ? fetch : null) {
+  if (!kakaoCfg) {
+    kakaoCfg = Promise.resolve().then(async () => {
+      const r = await fetchFn('/rt/config', { cache: 'no-store' });
+      const j = r.ok ? await r.json() : null;
+      return typeof j?.kakao === 'string' && /^[\w-]{16,80}$/.test(j.kakao) ? j.kakao : '';
+    }).catch(() => { kakaoCfg = null; return ''; });
+  }
+  return kakaoCfg;
+}
+const kakaoSdk = new WeakMap(); // window -> the load in flight or done
+// Loads the SDK once (script tag with integrity), then Kakao.init(key) once. Resolves the Kakao global, or null.
+// A failed load is remembered for the page's lifetime: no new <script> per tap, the caller goes straight to its fallback.
+export function loadKakao(key, { doc = typeof document === 'undefined' ? null : document, win = typeof window === 'undefined' ? null : window } = {}) {
+  if (!key || !doc || !win) return Promise.resolve(null);
+  if (!kakaoSdk.get(win)) {
+    kakaoSdk.set(win, new Promise((resolve) => {
+      const ready = () => {
+        try {
+          const K = win.Kakao;
+          if (!K) return resolve(null);
+          if (!(K.isInitialized?.())) K.init(key);
+          resolve(K);
+        } catch { resolve(null); }
+      };
+      if (win.Kakao) { ready(); return; }
+      const s = doc.createElement('script');
+      s.src = KAKAO_SDK.src;
+      s.integrity = KAKAO_SDK.integrity;
+      s.crossOrigin = 'anonymous';
+      s.async = true;
+      s.onload = ready;
+      s.onerror = () => resolve(null);
+      doc.head.append(s);
+    }));
+  }
+  return kakaoSdk.get(win);
+}
+// true when the SDK took the share; false on any problem (no key, blocked CDN, throw), so the caller uses sendLink.
+export async function kakaoSend(key, payload, opts) {
+  try {
+    const K = await loadKakao(key, opts);
+    if (!K?.Share?.sendDefault) return false;
+    K.Share.sendDefault(payload);
+    return true;
+  } catch { return false; }
+}

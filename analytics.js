@@ -87,11 +87,32 @@ if (typeof document !== 'undefined' && document.addEventListener) {
   window.addEventListener?.('pagehide', leave);
 }
 
+// GA4 wants event and parameter names of lowercase letters, digits and underscores, starting with a letter, at most 40 characters;
+// parameter values are scalars, strings at most 100 characters. Anything else is dropped or cut here so GA never rejects an event.
+export function gaName(name) {
+  return String(name || '').toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^[^a-z]+/, '').slice(0, 40);
+}
+// Only these keys ever reach Google (what the callers send today), so no future caller can leak player-written text (nick, text, wish) to GA.
+export const GA_PARAMS = Object.freeze(['slot', 'ref', 'streak', 'tier', 'found', 'method', 'kind', 'how', 'from', 'fresh', 'pic', 'load_ms', 'gap']);
+export function gaParams(params) {
+  const out = {};
+  if (!params || typeof params !== 'object') return out;
+  for (const [k, v] of Object.entries(params)) {
+    const key = gaName(k);
+    if (!GA_PARAMS.includes(key) || k !== key) continue;
+    if (typeof v === 'number' && Number.isFinite(v)) out[key] = v;
+    else if (typeof v === 'boolean') out[key] = v ? 1 : 0;
+    else if (typeof v === 'string') out[key] = v.slice(0, 100);
+  }
+  return out;
+}
+
 export function trackEvent(eventName, params) {
   const name = String(eventName || '');
   const extra = params && typeof params === 'object' ? params : {};
   try {
-    if (typeof window.gtag === 'function') window.gtag('event', name, extra);
+    const ga = gaName(name);
+    if (ga && typeof window.gtag === 'function') window.gtag('event', ga, gaParams(extra));
     if (typeof window.clarity === 'function') window.clarity('event', name);
   } catch { /* analytics must not break play */ }
   if (!MAJOR.has(name)) return;

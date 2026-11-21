@@ -5,7 +5,8 @@ import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, LANDMARKS } from './
 import { BALANCE, PAY, askBid, auctionClosed, buildingOf, chainBoost, floorOf, nextChainFace, slotName } from './balance.js';
 import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, tutorialTap, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611210015';
 import { WISH, cleanWish, wishRejected, wishShareText } from './wish.js';
-import { cardUrl, vipShareLink, composeWishShot } from './share.js?v=202611210015';
+import { backFields, returnGap } from './growth.js?v=202611210015';
+import { cardUrl, vipShareLink, composeWishShot, kakaoFeed, kakaoKey, kakaoSend, loadKakao } from './share.js?v=202611210015';
 import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611210015';
 import { EMOTES, REACTIONS, AVATAR_COLORS, SPECIES } from './ts3d/avatars.js?v=202611210015';
 import { trackEvent } from './analytics.js?v=202611210015';
@@ -1203,7 +1204,15 @@ export function createUI(root, hooks) {
         if (how === 'copied') note('공유 링크를 복사했어요', 'ok');
         if (how === 'shared' || how === 'copied') askShot();
       } });
-      const row = h('div', { class: 'shot-row' }, save, copy, share);
+      const kakao = kakaoButton(async () => {
+        if (!page || shareBusy) return;
+        const words = { kind: 'shot', title: 'WISH BOARD : 모두의 전광판', text: SHARE_TEXT, url: page };
+        const how = (await sendKakao(words)) || (await sendLink({ ...words, native: true, into: copyBox }));
+        if (how === 'busy') return;
+        if (how === 'copied') note('공유 링크를 복사했어요', 'ok');
+        if (how === 'kakao' || how === 'shared' || how === 'copied') askShot();
+      }, { disabled: true });
+      const row = h('div', { class: 'shot-row' }, save, copy, share, kakao);
       host.append(
         h('img', { class: 'shot-preview', src: url, alt: '타임스퀘어 스냅샷' }),
         status,
@@ -1216,6 +1225,7 @@ export function createUI(root, hooks) {
           status.textContent = '링크를 열면 이 사진이 미리 보이고, 누르면 바로 광장으로 들어와요.';
           copy.disabled = false;
           share.disabled = false;
+          kakao.disabled = false;
           return;
         }
         // No link: say so and keep only the save button, so nothing dead or raw gets copied.
@@ -1223,6 +1233,7 @@ export function createUI(root, hooks) {
         status.classList.add('err');
         copy.remove();
         share.remove();
+        kakao.remove();
       });
       return () => URL.revokeObjectURL(url);
     }, true);
@@ -1242,6 +1253,22 @@ export function createUI(root, hooks) {
     trackEvent('share_link', { kind, how: how === 'shared' ? 'native' : how === 'copied' ? 'copy' : 'manual' });
     if (how === 'manual') showManual(url || text, into);
     return how;
+  }
+  // 카카오톡으로 보내기: the button exists only when GET /rt/config carries a Kakao key. 'kakao' when the SDK took the share, '' on any failure
+  // (the caller then uses sendLink, so a blocked SDK looks like an ordinary link share).
+  async function sendKakao({ kind, title, text, url }) {
+    if (shareBusy) return 'busy';
+    shareBusy = true;
+    let ok = false;
+    try { ok = await kakaoSend(await kakaoKey(), kakaoFeed({ title, text, url, origin: location.origin })); } catch { ok = false; }
+    finally { shareBusy = false; }
+    if (ok) trackEvent('share_link', { kind, how: 'kakao' });
+    return ok ? 'kakao' : '';
+  }
+  function kakaoButton(onTap, { disabled = false } = {}) {
+    const b = h('button', { class: 'btn ghost kakao', type: 'button', text: '카카오톡으로 보내기', hidden: true, disabled, onclick: () => onTap(b) });
+    kakaoKey().then((k) => { if (k) { b.hidden = false; loadKakao(k).catch(() => {}); } }).catch(() => {});
+    return b;
   }
   // The manual-copy fallback: a read-only, selected input. Inside `into` when given (and still on screen), else a small sheet.
   function manualCopy(value) {
@@ -1350,6 +1377,7 @@ export function createUI(root, hooks) {
       qPaid: fresh ? {} : (prev.qPaid || {}),
       streak: prev.streak || 0,
       last: prev.last || '',
+      ...backFields(prev, day), // back: days since the last attended day on a later day; backSent: return_visit already went out today
       score: prev.week === week ? (prev.score || 0) : 0,
       play: prev.week === week ? (Number.isFinite(Number(prev.play)) ? Number(prev.play) : (Number(prev.earn) || 0)) : 0,
     };
@@ -1365,6 +1393,7 @@ export function createUI(root, hooks) {
   }
   function attend() {
     const d = today();
+    const gap = returnGap(d, recall('kts_daily', {}), d.day); // read before saveDay below: another tab may already have sent today's return_visit
     if (d.last !== d.day) {
       const prev = kstDay(Date.now() - 864e5);
       d.streak = d.last === prev ? (d.streak || 0) + 1 : 1;
@@ -1372,6 +1401,7 @@ export function createUI(root, hooks) {
       saveDay(d);
     }
     if (d.streak > 0) todayBtn.textContent = `미션 · ${d.streak}일`;
+    if (d.back > 0 && !d.backSent) { d.backSent = 1; saveDay(d); if (gap) trackEvent('return_visit', { gap }); } // once per KST day across tabs, only for a browser that attended on an earlier day
   }
   // Attendance and finished missions pay over the room socket. A reward is marked paid only once its send went out,
   // so one that came due before the room was joined stays due and goes out later. One payout per call, 3 s apart.
@@ -1924,7 +1954,7 @@ export function createUI(root, hooks) {
           rankEl = h('p', { class: 'note', text: line, hidden: !line });
           kids.push(rankEl);
           const share = h('button', { class: 'btn gold wish-go', type: 'button', text: '친구에게 하트 부탁하기', onclick: () => shareMine(m, share) });
-          kids.push(share);
+          kids.push(share, kakaoButton((b) => shareMine(m, b, true)));
           if (!(Number(m.hearts) > 0)) kids.push(h('button', { class: 'btn ghost wish-edit', type: 'button', text: '고쳐 쓰기', onclick: () => { editing = true; paintMine(true); input?.focus(); } }));
           if (justPosted) { justPosted = false; setTimeout(() => { if (share.isConnected) share.focus(); }, 80); }
           kids.push(pushRow());
@@ -1936,18 +1966,18 @@ export function createUI(root, hooks) {
       }
       // A picture link first: the wish goes up on the boards near the camera, the frame is uploaded with { wish },
       // and the preview page is shared. Over ~4 s or on any failure, the plain /rt/w/<id> link. No coin for sharing a wish.
-      async function shareMine(m, btn) {
+      async function shareMine(m, btn, viaKakao = false) {
         if (btn?.disabled || shareBusy) return;
         const plain = hooks.wishUrl?.(m.id) || (location.origin + '/rt/w/' + encodeURIComponent(m.id));
         const label = btn?.textContent || '친구에게 하트 부탁하기';
         if (btn) { btn.disabled = true; btn.textContent = '전광판에 올리는 중…'; }
         let pic = '';
-        try { pic = await Promise.race([wishPicture(m), new Promise((r) => setTimeout(() => r(''), 4000))]); } catch { pic = ''; }
+        try { pic = await Promise.race([wishPicture(m), new Promise((r) => setTimeout(() => r(''), 4000)), ...(viaKakao ? [new Promise((r) => setTimeout(() => r(''), 1000))] : [])]); } catch { pic = ''; } // Kakao's popup needs the tap still fresh: ~1 s at most for the picture
         if (btn) { btn.disabled = false; btn.textContent = label; }
         const url = pic || plain;
         const { title, text } = wishShareText(m);
-        const how = await sendLink({ kind: 'wish', native: true, title, text, url, into: shareBox });
-        if (how === 'cancel') return;
+        const how = (viaKakao && (await sendKakao({ kind: 'wish', title, text, url }))) || (await sendLink({ kind: 'wish', native: true, title, text, url, into: shareBox }));
+        if (how === 'cancel' || how === 'busy') return;
         trackEvent('wish_share', { how, pic: pic ? 1 : 0 });
         if (how === 'copied') note('링크를 복사했어요. 친구에게 붙여 넣어 보내세요.', 'ok');
         if (how === 'manual') manualLink = url;

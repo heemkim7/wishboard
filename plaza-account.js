@@ -27,6 +27,7 @@ export const EVENT_NAMES = Object.freeze([
   'wish_share',
   'wish_land',
   'share_link',
+  'return_visit',
 ]);
 const GUEST_SUB = /^g-[0-9a-f-]{36}$/i;
 const TICKET = /^h1\.[A-Za-z0-9_-]{20,200}\.[A-Za-z0-9_-]{20,90}$/;

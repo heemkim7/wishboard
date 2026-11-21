@@ -1185,7 +1185,7 @@ describe('times square plaza', { concurrency: false }, () => {
       assert.deepEqual(events, { page_landing: 3, enter_square: 1, first_coin: 1, board_claim: 1, session_end: 2 });
       assert.deepEqual(d15, {
         day: '2026-11-15', visitors: 2, new: 2, returning: 0, anon: 1, sessions: 3, len_avg: 103, len_med: 20,
-        funnel: [3, 1, 1, 1], funnel_new: [2, 1, 1, 1], ret: { 1: null, 7: null, 30: null },
+        funnel: [3, 1, 1, 1], funnel_new: [2, 1, 1, 1], grow: [3, 1, 0, 0, 0, 0], ret: { 1: null, 7: null, 30: null },
         share_accounts: 0, claim_accounts: 1, focus_new: 0,
         visits: 3, enter_rate: 33, taxi_trips: 0, billboard_claims: 1, outbound_clicks: 0, account_conversions: 0,
       });
