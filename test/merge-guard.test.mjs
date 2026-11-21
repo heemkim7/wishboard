@@ -573,7 +573,9 @@ function suite(label, makeDb, skip) {
         const kept = [], ctx = { waitUntil(p) { kept.push(Promise.resolve(p)); } };
         const req = new Request('https://sq.example/rt/auth/merge', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + u.token }, body: JSON.stringify({ guest_id: g.id, guest_token: g.token, nickname: '' }) });
         const answer = worker.fetch(req, s.env, ctx); answer.catch(() => {}); // the client is gone: nobody reads the answer
-        await new Promise((r) => setTimeout(r, 20));
+        // The gate keeps the RPC out for as long as this takes, so waiting cannot hide a late hand-over: 20 ms was too
+        // short when the whole suite runs at once.
+        for (let i = 0; i < 200 && !kept.length; i++) await new Promise((r) => setTimeout(r, 10));
         const before = kept.length; assert.ok(before >= 1, 'the work is already with waitUntil while the RPC is still out');
         assert.equal(await s.coins(g.id), 100); open(); s.state.before = null;
         await Promise.all(kept.slice(0, before)); // what the runtime keeps alive

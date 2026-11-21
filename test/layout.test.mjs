@@ -255,7 +255,7 @@ describe('멍때리기 clears the view', () => {
 
 describe('toasts and the game panels', () => {
   it('while the bake or the dance panel is up the toasts go to the top, as they do over a sheet', () => {
-    const m = css.match(/body.has-sheet .toasts,([^{]*){([^}]*)}/);
+    const m = css.match(/body\.has-sheet \.toasts,([^{]*)\{([^}]*)\}/);
     assert.ok(m, 'no toast-at-top rule');
     for (const sel of ['body.has-proof .toasts', 'body:has(#ui > .bake.show) .toasts', 'body:has(#ui > .rhythm.show) .toasts']) assert.ok(m[1].includes(sel), sel);
     assert.match(m[2], /bottom: auto !important;/);

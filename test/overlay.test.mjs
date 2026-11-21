@@ -448,7 +448,7 @@ describe('toasts', () => {
     assert.match(ui, /function note\(text, kind = '', onClick, opts\)/);
     assert.match(ui, /toastMs\(say, !!click\)/);
     assert.match(ui, /click \? h\('i', \{ class: 'go', 'aria-hidden': 'true' \}, icon\('chevronRight'\)\) : null/);
-    assert.match(read('index.html'), /body\.has-sheet \.toasts, body\.has-proof \.toasts \{ top: calc\(var\(--app-top, 0px\) \+ 10px \+ var\(--safe-t\)\); bottom: auto !important;/);
+    assert.match(read('index.html'), /body\.has-sheet \.toasts, body\.has-proof \.toasts, body:has\(#ui > \.bake\.show\) \.toasts, body:has\(#ui > \.rhythm\.show\) \.toasts \{ top: calc\(var\(--app-top, 0px\) \+ 10px \+ var\(--safe-t\)\); bottom: auto !important;/);
   });
 });
 
