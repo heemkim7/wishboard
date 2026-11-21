@@ -330,14 +330,17 @@ const ui = createUI(document.getElementById('ui'), {
       setTimeout(() => { introDone(); afterIntro(); }, 3000);
       return;
     }
-    const pose = world?.focusSlot(FOCUS, GIFT ? 4500 : 2500);
+    // The link says "이 전광판 앞으로": the avatar goes to the board's front first (a local teleport, like the map's), then
+    // the camera looks at the board and stays until the player moves. Fireworks only for a gift link.
+    world?.goToSlot?.(FOCUS);
+    const pose = world?.focusSlot(FOCUS, { hold: 0, celebrate: false });
     if (!pose) { introDone(); return; }
     focusedSlot = FOCUS;
     if (GIFT) {
-      world?.giftPop?.(FOCUS);
+      world?.giftPop?.(FOCUS, true);
       ui.note('당신을 위해 준비된 타임스퀘어 스페셜 전광판입니다!', 'ok');
     }
-    setTimeout(() => { ui.job({ type: 'focus', slot: FOCUS, board: pose.board || {}, fare: 0 }); introDone(); }, GIFT ? 700 : 2500);
+    setTimeout(() => { ui.job({ type: 'focus', slot: FOCUS, board: pose.board || {}, fare: 0 }); introDone(); }, 700);
   },
   focusShot: (slot) => { const pose = world?.focusSlot(slot); if (pose) focusedSlot = String(slot || ''); return pose; },
   endFocus: () => world?.endFocus(),
@@ -387,10 +390,20 @@ world = createTimesSquare(document.getElementById('view'), {
   onBillboard: (slotId) => ui.openAd(slotId),
   onPlot: (id) => ui.openPlot(id),
   onInteract(kind, id, info) {
+    // The world also reports through this hook: a notice line, a tap on a far board, a reached waypoint.
+    if (kind === 'notice') { ui.note(info?.text || '', info?.tone || '', info?.reload ? () => location.reload() : undefined); return; }
+    if (kind === 'board-far') { ui.farBoard?.(id, info); return; }
+    if (kind === 'arrive') { ftueApi?.onWaypoint?.(info); return; }
     if (kind === 'cart') {
       if (info?.near === false) ui.note('붕어빵 포차 앞으로 가까이 가면 구울 수 있어요');
       else ui.startBake();
-    } else if (kind === 'atm') ui.openHub();
+    } else if (kind === 'atm') {
+      // A tap on the ATM from across the square (or from a taxi) is a "take me there", not the hub.
+      if (info?.far && info.at) { world?.setWaypoint?.(info.at); ui.note('황금 ATM은 앞에 가면 열려요. 길안내를 켰어요', 'ok'); }
+      else ui.openHub();
+    }
+    // E at a board opens what a tap on that board opens.
+    else if (kind === 'board') ui.openAd(id);
     else if (kind === 'plot') ui.openPlot(id);
     else if (kind === 'stage') ui.startDance();
     else if (kind === 'crowd') {
@@ -526,13 +539,15 @@ function setLounge(on) {
     clearInterval(loungeTimer);
     world?.stopLounge();
     ui.lounge(false, 0);
+    ui.note('관람을 마쳤어요. 시점이 캐릭터에게 돌아와요.');
     return;
   }
+  // The world refuses in a taxi (and says why); nothing else changes then.
+  if (world.startLounge() === false) { loungeOn = false; return; }
   loungeSum = 0;
   loungeTold = false;
-  world.startLounge();
   ui.lounge(true, 0);
-  ui.note('전광판 관람을 켰어요. 8초마다 다른 전광판, 20초마다 +2. 움직이면 끝나요.', 'ok');
+  ui.note('전광판 관람을 켰어요. 캐릭터는 제자리에 있고 카메라만 8초마다 다음 전광판으로 가요. 20초마다 +2 · 움직이면 돌아와요.', 'ok');
   clearInterval(loungeTimer);
   loungeTimer = setInterval(() => {
     if (!loungeOn) return;

@@ -328,6 +328,16 @@ visualViewport?.addEventListener('scroll', fitVV);
   .prompt .sub { font-size: 12px; color: var(--muted); font-weight: 500; }
   .prompt .cool { position: relative; width: 26px; height: 26px; }
   .prompt .cool svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+  /* A tap on a far board: a small card above the prompt, never a sheet. ui.js showFarCard removes it after 4 s. */
+  .farcard { position: absolute; left: 50%; bottom: calc(176px + var(--safe-b)); transform: translate(-50%, 8px); z-index: 6; display: flex; align-items: center; gap: 12px; max-width: calc(100vw - 24px); padding: 10px 12px; border-radius: 14px; background: var(--surface-hud); border: 1px solid var(--line); color: var(--text); opacity: 0; transition: opacity .25s ease, transform .25s ease; pointer-events: none !important; }
+  .farcard.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto !important; }
+  .farcard .where { display: grid; gap: 2px; min-width: 0; }
+  .farcard .where b { font-size: 15px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .farcard .where span { font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .farcard .acts { display: flex; gap: 6px; flex: none; }
+  .farcard .acts button { min-height: 40px; padding: 0 12px; border-radius: 14px; border: 1px solid var(--line); background: transparent; color: var(--text); font-size: 13px; font-weight: 700; }
+  .farcard .acts button.go { border-color: var(--accent); color: var(--accent); }
+  .farcard .acts button:disabled { color: var(--text-2); opacity: .5; }
 
   .dock { position: absolute; left: 50%; bottom: calc(18px + var(--safe-b)); transform: translateX(-50%); display: flex; gap: 8px; padding: 8px; pointer-events: auto !important; }
   .emote { position: relative; width: 74px; height: 70px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: var(--text); background: var(--surface-2); border: 1px solid transparent; transition: transform .15s, background .2s, border-color .2s; }

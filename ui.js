@@ -790,7 +790,10 @@ export function createUI(root, hooks) {
     if (driving) { actBtn.textContent = '하차'; return; }
     if (!near) return;
     const left = cooldownLeft();
-    const p = near.kind === 'crowd'
+    // A board in front of the player: the world sends the line for its state (빈 전광판 / {이름}님의 전광판 / 내 전광판).
+    const p = near.kind === 'board'
+      ? (Array.isArray(near.p) ? near.p : ['전광판 열기', slotName(near.id), '전광판'])
+      : near.kind === 'crowd'
       ? (near.n
         ? [`같이 함성 · 옆 ${near.n}명`, left > 0 ? `다음 함성까지 ${(left / 1000).toFixed(0)}초` : '옆 사람과 같이', '함성']
         : ['함성', left > 0 ? `다음 함성까지 ${(left / 1000).toFixed(0)}초` : '코인은 전광판 응원에서 들어와요', '함성'])
@@ -798,6 +801,37 @@ export function createUI(root, hooks) {
     promptText.textContent = p[0];
     promptSub.textContent = p[1];
     actBtn.textContent = p[2];
+  }
+  // A tap on a board far away (60 m+) or from a taxi: a small card near the bottom instead of a sheet. Nothing is
+  // locked and it fades after 4 s. info: { dist, driving, state: 'free' | 'dark' | 'other' | 'mine', who }.
+  let farEl = null, farTimer = 0;
+  function hideFar() {
+    clearTimeout(farTimer);
+    const el = farEl;
+    farEl = null;
+    if (!el) return;
+    el.classList.remove('show');
+    setTimeout(() => el.remove(), 260);
+  }
+  function showFarCard(slot, info = {}) {
+    if (!slot || sheet || baking || dance) return;
+    hideFar();
+    const state = info.state || 'free';
+    const who = state === 'other' ? `${info.who || '익명'}님의 전광판` : state === 'mine' ? '내 전광판' : '빈 전광판';
+    const far = Number.isFinite(info.dist) ? ` · ${Math.round(info.dist)}m` : '';
+    const act = (text, fn, cls = '') => h('button', { type: 'button', class: cls, text, onclick: () => { hideFar(); fn(); } });
+    const cheerBtn = act('응원', () => hooks.cheer?.(slot, 1));
+    cheerBtn.disabled = state !== 'other';
+    const el = h('div', { class: 'farcard', role: 'status' },
+      h('div', { class: 'where' }, h('b', { text: slotName(slot) }), h('span', { text: who + far })),
+      h('div', { class: 'acts' },
+        act('보기', () => hooks.focusShot?.(slot)),
+        cheerBtn,
+        act(state === 'mine' ? '수정' : '걸기', () => (state === 'mine' ? openAd(slot) : openBillboard(slot)), 'go')));
+    root.append(el);
+    farEl = el;
+    requestAnimationFrame(() => el.classList.add('show'));
+    farTimer = setTimeout(hideFar, 4000);
   }
   function levelOf(id) {
     const p = world.plots.find(x => Number(x.plot_id) === Number(id));
@@ -1157,8 +1191,10 @@ export function createUI(root, hooks) {
   const SHARE_TEXT = '붕어빵 구워 뉴욕 타임스퀘어 전광판과 건물을 차지하세요!';
   function countShot() {
     return new Promise((resolve) => {
-      hooks.lockInput?.(true);
-      const el = h('div', { class: 'countflash', text: '3', style: { pointerEvents: 'auto' } });
+      // The count is for posing: the overlay lets touches through (the stylesheet's pointer-events: none), input is not
+      // locked, so the camera can be turned and emotes fire. body.posing tells the world a tap on a board is not a pick.
+      document.body.classList.add('posing');
+      const el = h('div', { class: 'countflash', text: '3' });
       document.body.append(el);
       let n = 3;
       const step = () => {
@@ -1168,7 +1204,7 @@ export function createUI(root, hooks) {
           sfx.shutter();
           let blob = null;
           try { blob = hooks.capture?.() || null; } catch { blob = null; }
-          setTimeout(() => { el.remove(); hooks.lockInput?.(false); resolve(blob); }, 120);
+          setTimeout(() => { el.remove(); document.body.classList.remove('posing'); hooks.lockInput?.(false); resolve(blob); }, 120);
           return;
         }
         el.textContent = String(n);
@@ -4850,6 +4886,7 @@ export function createUI(root, hooks) {
     },
     setStatus(text, kind = 'warn') { statusText = text || ''; statusKind = kind; renderStatus(); },
     setNear(v) { near = v || null; renderPrompt(); },
+    farBoard: showFarCard,
     setWorld(next) {
       world = { billboards: next?.billboards || [], plots: next?.plots || [], ranks: next?.ranks || [], today: next?.today || null, week: next?.week || null };
       plazaReady = true;
