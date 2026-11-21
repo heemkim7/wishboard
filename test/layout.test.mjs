@@ -252,3 +252,15 @@ describe('멍때리기 clears the view', () => {
     for (const kept of ['.dock', '.stay-lounge', '.stay-focus', '.bar,']) assert.equal(sel.includes('#ui.lounging > ' + kept), false, kept);
   });
 });
+
+describe('toasts and the game panels', () => {
+  it('while the bake or the dance panel is up the toasts go to the top, as they do over a sheet', () => {
+    const m = css.match(/body.has-sheet .toasts,([^{]*){([^}]*)}/);
+    assert.ok(m, 'no toast-at-top rule');
+    for (const sel of ['body.has-proof .toasts', 'body:has(#ui > .bake.show) .toasts', 'body:has(#ui > .rhythm.show) .toasts']) assert.ok(m[1].includes(sel), sel);
+    assert.match(m[2], /bottom: auto !important;/);
+    // the bake panel is 112px up and about 170px tall: the default toast line (196px up) is inside it
+    const bake = px(rule(css, '.bake'), 'bottom'), toasts = px(rule(css, '.toasts'), 'bottom');
+    assert.ok(toasts > bake && toasts < bake + 170);
+  });
+});

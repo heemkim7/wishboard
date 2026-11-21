@@ -449,8 +449,9 @@ visualViewport?.addEventListener('scroll', fitVV);
   /* A tappable toast ends in a chevron. */
   .toast .go { display: inline-block; margin-left: 6px; font-style: normal; color: var(--text-2); }
   .toast .go svg.ico { width: 15px; height: 15px; vertical-align: -3px; }
-  /* While a sheet or the proof bar is up the toasts sit at the top: clear of the sheet's buttons and of the phone keyboard. */
-  body.has-sheet .toasts, body.has-proof .toasts { top: calc(var(--app-top, 0px) + 10px + var(--safe-t)); bottom: auto !important; flex-direction: column; }
+  /* While a sheet, the proof bar, the bake panel or the dance panel is up the toasts sit at the top: clear of the
+     panel's buttons and of the phone keyboard. */
+  body.has-sheet .toasts, body.has-proof .toasts, body:has(#ui > .bake.show) .toasts, body:has(#ui > .rhythm.show) .toasts { top: calc(var(--app-top, 0px) + 10px + var(--safe-t)); bottom: auto !important; flex-direction: column; }
   /* Sheets stack: a parent under its child keeps its layout (inputs, scroll) and is only hidden. */
   .modal.under { visibility: hidden; }
   .sheet:focus { outline: none; }
@@ -991,7 +992,7 @@ visualViewport?.addEventListener('scroll', fitVV);
   .waypill.nudge { animation: wayNudge .9s ease-out; }
   @keyframes wayNudge { from { border-color: var(--info); } to { border-color: var(--line); } }
   /* The tutorial waypoint pill would sit on the bake and dance panels in portrait; it hides while they are open (the proof bar already hides it). */
-  #ui:has(.bake.show) .waypill, #ui:has(.rhythm.show) .waypill { display: none; }
+  #ui:has(.bake.show) .waypill, #ui:has(.rhythm.show) .waypill, #ui:has(.bake.show) .help, #ui:has(.rhythm.show) .help { display: none; }
   /* 오늘의 소원: the 🌠 tool (never folded behind ⋯), and its sheet. Buttons stay ≥ 40px tall on phones. */
   .tools .tool-wish { position: relative; }
   .tool-wish .wish-dot { position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--live); outline: 2px solid var(--bg); pointer-events: none; }
