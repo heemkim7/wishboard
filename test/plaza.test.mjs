@@ -316,7 +316,7 @@ describe('times square plaza', { concurrency: false }, () => {
       const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json' } });
       if (u.includes('/rest/v1/billboards')) return json(world.boards);
       if (u.includes('/rest/v1/plots')) return json(world.plots);
-      if (u.includes('/rest/v1/wallets')) return json(u.includes('spent=gt.0') ? world.ranks : []);
+      if (u.includes('/rest/v1/wallets')) return json(u.includes('spent=gt.0') ? world.ranks : world.wallet ? [world.wallet] : []); // world.wallet: the caller's row, once it has one
       if (u.includes('/rpc/coin_batch')) return failFlush ? json({ message: 'down' }, 500) : json({ ok: true, flushed: 1 });
       if (u.includes('/rpc/claim_billboard')) {
         const a = JSON.parse(opt.body);
@@ -446,7 +446,13 @@ describe('times square plaza', { concurrency: false }, () => {
       assert.equal(syncs(bystander), 0);
       assert.equal(msgs(evicted).filter(m => m.t === 'TAKE').at(-1).victim, 'guest:evicted');
       assert.equal(msgs(landlord).filter(m => m.t === 'WORLD_UPDATE').at(-1).data.slot_id, 'PLOT_3');
-      const sold = await call('/rt/sell-coins', { method: 'POST', headers: auth, body: JSON.stringify({ topic: 'chapel:square', slot_id: 'PLOT_3', amount: 10, nickname: '까마귀' }) });
+      // A guest sends only coins above its starting 100 (test/merge-guard.test.mjs): no row yet means nothing to send.
+      const sell = () => call('/rt/sell-coins', { method: 'POST', headers: auth, body: JSON.stringify({ topic: 'chapel:square', slot_id: 'PLOT_3', amount: 10, nickname: '까마귀' }) });
+      const early = await sell();
+      assert.equal(early.status, 400); assert.equal((await early.json()).code, 'starter');
+      assert.equal(calls.some(c => c.url.includes('sell_coins_to_advertiser')), false);
+      world.wallet = { coins: 140 };
+      const sold = await sell();
       assert.equal(sold.status, 200);
       const soldBody = await sold.json();
       assert.equal(soldBody.buyer_name, '건물주');

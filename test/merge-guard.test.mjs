@@ -1,5 +1,6 @@
-// Package U6: the starter guard on account links (/rt/auth/merge). A guest wallet starts with 100 coins nobody earned and merge_guest_account moves
-// every coin, so sign-out -> a new guest -> sign-in added 100 a cycle. The same scenarios run against two stand-ins for Supabase:
+// Package U6: the starter guard. A guest wallet starts with 100 coins nobody earned. merge_guest_account moves every coin, so sign-out -> a new
+// guest -> sign-in added 100 a cycle (/rt/auth/merge); and sell_coins_to_advertiser let a guest hand them to any board holder (/rt/sell-coins).
+// The same scenarios run against two stand-ins for Supabase:
 //   model      the wallet functions of schema.sql rewritten in JS (always runs)
 //   schema.sql the real functions in PGlite, when it is installed outside the repo (see test/db.test.mjs for how)
 import { registerHooks, createRequire } from 'node:module';
@@ -94,6 +95,14 @@ function memDb() {
       for (const b of boards) if (b.holder_id === a.p_guest_id) b.holder_id = a.p_user_id;
       return { ok: true, actor_id: a.p_user_id, coins: u.coins, bonus, moved, nickname: u.nickname, linked: true };
     },
+    sell_coins_to_advertiser(a) { // no clock in the model: a board with a holder is lit
+      if (![10, 20, 50].includes(a.p_amount)) return { ok: false, error: '10, 20, 50코인만 팔 수 있어요.' };
+      const b = boards.find((x) => x.slot_id === a.p_slot_id); if (!b || !b.holder_id) return { ok: false, error: '지금 그 전광판을 산 광고주가 없어요.' };
+      if (b.holder_id === a.p_actor_id) return { ok: false, error: '내 광고에는 코인을 팔 수 없어요.' };
+      const w = row(a.p_actor_id); if (w.coins < a.p_amount) return { ok: false, error: '팔 코인이 부족해요.' };
+      w.coins -= a.p_amount; const to = wallets.get(b.holder_id); if (to) to.coins += a.p_amount;
+      return { ok: true, remaining_coins: w.coins, buyer_name: '주인', buyer_id: b.holder_id, amount: a.p_amount };
+    },
     withdraw_account(a) { for (const b of boards) if (b.holder_id === a.p_actor_id) b.holder_id = null; wallets.delete(a.p_actor_id); return { ok: true, actor_id: a.p_actor_id }; },
   };
   return {
@@ -114,7 +123,7 @@ async function loadPGlite() {
 }
 const PGlite = await loadPGlite();
 if (!PGlite) console.log('# merge-guard.test: PGlite not installed, the schema.sql half is skipped. Install it in ' + join(tmpdir(), 'kts-pglite') + ' (npm i @electric-sql/pglite) or set PGLITE_DIR.');
-const REAL = ['profile_read', 'coin_batch', 'spend_plaza', 'grant_coins', 'merge_guest_account', 'withdraw_account'];
+const REAL = ['profile_read', 'coin_batch', 'spend_plaza', 'grant_coins', 'merge_guest_account', 'withdraw_account', 'sell_coins_to_advertiser'];
 async function pgDb() {
   const db = new PGlite();
   await db.exec('CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;'); // Supabase gives these; PGlite does not
@@ -126,20 +135,23 @@ async function pgDb() {
       return (await db.query(sql, keys.map((k) => (k === 'p_items' ? JSON.stringify(a[k]) : a[k])))).rows[0].r; },
     async wallet(id) { return (await db.query('SELECT actor_id, nickname, coins::float8 AS coins, vip_tickets, linked, link_bonus FROM public.wallets WHERE actor_id = $1', [id])).rows[0] || null; },
     async boards(holder) { return (await db.query('SELECT slot_id, holder_id FROM public.billboards WHERE holder_id = $1', [holder])).rows; },
-    async hold(slot, id) { const r = await db.query('UPDATE public.billboards SET holder_id = $1 WHERE slot_id = $2', [id, slot]); assert.equal(r.affectedRows, 1, slot); },
+    async hold(slot, id) { const r = await db.query("UPDATE public.billboards SET holder_id = $1, holder_name = '주인', lit_until = now() + interval '1 day', expires_at = now() + interval '1 day' WHERE slot_id = $2", [id, slot]); assert.equal(r.affectedRows, 1, slot); },
     async holder(slot) { return (await db.query('SELECT holder_id FROM public.billboards WHERE slot_id = $1', [slot])).rows[0]?.holder_id ?? null; },
   };
 }
 
 // The Worker's fetch, answered from one of the two. state.rpcs: every RPC as 'name actor amount'. state.fail(name, args) may answer in its place
-// (or throw, a network error); state.shape(name, answer) may change an answer (an older function shape).
+// (or throw, a network error); state.shape(name, answer) may change an answer (an older function shape). state.failRead(id) does the same for a
+// wallet read, and state.slowRead (ms) makes one take real time.
 function fakeNet(state, db) {
   return async (url, opt = {}) => {
     const u = String(url);
     if (u.includes('/.well-known/jwks.json')) return json({ keys: state.jwks || [] });
     if (u.includes('/auth/v1/user')) return json({});
     if (u.includes('/rest/v1/billboards')) { state.reads++; const h = /holder_id=eq\.([^&]+)/.exec(u); return json(h ? await db.boards(decodeURIComponent(h[1])) : []); }
-    if (u.includes('/rest/v1/wallets')) { state.reads++; const m = /actor_id=eq\.([^&]+)/.exec(u), w = m ? await db.wallet(decodeURIComponent(m[1])) : null; return json(w ? [w] : []); }
+    if (u.includes('/rest/v1/wallets')) { state.reads++; const m = /actor_id=eq\.([^&]+)/.exec(u), id = m ? decodeURIComponent(m[1]) : ''; if (id) state.wreads.push(id);
+      if (id && state.slowRead) await new Promise((r) => setTimeout(r, state.slowRead)); // a real pause, so requests overlap
+      const bad = id && state.failRead?.(id); if (bad) return bad; const w = id ? await db.wallet(id) : null; return json(w ? [w] : []); }
     const m = /\/rest\/v1\/rpc\/(\w+)/.exec(u);
     if (m) { const a = JSON.parse(opt.body || '{}'); state.rpcs.push([m[1], a.p_actor_id || a.p_user_id || '', a.p_coins ?? a.p_amount ?? ''].join(' ').trim());
       const bad = state.fail?.(m[1], a); if (bad) return bad;
@@ -151,7 +163,7 @@ function fakeNet(state, db) {
 let clockBase = Date.parse('2029-03-01T03:00:00Z'), kid = 0, seq = 0;
 // Each test runs days apart, so the isolate's copies (budget level, tally, world) of an earlier test are stale for the next one.
 async function scene(db, extra = {}) {
-  clockBase += 10 * 864e5; let t = clockBase; const origNow = Date.now, origFetch = globalThis.fetch, state = { rpcs: [], reads: 0 };
+  clockBase += 10 * 864e5; let t = clockBase; const origNow = Date.now, origFetch = globalThis.fetch, state = { rpcs: [], reads: 0, wreads: [] };
   Date.now = () => t; globalThis.fetch = fakeNet(state, db); globalThis.caches = { default: { async match() {}, async put() {}, async delete() { return true; } } };
   const env = makeEnv(extra), waits = [], ctx = { waitUntil(p) { waits.push(Promise.resolve(p)); } };
   const call = async (p, opt = {}) => { const res = await worker.fetch(new Request('https://sq.example' + p, opt), env, ctx); while (waits.length) await Promise.all(waits.splice(0)); return res; };
@@ -177,7 +189,11 @@ async function scene(db, extra = {}) {
   const linked = async () => { const u = await user(), g = await guest(), r = await link(u, g); assert.equal(r.bonus, 300); assert.equal(await coins(u.id), 400); return u; };
   const stp = (id) => env.meter('acct').sql.db.prepare('select v from stp where g = ?').get(id)?.v ?? 0;
   const burns = () => state.rpcs.filter((x) => /^(spend_plaza|grant_coins) /.test(x));
-  return { clock: { add: (ms) => { t += ms; } }, state, env, call, post, get, bare, guest, user, coins, earn, spend30, link, linked, stp, burns, done: () => { Date.now = origNow; globalThis.fetch = origFetch; } };
+  // 광고주에게 코인 보내기, as net.js posts it.
+  const send = async (who, slot, amount) => { const res = await post('/rt/sell-coins', { topic: 'chapel:square', slot_id: slot, amount, nickname: '손님' }, who.token); return { status: res.status, body: await res.json() }; };
+  const sells = () => state.rpcs.filter((x) => x.startsWith('sell_coins_to_advertiser ')).length;
+  const lease = (id) => env.meter('acct').sql.db.prepare("select count(*) n from sqlite_master where name = 'shl'").get().n ? env.meter('acct').sql.db.prepare('select count(*) n from shl where uid = ?').get(id).n : 0;
+  return { clock: { add: (ms) => { t += ms; } }, state, env, call, post, get, bare, guest, user, coins, earn, spend30, link, linked, stp, burns, send, sells, lease, done: () => { Date.now = origNow; globalThis.fetch = origFetch; } };
 }
 const utcDay = () => new Date().toISOString().slice(0, 10); // Meter.add keys its row by new Date() (the real clock, not the mocked Date.now)
 const dayN = (env) => env.meter('day').sql.db.prepare('select n from d where day = ?').get(utcDay())?.n || 0;
@@ -421,6 +437,162 @@ function suite(label, makeDb, skip) {
 }
 suite('model', async () => memDb(), false);
 suite('schema.sql in PGlite', pgDb, PGlite ? false : 'PGlite not installed (see the first lines of this file)');
+
+// ---- /rt/sell-coins: a guest sends only what it holds above the starter ---------------------------------------------------------------------------
+const STARTER = { ok: false, code: 'starter', error: '시작 코인 100은 보낼 수 없어요. 계정을 연결하면 보낼 수 있어요.' };
+const BUSY = { ok: false, code: 'busy', error: '앞선 코인 보내기가 끝난 뒤에 다시 해 주세요.' };
+function sendSuite(label, makeDb, skip) {
+  describe('starter guard on guest coin sends: ' + label, { concurrency: false, skip }, () => {
+    let db;
+    before(async () => { db = await makeDb(); });
+
+    it('a fresh guest is refused, with or without a wallet row, and nothing reaches the database function', async () => {
+      const s = await scene(db);
+      try {
+        const owner = await s.linked(), g = await s.guest(), b = await s.bare(); await db.hold('STREET_12', owner.id);
+        for (const n of [10, 20, 50]) { const r = await s.send(g, 'STREET_12', n); assert.equal(r.status, 400); assert.deepEqual(r.body, STARTER); }
+        const r = await s.send(b, 'STREET_12', 10); assert.equal(r.status, 400); assert.deepEqual(r.body, STARTER);
+        assert.equal(s.sells(), 0); assert.equal(await s.coins(g.id), 100); assert.equal(await s.coins(owner.id), 400);
+        assert.equal(await s.coins(b.id), null); // the function would have made the row with 100 and sent from it
+        assert.equal(s.lease(g.id), 0);
+      } finally { s.done(); }
+    });
+
+    it('a guest with 150 sends 50 and not one coin more', async () => {
+      const s = await scene(db);
+      try {
+        const owner = await s.linked(), g = await s.guest(), g2 = await s.guest(); await db.hold('STREET_13', owner.id); await s.earn(g.id, 50); await s.earn(g2.id, 49);
+        const ok = await s.send(g, 'STREET_13', 50);
+        assert.equal(ok.status, 200); assert.equal(ok.body.ok, true); assert.equal(ok.body.remaining_coins, 100); assert.equal(ok.body.amount, 50);
+        assert.equal(await s.coins(g.id), 100); assert.equal(await s.coins(owner.id), 450);
+        assert.deepEqual((await s.send(g, 'STREET_13', 10)).body, STARTER);
+        assert.deepEqual((await s.send(g2, 'STREET_13', 50)).body, STARTER); // 149: 50 would leave 99
+        assert.equal((await s.send(g2, 'STREET_13', 20)).status, 200); assert.equal((await s.send(g2, 'STREET_13', 20)).status, 200);
+        assert.deepEqual((await s.send(g2, 'STREET_13', 10)).body, STARTER); // 109: 10 would leave 99
+        assert.equal(await s.coins(g2.id), 109); assert.equal(await s.coins(owner.id), 490); assert.equal(s.sells(), 3);
+      } finally { s.done(); }
+    });
+
+    it('coins a guest was sent by someone else count as above the starter', async () => {
+      const s = await scene(db);
+      try {
+        const owner = await s.linked(), u = await s.linked(), g = await s.guest(), g2 = await s.guest();
+        await db.hold('STREET_14', owner.id); await db.hold('STREET_15', g.id); await db.hold('STREET_16', g2.id); await s.spend30(g2.id);
+        assert.equal((await s.send(u, 'STREET_15', 50)).status, 200); assert.equal(await s.coins(g.id), 150);
+        assert.equal((await s.send(g, 'STREET_14', 50)).status, 200); assert.equal(await s.coins(g.id), 100); assert.equal(await s.coins(owner.id), 450);
+        assert.equal((await s.send(u, 'STREET_16', 50)).status, 200); assert.equal(await s.coins(g2.id), 120); // 70 of its own + 50 received
+        assert.deepEqual((await s.send(g2, 'STREET_14', 50)).body, STARTER);
+        assert.equal((await s.send(g2, 'STREET_14', 20)).status, 200); assert.equal(await s.coins(g2.id), 100);
+      } finally { s.done(); }
+    });
+
+    it('a linked account sends as before: no balance read, no hold, down to nothing', async () => {
+      const s = await scene(db);
+      try {
+        const owner = await s.linked(), u = await s.user(); await db.hold('STREET_17', owner.id);
+        assert.equal((await s.get('/rt/profile', u.token)).status, 200); assert.equal(await s.coins(u.id), 100); // an account's own row starts at 100 too
+        const log = spyDo(s.env); s.state.wreads.length = 0;
+        assert.equal((await s.send(u, 'STREET_17', 50)).status, 200); assert.equal((await s.send(u, 'STREET_17', 50)).status, 200);
+        assert.equal(await s.coins(u.id), 0); assert.equal(await s.coins(owner.id), 500);
+        const no = await s.send(u, 'STREET_17', 10); assert.equal(no.status, 400); assert.equal(no.body.error, '팔 코인이 부족해요.'); // the function's own refusal
+        assert.deepEqual(s.state.wreads, []); assert.deepEqual(log.filter((x) => /^acct\.sell/.test(x)), []);
+      } finally { s.done(); }
+    });
+
+    it('several sends at once from one guest: one goes through, the rest are told to wait, the balance stays at 100', async () => {
+      const s = await scene(db);
+      try {
+        const owner = await s.linked(), g = await s.guest(), g2 = await s.guest(); await db.hold('STREET_18', owner.id); await s.earn(g.id, 50); await s.earn(g2.id, 50);
+        s.state.slowRead = 25; // the balance read takes a moment: without the hold all six would read 150 and three would get through
+        const out = await Promise.all([50, 50, 50, 20, 10, 50].map((n) => s.send(g, 'STREET_18', n)));
+        assert.deepEqual(out.map((r) => r.status), [200, 429, 429, 429, 429, 429]);
+        for (const r of out.slice(1)) assert.deepEqual(r.body, BUSY);
+        assert.equal(s.sells(), 1); assert.equal(await s.coins(g.id), 100); assert.equal(s.lease(g.id), 0);
+        s.state.slowRead = 0; assert.deepEqual((await s.send(g, 'STREET_18', 10)).body, STARTER); // the hold is gone: the next send is judged on its own
+        // What the database function alone guarantees: each call checks only that the balance covers the amount, so the same burst sent straight to
+        // it empties the wallet (never below 0).
+        const raw = await Promise.all([50, 50, 50, 50, 50, 50].map((n) => db.rpc('sell_coins_to_advertiser', { p_key: KEY, p_actor_id: g2.id, p_nickname: '손님', p_slot_id: 'STREET_18', p_amount: n })));
+        assert.equal(raw.filter((r) => r.ok).length, 3); assert.equal(await s.coins(g2.id), 0);
+      } finally { s.done(); }
+    });
+
+    it('a send under way somewhere else (the acct lease) holds this one back until it ends or runs out', async () => {
+      const s = await scene(db);
+      try {
+        const owner = await s.linked(), g = await s.guest(); await db.hold('STREET_19', owner.id); await s.earn(g.id, 100);
+        const log = spyDo(s.env);
+        assert.equal(s.env.meter('acct').do.sellTake(g.id, 15000), true); // another isolate took it
+        const no = await s.send(g, 'STREET_19', 50); assert.equal(no.status, 429); assert.deepEqual(no.body, BUSY); assert.equal(s.sells(), 0);
+        s.clock.add(15001); // that request died: the lease runs out
+        assert.equal((await s.send(g, 'STREET_19', 50)).status, 200); assert.equal(s.lease(g.id), 0);
+        assert.equal((await s.send(g, 'STREET_19', 50)).status, 200); assert.equal(await s.coins(g.id), 100); // given back each time, so the next one is not held
+        assert.deepEqual(log.filter((x) => /^acct\.sell/.test(x)), ['acct.sellTake', 'acct.sellTake', 'acct.sellDone', 'acct.sellTake', 'acct.sellDone']);
+      } finally { s.done(); }
+    });
+
+    it('the two acct calls of a guest send are counted against the daily budget', async () => {
+      const s = await scene(db);
+      try {
+        const owner = await s.linked(), g = await s.guest(); await db.hold('STREET_20', owner.id); await s.earn(g.id, 50);
+        const log = spyDo(s.env);
+        s.clock.add(61000); await s.get('/rt/wishes'); // its add lands what earlier requests left pending; its own calls wait for the next one
+        const base = dayN(s.env);
+        s.clock.add(1000); assert.equal((await s.send(g, 'STREET_20', 50)).status, 200);
+        assert.equal(log.filter((x) => /^acct\.sell/.test(x)).length, 2);
+        const counted = log.length; s.clock.add(30000); await s.call('/rt/health');
+        assert.equal(dayN(s.env), base + counted + 1);
+      } finally { s.done(); }
+    });
+
+    it('budget level hard, or the acct instance failing: no lease, the rule and the one-at-a-time hold of this isolate still apply', async () => {
+      const s = await scene(db);
+      try {
+        const owner = await s.linked(), fresh = await s.guest(), g = await s.guest(), g2 = await s.guest(); await db.hold('STREET_21', owner.id); await s.earn(g.id, 50); await s.earn(g2.id, 50);
+        const real = s.env.METER.get; s.env.METER.get = (n) => (n === 'acct' ? new Proxy(real(n), { get: (t, k) => (k === 'sellTake' ? async () => { throw new Error('do down'); } : t[k]) }) : real(n));
+        assert.deepEqual((await s.send(fresh, 'STREET_21', 10)).body, STARTER);
+        assert.equal((await s.send(g2, 'STREET_21', 50)).status, 200); assert.deepEqual((await s.send(g2, 'STREET_21', 10)).body, STARTER);
+        s.env.METER.get = real;
+        setUsed(s.env, 96000); s.clock.add(61000); assert.equal((await (await s.get('/rt/wishes')).json()).busy, true); // the isolate now knows the level
+        const log = spyDo(s.env);
+        assert.deepEqual((await s.send(fresh, 'STREET_21', 10)).body, STARTER);
+        s.state.slowRead = 25;
+        const out = await Promise.all([50, 50, 50].map((n) => s.send(g, 'STREET_21', n)));
+        assert.deepEqual(out.map((r) => r.status), [200, 429, 429]); assert.equal(await s.coins(g.id), 100);
+        assert.deepEqual(log.filter((x) => /^acct\.sell/.test(x)), []);
+      } finally { s.done(); }
+    });
+
+    it('a balance that cannot be read refuses the send (502) and gives the hold back', async () => {
+      const s = await scene(db);
+      try {
+        const owner = await s.linked(), g = await s.guest(); await db.hold('STREET_22', owner.id); await s.earn(g.id, 50);
+        s.state.failRead = (id) => (id === g.id ? json({ message: 'upstream' }, 500) : null);
+        const a = await s.send(g, 'STREET_22', 50); assert.equal(a.status, 502); assert.deepEqual(a.body, { ok: false, error: '판매를 처리하지 못했습니다.' });
+        s.state.failRead = (id) => { if (id === g.id) throw new TypeError('network down'); return null; };
+        assert.equal((await s.send(g, 'STREET_22', 50)).status, 502);
+        assert.equal(s.sells(), 0); assert.equal(s.lease(g.id), 0); assert.equal(await s.coins(g.id), 150);
+        s.state.failRead = null; assert.equal((await s.send(g, 'STREET_22', 50)).status, 200);
+      } finally { s.done(); }
+    });
+  });
+}
+sendSuite('model', async () => memDb(), false);
+sendSuite('schema.sql in PGlite', pgDb, PGlite ? false : 'PGlite not installed (see the first lines of this file)');
+
+describe('Meter.sellTake / sellDone', () => {
+  it('one live lease per guest; it ends when given back or when its time is up', () => {
+    const orig = Date.now; let t = 1e12; Date.now = () => t;
+    try {
+      const m = new Meter(makeCtx(sqliteStorage()), {});
+      assert.equal(m.sellDone('guest:a'), true); // nothing held yet
+      assert.equal(m.sellTake('guest:a', 15000), true); assert.equal(m.sellTake('guest:a', 15000), false); assert.equal(m.sellTake('guest:b', 15000), true);
+      assert.equal(m.sellDone('guest:a'), true); assert.equal(m.sellTake('guest:a', 15000), true);
+      t += 14999; assert.equal(m.sellTake('guest:a', 15000), false); t += 1; assert.equal(m.sellTake('guest:a', 15000), true);
+      assert.equal(m.sellTake('', 15000), false);
+      t += 60001; assert.equal(m.sellTake('guest:c', 1e9), true); t += 60000; assert.equal(m.sellTake('guest:c', 1e9), true); // never longer than a minute
+    } finally { Date.now = orig; }
+  });
+});
 
 describe('Meter.stTake', () => {
   it('counts a guest\'s starter once, up to the cap, and ignores bad input', () => {

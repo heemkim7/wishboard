@@ -331,6 +331,12 @@ export class Meter extends DurableObject {
     const g = String(guest || '').slice(0, 80), m = Math.floor(Number(moved)), c = Math.floor(Number(cap)); if (!g || !(m > 0) || !(c > 0)) return 0;
     const had = Number(q.exec('select v from stp where g = ?', g).toArray()[0]?.v) || 0, s = Math.min(m, Math.max(0, c - had));
     if (s > 0) q.exec('insert into stp(g, v) values(?, ?) on conflict(g) do update set v = excluded.v', g, had + s); return s; }
+  // One coin send at a time per guest (instance 'acct', see sendHold). shl: a lease per guest, until = when it runs out by itself. Check and take in
+  // one call. -> false while a live lease exists.
+  sellTake(uid, ms) { const q = this.ctx.storage.sql, now = Date.now(), id = String(uid || '').slice(0, 80); if (!this.shOk) { this.shOk = 1; q.exec('create table if not exists shl(uid text primary key, until integer not null)'); }
+    if (!id) return false; q.exec('delete from shl where until <= ?', now); if (q.exec('select 1 from shl where uid = ?', id).toArray()[0]) return false;
+    q.exec('insert into shl(uid, until) values(?, ?)', id, now + Math.min(60000, Math.max(1000, Math.floor(Number(ms)) || 0))); return true; }
+  sellDone(uid) { const q = this.ctx.storage.sql; if (!this.shOk) { this.shOk = 1; q.exec('create table if not exists shl(uid text primary key, until integer not null)'); } q.exec('delete from shl where uid = ?', String(uid || '').slice(0, 80)); return true; }
   cardInit() { if (this.ci) return; this.ci = 1; this.ctx.storage.sql.exec('create table if not exists cards(k text primary key, png blob, at integer)'); }
   cardGet(key) { this.cardInit(); const row = this.ctx.storage.sql.exec('select png from cards where k = ?', String(key || '')).toArray()[0]; return row?.png || null; }
   cardPut(key, bytes) { this.cardInit(); const png = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []); if (png.byteLength > 40000) return { ok: false };
@@ -2064,6 +2070,17 @@ function tribeSettle(env, ctx, now = Date.now()) {
   try { ctx?.waitUntil?.(job); } catch { /* the next request retries */ }
   return job;
 }
+// 광고주에게 코인 보내기 from a guest. sell_coins_to_advertiser itself only refuses a send larger than the balance (row lock, coins >= 0), so a new
+// guest could hand its unearned starting coins to any board holder with no link at all. The Worker reads the balance first and refuses a send that
+// would leave a guest under STARTER_COINS. Read and send are two steps, so one guest sends one at a time: SENDING within this isolate, and a lease in
+// the 'acct' instance (sellTake / sellDone, SEND_HOLD long if the request dies) across isolates. Budget hard, or that call failing: this isolate only.
+// -> a release function, or false while another send of this guest is on its way.
+const SENDING = new Set(), SEND_HOLD = 15000, SEND_BUSY = '앞선 코인 보내기가 끝난 뒤에 다시 해 주세요.', STARTER_ERR = '시작 코인 100은 보낼 수 없어요. 계정을 연결하면 보낼 수 있어요.';
+async function sendHold(env, uid) {
+  if (SENDING.has(uid)) return false; SENDING.add(uid); let lease = false;
+  try { if (!(await budgetHard(env))) { if ((await acct(env).sellTake(uid, SEND_HOLD)) === false) { SENDING.delete(uid); return false; } lease = true; } } catch { lease = false; }
+  return async () => { SENDING.delete(uid); if (lease) { try { await acct(env).sellDone(uid); } catch { /* the lease runs out by itself */ } } };
+}
 async function plaza(req, env, ctx, u) {
   if (u.pathname === '/rt/world') {
     if (req.method !== 'GET') return J({ err: 'get' }, 405);
@@ -2162,7 +2179,17 @@ async function plaza(req, env, ctx, u) {
     const amount = Math.floor(Number(b.amount));
     if (!SLOT_RE.test(slot)) return J({ ok: false, error: '전광판 슬롯이 올바르지 않습니다.' }, 400);
     if (![10, 20, 50].includes(amount)) return J({ ok: false, error: '10, 20, 50코인만 팔 수 있어요.' }, 400);
-    rpc = await supabaseRpc('sell_coins_to_advertiser', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_nickname: nick, p_slot_id: slot, p_amount: amount });
+    // A guest sends only what it holds above the starting coins (see sendHold); a linked account sends as before, with no read and no hold.
+    const free = actor.id.startsWith('user:') ? null : await sendHold(env, actor.id);
+    if (free === false) return J({ ok: false, code: 'busy', error: SEND_BUSY }, 429);
+    try {
+      if (free) { let have = null; // after settle, so coins a room still held are in the row
+        try { const s = await fetch(SUPA + '/rest/v1/wallets?select=coins&actor_id=eq.' + encodeURIComponent(actor.id), { headers: { apikey: ANON, accept: 'application/json' } }); const rows = s.ok ? await s.json() : null;
+          if (Array.isArray(rows)) have = rows.length ? Number(rows[0]?.coins) : 0; } catch { have = null; } // no row: only the 100 the wallet route shows, nothing to send
+        if (!Number.isFinite(have)) return J({ ok: false, error: '판매를 처리하지 못했습니다.' }, 502);
+        if (have - amount < STARTER_COINS) return J({ ok: false, code: 'starter', error: STARTER_ERR }, 400); }
+      rpc = await supabaseRpc('sell_coins_to_advertiser', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_nickname: nick, p_slot_id: slot, p_amount: amount });
+    } finally { if (free) await free(); }
     const data = rpc.data || {};
     if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || data.message || '판매를 처리하지 못했습니다.' }, rpc.ok ? 400 : 502);
     try { await env.ROOM.get(env.ROOM.idFromName(topic)).fetch(new Request('https://room.internal/sync', { method: 'POST', headers: { 'x-uid': actor.id } })); } catch { }
