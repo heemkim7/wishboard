@@ -543,9 +543,9 @@ describe('board celebrations', () => {
     }
     const small = plans[0], big = plans[plans.length - 1];
     assert.ok(big.total > small.total * 3);
-    // the lot board: sprites a quarter of a metre, sparks that travel about a metre, a flash well under a metre
+    // the lot board: sprites under 0.3 m, sparks that travel 1.2 m, a flash well under a metre
     assert.ok(small.size < 0.3 && small.bursts[0].flash < 0.8);
-    assert.ok(near(small.bursts[0].speed * sparkGlide(small.life, small.drag), 1, 1e-9));
+    assert.ok(near(small.bursts[0].speed * sparkGlide(small.life, small.drag), 1.2, 1e-9));
     // the old burst used 1.45 m sprites (2.2 m on the tower), a 7 m flash and colours times 2.6
     assert.ok(big.size < 1 && big.bursts[0].flash <= 3.6);
     for (const p of plans) assert.ok(p.gain <= 1.5 && p.flashGain <= 1.2);

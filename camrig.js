@@ -216,10 +216,10 @@ export function celebrationPlan({ w = 0, h = 0, tier = 'C', low = false, top = t
   const H = Math.max(0.5, num(h, 4)), W = Math.max(0.5, num(w, H * 16 / 9));
   const m = clamp(H, 1.5, 14); // everything scales with the height of the face
   const { drag, grav, life, gain, flashGain, flat, riseT } = PARTY;
-  const size = clamp(0.085 * m, 0.22, 0.95);
+  const size = clamp(0.085 * m, 0.28, 0.95);
   const gap = clamp(0.16 * m, 0.4, 2.2);
   const small = cheer ? 0.7 : 1;
-  const speed = (clamp(0.42 * m, 1, 5.5) * small) / sparkGlide(life, drag);
+  const speed = (clamp(0.42 * m, 1.2, 5.5) * small) / sparkGlide(life, drag);
   const flash = 1.6 * gap * small;
   // Above the top edge by more than a spark with no upward speed falls in its life, plus half a sprite.
   const lift = Math.max(gap, sparkDrop(life, drag, grav) + size / 2 + 0.1);
