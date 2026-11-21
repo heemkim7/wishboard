@@ -667,7 +667,11 @@ Kakao JavaScript 키는 비밀이 아니라 공개 키다. Worker 변수 `KAKAO_
 
 ### GA4로 나가는 것
 
-`analytics.js`의 `trackEvent`는 gtag에 `gaName(name)`(소문자·숫자·밑줄, 영문자로 시작, 40자까지)과 `gaParams(params)`를 보낸다. `gaParams`는 `GA_PARAMS`에 있는 키(`slot`, `ref`, `streak`, `tier`, `found`, `method`, `kind`, `how`, `from`, `fresh`, `pic`, `load_ms`, `gap`, 친구 초대의 `kept` `side` `amount`)만 남기고 값은 수·불린(1/0)·문자열(100자까지)만 받는다. 그 밖의 키(`text`, `nick` 같은 플레이어가 쓴 글 포함)는 Google로 나가지 않는다. 새 이벤트가 새 키를 보내려면 `GA_PARAMS`에 더해야 하고, 테스트가 `ui.js`·`main.js`의 `trackEvent` 호출 키가 목록에 있는지 확인한다. `EVENT_NAMES`는 모두 GA4 규칙을 지킨다(테스트가 확인). 서버로 가는 `/rt/event` 본문은 그대로다. `index.html`의 `GA_MEASUREMENT_ID`는 `G-ZHXT5BEQ4J`다(GA4 계정 `wishboard`, 속성 `모두의 전광판`, 웹 스트림 `모두의 전광판 웹`). 값이 자리표시 `G-XXXXXXXXXX`이면 태그를 싣지 않는다. 스트림의 향상된 측정은 기본값이라 `page_view`, `scroll`, `session_start` 같은 이벤트가 게임 이벤트와 함께 들어온다. `legal.js`의 개인정보처리방침은 GA를 말하지 않는다.
+`analytics.js`의 `trackEvent`는 gtag에 `gaName(name)`(소문자·숫자·밑줄, 영문자로 시작, 40자까지)과 `gaParams(params)`를 보낸다. `gaParams`는 `GA_PARAMS`에 있는 키(`slot`, `ref`, `streak`, `tier`, `found`, `method`, `kind`, `how`, `from`, `fresh`, `pic`, `load_ms`, `gap`, 친구 초대의 `kept` `side` `amount`)만 남기고 값은 수·불린(1/0)·문자열(100자까지)만 받는다. 그 밖의 키(`text`, `nick` 같은 플레이어가 쓴 글 포함)는 Google로 나가지 않는다. 새 이벤트가 새 키를 보내려면 `GA_PARAMS`에 더해야 하고, 테스트가 `ui.js`·`main.js`의 `trackEvent` 호출 키가 목록에 있는지 확인한다. `EVENT_NAMES`는 모두 GA4 규칙을 지킨다(테스트가 확인). 서버로 가는 `/rt/event` 본문은 그대로다. `index.html`의 `GA_MEASUREMENT_ID`는 `G-ZHXT5BEQ4J`다(GA4 계정 `wishboard`, 속성 `모두의 전광판`, 웹 스트림 `모두의 전광판 웹`). 값이 자리표시 `G-XXXXXXXXXX`이면 태그를 싣지 않는다. 스트림의 향상된 측정은 기본값이라 `page_view`, `scroll`, `session_start` 같은 이벤트가 게임 이벤트와 함께 들어온다.
+
+Google 태그는 실릴 때의 주소(프로토콜·호스트 이름·경로·쿼리, 포트와 `#` 뒤는 뺀다)를 첫 `page_view`로 보내고, 페이지의 `gtag('config')`에 준 `page_location`·`send_page_view`로는 그 첫 조회가 바뀌지 않는다. 그래서 `index.html`은 `dataLayer`에 `js`·`config`를 먼저 쌓아 두고, 주소 쿼리에 `code=`(로그인하고 돌아온 PKCE 코드)나 `handover=`(기기 이동 티켓)가 없을 때만 태그 스크립트를 넣는다. 있으면 250ms마다 다시 보고, 앱이 주소에서 지운 뒤(`code`는 Supabase 클라이언트가, `handover`는 `bootAccount`가 지운다) 넣는다. 그사이 `trackEvent`가 보낸 것은 `dataLayer`에서 기다린다. 120번(30초) 봐도 남아 있으면 그 페이지 조회는 태그 없이 끝난다. 주소에 새 비밀 값을 싣는 기능을 만들면 이 정규식(`held`)에 그 키를 더한다.
+
+`legal.js`의 개인정보처리방침에는 "방문 통계 (Google 애널리틱스)" 문단이 있다: 보내는 항목, `_ga` 쿠키, 보내지 않는 것, 보관 기간(이벤트 2개월·방문자 식별값 14개월, GA 관리 화면 설정값), 거부 방법. 측정 ID가 자리표시가 아닌데 이 문단이 없으면 테스트가 실패한다.
 
 테스트는 `test/metrics.test.mjs`다(단계별 하루 집계, 접힌 날의 `grow`, `return_visit` 판단, GA4 이름·파라미터, 퍼센트와 '—', 날짜 열과 합계).
 
