@@ -234,17 +234,26 @@ function splitTwo(text) {
   const b = (cut > 0 ? gl.slice(cut + 1) : gl.slice(Math.ceil(mid))).join('').trim();
   return a && b ? [a, b] : [text];
 }
+const WIDE_MAX = 0.7, WIDE_MIN = 0.35;
+/** Grows a one-line main line until it spans WIDE_MIN of the canvas width W (never past cap; the height fit still applies). */
+function wideGrow(g, text, s, ew, W, cap) {
+  g.font = `800 ${Math.round(s)}px ${SANS}`;
+  const w = g.measureText(text).width + ew(s);
+  return w > 0 && w < W * WIDE_MIN ? Math.max(s, Math.min(cap, s * (W * WIDE_MIN) / w)) : s;
+}
 /** The board's text block, left-aligned in [top, bot]: the main line (one or two lines, whichever reads larger) in Pretendard
  *  800 with the player's emoji in front, then line 2 and line 3 in 700. Everything is fitted and scaled to the room. */
 function textBlock(g, o) {
   const { k, x0, maxW } = o;
   const avail = Math.max(8, o.bot - o.top);
   const ew = (s) => (o.emo ? s * 1.16 : 0);
+  // Main-tower boards (o.wide): a main line ends by WIDE_MAX of the canvas width, and a one-line one spans at least WIDE_MIN.
+  const lineW = o.wide ? Math.min(maxW, o.W * WIDE_MAX - x0) : maxW;
   const fitE = (t, cap, min) => {
     let s = cap;
     for (;;) {
       g.font = `800 ${Math.round(s)}px ${SANS}`;
-      if (g.measureText(t).width + ew(s) <= maxW || s <= min) return s;
+      if (g.measureText(t).width + ew(s) <= lineW || s <= min) return s;
       s = Math.max(min, s * 0.92);
     }
   };
@@ -258,10 +267,11 @@ function textBlock(g, o) {
   if (o.l1) {
     const two = splitTwo(o.l1);
     if (two.length === 2) {
-      const sa = Math.min(fitE(two[0], 120 * k, 36 * k), fit(g, two[1], maxW, 120 * k, 800, SANS, 36 * k));
+      const sa = Math.min(fitE(two[0], 120 * k, 36 * k), fit(g, two[1], lineW, 120 * k, 800, SANS, 36 * k));
       if (eff(2, sa) > eff(1, s1) * 1.12) { main = two; s1 = sa; }
     }
   }
+  if (o.wide && main.length === 1) s1 = wideGrow(g, main[0], s1, ew, o.W, 230 * k);
   const total = main.length * s1 * LH + rest;
   const f = total > avail ? avail / total : 1;
   s1 *= f; s2 *= f; s3 *= f;
@@ -446,7 +456,8 @@ export function paintBillboard(canvas, data = {}, opts = {}) {
       if (!l1) { l1 = l2; l2 = l3; l3 = ''; }
       const emo = vacant ? '' : chars(data.emoji || '🔥', 4) || '🔥';
       textBlock(g, {
-        k, x0: pad, maxW: W - pad * 2, top: Math.max(chipY + 8 * k, 96 * k), bot: body - 86 * k, l1, l2, l3, emo,
+        k, W, x0: pad, maxW: W - pad * 2, top: Math.max(chipY + 8 * k, 96 * k), bot: body - 86 * k, l1, l2, l3, emo,
+        wide: tierOf(data.slot_id) === 'S',
         c1: vacant ? WHITE : ink, c2: vacant ? TEXT2 : mixHex(ink, TEXT2, 0.5), c3: vacant ? AMBER : MUTED,
       });
     }
@@ -1597,7 +1608,7 @@ export function sameWishes(a, b) {
 }
 
 /** Wish card on a billboard canvas. data: {id, nick, txt, hearts}. opts.chip: label chip text, opts.strip: bottom claim
- *  cue, opts.dark: owner's light is out. The same calm panel as every board: amber chip, the wish in large white type,
+ *  cue, opts.dark: owner's light is out, opts.wide: a main-tower board (a line spans 35–70% of the width). The same calm panel as every board: amber chip, the wish in large white type,
  *  nickname and a drawn heart below, so forty of them sit quietly next to the live ads. */
 export function paintWish(canvas, data = {}, opts = {}) {
   const g = canvas.getContext('2d');
@@ -1614,8 +1625,10 @@ export function paintWish(canvas, data = {}, opts = {}) {
 
   const lines = wishLines(data.txt);
   const top = Math.max(30 * k + ch + 18 * k, 96 * k), bottom = body - 86 * k, avail = bottom - top, maxW = W - pad * 2;
+  const lineW = opts.wide ? Math.min(maxW, W * WIDE_MAX - pad) : maxW;
   let size = lines.length > 1 ? 120 * k : 150 * k;
-  for (const line of lines) size = Math.min(size, fit(g, line, maxW, size, 800, SANS, 30 * k));
+  for (const line of lines) size = Math.min(size, fit(g, line, lineW, size, 800, SANS, 30 * k));
+  if (opts.wide && lines.length === 1) size = wideGrow(g, lines[0], size, () => 0, W, 230 * k);
   size = Math.round(Math.min(size, avail / (lines.length > 1 ? 2.28 : 1.14)));
   const lh = size * 1.14;
   let y = top + avail / 2 - (lines.length - 1) * lh / 2;

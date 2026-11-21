@@ -9,6 +9,8 @@ import { auctionClosed } from '../balance.js';
 import { nowMs, kingCovers } from '../live.js';
 
 export const screenTime = { value: 0 };
+// Highest linear luminance a screen pixel may reach (see screenMaterial): just under the default bloom threshold.
+const SCREEN_CAP = 0.92;
 
 /** Unlit LED material: dot-matrix pixels up close and a faint light sweep on the nearest boards (no rim chase, grid,
  *  wave or flicker: the artwork carries the board). */
@@ -35,10 +37,14 @@ export function screenMaterial(map, { gain = 1.6, grid = [208, 117], led = 1, sw
   float s = fract(tt * 0.05 + vMapUv.x * 0.5 - vMapUv.y * 0.28);
   float band = smoothstep(0.0, 0.04, s) * (1.0 - smoothstep(0.04, 0.12, s));
   diffuseColor.rgb += band * 0.06 * uSweep * (0.4 + diffuseColor.rgb);
+  // Luminance ceiling: the bloom high-pass reads this linear colour before tone mapping (threshold 1.08 - 0.28 * glow,
+  // 0.954 at the default glow 0.45). White text and emoji highlights stop at SCREEN_CAP, which NeutralToneMapping at
+  // exposure 0.95 shows as about 0.915 (sRGB), so board type stays crisp. Coloured ink sits far below and keeps its gain.
+  diffuseColor.rgb *= min(1.0, ${SCREEN_CAP.toFixed(3)} / max(luminance(diffuseColor.rgb), 1e-4));
 }
 #endif`);
   };
-  m.customProgramCacheKey = () => 'kts-led-screen';
+  m.customProgramCacheKey = () => 'kts-led-screen-cap';
   return m;
 }
 
@@ -231,7 +237,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   // The card replaces only the artwork; b.data (the notice), decals and the click target stay as they are.
   function paintCard(b) {
     b.wishMsg = wishStrip(b.slotId, b.row, towerOpen);
-    paintWish(b.canvas, b.wish, { strip: b.wishMsg, dark: !!b.row?.holder_id });
+    paintWish(b.canvas, b.wish, { strip: b.wishMsg, dark: !!b.row?.holder_id, wide: b.tier === 'S' });
     b.wishFontOk = wishFontsOk.has(fontKey(b.wish));
     remember(b.canvas);
     applyOverlay(b);
