@@ -5323,6 +5323,8 @@ export function createUI(root, hooks) {
   }
   // 회원 탈퇴: its own step. It lists what goes (worker.js /rt/auth/withdraw, forgetActor and schema.sql withdraw_account), 취소 is the
   // big button and goes back to settings, and 탈퇴하기 works only after the word 탈퇴 was typed.
+  // The login itself is deleted only when the database has forget_login (hooks.forgetLogin, asked as the sheet opens). Until that is
+  // known, and whenever it is not there, the login is not in the list: a note says the operator removes it.
   const WITHDRAW_WORD = '탈퇴';
   function openWithdraw() {
     openSheet('회원 탈퇴', null, (host) => {
@@ -5332,6 +5334,11 @@ export function createUI(root, hooks) {
       const cancel = h('button', { class: 'btn gold cta', type: 'button', text: '취소', onclick: () => openSettings() });
       const err = h('p', { class: 'note login-err', role: 'alert', hidden: true });
       const typed = () => word.value.trim() === WITHDRAW_WORD;
+      const loginItem = h('li', { text: '계정 자체 (로그인 정보)' });
+      const loginNote = h('p', { class: 'note', text: '로그인 정보(이메일·소셜 로그인 식별자)는 자동으로 지워지지 않아요. 탈퇴 뒤 운영자가 지웁니다.' });
+      const showLogin = (deleted) => { loginItem.hidden = !deleted; loginNote.hidden = !!deleted; };
+      showLogin(hooks.forgetKnown?.() === true);
+      Promise.resolve().then(() => hooks.forgetLogin?.()).then((yes) => { if (sheet === me) showLogin(yes === true); }).catch(() => {});
       word.addEventListener('input', () => { go.disabled = !typed(); });
       go.addEventListener('click', async () => {
         if (!typed()) return;
@@ -5351,13 +5358,14 @@ export function createUI(root, hooks) {
       host.append(
         h('div', { class: 'callout', style: { marginTop: 0 } }, h('b', { class: 'gone-warn', text: '탈퇴하면 아래가 모두 지워지고, 되돌릴 수 없어요.' })),
         h('ul', { class: 'gone-list' },
-          h('li', { text: '계정 자체 (로그인 정보)' }),
+          loginItem,
           h('li', { text: '지갑 연결과 코인, VIP 티켓' }),
           h('li', { text: '내 전광판과 토지 (건물은 빈 땅으로 돌아가요), 올린 사진' }),
           h('li', { text: '내 소원, 내가 준 하트와 신고' }),
           h('li', { text: '알림 구독' }),
           h('li', { text: '주간 리그 기록, 전광판 리포트, 초대 코드' }),
         ),
+        loginNote,
         h('p', { class: 'note', text: '다른 사람의 데이터는 지우지 않아요. 이 기기는 새 손님으로 이어집니다.' }),
         cancel,
         h('div', { class: 'field' }, h('label', null, `정말 탈퇴하려면 아래 칸에 ${WITHDRAW_WORD} 라고 입력하세요`), word),

@@ -432,6 +432,10 @@ describe('SQL in PGlite', { skip: PGlite ? false : 'PGlite not installed (see th
     assert.equal((await claimIn(old, 'guest:o', 'STREET_8')).ok, true);
     await assert.rejects(old.query('SELECT public.starter_slot_list($1)', [KEY]));
     assert.deepEqual(await status(old), { 1: true, 2: true, 3: true, 4: true });
+    // The later migration adds forget_login (test/forget-login.test.mjs runs it for real). PGlite has no auth.users, so its own check reports that
+    // the function exists but cannot delete: not applied.
+    const forget = (await old.exec(read('migrations/2026-11-22-forget-login.sql'))).at(-1).rows;
+    assert.equal(forget.length, 1); assert.equal(forget[0].applied, false); assert.match(forget[0].note, /함수는 있지만 지우지 못합니다/);
     const neu = await fresh(read('schema.sql'));
     const [a, b] = [await shape(old), await shape(neu)];
     assert.deepEqual(a.cols, b.cols);

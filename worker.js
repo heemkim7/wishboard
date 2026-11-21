@@ -83,7 +83,7 @@ export async function resolveActor(env, token) {
   try {
     const t = String(token || ''); if (!t) return null;
     if (t.startsWith('g1.')) { const G = await guestVerify(env, t); return G ? { id: 'guest:' + G.s, sub: G.s, guest: true, anon: true } : null; }
-    const P = await verifyJwt(t); if (!P?.sub) return null; return { id: 'user:' + P.sub, sub: P.sub, guest: false, anon: !!P.is_anonymous };
+    const P = await verifyJwt(t); if (!P?.sub) return null; return { id: 'user:' + P.sub, sub: P.sub, guest: false, anon: !!P.is_anonymous, email: typeof P.email === 'string' ? P.email.trim().toLowerCase().slice(0, 320) : '' };
   } catch { return null; }
 }
 const FLUSH_N = 20, FLUSH_MS = 30000;
@@ -332,12 +332,14 @@ export class Meter extends DurableObject {
     const g = String(guest || '').slice(0, 80), m = Math.floor(Number(moved)), c = Math.floor(Number(cap)); if (!g || !(m > 0) || !(c > 0)) return 0;
     const had = Number(q.exec('select v from stp where g = ?', g).toArray()[0]?.v) || 0, s = Math.min(m, Math.max(0, c - had));
     if (s > 0) q.exec('insert into stp(g, v) values(?, ?) on conflict(g) do update set v = excluded.v', g, had + s); return s; }
-  // gone: accounts that withdrew, by a keyed hash of the id (goneKey), kept for good. A withdrawal deletes the wallet row and its link_bonus, so
-  // the next link of the same id is paid the link reward again; the mark is how the Worker knows that link is not a first one.
-  goneSet(h) { this.stInit(); const k = String(h || '').slice(0, 64); if (!k) return false; this.ctx.storage.sql.exec('insert or ignore into gone(h, at) values(?, ?)', k, Date.now()); return true; }
+  // gone: accounts that withdrew, by keyed hashes (goneKeys: one of the id, one of the e-mail), kept for good. A withdrawal deletes the wallet row
+  // and its link_bonus, and with forget_login the login too, so the next link of the same id, or of a new id made with the same e-mail, is paid the
+  // link reward again; a mark is how the Worker knows that link is not a first one. h: one hash or a list.
+  goneList(h) { return [...new Set((Array.isArray(h) ? h : [h]).map(x => String(x || '').slice(0, 64)).filter(Boolean))].slice(0, 4); }
+  goneSet(h) { this.stInit(); const ks = this.goneList(h); for (const k of ks) this.ctx.storage.sql.exec('insert or ignore into gone(h, at) values(?, ?)', k, Date.now()); return ks.length > 0; }
   // For the link the reward was paid on (see takeBack), in one call. No mark: a real first link, the guest's whole starter is counted as gone with it
   // (even when nothing moved yet, so coins that reach its row later are its earnings). A mark: a later link, part = how much of `moved` is starter.
-  stFirst(guest, moved, cap, h) { this.stInit(); const k = String(h || '').slice(0, 64), gone = !!k && !!this.ctx.storage.sql.exec('select 1 from gone where h = ?', k).toArray()[0];
+  stFirst(guest, moved, cap, h) { this.stInit(); const gone = this.goneList(h).some(k => !!this.ctx.storage.sql.exec('select 1 from gone where h = ?', k).toArray()[0]); // any one mark is enough
     if (gone) return { gone: true, part: this.stTake(guest, moved, cap) }; this.stTake(guest, cap, cap); return { gone: false, part: 0 }; }
   // Leases (instance 'acct', see sendHold / linkHold), each running out by itself. shl: one coin send (or pledge) at a time per account, -> its
   // `until`, the token sellDone needs, or false while a send or a link of that account is under way. lkl: account links that are moving coins;
@@ -2773,8 +2775,9 @@ async function fileReport(req, env) {
 // moves, as before), moved = what this very call moved (0 for a replay and for the loser of two calls at once). On every later link the first
 // STARTER_COINS a guest ever moves are taken back out of the account and what it earned on top stays. Meter.stTake counts them per guest, so coins
 // that reach an already linked guest later (a late room flush) are its earnings. An answer without a numeric `moved` leaves the link as it was.
-// A first link counts the guest's whole starter as gone even when nothing moved yet (stFirst). An account that withdrew is remembered (goneKey,
-// Meter.goneSet): its wallet row and link_bonus are deleted, so the database pays the link reward again on its next link, but that link is not a
+// A first link counts the guest's whole starter as gone even when nothing moved yet (stFirst). An account that withdrew is remembered (goneKeys,
+// Meter.goneSet: by its id and by its e-mail): its wallet row and link_bonus are deleted, and its login too once forget_login is installed, so the
+// database pays the link reward again on its next link, or on the first link of a new id made with the same e-mail, but that link is not a
 // first one. The reward and the guest's starter are both taken back, and only what the guest earned stays. Budget hard: no 'acct' call, so no mark
 // is written or read and such a link passes as a first one.
 // While a link that will move coins is under way the account's own coin sends wait (linkHold), so they cannot empty the wallet before the take-back.
@@ -2794,6 +2797,22 @@ async function takeBack(env, uid, n) {
 // The mark of a withdrawn account: a keyed hash, so the 'acct' instance never holds the id of someone who left.
 async function goneKey(env, uid) { const dig = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('gone:' + uid + String(env.GUEST_KEY || ''))));
   let hex = ''; for (const b of dig) hex += b.toString(16).padStart(2, '0'); return hex.slice(0, 32); }
+// Both marks of an account: its id, and the e-mail in its verified token (none without one). Once forget_login has deleted the login, signing up
+// again with the same Google account or e-mail gives a new id; the e-mail mark is what that new id still matches. Never stored raw.
+async function goneKeys(env, actor) { const ks = [await goneKey(env, actor.id)]; if (actor.email) ks.push(await goneKey(env, 'mail:' + actor.email)); return ks; }
+// Does the database have forget_login (migrations/2026-11-22-forget-login.sql)? One probe with an id the function refuses: 200 when it is there and
+// the Worker key is right, 404 before the migration. Per isolate: a yes for good, a no (or a probe that failed or took over 1.5 s) for 10 minutes.
+// No Durable Object call. The withdrawal's own call updates it too.
+let FORGET_C = { yes: false, at: 0, p: null };
+const forgetSeen = (yes) => { if (!FORGET_C.yes) FORGET_C = { yes: !!yes, at: Date.now(), p: null }; };
+export function forgetProbe(env) {
+  if (FORGET_C.yes) return Promise.resolve(true);
+  if (FORGET_C.at && !stale(FORGET_C.at, 600000)) return Promise.resolve(false);
+  if (FORGET_C.p) return FORGET_C.p;
+  const ask = supabaseRpc('forget_login', { p_key: env.FLUSH_KEY || '', p_actor_id: 'probe' }).then((r) => r.ok && !!r.data && r.data.ok === false, () => false);
+  let timer; const late = new Promise((res) => { timer = setTimeout(res, 1500, false); });
+  return FORGET_C.p = Promise.race([ask, late]).then((yes) => { clearTimeout(timer); FORGET_C.p = null; forgetSeen(yes); return FORGET_C.yes; });
+}
 // The two wallet rows a link touches, in one read. -> { g: the guest's coins (0: no row), paid: the account already has its link reward }, or null
 // when they cannot be read.
 async function linkAhead(guestId, userId) {
@@ -2807,7 +2826,10 @@ async function accountApi(req, env, ctx, u) {
     const kakao = String(env.KAKAO_JS_KEY || '').trim(); // a public JavaScript key (not a secret); the share button exists only when it is set
     // On every visitor's boot path: never wait for Supabase. A stale list (or the old four, a subset) is safe; refresh behind the response.
     if (Date.now() - STARTER_C.at >= STARTER_C.ttl) ctx?.waitUntil?.(starterSlots(env));
-    return J({ ...(/^[\w-]{16,80}$/.test(kakao) ? { url: SUPA, key: ANON, kakao, starter: STARTER_C.list } : { url: SUPA, key: ANON, starter: STARTER_C.list }), ...(inviteOn(env) ? { invite: true } : {}) }); // invite: the master switch INVITE_ON
+    // forget: a withdrawal also deletes the login (forget_login is installed). The boot path gets what this isolate already knows and asks behind
+    // the response; the withdrawal sheet asks with ?forget=1 and waits for the probe (1.5 s at most), so it never promises more than will happen.
+    const asked = forgetProbe(env); if (u.searchParams.get('forget') === '1') await asked; else ctx?.waitUntil?.(asked);
+    return J({ ...(/^[\w-]{16,80}$/.test(kakao) ? { url: SUPA, key: ANON, kakao, starter: STARTER_C.list } : { url: SUPA, key: ANON, starter: STARTER_C.list }), ...(inviteOn(env) ? { invite: true } : {}), ...(FORGET_C.yes ? { forget: true } : {}) }); // invite: the master switch INVITE_ON
   }
   if (u.pathname === '/rt/event') {
     if (req.method !== 'POST') return J({ err: 'post' }, 405);
@@ -2832,15 +2854,23 @@ async function accountApi(req, env, ctx, u) {
     const rpc = await supabaseRpc('withdraw_account', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id });
     const data = rpc.data || {};
     if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || '탈퇴를 처리하지 못했습니다.' }, rpc.ok ? 400 : 502);
-    // The wallet row and its link_bonus are gone now: remember that this id has had its link reward (see takeBack). Not at budget hard.
-    const mark = (async () => { if (!(await budgetHard(env))) await acct(env).goneSet(await goneKey(env, actor.id)); })().catch(() => { }); ctx.waitUntil(mark); await mark;
-    try { await fetch(SUPA + '/auth/v1/user', { method: 'DELETE', headers: { apikey: ANON, Authorization: 'Bearer ' + tokenOf(req) } }); } catch { }
+    // The wallet row and its link_bonus are gone now: remember that this account has had its link reward (see takeBack). Not at budget hard.
+    // Then the login itself: forget_login deletes the auth.users row (it refuses while a wallet row exists, so it can only finish a withdrawal).
+    // Supabase Auth has no route for a user to delete itself. Before the migration the function is missing (404): the withdrawal still stands
+    // and the answer says the login was kept, as it does when the function refuses, fails, or finds no row. Kept running if the client goes away.
+    const rest = (async () => {
+      try { if (!(await budgetHard(env))) await acct(env).goneSet(await goneKeys(env, actor)); } catch { /* the withdrawal itself is done */ }
+      const f = await supabaseRpc('forget_login', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id }).catch(() => ({ ok: false, status: 0, data: { message: 'no answer' } }));
+      if (f.status === 404) forgetSeen(false); else if (f.ok && f.data && typeof f.data.ok === 'boolean') forgetSeen(true);
+      if (f.ok && f.data?.ok === true && Number(f.data.deleted) >= 1) return 'deleted';
+      console.warn('forget_login', f.status, 'login kept:', String(f.data?.error || f.data?.message || (f.ok ? 'deleted ' + (Number(f.data?.deleted) || 0) : '')).slice(0, 200)); return 'kept';
+    })().catch(() => 'kept'); ctx.waitUntil(rest); const login = await rest;
     try { await invalidateWorld(env, ctx); } catch { }
     // What the Worker keeps outside Supabase goes too (see forgetActor), before the rooms are told, so their refetch no longer shows the wish.
     const gone = forgetActor(env, actor.id).catch(() => { }); ctx.waitUntil(gone);
     // The account's boards and plots were cleared in bulk: tell every room so connected clients refetch the world.
     ctx.waitUntil(gone.then(() => Promise.all(PLAZA_TOPICS.map(async t => { try { await env.ROOM.get(env.ROOM.idFromName(t)).fetch(new Request('https://room.internal/world', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"t":"WORLD_UPDATE"}' })); } catch { } }))));
-    return J({ ok: true });
+    return J({ ok: true, login }); // login: 'deleted' | 'kept'
   }
   const b = await readJson(req);
   const sub = parseGuestHandover(b?.guest_id);
@@ -2863,7 +2893,7 @@ async function accountApi(req, env, ctx, u) {
     const moved = typeof data.moved === 'number' ? Math.max(0, Math.floor(data.moved)) : 0, bonus = Math.max(0, Math.floor(Number(data.bonus)) || 0); // no numeric moved: the function does not say, nothing counts as starter
     if (!moved && !bonus) return { rpc, data, back: 0, again: false };
     const hard = await budgetHard(env); let part = bonus ? 0 : Math.min(moved, STARTER_COINS), again = false; // again: the reward was paid to an id that withdrew before
-    if (!hard) { try { if (bonus) { const f = await acct(env).stFirst(guestId, moved, STARTER_COINS, await goneKey(env, actor.id)); again = f?.gone === true; part = again ? Number(f.part) || 0 : 0; }
+    if (!hard) { try { if (bonus) { const f = await acct(env).stFirst(guestId, moved, STARTER_COINS, await goneKeys(env, actor)); again = f?.gone === true; part = again ? Number(f.part) || 0 : 0; }
         else part = Number(await acct(env).stTake(guestId, moved, STARTER_COINS)) || 0; } catch { /* as at hard */ } }
     return { rpc, data, again, back: await takeBack(env, actor.id, part + (again ? bonus : 0)).catch(() => 0) };
   })().finally(() => (free ? free() : null));
