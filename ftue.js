@@ -312,12 +312,34 @@ export function seenAdd(seen, ids, cap = 60) {
   return out.slice(-cap);
 }
 
+// The walk to the free slot ends at its waypoint. `at` is the waypoint the world says was reached (not one cleared by
+// hand), `free` the slot the tutorial pointed at. 'open' = open the claim wizard for it; 'park' = reached in a taxi,
+// so say to get out; '' = not this waypoint, the slot was taken meanwhile, the starter is used, or the screen is busy.
+export function walkArrival({ at, free, taken, starterOk = true, busy = false } = {}) {
+  if (!free?.id || !at || !Number.isFinite(at.x) || !Number.isFinite(at.z)) return '';
+  if (Math.hypot(at.x - free.x, at.z - free.z) > 1) return '';
+  if (taken || !starterOk || busy) return '';
+  return at.driving ? 'park' : 'open';
+}
+
 export function startFtue(ctx) {
   const { ui, world, balance, touch } = ctx;
   ui.setNextLine?.('붕어빵 포차로 가 보세요');
   world.setWaypoint?.(balance ? { x: 21, z: 118 } : { x: 21, z: 118 });
   let here = false;
+  let free = null; // the free slot the last waypoint points at: { id, x, z }
   return {
+    // main.js passes the world's "waypoint reached" here. At the free slot the claim wizard opens by itself.
+    onWaypoint(at) {
+      const goal = ui.nextGoal?.() || null;
+      const act = walkArrival({ at, free, taken: !!world.boardView?.(free?.id)?.holder_id, starterOk: !goal || !!goal.free, busy: !!ui.isBusy?.() });
+      if (!act) return '';
+      const id = free.id;
+      free = null;
+      if (act === 'open') ui.openClaimStep?.(1, claimWizard(id));
+      else ui.note?.('무료 칸 앞이에요. 택시에서 내린 뒤 E를 누르면 걸 수 있어요', 'ok');
+      return act;
+    },
     onArrive() {
       if (here) return;
       here = true;
@@ -331,6 +353,7 @@ export function startFtue(ctx) {
       const id = starterOk ? BALANCE.starterSlots.find((slot) => !world.boardView?.(slot)?.holder_id) : '';
       const card = id ? world.slotCard?.(id) : null;
       if (card && Number.isFinite(card.x) && Number.isFinite(card.z)) {
+        free = { id, x: card.x, z: card.z };
         world.setWaypoint?.({ x: card.x, z: card.z });
         ui.setNextLine?.('하늘색 기둥을 따라 무료 칸으로 가세요');
         return;

@@ -16,7 +16,11 @@ describe('phase 0 contracts', () => {
     assert.match(ui, /function payDue\(/);
     assert.match(ui, /function pumpLink\(/);
     assert.match(ui, /sponsorEl\.hidden && !hooks\.cineOn\?\.\(\)/);
-    assert.match(world, /startLounge\(\) \{[\s\S]*api\.teleport\(-21, -112\)/);
+    // 멍때리기 no longer moves the avatar (it used to teleport to -21, -112): only the camera tours the boards.
+    const lounge = world.slice(world.indexOf('startLounge() {'), world.indexOf('stopLounge() {'));
+    assert.ok(lounge.length > 0);
+    assert.equal(/teleport\(/.test(lounge), false);
+    assert.match(world, /function tourNext\(\)/);
     assert.match(world, /teleport\(x, z\)/);
     const load = ui.slice(ui.indexOf('function loadDay'), ui.indexOf('function payDue'));
     assert.match(load, /fare:/);

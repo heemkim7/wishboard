@@ -27,6 +27,7 @@ import { createAvatars, EMOTES, REACTIONS, AVATAR_COLORS, speciesId } from './ts
 import { seesAvatar, prefetchDelay } from './ts3d/loadplan.js?v=202611211159';
 import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, paintLabel, fontsReady, chars, hashStr } from './ts3d/art.js?v=202611211159';
 import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=202611211159';
+import { RETURN_MS, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, portraitFov, fitDistance, reverseTime, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone } from './camrig.js?v=202611211159';
 
 export { paintBillboard, THEMES, LAYOUT, PLOT_SLOTS, groundHeight, EMOTES, AVATAR_COLORS, taxiTrainMult, applyTaxiHardHit };
 export const PLAZA = LAYOUT;
@@ -332,6 +333,13 @@ void main(){
   let cine = null, boostHeld = false, boostSnd = 0;
   let lounge = false, loungeI = 0, loungeAt = 0, hopped = 0, hiveAt = 0, hiveHint = false, shake = 0;
   let watchPortrait = false;
+  // Scripted cameras (focus, lounge tour, intro) never write camWant: the orbit keeps running underneath, homePos / homeLook
+  // are its pose this frame, and every ending eases back to it (endCine). hidMe: frameBillboard hid my avatar, which is
+  // not the same thing as sitting in a taxi.
+  const homePos = camera.position.clone(), homeLook = follow.clone(), viewLook = follow.clone();
+  let hidMe = false, clipDist = Infinity, reverseT = 0, lastEmote = -1e9, stuntAt = -1e9, ringDim = false, boardAt = 0, boardNear = null;
+  // The world has one free-form line to the HUD: onInteract('notice', null, { text, tone }).
+  const tell = (text, tone = '', extra = null) => opts.onInteract?.('notice', null, { text, tone, ...extra });
 
   // ---- input ----------------------------------------------------------------------------
   const keys = new Set();
@@ -339,7 +347,7 @@ void main(){
   let lastNearKey = '', near = null, lastJump = 0;
   window.addEventListener('keydown', (e) => {
     if (isTyping(e)) return;
-    if (e.code === 'Escape') { clearCine(); return; }
+    if (e.code === 'Escape') { endCine(true); return; }
     if (MOVE_CODES.has(e.code)) {
       keys.add(e.code);
       if (e.code.startsWith('Arrow')) e.preventDefault();
@@ -361,29 +369,45 @@ void main(){
   ray.layers.enableAll();
   const ndc = new THREE.Vector2();
   let down = null, hoverAt = 0;
+  const pickPoint = new THREE.Vector3();
   const pickAt = (ev) => {
     const r = canvas.getBoundingClientRect();
     ndc.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
     ray.setFromCamera(ndc, camera);
     ray.far = 260;
     const hit = ray.intersectObjects(pick, false).find(h => h.object.userData.pick);
+    if (hit) pickPoint.copy(hit.point);
     return hit ? hit.object.userData.pick : null;
   };
   canvas.addEventListener('pointerdown', (ev) => {
-    if (cine?.locked && me.root.visible) clearCine();
-    down = { x: ev.clientX, y: ev.clientY, t: performance.now() }; canvas.style.cursor = 'grabbing';
+    // A touch that ends a scripted camera is spent on that: it does not also pick what is under it (see pointerup).
+    const cut = !!(cine && !cine.back && !cine.pin);
+    if (cut) endCine();
+    down = { x: ev.clientX, y: ev.clientY, t: performance.now(), cut }; canvas.style.cursor = 'grabbing';
   }, { signal });
   canvas.addEventListener('pointerup', (ev) => {
     canvas.style.cursor = 'grab';
     if (!down) return;
     const moved = Math.hypot(ev.clientX - down.x, ev.clientY - down.y);
     const quick = performance.now() - down.t < 450;
+    const cut = down.cut;
     down = null;
-    if (moved > 7 || !quick || !inputEnabled) return;
+    if (moved > 7 || !quick || !inputEnabled || cut) return;
+    // During the photo countdown (ui.js countShot) a tap is part of posing, not a pick.
+    if (document.body.classList.contains('posing')) return;
     const info = pickAt(ev);
     if (!info) return;
-    if (info.kind === 'billboard') opts.onBillboard?.(info.slotId);
+    // Far boards (and any board from a taxi) get a small card instead of a sheet; a far ATM gets a waypoint.
+    const dist = pickPoint.distanceTo(tmp.set(pos.x, pos.y + 1, pos.z));
+    const route = tapRoute({ kind: info.kind, dist, driving: !!drive, near: near?.kind === info.kind });
+    if (info.kind === 'billboard') {
+      if (route === 'card') {
+        const bp = boardPrompt({ board: boards.get(info.slotId)?.data, me: opts.actorId?.() || '', name: slotName(info.slotId) });
+        opts.onInteract?.('board-far', info.slotId, { clicked: true, dist, driving: !!drive, state: bp.state, who: bp.who });
+      } else opts.onBillboard?.(info.slotId);
+    }
     else if (info.kind === 'plot') opts.onPlot?.(info.plotId);
+    else if (info.kind === 'atm' && route === 'waypoint') opts.onInteract?.('atm', null, { clicked: true, near: false, far: true, at: { x: LAYOUT.atm.x, z: LAYOUT.atm.z } });
     else opts.onInteract?.(info.kind, null, { clicked: true, near: near?.kind === info.kind });
   }, { signal });
   canvas.addEventListener('pointermove', (ev) => {
@@ -465,8 +489,10 @@ void main(){
     flash.position.copy(at);
     flash.userData.max = 7 * power;
     scene.add(pts, flash);
-    fireworks.push({ pts, flash, v, age: 0, life: 2.4 });
-    while (fireworks.length > 14) dropFirework(0);
+    fireworks.push({ pts, flash, v, age: 0, life: 2.4, fadeAt: -1 });
+    // Over the cap the oldest fades out over a third of a second; only a runaway pile is cut outright.
+    fadeOldest(fireworks, FIREWORK.cap);
+    while (fireworks.length > FIREWORK.hard) dropFirework(0);
   }
   const rockets = [];
   function launch(x, z, y1, hex, delay = 0) {
@@ -586,6 +612,10 @@ void main(){
   function playEmote(id, send = true) {
     const e = EMOTES[id];
     if (!e || drive) return false;
+    // One cooldown for all four: a held key or a mashed button is one emote (and one room message, one rocket) per 0.7 s.
+    const at = performance.now();
+    if (!cooldownOk(at, lastEmote, EMOTE_GAP_MS)) return false;
+    lastEmote = at;
     me.emote(e.anim, e.hold);
     me.say(e.glyph);
     if (id === 2) launch(pos.x, pos.z, pos.y + 9, PALETTE[(Math.random() * PALETTE.length) | 0], 0.25);
@@ -661,8 +691,7 @@ void main(){
     eye = EYE;
     follow.set(pos.x, pos.y + eye, pos.z);
     rescaleOrbit(8.5);
-    camera.fov = baseFov;
-    camera.updateProjectionMatrix();
+    // The driving FOV eases back in step() (fovGoal); nothing snaps here.
     clearRide();
     netState.equip = '';
     opts.onDrive?.(false);
@@ -1115,7 +1144,8 @@ void main(){
   }
 
   function stepWalk(dt, input) {
-    camera.getWorldDirection(fwd);
+    // While a scripted camera runs (or eases back) the stick is read against the orbit the player will return to.
+    if (cine) fwd.subVectors(homeLook, homePos); else camera.getWorldDirection(fwd);
     fwd.y = 0;
     if (fwd.lengthSq() < 1e-6) fwd.set(0, 0, -1);
     fwd.normalize();
@@ -1200,12 +1230,12 @@ void main(){
     pos.set(d.x, d.y, d.z);
     yaw = d.yaw;
     animSpeed = Math.abs(d.v);
-    const fov = baseFov + clamp(Math.abs(d.v) / 30, 0, 1) * 10;
-    if (Math.abs(camera.fov - fov) > 0.05) { camera.fov += (fov - camera.fov) * (1 - Math.exp(-dt * 4)); camera.updateProjectionMatrix(); }
     updateJob(t);
   }
 
-  function slotPose(slotId, dist) {
+  // `level`: camera at the board's own height (the straight-on photo frame) instead of the low street view.
+  // `clear`: a scripted camera will sit at `cam`, so pull it in when a building stands between it and the board.
+  function slotPose(slotId, dist, clear = false, level = false) {
     const p = boards.worldPos(slotId);
     if (!p) return null;
     const screen = boards.get(slotId)?.mounts[0]?.screen;
@@ -1216,13 +1246,46 @@ void main(){
     if (f.lengthSq() < 1e-4) f.set(0, 0, 1);
     f.normalize();
     const look = p.clone();
-    const cam = p.clone().addScaledVector(f, dist);
-    cam.y = Math.max(look.y * 0.42 + 1.8, groundHeight(cam.x, cam.z) + 1.6);
+    const cam = new THREE.Vector3();
+    const place = (d) => {
+      cam.copy(p).addScaledVector(f, d);
+      if (!level) cam.y = Math.max(look.y * 0.42 + 1.8, groundHeight(cam.x, cam.z) + 1.6);
+    };
+    place(dist);
+    if (clear && nyc && dist > 2.5) {
+      // Walls are only loaded around the player; load the ones around this board (as taxiCanSit does) before testing.
+      // The ray starts 2.5 m out so the board's own wall never counts.
+      nyc.ensureSolid(p.x, p.z, 60);
+      const sx = p.x + f.x * 2.5, sz = p.z + f.z * 2.5, sy = look.y + (cam.y - look.y) * (2.5 / dist);
+      const fit = shortenFocus(dist, nyc.rayBlock(sx, sy, sz, cam.x, cam.y, cam.z));
+      if (fit < dist) place(fit);
+    }
     return { look, cam, front: { x: p.x + f.x * 9, z: p.z + f.z * 9 }, board: boards.get(slotId)?.data || null, slot: slotId };
   }
   const AD_IDS = ['MAIN_TOP', 'MAIN_MID', 'MAIN_BOT', 'SUB_1A', 'SUB_1B', 'SUB_2A', 'SUB_2B', 'SUB_3A', 'SUB_3B', 'SUB_4A', 'SUB_4B'];
   for (let i = 1; i <= 30; i++) AD_IDS.push('STREET_' + i);
   for (let i = 1; i <= 18; i++) AD_IDS.push('PLOT_' + i);
+  // Every claimable board, for the proximity prompt. A board that is not on the map yet is simply not a candidate;
+  // front points are cached per mount (a lot's board is mounted again when the lot levels up).
+  const BOARD_IDS = ['MAIN_LOW', 'MAIN_UP', ...AD_IDS];
+  const frontCache = new Map(), frontList = [];
+  function nearBoard() {
+    frontList.length = 0;
+    for (const id of BOARD_IDS) {
+      const m = boards.get(id)?.mounts[0] || null;
+      let c = frontCache.get(id);
+      if (!c || c.m !== m) {
+        const pose = m ? slotPose(id, 9) : null;
+        c = { m, f: pose ? { id, x: pose.front.x, z: pose.front.z, y: pose.look.y } : null };
+        frontCache.set(id, c);
+      }
+      if (c.f) frontList.push(c.f);
+    }
+    const hit = pickNearBoard(pos.x, pos.z, frontList);
+    if (!hit) return null;
+    const bp = boardPrompt({ board: boards.get(hit.id)?.data, me: opts.actorId?.() || '', name: slotName(hit.id) });
+    return { kind: 'board', id: hit.id, s: bp.state, who: bp.who, p: bp.p };
+  }
   const crown = new THREE.Group();
   const beam = new THREE.Mesh(crossBeamGeo(BEAM_W, 90), beamMat('#ffe8c0', 0.2));
   beam.position.y = 3;
@@ -1265,7 +1328,10 @@ void main(){
     for (const [tag, s] of map) if (s > n) { best = tag; n = s; }
     return best;
   }
-  function giftPop(slotId) {
+  // Gift fireworks only. `sure` is the ?gift=1 link; otherwise the board itself must read as a gift ("To. name"),
+  // so the plain claim flow that still calls this stays quiet.
+  function giftPop(slotId, sure = false) {
+    if (!sure && !isGiftBoard(boards.get(slotId)?.data)) return;
     const pose = slotPose(slotId, 18);
     if (!pose) return;
     ['#ffcf5a', '#ff3d9a', '#39f58a', '#b84dff'].forEach((hex, i) => {
@@ -1288,56 +1354,102 @@ void main(){
     if (pose && insideLoop(pose.front.x, pose.front.z, 4)) return { point: pose.front, slot: pose.slot, board: pose.board };
     return { point: pickSpot(70, 200, { x: pos.x, z: pos.z }), slot: '', board: null };
   }
+  // ---- scripted cameras ------------------------------------------------------------------------------------------
+  // cine = { t0, dur, back, ease, tell, until, pin }. back: easing to the orbit pose (the intro and every ending);
+  // otherwise going to / holding on cineTo. pin: input does not end it (the photo frame). tell: say onFocus(false) when
+  // the return lands (the intro, which never said onFocus(true)).
   function playIntroSweep() {
     const pose = slotPose('MAIN_TOP', 28);
     cineFrom.copy(pose?.cam || new THREE.Vector3(LAYOUT.oneTimes.x, 42, LAYOUT.oneTimes.z + 30));
     cineL0.copy(pose?.look || new THREE.Vector3(LAYOUT.oneTimes.x, 26, LAYOUT.oneTimes.z));
-    cine = { t0: performance.now(), dur: 2200, hold: false, locked: false };
+    cine = { t0: performance.now(), dur: 2200, back: true, ease: 'inout', tell: true };
   }
-  function clearCine() {
-    const had = !!cine || !me.root.visible;
-    cine = null;
-    if (lounge) { lounge = false; opts.onLoungeEnd?.(); }
-    if (!drive) me.root.visible = true;
-    if (had) opts.onFocus?.(false);
-  }
-  function focusSlot(slotId, holdMs = 0) {
-    const pose = slotPose(slotId, 18);
-    if (!pose) return null;
+  /** Fly from wherever the view is now to `cam` looking at `look`, then hold (chains board to board without a cut). */
+  function startCine(cam, look, o = {}) {
     cineFrom.copy(camera.position);
-    cineL0.copy(controls.target);
-    cineTo.copy(pose.cam);
-    cineL1.copy(pose.look);
-    cine = { t0: performance.now(), dur: 700, hold: !holdMs, locked: true, until: holdMs ? performance.now() + holdMs : 0 };
-    if (!lounge) {
-      const here = camera.position.clone().lerp(pose.look, 0.35);
-      burst(here, '#ffcf5a', 90, 1.4);
-      burst(pose.look, '#ff3d9a', 80, 1);
-      launch(pose.front.x, pose.front.z, pose.look.y, '#ffcf5a', 0.05);
+    cineL0.copy(viewLook);
+    cineTo.copy(cam);
+    cineL1.copy(look);
+    cine = { t0: performance.now(), dur: o.dur || 700, back: false, until: o.until || 0, pin: !!o.pin };
+  }
+  /**
+   * The one way out of a scripted camera: movement, a tap, Escape, a timed hold running out, 시점 해제, the lounge
+   * stopping. Starts a 0.45 s ease-out back to the orbit; input is live from this call on, and a return that is already
+   * running is left alone (force, from Escape, only cuts the long intro short).
+   */
+  function endCine(force = false) {
+    if (hidMe) { hidMe = false; if (!drive) me.root.visible = true; }
+    const wasLounge = lounge;
+    lounge = false;
+    const now = performance.now();
+    if (cine && !cine.back) {
+      if (drive) {
+        // In a car the view comes back behind it, at the distance the orbit already had.
+        const d = clamp(tmp.subVectors(camWant, follow).length() || 11.5, controls.minDistance, controls.maxDistance);
+        const p = behindCar(follow, drive.yaw, d);
+        camWant.set(p.x, p.y, p.z);
+      }
+      cineFrom.copy(camera.position);
+      cineL0.copy(viewLook);
+      cine = { t0: now, dur: RETURN_MS, back: true, ease: 'out', tell: false };
+      opts.onFocus?.(false);
+    } else if (cine && force && cine.t0 + cine.dur - now > RETURN_MS) {
+      cineFrom.copy(camera.position);
+      cineL0.copy(viewLook);
+      cine = { t0: now, dur: RETURN_MS, back: true, ease: 'out', tell: cine.tell };
     }
+    if (wasLounge) opts.onLoungeEnd?.();
+  }
+  function focusSlot(slotId, holdMsOrOpts = 0) {
+    const o = focusOptions(holdMsOrOpts);
+    // Chosen rule: no focus camera from a moving taxi (the car would drive blind).
+    if (drive) { tell('운전 중에는 내린 뒤에 볼 수 있어요'); return null; }
+    const pose = slotPose(slotId, 18, true);
+    if (!pose) return null;
+    if (hidMe) { hidMe = false; me.root.visible = true; }
+    startCine(pose.cam, pose.look, { dur: 700, until: o.hold ? performance.now() + o.hold : 0 });
+    // One burst, on the board, and only when asked (a claim): a plain 보기 leaves the board clear.
+    if (o.celebrate) burst(pose.look.clone(), '#ffcf5a', 100, 1.2);
     opts.onFocus?.(true);
     return pose;
   }
+  // The straight-on frame: 8 m, or far enough for a tall 9:16 frame (22 m at the landscape FOV, less at the wider one).
+  function framePose(slotId) {
+    const d = watchPortrait ? fitDistance(22, baseFov, portraitFov(9 / 16, baseFov)) : 8;
+    return slotPose(slotId, d, true, true);
+  }
   function frameBillboard(slotId) {
-    const pose = slotPose(slotId, 10);
+    if (drive) return false;
+    const pose = framePose(slotId);
     if (!pose) return false;
-    const dir = pose.cam.clone().sub(pose.look);
-    dir.y = 0;
-    if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1);
-    dir.normalize();
-    const cam = pose.look.clone().addScaledVector(dir, watchPortrait ? 22 : 8);
-    cineFrom.copy(cam);
-    cineTo.copy(cam);
+    // A cut, not a flight: the photo is taken right away. Pinned: a drag or a step must not drop the frame.
+    startCine(pose.cam, pose.look, { dur: 1, pin: true });
+    cineFrom.copy(pose.cam);
     cineL0.copy(pose.look);
-    cineL1.copy(pose.look);
-    cine = { t0: performance.now(), dur: 1, hold: true, locked: true, until: 0 };
-    camera.position.copy(cam);
-    controls.target.copy(pose.look);
+    camera.position.copy(pose.cam);
     camera.lookAt(pose.look);
-    camWant.copy(cam);
+    viewLook.copy(pose.look);
     me.root.visible = false;
+    hidMe = true;
     opts.onFocus?.(true);
     return true;
+  }
+  const LOUNGE_IDS = ['MAIN_TOP', 'MAIN_MID', 'MAIN_BOT', 'SUB_1A', 'SUB_2A', 'SUB_3A', 'SUB_4A'];
+  /** 멍때리기: the camera glides from the board it is on to the next one. The avatar stays where it is. */
+  function tourNext() {
+    if (cine?.pin) return false; // a photo is being framed: the tour waits for the next 8 s tick
+    for (let k = 0; k < LOUNGE_IDS.length; k++) {
+      const id = LOUNGE_IDS[loungeI++ % LOUNGE_IDS.length];
+      const pose = watchPortrait ? framePose(id) : slotPose(id, 18, true);
+      if (!pose) continue;
+      const first = !cine || cine.back;
+      startCine(pose.cam, pose.look, { dur: first ? 1100 : 1800 });
+      // A low arc keeps the glide above the street furniture between two boards.
+      cine.arc = first ? 0 : Math.min(14, cineFrom.distanceTo(cineTo) * 0.12);
+      if (first) opts.onFocus?.(true);
+      return true;
+    }
+    return false;
   }
   function taxiCanSit(x, z) {
     if (!nyc || !insideLoop(x, z, 6) || !nyc.onLand(x, z) || nyc.buildingAt(x, z) >= 0) return false;
@@ -1468,13 +1580,27 @@ void main(){
     clockT = t;
     screenTime.value = t;
     const input = readInput();
+    // Movement ends a held scripted camera before this frame's step, so the first step already uses the orbit basis.
+    // A scripted camera cannot start from a taxi; one that was running when the player got in ends here too.
+    if (cine && !cine.back && (drive || cineCancels({ active: true, pin: cine.pin, keys: keys.size, joy: Math.hypot(joy.x, joy.y), lounge }))) endCine();
+    else if (lounge && drive) endCine();
     let sitting = false;
     if (drive) stepDrive(dt, input, t);
     else sitting = stepWalk(dt, input);
+    reverseT = drive ? reverseTime(reverseT, drive.v, dt) : 0;
+    // The rings share one 20 s reward gap (main.js pays through onStunt): dim while it runs, and no shake or burst.
+    const ringWait = now - stuntAt < PAY.stunt.gapMs + 250;
+    if (ringWait !== ringDim) {
+      ringDim = ringWait;
+      ringMat.color.set(REWARD).multiplyScalar(ringDim ? 0.28 : 1);
+      ringBeamMat.opacity = ringDim ? 0.07 : 0.25;
+    }
     for (const s of STUNTS) {
       const nearRing = Math.hypot(pos.x - s.ry.position.x, pos.z - s.ry.position.z) < 1.7;
       if (nearRing && !s.inside) {
         s.inside = true;
+        if (ringWait) continue;
+        stuntAt = now;
         shake = 0.35;
         burst(s.ry.position.clone(), '#ffcf5a', 28, 0.6);
         opts.onStunt?.();
@@ -1496,13 +1622,10 @@ void main(){
     if (balloon && balloon.hp > 0) {
       balloon.mesh.position.y = 58 + Math.sin(t * 0.6) * 1.6;
     }
-    if (lounge && (keys.size || Math.hypot(joy.x, joy.y) > 0.25)) clearCine();
+    if (lounge && (keys.size || Math.hypot(joy.x, joy.y) > 0.25)) endCine();
     else if (lounge && performance.now() - loungeAt > 8000) {
       loungeAt = performance.now();
-      const ids = ['MAIN_TOP', 'MAIN_MID', 'MAIN_BOT', 'SUB_1A', 'SUB_2A', 'SUB_3A', 'SUB_4A'];
-      const id = ids[loungeI++ % ids.length];
-      if (watchPortrait) frameBillboard(id);
-      else focusSlot(id, 7600);
+      tourNext();
     }
     if (!drive) me.update(dt, t);
     playerInfo.x = pos.x; playerInfo.y = pos.y; playerInfo.z = pos.z; playerInfo.yaw = yaw; playerInfo.driving = !!drive;
@@ -1525,15 +1648,27 @@ void main(){
     tmp.set(pos.x, pos.y + eye, pos.z);
     follow.lerp(tmp, 1 - Math.exp(-dt * (drive ? 10 : 14)));
     camera.position.copy(camWant).add(tmp2.subVectors(follow, prevFollow));
-    if (drive && !orbiting && now - orbitEnd > 1500 && Math.abs(drive.v) > 2) {
+    // FOV: wider in a portrait frame, wider again with speed in a taxi; every change (rotation, getting out) is eased.
+    const fovGoal = portraitFov(camera.aspect, baseFov) + (drive ? clamp(Math.abs(drive.v) / 30, 0, 1) * 10 : 0);
+    if (Math.abs(camera.fov - fovGoal) > 0.05) { camera.fov += (fovGoal - camera.fov) * (1 - Math.exp(-dt * (drive ? 4 : 6))); camera.updateProjectionMatrix(); }
+    const driveCam = drive ? driveCamera({ v: drive.v, reverseT }) : null;
+    if (drive && !orbiting && now - orbitEnd > 1500 && driveCam.swing) {
       off.subVectors(camera.position, follow);
       const r = off.length();
       const theta = Math.atan2(off.x, off.z);
       const phi = Math.acos(clamp(off.y / r, -1, 1));
-      const want = drive.v >= 0 ? drive.yaw + Math.PI : drive.yaw;
+      // Behind the car, also for a short reverse (steering stays car-relative); in front only after 1.2 s of reversing.
+      const want = driveCam.front ? drive.yaw : drive.yaw + Math.PI;
       const nt = dampAngle(theta, want, 2.4, dt);
       const np = phi + (1.2 - phi) * (1 - Math.exp(-dt * 1.2));
       camera.position.set(follow.x + r * Math.sin(np) * Math.sin(nt), follow.y + r * Math.cos(np), follow.z + r * Math.sin(np) * Math.cos(nt));
+    } else if (!drive && !(cine && !cine.back)) {
+      // On foot the view turns gently toward where the stick steers, so a turn does not need a second finger.
+      const turn = followYawRate({ f: input.f, r: input.r, idleMs: now - orbitEnd, dragging: orbiting });
+      if (turn) {
+        off.subVectors(camera.position, follow).applyAxisAngle(UP, -turn * dt);
+        camera.position.copy(follow).add(off);
+      }
     }
     controls.target.copy(follow);
     controls.update();
@@ -1569,10 +1704,12 @@ void main(){
           const f = nyc.rayBlock(follow.x, follow.y, follow.z, camera.position.x, camera.position.y, camera.position.z);
           if (f < 1) best = Math.min(best, f * dd);
         }
-        if (best < dd) {
+        // A wall pulls the camera in at once; when it clears, the camera eases back out over about a quarter second.
+        clipDist = easeCamDist(clipDist, best < dd ? Math.max(0.7, best - 0.35) : dd, dt);
+        if (clipDist < dd - 0.01) {
           const tilted = !look.equals(follow);
           const shift = tmp2.copy(look).sub(camera.position);
-          camera.position.copy(follow).addScaledVector(dir, Math.max(0.7, best - 0.35));
+          camera.position.copy(follow).addScaledVector(dir, clipDist);
           if (tilted) look.copy(camera.position).add(shift);
         }
       }
@@ -1581,25 +1718,32 @@ void main(){
       camera.lookAt(look);
       me.tag.visible = camera.position.distanceTo(follow) > 2.4;
     }
-    if (cine && cine.locked && me.root.visible && (keys.size || joy.x || joy.y)) clearCine();
+    // The orbit pose above is where the player's own camera is this frame. A scripted camera only overrides what is
+    // drawn; camWant and controls.target are left to the orbit, so the way back is always known.
+    homePos.copy(camera.position);
+    homeLook.copy(look);
     if (cine) {
-      const u = Math.min(1, (now - cine.t0) / cine.dur);
-      const e = u < 0.5 ? 4 * u * u * u : 1 - ((-2 * u + 2) ** 3) / 2;
-      if (!cine.locked) {
-        cineTo.set(pos.x - Math.sin(yaw) * 8.2, pos.y + eye + 1.25, pos.z - Math.cos(yaw) * 8.2);
-        cineL1.copy(follow);
+      const u = tweenU(now, cine.t0, cine.dur);
+      if (cine.back) {
+        const e = cine.ease === 'inout' ? easeInOutCubic(u) : easeOutCubic(u);
+        camera.position.lerpVectors(cineFrom, homePos, e);
+        look.lerpVectors(cineL0, homeLook, e);
+        camera.lookAt(look);
+        if (u >= 1) {
+          const done = cine;
+          cine = null;
+          if (done.tell) opts.onFocus?.(false);
+        }
+      } else {
+        const e = easeInOutCubic(u);
+        camera.position.lerpVectors(cineFrom, cineTo, e);
+        if (cine.arc) camera.position.y += Math.sin(Math.PI * e) * cine.arc;
+        look.lerpVectors(cineL0, cineL1, e);
+        camera.lookAt(look);
+        if (cine.until && now >= cine.until) endCine();
       }
-      look.lerpVectors(cineL0, cineL1, e);
-      controls.target.copy(look);
-      controls.update();
-      camera.position.lerpVectors(cineFrom, cineTo, e);
-      camera.lookAt(look);
-      camWant.copy(camera.position);
-      if ((cine.until && now >= cine.until)) {
-        cine = null;
-        if (!lounge) { if (!drive) me.root.visible = true; opts.onFocus?.(false); }
-      } else if (u >= 1 && !cine.hold && !cine.until) clearCine();
     }
+    viewLook.copy(look);
     if (shake > 0) {
       camera.position.x += (Math.random() - 0.5) * shake;
       camera.position.y += (Math.random() - 0.5) * shake * 0.6;
@@ -1642,6 +1786,9 @@ void main(){
           }
         }
       }
+      // The board in front of the player (front point within 12 m), looked up four times a second. Above ring and crowd.
+      if (now - boardAt > 250) { boardAt = now; boardNear = nearBoard(); }
+      if (!nk && boardNear) nk = boardNear;
       if (!nk) {
         for (const s of STUNTS) {
           if (Math.hypot(pos.x - s.x, pos.z - s.z) < 5) { nk = { kind: 'ring' }; break; }
@@ -1658,14 +1805,21 @@ void main(){
             if (Math.hypot(x - pos.x, z - pos.z) < BALANCE.cheerNear) mates++;
           }
         }
-        nk = { kind: 'crowd', n: mates };
+        // 함성 only with someone within cheerNear (8 m); alone there is no prompt at all.
+        if (mates > 0) nk = { kind: 'crowd', n: mates };
       }
     }
-    const key = nk ? nk.kind + (nk.id ?? '') + (nk.i ?? '') : '';
+    // The key carries the neighbour count and the board's state, so "옆 N명" and the board line stay current.
+    const key = proximityKey(nk);
     if (key !== lastNearKey) { lastNearKey = key; near = nk; opts.onProximity?.(nk); }
     marks?.stall.setNear(near?.kind === 'cart', t);
     marks?.stage.setNear(near?.kind === 'stage', t);
-    if (waypoint && Math.hypot(pos.x - waypoint.x, pos.z - waypoint.z) < 7) setWaypoint(null);
+    if (waypoint && Math.hypot(pos.x - waypoint.x, pos.z - waypoint.z) < 7) {
+      // Reached (not cleared by hand): the tutorial opens the claim wizard from this.
+      const at = waypoint;
+      setWaypoint(null);
+      opts.onInteract?.('arrive', null, { x: at.x, z: at.z, driving: !!drive });
+    }
     for (const m of Object.values(markers)) if (m.g.visible) { m.icon.position.y = 6 + Math.sin(t * 2.4) * 0.4; m.ring.scale.setScalar(1 + Math.sin(t * 3) * 0.06); }
 
     syncRemotes(dt, t);
@@ -1709,12 +1863,11 @@ void main(){
         p[j] += v[j] * dt; p[j + 1] += v[j + 1] * dt; p[j + 2] += v[j + 2] * dt;
       }
       f.pts.geometry.attributes.position.needsUpdate = true;
-      const u = f.age / f.life;
-      f.pts.material.opacity = 1 - u * u;
+      f.pts.material.opacity = fireworkAlpha(f.age, f.life, f.fadeAt);
       const fl = Math.min(1, f.age / 0.5);
       f.flash.scale.setScalar(f.flash.userData.max * (0.3 + fl * 0.7));
-      f.flash.material.opacity = Math.max(0, 1 - fl);
-      if (f.age >= f.life) dropFirework(i);
+      f.flash.material.opacity = Math.max(0, 1 - fl) * (f.fadeAt >= 0 ? Math.max(0, 1 - (f.age - f.fadeAt) / FIREWORK.fade) : 1);
+      if (fireworkDone(f.age, f.life, f.fadeAt)) dropFirework(i);
     }
 
     const pulse = 0.85 + Math.sin(t * 1.7) * 0.15;
@@ -1742,6 +1895,38 @@ void main(){
   const ro = new ResizeObserver(resize);
   ro.observe(canvas.parentElement || canvas);
   resize();
+  // Start at the FOV this frame shape wants (about 72° in portrait); later changes are eased in step().
+  camera.fov = portraitFov(camera.aspect, baseFov);
+  camera.updateProjectionMatrix();
+
+  // ---- WebGL context loss -------------------------------------------------------------------------------------
+  // The browser may take the context away (tab in the background, GPU reset). three.js re-uploads geometry and
+  // textures after a restore, but render-target contents are gone: the environment map is rebuilt and the boards
+  // are painted again. If the context is not back in 4 s the player gets a tap-to-reload notice.
+  let ctxLost = false, ctxTimer = 0;
+  canvas.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault();
+    ctxLost = true;
+    tell('화면을 다시 불러오는 중…');
+    clearTimeout(ctxTimer);
+    ctxTimer = setTimeout(() => { if (ctxLost) tell('화면이 돌아오지 않아요. 여기를 눌러 새로고침해 주세요', 'err', { reload: true }); }, 4000);
+  }, { signal });
+  canvas.addEventListener('webglcontextrestored', () => {
+    ctxLost = false;
+    clearTimeout(ctxTimer);
+    try {
+      const room2 = new RoomEnvironment();
+      const next = pmrem.fromScene(room2, 0.04);
+      room2.dispose();
+      envRT.dispose();
+      envRT = next;
+      scene.environment = envRT.texture;
+      scene.environmentIntensity = 0.25;
+      buildPhotoEnv();
+      boards.repaintAll();
+      resize();
+    } catch (err) { console.error('[context]', err); }
+  }, { signal });
 
   let frames = 0, acc = 0, slow = 0;
   function adapt(dt) {
@@ -1769,6 +1954,7 @@ void main(){
     elapsed += dt;
     if (beaconSlot && !beaconGroup) placeBeacon();
     step(dt, elapsed, performance.now());
+    if (ctxLost) return; // the world (and presence) keeps stepping; nothing can be drawn until the context is back
     reflection.update(scene, camera);
     composer.render();
     adapt(dt);
@@ -2355,14 +2541,27 @@ void main(){
     giftPop,
     topTeam,
     endFocus() {
-      if (!cine) { opts.onFocus?.(false); return; }
-      if (cine.back) { clearCine(); return; }
-      cineFrom.copy(camera.position);
-      cineL0.copy(controls.target);
-      cineTo.set(pos.x - Math.sin(yaw) * 8.2, pos.y + eye + 1.25, pos.z - Math.cos(yaw) * 8.2);
-      cineL1.set(pos.x, pos.y + 1.2, pos.z);
-      cine = { t0: performance.now(), dur: 700, hold: false, locked: true, until: 0, back: true };
-      if (!drive) me.root.visible = true;
+      if (!cine) { if (hidMe || lounge) endCine(); opts.onFocus?.(false); return; }
+      endCine();
+    },
+    // Deep links and QR codes: put the avatar at the board's front point (the same local teleport the map uses; the
+    // position still comes only from this client) facing the board. Returns the point, or null when the board is not
+    // on the map or its front is outside the fence.
+    goToSlot(slotId) {
+      const pose = slotPose(slotId, 18);
+      if (!pose || !insideLoop(pose.front.x, pose.front.z, 0)) return null;
+      api.teleport(pose.front.x, pose.front.z);
+      const dx = pose.look.x - pos.x, dz = pose.look.z - pos.z;
+      if (dx * dx + dz * dz > 1) {
+        yaw = Math.atan2(dx, dz);
+        me.holder.rotation.y = yaw;
+        camWant.set(pos.x - Math.sin(yaw) * 8.2, pos.y + eye + 1.4, pos.z - Math.cos(yaw) * 8.2);
+        camera.position.copy(camWant);
+      }
+      // The view was cut to the new place: a camera move that starts now must not swing in from the old one.
+      viewLook.copy(follow);
+      camera.lookAt(follow);
+      return { x: pos.x, z: pos.z };
     },
     cineOn: () => !!cine || lounge,
     setBoost(on) { boostHeld = !!on; },
@@ -2374,7 +2573,10 @@ void main(){
     exitTaxi,
     startStars, removeStar, clearStars, removeCoin,
     capture() {
-      composer.render();
+      // The picture is taken without my own name tag (the frame loop decides its visibility again on the next frame).
+      const tagOn = me.tag.visible;
+      me.tag.visible = false;
+      try { composer.render(); } finally { me.tag.visible = tagOn; }
       const maxW = 1280;
       const scale = Math.min(1, maxW / Math.max(1, canvas.width));
       const out = document.createElement('canvas');
@@ -2405,15 +2607,20 @@ void main(){
     setKing(k) { boards.setKing(k); },
     showGhost,
     setWatchPortrait,
+    // 멍때리기: only the camera tours the boards (tourNext, every 8 s); the avatar stays where it stands.
+    // false when it cannot start (in a taxi).
     startLounge() {
+      if (drive) { tell('운전 중에는 내린 뒤에 볼 수 있어요'); return false; }
       lounge = true;
       loungeAt = 0;
       loungeI = 0;
-      api.teleport(-21, -112);
-      yaw = 0;
-      me.holder.rotation.y = 0;
+      return true;
     },
-    stopLounge() { lounge = false; cine = null; if (!drive) me.root.visible = true; opts.onFocus?.(false); },
+    stopLounge() {
+      const had = !!cine && !cine.back;
+      endCine();
+      if (!had) opts.onFocus?.(false);
+    },
     throwPouch,
     bumpFever, setFever, rejectFever,
     openPlaza,
