@@ -43,6 +43,8 @@ export async function subscribePush() {
 
 // Subscriptions made before the immediate pushes only live in Supabase, so once per session an already allowed
 // subscription is posted again (silently; no permission prompt, no UI). Resolves true when the server took it.
+// env.force: post it now even if this session already did. The server binds an endpoint to whoever posts it (POST /rt/push
+// replaces the actor), so after a sign-out this is what moves the subscription from the account to the new guest.
 export async function resendPush(env = {}) {
   const N = 'Notification' in env ? env.Notification : globalThis.Notification;
   const nav = 'navigator' in env ? env.navigator : globalThis.navigator;
@@ -50,7 +52,7 @@ export async function resendPush(env = {}) {
   const send = env.fetch || globalThis.fetch;
   try {
     if (!N || N.permission !== 'granted' || !nav?.serviceWorker) return false;
-    if (ss?.getItem?.('kts_push_resent') === '1') return false;
+    if (!env?.force && ss?.getItem?.('kts_push_resent') === '1') return false;
     const reg = await Promise.race([
       nav.serviceWorker.getRegistration ? nav.serviceWorker.getRegistration() : nav.serviceWorker.ready,
       new Promise((resolve) => setTimeout(() => resolve(null), 3000)),

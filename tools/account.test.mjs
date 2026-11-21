@@ -2,11 +2,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   GT_LS, EVENT_NAMES, keysMatch, isInAppWebView, isAndroid, parseGuestHandover, adoptHandover, ticketSub,
-  handoverHref, chromeIntent, loginEmail, profileName, mergeCoins, protectMinutes, slotTier,
+  handoverHref, chromeIntent, loginEmail, mergeCoins, protectMinutes, slotTier,
   linkedActor, statsFromCounts, LINK_BONUS,
   isKakaoTalk, kakaoExternal, externalRoutes, oauthMessage, oauthReturn, returnUrl, cleanAddress, oauthErrorText, authErrorText, accountLabel,
-  OAUTH_CHANNEL, OAUTH_MSG, OAUTH_ACK,
+  OAUTH_CHANNEL, OAUTH_MSG, OAUTH_ACK, OAUTH_ERR,
 } from '../plaza-account.js';
+import * as account from '../plaza-account.js';
 
 assert.equal(GT_LS, 'masil_gt');
 assert.equal(keysMatch('abc', 'abc'), true);
@@ -112,14 +113,17 @@ assert.equal(cleanAddress(ORIGIN + '/?error=access_denied#error=access_denied&er
 assert.equal(cleanAddress(ORIGIN + '/#access_token=abc&token_type=bearer'), '/');
 assert.equal(cleanAddress(ORIGIN + '/?wish=abcdefghij'), '/?wish=abcdefghij');
 
-// Provider errors and Supabase auth errors become one Korean line; text from the address is clipped and never the whole message.
+// Provider errors and Supabase auth errors become one Korean line. For a provider error the line is one of a fixed set
+// (OAUTH_ERR): error, error_code and error_description come from the address, so none of their text is shown.
 assert.equal(oauthErrorText({ error: 'access_denied', errorCode: 'access_denied', description: 'User denied access' }), '구글 로그인을 취소했어요');
 assert.equal(oauthErrorText({ error: 'access_denied' }), '구글 로그인을 취소했어요');
 assert.equal(oauthErrorText({ error: 'access_denied', errorCode: 'signup_disabled', description: 'Signups not allowed for this instance' }), '지금은 새 계정을 만들 수 없어요');
-assert.equal(oauthErrorText({ error: 'server_error', description: 'Unable to exchange external code' }), '로그인하지 못했어요 (Unable to exchange external code)');
-assert.equal(oauthErrorText({ error: 'server_error', description: 'a\u0000b\n' + 'x'.repeat(300) }).length, '로그인하지 못했어요 ()'.length + 120);
+assert.equal(oauthErrorText({ error: 'server_error', description: 'Unable to exchange external code' }), '로그인하지 못했어요. 다시 시도해 주세요.');
+assert.equal(oauthErrorText({ error: 'server_error', description: 'a\u0000b\n' + 'x'.repeat(300) }), '로그인하지 못했어요. 다시 시도해 주세요.');
 assert.equal(oauthErrorText({ error: 'no_code' }), '로그인하지 못했어요. 다시 시도해 주세요.');
 assert.equal(oauthErrorText(null), '로그인하지 못했어요. 다시 시도해 주세요.');
+assert.equal(oauthErrorText({ error: 'access_denied', errorCode: 'user_banned', description: 'User is banned' }), OAUTH_ERR.banned);
+assert.equal(oauthErrorText({ error: 'invalid_request', errorCode: 'bad_oauth_state', description: 'OAuth state is invalid' }), OAUTH_ERR.expired);
 assert.equal(authErrorText(new Error('Invalid login credentials')), '아이디 또는 비밀번호가 맞지 않아요');
 assert.equal(authErrorText({ code: 'invalid_credentials', message: 'x' }), '아이디 또는 비밀번호가 맞지 않아요');
 assert.equal(authErrorText(new Error('User already registered')), '이미 가입한 아이디예요. 로그인해 주세요.');
@@ -149,8 +153,8 @@ assert.equal(loginEmail('Neon_1'), 'neon_1@id.wishboard.dev');
 assert.equal(loginEmail('a@b.co'), 'a@b.co');
 assert.equal(loginEmail('ab'), '');
 assert.equal(loginEmail('not an email'), '');
-assert.equal(profileName({ app_metadata: { provider: 'google' }, user_metadata: { full_name: '네온' } }), '네온');
-assert.equal(profileName({ app_metadata: { provider: 'email' }, user_metadata: { full_name: '숨김' } }), '');
+// The provider's profile name (a real name, for Google) is never read: the helper that did is gone.
+assert.equal('profileName' in account, false);
 
 const first = mergeCoins({ userCoins: 40, guestCoins: 100, bonusPaid: false });
 assert.equal(first.bonus, LINK_BONUS);

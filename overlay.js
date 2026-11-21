@@ -132,7 +132,8 @@ export function draftAtRisk(typed, values) {
 }
 
 // ---- input lock ------------------------------------------------------------------------------
-// Movement is locked while any owner (a sheet, the proof bar, bake, dance, the photo countdown) wants it locked.
+// Movement is locked while any owner (a sheet, the proof bar, bake, dance, the city still being built) wants it locked.
+// Each owner releases only its own lock; a call that names no owner uses the slot 'other' and frees nothing else.
 export function createInputLock(apply) {
   const owners = new Set();
   return {
@@ -187,6 +188,13 @@ export function proofOffers({ ready, guest, linked, gift, slot, pushSupported, p
     link: !!ready && !!guest && !linked,
     push: !!pushSupported && permission === 'default' && !gift && !String(slot || '').startsWith('PLOT_'),
   };
+}
+// Does the bar come up, or only its notice? Only the notice when the player walked on while the celebration ran (waited, and
+// the focus camera is gone or back was pressed: skip) or a sheet is open; force: the player tapped that notice.
+// pushLater: the bar is skipped, so its "알림 받기" was never on screen; that ask is queued as the push sheet instead.
+export function proofPlan({ force, waited, focus, skip, sheet, offers } = {}) {
+  const bar = !!force || !((!!waited && (!focus || !!skip)) || !!sheet);
+  return { bar, pushLater: !bar && !!offers?.push };
 }
 
 // ---- 다녀간 사이 ------------------------------------------------------------------------------
