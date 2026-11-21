@@ -4,7 +4,7 @@
 // To move to a dedicated WebSocket server, reimplement these methods here; nothing else needs to change.
 // Fully optional: if the CDN or Supabase is unreachable, the game keeps running single-player.
 // v6: Seoul project (ap-northeast-2). Rooms = 행정동 code + scene; a shared lobby presence channel gives per-dong head counts.
-import { GT_LS, SESSION_LS, isInAppWebView } from './plaza-account.js';
+import { GT_LS, SESSION_LS, isInAppWebView, returnUrl } from './plaza-account.js';
 import { setStarterSlots } from './balance.js';
 import { snapQuery, kakaoOf } from './share.js?v=202611211159';
 export const SUPA_URL = 'https://yxddhpacuyaffaoutxjn.supabase.co';
@@ -230,7 +230,15 @@ export class Net {
   // The Kakao key loadConfig kept from that one /rt/config answer ('' without one). Waits for it; never a request of its own.
   kakaoKey() { if (!this.kakaoP) this.kakaoP = new Promise((r) => { this.kakaoSet = r; }); return this.kakaoP; }
   async currentSession() { try { const s = await this.sb?.auth?.getSession(); return s?.data?.session || null; } catch { return null; } }
-  async startOAuth(provider) { if (!this.sb?.auth) throw new Error('로그인 준비 중이에요'); const back = new URL(location.href); for (const k of ['autologin', 'handover', 'code']) back.searchParams.delete(k); const redirectTo = back.origin + back.pathname + back.search; const { error } = await this.sb.auth.signInWithOAuth({ provider, options: { redirectTo } }); if (error) throw error; }
+  // Google sign-in. The game tab stays: oauthUrl() only asks supabase-js for the provider address (skipBrowserRedirect) so main.js can load it in a
+  // second window, which comes back to /oauth (oauth.html) and hands the code to this tab; exchangeCode() then finishes here. PKCE: the code verifier
+  // is in localStorage under the client's storage key, so whichever same-origin tab ends up with the code can exchange it.
+  async oauthUrl(provider, redirectTo) { if (!this.sb?.auth) throw new Error('로그인 준비 중이에요'); const { data, error } = await this.sb.auth.signInWithOAuth({ provider, options: { redirectTo, skipBrowserRedirect: true } }); if (error) throw error; if (!data?.url) throw new Error('로그인 주소를 받지 못했어요. 다시 시도해 주세요.'); return data.url; }
+  async exchangeCode(code) { if (!this.sb?.auth) throw new Error('로그인 준비 중이에요'); const { data, error } = await this.sb.auth.exchangeCodeForSession(code); if (error) throw error; if (!data?.session) throw new Error('로그인에 실패했어요'); return data.session; }
+  // The fallback when a second window cannot be opened: this tab goes to the provider and comes back to the same address (minus one-time parameters).
+  async startOAuth(provider) { if (!this.sb?.auth) throw new Error('로그인 준비 중이에요'); const redirectTo = returnUrl(location.href); const { error } = await this.sb.auth.signInWithOAuth({ provider, options: { redirectTo } }); if (error) throw error; }
+  // This device only (scope local): the account's other devices stay signed in.
+  async signOut() { const auth = this.sb?.auth; if (!auth) throw new Error('로그인 준비 중이에요'); const { error } = await auth.signOut({ scope: 'local' }); if (error) throw error; }
   async passwordAuth(kind, email, password) { const auth = this.sb?.auth; if (!auth) throw new Error('로그인 준비 중이에요'); const first = kind === 'up' ? await auth.signUp({ email, password }) : await auth.signInWithPassword({ email, password }); if (first.error) throw first.error; if (first.data?.session) return first.data.session; if (kind === 'up') { const again = await auth.signInWithPassword({ email, password }); if (again.data?.session) return again.data.session; const err = new Error('가입은 기록됐지만 이 창에서 바로 로그인되지 않았어요. 메일 확인이 켜져 있으면 확인 후 다시 로그인해 주세요.'); err.code = 'confirm'; throw err; } throw new Error('로그인에 실패했어요'); }
   async mergeGuest(guestId, guestToken, nickname) { const tok = await doToken(this.sb); if (!tok || String(tok).startsWith('g1.')) throw new Error('로그인 세션이 없어요'); const r = await fetch('/rt/auth/merge', { method: 'POST', headers: { authorization: 'Bearer ' + tok, 'content-type': 'application/json' }, body: JSON.stringify({ guest_id: guestId, guest_token: guestToken, nickname: nickname || '', topic: this.topic || (NS + 'square') }) }); const data = await r.json().catch(() => ({})); if (!r.ok || data.ok === false) throw new Error(data.error || data.err || '계정 연결에 실패했어요'); return data; }
   async withdrawAccount() { const tok = await doToken(this.sb); if (!tok || String(tok).startsWith('g1.')) throw new Error('로그인된 계정만 탈퇴할 수 있어요'); const r = await fetch('/rt/auth/withdraw', { method: 'POST', headers: { authorization: 'Bearer ' + tok, 'content-type': 'application/json' }, body: '{}' }); const data = await r.json().catch(() => ({})); if (!r.ok || data.ok === false) throw new Error(data.error || '탈퇴를 처리하지 못했어요'); try { await this.sb?.auth?.signOut(); } catch { } return data; }

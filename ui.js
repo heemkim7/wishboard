@@ -13,7 +13,8 @@ import { inviteView } from './invite.js';
 import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611211159';
 import { EMOTES, REACTIONS, AVATAR_COLORS, SPECIES } from './ts3d/avatars.js?v=202611211159';
 import { trackEvent } from './analytics.js?v=202611211159';
-import { CHEER_PHRASES, allowedLink, blockedText, linkedActor } from './plaza-account.js';
+import { CHEER_PHRASES, accountLabel, allowedLink, blockedText, linkedActor } from './plaza-account.js';
+import { policyDoc } from './legal.js?v=202611211159';
 import { subscribePush, resendPush } from './push.js?v=202611211159';
 import { bindSfx, play } from './audio.js?v=202611211159';
 import { AD, AD_TEMPLATES, adSums, adBars } from './adreport.js';
@@ -308,7 +309,7 @@ export function createUI(root, hooks) {
   feedRows.append(h('p', { class: 'empty', text: '점령·분양 소식이 여기 남아요' }));
   const guestWarn = h('div', { class: 'guestwarn', hidden: true },
     h('p', { text: '닫으면 코인이 사라질 수 있어요' }),
-    h('button', { class: 'btn gold', type: 'button', text: '+300', onclick: (e) => { e.preventDefault(); e.stopPropagation(); openLogin(); } }),
+    h('button', { class: 'btn gold', type: 'button', text: '계정 연결 +300', onclick: (e) => { e.preventDefault(); e.stopPropagation(); openLogin(); } }),
   );
   const nextLineEl = h('p', { class: 'nextline', hidden: true });
   // 밤 9시 banner (main.js setNine, once a second): before 21:00 a tap looks at the main tower, inside the window it opens
@@ -710,7 +711,7 @@ export function createUI(root, hooks) {
     renderGoal();
     if (bump) { walletEl.classList.remove('bump'); void walletEl.offsetWidth; walletEl.classList.add('bump'); }
   }
-  let accountView = { ready: false, guest: false, linked: false };
+  let accountView = { ready: false, guest: false, linked: false }, bootLogin = null;
   function renderProfile() {
     nameEl.replaceChildren(document.createTextNode(hooks.nick()));
     if (accountView.linked) nameEl.append(h('i', { class: 'verified', title: '인증 계정' }, icon('check')));
@@ -719,6 +720,7 @@ export function createUI(root, hooks) {
   }
   function renderAccount() {
     guestWarn.hidden = !(accountView.ready && accountView.guest && !accountView.linked);
+    if (bootLogin) bootLogin.hidden = guestWarn.hidden; // the boot card's "이미 계정이 있어요 · 로그인" is for a guest only
     renderProfile();
   }
   function renderStatus() {
@@ -3280,12 +3282,32 @@ export function createUI(root, hooks) {
   }
 
   // ---------------------------------------------------------------- boot / onboarding
+  // 이용약관 and 개인정보처리방침 unfold inside the sheet that links to them (legal.js policyDoc), so a half-filled form and the game stay.
+  // link(kind, text) makes an opener; box is where the text appears and is placed once in that sheet. Tapping the open one folds it.
+  function legalFold() {
+    const box = h('div', { class: 'legalbox', hidden: true, tabindex: '-1' });
+    let shown = '';
+    const fold = () => { shown = ''; box.hidden = true; box.replaceChildren(); };
+    const show = (kind) => {
+      if (shown === kind) { fold(); return; }
+      const doc = policyDoc(kind);
+      if (!doc) return;
+      shown = kind;
+      box.replaceChildren(
+        h('b', { text: doc.title }),
+        ...doc.sections.flatMap((s) => [h('h3', { text: s.h }), h('p', { text: s.p })]),
+        h('button', { class: 'btn ghost', type: 'button', text: '닫기', onclick: fold }),
+      );
+      box.hidden = false;
+      box.scrollTop = 0;
+      try { box.scrollIntoView({ block: 'nearest' }); box.focus({ preventScroll: true }); } catch { /* older browsers: it is still shown */ }
+    };
+    const link = (kind, text) => h('button', { type: 'button', class: 'linkbtn', text, onclick: (e) => { e.preventDefault(); e.stopPropagation(); show(kind); } });
+    return { box, link };
+  }
   function policyLinks() {
-    return h('p', { class: 'note legal' },
-      h('a', { href: './?policy=terms', target: '_blank', rel: 'noopener', text: '[이용약관]' }),
-      ' | ',
-      h('a', { href: './?policy=privacy', target: '_blank', rel: 'noopener', text: '[개인정보처리방침]' }),
-    );
+    const legal = legalFold();
+    return h('div', null, h('p', { class: 'note legal' }, legal.link('terms', '[이용약관]'), ' | ', legal.link('privacy', '[개인정보처리방침]')), legal.box);
   }
   function openLinkPrompt() {
     if (quietBlock) return;
@@ -3513,70 +3535,158 @@ export function createUI(root, hooks) {
       h('button', { class: 'btn ghost', type: 'button', text: '계정 연결', onclick: () => openLogin() }),
     );
   }
-  function openLogin() {
+  // Sign-in state main.js reports (setLogin): wait = a Google window is open or a sign-in is finishing (text overrides the button label),
+  // err and info = the lines under the Google button. It outlives the sheet, so reopening the sheet shows the same state.
+  let loginView = { wait: false, text: '', err: '', info: '' }, loginPaint = null;
+  function setLogin(next) {
+    loginView = { ...loginView, ...next };
+    loginPaint?.();
+  }
+  function closeLogin() { if (sheet?.login) closeSheet(); }
+  // opts.resume: this browser was opened by a handover link, so the sheet says what happens next and the player taps once.
+  function openLogin(opts) {
     const env = hooks.authEnv?.() || {};
+    const resume = opts?.resume === true && !env.inApp;
     openSheet('계정 연결', '+300', (host) => {
-      let mode = 'in';
-      const id = h('input', { class: 'input', maxLength: 80, placeholder: '이메일 또는 아이디', autocomplete: 'username', 'aria-label': '이메일 또는 아이디' });
-      const pw = h('input', { class: 'input', type: 'password', maxLength: 72, placeholder: '비밀번호 (6자 이상)', autocomplete: 'current-password', 'aria-label': '비밀번호' });
+      const me = sheet;
+      me.login = true;
+      if (!entered) me.el.classList.add('front'); // over the boot card
+      loginView = { ...loginView, err: '', info: '' };
+      const legal = legalFold();
+      let mode = 'in', busy = false;
+      const id = h('input', { class: 'input', name: 'username', maxLength: 80, placeholder: '이메일 또는 아이디', autocomplete: 'username', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'next', 'aria-label': '이메일 또는 아이디' });
+      const pw = h('input', { class: 'input', name: 'password', type: 'password', maxLength: 72, placeholder: '비밀번호 (6자 이상)', autocomplete: 'current-password', autocapitalize: 'off', enterkeyhint: 'go', 'aria-label': '비밀번호' });
       const agree = h('input', { type: 'checkbox', 'aria-label': '만 14세 이상이며 약관과 개인정보처리방침에 동의' });
-      const agreeRow = h('label', { class: 'agree' }, agree, '만 14세 이상이며 ', h('a', { href: './?policy=terms', target: '_blank', rel: 'noopener', text: '[이용약관]' }), '과 ', h('a', { href: './?policy=privacy', target: '_blank', rel: 'noopener', text: '[개인정보처리방침]' }), '에 동의합니다.');
-      const submit = h('button', { class: 'btn gold cta', type: 'button', text: '로그인' });
+      const agreeRow = h('label', { class: 'agree' }, agree, h('span', null, '만 14세 이상이며 ', legal.link('terms', '[이용약관]'), '과 ', legal.link('privacy', '[개인정보처리방침]'), '에 동의합니다.'));
+      const formErr = h('p', { class: 'note login-err', role: 'alert', hidden: true });
+      const submit = h('button', { class: 'btn gold cta', type: 'submit', text: '로그인' });
       const swap = h('button', { class: 'btn ghost', type: 'button', text: '처음이면 가입' });
+      const form = h('form', { class: 'login-form', novalidate: true }, id, pw, agreeRow, formErr, submit);
+      const fail = (text) => { formErr.textContent = text || ''; formErr.hidden = !text; };
       const sync = () => {
         const up = mode === 'up';
-        submit.textContent = up ? '가입하고 연결' : '로그인';
+        submit.textContent = busy ? '잠시만요…' : (up ? '가입하고 연결' : '로그인');
+        submit.disabled = busy;
         swap.textContent = up ? '이미 계정이 있어요' : '처음이면 가입';
         agreeRow.hidden = !up;
-        submit.disabled = up && !agree.checked;
-        id.autocomplete = up ? 'username' : 'username';
         pw.autocomplete = up ? 'new-password' : 'current-password';
       };
-      agree.addEventListener('change', sync);
-      swap.addEventListener('click', () => { mode = mode === 'up' ? 'in' : 'up'; sync(); });
-      submit.addEventListener('click', async () => {
-        if (mode === 'up' && !agree.checked) { note('만 14세 이상이고 약관과 개인정보처리방침에 동의해야 가입할 수 있어요', 'err'); return; }
-        submit.disabled = true;
+      agree.addEventListener('change', () => { if (agree.checked) fail(''); });
+      swap.addEventListener('click', () => { mode = mode === 'up' ? 'in' : 'up'; fail(''); sync(); });
+      // Enter: id → password, password → submit (the form's own submit).
+      id.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); pw.focus(); } });
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (busy) return;
+        if (mode === 'up' && !agree.checked) { fail('만 14세 이상이고 약관과 개인정보처리방침에 동의해야 가입할 수 있어요'); agree.focus(); return; }
+        busy = true;
+        fail('');
+        sync();
         try {
           await hooks.passwordAuth?.(mode, id.value, pw.value);
-          closeSheet();
-        } catch (e) {
-          note(e?.message || '로그인에 실패했어요', 'err');
+          if (sheet === me) closeSheet();
+        } catch (err) {
+          fail(err?.message || '로그인에 실패했어요');
+        } finally {
+          busy = false;
           sync();
         }
       });
       // In-app browsers block Google sign-in. The handover link carries this guest into the system browser; it can be empty until it is ready.
       const browser = env.android ? '크롬' : '사파리';
-      const google = h('button', { class: 'btn', type: 'button', text: 'Google로 계속' });
-      google.addEventListener('click', async () => {
-        const intent = env.inApp && env.android ? (hooks.authEnv?.() || {}).intent : '';
-        if (intent) { location.href = intent; return; }
-        if (env.inApp) { note(`이 앱 안에서는 구글 로그인이 열리지 않아요. 아래에서 이메일로 가입하거나, ${browser} 링크를 복사하세요.`, 'err'); return; }
-        try { await hooks.oauth?.('google'); }
-        catch (e) { note(e?.message || '구글 로그인을 열지 못했어요', 'err'); }
-      });
+      const google = h('button', { class: 'btn login-google', type: 'button' });
+      const gErr = h('p', { class: 'note login-err', role: 'alert', hidden: true });
+      const gInfo = h('p', { class: 'note', role: 'status', hidden: true });
+      const paint = () => {
+        google.disabled = !!loginView.wait;
+        google.textContent = loginView.wait ? (loginView.text || '구글 창에서 계속하세요…') : (resume ? '구글로 계속' : 'Google로 계속');
+        gInfo.textContent = loginView.info || '';
+        gInfo.hidden = !loginView.info;
+        gErr.textContent = loginView.err || '';
+        gErr.hidden = !loginView.err;
+      };
       const linkOut = h('input', { class: 'input', readOnly: true, hidden: true, 'aria-label': `${browser}에서 열 링크` });
+      const copySaid = h('p', { class: 'note', role: 'status', hidden: true });
+      const say = (text) => { copySaid.textContent = text; copySaid.hidden = !text; };
       const copy = h('button', { class: 'btn ghost', type: 'button' }, ...withIcon('link', `${browser}에서 열 링크 복사`));
       copy.addEventListener('click', async () => {
         const url = (hooks.authEnv?.() || {}).handoverUrl || '';
-        if (!url) { note('링크를 준비하는 중이에요. 잠시 뒤에 다시 눌러 주세요', 'err'); return; }
+        if (!url) { say('링크를 준비하는 중이에요. 잠시 뒤에 다시 눌러 주세요'); return; }
         try {
           await navigator.clipboard.writeText(url);
-          note(`링크를 복사했어요. ${browser} 주소창에 붙여 넣으세요`, 'ok');
+          say(`링크를 복사했어요. ${browser} 주소창에 붙여 넣으세요`);
         } catch {
           linkOut.value = url;
           linkOut.hidden = false;
           linkOut.select();
-          note('복사가 막혀 있어요. 아래 링크를 길게 눌러 복사하세요', 'err');
+          say('복사가 막혀 있어요. 아래 링크를 길게 눌러 복사하세요');
         }
       });
+      // Out of the in-app browser: each route is tried in turn while this page is still in front (the app that takes one hides it).
+      const leave = (routes) => {
+        const at = Date.now();
+        let i = 0, hid = false;
+        const onHide = () => { if (document.visibilityState === 'hidden') hid = true; };
+        document.addEventListener('visibilitychange', onHide);
+        const next = () => {
+          if (hid || i >= routes.length || Date.now() - at > 4000) { document.removeEventListener('visibilitychange', onHide); return; }
+          const url = routes[i++];
+          try { location.href = url; } catch { /* a scheme this webview does not know */ }
+          setTimeout(next, 1200);
+        };
+        next();
+      };
+      const handOver = () => {
+        const now = hooks.authEnv?.() || {};
+        if (!now.handoverUrl) { setLogin({ err: '링크를 준비하는 중이에요. 잠시 뒤에 다시 눌러 주세요' }); return; }
+        const routes = Array.isArray(now.routes) ? now.routes : [];
+        hooks.handoverFired?.();
+        loginPaint = null;
+        // The instruction stays in the sheet (a toast would be gone by the time the player comes back to this app).
+        host.replaceChildren(...[
+          h('div', { class: 'callout', style: { marginTop: 0 } }, routes.length
+            ? `${browser}에서 이어서 진행 중이에요. 로그인이 끝나면 그 창에서 계속하세요`
+            : `이 앱 안에서는 구글 로그인이 열리지 않아요. 아래 링크를 복사해 ${browser} 주소창에 붙여 넣으면, 거기서 이어서 연결됩니다. 로그인이 끝나면 그 창에서 계속하세요`),
+          routes.length ? h('p', { class: 'note', text: `${env.android ? '크롬이' : '사파리가'} 열리지 않았다면 아래 링크를 복사해 ${browser} 주소창에 붙여 넣으세요.` }) : null,
+          copy, copySaid, linkOut,
+          h('button', { class: 'btn ghost', type: 'button', text: '아이디로 로그인', onclick: () => openLogin() }),
+        ].filter(Boolean));
+        if (routes.length) leave(routes);
+        else copy.click();
+      };
+      google.addEventListener('click', () => {
+        if (env.inApp) { handOver(); return; }
+        loginView = { ...loginView, err: '', info: '' };
+        // Not awaited: main.js opens the Google window in this same task, then reports through setLogin.
+        try { hooks.oauth?.('google'); }
+        catch (e) { setLogin({ wait: false, err: e?.message || '구글 로그인을 열지 못했어요' }); }
+      });
       const kids = [
-        h('p', { class: 'note', text: '연결하면 전광판과 코인이 남아요. 보상은 계정마다 한 번 +300.' }),
+        resume ? h('div', { class: 'callout', style: { marginTop: 0 } }, '구글 로그인으로 이어서 연결합니다') : null,
+        h('p', { class: 'note', style: resume ? null : { marginTop: 0 }, text: '연결하면 전광판과 코인이 남아요. 보상은 계정마다 한 번 +300.' }),
         google,
+        gInfo,
+        gErr,
+        h('p', { class: 'note login-terms' }, 'Google로 계속하면 만 14세 이상이며 ', legal.link('terms', '이용약관'), '과 ', legal.link('privacy', '개인정보처리방침'), '에 동의하는 것으로 봅니다'),
       ];
-      if (env.inApp) kids.push(h('p', { class: 'note', text: env.android ? '이 앱 안에서는 구글 로그인을 열지 않고, 크롬으로 넘어갑니다.' : '이 앱 안에서는 구글 로그인을 열지 않아요. 이메일로 가입하거나 사파리 링크를 여세요.' }), copy, linkOut);
-      kids.push(id, pw, agreeRow, submit, swap, policyLinks());
+      if (env.inApp) kids.push(h('p', { class: 'note', text: env.routed ? `이 앱 안에서는 구글 로그인이 열리지 않아, 누르면 ${env.android ? '크롬으로' : '사파리로'} 넘어갑니다.` : `이 앱 안에서는 구글 로그인이 열리지 않아요. 아이디로 가입하거나, ${browser}에서 열 링크를 복사하세요.` }), copy, copySaid, linkOut);
+      kids.push(h('div', { class: 'login-or', text: '또는' }), form, swap, legal.box);
       host.append(...kids);
+      loginPaint = paint;
+      paint();
+      sync();
+      return () => { if (loginPaint === paint) loginPaint = null; };
+    }, true);
+  }
+  // In-app browser, back from the system browser: the guest here was linked there and its coins and boards moved (main.js handoverBack).
+  function handoverMoved() {
+    const browser = (hooks.authEnv?.() || {}).android ? '크롬' : '사파리';
+    openSheet('계정으로 옮겼어요', null, (host) => {
+      host.append(
+        h('div', { class: 'callout', style: { marginTop: 0 } }, `코인과 전광판을 방금 연결한 계정으로 옮겼어요. 그 계정은 ${browser}에서 로그인한 창에 있으니, 거기서 이어서 하세요.`),
+        h('p', { class: 'note', text: '이 앱 안의 화면은 코인 0인 손님으로 남아 있어요. 여기서 코인이 0으로 보이는 것은 그 때문이에요.' }),
+        h('button', { class: 'btn gold cta', type: 'button', text: '확인', onclick: () => closeSheet() }),
+      );
     }, true);
   }
   const bootEl = document.getElementById('boot');
@@ -3628,7 +3738,9 @@ export function createUI(root, hooks) {
     };
     go.addEventListener('click', enter);
     nick.addEventListener('keydown', (e) => { if (e.key === 'Enter') enter(); });
-    const bootFields = known ? [go] : [nick, nickErr, go];
+    // A returning player on a new device signs in before entering; the sheet opens over this card (renderAccount shows it to a guest only).
+    bootLogin = h('button', { class: 'linkbtn boot-login', type: 'button', text: '이미 계정이 있어요 · 로그인', hidden: !(accountView.ready && accountView.guest && !accountView.linked), onclick: () => openLogin() });
+    const bootFields = known ? [go, bootLogin] : [nick, nickErr, go, bootLogin];
     bootEnter.replaceChildren(...bootFields);
     bootEnter.hidden = false;
     if (!coarse) setTimeout(() => go.focus(), 60);
@@ -4498,11 +4610,49 @@ export function createUI(root, hooks) {
         catch { note('길게 눌러 계정 번호를 선택하세요', 'err'); }
       } });
       const who = hooks.linked?.() ? '인증 계정' : (hooks.isGuest?.() ? '임시 게스트' : '입장 전');
+      // An id sign-up has a made-up address (…@id.wishboard.dev): only the id is shown.
+      const acct = accountLabel(hooks.email?.());
+      const me = sheet;
+      // Account block: a guest gets the way in; a linked account gets 로그아웃 (one confirm step) and, below it, withdrawal.
+      const account = h('div', { class: 'acct' });
+      if (hooks.linked?.()) {
+        const out = h('button', { class: 'btn ghost', type: 'button', text: '로그아웃' });
+        const yes = h('button', { class: 'btn', type: 'button', text: '로그아웃' });
+        const no = h('button', { class: 'btn ghost', type: 'button', text: '취소' });
+        const outErr = h('p', { class: 'note login-err', role: 'alert', hidden: true });
+        const ask = h('div', { class: 'acct-ask', hidden: true },
+          h('p', { class: 'note', text: '로그아웃하면 이 기기는 새 손님으로 이어집니다. 코인·전광판·토지는 계정에 그대로 남고, 다시 로그인하면 돌아와요.' }),
+          h('div', { class: 'acct-row' }, no, yes),
+          outErr);
+        out.addEventListener('click', () => { ask.hidden = false; out.hidden = true; });
+        no.addEventListener('click', () => { ask.hidden = true; out.hidden = false; });
+        yes.addEventListener('click', async () => {
+          yes.disabled = true;
+          no.disabled = true;
+          outErr.hidden = true;
+          try {
+            await hooks.signOut?.();
+            if (sheet === me) closeSheet();
+          } catch (e) {
+            outErr.textContent = e?.message || '로그아웃하지 못했어요';
+            outErr.hidden = false;
+            yes.disabled = false;
+            no.disabled = false;
+          }
+        });
+        account.append(out, ask, h('button', { type: 'button', class: 'linkbtn', text: '[회원 탈퇴 및 데이터 초기화]', onclick: () => openWithdraw() }));
+      } else if (hooks.isGuest?.()) {
+        account.append(
+          h('button', { class: 'btn', type: 'button', text: '계정 연결 · 로그인 (+300)', onclick: () => openLogin() }),
+          h('p', { class: 'note', text: '연결하면 창을 닫아도 코인과 전광판이 남아요. 이미 계정이 있으면 여기서 로그인하세요.' }),
+        );
+      }
       host.append(
         h('div', { class: 'holder', style: { marginTop: 0 } },
           h('div', { class: 'stat' }, h('small', { text: '상태' }), h('b', { text: who })),
           h('div', { class: 'stat' }, h('small', { text: '닉네임' }), h('b', { text: hooks.nick?.() || '—' })),
-          h('div', { class: 'stat' }, h('small', { text: '이메일' }), h('b', { text: hooks.email?.() || '없음' }))),
+          h('div', { class: 'stat' }, h('small', { text: acct.kind === 'id' ? '아이디' : '이메일' }), h('b', { text: acct.text || '없음', title: acct.text || null }))),
+        account.childNodes.length ? account : null,
         row('네온 글로우', '눈부시면 낮춰 주세요', 0, 100, Math.round(s.glow * 100), v => `${v}%`, v => hooks.setGlow(v / 100)),
         row('화면 밝기', '노출', 60, 130, Math.round(s.exposure * 100), v => `${v}%`, v => hooks.setExposure(v / 100)),
         h('div', { class: 'field' }, h('label', null, '그래픽 품질', h('span', { text: '반사·해상도' })), qSel, qNote),
@@ -4513,21 +4663,51 @@ export function createUI(root, hooks) {
         h('p', { class: 'note' }, '지도 © ', h('a', { href: 'https://www.openstreetmap.org/copyright', target: '_blank', rel: 'noopener', text: 'OpenStreetMap' }), ' · ', h('button', { type: 'button', class: 'linkbtn', text: '사진·캐릭터 라이선스', onclick: () => openCredits() })),
         policyLinks(),
       );
-      if (hooks.linked?.()) {
-        const confirm = h('div', { hidden: true });
-        const go = h('button', { class: 'btn', type: 'button', text: '탈퇴하기' });
-        const cancel = h('button', { class: 'btn ghost', type: 'button', text: '취소', onclick: () => { confirm.hidden = true; } });
-        go.addEventListener('click', async () => {
-          go.disabled = true;
-          try { await hooks.withdraw?.(); closeSheet(); }
-          catch (e) { note(e?.message || '탈퇴를 처리하지 못했어요', 'err'); go.disabled = false; }
-        });
-        confirm.append(h('p', { class: 'note', text: '내 지갑 연결과 내 전광판·토지 소유만 지웁니다. 다른 사람의 데이터는 지우지 않아요.' }), cancel, go);
-        host.append(
-          h('button', { type: 'button', class: 'linkbtn', text: '[회원 탈퇴 및 데이터 초기화]', onclick: () => { confirm.hidden = false; } }),
-          confirm,
-        );
-      }
+    }, true);
+  }
+  // 회원 탈퇴: its own step. It lists what goes (worker.js /rt/auth/withdraw, forgetActor and schema.sql withdraw_account), 취소 is the
+  // big button and goes back to settings, and 탈퇴하기 works only after the word 탈퇴 was typed.
+  const WITHDRAW_WORD = '탈퇴';
+  function openWithdraw() {
+    openSheet('회원 탈퇴', null, (host) => {
+      const me = sheet;
+      const word = h('input', { class: 'input', maxLength: 8, placeholder: WITHDRAW_WORD, autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': `확인하려면 ${WITHDRAW_WORD} 라고 입력` });
+      const go = h('button', { class: 'btn ghost gone-go', type: 'button', text: '탈퇴하기', disabled: true });
+      const cancel = h('button', { class: 'btn gold cta', type: 'button', text: '취소', onclick: () => openSettings() });
+      const err = h('p', { class: 'note login-err', role: 'alert', hidden: true });
+      const typed = () => word.value.trim() === WITHDRAW_WORD;
+      word.addEventListener('input', () => { go.disabled = !typed(); });
+      go.addEventListener('click', async () => {
+        if (!typed()) return;
+        go.disabled = true;
+        cancel.disabled = true;
+        err.hidden = true;
+        try {
+          await hooks.withdraw?.();
+          if (sheet === me) closeSheet();
+        } catch (e) {
+          err.textContent = e?.message || '탈퇴를 처리하지 못했어요';
+          err.hidden = false;
+          go.disabled = !typed();
+          cancel.disabled = false;
+        }
+      });
+      host.append(
+        h('div', { class: 'callout', style: { marginTop: 0 } }, h('b', { class: 'gone-warn', text: '탈퇴하면 아래가 모두 지워지고, 되돌릴 수 없어요.' })),
+        h('ul', { class: 'gone-list' },
+          h('li', { text: '계정 자체 (로그인 정보)' }),
+          h('li', { text: '지갑 연결과 코인, VIP 티켓' }),
+          h('li', { text: '내 전광판과 토지 (건물은 빈 땅으로 돌아가요), 올린 사진' }),
+          h('li', { text: '내 소원, 내가 준 하트와 신고' }),
+          h('li', { text: '알림 구독' }),
+          h('li', { text: '주간 리그 기록, 전광판 리포트, 초대 코드' }),
+        ),
+        h('p', { class: 'note', text: '다른 사람의 데이터는 지우지 않아요. 이 기기는 새 손님으로 이어집니다.' }),
+        cancel,
+        h('div', { class: 'field' }, h('label', null, `정말 탈퇴하려면 아래 칸에 ${WITHDRAW_WORD} 라고 입력하세요`), word),
+        go,
+        err,
+      );
     }, true);
   }
 
@@ -4869,6 +5049,9 @@ export function createUI(root, hooks) {
     },
     promptLink,
     openLogin,
+    setLogin,
+    closeLogin,
+    handoverMoved,
     setRevenge(until) { revengeUntil = Number(until) || 0; },
     setBall(open, until) { ballOpenFlag = !!open; ballUntil = Number(until) || 0; },
     setCrowd(n) {

@@ -85,9 +85,109 @@ export function handoverHref(ticket, autologin) {
   return u.href;
 }
 
+// Android: open the link in Chrome. S.browser_fallback_url is where the webview goes when Chrome is not installed.
 export function chromeIntent(httpsUrl) {
   const u = new URL(httpsUrl);
-  return `intent://${u.host}${u.pathname}${u.search}#Intent;scheme=https;package=com.android.chrome;end`;
+  return `intent://${u.host}${u.pathname}${u.search}#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(u.href)};end`;
+}
+
+export function isKakaoTalk(ua) {
+  return /KAKAOTALK/i.test(String(ua || ''));
+}
+
+// KakaoTalk's own way out of its in-app browser (Android and iOS): it opens the link in the phone's default browser.
+export function kakaoExternal(httpsUrl) {
+  return 'kakaotalk://web/openExternal?url=' + encodeURIComponent(new URL(httpsUrl).href);
+}
+
+// The addresses to try, in order, to carry a handover link from an in-app browser into the system browser.
+// Empty when there is no automatic way (iOS outside KakaoTalk): the sheet then shows the copy-link instructions only.
+export function externalRoutes(ua, httpsUrl) {
+  const url = String(httpsUrl || '');
+  if (!url) return [];
+  const out = [];
+  if (isKakaoTalk(ua)) out.push(kakaoExternal(url));
+  if (isAndroid(ua)) out.push(chromeIntent(url));
+  return out;
+}
+
+// ---- Google sign-in in a second window (oauth.html) and the full-page fallback ----
+export const OAUTH_CHANNEL = 'kts-oauth';
+export const OAUTH_MSG = 'kts-oauth';
+export const OAUTH_ACK = 'kts-oauth-ack';
+const AUTH_PARAMS = ['code', 'error', 'error_code', 'error_description'];
+const ONCE_PARAMS = ['autologin', 'handover', ...AUTH_PARAMS];
+const hashParams = (hash) => new URLSearchParams(String(hash || '').replace(/^#/, ''));
+
+// What oauth.html sent: { code } or { error, errorCode, description }, or null for anything else (wrong shape, odd characters).
+export function oauthMessage(data) {
+  if (!data || typeof data !== 'object' || data.t !== OAUTH_MSG) return null;
+  if (typeof data.code === 'string' && data.code) return /^[\w.~-]{8,512}$/.test(data.code) ? { code: data.code } : null;
+  if (typeof data.error !== 'string' || !data.error) return null;
+  return {
+    error: data.error.slice(0, 80),
+    errorCode: typeof data.errorCode === 'string' ? data.errorCode.slice(0, 80) : '',
+    description: typeof data.description === 'string' ? data.description.slice(0, 200) : '',
+  };
+}
+
+// The game's own address right after a full-page sign-in: a code to exchange (supabase-js does it), or the provider's error.
+export function oauthReturn(search, hash) {
+  const q = new URLSearchParams(String(search || '').replace(/^\?/, ''));
+  const f = hashParams(hash);
+  const pick = (k) => String(q.get(k) || f.get(k) || '');
+  const error = pick('error'), errorCode = pick('error_code'), description = pick('error_description');
+  return { code: !!q.get('code'), failed: !!(error || errorCode || description), error, errorCode, description };
+}
+
+// Where a full-page sign-in comes back to: this page without the one-time parameters (and without the hash).
+export function returnUrl(href) {
+  const u = new URL(href);
+  for (const k of ONCE_PARAMS) u.searchParams.delete(k);
+  return u.origin + u.pathname + u.search;
+}
+
+// The address bar once the sign-in parameters were read: path + query + hash without them. A hash that carries an error or a token goes too.
+export function cleanAddress(href) {
+  const u = new URL(href);
+  for (const k of ONCE_PARAMS) u.searchParams.delete(k);
+  const f = hashParams(u.hash);
+  const hash = AUTH_PARAMS.some((k) => f.has(k)) || f.has('access_token') ? '' : u.hash;
+  return u.pathname + u.search + hash;
+}
+
+// A line for the player when the provider sent an error back. Pressing cancel in the Google window is access_denied.
+export function oauthErrorText(r) {
+  const error = String(r?.error || ''), code = String(r?.errorCode || '');
+  const d = Array.from(String(r?.description || '')).map((c) => (c < ' ' ? ' ' : c)).join('').trim().slice(0, 120);
+  const all = code + ' ' + d;
+  if (/signup/i.test(all) && /disabled|not allowed/i.test(all)) return '지금은 새 계정을 만들 수 없어요';
+  if (error === 'access_denied' && !/banned|disabled|provider/i.test(all)) return '구글 로그인을 취소했어요';
+  return d ? `로그인하지 못했어요 (${d})` : '로그인하지 못했어요. 다시 시도해 주세요.';
+}
+
+// Supabase auth errors in Korean. Our own Korean messages pass through; anything else becomes one plain line.
+export function authErrorText(e) {
+  const m = String(e?.message || (typeof e === 'string' ? e : '') || ''), code = String(e?.code || ''), status = Number(e?.status) || 0;
+  const all = m + ' ' + code;
+  if (code === 'invalid_credentials' || /invalid login credentials/i.test(m)) return '아이디 또는 비밀번호가 맞지 않아요';
+  if (code === 'user_already_exists' || code === 'email_exists' || /already registered|already been registered/i.test(m)) return '이미 가입한 아이디예요. 로그인해 주세요.';
+  if (code === 'weak_password' || /password should|weak.?password|password.*at least/i.test(m)) return '비밀번호는 6자 이상이어야 해요';
+  if (status === 429 || /rate.?limit|too many requests|for security purposes/i.test(all)) return '요청이 너무 많아요. 잠시 뒤에 다시 해 주세요.';
+  if (e?.name === 'AuthRetryableFetchError' || /failed to fetch|networkerror|network request failed|load failed|fetch failed/i.test(m)) return '네트워크에 연결하지 못했어요. 연결을 확인하고 다시 해 주세요.';
+  if (code === 'email_not_confirmed' || /email not confirmed/i.test(m)) return '메일 확인이 끝나지 않은 계정이에요';
+  if (code === 'email_address_invalid' || /email address.*invalid|unable to validate email/i.test(m)) return '이메일 또는 아이디를 확인해 주세요';
+  if (/code verifier|flow.?state|auth code/i.test(all)) return '로그인 시간이 지났어요. 다시 시도해 주세요.';
+  if (/[가-힣]/.test(m)) return m;
+  return '로그인에 실패했어요';
+}
+
+// What the settings sheet shows for an account: the bare id for an id sign-up (…@id.wishboard.dev is not a mailbox), else the e-mail.
+export function accountLabel(email) {
+  const s = String(email || '').trim();
+  if (!s) return { kind: '', text: '' };
+  const m = /^([^@\s]+)@id\.wishboard\.dev$/i.exec(s);
+  return m ? { kind: 'id', text: m[1] } : { kind: 'email', text: s };
 }
 
 export function loginEmail(raw) {
