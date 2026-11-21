@@ -325,6 +325,12 @@ export class Meter extends DurableObject {
   // Check and count in one call (a DO runs one call at a time), so parallel starter claims from one IP cannot pass the cap.
   sipTake(hash, day, cap) { this.acInit(); const q = this.ctx.storage.sql, id = String(hash || '').slice(0, 16), d = String(day || ''), n = agGet(q, id, 'sip', d); if (n >= cap) return false; agPut(q, id, 'sip', d, n + 1); return true; }
   sipGive(hash, day) { this.acInit(); const q = this.ctx.storage.sql, id = String(hash || '').slice(0, 16), d = String(day || ''), n = agGet(q, id, 'sip', d); if (n > 0) agSet(q, id, 'sip', d, n - 1); return Math.max(0, n - 1); }
+  // Starter guard for account links (instance 'acct'). stp: how many of a guest's unearned starting coins its links have already moved out of its
+  // wallet (0..cap, only grows). Check and count in one call, so two links at once never both see the same starter. -> how much of `moved` is starter.
+  stTake(guest, moved, cap) { const q = this.ctx.storage.sql; if (!this.stOk) { this.stOk = 1; q.exec('create table if not exists stp(g text primary key, v integer not null)'); }
+    const g = String(guest || '').slice(0, 80), m = Math.floor(Number(moved)), c = Math.floor(Number(cap)); if (!g || !(m > 0) || !(c > 0)) return 0;
+    const had = Number(q.exec('select v from stp where g = ?', g).toArray()[0]?.v) || 0, s = Math.min(m, Math.max(0, c - had));
+    if (s > 0) q.exec('insert into stp(g, v) values(?, ?) on conflict(g) do update set v = excluded.v', g, had + s); return s; }
   cardInit() { if (this.ci) return; this.ci = 1; this.ctx.storage.sql.exec('create table if not exists cards(k text primary key, png blob, at integer)'); }
   cardGet(key) { this.cardInit(); const row = this.ctx.storage.sql.exec('select png from cards where k = ?', String(key || '')).toArray()[0]; return row?.png || null; }
   cardPut(key, bytes) { this.cardInit(); const png = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []); if (png.byteLength > 40000) return { ok: false };
@@ -2672,6 +2678,25 @@ async function fileReport(req, env) {
   if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || (/schema cache|Could not find the function/i.test(msg) ? '신고가 아직 준비 중이에요.' : '신고를 접수하지 못했어요.') }, rpc.ok ? 400 : 502);
   return J({ ok: true });
 }
+// Starter guard for account links. A guest wallet starts with STARTER_COINS nobody earned (wallets.coins DEFAULT 100; coin_batch, claim_billboard and
+// sell_coins_to_advertiser insert the same 100) and merge_guest_account moves every coin, so sign-out -> a new guest -> sign-in added 100 a cycle.
+// The merge's own answer is the judge, decided inside its one transaction: bonus > 0 only for the call that made the account's first link (everything
+// moves, as before), moved = what this very call moved (0 for a replay and for the loser of two calls at once). On every later link the first
+// STARTER_COINS a guest ever moves are taken back out of the account and what it earned on top stays. Meter.stTake counts them per guest, so coins
+// that reach an already linked guest later (a late room flush) are its earnings. An answer without a numeric `moved` leaves the link as it was.
+// takeBack removes n coins with what the database has today: spend_plaza burns exactly 30 and nothing else, grant_coins adds any amount. Whole 30s
+// first, then the rest r as +(30 - r) and one more 30, so at no step has the wallet lost more than n: the account never loses a coin it had before the
+// link. It stops at the first refusal and the account keeps the remainder. -> the coins actually removed.
+const STARTER_COINS = 100, BURN = 30;
+async function takeBack(env, uid, n) {
+  const key = env.FLUSH_KEY || '', want = Math.min(STARTER_COINS, Math.floor(Number(n))); if (!(want > 0)) return 0;
+  const yes = (r) => r.ok && r.data?.ok === true, burn = () => supabaseRpc('spend_plaza', { p_key: key, p_actor_id: uid, p_coins: BURN, p_tickets: 0 }).then(yes, () => false);
+  const whole = Math.floor(want / BURN), rest = want % BURN;
+  const done = (await Promise.all(Array.from({ length: whole }, burn))).filter(Boolean).length * BURN;
+  if (done < whole * BURN || !rest) return done;
+  if (!(await supabaseRpc('grant_coins', { p_key: key, p_actor_id: uid, p_amount: BURN - rest }).then(yes, () => false))) return done;
+  return (await burn()) ? want : done - (BURN - rest);
+}
 async function accountApi(req, env, ctx, u) {
   if (u.pathname === '/rt/config') {
     if (req.method !== 'GET') return J({ err: 'get' }, 405);
@@ -2721,6 +2746,14 @@ async function accountApi(req, env, ctx, u) {
   const rpc = await supabaseRpc('merge_guest_account', { p_key: env.FLUSH_KEY || '', p_user_id: actor.id, p_guest_id: guestId, p_nickname: botNick(b?.nickname) ? '' : clip(b?.nickname || '', 16) });
   const data = rpc.data || {};
   if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || '계정을 연결하지 못했습니다.' }, rpc.ok ? 400 : 502);
+  // Starter guard (see takeBack). Only a link that moved coins asks anything: one 'acct' call, and on a later link at most five RPCs. Budget hard, or
+  // that call failing: no Durable Object, a later link gives back the first STARTER_COINS of what it moved. Kept running if the client goes away.
+  let coins = data.coins; const moved = typeof data.moved === 'number' ? Math.floor(data.moved) : 0;
+  if (moved > 0) { const first = Number(data.bonus) > 0;
+    const job = (async () => { let part = Math.min(moved, STARTER_COINS);
+      if (!(await budgetHard(env))) { try { part = Number(await acct(env).stTake(guestId, moved, STARTER_COINS)) || 0; } catch { /* as at hard */ } }
+      return first ? 0 : takeBack(env, actor.id, part); })().catch(() => 0);
+    ctx.waitUntil(job); const back = await job; if (back > 0 && Number.isFinite(Number(coins))) coins = Math.max(0, Number(coins) - back); }
   try { await invalidateWorld(env, ctx); } catch { }
   // The guest's boards now have the user as holder: a bulk change, so the live rooms drop their board rows (brd) and clients refetch the world. Live rooms
   // as the wish fan-out picks them (wishRooms: the caller's shard and shards with a seated account today or yesterday; unreadable: the caller's only).
@@ -2733,7 +2766,7 @@ async function accountApi(req, env, ctx, u) {
   ctx.waitUntil(Promise.resolve().then(() => Promise.all([pushM(env).psMove(guestId, actor.id), snapM(env).snapMove(guestId, actor.id).then(() => { SNX.clear(); SNC.clear(); }),
     wishM(env).wMove(guestId, actor.id).then(() => { WISHC.at = 0; WONE.clear(); WAU.clear(); }), darkM(env).dkMove(guestId, actor.id), lgM(env).lgMove(guestId, actor.id).then(lgDrop), invM(env).ivMove(guestId, actor.id)])).catch(() => { })); // the invite code, counts and pending rewards too
   await adSoon(ctx, () => adM(env).adMove(guestId, actor.id)); // the moved boards keep their report; waited for (up to 0.8 s) so a report right after the link finds it
-  return J({ ok: true, actor_id: actor.id, coins: data.coins, bonus: data.bonus || 0, linked: true, nickname: data.nickname || '' });
+  return J({ ok: true, actor_id: actor.id, coins, bonus: data.bonus || 0, linked: true, nickname: data.nickname || '' });
 }
 // Account withdrawal, outside Supabase: push subscriptions and gaps, wishes (hidden and emptied), hearts given, reports filed, and the uploader link of
 // snapshot contexts, for the user and for every guest linked to it (the 'ev' alias). Then this isolate's copies that could still show the wish.
