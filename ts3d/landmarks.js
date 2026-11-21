@@ -5,7 +5,7 @@ import { LAYOUT, LOOP, PLOT_SLOTS, TAXI_STANDS, fountainSpot, insideLoop } from 
 import { Kit, fishGeometry } from './kit.js?v=202611211159';
 import {
   makeCanvas, paintStationSign, paintPylon, paintMenuBoard, paintTKTS, paintNeonSign,
-  paintBeam, paintPlotBadge, paintLabel, paintTaxiStand, SANS, EMOJI,
+  paintPlotBadge, paintLabel, paintTaxiStand, SANS, EMOJI,
 } from './art.js?v=202611211159';
 
 const tex = (canvas, aniso = 4) => {
@@ -456,7 +456,18 @@ export function buildLandmarks(ctx) {
     back.rotation.y = 0;
     back.position.z = G.z0 - 0.1;
     root.add(back);
-    const beamTex2 = new THREE.CanvasTexture(paintBeam(makeCanvas(64, 256)));
+    // Spot cones: u runs around the cone, so the texture is a plain vertical falloff (bright at the lamp, soft at the floor).
+    const coneC = makeCanvas(4, 128);
+    {
+      const g = coneC.getContext('2d');
+      const gy = g.createLinearGradient(0, 0, 0, 128);
+      gy.addColorStop(0, 'rgba(255,255,255,0.85)');
+      gy.addColorStop(0.6, 'rgba(255,255,255,0.35)');
+      gy.addColorStop(1, 'rgba(255,255,255,0.08)');
+      g.fillStyle = gy;
+      g.fillRect(0, 0, 4, 128);
+    }
+    const beamTex2 = new THREE.CanvasTexture(coneC);
     const spots = [];
     ['#ff3d9a', '#3fe6ff', '#ffcf5a', '#b84dff'].forEach((col, k) => {
       const beam = new THREE.Mesh(new THREE.ConeGeometry(2.2, 14, 18, 1, true).translate(0, -7, 0), new THREE.MeshBasicMaterial({ map: beamTex2, color: new THREE.Color(col).multiplyScalar(0.45), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
@@ -515,7 +526,6 @@ export function buildLandmarks(ctx) {
   const plotMats = {
     tower: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.1, metalness: 0.9, envMapIntensity: 1.5 }),
   };
-  const beamTex = new THREE.CanvasTexture(paintBeam(makeCanvas(64, 256)));
 
   function plotSign(text, color, sub) {
     const c = makeCanvas(512, 128);
@@ -634,7 +644,7 @@ export function buildLandmarks(ctx) {
       if (o.material && o.material !== kitMats.base) {
         for (const m of [].concat(o.material)) {
           if (Object.values(kitMats).includes(m) || Object.values(plotMats).includes(m)) continue;
-          if (m.map && m.map !== beamTex && m.map !== glowTex) m.map.dispose();
+          if (m.map && m.map !== glowTex) m.map.dispose();
           m.dispose();
         }
       }

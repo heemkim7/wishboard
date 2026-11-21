@@ -4,7 +4,27 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Kit } from './kit.js?v=202611211159';
-import { makeCanvas, paintTaxiSign, paintTaxiDecal, paintBeam } from './art.js?v=202611211159';
+import { makeCanvas, paintTaxiSign, paintTaxiDecal } from './art.js?v=202611211159';
+
+// Headlight pool on the road: a wide soft fan (art.js paintBeam is now a narrow core meant for guide beams).
+function paintHeadlight(canvas) {
+  const g = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const gx = g.createLinearGradient(0, 0, W, 0);
+  gx.addColorStop(0, 'rgba(255,255,255,0)');
+  gx.addColorStop(0.5, 'rgba(255,255,255,1)');
+  gx.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gx;
+  g.fillRect(0, 0, W, H);
+  g.globalCompositeOperation = 'destination-in';
+  const gy = g.createLinearGradient(0, 0, 0, H);
+  gy.addColorStop(0, 'rgba(0,0,0,0)');
+  gy.addColorStop(0.7, 'rgba(0,0,0,0.6)');
+  gy.addColorStop(1, 'rgba(0,0,0,1)');
+  g.fillStyle = gy;
+  g.fillRect(0, 0, W, H);
+  return canvas;
+}
 import { GROUND_LAYER } from './ground.js?v=202611211159';
 import { ROAD } from './nyc.js?v=202611211159';
 import { LAYOUT } from './layout.js?v=202611211159';
@@ -163,7 +183,7 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
   for (let k = 0; k < N_CAR; k++) carParts[0].setColorAt(k, veh[N_TAXI + k].color);
   carParts[0].instanceColor.needsUpdate = true;
   const wheels = mk(kits.wheel, kitMats.metal, total * 4);
-  const beamTex = new THREE.CanvasTexture(paintBeam(makeCanvas(64, 256)));
+  const beamTex = new THREE.CanvasTexture(paintHeadlight(makeCanvas(64, 256)));
   const beams = mk(new THREE.PlaneGeometry(2.8, 9).rotateX(-Math.PI / 2).translate(0, 0.05, 6.7), new THREE.MeshBasicMaterial({ map: beamTex, color: new THREE.Color(0.5, 0.46, 0.38), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }), total);
   beams.layers.set(GROUND_LAYER);
   const slotOf = (i) => (i < N_TAXI ? { parts: taxiParts, k: i } : i < N_AI ? { parts: carParts, k: i - N_TAXI } : { parts: taxiParts, k: i - N_AI + N_TAXI });

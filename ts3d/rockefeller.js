@@ -2,9 +2,9 @@
 // Massing follows the measured footprint: a low podium, the narrow 260 m shaft, then the stepped crown.
 import * as THREE from 'three';
 
-const STONE = new THREE.Color('#cbb89a');
-const STONE_DARK = new THREE.Color('#8d7b64');
-const BRONZE = new THREE.Color('#5c4632');
+const STONE = new THREE.Color('#5e6272');
+const STONE_DARK = new THREE.Color('#3c404e');
+const BRONZE = new THREE.Color('#4a3c30');
 
 function rockParts(nyc) {
   const B = nyc.buildings;
@@ -29,42 +29,47 @@ function rockParts(nyc) {
   return { base, shaft };
 }
 
+// Night limestone in the city's slate family, about one window in ten lit (warm, one in eight cool), an occasional
+// fully lit floor. The canvas holds 8 x 8 windows and repeats at half scale, so each window keeps its old size while
+// the lit pattern repeats only every eight windows.
 function facadeTexture() {
   const c = document.createElement('canvas');
   c.width = 1024;
   c.height = 1024;
   const g = c.getContext('2d');
-  g.fillStyle = '#c4b29a';
+  g.fillStyle = '#545868';
   g.fillRect(0, 0, 1024, 1024);
-  for (let i = 0; i < 4000; i++) {
-    g.fillStyle = `rgba(80,60,40,${Math.random() * 0.15})`;
-    g.fillRect((Math.random() * 1024) | 0, (Math.random() * 1024) | 0, 2, 2);
+  let s = 90217;
+  const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+  const N = 8, bay = 128, floor = 128;
+  const litFloor = Array.from({ length: N }, () => rnd() < 0.06);
+  const lit = [];
+  for (let x = 0; x < N; x++) for (let y = 0; y < N; y++) {
+    const r = rnd();
+    if (litFloor[y] ? r > 0.15 : r < 0.09) lit.push([x, y, rnd() < 0.125 ? '#aacdff' : '#ffc878']);
   }
-  const bay = 256, floor = 256;
-  for (let x = 0; x < 4; x++) {
-    g.fillStyle = '#efe2cf';
-    g.fillRect(x * bay, 0, 18, 1024);
-    g.fillStyle = '#6d5c48';
-    g.fillRect(x * bay + bay - 10, 0, 10, 1024);
-    for (let y = 0; y < 4; y++) {
-      const px = x * bay + 36, py = y * floor + 28;
-      const lit = (x * 3 + y * 5) % 7 !== 1;
-      g.fillStyle = '#8d7b64';
-      g.fillRect(px - 6, py - 6, 196, 210);
-      g.fillStyle = lit ? ((x + y) % 3 === 0 ? '#ffe6b8' : '#ffd08a') : '#141820';
-      g.fillRect(px, py, 184, 196);
-      if (lit) {
-        g.fillStyle = 'rgba(255,244,220,0.45)';
-        g.fillRect(px + 8, py + 8, 70, 80);
-      }
-      g.fillStyle = '#5c4c3c';
-      g.fillRect(px + 88, py, 6, 196);
-      g.fillRect(px, py + 96, 184, 6);
+  const isLit = (x, y) => lit.find((l) => l[0] === x && l[1] === y);
+  for (let x = 0; x < N; x++) {
+    g.fillStyle = '#666a7a';
+    g.fillRect(x * bay, 0, 9, 1024);
+    g.fillStyle = '#3a3e4c';
+    g.fillRect(x * bay + bay - 5, 0, 5, 1024);
+    for (let y = 0; y < N; y++) {
+      const px = x * bay + 18, py = y * floor + 14;
+      const on = isLit(x, y);
+      g.fillStyle = '#444858';
+      g.fillRect(px - 3, py - 3, 98, 105);
+      g.fillStyle = on ? on[2] : '#0b0e16';
+      g.fillRect(px, py, 92, 98);
+      g.fillStyle = '#2a2e3a';
+      g.fillRect(px + 44, py, 3, 98);
+      g.fillRect(px, py + 48, 92, 3);
     }
   }
   const map = new THREE.CanvasTexture(c);
   map.colorSpace = THREE.SRGBColorSpace;
   map.wrapS = map.wrapT = THREE.RepeatWrapping;
+  map.repeat.set(0.5, 0.5);
   map.anisotropy = 8;
   const e = document.createElement('canvas');
   e.width = 1024;
@@ -72,14 +77,14 @@ function facadeTexture() {
   const eg = e.getContext('2d');
   eg.fillStyle = '#000';
   eg.fillRect(0, 0, 1024, 1024);
-  for (let x = 0; x < 4; x++) for (let y = 0; y < 4; y++) {
-    if ((x * 3 + y * 5) % 7 === 1) continue;
-    eg.fillStyle = (x + y) % 3 === 0 ? '#ffd7a1' : '#e8a050';
-    eg.fillRect(x * 256 + 42, y * 256 + 34, 172, 180);
+  for (const [x, y, col] of lit) {
+    eg.fillStyle = col;
+    eg.fillRect(x * bay + 18, y * floor + 14, 92, 98);
   }
   const emissive = new THREE.CanvasTexture(e);
   emissive.colorSpace = THREE.SRGBColorSpace;
   emissive.wrapS = emissive.wrapT = THREE.RepeatWrapping;
+  emissive.repeat.set(0.5, 0.5);
   emissive.anisotropy = 8;
   return { map, emissive };
 }
@@ -153,7 +158,7 @@ export function buildRockefeller(info, { scene }) {
   if (!info) return null;
   const { base, shaft } = info;
   const tex = facadeTexture();
-  const wallMat = new THREE.MeshStandardMaterial({ map: tex.map, emissiveMap: tex.emissive, emissive: 0xffe2b8, emissiveIntensity: 0.55, color: STONE, roughness: 0.62, metalness: 0.08, side: THREE.DoubleSide });
+  const wallMat = new THREE.MeshStandardMaterial({ map: tex.map, emissiveMap: tex.emissive, emissive: 0xffffff, emissiveIntensity: 1.6, roughness: 0.62, metalness: 0.08, side: THREE.DoubleSide });
   const stoneMat = new THREE.MeshStandardMaterial({ color: STONE, roughness: 0.78, metalness: 0.04, side: THREE.DoubleSide });
   const darkMat = new THREE.MeshStandardMaterial({ color: STONE_DARK, roughness: 0.7, metalness: 0.08, side: THREE.DoubleSide });
   const bronzeMat = new THREE.MeshStandardMaterial({ color: BRONZE, roughness: 0.45, metalness: 0.55, side: THREE.DoubleSide });

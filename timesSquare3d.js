@@ -62,6 +62,17 @@ export function detectQuality() {
 }
 export const colorFor = (id) => AVATAR_COLORS[hashStr(id) % AVATAR_COLORS.length];
 
+// NeutralToneMapping pulls the darkest channel of a dim colour toward zero (its toe), so a dark sRGB target fed in
+// directly comes out darker and more saturated. This returns the linear pre-tone-map colour that shows as `hex`
+// on screen (exact while the colour's darkest channel stays under the toe, which holds for every sky/fog value here).
+function shownColor(hex, exposure) {
+  const t = new THREE.Color(hex);
+  const lo = Math.min(t.r, t.g, t.b);
+  const off = 0.4 * Math.sqrt(lo) - lo;
+  return t.setRGB((t.r + off) / exposure, (t.g + off) / exposure, (t.b + off) / exposure);
+}
+const GO_HERE = '#48d6f0', REWARD = '#ffb020';
+
 export function createTimesSquare(canvas, opts = {}) {
   if (!canvas) throw new Error('canvas');
   const net = opts.net || null;
@@ -80,8 +91,11 @@ export function createTimesSquare(canvas, opts = {}) {
   renderer.setPixelRatio(dpr);
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0x2a2248, quality === 'high' ? 0.0009 : quality === 'medium' ? 0.00115 : 0.0015);
-  scene.environmentIntensity = 0.4;
+  const shown = (hex) => shownColor(hex, renderer.toneMappingExposure);
+  // Fog matches the low sky band (#1c1a3a on screen); densities per tier are unchanged.
+  scene.fog = new THREE.FogExp2(shown('#1c1a3a'), quality === 'high' ? 0.0009 : quality === 'medium' ? 0.00115 : 0.0015);
+  // Diffuse + specular image light from the room env (0.25) and later the photo env (0.5): kept low so walls stay dark.
+  scene.environmentIntensity = 0.25;
   const baseFov = low ? 62 : 55;
   const camera = new THREE.PerspectiveCamera(baseFov, 1, 0.2, 5200);
   camera.layers.enable(1);
@@ -96,7 +110,7 @@ export function createTimesSquare(canvas, opts = {}) {
   );
   walkerMesh.frustumCulled = false;
   const walkerDummy = new THREE.Object3D();
-  const walkerTint = [0xd5deee, 0xf0c14e, 0xef7aa8, 0x7dcea0, 0x9eb6ff, 0xffb087];
+  const walkerTint = [0xb8bfd0, 0xc9a66a, 0xc08aa0, 0x8fb0a0, 0x95a4cc, 0xc4a088];
   for (let i = 0; i < walkerPts.length; i++) walkerMesh.setColorAt(i, new THREE.Color(walkerTint[i % walkerTint.length]));
   scene.add(walkerMesh);
   function stepWalkers(t) {
@@ -123,26 +137,30 @@ export function createTimesSquare(canvas, opts = {}) {
 
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false, fog: false,
-    uniforms: { uTime: screenTime },
+    // Colours are on-screen targets run back through the tone map (shownColor), so the sky shows #060917 at the
+    // zenith, #131a3c in the middle and #2a2050 at the horizon. No cloud noise: a plain gradient is cheaper and calmer.
+    uniforms: {
+      uTime: screenTime,
+      uZen: { value: shown('#060917') }, uMid: { value: shown('#131a3c') }, uHor: { value: shown('#2a2050') },
+      uHaze: { value: shown('#3d2248') }, uFog: { value: scene.fog.color },
+    },
     vertexShader: 'varying vec3 vDir; void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-    fragmentShader: `varying vec3 vDir; uniform float uTime;
-float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-float vn(vec2 p){ vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
-  return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), u.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), u.x), u.y); }
-float fbm(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 5; i++){ v += a * vn(p); p *= 2.03; a *= 0.5; } return v; }
+    fragmentShader: `varying vec3 vDir; uniform float uTime; uniform vec3 uZen, uMid, uHor, uHaze, uFog;
+float h21(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 void main(){
   vec3 d = normalize(vDir);
-  float h = clamp(d.y, -0.2, 1.0);
-  vec3 zen = vec3(0.006, 0.008, 0.03), mid = vec3(0.03, 0.022, 0.085), hor = vec3(0.16, 0.06, 0.2), warm = vec3(0.34, 0.12, 0.13);
-  vec3 c = mix(mid, zen, smoothstep(0.1, 0.75, h));
-  c = mix(hor, c, smoothstep(0.0, 0.2, h));
-  c = mix(warm, c, smoothstep(-0.03, 0.07, h));
-  vec2 uv = d.xz / max(0.06, d.y + 0.1) * 0.8 + vec2(uTime * 0.006, uTime * 0.0025);
-  float n = fbm(uv * 1.2);
-  float cl = smoothstep(0.48, 0.86, n) * smoothstep(0.02, 0.22, h) * (1.0 - smoothstep(0.5, 0.95, h));
-  c += mix(vec3(0.3, 0.09, 0.28), vec3(0.42, 0.2, 0.14), n) * cl * 0.5;
-  vec2 sp = floor(d.xz / (d.y + 0.02) * 260.0);
-  c += step(0.9988, h21(sp)) * smoothstep(0.4, 0.85, h) * 0.5;
+  float h = d.y;
+  vec3 c = mix(uHor, uMid, smoothstep(0.0, 0.24, h));
+  c = mix(c, uZen, smoothstep(0.24, 0.78, h));
+  // faint warm-pink city glow low on the horizon, strongest along the bowtie (north-south, the Broadway axis)
+  vec2 az = normalize(d.xz + vec2(1e-4));
+  float haze = (0.55 + 0.45 * abs(az.y)) * (1.0 - smoothstep(0.0, 0.14, max(h, 0.0)));
+  c = mix(c, uHaze, haze * 0.6);
+  c = mix(uFog, c, smoothstep(-0.04, 0.01, h));
+  // few, small stars, only high up
+  vec2 sp = floor(d.xz / (d.y + 0.05) * 420.0);
+  float s = h21(sp);
+  c += step(0.99975, s) * smoothstep(0.45, 0.8, h) * (0.16 + 0.08 * sin(uTime * 1.7 + fract(s * 977.0) * 40.0));
   gl_FragColor = vec4(c, 1.0);
 }`,
   });
@@ -152,22 +170,26 @@ void main(){
   scene.add(sky);
 
   // ---- lights (constant count: toggling would recompile every material) -----------
-  const hemi = new THREE.HemisphereLight(0xb7c6ff, 0x6a3048, low ? 5.4 : 4.6);
-  const moon = new THREE.DirectionalLight(0xd0dcff, 1.25);
+  // Night: the ambient terms are low and only slightly cool, so walls (dark albedo, see ts3d/world.js) sit in the dark
+  // while the avatars, whose albedo is several times higher, keep their own colours. Signs, shop bands and the
+  // coloured point lights do the rest of the lighting.
+  const hemi = new THREE.HemisphereLight(0xb0b8d8, 0x3a2c3c, low ? 3.2 : 2.8);
+  const moon = new THREE.DirectionalLight(0xd0dcff, 1.0);
   moon.position.set(-40, 90, 30);
   scene.add(hemi, moon);
-  const mainLight = new THREE.PointLight(0x3fe6ff, 600, 95, 2);
+  const MAIN_I = 820;
+  const mainLight = new THREE.PointLight(0x3fe6ff, MAIN_I, 95, 2);
   mainLight.position.set(LAYOUT.oneTimes.x, 18, LAYOUT.oneTimes.z - 26);
-  const stallLight = new THREE.PointLight(0xff8a2a, 30, 16, 2);
+  const stallLight = new THREE.PointLight(0xff8a2a, 40, 16, 2);
   stallLight.position.set(LAYOUT.stall.x, 2.3, LAYOUT.stall.z + 0.4);
-  const westLight = new THREE.PointLight(0xff3d9a, low ? 760 : 520, 85, 2);
+  const westLight = new THREE.PointLight(0xff3d9a, low ? 1000 : 700, 85, 2);
   westLight.position.set(low ? 16 : -22, 16, low ? 60 : -40);
   scene.add(mainLight, stallLight, westLight);
   let eastLight = null;
   if (!low) {
-    eastLight = new THREE.PointLight(0x3fe6ff, 520, 85, 2);
+    eastLight = new THREE.PointLight(0x3fe6ff, 700, 85, 2);
     eastLight.position.set(30, 16, 95);
-    const stageLight = new THREE.PointLight(0xff3d9a, 160, 30, 2);
+    const stageLight = new THREE.PointLight(0xff3d9a, 210, 30, 2);
     stageLight.position.set(LAYOUT.stage.cx, 7, LAYOUT.stage.z0 - 2);
     scene.add(eastLight, stageLight);
   }
@@ -477,14 +499,36 @@ void main(){
   }
 
   // ---- markers (taxi pickup / drop-off / waypoint) ------------------------------------------
+  // Guide beams: two crossed soft quads (core about 0.15 m) instead of a fat cylinder, alpha .25, additive.
+  // Cyan = go here (waypoint, taxi pickup / drop-off, my board); amber = coin rewards only.
   const beamTex = new THREE.CanvasTexture(paintBeam(makeCanvas(64, 256)));
-  function makeMarker(colorHex, glyph) {
+  const BEAM_W = 0.75;
+  // paintBeam (art.js) is a narrow soft core about a fifth of the texture wide, fading toward v = 1, painted for a flat
+  // quad: two crossed quads 0.75 m wide give a core of about 0.15 m from every side. v runs .2 -> 0 -> 1 up the beam,
+  // so it is fully bright at 45% of its height (above the roofs, where it guides from afar) and fades out at the top.
+  function crossBeamGeo(w, h) {
+    const x = w / 2, pos = [], uv = [], idx = [];
+    for (const [ax, az] of [[x, 0], [0, x]]) {
+      const b = pos.length / 3;
+      for (const [y, v] of [[0, 0.2], [h * 0.45, 0], [h, 1]]) {
+        pos.push(-ax, y, -az, ax, y, az);
+        uv.push(0, v, 1, v);
+      }
+      idx.push(b, b + 1, b + 3, b, b + 3, b + 2, b + 2, b + 3, b + 5, b + 2, b + 5, b + 4);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    g.setIndex(idx);
+    g.computeBoundingSphere();
+    return g;
+  }
+  const beamMat = (hex, opacity = 0.25) => new THREE.MeshBasicMaterial({ map: beamTex, color: new THREE.Color(hex), transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: false });
+  const thinRing = (r, hex, opacity) => new THREE.Mesh(new THREE.RingGeometry(r - 0.12, r, 48).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: hex, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending }));
+  function makeMarker(colorHex, glyph, height, reflect) {
     const g = new THREE.Group();
-    const col = new THREE.Color(colorHex);
-    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 1.6, 70, 20, 1, true).translate(0, 35, 0), new THREE.MeshBasicMaterial({ map: beamTex, color: col.clone().multiplyScalar(0.55), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
-    beam.rotation.x = Math.PI;
-    beam.position.y = 70;
-    const ring = new THREE.Mesh(new THREE.RingGeometry(2.4, 3, 48).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: col.clone().multiplyScalar(1.6), transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending }));
+    const beam = new THREE.Mesh(crossBeamGeo(BEAM_W, height), beamMat(colorHex));
+    const ring = thinRing(1.45, colorHex, 0.75);
     ring.position.y = 0.05;
     ring.layers.set(1);
     const icon = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(paintMarker(makeCanvas(128, 128), glyph, colorHex)), transparent: true, depthWrite: false }));
@@ -492,21 +536,22 @@ void main(){
     icon.position.y = 6;
     icon.layers.set(2);
     beam.layers.set(2);
+    if (reflect) beam.layers.enable(0);
     g.add(beam, ring, icon);
     g.visible = false;
     scene.add(g);
     return { g, ring, icon, set(p) { g.visible = !!p; if (p) g.position.set(p.x, groundHeight(p.x, p.z), p.z); } };
   }
-  const markers = { pickup: makeMarker('#39f58a', '🙋'), drop: makeMarker('#ffcf5a', '🏁'), way: makeMarker('#3fe6ff', '📍') };
+  const markers = { pickup: makeMarker(GO_HERE, '🙋', 40, true), drop: makeMarker(GO_HERE, '🏁', 25, true), way: makeMarker(GO_HERE, '📍', 70, false) };
   const passenger = new THREE.Group();
   {
-    const cloth = new THREE.MeshStandardMaterial({ color: '#ffcf5a', roughness: 0.55 });
+    const cloth = new THREE.MeshStandardMaterial({ color: '#c9a25a', roughness: 0.55 });
     const skin = new THREE.MeshStandardMaterial({ color: '#ffd2ad', roughness: 0.6 });
     const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 0.62, 4, 8), cloth);
     body.position.y = 0.9;
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 10), skin);
     head.position.y = 1.62;
-    const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(paintMarker(makeCanvas(256, 96), '손님', '#39f58a')), transparent: true, depthWrite: false }));
+    const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(paintMarker(makeCanvas(256, 96), '손님', GO_HERE)), transparent: true, depthWrite: false }));
     tag.position.y = 2.25;
     tag.scale.set(3.4, 1.28, 1);
     passenger.add(body, head, tag);
@@ -516,24 +561,6 @@ void main(){
   function showPassenger(p) {
     passenger.visible = !!p;
     if (p) passenger.position.set(p.x, groundHeight(p.x, p.z), p.z);
-  }
-  {
-    const beam = markers.drop.g.children[0];
-    beam.geometry.dispose();
-    beam.geometry = new THREE.CylinderGeometry(1.6, 1.6, 25, 24, 1, true);
-    beam.position.y = 12.5;
-    beam.rotation.x = 0;
-    beam.material = new THREE.MeshBasicMaterial({ color: 0xffcf5a, transparent: true, opacity: 0.45, depthWrite: false, side: THREE.DoubleSide });
-    beam.layers.enable(0);
-  }
-  {
-    const beam = markers.pickup.g.children[0];
-    beam.geometry.dispose();
-    beam.geometry = new THREE.CylinderGeometry(1.2, 2.4, 40, 16, 1, true);
-    beam.position.y = 20;
-    beam.rotation.x = 0;
-    beam.material = new THREE.MeshBasicMaterial({ color: 0x39f58a, transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide });
-    beam.layers.enable(0);
   }
   let waypoint = null;
   const job = { phase: 'none', target: null, dest: null, t0: 0, limit: 0, nextAt: 0, startX: 0, startZ: 0, riders: 0, extra: null, extraAt: 0, extraReach: 0, detachAt: 0 };
@@ -740,9 +767,8 @@ void main(){
   const stars = new Map();
   const starGeo = new THREE.OctahedronGeometry(0.42, 0);
   const starMat = new THREE.MeshStandardMaterial({ color: '#ffd56a', emissive: '#ffb020', emissiveIntensity: 2, metalness: 0.8, roughness: 0.2 });
-  const starBeamTex = new THREE.CanvasTexture(paintGlow(makeCanvas(64, 64)));
-  const starBeamGeo = new THREE.CylinderGeometry(0.12, 0.3, 16, 12, 1, true).translate(0, 8, 0);
-  const starBeamMat = new THREE.MeshBasicMaterial({ map: starBeamTex, color: new THREE.Color(1.1, 0.8, 0.22), transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+  const starBeamGeo = crossBeamGeo(BEAM_W, 16);
+  const starBeamMat = beamMat(REWARD);
   function startStars(list) {
     clearStars();
     const now = performance.now();
@@ -755,7 +781,7 @@ void main(){
       const beam = new THREE.Mesh(starBeamGeo, starBeamMat);
       beam.visible = false;
       beam.layers.enable(0);
-      const pad = new THREE.Mesh(new THREE.RingGeometry(1.15, BALANCE.starR, 24).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffcf5a, transparent: true, opacity: 0.7, depthWrite: false, side: THREE.DoubleSide }));
+      const pad = new THREE.Mesh(new THREE.RingGeometry(BALANCE.starR - 0.12, BALANCE.starR, 24).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: REWARD, transparent: true, opacity: 0.7, depthWrite: false, side: THREE.DoubleSide }));
       pad.visible = false;
       g.add(gem, halo, beam, pad);
       g.visible = false;
@@ -777,12 +803,13 @@ void main(){
   const COIN_HOME = [[14, 38], [21, 44], [11, 50], [23, 56], [16, 64], [8, 47], [27, 52], [18, 74]];
   const coinMat = new THREE.MeshStandardMaterial({ color: '#ffd56a', emissive: '#ffb020', emissiveIntensity: 1.4, metalness: 0.85, roughness: 0.25 });
   const coinGeo = new THREE.CylinderGeometry(0.28, 0.28, 0.08, 16);
-  const coinBeamMat = new THREE.MeshBasicMaterial({ color: 0xffd56a, transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide });
+  const coinBeamMat = beamMat(REWARD);
+  const coinBeamGeo = crossBeamGeo(BEAM_W, 8);
   const coins = COIN_HOME.map(([x, z], i) => {
     const mesh = new THREE.Mesh(coinGeo, coinMat);
     mesh.rotation.x = Math.PI / 2;
     mesh.position.set(x, 0.9, z);
-    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.28, 8, 8, 1, true).translate(0, 4, 0), coinBeamMat);
+    const beam = new THREE.Mesh(coinBeamGeo, coinBeamMat);
     beam.position.set(x, 0, z);
     scene.add(mesh, beam);
     return { i, x, z, mesh, beam, back: 0 };
@@ -798,12 +825,13 @@ void main(){
     { x: 16, z: 52 },
     { x: 16, z: 90 },
   ];
-  const ringMat = new THREE.MeshBasicMaterial({ color: '#ffcf5a' });
-  const ringBeamMat = new THREE.MeshBasicMaterial({ color: 0xffcf5a, transparent: true, opacity: 0.32, depthWrite: false, side: THREE.DoubleSide });
+  const ringMat = new THREE.MeshBasicMaterial({ color: REWARD });
+  const ringBeamMat = beamMat(REWARD);
+  const ringBeamGeo = crossBeamGeo(BEAM_W, 24);
   for (const s of STUNTS) {
     const ring = new THREE.Mesh(new THREE.TorusGeometry(2.1, 0.28, 10, 28), ringMat);
     ring.position.set(s.x, 2.3, s.z);
-    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 1.2, 24, 12, 1, true).translate(0, 12, 0), ringBeamMat);
+    const beam = new THREE.Mesh(ringBeamGeo, ringBeamMat);
     beam.position.set(s.x, 0, s.z);
     scene.add(ring, beam);
     s.ry = ring;
@@ -1040,7 +1068,7 @@ void main(){
     envRT.dispose();
     envRT = next;
     scene.environment = envRT.texture;
-    scene.environmentIntensity = 0.8;
+    scene.environmentIntensity = 0.5;
     box.geometry.dispose();
     box.material.forEach(m => m.dispose());
   }
@@ -1193,8 +1221,8 @@ void main(){
   for (let i = 1; i <= 30; i++) AD_IDS.push('STREET_' + i);
   for (let i = 1; i <= 18; i++) AD_IDS.push('PLOT_' + i);
   const crown = new THREE.Group();
-  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 1.4, 90, 10, 1, true), new THREE.MeshBasicMaterial({ color: 0xffcf5a, transparent: true, opacity: 0.38, depthWrite: false, side: THREE.DoubleSide }));
-  beam.position.y = 48;
+  const beam = new THREE.Mesh(crossBeamGeo(BEAM_W, 90), beamMat('#ffe8c0', 0.2));
+  beam.position.y = 3;
   const hat = new THREE.Mesh(new THREE.TorusGeometry(1.8, 0.22, 8, 20), new THREE.MeshBasicMaterial({ color: 0xffe08a }));
   hat.rotation.x = Math.PI / 2;
   hat.position.y = 3.2;
@@ -1687,7 +1715,7 @@ void main(){
     }
 
     const pulse = 0.85 + Math.sin(t * 1.7) * 0.15;
-    mainLight.intensity = 600 * pulse;
+    mainLight.intensity = MAIN_I * pulse;
     lightCol.set(boards.accentOf('MAIN_TOP'));
     mainLight.color.lerp(lightCol, 0.05);
   }
@@ -2208,12 +2236,7 @@ void main(){
     if (!p) return;
     mapPin = { slot: beaconSlot, x: p.x, z: p.z };
     if (!beaconGroup) {
-      const beam = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.7, 1.6, 70, 20, 1, true).translate(0, 35, 0),
-        new THREE.MeshBasicMaterial({ map: beamTex, color: new THREE.Color('#7cf6ff').multiplyScalar(0.55), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }),
-      );
-      beam.rotation.x = Math.PI;
-      beam.position.y = 70;
+      const beam = new THREE.Mesh(crossBeamGeo(BEAM_W, 70), beamMat(GO_HERE));
       beaconGroup = new THREE.Group();
       beaconGroup.add(beam);
       scene.add(beaconGroup);
