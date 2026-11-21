@@ -650,18 +650,6 @@ export function paintMenuBoard(canvas) {
   return canvas;
 }
 
-export function paintTentPrint(canvas) {
-  const g = canvas.getContext('2d');
-  const W = canvas.width, H = canvas.height, k = H / 128;
-  g.clearRect(0, 0, W, H);
-  g.fillStyle = 'rgba(255,255,255,0.96)';
-  g.font = `900 ${Math.round(84 * k)}px ${SANS}`;
-  g.textAlign = 'center';
-  g.textBaseline = 'middle';
-  g.fillText('황금붕어빵', W / 2, H * 0.55);
-  return canvas;
-}
-
 export function paintTaxiSign(canvas) {
   const g = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height, k = H / 64;
@@ -964,65 +952,6 @@ export function paintAdAtlas(canvas) {
   return cells;
 }
 
-/** Storefront strip: one warm lit shop band of even height under flat sign boards, tiles horizontally. */
-export function paintStorefronts(canvas) {
-  const g = canvas.getContext('2d');
-  const W = canvas.width, H = canvas.height, k = H / 256;
-  const r = rng(91);
-  g.fillStyle = '#0b0e1c';
-  g.fillRect(0, 0, W, H);
-  const shops = [['K-MART', MAGENTA], ['CAFE 서울', AMBER], ['GIFTS', CYAN], ['치킨&맥주', AMBER], ['K-POP STORE', MAGENTA], ['편의점 24', CYAN], ['PHARMACY', WHITE], ['노래방', MAGENTA]];
-  const n = shops.length, sw = W / n;
-  shops.forEach(([name, col], i) => {
-    const x = i * sw;
-    g.fillStyle = 'rgb(255,200,120)';
-    g.fillRect(x + 10 * k, 80 * k, sw - 20 * k, H - 90 * k);
-    g.fillStyle = 'rgba(60,34,14,0.32)';
-    for (let j = 0; j < 3; j++) g.fillRect(x + 18 * k + r() * (sw - 60 * k), 150 * k + r() * 40 * k, 20 * k + r() * 24 * k, H - 160 * k);
-    g.fillStyle = '#141a2e';
-    g.fillRect(x + sw / 2 - 2 * k, 80 * k, 4 * k, H - 80 * k);
-    g.fillStyle = PANEL;
-    g.fillRect(x + 4 * k, 8 * k, sw - 8 * k, 62 * k);
-    flatText(g, name, x + sw / 2, 40 * k, sw - 30 * k, 40 * k, col, 800, 14 * k);
-  });
-  return canvas;
-}
-
-/** Window grid for tower facades: returns [albedo, emissive] canvases. About one window in ten is lit: a warm tint for
- *  most, a cool one for about one in eight, and now and then a whole lit floor. The wall and panes stay one dark tone. */
-export function paintWindows(kind, seed = 7) {
-  const S = 512;
-  const a = makeCanvas(S, S), e = makeCanvas(S, S);
-  const ga = a.getContext('2d'), ge = e.getContext('2d');
-  const r = rng(seed);
-  const cols = 12, rows = 20, cw = S / cols, rh = S / rows;
-  const stone = kind === 'stone';
-  ga.fillStyle = stone ? '#171824' : '#0e1330';
-  ga.fillRect(0, 0, S, S);
-  ge.fillStyle = '#000000';
-  ge.fillRect(0, 0, S, S);
-  const px = stone ? cw * 0.22 : cw * 0.08, py = stone ? rh * 0.2 : rh * 0.12;
-  for (let j = 0; j < rows; j++) {
-    const floor = r() < 0.04;
-    for (let i = 0; i < cols; i++) {
-      const x = i * cw, y = j * rh;
-      ga.fillStyle = stone ? '#10121a' : '#121936';
-      ga.fillRect(x + px, y + py, cw - px * 2, rh - py * 2);
-      if (!(floor || r() < 0.075)) continue;
-      const cool = r() < 0.125;
-      const v = 0.78 + r() * 0.22;
-      ge.fillStyle = cool ? `rgba(170,205,255,${v})` : `rgba(255,200,120,${v})`;
-      ge.fillRect(x + px, y + py, cw - px * 2, rh - py * 2);
-    }
-  }
-  if (!stone) {
-    ga.fillStyle = '#1a2142';
-    for (let i = 0; i <= cols; i++) ga.fillRect(i * cw - 1, 0, 2, S);
-    for (let j = 0; j <= rows; j++) ga.fillRect(0, j * rh - 1, S, 2);
-  }
-  return [a, e];
-}
-
 /** Soft round glow sprite: bright centre, smooth falloff, nothing at the edge. */
 export function paintGlow(canvas, inner = 'rgba(255,255,255,1)') {
   const g = canvas.getContext('2d');
@@ -1084,81 +1013,6 @@ export function paintPuddles(canvas, seed = 3) {
       }
     }
   }
-  return canvas;
-}
-
-/** Manhole cover: a dark disc that sits a step above the near-black asphalt, low-contrast hatch and lettering. */
-export function paintManhole(canvas) {
-  const g = canvas.getContext('2d');
-  const S = canvas.width, c = S / 2;
-  g.clearRect(0, 0, S, S);
-  g.fillStyle = '#14161e';
-  g.beginPath();
-  g.arc(c, c, c - 2, 0, Math.PI * 2);
-  g.fill();
-  g.strokeStyle = '#20232c';
-  g.lineWidth = S * 0.04;
-  g.stroke();
-  g.save();
-  g.beginPath();
-  g.arc(c, c, c * 0.84, 0, Math.PI * 2);
-  g.clip();
-  g.strokeStyle = '#1b1e27';
-  g.lineWidth = S * 0.018;
-  for (let i = -S; i < S * 2; i += S * 0.07) {
-    g.beginPath(); g.moveTo(i, 0); g.lineTo(i + S, S); g.stroke();
-    g.beginPath(); g.moveTo(i + S, 0); g.lineTo(i, S); g.stroke();
-  }
-  g.restore();
-  g.fillStyle = '#272b35';
-  g.font = `800 ${Math.round(S * 0.09)}px ${SANS}`;
-  g.textAlign = 'center';
-  g.textBaseline = 'middle';
-  g.fillText('NYC SEWER', c, c);
-  return canvas;
-}
-
-// Road paint is off-white at reduced strength; a yellow line becomes a muted warm grey, never bright yellow.
-function roadInk(color) {
-  const [r, gg, b] = rgbOf(color);
-  return r > 150 && gg > 110 && b < 120 ? 'rgba(198,178,134,0.42)' : 'rgba(222,225,234,0.5)';
-}
-/** Road paint: dashed lane lines + edge lines on a transparent strip (u across road, v along). */
-export function paintLanes(canvas, lanes) {
-  const g = canvas.getContext('2d');
-  const W = canvas.width, H = canvas.height;
-  g.clearRect(0, 0, W, H);
-  const line = (u, dashed, color, width) => {
-    g.fillStyle = roadInk(color);
-    const x = u * W - width / 2;
-    if (!dashed) { g.fillRect(x, 0, width, H); return; }
-    for (let y = 0; y < H; y += H / 4) g.fillRect(x, y + H * 0.02, width, H / 8);
-  };
-  for (const l of lanes) line(l.u, l.dashed, l.color, l.w || 6);
-  const r = rng(5);
-  g.globalCompositeOperation = 'destination-out';
-  for (let i = 0; i < 360; i++) {
-    g.fillStyle = `rgba(0,0,0,${r() * 0.35})`;
-    g.fillRect(r() * W, r() * H, 1 + r() * 3, 1 + r() * 3);
-  }
-  g.globalCompositeOperation = 'source-over';
-  return canvas;
-}
-
-export function paintCrosswalk(canvas) {
-  const g = canvas.getContext('2d');
-  const W = canvas.width, H = canvas.height;
-  g.clearRect(0, 0, W, H);
-  g.fillStyle = 'rgba(222,225,234,0.55)';
-  const bars = 8;
-  for (let i = 0; i < bars; i++) g.fillRect((i + 0.2) * W / bars, 0, W / bars * 0.55, H);
-  const r = rng(11);
-  g.globalCompositeOperation = 'destination-out';
-  for (let i = 0; i < 520; i++) {
-    g.fillStyle = `rgba(0,0,0,${r() * 0.35})`;
-    g.fillRect(r() * W, r() * H, 1 + r() * 4, 1 + r() * 4);
-  }
-  g.globalCompositeOperation = 'source-over';
   return canvas;
 }
 

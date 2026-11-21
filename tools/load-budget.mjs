@@ -1,6 +1,6 @@
 // What a fresh visit downloads, per phase, resolved statically from the files on disk.
 //   boot   before the player taps 입장하기: index.html and what it links, the module graph from its <script type=module>,
-//          and every asset the boot path asks for (city, ground, env photos, own species model, HUD images)
+//          and every asset the boot path asks for (city, env photos, own species model, HUD images)
 //   first  the first minute after entering: the other species once their avatars are on screen (worst case: both), audio
 //   later  only when a sheet opens (plot pictures, hub picture, photo credits)
 // Every '/assets/…' or 'icons/…' literal in a loaded module must match a RULE below, so a new download cannot slip into
@@ -25,8 +25,8 @@ const clean = (u) => u.replace(/^\.?\//, '').replace(/[?#].*$/, '');
 // [pattern on the literal (no leading slash, no query), phase or (literal, ctx) => phase, files the literal stands for]
 export const RULES = [
   [/^assets\/nyc\/manhattan\.bin$/, 'boot'],
-  [/^assets\/textures\/\$\{.*\}\$\{name\}\.jpg$/, 'boot', (root, ctx) => ['asphalt', 'sidewalk', 'plaza'].flatMap((n) => ['diff', 'nor', 'rough'].map((k) => `assets/textures/${ctx.quality === 'low' && k !== 'rough' ? '512/' : ''}${n}_${k}.jpg`))],
-  [/^icons\/facade-(test|side)\.jpg$/, 'boot'],
+  // (No rule for ground or facade photo textures: the ground and the walls are procedural and those files are gone,
+  // so a literal that asks for one again shows up as unclassified.)
   [/^icons\/bokjumeoni\.png$/, 'boot'], // the pouch balloon floats over the plaza from the first frame
   [/^icons\/coin\.jpg$/, 'boot'], // wallet icon, built with the HUD
   [/^assets\/times-square\/\$\{name\}\.env\.jpg$/, 'boot', () => ENV_PHOTOS.map((n) => clean(envPhotoUrl(n)))],

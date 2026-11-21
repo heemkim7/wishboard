@@ -106,8 +106,10 @@ export function patchWet(mat, refl, puddleTex, { wet = 0.7, puddles = 1, reflect
       .replace('#include <map_fragment>', `#include <map_fragment>
 if ( uPave.z > 0.0 ) {
   vec2 pc = vWxz / uPave.xy;
-  pc.x += uPave.w * 0.5 * floor( pc.y );
+  // Pixel footprint before the running-bond shift: the shift jumps by half a slab at every row, and fwidth across
+  // that jump was huge, which left a crawling undarkened hairline along each row boundary.
   vec2 pf = fwidth( pc );
+  pc.x += uPave.w * 0.5 * floor( pc.y );
   vec2 d = abs( fract( pc + 0.5 ) - 0.5 );
   vec2 lw = 0.03 / uPave.xy;
   vec2 ln = 1.0 - smoothstep( lw, lw + pf * 1.5, d );
@@ -130,11 +132,8 @@ if ( uVary > 0.0 ) {
 }`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
 roughnessFactor = mix( roughnessFactor * ( 1.0 - 0.5 * uWet ) * ( 1.0 + gVar ), 0.03, gPud );`)
-      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
-normal = normalize( mix( normal, nonPerturbedNormal, gPud * 0.92 ) );`)
       .replace('#include <opaque_fragment>', `if ( uReflOn > 0.5 ) {
   vec2 ruv = vReflUv.xy / vReflUv.w;
-  ruv += ( normal.xy - nonPerturbedNormal.xy ) * 0.04;
   float lod = clamp( roughnessFactor * 9.0, 0.0, 6.5 );
   vec3 rc = textureLod( uRefl, ruv, lod ).rgb;
   float ndv = clamp( dot( normal, normalize( vViewPosition ) ), 0.0, 1.0 );

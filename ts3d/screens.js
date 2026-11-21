@@ -138,13 +138,6 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   tickerTex.wrapS = THREE.RepeatWrapping;
   tickerTex.anisotropy = aniso;
   const tickerMat = screenMaterial(tickerTex, { gain: 1.35, grid: [1400, 22], sweep: 0 });
-  const tmp = new THREE.Vector3();
-
-  const vacantCanvas = makeCanvas(512, 288);
-  paintBillboard(vacantCanvas, { slot_id: 'WALL_1', emoji: '📢', bg_theme: 'cyber_navy', text_color: '#ffffff', line1: '이 자리를 점령하세요', line2: '타임스퀘어 건물 전광판', line3: '가격은 자리를 누르면', holder_id: null });
-  const vacantTex = tune(new THREE.CanvasTexture(vacantCanvas));
-  remember(vacantCanvas);
-  const vacantMat = screenMaterial(vacantTex, { gain: 1.06, grid: [128, 72] });
 
   const CLAIM = /^(MAIN_(UP|TOP|MID|BOT|LOW)|SUB_[1-4][AB]|STREET_([1-9]|[12]\d|30)|PLOT_([1-9]|1[0-8]))$/;
   let air = null;
@@ -262,12 +255,6 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     let b = boards.get(slotId);
     if (b) return b;
     const tier = tierOf(slotId);
-    const share = false && tier === 'C';
-    if (share) {
-      b = { slotId, tier, canvas: vacantCanvas, tex: vacantTex, mat: vacantMat, data: defaultData(slotId), sig: '', mounts: [], shared: true };
-      boards.set(slotId, b);
-      return b;
-    }
     const canvas = tier === 'C' ? makeCanvas(512, 288) : makeCanvas(1024, 576);
     const tex = tune(new THREE.CanvasTexture(canvas));
     const mat = screenMaterial(tex, { gain: tier === 'S' ? 1.16 : tier === 'B' ? 1.12 : 1.06, grid: tier === 'C' ? [128, 72] : [256, 144] });
@@ -371,15 +358,21 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     if (!m) return null;
     return m.screen.getWorldPosition(out);
   }
-
-  function ownCanvas(b) {
-    const canvas = makeCanvas(512, 288);
-    const tex = tune(new THREE.CanvasTexture(canvas));
-    b.canvas = canvas;
-    b.tex = tex;
-    b.mat = screenMaterial(tex, { gain: 1.06, grid: [128, 72] });
-    b.shared = false;
-    for (const m of b.mounts) m.screen.material = b.mat;
+  /** The first mount's face in the world: centre, unit right / up / normal, width and height in metres, tier. */
+  function face(slotId) {
+    const b = boards.get(slotId);
+    const m = b?.mounts[0];
+    if (!m) return null;
+    m.screen.updateWorldMatrix(true, false);
+    const e = m.screen.matrixWorld.elements;
+    const sx = Math.hypot(e[0], e[1], e[2]) || 1, sy = Math.hypot(e[4], e[5], e[6]) || 1, sz = Math.hypot(e[8], e[9], e[10]) || 1;
+    return {
+      tier: b.tier, w: m.w * sx, h: m.h * sy,
+      pos: new THREE.Vector3(e[12], e[13], e[14]),
+      right: new THREE.Vector3(e[0] / sx, e[1] / sx, e[2] / sx),
+      up: new THREE.Vector3(e[4] / sy, e[5] / sy, e[6] / sy),
+      normal: new THREE.Vector3(e[8] / sz, e[9] / sz, e[10] / sz),
+    };
   }
 
   // b.row keeps what the server said. A live hold shows that ad. A dark hold keeps the owner's name. An empty slot shows the house notice.
@@ -402,8 +395,6 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
       emoji: '💡',
       unlit: true,
     } : { ...defaultData(slotId), views: b.row.views, clicks: b.row.clicks, cheers: b.row.cheers, ...(opsLine ? { line2: opsLine } : {}) };
-    if (b.shared && !next.holder_id && !opsLine) { b.data = next; b.sig = sigOf(next); return false; }
-    if (b.shared) ownCanvas(b);
     const sig = sigOf(next);
     const changed = sig !== b.sig;
     b.data = next;
@@ -411,10 +402,8 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     b.sig = sig;
     paint(b);
     fontsReady([next.line1, next.line2, next.line3, next.holder_name].join(' ')).then(() => { if (b.sig === sig) paint(b); });
-    if (celebrate && b.mounts.length) {
-      const p = worldPos(slotId, tmp);
-      if (p) onBurst?.(p.clone(), THEMES[next.bg_theme]?.accent || '#ffcf5a', b.tier);
-    }
+    // The world places the fireworks around the face (face()); this only says which board and in what colour.
+    if (celebrate && b.mounts.length) onBurst?.(slotId, THEMES[next.bg_theme]?.accent || '#ffcf5a');
     return true;
   }
   /** Puts the house notice back on every screen whose hold has run out. True when a screen changed. */
@@ -443,6 +432,9 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
 
   // The nearest boards get a moving info strip over the bottom band of their artwork (the band art.js paints:
   // max(28, 46k) high). State tag on the left, a slow scroll of the board's numbers and the house line. Nothing else moves.
+  // The 10 nearest boards every 0.08 s; on the phone tier the 3 nearest every 0.16 s (every other tick: the 0.08 s tick
+  // itself stays, so the king and wish cadences that count ticks are the same on every tier).
+  const LIVE_HOT = quality === 'low' ? 3 : 10, LIVE_EVERY = quality === 'low' ? 2 : 1;
   const TAGS = { king: ['소원왕', 'rgba(255,176,32,0.16)', '#ffb020'], wish: ['소원', 'rgba(255,176,32,0.16)', '#ffb020'], live: ['LIVE', '#ff4fa3', '#ffffff'], dark: ['꺼짐', '#1c2440', '#8f96b8'], free: ['빈칸', '#1c2440', '#b9bfdc'] };
   function drawLive(b, t) {
     const canvas = b.canvas;
@@ -529,12 +521,14 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     near.sort((a, b) => a.d - b.d);
     lastNear = near;
     if (kingDirty) kingStep();
-    const hot = new Set(near.slice(0, 10).map((r) => r.b));
+    // The strip is a canvas redraw and a texture upload per board: LIVE_HOT boards, every LIVE_EVERY-th tick.
+    const draw = liveTick % LIVE_EVERY === 0;
+    const hot = new Set(near.slice(0, LIVE_HOT).map((r) => r.b));
     const seen = new Set();
     for (const b of boards.values()) {
       const on = hot.has(b);
       if (b.mat?.userData?.sweep) b.mat.userData.sweep.value = on ? 1 : 0;
-      if (!on || b.shared || seen.has(b.canvas)) continue;
+      if (!draw || !on || b.shared || seen.has(b.canvas)) continue;
       seen.add(b.canvas);
       drawLive(b, screenTime.value);
     }
@@ -683,5 +677,5 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     }
   }
 
-  return { boards, ensure, mount, unmount, set, expire, get: (id) => boards.get(id), worldPos, setTicker, setOps, repaintAll, update, accentOf, tickerCanvas, watchShow, setShow, setAir, setKing, setDecals, setWishes, pinWish, decalsOf: (id) => (boards.get(id)?.decals || []).slice(), setRim };
+  return { boards, ensure, mount, unmount, set, expire, get: (id) => boards.get(id), worldPos, face, setTicker, setOps, repaintAll, update, accentOf, tickerCanvas, watchShow, setShow, setAir, setKing, setDecals, setWishes, pinWish, decalsOf: (id) => (boards.get(id)?.decals || []).slice(), setRim };
 }
