@@ -5,6 +5,7 @@ import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, LANDMARKS } from './
 import { BALANCE, PAY, askBid, auctionClosed, buildingOf, chainBoost, floorOf, nextChainFace, slotName } from './balance.js';
 import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, tutorialTap, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611210015';
 import { WISH, WISH_ERR, cleanWish, wishRejected, wishShareText } from './wish.js';
+import { botNick, leagueLine, leagueWeek } from './league.js';
 import { backFields, returnGap } from './growth.js?v=202611210015';
 import { nineSlot, nowMs } from './live.js';
 import { cardUrl, vipShareLink, composeWishShot, kakaoFeed, kakaoKey, kakaoSend, loadKakao } from './share.js?v=202611210015';
@@ -288,7 +289,7 @@ export function createUI(root, hooks) {
   const rankRows = h('div', { class: 'rows' });
   const feedRows = h('div', { class: 'feed' });
   const liveBoard = h('div', { class: 'glass liveboard' },
-    h('button', { class: 'livehead', type: 'button', onclick: () => openRanks() }, h('b', { text: '🏆 실시간 순위' }), h('span', { text: '전체' })),
+    h('button', { class: 'livehead', type: 'button', onclick: () => openRanks() }, h('b', { text: '🏆 실시간 순위' }), h('span', { text: '이번 주' })),
     rankRows,
     h('button', { class: 'livehead feedhead', type: 'button', onclick: () => openFeed() }, h('b', { text: '📢 광장 소식' })),
     feedRows,
@@ -2986,22 +2987,17 @@ export function createUI(root, hooks) {
     }
     return (live || dark)?.slot_id || '';
   }
+  // 주간 리그: /rt/world's top 10 of this KST week (a cached copy of an older week counts as empty) and my last /rt/league answer.
+  function weekRows() { const wk = world.week; return wk && wk.week === leagueWeek() && Array.isArray(wk.top) ? wk.top : []; }
+  function myLeague() { const lg = hooks.league?.(); return lg && lg.week === leagueWeek() ? lg : null; }
   function paintLive() {
-    const rows = standings().slice(0, 5);
-    const me = hooks.actorId?.();
-    const rankButtons = rows.length ? rows.map((r, i) => {
-      const slot = bestLiveSlot(r.id);
-      return h('button', {
-        type: 'button',
-        class: 'rank' + (r.id === me ? ' me' : ''),
-        title: slot ? '이 사람 전광판 보기' : '순위 열기',
-        onclick: () => { if (slot) hooks.focusShot?.(slot); else openRanks(); },
-      },
-        h('span', { class: 'n', text: String(i + 1) }),
-        h('b', { text: r.name }),
-        r.linked ? h('i', { class: 'verified', title: '인증 계정', text: '✓' }) : null,
-        h('span', { class: 'pts tnum', text: money(r.score) }));
-    }) : [h('p', { class: 'empty', text: '아직 점령한 사람이 없어요' })];
+    const rows = weekRows().slice(0, 5);
+    const me = myLeague()?.me || null;
+    const rankButtons = rows.length ? rows.map((r, i) => h('button', { type: 'button', class: 'rank' + (me && me.rank === i + 1 ? ' me' : ''), title: '순위 열기', onclick: () => openRanks() },
+      h('span', { class: 'n', text: String(i + 1) }),
+      h('b', { text: String(r.nick || '네온손님') }),
+      h('span', { class: 'pts tnum', text: money(Number(r.spent) || 0) }))) : [h('p', { class: 'empty', text: '이번 주는 아직 비어 있어요' })];
+    if (me && me.rank >= 1) rankButtons.push(h('p', { class: 'empty', text: leagueLine(me) }));
     rankRows.replaceChildren(...rankButtons);
   }
   let rankRefresh = null;
@@ -3040,7 +3036,9 @@ export function createUI(root, hooks) {
     openSheet('🏆 소원 랭킹', 'NOW', (host) => {
       const list = h('div', { class: 'ranks' });
       const note = h('p', { class: 'note' });
-      let tab = 'spent';
+      const meEl = h('p', { class: 'note' });
+      let tab = 'week', weekState = 'wait';
+      Promise.resolve(hooks.loadLeague?.()).then((r) => { weekState = r ? 'ok' : 'fail'; }, () => { weekState = 'fail'; }).then(() => { if (rankRefresh === paint) paint(); });
       const go = (slot) => { closeSheet(); hooks.focusShot?.(slot); };
       const linkBtn = (b) => {
         const url = /^https:\/\//.test(String(b.external_url || '')) ? b.external_url : '';
@@ -3048,6 +3046,18 @@ export function createUI(root, hooks) {
       };
       const paint = () => {
         hooks.syncCrown?.();
+        meEl.hidden = tab !== 'week';
+        if (tab === 'week') {
+          // The /rt/league answer once it is here (my row marked), the world's top 10 until then.
+          const lg = myLeague(), rows = lg ? lg.top : weekRows().map((r, i) => ({ rank: i + 1, nick: r.nick, spent: r.spent, mine: false }));
+          list.replaceChildren(...(rows.length ? rows.map((r) => h('div', { class: 'rank' + (r.mine ? ' me' : '') },
+            h('span', { class: 'n', text: String(r.rank) }),
+            h('b', { text: String(r.nick || '네온손님') }),
+            h('span', { class: 'pts tnum', text: money(Number(r.spent) || 0) }))) : [h('p', { class: 'note', text: '이번 주에는 아직 코인을 쓴 사람이 없어요.' })]));
+          meEl.textContent = lg?.me ? leagueLine(lg.me) : weekState === 'wait' ? '내 순위를 불러오는 중…' : weekState === 'fail' ? '내 순위를 불러오지 못했어요' : '';
+          note.textContent = '월요일 0시(한국 시간)부터 이번 주에 전광판·분양·사진·스티커·장악에 쓴 코인이에요. 빼앗기거나 거절되어 돌려받은 코인은 그 코인을 쓴 주에서 빠져요.';
+          return;
+        }
         if (tab === 'spent') {
           const held = (id) => bestLiveSlot(id);
           const rows = standings().slice(0, 20);
@@ -3071,7 +3081,7 @@ export function createUI(root, hooks) {
             h('span', { class: 'pts tnum', text: String(r.heat) }),
             h('button', { type: 'button', class: 'mini', text: '열기', onclick: () => openAd(r.slot) }),
             h('button', { type: 'button', class: 'mini', text: '보러가기', onclick: () => go(r.slot) }))) : [h('p', { class: 'note', text: '아직 해시태그가 없어요. 문구에 #스레드 처럼 넣어 보세요.' })]));
-          note.textContent = '문구에 넣은 #태그입니다. 메인 타워 지붕은 소속 이번 주 점수 1위가 가져갑니다.';
+          note.textContent = '문구에 넣은 #태그입니다. 메인 타워 지붕은 한 주 동안 소속 점수 1위였던 소속에게 가요.';
           return;
         }
         const rows = hotBoards().slice(0, 10);
@@ -3084,10 +3094,10 @@ export function createUI(root, hooks) {
           linkBtn(b))) : [h('p', { class: 'note', text: '아직 걸린 소원이 없어요.' })]));
         note.textContent = '응원 수와 택시가 선 횟수를 더합니다. 1위 전광판 위로 황금 빛기둥이 섭니다.';
       };
-      const tabBtn = (id, text) => h('button', { type: 'button', class: id === 'spent' ? 'on' : '', text, onclick: (e) => { tab = id; for (const c of e.currentTarget.parentElement.children) c.classList.toggle('on', c === e.currentTarget); paint(); } });
+      const tabBtn = (id, text) => h('button', { type: 'button', class: id === tab ? 'on' : '', text, onclick: (e) => { tab = id; for (const c of e.currentTarget.parentElement.children) c.classList.toggle('on', c === e.currentTarget); paint(); } });
       rankRefresh = paint;
       paint();
-      host.append(h('div', { class: 'seg' }, tabBtn('spent', '누적 점령'), tabBtn('hot', '실시간 인기 소원'), tabBtn('team', '해시태그')), list, note);
+      host.append(h('div', { class: 'seg' }, tabBtn('week', '이번 주'), tabBtn('spent', '누적'), tabBtn('hot', '실시간 인기 소원'), tabBtn('team', '해시태그')), meEl, list, note);
       return () => { rankRefresh = null; };
     }, false, 'steady');
   }
@@ -3145,7 +3155,7 @@ export function createUI(root, hooks) {
       const save = h('button', { class: 'btn gold cta', type: 'button', text: '저장하기', onclick: async () => {
         if (save.disabled) return;
         const name = chars(input.value, 16).trim() || hooks.nick();
-        if (blockedText(name)) { note('그 이름은 쓸 수 없어요', 'err'); return; }
+        if (blockedText(name) || botNick(name)) { note('그 이름은 쓸 수 없어요', 'err'); return; }
         save.disabled = true;
         save.textContent = '저장 중…';
         try {
@@ -3512,16 +3522,20 @@ export function createUI(root, hooks) {
     const known = hooks.hasSession?.();
     const nick = h('input', { class: 'input', maxLength: 16, value: hooks.nick(), placeholder: '닉네임', 'aria-label': '닉네임' });
     const go = h('button', { class: 'btn enter-go pulse', type: 'button', text: bootLabel || '입장하기' });
+    const nickErr = h('p', { class: 'note', role: 'alert', hidden: true }); // on the boot card: a toast would sit under it
     bootGo = go;
     const enter = () => {
       if (entered) return;
+      // 네온봇N is the seeded bots' name: a typed one is refused here, a stored one is dropped for the default.
+      const name = chars(known ? hooks.nick() : nick.value, 16).trim() || hooks.nick();
+      if (botNick(name) && !known) { nickErr.textContent = '그 이름은 쓸 수 없어요'; nickErr.hidden = false; nick.focus?.(); return; }
       entered = true;
       trackEvent('enter_square', { load_ms: Math.round(performance.now()) });
       ac();
       sfx.engine();
       cityStart();
       askFullscreen();
-      hooks.enter({ nick: chars(known ? hooks.nick() : nick.value, 16).trim() || hooks.nick(), color, species });
+      hooks.enter({ nick: botNick(name) ? '네온손님' : name, color, species });
       renderProfile();
       hooks.arrive?.();
       attend();
@@ -3531,7 +3545,7 @@ export function createUI(root, hooks) {
     };
     go.addEventListener('click', enter);
     nick.addEventListener('keydown', (e) => { if (e.key === 'Enter') enter(); });
-    const bootFields = known ? [go] : [nick, go];
+    const bootFields = known ? [go] : [nick, nickErr, go];
     bootEnter.replaceChildren(...bootFields);
     bootEnter.hidden = false;
     if (!coarse) setTimeout(() => go.focus(), 60);
@@ -4787,7 +4801,7 @@ export function createUI(root, hooks) {
     setStatus(text, kind = 'warn') { statusText = text || ''; statusKind = kind; renderStatus(); },
     setNear(v) { near = v || null; renderPrompt(); },
     setWorld(next) {
-      world = { billboards: next?.billboards || [], plots: next?.plots || [], ranks: next?.ranks || [], today: next?.today || null };
+      world = { billboards: next?.billboards || [], plots: next?.plots || [], ranks: next?.ranks || [], today: next?.today || null, week: next?.week || null };
       plazaReady = true;
       renderPrompt();
       rankRefresh?.();

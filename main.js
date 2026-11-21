@@ -134,6 +134,9 @@ const state = {
   billboards: [],
   plots: [],
   ranks: [],
+  // 주간 리그: week = /rt/world's { week, top:[{ nick, spent }] } (null while that week is empty), league = the last GET /rt/league answer.
+  week: null,
+  league: null,
   // ponytail: session cheers and ticker lines, a column if they must survive refresh
   cheers: {},
   notes: {},
@@ -283,6 +286,8 @@ const ui = createUI(document.getElementById('ui'), {
   watchPortrait: (on) => world?.setWatchPortrait?.(!!on),
   throwPouch: () => world?.throwPouch(),
   syncCrown: () => paintCrown(),
+  league: () => state.league,
+  loadLeague: () => loadLeague(),
   interact: () => world?.interact(),
   enter: (p) => enter(p),
   wishData: () => state.wish,
@@ -756,6 +761,7 @@ async function claim(payload) {
   const res = await net.claimBillboard({ ...payload, external_url: link || '', nickname: state.nick });
   if (res?.review_id) {
     settle(res);
+    if (payload?.mode !== 'tribe') leagueSoon();
     ui.setNextLine('검수 대기');
     ui.note('S급은 확인 후 켜집니다. 거절되면 낸 코인이 그대로 돌아와요.', 'ok');
     return res;
@@ -771,6 +777,7 @@ async function claim(payload) {
       else state.ranks.push({ actor_id: net.id, nickname: state.nick, spent: paid, linked: !!sessionUser });
       state.ranks.sort((a, b) => Number(b.spent) - Number(a.spent));
     }
+    if (paid > 0 && payload?.mode !== 'tribe' && payload?.mode !== 'edit') leagueSoon();
   }
   settle(res);
   if (res?.ok !== false && res?.data) {
@@ -793,6 +800,7 @@ async function buySticker(slot, glyph) {
   settle(res);
   world?.applyStk?.({ slot, list: res.list || [] });
   world?.launchSticker?.(slot, glyph);
+  leagueSoon();
   ui.note(`${glyph} 스티커를 날려 보냈어요`, 'ok');
   return res;
 }
@@ -817,6 +825,7 @@ async function takeover(payload) {
   const res = await net._plazaPost('/rt/spend', { kind: 'air', line, pay });
   settle(res);
   world?.beginAir?.({ nick: res.nick || state.nick, line: res.line || line, until: res.until });
+  if (pay === 'coins') leagueSoon();
   ui.note('📣 60초 동안 모든 전광판을 장악했어요', 'ok');
   return res;
 }
@@ -828,6 +837,7 @@ async function submitPhoto(payload) {
     world.updateBillboardTexture(res.data.slot_id || payload.slot_id, res.data, false);
   }
   settle(res);
+  if (res?.data) leagueSoon();
   return res;
 }
 
@@ -839,7 +849,7 @@ async function buy(payload) {
     world.applyPlot(res.data, true);
   }
   settle(res);
-  if (res?.ok !== false && res?.data) ui.promptLink?.('own');
+  if (res?.ok !== false && res?.data) { ui.promptLink?.('own'); leagueSoon(); }
   return res;
 }
 
@@ -855,6 +865,7 @@ function readPlaza() {
       ...(typeof j.roof === 'string' ? { roof: j.roof } : {}),
       ...(j.ops && j.ops.copy ? { ops: j.ops } : {}),
       ...(j.wish && typeof j.wish === 'object' ? { wish: j.wish } : {}),
+      ...(j.league && typeof j.league === 'object' ? { league: j.league } : {}),
     };
   } catch { return null; }
 }
@@ -868,6 +879,7 @@ function writePlaza(remote) {
       ...(typeof remote.roof === 'string' ? { roof: remote.roof } : {}),
       ...(remote.ops ? { ops: remote.ops } : {}),
       ...(remote.wish ? { wish: remote.wish } : {}),
+      ...(remote.league ? { league: remote.league } : {}),
     }));
   } catch { /* private mode */ }
 }
@@ -884,6 +896,7 @@ function applyPlaza(remote) {
   noteChains();
   state.plots = remote.plots || [];
   if (Array.isArray(remote.ranks)) state.ranks = remote.ranks;
+  state.week = remote.league && typeof remote.league === 'object' && Array.isArray(remote.league.top) ? remote.league : null; // a missing key is an empty week
   if (remote.today) state.today = { visitors: Math.max(0, Math.floor(Number(remote.today.visitors) || 0)), wishes: Math.max(0, Math.floor(Number(remote.today.wishes) || 0)) };
   if (typeof remote.roof === 'string') state.roof = remote.roof;
   applyWishWorld(remote.wish);
@@ -909,6 +922,15 @@ async function refreshWorld() {
     applyPlaza(remote);
   } catch { /* keep the cached plaza */ }
 }
+// 주간 리그: GET /rt/league when the 🏆 sheet opens and 1.5 s after my own spend (the Worker tallies it in waitUntil). Never on a timer.
+// One request at a time; resolves to the fresh answer or null.
+let leagueJob = null, leagueT = 0;
+function loadLeague() {
+  if (leagueJob) return leagueJob;
+  leagueJob = net.league().then((r) => { if (r) { state.league = r; ui.setWorld(state); } return r; }).catch(() => null).finally(() => { leagueJob = null; });
+  return leagueJob;
+}
+function leagueSoon() { clearTimeout(leagueT); leagueT = setTimeout(() => { loadLeague(); }, 1500); }
 
 // ---- 오늘의 소원 ------------------------------------------------------------------------
 // No timer refetches wishes (daily request budget): /rt/world carries the board, GET /rt/wishes runs once after entering,

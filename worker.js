@@ -11,6 +11,7 @@ import { CHEER_PHRASES, EVENT_NAMES, allowedLink, blockedText, parseGuestHandove
 import { renderCardPng } from './cardpng.js';
 import { WISH, WISH_ERR, cleanWish, cleanNick, wishFault, wishNickFault, ipNet, rankWishes, prizeFor, boardMix, wishShareText } from './wish.js';
 import { ghostPacket } from './ts3d/walkers.js';
+import { LEAGUE, leagueBoard, leagueCut, weekEnds, botNick } from './league.js';
 import { DARK, quietShift, darkNext, darkHours, darkText, litOf } from './dark.js';
 import { adTables, adIngest, adTenure, adRename, adForget, adReport } from './adreport.js';
 // v16 cost pass: ping 25s (client) / STALE 75s, idle scan alarm 60s, meter report 60s, compact pos ('p'/'P'), nearby fanout, event ring + world cache, HMAC guest tokens.
@@ -431,6 +432,73 @@ export class Meter extends DurableObject {
   wUnpay(day, wid) { this.wInit(); const q = this.ctx.storage.sql, r = q.exec('select j from wst where day = ?', day).toArray()[0]; if (!r) return { ok: false };
     let list = []; try { list = JSON.parse(r.j); } catch { return { ok: false }; } const w = list.find(x => x.id === wid); if (!w) return { ok: false };
     w.paid = 0; q.exec('update wst set j = ? where day = ?', JSON.stringify(list), day); return { ok: true }; }
+  // 주간 리그 (instance 'lg'). lg: coins an account really spent per KST ISO week (at = when the row last grew, the tie-break). lgm: once-a-week
+  // markers of the lazy tribe settlement (st 1 done, 0 claimed at `at`). uid never leaves this object except as mine (true/false).
+  // lgs: what a refund needs to find the week it belongs to. Key = a slot id (its holder as tallied, the week its claim was tallied in or '' when the league never counted it, the last bid), 'r:<review
+  // id>' (an S-tier bid held for review) or 'p:<photo id>' (a pending photo's fee).
+  lgInit() { if (this.li) return; this.li = 1; const q = this.ctx.storage.sql;
+    q.exec("create table if not exists lg(w text, uid text, nick text not null default '', spent integer not null default 0, at integer not null default 0, primary key(w, uid))");
+    q.exec('create table if not exists lgm(k text primary key, st integer not null, at integer not null)');
+    q.exec('create table if not exists lgs(k text primary key, uid text not null, w text not null, bid integer not null default 0)'); }
+  lgPrune(wk, now, cut) { if (!cut || this.lgPr === wk) return; this.lgPr = wk; const q = this.ctx.storage.sql;
+    q.exec('delete from lg where w < ?', String(cut)); q.exec("delete from lgs where w <> '' and w < ?", String(cut)); q.exec('delete from lgm where at < ?', now - 60 * 864e5); }
+  // Adds d > 0 to the week's row. nick '' (or one the Worker refused) keeps the stored nick; a new row without one is 네온손님.
+  lgPlus(wk, u, nick, d, now) { const n = String(nick || '');
+    this.ctx.storage.sql.exec('insert into lg(w, uid, nick, spent, at) values(?, ?, ?, ?, ?) on conflict(w, uid) do update set spent = spent + excluded.spent, at = excluded.at, nick = case when ? <> \'\' then ? else nick end', wk, u, n || '네온손님', d, now, n, n); }
+  // A refund lowers the row of the week it was tallied in, never below 0; a week already pruned (or a spend never tallied) loses nothing.
+  lgMinus(wk, u, d) { this.ctx.storage.sql.exec('update lg set spent = max(0, spent - ?) where w = ? and uid = ?', d, String(wk || ''), String(u || '')); }
+  // delta > 0 adds to this week (key: also remember it for a later refund); delta < 0 lowers this week's row (direct calls and tests only).
+  lgAdd(w, uid, nick, delta, now = Date.now(), cut = '', key = '') { this.lgInit(); const u = String(uid || ''), d = Math.trunc(Number(delta) || 0), wk = String(w || '');
+    this.lgPrune(wk, now, cut); if (!u || !wk || !d) return { ok: false };
+    if (d > 0) { this.lgPlus(wk, u, nick, d, now); if (key) this.ctx.storage.sql.exec('insert or replace into lgs(k, uid, w, bid) values(?, ?, ?, ?)', String(key), u, wk, d); }
+    else this.lgMinus(wk, u, -d);
+    return { ok: true }; }
+  // One board claim, in one call so the order is fixed: first the previous holder's refund (from the week its bid was tallied, found in the slot record),
+  // then the new holder. claim: the bid. edit: only what goes past the recorded bid of this holder (parallel edits are serialised here, so one raise
+  // counts once; a board with no record, held since before the league, counts its first raise as nothing). starter, tribe: nothing, but the record
+  // follows the board. Only guest:/user: holders are tallied.
+  lgBoard(slot, w, now, cut, holder, nick, mode, bid, prev = '', refund = 0) { this.lgInit(); const q = this.ctx.storage.sql, s = String(slot || ''), wk = String(w || ''), h = String(holder || ''), b = Math.max(0, Math.floor(Number(bid) || 0));
+    if (!s || !wk || !h) return { ok: false }; this.lgPrune(wk, now, cut);
+    this.ctx.storage.transactionSync(() => {
+      const rec = q.exec('select uid, w, bid from lgs where k = ?', s).toArray()[0] || null, back = Math.floor(Number(refund) || 0);
+      if (back > 0 && prev && rec && rec.uid === String(prev)) this.lgMinus(rec.w, rec.uid, back);
+      const player = /^(guest|user):/.test(h);
+      if (mode === 'edit') { const known = rec && rec.uid === h ? Number(rec.bid) : null, add = known == null ? 0 : Math.max(0, b - known);
+        if (add > 0 && player) this.lgPlus(wk, h, nick, add, now);
+        // The record keeps the week its bid was tallied in: a raise does not move it (the refund is 80% of the whole bid), and a board with no record
+        // gets w = '' so a refund of a bid the league never counted takes nothing.
+        q.exec('insert or replace into lgs(k, uid, w, bid) values(?, ?, ?, ?)', s, h, known != null ? String(rec.w) : '', Math.max(b, known ?? 0)); }
+      else { if (mode === 'claim' && b > 0 && player) this.lgPlus(wk, h, nick, b, now); q.exec('insert or replace into lgs(k, uid, w, bid) values(?, ?, ?, ?)', s, h, wk, b); } });
+    return { ok: true }; }
+  // A refund of something remembered under key (a rejected review bid, a rejected photo fee): from the week it was tallied, once; the record goes.
+  lgBack(key, uid, amount) { this.lgInit(); const q = this.ctx.storage.sql, k = String(key || ''), rec = q.exec('select uid, w from lgs where k = ?', k).toArray()[0], d = Math.floor(Number(amount) || 0);
+    if (!rec || rec.uid !== String(uid || '') || d <= 0) return { ok: false }; this.lgMinus(rec.w, rec.uid, d); q.exec('delete from lgs where k = ?', k); return { ok: true }; }
+  // An approved review: the board's previous holder is refunded from its slot record, then the slot remembers the reviewed bid in its tallied week.
+  lgApprove(id, slot, prev = '', refund = 0) { this.lgInit(); const q = this.ctx.storage.sql, k = 'r:' + String(id), s = String(slot || '');
+    this.ctx.storage.transactionSync(() => {
+      const rec = q.exec('select uid, w from lgs where k = ?', s).toArray()[0], back = Math.floor(Number(refund) || 0);
+      if (back > 0 && prev && rec && rec.uid === String(prev)) this.lgMinus(rec.w, rec.uid, back);
+      const r = q.exec('select uid, w, bid from lgs where k = ?', k).toArray()[0];
+      if (r && s) q.exec('insert or replace into lgs(k, uid, w, bid) values(?, ?, ?, ?)', s, r.uid, r.w, r.bid); else if (s) q.exec('delete from lgs where k = ?', s);
+      q.exec('delete from lgs where k = ?', k); });
+    return { ok: true }; }
+  lgRows(w) { this.lgInit(); return this.ctx.storage.sql.exec('select uid, nick, spent, at from lg where w = ? and spent > 0', String(w || '')).toArray(); }
+  lgTop(w, uid = '', n = LEAGUE.top) { return leagueBoard(this.lgRows(w), String(uid || ''), n); }
+  lgWorld(w, n = LEAGUE.world) { return leagueBoard(this.lgRows(w), '', n).top.map(r => ({ nick: r.nick, spent: r.spent })); }
+  lgNick(w, uid, nick) { this.lgInit(); this.ctx.storage.sql.exec('update lg set nick = ? where w = ? and uid = ?', String(nick || ''), String(w || ''), String(uid || '')); return { ok: true }; }
+  // Account merge: the guest's weekly rows are summed into the user's (the user's nick stays when it has one).
+  lgMove(from, to) { this.lgInit(); const q = this.ctx.storage.sql, f = String(from || ''), t = String(to || ''); if (!f || !t || f === t) return { ok: false };
+    this.ctx.storage.transactionSync(() => {
+      q.exec("insert into lg(w, uid, nick, spent, at) select w, ?, nick, spent, at from lg where uid = ? on conflict(w, uid) do update set spent = spent + excluded.spent, at = max(at, excluded.at), nick = case when nick <> '' then nick else excluded.nick end", t, f);
+      q.exec('delete from lg where uid = ?', f); q.exec('update lgs set uid = ? where uid = ?', t, f); });
+    return { ok: true }; }
+  lgForget(uid) { this.lgInit(); const u = String(uid || ''); this.ctx.storage.sql.exec('delete from lg where uid = ?', u); this.ctx.storage.sql.exec('delete from lgs where uid = ?', u); return { ok: true }; }
+  // A once-a-week job: 'done' (finished before), 'busy' (another caller claimed it under 2 minutes ago) or 'mine' (claimed now; lgDone when it worked).
+  lgOnce(k, now = Date.now()) { this.lgInit(); const q = this.ctx.storage.sql, r = q.exec('select st, at from lgm where k = ?', String(k)).toArray()[0];
+    if (r && Number(r.st) === 1) return 'done'; if (r && now - Number(r.at) < 120000) return 'busy';
+    q.exec('insert into lgm(k, st, at) values(?, 0, ?) on conflict(k) do update set st = 0, at = excluded.at', String(k), now); return 'mine'; }
+  lgDone(k, now = Date.now()) { this.lgInit(); this.ctx.storage.sql.exec('insert into lgm(k, st, at) values(?, 1, ?) on conflict(k) do update set st = 1, at = excluded.at', String(k), now); return { ok: true }; }
+  lgFree(k) { this.lgInit(); this.ctx.storage.sql.exec('delete from lgm where k = ? and st = 0', String(k)); return { ok: true }; }
 }
 
 export class Room extends DurableObject {
@@ -985,7 +1053,7 @@ export class Room extends DurableObject {
       let left = row.delta;
       while (left > 0) {
         const delta = Math.min(500, left);
-        items.push({ actor_id: row.uid, nickname: row.nick || '네온손님', delta, reason: row.reason || 'mine' });
+        items.push({ actor_id: row.uid, nickname: (!botNick(row.nick) && row.nick) || '네온손님', delta, reason: row.reason || 'mine' }); // 네온봇N is the seeded bots' name, not a player's
         left -= delta;
       }
     }
@@ -1312,10 +1380,11 @@ async function profileApi(req, env, u, ctx) {
     }
     if (typeof b.nickname === 'string') {
       const nick = clip(b.nickname, 16);
-      if (!nick || rejectedCopy(nick)) return J({ ok: false, error: '그 이름은 쓸 수 없어요' }, 400);
+      if (!nick || rejectedCopy(nick) || botNick(nick)) return J({ ok: false, error: '그 이름은 쓸 수 없어요' }, 400);
       const rpc = await supabaseRpc('set_nickname', { p_key: env.FLUSH_KEY, p_actor_id: actor.id, p_nickname: nick });
       if (!rpc.ok || rpc.data?.ok === false) return J({ ok: false, error: '이름을 저장하지 못했어요' }, rpc.ok ? 400 : 502);
       out.nickname = rpc.data?.nickname || nick;
+      try { ctx?.waitUntil?.(Promise.resolve().then(() => lgM(env).lgNick(isoWeek(), actor.id, out.nickname)).then(() => { LGW.at = 0; LGC.at = 0; }).catch(() => null)); } catch { /* the week's list shows the new name at the next spend */ }
       try { await invalidateWorld(env, ctx); } catch { /* the next world read still picks up the name */ }
     }
     if (typeof b.color === 'string') {
@@ -1358,8 +1427,6 @@ async function inboxRead(req, env) {
 }
 function pushHostOk(endpoint) { try { const x = new URL(endpoint); return x.protocol === 'https:' && PUSH_HOSTS.test(x.hostname) && String(endpoint).length < 600; } catch { return false; } }
 const GRP = { at: 0, w: '', v: null };
-let tribeRefundWeek = '';
-let tribeRoofWeek = '';
 const J = (o, s = 200, h = {}) => new Response(JSON.stringify(o), { status: s, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...h } });
 let GATE = { at: 0, r: null }; // per-isolate meter cache: /rt/gate no longer costs one Meter RPC per call
 const GATE_TTL = 15000, PC = new Map(); // PC: per-isolate world cache (Cache API is a no-op on *.workers.dev)
@@ -1459,22 +1526,24 @@ function evProps(p) { const o = {}; let n = 0; if (p && typeof p === 'object') f
 // today = { visitors, wishes } for the boot screen comes from the account registry: one DO call per cache refill (15 s), never per request.
 async function readWorld(env) {
   const h = { apikey: ANON, accept: 'application/json' };
-  const [bs, ps, rs, tally, live, wish] = await Promise.all([
+  const [bs, ps, rs, tally, live, wish, league] = await Promise.all([
     fetch(SUPA + '/rest/v1/billboards?select=*&slot_id=in.(' + SLOT_IDS.join(',') + ')&order=slot_id.asc', { headers: h }),
     fetch(SUPA + '/rest/v1/plots?select=*&order=plot_id.asc', { headers: h }),
-    fetch(SUPA + '/rest/v1/wallets?select=actor_id, nickname, spent, linked&spent=gt.0&order=spent.desc&limit=20', { headers: h }),
+    fetch(SUPA + '/rest/v1/wallets?select=actor_id, nickname, spent, linked&spent=gt.0&order=spent.desc&limit=60', { headers: h }), // 60: room for the 네온봇N rows filtered out below
     Promise.resolve().then(() => acct(env).tallyOf(kstDay())).catch(() => null),
     supabaseRpc('plaza_live', { p_key: env.FLUSH_KEY || '' }).catch(() => null),
     lvlNow(env).then(l => l >= 2 ? (WWLAST.day === kstDay() ? WWLAST.v : null) : wishM(env).wWorld(kstDay()).then(v => { WWLAST = { day: kstDay(), v }; return v; })).catch(() => null), // budget hard: the last copy, no wish-DO call
+    Promise.resolve().then(() => leagueWorld(env)).catch(() => null),
   ]);
   if (!bs.ok || !ps.ok) return { err: 'upstream ' + (bs.ok ? ps.status : bs.status) };
   const [billboards, plots, ranks] = await Promise.all([bs.json(), ps.json(), rs.ok ? rs.json() : null]);
   if (!Array.isArray(billboards) || !Array.isArray(plots)) return { err: 'shape' };
-  const world = { billboards, plots, ranks: Array.isArray(ranks) ? ranks : [], today: { visitors: Number(tally?.visitors) || 0, wishes: Number(tally?.wishes) || 0 } };
+  const world = { billboards, plots, ranks: Array.isArray(ranks) ? ranks.filter(r => !botNick(r?.nickname)).slice(0, 20) : [], today: { visitors: Number(tally?.visitors) || 0, wishes: Number(tally?.wishes) || 0 } };
   const row = live?.ok && live.data && typeof live.data === 'object' ? live.data : null;
   if (row?.ops?.id) world.ops = { id: String(row.ops.id), theme: String(row.ops.theme || ''), title: String(row.ops.title || ''), copy: String(row.ops.copy || '') };
   if (row && typeof row.roof === 'string') world.roof = row.roof;
   const ww = wishWorld(wish); if (ww.count || ww.board.length || ww.king) world.wish = ww; // left out while empty or failing: clients read a missing key as { board: [], king: null, count: 0 }
+  if (league?.top?.length) world.league = { week: league.week, top: league.top.map(r => ({ nick: clip(r.nick, 16), spent: Math.max(0, Math.floor(Number(r.spent)) || 0) })) }; // also left out while empty
   return { body: JSON.stringify(world), world, ranked: Array.isArray(ranks) };
 }
 function wishWorld(v) {
@@ -1669,9 +1738,76 @@ async function wishApi(req, env, ctx, u) {
     return J({ err: 'path' }, 404);
   } catch { return wishNo('down', 502); }
 }
+// 주간 리그. The tally lives in the Meter instance 'lg': one DO call per spend the Worker mediates, in waitUntil, with the amount the RPC charged;
+// refunds subtract. Tribe pledges (refundable, refund_tribe_week does not say to whom) and coins sent to an advertiser are not counted.
+const lgM = env => env.METER.get(env.METER.idFromName('lg'));
+const LGW = { at: 0, w: '', v: null }; // /rt/world's league part, 60 s per isolate; this isolate's spends clear it
+const LGC = { at: 0, w: '', v: null }; // the anonymous /rt/league answer, 10 s per isolate
+// The nick a spend may write on the public list: '' (keep the stored one) when it is banned or the bots' shape. Sticker and photo routes never check it.
+const BOT_NAME_ERR = '그 이름은 쓸 수 없어요. 프로필에서 이름을 바꿔 주세요.'; // claims, plots, air: the name comes from the profile
+const leagueNick = (nick) => { const n = clip(nick, 16); return !n || rejectedCopy(n) || botNick(n) ? '' : n; };
+function leagueRun(env, ctx, run) {
+  const t = Date.now(), job = Promise.resolve().then(() => run(lgM(env), t)).then(() => { LGW.at = 0; LGC.at = 0; }).catch(() => null);
+  try { ctx?.waitUntil?.(job); } catch { /* the spend stands; this week's tally misses it */ }
+}
+// A spend with no board behind it (plot, sticker, air, photo fee, an S-tier bid held for review). key: remember it for a later refund (lgBack).
+function leagueAdd(env, ctx, uid, nick, delta, key = '') {
+  const id = String(uid || ''), d = Math.trunc(Number(delta) || 0); if (d <= 0 || !/^(guest|user):/.test(id)) return;
+  leagueRun(env, ctx, (M, t) => M.lgAdd(isoWeek(t), id, leagueNick(nick), d, t, leagueCut(t), key));
+}
+// At the hard budget level the isolate's last copy is all there is (no DO call).
+async function leagueWorld(env) {
+  const w = isoWeek(), hard = (await lvlNow(env)) >= 2;
+  if (!hard && (LGW.w !== w || !LGW.v || Date.now() - LGW.at > 60000)) { const v = await lgM(env).lgWorld(w); LGW.at = Date.now(); LGW.w = w; LGW.v = v; }
+  return { week: w, top: LGW.w === w && Array.isArray(LGW.v) ? LGW.v : [] };
+}
+async function leagueApi(req, env) {
+  if (req.method !== 'GET') return J({ err: 'get' }, 405);
+  if (!(await rateOk(env.EVENT_RL, req))) return J({ ok: false, err: 'rate' }, 429);
+  const tok = tokenOf(req), actor = tok ? await resolveActor(env, tok) : null, now = Date.now(), w = isoWeek(now);
+  if ((await lvlNow(env)) >= 2) return LGC.w === w && LGC.v ? J({ ok: true, week: w, ends: weekEnds(now), top: LGC.v.top }) : J({ ok: false, err: 'busy' }, 503); // hard budget: the anonymous copy, no DO call
+  try { let v;
+    if (actor) v = await lgM(env).lgTop(w, actor.id);
+    else { if (LGC.w !== w || !LGC.v || now - LGC.at > 10000) { LGC.v = await lgM(env).lgTop(w, ''); LGC.at = now; LGC.w = w; } v = LGC.v; }
+    return J({ ok: true, week: w, ends: weekEnds(now), top: v.top, ...(actor ? { me: v.me } : {}) });
+  } catch { return J({ ok: false, err: 'league' }, 502); }
+}
+// Lazy weekly tribe settlement (scheduled stays off on the free plan). No other cron job runs here. Jobs, each once per week across isolates through a
+// marker in the 'lg' instance (refund:<week>, roof:<week>):
+// - refund: after the KST week rolls over, refund_tribe_week(last week). A refunded row has spent = amount, so a second run pays nothing.
+// - roof: after the rollover (Monday to Saturday), award_tribe_roof(last week). A migrated database awards a finished week once (ok / done). The old
+//   function answers skipped on any day but Sunday: then this path rests for 6 hours in this isolate, and
+// - sun (the old function's own time): Sunday 21:00-23:59 KST, award_tribe_roof(this week). A migrated database answers 'open': fine, not again tonight.
+// Until a job is done this isolate asks at most once a minute, once an hour after 3 failures in a row. A function PostgREST does not know is done for the week.
+const TSET = { refund: '', roof: '', sun: '', at: 0, fails: 0, rest: 0 };
+// At the hard budget level (lvlNow 2) it does nothing and asks again a minute later.
+function tribeSettle(env, ctx, now = Date.now()) {
+  const prev = isoWeek(now - 7 * 864e5), week = isoWeek(now), dow = kstDow(now), night = dow === 0 && new Date(now + 9 * 36e5).getUTCHours() >= 21;
+  const jobs = [];
+  if (TSET.refund !== prev) jobs.push(['refund', 'refund_tribe_week', prev]);
+  if (dow !== 0 && TSET.roof !== prev && now >= TSET.rest) jobs.push(['roof', 'award_tribe_roof', prev]);
+  if (night && TSET.sun !== week) jobs.push(['sun', 'award_tribe_roof', week]);
+  if (!jobs.length || now - TSET.at < (TSET.fails >= 3 ? 3600000 : 60000)) return Promise.resolve();
+  TSET.at = now;
+  const job = (async () => { const M = lgM(env); if ((await lvlNow(env)) >= 2) return;
+    for (const [kind, fn, w] of jobs) {
+      const k = (kind === 'refund' ? 'refund:' : 'roof:') + w, st = await M.lgOnce(k, now); if (st === 'done') { TSET[kind] = w; continue; } if (st !== 'mine') continue;
+      let r = null; try { r = await supabaseRpc(fn, { p_key: env.FLUSH_KEY || '', p_week: w }); } catch { r = null; }
+      const d = r?.data && typeof r.data === 'object' ? r.data : {};
+      if (r?.ok && d.ok !== false && !d.skipped) { await M.lgDone(k, Date.now()); TSET[kind] = w; TSET.fails = 0; if (kind !== 'refund') PC.delete('world'); continue; }
+      await M.lgFree(k);
+      if (r?.ok && d.skipped) TSET.rest = Date.now() + 6 * 3600000; // the old award_tribe_roof: not migrated; ask again in 6 h in case the migration runs mid-week
+      else if (r?.ok && d.error === 'open') TSET.sun = w; // the migrated one keeps this week open until it is over
+      else if (r && !r.ok && /PGRST202|Could not find the function/i.test(JSON.stringify(r.data))) TSET[kind] = w;
+      else TSET.fails++;
+    } })().catch(() => { });
+  try { ctx?.waitUntil?.(job); } catch { /* the next request retries */ }
+  return job;
+}
 async function plaza(req, env, ctx, u) {
   if (u.pathname === '/rt/world') {
     if (req.method !== 'GET') return J({ err: 'get' }, 405);
+    tribeSettle(env, ctx);
     const mem = PC.get('world'); if (mem && Date.now() - mem.at < PRAY_TTL * 1000) return new Response(mem.b, { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
     const key = new Request(WORLD_CACHE), c = caches.default; let r = await c.match(key);
     if (!r) { const got = await readWorld(env); if (got.err || !got.body) return J({ err: got.err || 'upstream' }, 502); darkSeed(env, ctx, got.world);
@@ -1735,10 +1871,12 @@ async function plaza(req, env, ctx, u) {
         await pushSticker(env, topic, { op: 'pop', slot }).catch(() => {});
         return J({ ok: false, error: paidSt.error || '코인을 쓰지 못했어요.' }, spentSt.ok ? 400 : 502);
       }
+      leagueAdd(env, ctx, actor.id, nick, 30);
       return J({ ok: true, kind: 'sticker', glyph, slot_id: slot, list: added.list || [], remaining_coins: paidSt.remaining_coins ?? null, vip_tickets: paidSt.vip_tickets ?? null });
     } else if (kind === 'air') {
       if (!line) return J({ ok: false, error: '전광판에 올릴 한 줄을 적어 주세요.' }, 400);
       if (rejectedCopy(nick, line)) return J({ ok: false, error: 'blocked' }, 400);
+      if (botNick(nick)) return J({ ok: false, error: BOT_NAME_ERR }, 400);
       if (pay === 'ticket') tickets = 1;
       else coins = 5000;
     } else return J({ ok: false, error: '그 금액은 쓸 수 없어요.' }, 400);
@@ -1747,6 +1885,7 @@ async function plaza(req, env, ctx, u) {
     const missing = /schema cache|Could not find the function/i.test(String(paid.message || paid.error || spent.data || ''));
     if (!spent.ok || paid.ok === false) return J({ ok: false, error: paid.error || (missing ? '코인 사용이 아직 준비 중이에요.' : '코인을 쓰지 못했어요.') }, spent.ok ? 400 : 502);
     if (kind === 'air') {
+      leagueAdd(env, ctx, actor.id, nick, coins);
       const until = Date.now() + 60000;
       try {
         for (const name of squareTopics(topic)) {
@@ -1797,6 +1936,7 @@ async function plaza(req, env, ctx, u) {
     }
     const theme = String(b.bg_theme || '');
     if (rejectedCopy(nick, b.line1, b.line2, b.line3)) return J({ ok: false, error: 'blocked' }, 400);
+    if (botNick(nick)) return J({ ok: false, error: BOT_NAME_ERR }, 400);
     if (mode === 'starter') { // one atomic take of today's 3 per IP; given back below if the claim is refused
       try { sip = { h: await ipHash(env, req), d: kstDay() }; if (!(await acct(env).sipTake(sip.h, sip.d, 3))) return J({ ok: false, error: '오늘 무료 점령은 이 연결에서 세 번까지예요' }, 400); } catch { sip = null; }
     }
@@ -1805,6 +1945,7 @@ async function plaza(req, env, ctx, u) {
   } else {
     if (!Number.isInteger(b.plot_id) || b.plot_id < 1 || b.plot_id > 18) return J({ ok: false, error: '토지 번호가 올바르지 않습니다.' }, 400);
     if (rejectedCopy(nick, b.sign_text)) return J({ ok: false, error: 'blocked' }, 400);
+    if (botNick(nick)) return J({ ok: false, error: BOT_NAME_ERR }, 400);
     rpc = await supabaseRpc('buy_or_upgrade_plot', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_nickname: nick, p_plot_id: b.plot_id, p_sign_text: clip(b.sign_text, 14), p_theme_color: hexColor(b.theme_color, '#00ffcc') });
   }
   const data = rpc.data || {};
@@ -1814,11 +1955,18 @@ async function plaza(req, env, ctx, u) {
     return J({ ok: false, error: claimErr }, rpc.ok ? 400 : 502);
   }
   if (claim && data.review_id) {
+    if (mode === 'claim') leagueAdd(env, ctx, actor.id, nick, b.bid, 'r:' + data.review_id); // an S-tier bid is charged now and held for review; a rejection refunds it
     try { await env.ROOM.get(env.ROOM.idFromName(topic)).fetch(new Request('https://room.internal/sync', { method: 'POST', headers: { 'x-uid': actor.id } })); } catch { }
     return J({ ok: true, review_id: data.review_id, remaining_coins: data.remaining_coins ?? null });
   }
   const kind = claim ? 'BILLBOARD' : 'PLOT'; const row = claim ? data.billboard : data.plot;
   if (!row || typeof row !== 'object') return J({ ok: false, error: 'empty' }, 502);
+  // The week's tally, one DO call: the 80% the RPC hands back to the board's previous holder comes off the week that bid was tallied in, then a claim
+  // adds its bid, an edit only its raise past the recorded bid (a tribe claim charges the tribe, a free one nothing). A plot adds its old price
+  // (the RPC doubles it).
+  if (claim) { const holder = mode === 'tribe' ? String(row.holder_id || '') : actor.id, sl = String(row.slot_id || b.slot_id || ''), prev = String(data.prev_holder_id || ''), back = Math.floor(Number(data.refund) || 0);
+    leagueRun(env, ctx, (M, t) => M.lgBoard(sl, isoWeek(t), t, leagueCut(t), holder, leagueNick(nick), mode, b.bid, prev, back)); }
+  else leagueAdd(env, ctx, actor.id, nick, Math.floor(Number(row.price) / 2));
   if (claim && mode !== 'edit' && row.photo_id) {
     try { await supabaseRpc('clear_billboard_photo', { p_key: env.FLUSH_KEY || '', p_slot_id: row.slot_id }); } catch { /* the screen still drops the photo below */ }
     row.photo_id = null;
@@ -1945,7 +2093,7 @@ function tribeId() {
   for (let i = 0; i < 8; i++) s += alphabet[bytes[i] % 36];
   return s;
 }
-async function tribeApi(req, env, u) {
+async function tribeApi(req, env, u, ctx) {
   if (req.method !== 'POST') return J({ err: 'post' }, 405);
   const actor = await resolveActor(env, tokenOf(req));
   if (!actor) return J({ err: 'auth' }, 401);
@@ -1967,19 +2115,7 @@ async function tribeApi(req, env, u) {
     return J({ ok: true, tribe_id: data.tribe_id, amount: data.amount });
   }
   if (b.look) {
-    const prev = isoWeek(Date.now() - 7 * 864e5);
-    if (tribeRefundWeek !== prev) {
-      try {
-        const back = await supabaseRpc('refund_tribe_week', { p_key: env.FLUSH_KEY || '', p_week: prev });
-        if (back.ok && back.data?.ok !== false) tribeRefundWeek = prev;
-      } catch { /* the sheet still opens; the next look retries the refund */ }
-    }
-    if (kstDow() === 0 && tribeRoofWeek !== isoWeek()) {
-      try {
-        const roof = await supabaseRpc('award_tribe_roof', { p_key: env.FLUSH_KEY || '', p_week: isoWeek() });
-        if (roof.ok && roof.data?.ok !== false) tribeRoofWeek = isoWeek();
-      } catch { /* next Sunday open retries */ }
-    }
+    await tribeSettle(env, ctx); // last week's refund (and Sunday night's roof) before the sheet reads the tribe's coins
     const rpc = await supabaseRpc('my_tribe', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id });
     const data = rpc.data || {};
     if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || '소속을 불러오지 못했어요' }, rpc.ok ? 400 : 502);
@@ -2108,6 +2244,7 @@ async function photos(req, env, ctx, u) {
     const data = rpc.data || {}, msg = String(data.message || '');
     if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || (/schema cache|Could not find the function/i.test(msg) ? '사진 전광판이 아직 준비 중이에요. 잠시 후 다시 시도해 주세요.' : '사진을 올리지 못했어요. 잠시 후 다시 시도해 주세요.') }, rpc.ok ? 400 : 502);
     const row = data.billboard; if (!row || typeof row !== 'object') return J({ ok: false, error: 'empty' }, 502);
+    leagueAdd(env, ctx, actor.id, b.nickname || b.nick || '', Math.floor(Number(data.fee) || 0), 'p:' + id);
     await announce(env, ctx, [topic], actor.id, row);
     return J({ ok: true, kind: 'BILLBOARD', data: row, remaining_coins: data.remaining_coins ?? null, fee: data.fee ?? null });
   }
@@ -2127,6 +2264,7 @@ async function photos(req, env, ctx, u) {
     const data = rpc.data || {};
     if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || data.message || '검수를 처리하지 못했습니다.' }, rpc.ok ? 400 : 502);
     PHOTO_C.delete(id);
+    if (data.photo?.actor_id && Number(data.photo.refunded) > 0) { const who = String(data.photo.actor_id), back = Math.floor(Number(data.photo.refunded)); leagueRun(env, ctx, (M) => M.lgBack('p:' + id, who, back)); } // a rejected pending photo's fee came back, off the week it was paid in
     if (data.billboard) await announce(env, ctx, PLAZA_TOPICS.includes(b.topic) ? [b.topic] : PLAZA_TOPICS, data.photo?.actor_id || '', data.billboard);
     return J({ ok: true, billboard: data.billboard || null, photo: data.photo || null });
   }
@@ -2178,6 +2316,10 @@ async function photos(req, env, ctx, u) {
     const rpc = await supabaseRpc('review_slot_claim', { p_key: env.FLUSH_KEY || '', p_id: id, p_approve: b?.approve === true });
     const data = rpc.data || {};
     if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || data.message || '검수를 처리하지 못했습니다.' }, rpc.ok ? 400 : 502);
+    // A rejected S-tier bid goes back to its payer; an approved one hands 80% of the old bid back to the board's previous holder.
+    // Both come off the week the bid was tallied in (the review record, the slot record).
+    if (data.rejected && data.actor_id) { const who = String(data.actor_id), back = Math.floor(Number(data.refund) || 0); leagueRun(env, ctx, (M) => M.lgBack('r:' + id, who, back)); }
+    else if (data.billboard) { const sl = String(data.billboard.slot_id || ''), prev = String(data.prev_holder_id || ''), back = Math.floor(Number(data.refund) || 0); leagueRun(env, ctx, (M) => M.lgApprove(id, sl, prev, back)); }
     if (b?.approve === true && data.billboard) {
       const payer = String(data.actor_id || '');
       const member = String(data.member || '');
@@ -2303,7 +2445,7 @@ async function accountApi(req, env, ctx, u) {
   const guestId = 'guest:' + sub;
   const G = await guestVerify(env, b?.guest_token, 180 * 86400);
   if (!G || G.s !== sub) return J({ err: 'guest' }, 401);
-  const rpc = await supabaseRpc('merge_guest_account', { p_key: env.FLUSH_KEY || '', p_user_id: actor.id, p_guest_id: guestId, p_nickname: clip(b?.nickname || '', 16) });
+  const rpc = await supabaseRpc('merge_guest_account', { p_key: env.FLUSH_KEY || '', p_user_id: actor.id, p_guest_id: guestId, p_nickname: botNick(b?.nickname) ? '' : clip(b?.nickname || '', 16) });
   const data = rpc.data || {};
   if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || '계정을 연결하지 못했습니다.' }, rpc.ok ? 400 : 502);
   try { await invalidateWorld(env, ctx); } catch { }
@@ -2311,7 +2453,7 @@ async function accountApi(req, env, ctx, u) {
   // Pushes to the user: id reach the guest's browsers, and the guest's board shots stay the holder's own (card page, share-page title).
   // The guest's wish, hearts, reports and unpaid prizes become the user's (wMove), so mine, the one-wish-a-day rule and the prize follow the person.
   ctx.waitUntil(Promise.resolve().then(() => Promise.all([pushM(env).psMove(guestId, actor.id), snapM(env).snapMove(guestId, actor.id).then(() => { SNX.clear(); SNC.clear(); }),
-    wishM(env).wMove(guestId, actor.id).then(() => { WISHC.at = 0; WONE.clear(); WAU.clear(); }), darkM(env).dkMove(guestId, actor.id)])).catch(() => { }));
+    wishM(env).wMove(guestId, actor.id).then(() => { WISHC.at = 0; WONE.clear(); WAU.clear(); }), darkM(env).dkMove(guestId, actor.id), lgM(env).lgMove(guestId, actor.id).then(() => { LGW.at = 0; LGC.at = 0; })])).catch(() => { }));
   await adSoon(ctx, () => adM(env).adMove(guestId, actor.id)); // the moved boards keep their report; waited for (up to 0.8 s) so a report right after the link finds it
   return J({ ok: true, actor_id: actor.id, coins: data.coins, bonus: data.bonus || 0, linked: true, nickname: data.nickname || '' });
 }
@@ -2321,9 +2463,9 @@ async function forgetActor(env, uid) {
   let ids = [uid]; try { ids = ids.concat(await env.METER.get(env.METER.idFromName('ev')).evGuests(uid)); } catch { /* the user's own rows still go */ }
   const dropSubs = async (id) => { const r = await pushM(env).psForget(id); // the Supabase copies of the endpoints this instance knew (older ones only Supabase knows stay)
     await Promise.all((r?.e || []).map(e => supabaseRpc('push_unsubscribe', { p_key: env.FLUSH_KEY || '', p_actor_id: id, p_endpoint: e }).catch(() => null))); };
-  await Promise.all(ids.map(id => Promise.all([dropSubs(id), wishM(env).wForget(id), snapM(env).snapForget(id), darkM(env).dkForget(id)].map(p => p.catch(() => null)))));
+  await Promise.all(ids.map(id => Promise.all([dropSubs(id), wishM(env).wForget(id), snapM(env).snapForget(id), darkM(env).dkForget(id), lgM(env).lgForget(id)].map(p => p.catch(() => null)))));
   await Promise.all(ids.map(id => adM(env).adForget(id).catch(() => null))); // the board reports of their tenures go too
-  WISHC.at = 0; WONE.clear(); WAU.clear(); SNX.clear(); SNC.clear(); PC.delete('world');
+  WISHC.at = 0; WONE.clear(); WAU.clear(); SNX.clear(); SNC.clear(); PC.delete('world'); LGW.at = 0; LGC.at = 0;
   try { await caches.default.delete(new Request(WORLD_CACHE)); } catch { }
 }
 function esc(s) { return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
@@ -2542,7 +2684,8 @@ export default {
     if (u.pathname.startsWith('/rt/card/')) return cardPage(req, env, u);
     if (u.pathname === '/rt/relight') return relightBoard(req, env, ctx);
     if (u.pathname === '/rt/ad-report') return adReportApi(req, env, u);
-    if (u.pathname === '/rt/tribe' || u.pathname === '/rt/tribe/pledge') return tribeApi(req, env, u);
+    if (u.pathname === '/rt/tribe' || u.pathname === '/rt/tribe/pledge') return tribeApi(req, env, u, ctx);
+    if (u.pathname === '/rt/league') return leagueApi(req, env);
     if (u.pathname === '/rt/world' || u.pathname === '/rt/wallet' || u.pathname === '/rt/claim-billboard' || u.pathname === '/rt/buy-plot' || u.pathname === '/rt/sell-coins' || u.pathname === '/rt/flush-wallet' || u.pathname === '/rt/spend') return plaza(req, env, ctx, u);
     if (WISH_PATHS.has(u.pathname)) return wishApi(req, env, ctx, u);
     if (u.pathname.startsWith('/rt/w/')) return wishPage(req, env, u);

@@ -26,7 +26,7 @@ const N = 10;
 const MINUTES = 40;
 const SCALE = 20, ORIGIN = 1500;
 const toU = (m) => Math.round(m * SCALE + ORIGIN);
-const NAMES = Array.from({ length: N }, (_, i) => '네온봇' + (i + 1));
+const NAMES = Array.from({ length: N }, (_, i) => 'QA봇' + (i + 1)); // not 네온봇N: the Worker refuses that name (the seeded production wallets)
 const COLORS = ['#ff3d9a', '#3fe6ff', '#ffcf5a', '#39f58a', '#b84dff', '#ff6a3d', '#4d7cff', '#f4f6ff', '#ffcf5a', '#39f58a'];
 const SPOTS = [
   [-24, -132], [-10, -110], [-6, -80], [-12, -40],
@@ -81,7 +81,7 @@ async function claim(token, nick, slot, bid, color, steal) {
     headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
     body: JSON.stringify({
       topic: TOPIC, nickname: nick, slot_id: slot, bid,
-      line1: nick, line2: steal ? '빼앗았다' : '샀다', line3: '#네온봇',
+      line1: nick, line2: steal ? '빼앗았다' : '샀다', line3: '#QA봇',
       emoji: steal ? '⚔️' : '💰', bg_theme: 'cyber_navy', text_color: color,
     }),
   });
@@ -123,7 +123,7 @@ function pickDeal(rows, name, coins, now) {
     if (!floor) continue;
     const alive = b.holder_id && Date.parse(b.expires_at) > now;
     if (alive && b.holder_name === name) { mine++; continue; }
-    if (alive && !String(b.holder_name || '').startsWith('네온봇')) continue;
+    if (alive && !String(b.holder_name || '').startsWith('QA봇')) continue;
     if (alive && Date.parse(b.protected_until) > now) continue;
     const bid = alive ? Math.max(floor, Number(b.current_bid) + 50) : floor;
     if (bid > coins) continue;
@@ -187,7 +187,7 @@ async function market(token, name, color) {
     console.log(name, deal.offer.steal ? '강탈' : '매수', deal.offer.slot, deal.offer.bid, c.ok ? 'ok' : c.error, '보유', coins);
     return;
   }
-  const buyer = rows.find((b) => b.holder_id && Date.parse(b.expires_at) > Date.now() && String(b.holder_name || '').startsWith('네온봇') && b.holder_name !== name);
+  const buyer = rows.find((b) => b.holder_id && Date.parse(b.expires_at) > Date.now() && String(b.holder_name || '').startsWith('QA봇') && b.holder_name !== name);
   const amount = coins >= 80 ? 20 : 10;
   if (buyer && coins >= amount + 30) {
     const s = await sell(token, name, buyer.slot_id, amount);
@@ -200,11 +200,11 @@ async function market(token, name, color) {
 if (process.argv.includes('--check')) {
   const now = Date.now();
   const rows = [
-    { slot_id: 'STREET_1', holder_id: 'a', holder_name: '네온봇2', current_bid: 200, expires_at: new Date(now + 9e6).toISOString(), protected_until: new Date(now - 1000).toISOString() },
+    { slot_id: 'STREET_1', holder_id: 'a', holder_name: 'QA봇2', current_bid: 200, expires_at: new Date(now + 9e6).toISOString(), protected_until: new Date(now - 1000).toISOString() },
     { slot_id: 'PLOT_1', holder_id: null, current_bid: 100 },
     { slot_id: 'MAIN_TOP', holder_id: 'h', holder_name: '힘킴', current_bid: 3000, expires_at: new Date(now + 9e6).toISOString(), protected_until: new Date(now - 1000).toISOString() },
   ];
-  const d = pickDeal(rows, '네온봇1', 300, now);
+  const d = pickDeal(rows, 'QA봇1', 300, now);
   if (!d.offer || d.offer.slot !== 'STREET_1' || d.offer.bid !== 250 || d.offer.steal !== true) throw new Error('deal');
   const w = walker(0);
   w.tx = SPOTS[4][0]; w.tz = SPOTS[4][1];
@@ -225,9 +225,9 @@ if (process.argv.includes('--check')) {
   if (await tradeAllowed('http://localhost:8787', true)) throw new Error('trade without /rt/config');
   let sent = 0;
   globalThis.fetch = async () => { sent++; return { ok: true, json: async () => ({}) }; };
-  await claim('t', '네온봇1', 'STREET_1', 200, '#ffffff', false).catch(() => {});
-  await sell('t', '네온봇1', 'STREET_1', 10).catch(() => {});
-  await market('t', '네온봇1', '#ffffff');
+  await claim('t', 'QA봇1', 'STREET_1', 200, '#ffffff', false).catch(() => {});
+  await sell('t', 'QA봇1', 'STREET_1', 10).catch(() => {});
+  await market('t', 'QA봇1', '#ffffff');
   globalThis.fetch = realFetch;
   if (sent) throw new Error('a request went out with trade off');
   process.exit(0);

@@ -1,5 +1,6 @@
 // 오늘의 소원: one short line per person per KST day, free. Pure rules shared by the browser, the Worker and the tests (no I/O).
 import { blockedText } from './plaza-account.js';
+import { botNick } from './league.js';
 
 export const WISH = Object.freeze({ maxLen: 24, heartsPerDay: 5, ipHeartsPerWish: 3, reportHide: 3, topMax: 50, recentMax: 20, boardMax: 24, keepDays: 8, prizes: Object.freeze([300, 200, 100]), prizeMinHearts: 5, prizeMinIps: 3, editsPerDay: 3, editGapMs: 30000, ipPostsPerDay: 20 });
 
@@ -63,9 +64,9 @@ export function wishFault(text) {
 }
 export function wishRejected(text) { const k = wishFault(text); return k ? WISH_ERR[k] : ''; }
 // Names that read as staff are not allowed on a wish, nor banned words, links or phone numbers (the same rules as the text): '' or 'nick'.
-// The staff check ignores spaces ("운 영 자").
+// The staff check ignores spaces ("운 영 자"). Nor the seeded bots' 네온봇N.
 const STAFF = /운영자|관리자|공식|admin|official/i;
-export function wishNickFault(nick) { const s = norm(nick), t = s.replace(/\s+/g, ''); return s && (blockedText(s) || STAFF.test(t) || contact(s)) ? 'nick' : ''; }
+export function wishNickFault(nick) { const s = norm(nick), t = s.replace(/\s+/g, ''); return s && (blockedText(s) || STAFF.test(t) || botNick(t) || contact(s)) ? 'nick' : ''; }
 // The nick a wish stores and shows: the same normalising as the text (no zero-width or bidi marks), 16 code points.
 export function cleanNick(nick) { return Array.from(norm(nick)).slice(0, 16).join('').trim(); }
 
