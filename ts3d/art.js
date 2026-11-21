@@ -1,4 +1,5 @@
 import { auctionClosed, live, floorOf, SLOT_IDS } from '../balance.js';
+import { nowMs } from '../live.js';
 // Canvas painters for every procedural texture in the plaza:
 // billboard artwork, LED tickers, neon signs, K-brand ads, facades, decals, name tags.
 export const SANS = '"Pretendard Variable", Pretendard, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
@@ -558,7 +559,7 @@ export function paintBillboard(canvas, data = {}, opts = {}) {
   }
 
   const vacant = !data.holder_id;
-  const who = !vacant ? `👑 ${chars(data.holder_name || '익명', 14)}` : auctionClosed(data.slot_id) ? '🌙 밤 9시에 10분만 열려요' : '✨ 빈 자리 · 지금 걸 수 있어요';
+  const who = !vacant ? `👑 ${chars(data.holder_name || '익명', 14)}` : auctionClosed(data.slot_id, nowMs()) ? '🌙 밤 9시에 10분만 열려요' : '✨ 빈 자리 · 지금 걸 수 있어요';
   g.font = `800 ${Math.round(34 * k)}px ${SANS}`;
   const pw = g.measureText(who).width + 40 * k;
   roundRect(g, 28 * k, 26 * k, pw, 46 * k, 23 * k);
@@ -1803,7 +1804,7 @@ export function paintWish(canvas, data = {}, opts = {}) {
   sparkle(g, W * 0.91, body * 0.24, 9 * k, '#ffe2a8');
   sparkle(g, W * 0.08, body * 0.8, 7 * k, '#ffe2a8');
 
-  const chip = '🌠 오늘의 소원';
+  const chip = String(opts.chip || '🌠 오늘의 소원');
   g.font = `800 ${Math.round(34 * k)}px ${SANS}`;
   roundRect(g, 28 * k, 26 * k, g.measureText(chip).width + 40 * k, 46 * k, 23 * k);
   g.fillStyle = 'rgba(4,5,18,0.72)';

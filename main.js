@@ -13,9 +13,9 @@ import { adoptHandover, allowedLink, blockedText, chromeIntent, handoverHref, is
 import { saveClip, dropParams } from './share.js?v=202611210015';
 import { ftueDue, crowdFacts, kstDay, lockCelebration, startFtue, wishAutoOpen, wishBootLine, awayRows, inboxUnread, seenAdd, liveKey, liveSeenAdd } from './ftue.js?v=202611210015';
 import { WISH, cleanWish } from './wish.js';
-import { applyInboxPush, loadInbox, readInbox } from './inbox.js?v=202611210015';
+import { applyInboxPush, loadInbox, readInbox, liveOnly, handledRead, liveSeeable } from './inbox.js?v=202611210015';
 import { openTribe, pledge, sendCheer } from './tribe.js?v=202611210015';
-import { applyOps, ballNotice, sessionEndPlan } from './live.js';
+import { applyOps, ballNotice, sessionEndPlan, nineBanner, kingMinute, clockSkew, clock, nowMs } from './live.js';
 
 adoptHandover(location.search, localStorage);
 
@@ -67,7 +67,7 @@ function paintBootLive(data, here) {
   stat.hidden = false;
   const boards = data.billboards.filter((b) => slotOf(b.slot_id));
   const main = boards.find((b) => b.slot_id === 'MAIN_TOP');
-  const open = boards.filter((b) => !b.holder_id && !auctionClosed(b.slot_id)).length;
+  const open = boards.filter((b) => !b.holder_id && !auctionClosed(b.slot_id, nowMs())).length;
   // Small counts read as an empty plaza, so each one shows only from its threshold (ftue.js PUBLIC_MIN).
   const { visitors, wishes, crowd } = crowdFacts({ visitors: data.today?.visitors, wishes: data.today?.wishes, crowd: here?.live });
   king.textContent = live(main)
@@ -82,8 +82,10 @@ function paintBootLive(data, here) {
     crowd ? `지금 광장 ${crowd}명` : '',
   ].filter(Boolean).join(' · ');
 }
+// Server clock minus this clock (live.js clock.off) from the boot /rt/world Date header (clockSkew; 0 when unknown or noisy).
+const bootSent = Date.now();
 Promise.all([
-  fetch('/rt/world', { cache: 'no-store' }).then((r) => r.json()).catch(() => null),
+  fetch('/rt/world', { cache: 'no-store' }).then((r) => { clock.off = clockSkew(r.headers.get('date'), bootSent, Date.now()); return r.json(); }).catch(() => null),
   fetch('/rt/here', { cache: 'no-store' }).then((r) => r.json()).catch(() => null),
 ]).then(([data, here]) => {
   paintBootLive(data, here);
@@ -154,7 +156,7 @@ let sessionUser = null, accountReady = false;
 // 다녀간 사이 / 🔔: inbox ids seen in this browser, my wish's heart count when I last saw it, the day yesterday's prize was shown.
 const INBOX_SEEN_KEY = 'kts_inbox_seen', WISH_SEEN_KEY = 'kts_wish_seen', WISH_PRIZE_KEY = 'kts_wish_prize', INBOX_LIVE_KEY = 'kts_inbox_live';
 function readJson(key, dflt) { try { const v = JSON.parse(recall(key) || 'null'); return v ?? dflt; } catch { return dflt; } }
-let focusedSlot = '', inboxRows = [], inboxHandled = new Set();
+let focusedSlot = '', inboxRows = [], inboxHandled = new Set(), liveNews = [];
 let introDone = () => {};
 const introReady = new Promise((resolve) => { introDone = resolve; });
 let linkWishDone = () => {};
@@ -519,6 +521,16 @@ function tickDraw() {
   ui.tickets(0, 300000);
 }
 setInterval(tickDraw, 1000);
+// 밤 9시 (live.js): the countdown banner 20:50–21:10 and yesterday's wish king on the boards 21:00–21:01, from this clock
+// plus clock.off (nowMs). No server call; the banner never opens a sheet by itself.
+let kingShown = false;
+function tickNine() {
+  const t = nowMs();
+  ui.setNine?.(nineBanner(t));
+  const on = kingMinute(t, state.wish.king);
+  if (on || kingShown) { world?.setKing?.(on ? state.wish.king : null); kingShown = on; }
+}
+setInterval(tickNine, 1000);
 
 function creditNow(n, play = false) {
   const amount = Math.floor(Number(n));
@@ -528,7 +540,6 @@ function creditNow(n, play = false) {
   if (play) state.earned = (state.earned || 0) + amount;
   ui.setWallet(state);
   ui.flyCoins?.(Math.min(amount, 40), world?.screenOf?.('me'));
-  world?.setRank?.(state.confirmed + state.pending);
   return amount;
 }
 
@@ -586,13 +597,17 @@ const cheerAt = new Map();
 
 async function openInbox() {
   const items = await loadInbox();
-  const rows = items.map((row) => ({
-    id: row.id,
+  inboxRows = items;
+  // News that came live this session is shown even before the room has stored its row.
+  const rows = [...liveOnly(liveNews, items), ...items].map((row) => ({
+    id: row.id || 0,
     text: applyInboxPush(row),
     slot: String(row.slot_id || ''),
     from: row.kind === 'cheer' ? String(row.from || '') : '',
   })).filter((row) => row.text);
-  await readInbox(rows.map((row) => row.id));
+  // Read is sent in the background: a failed send must not hide the list or keep the 🔔 lit.
+  readInbox(items.filter((row) => !row.read).map((row) => row.id)).catch(() => {});
+  liveNews = [];
   markInboxSeen(items.map((row) => row.id));
   return rows;
 }
@@ -664,7 +679,6 @@ async function refreshWallet() {
     state.walletKnown = true;
     state.pending = pendingSum();
     ui.setWallet(state);
-    world?.setRank?.(state.confirmed);
     return true;
   } catch { return false; }
 }
@@ -1294,9 +1308,10 @@ net.on('inbox', (m) => {
   const line = applyInboxPush(m);
   if (line) {
     ui.setInboxDot?.(true);
-    // Seen live: the stored copy of this news (no id on the socket) will not come back in 다녀간 사이.
-    const key = liveKey(m, Date.now());
+    // Seen live, only when the line could be seen: its stored copy (no id on the socket) will not come back in 다녀간 사이.
+    const key = liveSeeable(!!ui.isNewbie?.(), document.visibilityState) ? liveKey(m, Date.now()) : '';
     if (key) keep(INBOX_LIVE_KEY, JSON.stringify(liveSeenAdd(readJson(INBOX_LIVE_KEY, []), key)));
+    liveNews = [{ kind: m.kind, slot_id: m.slot_id, phrase: m.phrase, from_name: m.from_name, from: m.from, at: nowMs() }, ...liveNews].slice(0, 10);
   }
   const reply = m?.kind === 'cheer' && m.from && m.slot_id ? { slot: m.slot_id, to: m.from } : '';
   if (line) ui.setNextLine(line, reply);
@@ -1591,8 +1606,10 @@ function markInboxSeen(ids) {
   keep(INBOX_SEEN_KEY, JSON.stringify(seenAdd(readJson(INBOX_SEEN_KEY, []), ids)));
   syncInboxDot();
 }
+// Seen here (kts_inbox_seen) or already read on the server from any device (loadInbox marks those read).
+function seenIds() { const own = readJson(INBOX_SEEN_KEY, []); return [...(Array.isArray(own) ? own : []), ...inboxRows.filter((row) => row.read).map((row) => row.id)]; }
 function syncInboxDot() {
-  ui.setInboxDot?.(inboxUnread(inboxRows.filter((row) => applyInboxPush(row) && !inboxHandled.has(Math.floor(Number(row.id)))), readJson(INBOX_SEEN_KEY, [])) > 0);
+  ui.setInboxDot?.(liveNews.length > 0 || inboxUnread(inboxRows.filter((row) => applyInboxPush(row) && !inboxHandled.has(Math.floor(Number(row.id)))), seenIds()) > 0);
 }
 // 다녀간 사이: once after entering, after the intro (and after a linked wish sheet closed), never for newcomers.
 // Rows come from ftue.js awayRows; ui queues the sheet until no other sheet, celebration or focus camera is up.
@@ -1603,22 +1620,28 @@ async function showAway() {
   await Promise.race([introReady, sleep(12000)]);
   if (WISH_ID && !FOCUS) await Promise.race([linkWishClosed, sleep(6000)]);
   const day = kstDay();
+  const holderOf = (slot) => state.billboards.find((b) => b.slot_id === slot)?.holder_id || world?.boardView?.(slot)?.holder_id || '';
   const plan = awayRows({
     newbie: !!ui.isNewbie?.(),
     inbox: inboxRows,
-    seen: readJson(INBOX_SEEN_KEY, []),
+    seen: seenIds(),
     copy: applyInboxPush,
     wish: state.wish.known ? state.wish : null,
     wishSeen: readJson(WISH_SEEN_KEY, null),
     prizeDay: recall(WISH_PRIZE_KEY),
     day,
-    holder: (slot) => state.billboards.find((b) => b.slot_id === slot)?.holder_id || world?.boardView?.(slot)?.holder_id || '',
+    holder: holderOf,
     me: net.id,
     liveSeen: readJson(INBOX_LIVE_KEY, []),
   });
   // Rows already handled (board held again, seen live, folded duplicates) do not light the 🔔 either.
   const shownIds = new Set(plan.rows.map((r) => r.id));
   inboxHandled = new Set(plan.inboxIds.filter((id) => !shownIds.has(id)));
+  // Handled rows (not shown, not folded under a shown row) are read here now; only a board I hold again also on the server.
+  const onSheet = new Set(plan.rows.flatMap((r) => [r.id, ...(r.also || [])]));
+  const done = handledRead(plan.inboxIds.filter((id) => !onSheet.has(id)), inboxRows, holderOf, net.id);
+  if (done.server.length) readInbox(done.server).catch(() => {});
+  if (done.local.length) markInboxSeen(done.local);
   syncInboxDot();
   if (!plan.rows.length) return;
   ui.openAway?.(plan.rows, () => {

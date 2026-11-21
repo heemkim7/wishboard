@@ -2361,6 +2361,8 @@ void main(){
     setWishes(list) { boards.setWishes(list); },
     // Shows that wish (must be in the current list) on up to 4 nearest idle boards now, for one card duration; true if shown.
     pinWish(id) { return boards.pinWish(id); },
+    // 밤 9시 소원왕: {nick, txt, hearts} puts yesterday's top wish on every claimable board but the main tower; null ends it.
+    setKing(k) { boards.setKing(k); },
     showGhost,
     setWatchPortrait,
     startLounge() {

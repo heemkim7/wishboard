@@ -6,6 +6,7 @@ import { BALANCE, PAY, askBid, auctionClosed, buildingOf, chainBoost, floorOf, n
 import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, tutorialTap, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611210015';
 import { WISH, cleanWish, wishRejected, wishShareText } from './wish.js';
 import { backFields, returnGap } from './growth.js?v=202611210015';
+import { nineSlot, nowMs } from './live.js';
 import { cardUrl, vipShareLink, composeWishShot, kakaoFeed, kakaoKey, kakaoSend, loadKakao } from './share.js?v=202611210015';
 import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611210015';
 import { EMOTES, REACTIONS, AVATAR_COLORS, SPECIES } from './ts3d/avatars.js?v=202611210015';
@@ -296,7 +297,14 @@ export function createUI(root, hooks) {
     h('button', { class: 'btn gold', type: 'button', text: '+300', onclick: (e) => { e.preventDefault(); e.stopPropagation(); openLogin(); } }),
   );
   const nextLineEl = h('p', { class: 'nextline', hidden: true });
-  root.append(h('div', { class: 'hud-l' }, h('div', { class: 'glass ident' }, profile, channelCard), guestWarn, walletEl, nextLineEl, liveBoard));
+  // 밤 9시 banner (main.js setNine, once a second): before 21:00 a tap looks at the main tower, inside the window it opens
+  // the claim sheet on a main tower slot. It never opens anything by itself. Hidden for newcomers (index.html).
+  let ninePhase = '';
+  const nineEl = h('button', { type: 'button', class: 'glass nine', hidden: true, onclick: () => {
+    if (ninePhase === 'pre') hooks.focusShot?.('MAIN_TOP');
+    else if (ninePhase === 'open') openBillboard(nineSlot(world.billboards), 'tower');
+  } });
+  root.append(h('div', { class: 'hud-l' }, h('div', { class: 'glass ident' }, profile, channelCard), guestWarn, walletEl, nineEl, nextLineEl, liveBoard));
   const feverEl = h('button', { type: 'button', class: 'glass fever', title: '택시 손님을 내리거나 전광판을 점령하면 1칸. 20칸이 되면 1분 동안 코인이 2배이고 택시 부스트가 무제한입니다.', text: '🔮 코인 2배 0/20', onclick: () => openToday() });
   root.querySelector('.hud-l')?.append(feverEl);
 
@@ -2142,7 +2150,7 @@ export function createUI(root, hooks) {
       return () => { adRefresh = null; };
     }, true);
   }
-  function openBillboard(slotId = 'MAIN_TOP') {
+  function openBillboard(slotId = 'MAIN_TOP', zone = '') {
     hooks.refreshWorld?.();
     let slot = slotId;
     openSheet('📢 전광판 점령', '점령', (host) => {
@@ -2151,7 +2159,7 @@ export function createUI(root, hooks) {
         if (!badgeEl) return;
         const b = boardById(slot);
         const mineLive = !!(b?.holder_id && b.holder_id === hooks.actorId() && boardActive(b));
-        badgeEl.textContent = !mineLive && auctionClosed(slot) ? '9시 오픈' : !b?.holder_id ? '빈칸' : !boardActive(b) ? '불 꺼짐' : '방송 중';
+        badgeEl.textContent = !mineLive && auctionClosed(slot, nowMs()) ? '9시 오픈' : !b?.holder_id ? '빈칸' : !boardActive(b) ? '불 꺼짐' : '방송 중';
       };
       const canvas = makeCanvas(1024, 576);
       const seg = h('div', { class: 'seg' });
@@ -2396,7 +2404,7 @@ export function createUI(root, hooks) {
         const after = have - extra;
         balance.replaceChildren(h('span', null, '보유 ', h('b', { text: `${money(have)} 코인` })), h('span', null, mineLive ? '고친 뒤 ' : '점령 후 ', h('b', { class: after < 0 ? 'neg' : '', text: `${after < 0 ? '-' : ''}${money(Math.abs(after))} 코인` })));
         const locked = protectedLeft(b) > 0 && !mine;
-        const closed = !mineLive && auctionClosed(slot);
+        const closed = !mineLive && auctionClosed(slot, nowMs());
         const short = have < extra;
         go.disabled = locked || closed || bid < min || short;
         const label = mineLive ? (extra > 0 ? `문구 고치기 · 추가 ${money(extra)}` : '문구 고치기') : `💥 ${money(bid)} 코인으로 점령하기`;
@@ -2599,7 +2607,7 @@ export function createUI(root, hooks) {
           return;
         }
         const floor = minBid(b, world.billboards, hooks.actorId?.(), [lines[0].value, lines[1].value, lines[2].value].join('\n'));
-        if (mode !== 'edit' && auctionClosed(slot)) { note('메인 타워는 밤 9시부터 10분 동안만 점령할 수 있어요', 'err'); return; }
+        if (mode !== 'edit' && auctionClosed(slot, nowMs())) { note('메인 타워는 밤 9시부터 10분 동안만 점령할 수 있어요', 'err'); return; }
         if (mode !== 'tribe' && (have < extra || bid < floor)) {
           note(have < extra ? `코인이 부족해요. 지금 ${money(have)}, ${money(extra)} 필요` : `최소 ${money(floor)} 코인부터 입찰`, 'err');
           refreshBid();
@@ -2704,7 +2712,7 @@ export function createUI(root, hooks) {
             photoBox, capRow, photoFile),
         ),
       ));
-      showZone(slotId && slotId !== 'MAIN_TOP' ? (towerIds.includes(slotId) ? 'tower' : String(slotId).startsWith('STREET_') ? 'hot' : 'cheap') : 'pick', slotId);
+      showZone(zone || (slotId && slotId !== 'MAIN_TOP' ? (towerIds.includes(slotId) ? 'tower' : String(slotId).startsWith('STREET_') ? 'hot' : 'cheap') : 'pick'), slotId);
       fontsReady('타임스퀘어 전광판 점령 ' + hooks.nick()).then(paint);
       return () => { clearInterval(timer); cancelAnimationFrame(raf); };
     }, false, 'bill');
@@ -4717,6 +4725,14 @@ export function createUI(root, hooks) {
     openAway,
     // 🔔 받은 소식 shows only while something is unread.
     setInboxDot(on) { inboxBtn.hidden = !on; },
+    // b: live.js nineBanner(t) or null. Writes the DOM only when the text changes.
+    setNine(b) {
+      const text = b?.text || '';
+      ninePhase = text ? b.phase : '';
+      if (nineEl.hidden !== !text) nineEl.hidden = !text;
+      if (text && nineEl.textContent !== text) nineEl.textContent = text;
+      nineEl.classList.toggle('open', ninePhase === 'open');
+    },
     resendPush: () => resendPush(),
     openClaimStep,
     setNextLine,

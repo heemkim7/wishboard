@@ -6,6 +6,7 @@ import { THEMES, makeCanvas, paintBillboard, paintTicker, fontsReady, tierOf, bo
 import { askBid } from '../balance.js';
 import { floorOf, live } from '../balance.js';
 import { auctionClosed } from '../balance.js';
+import { nowMs } from '../live.js';
 
 export const screenTime = { value: 0 };
 
@@ -107,7 +108,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   const aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
   const plates = new WeakMap();
   let liveHead = 'WISH BOARD  ·  모두의 전광판  ·  코인을 모아 이 화면을 점령하세요  ·  ';
-  let liveAcc = 0, liveTick = 0, towerOpen = !auctionClosed('MAIN_TOP');
+  let liveAcc = 0, liveTick = 0, towerOpen = !auctionClosed('MAIN_TOP', nowMs());
   // 오늘의 소원: idle boards alternate their notice with a wish card. Rotation repaints happen only on the 0.64 s cadence
   // (update() → wishPlan): at most wishBudget per tick (nearest first, then oldest waiting) plus WISH_DROPS clears of boards
   // whose wish left the list. A list change or a loaded font repaints at most the WISH_NOW nearest boards in that call.
@@ -165,6 +166,15 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   let air = null;
   let opsLine = '';
   function airOn() { return !!(air && air.until > Date.now()); }
+  // 밤 9시 소원왕 (setKing, main.js decides the minute): claimable boards outside the main tower show yesterday's top wish
+  // full-face. A live takeover wins. Entering and leaving repaint at most kingBudget boards per 0.08 s tick, nearest first.
+  // A wish card gives way only when its board turns (wishOk), so the wish tick never drops every card at once for the king.
+  const kingBudget = quality === 'low' ? 1 : 3;
+  const KING_CARD = { chip: '👑 어제의 소원왕', strip: '👑 어제 하트를 가장 많이 받은 소원' };
+  let king = null, kingDirty = false, kingGen = 0;
+  function kingFor(b) { return !!king && !b.shared && CLAIM.test(b.slotId) && !String(b.slotId).startsWith('MAIN_') && !airOn(); }
+  // b.kingOn: the kingGen whose card this board shows, 0 for none. A board is stale when it differs from kingWant.
+  const kingWant = (b) => (kingFor(b) ? kingGen : 0);
   function airRow(b) {
     const glyphs = Array.from(String(air?.line || ''));
     return {
@@ -213,7 +223,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     }
     const list = b.decals || [];
     // Stickers stay on the notice; a wish card is left clean (corner 0 would cover its chip, the side ones its text).
-    if (!list.length || b.wish) return;
+    if (!list.length || b.wish || b.kingOn) return;
     const g = b.canvas.getContext('2d');
     for (let i = 0; i < list.length; i++) drawBadge(g, b.canvas.width, b.canvas.height, list[i], i);
   }
@@ -235,7 +245,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     return true;
   }
 
-  function wishOk(b) { return wishes.length > 0 && !b.shared && b.mounts.length > 0 && wishRotates(b.slotId, b.row, airOn(), towerOpen, Date.now(), b.untilMs); }
+  function wishOk(b) { return wishes.length > 0 && !b.shared && b.mounts.length > 0 && wishRotates(b.slotId, b.row, airOn(), towerOpen, Date.now(), b.untilMs) && !kingFor(b); }
   function dropWish(b) {
     if (b.wish) wishShown--;
     b.wish = null;
@@ -256,7 +266,9 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   function paint(b) {
     // A board marked by setWishes (its wish left the list or was edited) paints the notice, never the old wish.
     if (b.wish && (b.wishDrop || !wishOk(b))) dropWish(b);
-    if (b.wish) { paintCard(b); return; }
+    if (b.wish) { b.kingOn = 0; paintCard(b); return; }
+    b.kingOn = kingWant(b);
+    if (b.kingOn) { b.kingNick = king.nick; paintWish(b.canvas, king, KING_CARD); remember(b.canvas); b.tex.needsUpdate = true; return; }
     const d = b.data, id = d.photo_status === 'approved' && d.holder_id ? d.photo_id : null;
     const photo = id ? photoReady(id) : null;
     paintBillboard(b.canvas, d, { photo, pending: d.photo_status === 'pending', shield: b.shield || '' });
@@ -355,6 +367,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     parent.add(group);
     const rec = { group, screen, w, h, R, rim };
     b.mounts.push(rec);
+    if ((b.kingOn || 0) !== kingWant(b)) paint(b);
     return group;
   }
 
@@ -468,13 +481,13 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     const accent = theme.accent || '#3fe6ff';
     const accent2 = theme.accent2 || '#ff3d9a';
     const photoOn = b.data?.photo_status === 'approved' && b.data?.holder_id && b.data?.photo_id;
-    const wishOn = !!b.wish;
+    const wishOn = !!b.wish, kingOn = !!b.kingOn;
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.drawImage(plate, 0, 0);
 
     const th = Math.max(18, Math.round(46 * k));
     const body = H - th;
-    if (!photoOn && !wishOn) {
+    if (!photoOn && !wishOn && !kingOn) {
       g.save();
       g.beginPath();
       g.rect(0, H * 0.58, W, body - H * 0.58);
@@ -515,13 +528,13 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     g.fillRect(0, body, W, Math.max(2, 2 * k));
     const onAir = live(b.row);
     const held = !!b.row?.holder_id;
-    g.fillStyle = wishOn ? '#9a5a24' : onAir ? '#ff2e4d' : held ? '#5c657a' : '#2a6f9e';
+    g.fillStyle = wishOn || kingOn ? '#9a5a24' : onAir ? '#ff2e4d' : held ? '#5c657a' : '#2a6f9e';
     g.fillRect(0, body, 108 * k, th);
     g.fillStyle = '#fff';
     g.font = `900 ${Math.max(11, Math.round(20 * k))}px ${SANS}`;
     g.textAlign = 'center';
     g.textBaseline = 'middle';
-    g.fillText(wishOn ? '소원' : onAir ? 'LIVE' : held ? '꺼짐' : '빈칸', 54 * k, body + th / 2);
+    g.fillText(kingOn ? '소원왕' : wishOn ? '소원' : onAir ? 'LIVE' : held ? '꺼짐' : '빈칸', 54 * k, body + th / 2);
     g.save();
     g.beginPath();
     g.rect(112 * k, body, Math.max(1, W - 112 * k), th);
@@ -533,7 +546,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     const cheers = Math.max(0, Math.floor(Number(b.data?.cheers) || 0));
     const clicks = Math.max(0, Math.floor(Number(b.data?.clicks) || 0));
     const notes = Array.isArray(b.data?.notes) ? b.data.notes.map((t) => chars(String(t || ''), 16)).filter(Boolean).slice(-5) : [];
-    const msg = wishOn ? `🌠 오늘의 소원   ·   ${b.wishMsg}   ·   ${liveHead}` : `👁 택시 정차 ${views}회   ·   🙌 응원 ${cheers}회   ·   🔗 링크 클릭 ${clicks}회   ·   ${notes.length ? notes.join('   ·   ') + '   ·   ' : ''}${liveHead}`;
+    const msg = kingOn ? `👑 어제의 소원왕   ·   ${chars(b.kingNick || '', 16)}   ·   ${liveHead}` : wishOn ? `🌠 오늘의 소원   ·   ${b.wishMsg}   ·   ${liveHead}` : `👁 택시 정차 ${views}회   ·   🙌 응원 ${cheers}회   ·   🔗 링크 클릭 ${clicks}회   ·   ${notes.length ? notes.join('   ·   ') + '   ·   ' : ''}${liveHead}`;
     const tw = Math.max(8, g.measureText(msg).width);
     const x0 = 120 * k - ((t * 90) % tw);
     g.fillText(msg, x0, body + th / 2);
@@ -594,6 +607,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     }
     near.sort((a, b) => a.d - b.d);
     lastNear = near;
+    if (kingDirty) kingStep();
     const hot = new Set(near.slice(0, 10).map((r) => r.b));
     const seen = new Set();
     for (const b of boards.values()) {
@@ -604,7 +618,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
       drawLive(b, screenTime.value);
     }
     if (liveTick % 8 === 0) {
-      const open = !auctionClosed('MAIN_TOP');
+      const open = !auctionClosed('MAIN_TOP', nowMs());
       if (open !== towerOpen) {
         towerOpen = open;
         for (const b of boards.values()) {
@@ -631,6 +645,28 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     }
   }
 
+  // Boards whose king card state is wrong, nearest first, kingBudget per tick; the rest wait for the next tick.
+  function kingStep() {
+    let left = kingBudget;
+    kingDirty = false;
+    for (let i = 0; i < lastNear.length; i++) {
+      const b = lastNear[i].b;
+      if (b.shared || (b.kingOn || 0) === kingWant(b)) continue;
+      if (left-- <= 0) { kingDirty = true; return; }
+      paint(b);
+    }
+  }
+  /** k: { nick, txt, hearts } for the minute, null to end it. Same card again → no work. Paints nothing in this call. */
+  function setKing(k) {
+    const next = k && String(k.txt || '') ? { id: 'king', nick: chars(String(k.nick || ''), 16), txt: String(k.txt), hearts: Math.max(0, Math.floor(Number(k.hearts) || 0)) } : null;
+    if (next?.nick === king?.nick && next?.txt === king?.txt && next?.hearts === king?.hearts) return false;
+    king = next;
+    // A new generation: cards already up with other words (or the fallback font) are stale and repaint on the budget.
+    kingGen++;
+    kingDirty = true;
+    if (king) fontsReady(king.txt + ' ' + king.nick).then(() => { if (king === next) { kingGen++; kingDirty = true; } });
+    return true;
+  }
   // Runs on the 0.64 s cadence only while wishes exist or a card is still up. The decisions are wishPlan's (tested);
   // this only gathers the states and paints what it lists.
   function wishTick() {
@@ -638,7 +674,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     const count = fillNear();
     for (let i = 0; i < count; i++) {
       const b = nearB[i];
-      nearOk[i] = n > 0 && !b.shared && b.mounts.length > 0 && wishRotates(b.slotId, b.row, air, towerOpen, now, b.untilMs);
+      nearOk[i] = n > 0 && !b.shared && !b.kingOn && b.mounts.length > 0 && wishRotates(b.slotId, b.row, air, towerOpen, now, b.untilMs);
     }
     planCfg.list = wishes;
     planCfg.now = now;
@@ -651,7 +687,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     const now = Date.now(), air = airOn(), near = lastNear, cands = [];
     for (let i = 0; i < near.length; i++) {
       const b = near[i].b;
-      cands.push({ ok: b.mounts.length > 0 && !b.shared && wishes.length > 0 && wishRotates(b.slotId, b.row, air, towerOpen, now, b.untilMs), pinId: b.wish?.id ?? null, pinUntil: b.wishPin });
+      cands.push({ ok: b.mounts.length > 0 && !b.shared && !b.kingOn && wishes.length > 0 && wishRotates(b.slotId, b.row, air, towerOpen, now, b.untilMs), pinId: b.wish?.id ?? null, pinUntil: b.wishPin });
     }
     const plan = wishPinPlan(wishes, id, cands, now);
     if (!plan) return false;
@@ -726,5 +762,5 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     }
   }
 
-  return { boards, ensure, mount, unmount, set, expire, get: (id) => boards.get(id), worldPos, setTicker, setOps, repaintAll, update, accentOf, tickerCanvas, watchShow, setShow, setAir, setDecals, setWishes, pinWish, decalsOf: (id) => (boards.get(id)?.decals || []).slice(), setRim };
+  return { boards, ensure, mount, unmount, set, expire, get: (id) => boards.get(id), worldPos, setTicker, setOps, repaintAll, update, accentOf, tickerCanvas, watchShow, setShow, setAir, setKing, setDecals, setWishes, pinWish, decalsOf: (id) => (boards.get(id)?.decals || []).slice(), setRim };
 }
