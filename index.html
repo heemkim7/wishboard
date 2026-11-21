@@ -97,6 +97,9 @@ visualViewport?.addEventListener('scroll', fitVV);
   #ui { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
   #view, #ui, #boot { top: var(--app-top, 0px); height: var(--app-h, 100dvh); bottom: auto; }
   #ui > * { pointer-events: none; }
+  /* The proof bar takes its own taps (an id selector above outranks .proof): its background must not pass a tap on to the
+     canvas, which would end the celebration focus, and the manual-copy field inside it must be selectable. */
+  #ui > .proof { pointer-events: auto; }
   button, input, select { font-family: inherit; color: inherit; }
   button { cursor: pointer; border: 0; background: none; padding: 0; }
   [hidden] { display: none !important; }
@@ -157,7 +160,6 @@ visualViewport?.addEventListener('scroll', fitVV);
   .profile .name small { font-size: 12px; font-weight: 700; color: var(--muted); }
   .profile .status { margin-top: 3px; display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 500; color: var(--muted); }
   .profile .status [hidden] { display: none; }
-  .profile .edit { font-size: 12px; color: var(--text-2); padding: 6px 8px; border-radius: 10px; background: var(--surface-2); }
   .verified { flex: none; display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; margin-left: 4px; padding: 0 4px; border-radius: 999px; background: var(--ok); color: var(--bg); font: 800 11px/1 var(--font); font-style: normal; }
   .profile .name .verified { margin-left: 6px; }
   .guestwarn { pointer-events: auto; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 14px; background: var(--surface-hud); border: 1px solid var(--line); }
@@ -227,7 +229,6 @@ visualViewport?.addEventListener('scroll', fitVV);
   .hud-r { position: absolute; top: calc(14px + var(--safe-t)); right: calc(14px + var(--safe-r)); display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
   .bar { display: flex; gap: 8px; align-items: center; }
   .tools { pointer-events: auto; display: flex; align-items: center; height: 46px; padding: 0 4px; border-radius: 999px; }
-  .pill { pointer-events: auto; height: 42px; padding: 0 14px; display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; border-radius: 999px; }
   .btn { pointer-events: auto; height: 42px; padding: 0 16px; border-radius: 10px; display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 15px; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); transition: transform .15s, background-color .2s, border-color .2s; white-space: nowrap; }
   .btn:active { transform: translateY(1px) scale(.98); }
   .btn.primary { color: var(--on-accent); background: var(--accent); border-color: transparent; }
@@ -239,7 +240,6 @@ visualViewport?.addEventListener('scroll', fitVV);
   .btn.icon { width: 42px; padding: 0; justify-content: center; font-size: 17px; }
   .tools .btn, .tools .btn.ghost, .tools .btn.icon { width: 40px; height: 40px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text); font-size: 20px; }
   .tools .btn:hover, .tools .btn.ghost:hover { background: var(--surface-2); border-color: transparent; }
-  .bar .channel-pill { cursor: pointer; font: inherit; color: inherit; border: 0; }
   .channel-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .btn:disabled { cursor: not-allowed; color: var(--dim); background: var(--surface-2); border-color: var(--line); filter: none; }
 
@@ -359,10 +359,12 @@ visualViewport?.addEventListener('scroll', fitVV);
   .farcard .where { display: grid; gap: 2px; min-width: 0; }
   .farcard .where b { font-size: 15px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .farcard .where span { font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .farcard .acts { display: flex; gap: 6px; flex: none; }
-  .farcard .acts button { min-height: 40px; padding: 0 12px; border-radius: 14px; border: 1px solid var(--line); background: transparent; color: var(--text); font-size: 13px; font-weight: 700; }
-  .farcard .acts button.go { border-color: var(--accent); color: var(--accent); }
-  .farcard .acts button:disabled { color: var(--text-2); opacity: .5; }
+  /* The card's own button row is .far-acts: the touch controls' .acts rules (absolute, bottom right, no pointer events) must never match it. */
+  .farcard .far-acts { display: flex; flex-direction: row; align-items: center; gap: 6px; flex: none; pointer-events: auto; }
+  .farcard .far-acts button { min-height: 40px; padding: 0 12px; border-radius: 14px; border: 1px solid var(--line); background: transparent; color: var(--text); font-size: 13px; font-weight: 700; white-space: nowrap; }
+  .farcard .far-acts button.go { border-color: var(--accent); color: var(--accent); }
+  .farcard .far-acts button:disabled { color: var(--text-2); opacity: .5; }
+  html.touch .farcard .far-acts button { min-width: 44px; min-height: 44px; }
 
   .dock { position: absolute; left: 50%; bottom: calc(18px + var(--safe-b)); transform: translateX(-50%); display: flex; gap: 8px; padding: 8px; pointer-events: auto !important; }
   .emote { position: relative; width: 74px; height: 70px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: var(--text); background: var(--surface-2); border: 1px solid transparent; transition: transform .15s, background .2s, border-color .2s; }
@@ -401,6 +403,10 @@ visualViewport?.addEventListener('scroll', fitVV);
   .joy.live .knob { transition: none; }
   .act.jump.honk { font-size: 15px; font-weight: 800; }
   .coach { position: absolute; left: 50%; top: calc(172px + var(--safe-t)); transform: translateX(-50%); max-width: calc(100vw - 32px); padding: 8px 14px; border-radius: 999px; background: var(--surface-hud); border: 1px solid var(--line); color: var(--text); font: 700 13px/1.35 var(--font); text-align: center; pointer-events: none; z-index: 4; }
+  /* Touch (the only place it is shown): at top 172px it lay over the left column (identity, task, wallet). It sits in the
+     lower middle instead: above the resting stick (ends 140px up) and the waypoint pill (ends 180px up), under the toasts
+     (from 228px), and it stops 76px from the right edge, where the dock and the action buttons are. */
+  html.touch .coach { top: auto; bottom: calc(190px + var(--safe-b)); left: calc(16px + var(--safe-l)); right: calc(76px + var(--safe-r)); width: fit-content; max-width: none; margin: 0 auto; transform: none; padding: 8px 12px; font-size: 12px; }
 
   /* ---------- bake minigame ---------- */
   .bake, .bake * { pointer-events: none !important; }
@@ -535,10 +541,21 @@ visualViewport?.addEventListener('scroll', fitVV);
   .sheet.bill .grid2.bb { flex: 1; min-height: 0; }
   .sheet.bill .grid2.bb > :first-child,
   .sheet.bill .grid2.bb > :last-child { min-height: 0; overflow: auto; }
+  /* One column under 900px, scrolling as a whole. Only the preview stays in view while the player types: the first
+     column is laid out as if its box were not there (display: contents), so its tabs, slot picker, place card and stats
+     scroll away with the form and the sticky preview can follow the whole scroll. (The whole first column used to be
+     sticky; it was taller than the scroller, a sticky box that tall never lets go, and the form stayed hidden under it.)
+     The preview is compact: at most 28vh tall, centred, on an opaque strip of the sheet's own surface. */
   @media (max-width: 900px) {
     .sheet.bill .grid2.bb { display: block; overflow: auto; }
-    .sheet.bill .grid2.bb > :first-child { position: sticky; top: 0; z-index: 3; background: var(--surface); overflow: visible; }
-    .sheet.bill .grid2.bb > :last-child { overflow: visible; }
+    .sheet.bill .grid2.bb > :first-child { display: contents; }
+    .sheet.bill .grid2.bb > :last-child { overflow: visible; margin-top: 14px; }
+    .sheet.bill .grid2.bb .screen { margin-top: 10px; padding: 8px 0; border-radius: 0; background: var(--surface); }
+    .sheet.bill .grid2.bb .screen canvas { width: min(100%, calc(28vh * 16 / 9)); margin: 0 auto; }
+  }
+  /* Nothing is sticky on a short screen (a phone on its side): there the preview would take most of the scroller. */
+  @media (max-width: 900px) and (min-height: 521px) {
+    .sheet.bill .grid2.bb .screen { position: sticky; top: 0; z-index: 3; }
   }
   .seg { display: inline-flex; flex-wrap: wrap; padding: 4px; border-radius: 14px; background: var(--bg); border: 1px solid var(--line); gap: 4px; }
   .seg button { padding: 9px 14px; border-radius: 10px; font-size: 13px; font-weight: 700; color: var(--muted); transition: all .2s; }
@@ -567,15 +584,6 @@ visualViewport?.addEventListener('scroll', fitVV);
   .input::placeholder { color: var(--muted); }
   .lines { display: grid; gap: 8px; }
   .emo { display: grid; gap: 8px; }
-  .emo-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
-  .emo-tabs button { height: 28px; padding: 0 10px; border-radius: 999px; font-size: 12px; font-weight: 700; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); }
-  .emo-tabs button.on { color: var(--accent); background: var(--accent-weak); }
-  .emo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(38px, 1fr)); gap: 6px; }
-  .emo-grid button { height: 38px; border-radius: 10px; font-size: 20px; background: var(--surface-2); border: 1px solid var(--line); transition: transform .15s; }
-  .emo-grid button:hover { transform: translateY(-2px); }
-  .emo-grid button.on { border-color: var(--line-strong); background: var(--accent-weak); }
-  .emo-own { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; color: var(--muted); }
-  .emo-own .input { width: 72px; height: 36px; text-align: center; font-size: 17px; }
   .themes { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
   .theme { position: relative; height: 50px; border-radius: 10px; overflow: hidden; border: 2px solid transparent; display: flex; align-items: flex-end; padding: 6px; font-size: 12px; font-weight: 800; color: var(--text); text-shadow: 0 1px 4px rgba(0,0,0,.8); transition: transform .15s, border-color .2s; }
   .theme:hover { transform: translateY(-2px); }
@@ -660,7 +668,9 @@ visualViewport?.addEventListener('scroll', fitVV);
   .species button.on { color: var(--accent); background: var(--accent-weak); border-color: var(--line-strong); }
 
   /* ---------- boot ---------- */
-  #boot { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; text-align: center; overflow: hidden;
+  /* The card is centred while it fits (its auto margins take the free space) and starts at the top and scrolls when it
+     is taller than the screen (a phone on its side): centring a taller card cut 입장하기 off with nothing to scroll. */
+  #boot { position: fixed; inset: 0; z-index: 50; display: grid; place-items: start center; text-align: center; overflow-x: hidden; overflow-y: auto; padding: max(12px, var(--safe-t)) 0 max(12px, var(--safe-b));
     background:
       linear-gradient(180deg, rgba(0,0,0,.72), rgba(0,0,0,.5) 46%, rgba(0,0,0,.82)),
       url('icons/boot.jpg') center/cover no-repeat,
@@ -668,8 +678,7 @@ visualViewport?.addEventListener('scroll', fitVV);
     transition: opacity .8s ease, visibility .8s; }
   #boot.gone { opacity: 0; visibility: hidden; pointer-events: none; }
   #boot .grid { display: none; }
-  #boot .wrap { position: relative; z-index: 3; width: min(560px, calc(100% - 32px)); padding: 22px 18px 18px; border-radius: 20px; background: var(--bg); border: 1px solid var(--line); box-shadow: var(--shadow-sheet); }
-  #boot .kicker { font: 700 12px/1 var(--font); letter-spacing: .2em; color: var(--info); }
+  #boot .wrap { position: relative; z-index: 3; width: min(560px, calc(100% - 32px)); margin: auto 0; padding: 22px 18px 18px; border-radius: 20px; background: var(--bg); border: 1px solid var(--line); box-shadow: var(--shadow-sheet); }
   #boot h1 { margin: 14px 0 6px; font: 800 40px/1.1 var(--font); letter-spacing: -.01em; color: var(--text); }
   #boot .tag { font-size: 15px; font-weight: 500; color: var(--text-2); line-height: 1.45; }
   #boot .prog { margin: 30px auto 10px; height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
@@ -683,8 +692,6 @@ visualViewport?.addEventListener('scroll', fitVV);
   #boot .badge { display: inline-block; margin-bottom: 8px; padding: 6px 12px; border-radius: 999px; font: 700 12px/1.2 var(--font); letter-spacing: .04em; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); }
   #boot .bootlive { margin-top: 14px; padding: 12px 14px; border-radius: 14px; text-align: left; background: var(--surface); border: 1px solid var(--line); font-size: 13px; font-weight: 500; line-height: 1.5; color: var(--text); }
   #boot .enter-go.pulse { animation: none; }
-  .vipbtn { pointer-events: auto; max-width: min(440px, 92vw); min-height: 36px; height: auto; padding: 8px 12px; border-radius: 999px; font: 700 12px/1.3 var(--font); color: var(--text); background: var(--surface-2); border: 1px solid var(--line); }
-  .vipbtn.block { width: 100%; border-radius: 10px; margin-bottom: 12px; }
   .vipcard { padding: 14px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface-2); text-align: left; }
   .vipcard h4 { margin: 0 0 6px; font: 800 15px/1.3 var(--font); }
   .vipcard p { margin: 0 0 10px; font-size: 13px; color: var(--muted); font-weight: 500; line-height: 1.45; }
@@ -700,7 +707,6 @@ visualViewport?.addEventListener('scroll', fitVV);
   #boot .enter-go { color: var(--on-accent); font-weight: 700; border-color: transparent;
     background: var(--accent); }
   #boot .enter-go:active { background: var(--accent-press); }
-  #boot .credit { position: absolute; z-index: 3; bottom: calc(14px + var(--safe-b)); left: 0; right: 0; font-size: 12px; color: var(--muted); }
   #boot { top: var(--app-top, 0px); height: var(--app-h, 100dvh); bottom: auto; }
 
   @media (max-width: 900px) {
@@ -712,13 +718,10 @@ visualViewport?.addEventListener('scroll', fitVV);
   @media (max-width: 640px) {
     .hud-l { width: auto; max-width: calc(100vw - 200px); min-width: 220px; gap: 8px; top: calc(10px + var(--safe-t)); left: calc(10px + var(--safe-l)); }
     .bar { gap: 6px; }
-    .bar .pill { display: none; }
-    .bar .channel-pill { display: inline-flex; }
     .news { top: calc(68px + var(--safe-t)); width: min(220px, calc(100vw - 360px)); height: 40px; }
     .acts { flex-direction: row; align-items: flex-end; }
     .profile { padding: 8px 10px; gap: 10px; }
     .avatar { width: 34px; height: 34px; font-size: 17px; border-radius: 10px; }
-    .profile .edit { display: none; }
     .wallet { padding: 9px 12px 9px 10px; gap: 10px; }
     /* Narrow column: every wallet chip flows in one wrapping row, so none runs past the panel edge. */
     .wallet .sub-fixed, .wallet .sub-live { display: contents; }
@@ -729,7 +732,6 @@ visualViewport?.addEventListener('scroll', fitVV);
     .btn { height: 38px; padding: 0 12px; font-size: 13px; }
     .btn.icon { width: 38px; }
     .btn .wide { display: none; }
-    .pill { height: 38px; padding: 0 12px; }
     .minimap { width: 100px; height: 100px; padding: 5px; }
     .minimap .tag { display: none; }
     .locpill { max-width: 100px; margin-top: 6px; padding: 5px 8px; font-size: 12px; }
@@ -770,8 +772,6 @@ visualViewport?.addEventListener('scroll', fitVV);
   html.touch .news .kick { padding: 0 6px; }
   html.touch .news .kick b { font-size: 12px; }
   html.touch .dock { left: auto; right: calc(76px + var(--safe-r)); bottom: calc(18px + var(--safe-b)); transform: none; padding: 0; background: none; border: 0; box-shadow: none; }
-  html.touch .dock .emote.more { width: 48px; height: 48px; border-radius: 50%; }
-  html.touch .dock .stay-lounge-btn { width: 48px; height: 48px; border-radius: 14px; }
   html.touch .dock .stay-lounge-btn .l { display: none; }
   html.touch .dock .stay-lounge-btn .e { font-size: 20px; }
   html.touch .reacts { left: auto; right: calc(8px + var(--safe-r)); bottom: calc(76px + var(--safe-b)); transform: none; grid-template-columns: repeat(4, 36px); gap: 4px; padding: 6px; max-height: 42vh; overflow: auto; }
@@ -789,14 +789,12 @@ visualViewport?.addEventListener('scroll', fitVV);
   html.touch .prompt .sub { display: block; font-size: 12px; }
   html.touch .modal { padding: calc(10px + var(--safe-t)) calc(10px + var(--safe-r)) calc(10px + var(--safe-b)) calc(10px + var(--safe-l)); place-items: start center; }
   html.touch .sheet { max-height: min(76vh, calc(var(--app-h, 100dvh) - 20px - var(--safe-t) - var(--safe-b))); border-radius: 20px; }
-  html.touch .profile .edit { display: none; }
   html.touch .avatar { width: 30px; height: 30px; font-size: 15px; border-radius: 10px; }
   html.touch .profile .name { font-size: 13px; }
   html.touch .wallet { padding: 6px 8px; gap: 8px; }
   html.touch .coin-icon { width: 26px; height: 26px; }
   html.touch .wallet .amt { font-size: 17px; }
   html.touch .hud-r { top: calc(8px + var(--safe-t)); right: calc(8px + var(--safe-r)); gap: 6px; }
-  html.touch .bar .channel-pill { display: inline-flex; height: 36px; padding: 0 10px; font-size: 12px; }
   html.touch .tools { height: 42px; padding: 0 3px; }
   html.touch .tools .btn { position: relative; width: 36px; height: 36px; font-size: 17px; }
   html.touch .tools .tool-desk { display: none; }
@@ -817,6 +815,32 @@ visualViewport?.addEventListener('scroll', fitVV);
   html.touch .tools.open { flex-wrap: wrap; height: auto; max-width: 156px; justify-content: flex-end; }
   html.touch .joy { width: 104px; height: 104px; left: calc(10px + var(--safe-l)); bottom: calc(36px + var(--safe-b)); }
   .tool-fold { display: none; }
+  /* Desktop windows under 820px: the full tool row (10 or 11 buttons of 40px + 10px = 410-450px, 14px from the right)
+     ran over the identity card, whose right edge is at 354px (by 78px at 700px, 34px at 744px). The row folds like the
+     touch one: 전광판, 소원, 받은 소식, 순위, 조작 안내 and ⋯ stay (at most 6 x 40px + 10px = 250px); ⋯ opens the rest as a
+     panel over the minimap, so nothing below it moves. */
+  @media (max-width: 819px) {
+    html:not(.touch) .tool-fold { display: inline-flex; }
+    html:not(.touch) .tools .tool-more { display: none; }
+    html:not(.touch) .tools.open .tool-more { display: inline-flex; }
+    html:not(.touch) .bar { position: relative; min-height: 46px; }
+    html:not(.touch) .tools.open { position: absolute; top: 0; right: 0; z-index: 7; flex-wrap: wrap; justify-content: flex-end; width: 170px; height: auto; padding: 3px 4px; border-radius: 20px; }
+  }
+  @media (max-width: 640px) {
+    /* The left column may take the width the folded row leaves: 250px + 10px from the right, and a 12px gap. */
+    html:not(.touch) .hud-l { max-width: calc(100vw - 282px); }
+  }
+  /* Desktop under 1127px: the centred dock (515px wide, its top 106px from the bottom) reaches the controls card (294px
+     from the left), so the card sits above the dock. The E prompt shares that band (118px up) and is drawn over the
+     card: the card is a legend with no controls, so it is under everything else in the HUD (z-index -1). Under 641px the
+     dock is in the right-hand column and the ticker (to 42px) and the news bar (to 90px) run along the bottom instead. */
+  .help { z-index: -1; }
+  @media (min-width: 641px) and (max-width: 1126px) {
+    html:not(.touch) .help { bottom: calc(118px + var(--safe-b)); }
+  }
+  @media (max-width: 640px) {
+    html:not(.touch) .help { bottom: calc(102px + var(--safe-b)); }
+  }
   html.touch .joy .knob { width: 44px; height: 44px; margin: -22px 0 0 -22px; }
   html.touch .acts { flex-direction: column-reverse; align-items: center; right: calc(12px + var(--safe-r)); bottom: calc(36px + var(--safe-b)); gap: 10px; }
   html.touch .act,
@@ -833,6 +857,8 @@ visualViewport?.addEventListener('scroll', fitVV);
   html.touch .reacts { left: auto; right: calc(8px + var(--safe-r)); bottom: calc(76px + var(--safe-b)); transform: none; grid-template-columns: repeat(4, 36px); gap: 4px; padding: 6px; max-height: 42vh; overflow: auto; }
   html.touch .reacts .emote { width: 36px; height: 36px; border-radius: 10px; }
   html.touch .reacts button { position: relative; width: 36px; height: 36px; font-size: 17px; }
+  /* The open panel is up to 42vh tall and reaches the pouch balloon (fixed, z-index 7) in its right column: the panel is on top. */
+  html.touch .reacts { z-index: 8; }
   html.touch .prompt { bottom: calc(78px + var(--safe-b)); }
   html.touch .toasts { bottom: calc(228px + var(--safe-b)); }
   body.has-sponsor .toasts { bottom: calc(360px + var(--safe-b)); }
@@ -840,9 +866,18 @@ visualViewport?.addEventListener('scroll', fitVV);
   html.touch .bake, html.touch .rhythm { bottom: calc(174px + var(--safe-b)); }
   @media (orientation: landscape) and (max-height: 520px) {
     html.touch .stay-quest { display: none; }
-    html.touch .stay-ticket { display: block; top: calc(6px + var(--safe-t)); width: min(260px, 42vw); max-width: 42vw; height: 28px; line-height: 26px; font-size: 12px; }
+    /* The left column is at most min(240px, 40vw) wide and starts 10-14px in, so everything in the middle starts
+       26px past that width: 12px clear of the identity card (a centred ticker lay 50px over it at 667px). On the right
+       the ticker stops 208px in, clear of the folded tool row (at most 5 x 36px + 8px, 8px from the edge). */
+    html.touch .stay-ticket { display: block; top: calc(6px + var(--safe-t)); left: calc(min(240px, 40vw) + 26px + var(--safe-l)); right: calc(208px + var(--safe-r)); width: auto; max-width: 260px; transform: none; height: 28px; line-height: 26px; font-size: 12px; }
     html.touch .hud-l { max-width: min(240px, 40vw); max-height: calc(100dvh - 12px); overflow: auto; }
-    html.touch .hud-r .stay-balloon { bottom: calc(150px + var(--safe-b)); }
+    /* The pouch balloon: fixed beside the dock (the dock is 52px wide, 12px from the right, from 140px up), like the
+       portrait rule. As a static child of the right column it only got a `bottom` that did nothing and sat under the dock. */
+    html.touch .hud-r .stay-balloon { position: fixed; right: calc(76px + var(--safe-r)); bottom: calc(140px + var(--safe-b)); top: auto; left: auto; margin: 0; z-index: 7; }
+    /* Driving: the taxi HUD (from 156px down) stays between the left column and the right-hand buttons (boost, 택시
+       내리기 and 빵! are 52px wide, 12px from the right), so the horn is not on the timer. */
+    html.touch .taxihud { left: calc(min(240px, 40vw) + 26px + var(--safe-l)); right: calc(76px + var(--safe-r)); gap: 4px 10px; }
+    html.touch .coach { left: calc(min(240px, 40vw) + 26px + var(--safe-l)); bottom: calc(150px + var(--safe-b)); }
     html.touch .minimap { width: 56px; height: 56px; }
     html.touch .news { display: flex; top: auto; bottom: calc(76px + var(--safe-b)); width: min(280px, 46vw); height: 32px; }
     html.touch .waypill { top: auto; bottom: calc(96px + var(--safe-b)); }
@@ -853,7 +888,11 @@ visualViewport?.addEventListener('scroll', fitVV);
     html.touch .reacts { bottom: calc(100px + var(--safe-b)); grid-template-columns: repeat(8, 36px); }
     html.touch .bake, html.touch .rhythm { bottom: calc(96px + var(--safe-b)); width: min(560px, calc(100% - 230px)); }
     #boot h1 { font-size: 28px; margin: 6px 0; }
-    #boot .credit { display: none; }
+    /* A phone on its side: no mark and tighter rows, so less of the card needs scrolling to reach 입장하기. */
+    #boot .bootmark { display: none; }
+    #boot .wrap { padding: 14px 18px; }
+    #boot .bootlive { margin-top: 8px; padding: 8px 12px; }
+    #boot .enter { margin-top: 12px; gap: 8px; }
   }
   @media (orientation: portrait) {
     html.touch .stay-quest { display: none; }

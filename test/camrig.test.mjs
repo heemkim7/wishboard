@@ -8,6 +8,8 @@ import {
   FOLLOW, followYawRate, portraitFov, fitDistance, DRIVE_CAM, reverseTime, driveCamera, easeCamDist, shortenFocus,
   BOARD_NEAR, pickNearBoard, boardState, boardPrompt, proximityKey, FAR_TAP, tapRoute,
   EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone,
+  FRAME, frameDistance, boardRange, SPARK, sparkGlide, sparkDrop,
+  CELEBRATE_GAP_MS, celebrationDue, faceAbove, PARTY, celebrationPlan, fanVelocity,
 } from '../camrig.js';
 import { walkArrival, startFtue } from '../ftue.js';
 
@@ -57,6 +59,18 @@ describe('scripted camera: one way back', () => {
     assert.equal(cineCancels({ active: true, lounge: true, joy: 0.3 }), true);
   });
 
+  it('a key still held or a thumb on the stick does not end it while input is switched off', () => {
+    assert.equal(cineCancels({ active: true, keys: 2, joy: 1, locked: true }), false);
+    assert.equal(cineCancels({ active: true, lounge: true, joy: 1, locked: true }), false);
+    assert.equal(cineCancels({ active: true, keys: 1, locked: false }), true);
+    const w = read('timesSquare3d.js');
+    assert.match(w, /cineCancels\(\{ active: true, pin: cine\.pin, keys: keys\.size, joy: Math\.hypot\(joy\.x, joy\.y\), lounge, locked: !inputEnabled \}\)/);
+    assert.match(w, /if \(lounge && inputEnabled && \(keys\.size \|\| Math\.hypot\(joy\.x, joy\.y\) > 0\.25\)\) endCine\(\);/);
+    // auto-repeat does not refill the key set that setInputEnabled(false) emptied
+    assert.match(w, /if \(inputEnabled\) keys\.add\(e\.code\);/);
+    assert.equal(w.match(/keys\.add\(/g).length, 1);
+  });
+
   it('comes back behind a car at the given distance', () => {
     const p = behindCar({ x: 10, y: 2.5, z: 20 }, 0, 11.5);
     // yaw 0 faces +Z, so behind is -Z
@@ -87,9 +101,10 @@ describe('scripted camera: one way back', () => {
     assert.equal(/cine[^\n]*me\.root\.visible[^\n]*clear/.test(w), false);
     assert.match(w, /function focusSlot\(slotId, holdMsOrOpts = 0\)/);
     assert.match(w, /if \(drive\) \{ tell\('운전 중에는 내린 뒤에 볼 수 있어요'\); return null; \}/);
-    assert.match(w, /if \(o\.celebrate\) burst\(pose\.look\.clone\(\)/);
+    assert.match(w, /if \(o\.celebrate\) celebrateBoard\(slotId, '#ffcf5a'\);/);
     const focus = w.slice(w.indexOf('function focusSlot('), w.indexOf('function framePose('));
     assert.equal(/launch\(/.test(focus), false);
+    assert.equal(/\bburst\(/.test(focus), false); // nothing is fired at pose.look (the centre of the face) any more
     assert.equal(/camera\.position\.clone\(\)\.lerp/.test(focus), false);
   });
 
@@ -350,6 +365,277 @@ describe('small rules', () => {
     assert.match(w, /addEventListener\('webglcontextrestored'/);
     assert.match(w, /\}, 4000\);/);
     assert.match(read('main.js'), /if \(kind === 'notice'\) \{ ui\.note\(info\?\.text \|\| '', info\?\.tone \|\| '', info\?\.reload \? \(\) => location\.reload\(\) : undefined\); return; \}/);
+  });
+});
+
+describe('framing a board', () => {
+  const tan = (deg) => Math.tan((deg * Math.PI) / 360);
+  // The frames the review named: desktop 16:9, a 771x1211 window, a 9:16 frame and a 0.46 phone. The portrait ones
+  // settle on 72 degrees (portraitFov), the landscape one keeps the base 55.
+  const FRAMES = [
+    ['16:9 landscape', 16 / 9, portraitFov(16 / 9, 55)],
+    ['771x1211', 771 / 1211, portraitFov(771 / 1211, 55)],
+    ['9:16', 9 / 16, portraitFov(9 / 16, 55)],
+    ['0.46 phone', 0.46, portraitFov(0.46, 62)],
+  ];
+  const FACES = [
+    ['main face', 24, 13.5],
+    ['street board', 22, 12.375],
+    ['lot board', 3.28, 1.845],
+  ];
+  it('the whole face is in the frame with 8% of it free on each side, and one side is exactly at the margin', () => {
+    assert.equal(FRAME.margin, 0.08);
+    for (const [fname, aspect, vfov] of FRAMES) for (const [bname, w, h] of FACES) {
+      const d = frameDistance({ w, h, aspect, vfov });
+      const seenH = 2 * d * tan(vfov), seenW = seenH * aspect;
+      const label = `${bname} in ${fname} at ${d.toFixed(2)} m`;
+      assert.ok(w <= seenW * 0.84 + 1e-9, label);
+      assert.ok(h <= seenH * 0.84 + 1e-9, label);
+      assert.ok(near(Math.max(w / seenW, h / seenH), 0.84, 1e-9), label);
+    }
+  });
+  it('gives the ranges the frames need', () => {
+    const at = (w, h, i) => frameDistance({ w, h, aspect: FRAMES[i][1], vfov: FRAMES[i][2] });
+    assert.equal(FRAMES[1][2], 72);
+    assert.equal(FRAMES[3][2], 72);
+    // main face 24 x 13.5: 15.4 m on a desktop, 30.9 m in the 771x1211 window, 35.0 m at 9:16, 42.7 m on the phone
+    assert.ok(near(at(24, 13.5, 0), 15.44, 0.01));
+    assert.ok(near(at(24, 13.5, 1), 30.88, 0.01));
+    assert.ok(near(at(24, 13.5, 2), 34.96, 0.01));
+    assert.ok(near(at(24, 13.5, 3), 42.74, 0.01));
+    // a 22 m street board: 14.2, 28.3, 32.0 and 39.2 m
+    assert.ok(near(at(22, 12.375, 0), 14.15, 0.01));
+    assert.ok(near(at(22, 12.375, 1), 28.31, 0.01));
+    assert.ok(near(at(22, 12.375, 2), 32.04, 0.01));
+    assert.ok(near(at(22, 12.375, 3), 39.18, 0.01));
+    // the small lot board fits from under 6 m in every frame
+    for (let i = 0; i < FRAMES.length; i++) assert.ok(at(3.28, 1.845, i) < 6, FRAMES[i][0]);
+    // a landscape frame is height-bound for a 16:9 face, a portrait one width-bound
+    assert.ok(near(at(24, 13.5, 0), 13.5 / (2 * tan(55) * 0.84), 1e-9));
+    assert.ok(near(at(24, 13.5, 2), 24 / (9 / 16) / (2 * tan(72) * 0.84), 1e-9));
+  });
+  it('a board camera keeps its own distance for a small board, moves out for a wide one, and stops at the cap', () => {
+    assert.equal(FRAME.max, 48);
+    // today's distances stay for a face that already fits: 18 m (보기, the claim), 8 m (the photo)
+    assert.equal(boardRange(18, 5.84), 18);
+    assert.equal(boardRange(8, 5.84), 8);
+    assert.equal(boardRange(18, 14.15), 18);
+    assert.ok(near(boardRange(8, 14.15), 14.15));
+    assert.ok(near(boardRange(18, 42.74), 42.74));
+    assert.equal(boardRange(18, 70), 48);
+    assert.equal(boardRange(60, 20), 60); // a caller that asked for more than the cap keeps it
+    assert.equal(boardRange(18, NaN), 18);
+    // every face of the plaza fits under the cap on a 0.46 phone
+    assert.ok(frameDistance({ w: 24, h: 13.5, aspect: 0.46, vfov: 72 }) < FRAME.max);
+  });
+  it('bad input cannot produce a wild range', () => {
+    assert.equal(frameDistance(), 0);
+    assert.equal(frameDistance({ w: -5, h: -5, aspect: 1, vfov: 55 }), 0);
+    assert.ok(Number.isFinite(frameDistance({ w: 24, h: 13.5, aspect: 0, vfov: 0 })));
+    assert.ok(Number.isFinite(frameDistance({ w: 24, h: 13.5, aspect: NaN, vfov: NaN, margin: 9 })));
+  });
+  it('every scripted board camera goes through it with the mount\'s real size and the settled FOV', () => {
+    const w = read('timesSquare3d.js');
+    const pose = w.slice(w.indexOf('function slotPose('), w.indexOf('const AD_IDS'));
+    assert.match(pose, /if \(clear\) \{\n\s+const face = boards\.face\(slotId\);\n\s+if \(face\) dist = boardRange\(dist, frameDistance\(\{ w: face\.w, h: face\.h, aspect: camera\.aspect, vfov: portraitFov\(camera\.aspect, baseFov\) \}\)\);/);
+    // the fit comes before the wall test, so a building in the way still pulls the camera in
+    assert.ok(pose.indexOf('boardRange(') < pose.indexOf('shortenFocus('));
+    assert.equal(/camera\.fov/.test(pose), false); // not the FOV in mid-ease
+    // focus / claim, lounge (both orientations) and the photo frame all ask with clear = true
+    assert.match(w, /const pose = slotPose\(slotId, 18, true\);/);
+    assert.match(w, /const pose = watchPortrait \? framePose\(id\) : slotPose\(id, 18, true\);/);
+    assert.match(w, /return slotPose\(slotId, d, true, true\);/);
+    // the mount's size in metres, parent scale included
+    const s = read('ts3d/screens.js');
+    assert.match(s, /tier: b\.tier, w: m\.w \* sx, h: m\.h \* sy,/);
+  });
+});
+
+describe('board celebrations', () => {
+  const FACES = [
+    ['lot board', { w: 3.28, h: 1.845, tier: 'C' }],
+    ['lot tower board', { w: 11.34, h: 6.39, tier: 'C' }],
+    ['corner board', { w: 14, h: 7.875, tier: 'B' }],
+    ['street board', { w: 22, h: 12.375, tier: 'B' }],
+    ['main face', { w: 24, h: 13.5, tier: 'S' }],
+  ];
+  const VARIANTS = [];
+  for (const [name, face] of FACES) for (const low of [false, true]) for (const top of [true, false]) for (const cheer of [false, true]) {
+    VARIANTS.push([`${name}${low ? ' low' : ''}${top ? '' : ' stacked'}${cheer ? ' cheer' : ''}`, face, celebrationPlan({ ...face, low, top, cheer })]);
+  }
+  /** Where the sparks of one burst are over its life, in the board's frame: the corners and middles of the fan. */
+  function sparks(plan, b) {
+    const out = [];
+    for (const ra of [0, 0.25, 0.5, 0.75, 1]) for (const rs of [0, 0.5, 1]) for (const rn of [0, 0.5, 1]) {
+      const v0 = fanVelocity(b, ra, rs, rn);
+      for (let t = 0; t <= plan.life + 1e-9; t += 0.05) {
+        const g = sparkGlide(t, plan.drag), d = sparkDrop(t, plan.drag, plan.grav);
+        out.push([b.u + v0[0] * g, b.v + v0[1] * g - d, b.n + v0[2] * g]);
+      }
+    }
+    return out;
+  }
+  // Clear of the face: beyond a side edge or above the top edge by at least `pad`. (Below the bottom edge is not a
+  // way out: nothing is placed there, and a side spark that falls stays beyond its side.)
+  const clearOf = (face, u, v, pad) => Math.abs(u) >= face.w / 2 + pad - 1e-9 || v >= face.h / 2 + pad - 1e-9;
+
+  it('no burst, flash or rocket is on the face', () => {
+    for (const [name, face, plan] of VARIANTS) {
+      assert.ok(plan.bursts.length > 0, name);
+      for (const b of plan.bursts) {
+        assert.ok(clearOf(face, b.u, b.v, b.flash / 2), `${name}: flash at ${b.u}, ${b.v}`);
+        assert.ok(b.n <= 0, name); // on the plane (or behind it), never in front
+        if (b.rise > 0) {
+          // the rocket climbs straight up beside the board
+          assert.ok(Math.abs(b.u) >= face.w / 2 + plan.rocket / 2, name);
+          assert.ok(b.riseT > 0 && b.rise / b.riseT < 40, name);
+        }
+      }
+    }
+  });
+  it('no spark is ever inside the board rectangle', () => {
+    for (const [name, face, plan] of VARIANTS) for (const b of plan.bursts) for (const [u, v] of sparks(plan, b)) {
+      assert.ok(clearOf(face, u, v, plan.size / 2), `${name}: spark at ${u.toFixed(2)}, ${v.toFixed(2)}`);
+    }
+  });
+  it('no spark is in front of the plane inside the camera\'s cone', () => {
+    // The focus camera stands on the board's normal, 6 m (pulled in by a wall) to 48 m (the framing cap) out, level
+    // with the face or below it: never above its top edge.
+    for (const [name, face, plan] of VARIANTS) {
+      for (const D of [6, 18, FRAME.max]) for (const cv of [face.h / 2, 0, -face.h / 2, -face.h / 2 - 30]) {
+        for (const b of plan.bursts) for (const [u, v, n] of sparks(plan, b)) {
+          if (!(n > 0)) continue; // on or behind the plane: beside the board, or hidden by it
+          assert.ok(n < 2.5, name);
+          // where the line from the camera through the spark meets the board's plane
+          const s = D / (D - n);
+          assert.ok(clearOf(face, u * s, cv + (v - cv) * s, plan.size / 2), `${name}: D ${D}, cam ${cv}, spark ${u.toFixed(2)}, ${v.toFixed(2)}, ${n.toFixed(2)}`);
+        }
+      }
+    }
+  });
+  it('fans open away from the face: side ones outward, the top one upward, by more than a spark can fall', () => {
+    for (const [name, face, plan] of VARIANTS) for (const b of plan.bursts) {
+      const side = Math.abs(b.u) > face.w / 2;
+      for (const ra of [0, 0.5, 1]) {
+        const [vu, vv] = fanVelocity(b, ra, 1, 0.5);
+        if (side) assert.ok(vu * Math.sign(b.u) > 0, name);
+        else assert.ok(vv > 0, name);
+      }
+      if (!side) assert.ok(b.v - face.h / 2 >= sparkDrop(plan.life, plan.drag, plan.grav) + plan.size / 2, name);
+      assert.ok(near(Math.hypot(b.out[0], b.out[1]), 1, 1e-9), name);
+      assert.ok(b.flat <= 0.25, name);
+    }
+  });
+  it('a face with another face right above it gets nothing above its top edge', () => {
+    for (const id of ['MAIN_LOW', 'MAIN_BOT', 'MAIN_MID', 'MAIN_TOP', 'SUB_1B', 'SUB_4B']) assert.equal(faceAbove(id), true, id);
+    for (const id of ['MAIN_UP', 'SUB_1A', 'STREET_7', 'PLOT_3', '', null]) assert.equal(faceAbove(id), false, String(id));
+    for (const [name, face, plan] of VARIANTS) {
+      if (!name.includes('stacked')) continue;
+      for (const b of plan.bursts) assert.ok(Math.abs(b.u) > face.w / 2, name);
+    }
+  });
+  it('size, speed, flash and count follow the board: a lot board gets a small one, the main face a big one', () => {
+    const plans = FACES.map(([, face]) => celebrationPlan(face));
+    for (let i = 1; i < plans.length; i++) {
+      const a = plans[i - 1], b = plans[i];
+      assert.ok(b.size >= a.size && b.bursts[0].speed >= a.bursts[0].speed && b.bursts[0].flash >= a.bursts[0].flash, FACES[i][0]);
+      assert.ok(b.bursts[0].count >= a.bursts[0].count, FACES[i][0]);
+    }
+    const small = plans[0], big = plans[plans.length - 1];
+    assert.ok(big.total > small.total * 3);
+    // the lot board: sprites under 0.3 m, sparks that travel 1.2 m, a flash well under a metre
+    assert.ok(small.size < 0.3 && small.bursts[0].flash < 0.8);
+    assert.ok(near(small.bursts[0].speed * sparkGlide(small.life, small.drag), 1.2, 1e-9));
+    // the old burst used 1.45 m sprites (2.2 m on the tower), a 7 m flash and colours times 2.6
+    assert.ok(big.size < 1 && big.bursts[0].flash <= 3.6);
+    for (const p of plans) assert.ok(p.gain <= 1.5 && p.flashGain <= 1.2);
+    assert.ok(PARTY.gain < 2.6 / 1.9);
+  });
+  it('counts fall on the low tier and stay under what one claim fired before', () => {
+    // Before: boards.set fired 90 (140 on the tower) + 2, 3 or 4 rockets of 80, and the focus call another 100;
+    // on the low tier each of those was 60%.
+    const OLD = { S: [140 + 100 + 4 * 80, 84 + 60 + 4 * 48], B: [90 + 100 + 3 * 80, 54 + 60 + 3 * 48], C: [90 + 100 + 2 * 80, 54 + 60 + 2 * 48] };
+    for (const [name, face] of FACES) for (const top of [true, false]) {
+      const high = celebrationPlan({ ...face, top }), low = celebrationPlan({ ...face, top, low: true });
+      assert.ok(low.total < high.total, name);
+      assert.ok(low.bursts.length <= high.bursts.length, name);
+      assert.ok(high.total < OLD[face.tier][0] / 2, `${name}: ${high.total}`);
+      assert.ok(low.total < OLD[face.tier][1] / 2, `${name}: ${low.total}`);
+      assert.equal(high.total, high.bursts.reduce((s, b) => s + b.count, 0));
+      // one claim is a handful of bursts: a phone stays far under the cap of 14 (and the hard cut at 28)
+      assert.ok(low.bursts.length <= 5 && low.bursts.length * 2 < FIREWORK.cap, name);
+      assert.ok(high.bursts.length <= 7 && high.bursts.length * 2 <= FIREWORK.cap, name);
+    }
+    assert.equal(FIREWORK.cap, 14);
+    assert.equal(FIREWORK.hard, 28);
+    // a phone gets no rockets on a lot board and one pair elsewhere
+    assert.equal(celebrationPlan({ ...FACES[0][1], low: true }).bursts.filter((b) => b.rise > 0).length, 0);
+    assert.equal(celebrationPlan({ ...FACES[4][1], low: true }).bursts.filter((b) => b.rise > 0).length, 2);
+    assert.equal(celebrationPlan(FACES[4][1]).bursts.filter((b) => b.rise > 0).length, 4);
+  });
+  it('is over in about three seconds', () => {
+    for (const [name, , plan] of VARIANTS) {
+      assert.ok(plan.end <= 3, `${name}: ${plan.end}`);
+      assert.ok(plan.life <= 1.5, name);
+      for (const b of plan.bursts) assert.ok(b.delay >= 0 && b.delay + b.riseT + plan.life <= plan.end + 1e-9, name);
+    }
+  });
+  it('a cheer is the small version of the same rule', () => {
+    for (const [name, face] of FACES) {
+      const claim = celebrationPlan(face), cheer = celebrationPlan({ ...face, cheer: true });
+      assert.ok(cheer.total < claim.total / 2, name);
+      assert.ok(cheer.bursts.length <= 3, name);
+      assert.ok(cheer.bursts[0].speed < claim.bursts[0].speed, name);
+      assert.equal(celebrationPlan({ ...face, cheer: true, low: true }).bursts.length, 2);
+    }
+  });
+  it('one celebration per board per claim', () => {
+    assert.equal(CELEBRATE_GAP_MS, 4000);
+    assert.equal(celebrationDue(undefined, 1000), true);
+    assert.equal(celebrationDue(1000, 1001), false);
+    assert.equal(celebrationDue(1000, 4999), false);
+    assert.equal(celebrationDue(1000, 5000), true);
+    const w = read('timesSquare3d.js');
+    // boards.set, the focus camera and strike share one gate; nothing else fires a claim's fireworks
+    assert.match(w, /onBurst: \(slotId, color\) => celebrateBoard\(slotId, color\)/);
+    assert.match(w, /strike\(slotId\) \{ celebrateBoard\(slotId, '#ffcf5a'\); \},/);
+    const gate = w.slice(w.indexOf('function celebrateBoard('), w.indexOf('function cheerAt('));
+    assert.match(gate, /if \(!celebrationDue\(celebratedAt\.get\(slotId\), now\)\) return false;/);
+    assert.match(gate, /celebratedAt\.set\(slotId, now\);/);
+    assert.equal(w.includes('celebrateAt('), false);
+    assert.match(read('ts3d/screens.js'), /if \(celebrate && b\.mounts\.length\) onBurst\?\.\(slotId, THEMES\[next\.bg_theme\]\?\.accent \|\| '#ffcf5a'\);/);
+  });
+  it('the world places the plan with the board\'s real normal, right and up, and cheerAt follows the same rule', () => {
+    const w = read('timesSquare3d.js');
+    const fw = w.slice(w.indexOf('function boardFireworks('), w.indexOf('function celebrateBoard('));
+    assert.match(fw, /const face = boards\.face\(slotId\);/);
+    assert.match(fw, /celebrationPlan\(\{ w: face\.w, h: face\.h, tier: face\.tier, low, top: !faceAbove\(slotId\), cheer: !!o\.cheer \}\)/);
+    assert.match(fw, /face\.pos\.clone\(\)\.addScaledVector\(face\.right, b\.u\)\.addScaledVector\(face\.up, b\.v\)\.addScaledVector\(face\.normal, b\.n\)/);
+    assert.match(fw, /fanVelocity\(b, Math\.random\(\), Math\.random\(\), Math\.random\(\)\)/);
+    assert.equal(/\bburst\(/.test(fw), false);
+    const cheer = w.slice(w.indexOf('function cheerAt('), w.indexOf('function fountainSplash('));
+    assert.match(cheer, /return boardFireworks\(slotId, '#ff3d9a', \{ cheer: true, alt: \['#ffcf5a'\] \}\);/);
+    assert.equal(/worldPos|\bburst\(|launch\(/.test(cheer), false);
+    // the face comes from the mount's world matrix: the same normal slotPose aims the camera along
+    const s = read('ts3d/screens.js');
+    assert.match(s, /normal: new THREE\.Vector3\(e\[8\] \/ sz, e\[9\] \/ sz, e\[10\] \/ sz\),/);
+  });
+  it('sparks follow a closed form, so the reach the plan counts on is the reach that is drawn', () => {
+    assert.equal(sparkGlide(0), 0);
+    assert.equal(sparkDrop(0), 0);
+    assert.ok(near(sparkGlide(100, 1.5), 1 / 1.5, 1e-9)); // never farther than speed / drag
+    // the same motion the frame loop used to integrate step by step (drag 1.5, gravity 5.2), within a few centimetres
+    let x = 0, y = 0, vx = 10, vy = 4;
+    const dt = 1 / 240;
+    for (let i = 0; i < 240 * 2; i++) { const k = Math.exp(-dt * SPARK.drag); vx *= k; vy = vy * k - SPARK.grav * dt; x += vx * dt; y += vy * dt; }
+    assert.ok(near(x, 10 * sparkGlide(2), 0.05), String(x));
+    assert.ok(near(y, 4 * sparkGlide(2) - sparkDrop(2), 0.05), String(y));
+    assert.deepEqual([SPARK.drag, SPARK.grav, SPARK.life], [1.5, 5.2, 2.4]);
+    const w = read('timesSquare3d.js');
+    assert.match(w, /const glide = sparkGlide\(f\.age, f\.drag\), drop = sparkDrop\(f\.age, f\.drag, f\.grav\);/);
+    assert.match(w, /p\[j\] = v\[j\] \* glide; p\[j \+ 1\] = v\[j \+ 1\] \* glide - drop; p\[j \+ 2\] = v\[j \+ 2\] \* glide;/);
+    // the round burst keeps its numbers
+    assert.match(w, /size: \(power >= 1 \? 1\.45 : 1\.05\) \* Math\.max\(0\.6, power\), gain: 2\.6, flash: 7 \* power, flashGain: 2\.2,/);
   });
 });
 

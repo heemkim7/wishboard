@@ -28,7 +28,7 @@ import { seesAvatar, prefetchDelay } from './ts3d/loadplan.js?v=202611211159';
 import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, paintLabel, fontsReady, chars, hashStr } from './ts3d/art.js?v=202611211159';
 import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=202611211159';
 import { taxiExit, EXIT_SLOW, nextOfferDelay, fareWait } from './interact.js?v=202611211159';
-import { RETURN_MS, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, portraitFov, fitDistance, reverseTime, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone } from './camrig.js?v=202611211159';
+import { RETURN_MS, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, portraitFov, fitDistance, reverseTime, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange } from './camrig.js?v=202611211159';
 
 export { paintBillboard, THEMES, LAYOUT, PLOT_SLOTS, groundHeight, EMOTES, AVATAR_COLORS, taxiTrainMult, applyTaxiHardHit };
 export const PLAZA = LAYOUT;
@@ -160,7 +160,8 @@ void main(){
   c = mix(c, uHaze, haze * 0.6);
   c = mix(uFog, c, smoothstep(-0.04, 0.01, h));
   // few, small stars, only high up
-  vec2 sp = floor(d.xz / (d.y + 0.05) * 420.0);
+  // (the divisor is clamped: at d.y = -0.05 it was a division by zero, and bloom spread that one NaN pixel)
+  vec2 sp = floor(d.xz / max(d.y + 0.05, 1e-3) * 420.0);
   float s = h21(sp);
   c += step(0.99975, s) * smoothstep(0.45, 0.8, h) * (0.16 + 0.08 * sin(uTime * 1.7 + fract(s * 977.0) * 40.0));
   gl_FragColor = vec4(c, 1.0);
@@ -216,7 +217,7 @@ void main(){
   const pick = [];
   const fireworks = [];
   const sparkTex = new THREE.CanvasTexture(paintGlow(makeCanvas(64, 64)));
-  const boards = createBoards({ renderer, kitMats, pick, quality, onBurst: (p, color, tier) => celebrateAt(p, color, tier) });
+  const boards = createBoards({ renderer, kitMats, pick, quality, onBurst: (slotId, color) => celebrateBoard(slotId, color) });
   const avatars = createAvatars({ scene, first: opts.species });
   {
     const S = LAYOUT.stairs, G = LAYOUT.stage;
@@ -351,7 +352,9 @@ void main(){
     if (isTyping(e)) return;
     if (e.code === 'Escape') { endCine(true); return; }
     if (MOVE_CODES.has(e.code)) {
-      keys.add(e.code);
+      // Not while input is switched off: auto-repeat would refill the set that setInputEnabled(false) just emptied.
+      // A key still held when input comes back counts again on its next repeat.
+      if (inputEnabled) keys.add(e.code);
       if (e.code.startsWith('Arrow')) e.preventDefault();
     }
     if (!inputEnabled || e.repeat) return;
@@ -473,56 +476,96 @@ void main(){
   }
 
   const PALETTE = ['#ff3d9a', '#3fe6ff', '#ffcf5a', '#39f58a', '#b84dff', '#ffffff'];
-  function burst(at, hex, n = 70, power = 1) {
-    const count = Math.max(12, Math.round(n * (low ? 0.6 : 1)));
+  /**
+   * One burst of sparks at `at`. o: { count, size, gain, flash, flashGain, life, drag, grav } and vel(i, v), which
+   * writes spark i's start velocity into v[i * 3..]. A spark's place is its start velocity times sparkGlide(age), less
+   * sparkDrop(age) in height (step()), so a burst's reach is known before it is fired (camrig.js celebrationPlan).
+   */
+  function spawnBurst(at, hex, o) {
+    const count = o.count;
     const geo = new THREE.BufferGeometry();
     const p = new Float32Array(count * 3), c = new Float32Array(count * 3), v = new Float32Array(count * 3);
     const base = new THREE.Color(hex), alt = new THREE.Color();
     for (let i = 0; i < count; i++) {
-      const u = Math.random() * 2 - 1, a = Math.random() * Math.PI * 2, s = Math.sqrt(1 - u * u);
-      const sp = (7 + Math.random() * 6) * power;
-      v[i * 3] = Math.cos(a) * s * sp; v[i * 3 + 1] = u * sp + 2 * power; v[i * 3 + 2] = Math.sin(a) * s * sp;
-      alt.copy(i % 4 === 0 ? new THREE.Color(PALETTE[i % PALETTE.length]) : base).multiplyScalar(2.6);
+      o.vel(i, v);
+      alt.copy(i % 4 === 0 ? new THREE.Color(PALETTE[i % PALETTE.length]) : base).multiplyScalar(o.gain);
       c[i * 3] = alt.r; c[i * 3 + 1] = alt.g; c[i * 3 + 2] = alt.b;
     }
     geo.setAttribute('position', new THREE.BufferAttribute(p, 3));
     geo.setAttribute('color', new THREE.BufferAttribute(c, 3));
-    const mat = new THREE.PointsMaterial({ size: (power >= 1 ? 1.45 : 1.05) * Math.max(0.6, power), map: sparkTex, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+    const mat = new THREE.PointsMaterial({ size: o.size, map: sparkTex, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
     const pts = new THREE.Points(geo, mat);
     pts.position.copy(at);
     pts.frustumCulled = false;
-    const flash = new THREE.Sprite(new THREE.SpriteMaterial({ map: sparkTex, color: base.clone().multiplyScalar(2.2), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    const flash = new THREE.Sprite(new THREE.SpriteMaterial({ map: sparkTex, color: base.clone().multiplyScalar(o.flashGain), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
     flash.position.copy(at);
-    flash.userData.max = 7 * power;
+    flash.userData.max = o.flash;
     scene.add(pts, flash);
-    fireworks.push({ pts, flash, v, age: 0, life: 2.4, fadeAt: -1 });
+    fireworks.push({ pts, flash, v, age: 0, life: o.life, drag: o.drag, grav: o.grav, fadeAt: -1 });
     // Over the cap the oldest fades out over a third of a second; only a runaway pile is cut outright.
     fadeOldest(fireworks, FIREWORK.cap);
     while (fireworks.length > FIREWORK.hard) dropFirework(0);
   }
+  /** The round burst (rings, coins, the fountain, emote rockets, the ball, gifts): sparks in every direction. */
+  function burst(at, hex, n = 70, power = 1) {
+    spawnBurst(at, hex, {
+      count: Math.max(12, Math.round(n * (low ? 0.6 : 1))),
+      size: (power >= 1 ? 1.45 : 1.05) * Math.max(0.6, power), gain: 2.6, flash: 7 * power, flashGain: 2.2,
+      life: SPARK.life, drag: SPARK.drag, grav: SPARK.grav,
+      vel(i, v) {
+        const u = Math.random() * 2 - 1, a = Math.random() * Math.PI * 2, s = Math.sqrt(1 - u * u);
+        const sp = (7 + Math.random() * 6) * power;
+        v[i * 3] = Math.cos(a) * s * sp; v[i * 3 + 1] = u * sp + 2 * power; v[i * 3 + 2] = Math.sin(a) * s * sp;
+      },
+    });
+  }
+  // A rocket climbs from y to y1 and goes off there. o: { y0, speed, size, shot } for the ones a board plan places
+  // (a short climb beside the board, then shot() fires the planned fan); y0 === y1 is a timed burst with no climb.
   const rockets = [];
-  function launch(x, z, y1, hex, delay = 0) {
-    rockets.push({ x, z, y: groundHeight(x, z), y1, hex, delay, sprite: null });
+  function launch(x, z, y1, hex, delay = 0, o = null) {
+    rockets.push({ x, z, y: o ? o.y0 : groundHeight(x, z), y1, hex, delay, sprite: null, speed: o?.speed || 26, size: o?.size || 0.9, shot: o?.shot || null });
+  }
+  // Fireworks around a board, never on it: camrig.js celebrationPlan gives the bursts in the board's own frame
+  // (beyond the side edges, above the top edge, fans that open away from the face) and boards.face() gives that frame
+  // in the world (the real normal, right and up of the mount and its size), so every size and facing is framed.
+  const celebratedAt = new Map();
+  const fanV = new THREE.Vector3();
+  function boardFireworks(slotId, hex, o = {}) {
+    const face = boards.face(slotId);
+    if (!face) return false;
+    const plan = celebrationPlan({ w: face.w, h: face.h, tier: face.tier, low, top: !faceAbove(slotId), cheer: !!o.cheer });
+    const alt = o.alt || PALETTE;
+    for (const b of plan.bursts) {
+      const at = face.pos.clone().addScaledVector(face.right, b.u).addScaledVector(face.up, b.v).addScaledVector(face.normal, b.n);
+      const tint = b.hue ? alt[(b.hue - 1) % alt.length] : hex;
+      const shot = () => spawnBurst(at, tint, {
+        count: b.count, size: plan.size, gain: plan.gain, flash: b.flash, flashGain: plan.flashGain, life: plan.life, drag: plan.drag, grav: plan.grav,
+        vel(i, v) {
+          const [vu, vv, vn] = fanVelocity(b, Math.random(), Math.random(), Math.random());
+          fanV.set(0, 0, 0).addScaledVector(face.right, vu).addScaledVector(face.up, vv).addScaledVector(face.normal, vn);
+          v[i * 3] = fanV.x; v[i * 3 + 1] = fanV.y; v[i * 3 + 2] = fanV.z;
+        },
+      });
+      // A rocket never starts under the street; a fan with no climb is just a timed burst.
+      const y0 = b.rise ? Math.max(groundHeight(at.x, at.z), at.y - b.rise) : at.y;
+      launch(at.x, at.z, at.y, tint, b.delay, { y0, speed: b.rise ? b.rise / b.riseT : 26, size: plan.rocket, shot });
+    }
+    return true;
+  }
+  /** The claim fireworks, once per board per claim: a board that celebrated in the last few seconds adds nothing. */
+  function celebrateBoard(slotId, hex) {
+    const now = performance.now();
+    if (!celebrationDue(celebratedAt.get(slotId), now)) return false;
+    if (!boardFireworks(slotId, hex)) return false;
+    celebratedAt.set(slotId, now);
+    return true;
   }
   function cheerAt(slotId) {
-    const p = boards.worldPos(slotId);
-    if (!p) return false;
-    burst(p.clone(), '#ff3d9a', 46, 0.65);
-    launch(p.x, p.z, p.y + 3, '#ffcf5a', 0.04);
-    launch(p.x + 1.2, p.z, p.y + 7, '#ffffff', 0.12);
-    return true;
+    return boardFireworks(slotId, '#ff3d9a', { cheer: true, alt: ['#ffcf5a'] });
   }
   function fountainSplash() {
     const f = fountainSpot();
     burst(new THREE.Vector3(f.x, f.y, f.z), '#7fd4ff', 42, 0.6);
-  }
-  function celebrateAt(p, hex, tier) {
-    const big = tier === 'S' ? 4 : tier === 'B' ? 3 : 2;
-    burst(p, hex, tier === 'S' ? 140 : 90, tier === 'S' ? 1.5 : 1);
-    for (let i = 0; i < big; i++) {
-      const ox = p.x + (Math.random() - 0.5) * 16, oz = p.z + 6 + Math.random() * 8;
-      launch(ox, oz, p.y + 4 + Math.random() * 8, PALETTE[(i + 1) % PALETTE.length], 0.15 + i * 0.35);
-    }
   }
   function dropFirework(i) {
     const f = fireworks[i];
@@ -1296,7 +1339,9 @@ void main(){
   }
 
   // `level`: camera at the board's own height (the straight-on photo frame) instead of the low street view.
-  // `clear`: a scripted camera will sit at `cam`, so pull it in when a building stands between it and the board.
+  // `clear`: a scripted camera will sit at `cam`. It stands at `dist`, or farther when the whole face would not be in
+  // the frame from there (camrig.js frameDistance: the mount's real width and height, this frame's aspect and the FOV
+  // the frame settles on, at most FRAME.max), and it is pulled in when a building stands between it and the board.
   function slotPose(slotId, dist, clear = false, level = false) {
     const p = boards.worldPos(slotId);
     if (!p) return null;
@@ -1307,6 +1352,10 @@ void main(){
     f.y = 0;
     if (f.lengthSq() < 1e-4) f.set(0, 0, 1);
     f.normalize();
+    if (clear) {
+      const face = boards.face(slotId);
+      if (face) dist = boardRange(dist, frameDistance({ w: face.w, h: face.h, aspect: camera.aspect, vfov: portraitFov(camera.aspect, baseFov) }));
+    }
     const look = p.clone();
     const cam = new THREE.Vector3();
     const place = (d) => {
@@ -1470,12 +1519,14 @@ void main(){
     if (!pose) return null;
     if (hidMe) { hidMe = false; me.root.visible = true; }
     startCine(pose.cam, pose.look, { dur: 700, until: o.hold ? performance.now() + o.hold : 0 });
-    // One burst, on the board, and only when asked (a claim): a plain 보기 leaves the board clear.
-    if (o.celebrate) burst(pose.look.clone(), '#ffcf5a', 100, 1.2);
+    // Fireworks around the board, and only when asked (a claim): a plain 보기 leaves it clear. When boards.set already
+    // set them off for this claim, this call adds nothing.
+    if (o.celebrate) celebrateBoard(slotId, '#ffcf5a');
     opts.onFocus?.(true);
     return pose;
   }
-  // The straight-on frame: 8 m, or far enough for a tall 9:16 frame (22 m at the landscape FOV, less at the wider one).
+  // The straight-on frame: from 8 m (15.8 m in the tall 9:16 watch frame) for a small board; slotPose moves it out
+  // until the whole face is in the frame, so a wide board fills the width less the margin instead of being cropped.
   function framePose(slotId) {
     const d = watchPortrait ? fitDistance(22, baseFov, portraitFov(9 / 16, baseFov)) : 8;
     return slotPose(slotId, d, true, true);
@@ -1499,7 +1550,9 @@ void main(){
   const LOUNGE_IDS = ['MAIN_TOP', 'MAIN_MID', 'MAIN_BOT', 'SUB_1A', 'SUB_2A', 'SUB_3A', 'SUB_4A'];
   /** 멍때리기: the camera glides from the board it is on to the next one. The avatar stays where it is. */
   function tourNext() {
-    if (cine?.pin) return false; // a photo is being framed: the tour waits for the next 8 s tick
+    // A photo is being framed: no glide under it. The tour does not pick up again afterwards: the photo's endFocus goes
+    // through endCine, which ends the lounge (onLoungeEnd), so the player starts it again by hand.
+    if (cine?.pin) return false;
     for (let k = 0; k < LOUNGE_IDS.length; k++) {
       const id = LOUNGE_IDS[loungeI++ % LOUNGE_IDS.length];
       const pose = watchPortrait ? framePose(id) : slotPose(id, 18, true);
@@ -1652,7 +1705,8 @@ void main(){
     const input = readInput();
     // Movement ends a held scripted camera before this frame's step, so the first step already uses the orbit basis.
     // A scripted camera cannot start from a taxi; one that was running when the player got in ends here too.
-    if (cine && !cine.back && (drive || cineCancels({ active: true, pin: cine.pin, keys: keys.size, joy: Math.hypot(joy.x, joy.y), lounge }))) endCine();
+    // While input is switched off (a sheet is open) a held key or a thumb resting on the stick does not count.
+    if (cine && !cine.back && (drive || cineCancels({ active: true, pin: cine.pin, keys: keys.size, joy: Math.hypot(joy.x, joy.y), lounge, locked: !inputEnabled }))) endCine();
     else if (lounge && drive) endCine();
     let sitting = false;
     if (drive) stepDrive(dt, input, t);
@@ -1692,7 +1746,7 @@ void main(){
     if (balloon && balloon.hp > 0) {
       balloon.mesh.position.y = 58 + Math.sin(t * 0.6) * 1.6;
     }
-    if (lounge && (keys.size || Math.hypot(joy.x, joy.y) > 0.25)) endCine();
+    if (lounge && inputEnabled && (keys.size || Math.hypot(joy.x, joy.y) > 0.25)) endCine();
     else if (lounge && performance.now() - loungeAt > 8000) {
       loungeAt = performance.now();
       tourNext();
@@ -1909,28 +1963,30 @@ void main(){
       const r = rockets[i];
       r.delay -= dt;
       if (r.delay > 0) continue;
-      if (!r.sprite) {
-        r.sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: sparkTex, color: new THREE.Color(r.hex).multiplyScalar(3), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
-        r.sprite.scale.set(0.9, 0.9, 1);
-        scene.add(r.sprite);
+      if (r.y < r.y1) {
+        if (!r.sprite) {
+          r.sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: sparkTex, color: new THREE.Color(r.hex).multiplyScalar(r.shot ? 1.6 : 3), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+          r.sprite.scale.set(r.size, r.size, 1);
+          scene.add(r.sprite);
+        }
+        r.y += dt * r.speed;
+        // A planned rocket climbs dead straight: it is half a sprite from the board's edge.
+        r.sprite.position.set(r.x + (r.shot ? 0 : Math.sin(r.y) * 0.08), Math.min(r.y, r.y1), r.z);
       }
-      r.y += dt * 26;
-      r.sprite.position.set(r.x + Math.sin(r.y) * 0.08, r.y, r.z);
       if (r.y >= r.y1) {
-        scene.remove(r.sprite);
-        r.sprite.material.dispose();
-        burst(new THREE.Vector3(r.x, r.y1, r.z), r.hex, 80, 1.05);
+        if (r.sprite) { scene.remove(r.sprite); r.sprite.material.dispose(); }
+        if (r.shot) r.shot(); else burst(new THREE.Vector3(r.x, r.y1, r.z), r.hex, 80, 1.05);
         rockets.splice(i, 1);
       }
     }
     for (let i = fireworks.length - 1; i >= 0; i--) {
       const f = fireworks[i];
       f.age += dt;
+      // Closed form (camrig.js sparkGlide / sparkDrop): start velocity times the glide, less the drop.
       const p = f.pts.geometry.attributes.position.array, v = f.v;
-      const drag = Math.exp(-dt * 1.5);
+      const glide = sparkGlide(f.age, f.drag), drop = sparkDrop(f.age, f.drag, f.grav);
       for (let j = 0; j < p.length; j += 3) {
-        v[j] *= drag; v[j + 1] = v[j + 1] * drag - 5.2 * dt; v[j + 2] *= drag;
-        p[j] += v[j] * dt; p[j + 1] += v[j + 1] * dt; p[j + 2] += v[j + 2] * dt;
+        p[j] = v[j] * glide; p[j + 1] = v[j + 1] * glide - drop; p[j + 2] = v[j + 2] * glide;
       }
       f.pts.geometry.attributes.position.needsUpdate = true;
       f.pts.material.opacity = fireworkAlpha(f.age, f.life, f.fadeAt);
@@ -2033,6 +2089,7 @@ void main(){
   function stop() { running = false; cancelAnimationFrame(raf); }
   function dispose() {
     stop();
+    clearTimeout(ctxTimer);
     ac.abort();
     ro.disconnect();
     controls.dispose();
@@ -2607,12 +2664,8 @@ void main(){
     frameBillboard,
     boardView: (id) => boards.get(id)?.data || null,
     setMonopoly(on) { boards.setShow?.(!!on); },
-    strike(slotId) {
-      const p = boards.worldPos(slotId);
-      if (!p) return;
-      burst(p.clone(), '#ffcf5a', 110, 1.5);
-      launch(p.x, p.z, p.y + 8, '#fff6c8', 0);
-    },
+    // A board taken from its holder: the claim fireworks in gold, unless that claim already set them off.
+    strike(slotId) { celebrateBoard(slotId, '#ffcf5a'); },
     giftPop,
     topTeam,
     endFocus() {

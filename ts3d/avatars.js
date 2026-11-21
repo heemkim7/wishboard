@@ -82,8 +82,6 @@ export function createAvatars({ scene, urls, models, first, height = 1.8 }) {
       // Main is the hoodie in every species and the only material that takes the player colour (see attach).
       // Fur, Muzzle, Eye and Accent keep the colours in the file. The hoodie is cloth: no metal, fairly rough.
       if (m.name === 'Main') { m.metalness = 0; m.roughness = 0.6; }
-      else if (m.name === 'Grey') { m.metalness = 0.7; m.roughness = 0.3; m.color.set('#c5cad3'); }
-      else if (m.name === 'Black') { m.metalness = 0.45; m.roughness = 0.22; }
       m.envMapIntensity = 1.25;
     });
     sys.species.set(id, { gltf, scale, foot });

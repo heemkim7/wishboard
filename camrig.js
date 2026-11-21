@@ -27,9 +27,10 @@ export function focusOptions(arg) {
 /**
  * Does input end the scripted camera now? Only a camera that is going to or holding on a board (not one already
  * returning, not the pinned photo frame). `hidden` (own avatar not drawn, as in a taxi) deliberately plays no part.
+ * `locked`: input is switched off (a sheet is open), so a key still held or a thumb resting on the stick is not input.
  */
-export function cineCancels({ active = false, back = false, pin = false, keys = 0, joy = 0, lounge = false } = {}) {
-  if (!active || back || pin) return false;
+export function cineCancels({ active = false, back = false, pin = false, keys = 0, joy = 0, lounge = false, locked = false } = {}) {
+  if (!active || back || pin || locked) return false;
   return keys > 0 || joy > (lounge ? 0.25 : 0.08);
 }
 /** Orbit pose behind a car: `polar` from straight up, like the driving auto-yaw. */
@@ -63,6 +64,23 @@ export function portraitFov(aspect, base, tall = 72) {
 export function fitDistance(dist, fovFrom, fovTo) {
   const t = (deg) => Math.tan((deg * Math.PI) / 360);
   return dist * t(fovFrom) / t(fovTo);
+}
+
+// ---- framing a board -----------------------------------------------------------------------------------------
+// One rule for every scripted board camera (보기, the claim focus, the lounge tour, the photo frame): the whole face is
+// in the frame with `margin` of the frame left free on each side, for the frame's aspect and its settled vertical FOV.
+export const FRAME = { margin: 0.08, max: 48 };
+/** Range (m) from which a w x h face fits the frame: the larger of the width fit and the height fit. vfov in degrees. */
+export function frameDistance({ w = 0, h = 0, aspect = 1, vfov = 55, margin = FRAME.margin } = {}) {
+  const t = Math.tan((clamp(num(vfov, 55), 10, 150) * Math.PI) / 360);
+  const a = num(aspect) > 0 ? num(aspect) : 1;
+  const keep = 1 - 2 * clamp(num(margin), 0, 0.4);
+  return Math.max(Math.max(0, num(w)) / a, Math.max(0, num(h))) / (2 * t * keep);
+}
+/** The range a board camera uses: the caller's own distance, farther when the face would not fit, never past `max`. */
+export function boardRange(dist, fit, max = FRAME.max) {
+  const d = Math.max(0, num(dist));
+  return Math.max(d, Math.min(num(fit), max));
 }
 
 // ---- driving camera ------------------------------------------------------------------------------------------
@@ -162,4 +180,75 @@ export function fireworkAlpha(age, life, fadeAt = -1, fade = FIREWORK.fade) {
 }
 export function fireworkDone(age, life, fadeAt = -1, fade = FIREWORK.fade) {
   return age >= life || (fadeAt >= 0 && age - fadeAt >= fade);
+}
+
+// ---- sparks --------------------------------------------------------------------------------------------------
+// A spark starts at its burst with velocity v0 and is slowed by drag and pulled down by gravity. Its place t seconds
+// later is v0 * sparkGlide(t) with sparkDrop(t) taken off its height: the world draws exactly this, at any frame rate.
+export const SPARK = { drag: 1.5, grav: 5.2, life: 2.4 };
+/** Metres travelled per m/s of start speed after t s. */
+export function sparkGlide(t, drag = SPARK.drag) { return (1 - Math.exp(-drag * t)) / drag; }
+/** Metres fallen after t s. */
+export function sparkDrop(t, drag = SPARK.drag, grav = SPARK.grav) { return (grav / drag) * (t - sparkGlide(t, drag)); }
+
+// ---- board celebrations --------------------------------------------------------------------------------------
+// A claim's fireworks frame the board and never cover it. Positions are in the board's own frame: u along its right
+// edge, v up, n along its normal (toward the viewer), origin at the centre of the face. Every burst is a fan in the
+// board's plane that opens away from the face: side fans and rockets sit beyond the side edges and only throw outward,
+// the top fan sits above the top edge by more than its sparks can fall. So no spark is over the w x h face, and none is
+// between the face and a camera in front of it.
+export const CELEBRATE_GAP_MS = 4000;
+/** One celebration per board per claim: false while the last one on that board is younger than the gap. */
+export function celebrationDue(last, now, gap = CELEBRATE_GAP_MS) { return !(now - last < gap); }
+/** A face with another claimable face right above it (the main stack, the lower corner board): no fan above its top edge. */
+export function faceAbove(slotId) { return /^(MAIN_(LOW|BOT|MID|TOP)|SUB_[1-4]B)$/.test(String(slotId || '')); }
+// Celebration sparks hang longer and fall less than the other bursts, and are gone in 1.4 s.
+export const PARTY = { drag: 1.8, grav: 1.6, life: 1.4, gain: 1.35, flashGain: 1.1, flat: 0.2, riseT: 0.35 };
+/**
+ * The bursts for one board. w, h: the face in metres; tier 'S' | 'B' | 'C' sets how many rockets; low: the phone tier;
+ * top: false when another face is right above (faceAbove); cheer: the small version for 응원.
+ * Returns { size, gain, flashGain, drag, grav, life, rocket, total, end, bursts }. Each burst: { u, v, n } where it
+ * goes off, out (unit direction of the fan in the plane) and arc (half-angle, rad), speed (fastest spark, m/s), flat
+ * (how far a spark may leave the plane, as a share of its speed), count, flash (sprite width, m), delay (s), hue
+ * (0 = the board's colour, 1.. = a palette colour), and for a rocket rise (m climbed below the burst) and riseT (s).
+ */
+export function celebrationPlan({ w = 0, h = 0, tier = 'C', low = false, top = true, cheer = false } = {}) {
+  const H = Math.max(0.5, num(h, 4)), W = Math.max(0.5, num(w, H * 16 / 9));
+  const m = clamp(H, 1.5, 14); // everything scales with the height of the face
+  const { drag, grav, life, gain, flashGain, flat, riseT } = PARTY;
+  const size = clamp(0.085 * m, 0.28, 0.95);
+  const gap = clamp(0.16 * m, 0.4, 2.2);
+  const small = cheer ? 0.7 : 1;
+  const speed = (clamp(0.42 * m, 1.2, 5.5) * small) / sparkGlide(life, drag);
+  const flash = 1.6 * gap * small;
+  // Above the top edge by more than a spark with no upward speed falls in its life, plus half a sprite.
+  const lift = Math.max(gap, sparkDrop(life, drag, grav) + size / 2 + 0.1);
+  const share = (low ? 0.6 : 1) * (cheer ? 0.6 : 1);
+  const n = (base) => Math.max(6, Math.round(base * share));
+  const hw = W / 2, hh = H / 2;
+  const bursts = [];
+  const fan = (u, v, out, arc, count, delay, hue = 0, rise = 0) => bursts.push({ u, v, n: 0, out, arc, speed, flat, count, flash, delay, hue, rise, riseT: rise ? riseT : 0 });
+  // Beyond each side edge, opening outward and upward (from 49° below level to straight up).
+  const sideN = n(10 + 1.6 * m + (top || cheer ? 0 : 0.8 * m));
+  for (const s of [-1, 1]) fan(s * (hw + gap), hh * 0.2, [s * Math.cos(0.35), Math.sin(0.35)], 1.2, sideN, s < 0 ? 0 : 0.12);
+  // Above the top edge, opening upward.
+  if (top && !cheer) fan(0, hh + lift, [0, 1], 1.35, n(12 + 2.2 * m), 0.3);
+  // Rockets climb beside the board and go off above its top corners, opening outward and upward.
+  const pairs = cheer ? 0 : low ? { S: 1, B: 1, C: 0 }[tier] ?? 0 : { S: 2, B: 1, C: 1 }[tier] ?? 1;
+  const rise = clamp(H + lift, 2.5, 12);
+  const shell = (s, p, delay, hue) => fan(s * (hw + gap * (1 + 1.4 * p)), hh + lift * (1 + 0.8 * p), [s * Math.cos(0.9), Math.sin(0.9)], 0.65, n(12 + 1.7 * m), delay, hue, rise);
+  for (let p = 0; p < pairs; p++) for (const s of [-1, 1]) shell(s, p, 0.55 + 0.3 * p + (s > 0 ? 0.08 : 0), 1 + p * 2 + (s > 0 ? 1 : 0));
+  if (cheer && !low) shell(1, 0, 0.2, 1);
+  let total = 0, end = 0;
+  for (const b of bursts) { total += b.count; end = Math.max(end, b.delay + b.riseT + life); }
+  return { size, gain, flashGain, drag, grav, life, rocket: clamp(2 * size, 0.45, 0.9), total, end, bursts };
+}
+/**
+ * Start velocity [u, v, n] (m/s) of one spark of a burst. ra, rs, rn are three numbers 0..1 (angle across the fan,
+ * speed, depth): the world feeds Math.random(), the tests walk the corners.
+ */
+export function fanVelocity(b, ra, rs, rn) {
+  const a = Math.atan2(b.out[1], b.out[0]) + (ra * 2 - 1) * b.arc;
+  const s = b.speed * (0.45 + 0.55 * rs);
+  return [Math.cos(a) * s, Math.sin(a) * s, (rn * 2 - 1) * b.flat * s];
 }

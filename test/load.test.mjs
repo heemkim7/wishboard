@@ -67,6 +67,10 @@ describe('first load budget', () => {
       const files = loadBudget({ quality }).rows.map((x) => x.file);
       assert.deepEqual(files.filter((f) => f.startsWith('assets/textures/') || /^icons\/facade-/.test(f)), [], quality);
     }
+    // The files themselves are gone too (they were still deployed as static assets), and so is the old robot model.
+    for (const gone of ['assets/textures', 'icons/facade-test.jpg', 'icons/facade-side.jpg', 'assets/models/RobotExpressive.glb']) {
+      assert.equal(existsSync(new URL('../' + gone, import.meta.url)), false, gone);
+    }
   });
 
   it('bumps the service worker cache with the new assets', () => {

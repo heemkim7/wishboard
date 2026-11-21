@@ -167,10 +167,13 @@ if (vWin.z < 0.5) {
   // 0-0.4 plinth, 0.4-3.0 glass in 3-4 panes with a transom at 2.55, 3.0-3.5 fascia with a 0.16 m sign strip,
   // 0.35 m piers between bays. Lines are anti-aliased with fwidth; once a bay is only a few pixels wide the whole
   // band fades to one even dim warm value (no flicker, no bright strip).
+  // vFac.y is metres above the street and sf is 0 from 3.55 m up, so only the bottom 3.6 m of a wall runs the
+  // storefront maths (the rest of the tower skips it; the result is the same). The pixel footprint is taken outside
+  // the branch: a derivative inside non-uniform control flow is undefined.
   float y = vFac.y;
   float sf = street * (1.0 - smoothstep(3.45, 3.55, y));
-  {
-    vec2 sw = max(fwidth(vFac), vec2(1e-4));
+  vec2 sw = max(fwidth(vFac), vec2(1e-4));
+  if (vFac.y < 3.6) {
     float sfFar = smoothstep(0.3, 1.0, max(sw.x, sw.y));
     float aw = sw.x * 0.75, ah = sw.y * 0.75;
     float bayI = floor(vFac.x / 6.4), bx = fract(vFac.x / 6.4) * 6.4;
