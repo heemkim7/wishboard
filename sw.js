@@ -29,6 +29,7 @@ self.addEventListener('push', (event) => {
 
 // Click: an open game tab (path / or /index.html, never admin.html or a share page) is told where to go ({ t: 'push', url },
 // main.js moves there in place) and focused; it is never navigated, which would reboot the game. No game tab: open a new one.
+// Once a tab has the message it is the one that moves: if focusing it then fails, no second window is opened.
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const url = sameOriginPath(event.notification.data && event.notification.data.url);
@@ -37,7 +38,8 @@ self.addEventListener('notificationclick', (event) => {
     for (const c of list) {
       let same = false; try { const x = new URL(c.url); same = x.origin === self.location.origin && (x.pathname === '/' || x.pathname === '/index.html'); } catch { same = false; }
       if (!same) continue;
-      try { c.postMessage({ t: 'push', url }); return await c.focus(); } catch { /* this tab cannot be reached: open a window instead */ }
+      try { c.postMessage({ t: 'push', url }); } catch { continue; } // this tab cannot be reached: the next one, or a new window
+      try { return await c.focus(); } catch { return undefined; } // told but not focused: it still moves, in the background
     }
     return self.clients.openWindow(url);
   })());
