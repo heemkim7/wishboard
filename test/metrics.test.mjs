@@ -1,6 +1,7 @@
 import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -272,6 +273,64 @@ describe('G2 wiring in the client sources', () => {
     const worker = readFileSync(new URL('../worker.js', import.meta.url), 'utf8');
     assert.match(worker, /env\.KAKAO_JS_KEY/);
     assert.equal(/Kakao\.init\(['"]/.test(ui + readFileSync(new URL('../share.js', import.meta.url), 'utf8')), false);
+  });
+  it('does not load the Google tag while the address carries a sign-in code or a handover ticket', () => {
+    const idx = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+    const src = (idx.match(/<script>\s*(const GA_MEASUREMENT_ID[\s\S]*?)<\/script>/) || [])[1] || '';
+    assert.ok(src.length > 100);
+    // The tag script itself, run with a made-up address and a clock the test turns by hand.
+    const page = (search) => {
+      const window = {}, location = { search }, tags = [], timers = new Map();
+      let seq = 0;
+      runInNewContext(src, {
+        window, location,
+        document: { createElement: () => ({}), head: { appendChild: (s) => tags.push(s.src) } },
+        setInterval: (fn) => { timers.set(++seq, fn); return seq; },
+        clearInterval: (id) => { timers.delete(id); },
+      });
+      const tick = (times = 1) => { for (let i = 0; i < times; i++) for (const fn of [...timers.values()]) fn(); };
+      return { location, tags, timers, tick, queued: Array.from(window.dataLayer, (a) => a[0]) }; // Array.from: an array of this context
+    };
+    // A plain address: the tag goes in at once, and nothing keeps polling.
+    for (const search of ['', '?focus=PLOT_3&ref=ab12cd34', '?policy=privacy', '?barcode=1&decode=2']) {
+      const p = page(search);
+      assert.equal(p.tags.length, 1, search);
+      assert.match(p.tags[0], /^https:\/\/www\.googletagmanager\.com\/gtag\/js\?id=G-[A-Z0-9]{8,12}$/);
+      assert.equal(p.timers.size, 0);
+    }
+    // Back from sign-in (?code=) or through a handover link: no tag until the app has taken the value out of the address.
+    for (const search of ['?code=abc-123', '?focus=PLOT_3&code=abc-123', '?handover=h1.xyz.sig&autologin=google']) {
+      const p = page(search);
+      assert.deepEqual(p.queued, ['js', 'config']); // the commands wait in dataLayer for the tag
+      p.tick(5);
+      assert.deepEqual(p.tags, [], search);
+      p.location.search = search.includes('focus') ? '?focus=PLOT_3' : '';
+      p.tick();
+      assert.equal(p.tags.length, 1, search);
+      assert.equal(p.timers.size, 0);
+      p.tick(3);
+      assert.equal(p.tags.length, 1); // loaded once
+    }
+    // Still there after 30 s (120 polls of 250 ms): the poll stops and this page view has no tag.
+    const stuck = page('?code=never-used');
+    stuck.tick(119);
+    assert.equal(stuck.timers.size, 1);
+    stuck.tick();
+    assert.equal(stuck.timers.size, 0);
+    stuck.location.search = '';
+    stuck.tick(5);
+    assert.deepEqual(stuck.tags, []);
+    assert.match(src, /\}, 250\);/);
+  });
+  it('says in the privacy policy that visits are counted with Google Analytics', () => {
+    const idx = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+    if (/const GA_MEASUREMENT_ID = 'G-XXXXXXXXXX';/.test(idx)) return; // no tag on the page, nothing to disclose
+    const legal = readFileSync(new URL('../legal.js', import.meta.url), 'utf8');
+    const privacy = legal.slice(legal.indexOf('function privacy()'), legal.indexOf('function terms()'));
+    assert.match(privacy, /Google 애널리틱스/);
+    assert.match(privacy, /_ga/); // the cookie
+    assert.match(privacy, /tools\.google\.com\/dlpage\/gaoptout/); // how to refuse
+    assert.equal(/Google/.test(legal.slice(legal.indexOf('function terms()'))), false);
   });
   it('renders the funnel with textContent only', () => {
     const html = readFileSync(new URL('../admin.html', import.meta.url), 'utf8');

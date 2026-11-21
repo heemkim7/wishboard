@@ -880,14 +880,28 @@ const GA_MEASUREMENT_ID = 'G-ZHXT5BEQ4J';
 const CLARITY_ID = '';
 (function () {
   if (GA_MEASUREMENT_ID && GA_MEASUREMENT_ID !== 'G-XXXXXXXXXX') {
-    const s = document.createElement('script');
-    s.async = true;
-    s.src = 'https://www.googletagmanager.com/gtag/js?id=' + encodeURIComponent(GA_MEASUREMENT_ID);
-    document.head.appendChild(s);
     window.dataLayer = window.dataLayer || [];
     window.gtag = function () { window.dataLayer.push(arguments); };
     window.gtag('js', new Date());
     window.gtag('config', GA_MEASUREMENT_ID);
+    // The Google tag reports the address it finds when it loads, and no on-page setting changes that first page view
+    // (page_location and send_page_view were both tried). So the tag is not loaded while the address still carries a
+    // sign-in code or a handover ticket. The app takes both out of the address moments after reading them, and events
+    // fired meanwhile wait in dataLayer. If one is still there after 30 s, this page view goes without the tag.
+    const held = () => /[?&](code|handover)=/.test(location.search);
+    const load = () => {
+      const s = document.createElement('script');
+      s.async = true;
+      s.src = 'https://www.googletagmanager.com/gtag/js?id=' + encodeURIComponent(GA_MEASUREMENT_ID);
+      document.head.appendChild(s);
+    };
+    if (!held()) load();
+    else {
+      let n = 0;
+      const t = setInterval(() => {
+        if (!held()) { clearInterval(t); load(); } else if (++n >= 120) clearInterval(t);
+      }, 250);
+    }
   }
   if (CLARITY_ID) {
     (function (c, l, a, r, i, t, y) {
