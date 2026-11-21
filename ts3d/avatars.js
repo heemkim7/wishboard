@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { makeCanvas, paintNameTag, paintBubble } from './art.js?v=202611210015';
+import { MODEL_URL, modelFor } from './loadplan.js?v=202611210015';
 
 const LOOPS = new Set(['Idle', 'Walking', 'Running', 'Dance', 'Sitting', 'Standing']);
 export const EMOTES = {
@@ -30,13 +31,11 @@ export function speciesId(id) {
   const n = Math.floor(Number(id));
   return n === 2 || n === 3 ? n : 1;
 }
-const MODEL_URL = { 1: '/assets/models/Mousey.glb', 2: '/assets/models/Cat.glb', 3: '/assets/models/Bear.glb' };
-
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 export function createAvatars({ scene, urls, models, first, height = 1.8 }) {
   const sources = { ...MODEL_URL, ...(models || (urls?.[0] ? { 1: urls[0] } : {})) };
-  const sys = { species: new Map(), missing: new Set(), pending: 0, failed: false, waiting: new Set(), all: new Set(), height };
+  const sys = { species: new Map(), missing: new Set(), pending: 0, waiting: new Set(), all: new Set(), height };
   const loader = new GLTFLoader();
   const started = new Set();
 
@@ -85,19 +84,16 @@ export function createAvatars({ scene, urls, models, first, height = 1.8 }) {
     sys.species.set(id, { gltf, scale, foot });
   }
 
+  // Avatars on the stand-in: attach once their model (or the fallback model) is in; drop the ones nothing will come for.
   function flush() {
     for (const a of [...sys.waiting]) {
-      if (sys.species.has(a.species) || sys.missing.has(a.species) || sys.pending === 0) {
-        sys.waiting.delete(a);
-        a.attach();
-      }
-    }
-    if (sys.pending === 0 && sys.species.size === 0) {
-      sys.failed = true;
-      for (const a of sys.waiting) a.attachFallback();
-      sys.waiting.clear();
+      const p = sys.plan(a.species);
+      if (p.show) { sys.waiting.delete(a); a.attach(); }
+      else if (!p.need) sys.waiting.delete(a);
+      else if (a.asked) loadId(p.need);
     }
   }
+  sys.plan = (id) => modelFor(id, { loaded: sys.species, missing: sys.missing });
 
   function loadId(id) {
     const url = sources[id] || MODEL_URL[id];
@@ -108,27 +104,24 @@ export function createAvatars({ scene, urls, models, first, height = 1.8 }) {
       prepare(id, gltf);
       sys.pending--;
       flush();
-      if (id === priority) rest();
     }, undefined, (err) => {
       console.error('[avatar]', url, err);
       sys.missing.add(id);
       sys.pending--;
       flush();
-      if (id === priority) rest();
     });
   }
-  function rest() {
-    for (const key of Object.keys(sources)) loadId(speciesId(key));
-  }
-  const priority = speciesId(first);
-  loadId(priority);
+  sys.load = loadId;
+  // Only the player's own species is fetched up front; others on first sight (Avatar.want) or by prefetch().
+  loadId(speciesId(first));
 
   function create(opts) {
     const a = new Avatar(sys, scene, opts);
     sys.all.add(a);
     return a;
   }
-  return { create, sys, get ready() { return sys.species.size > 0; } };
+  function prefetch() { for (const key of Object.keys(sources)) loadId(speciesId(key)); }
+  return { create, sys, prefetch, want: loadId, get ready() { return sys.species.size > 0; } };
 }
 
 // Two-bone aim so the hands meet a world point. The Mixamo clip set has no prayer or cheer.
@@ -267,10 +260,15 @@ class Avatar {
   }
 
   spec() {
-    const own = this.sys.species.get(this.species);
-    if (own) return own;
-    if (this.sys.missing.has(this.species) || this.sys.pending === 0) return this.sys.species.get(1) || this.sys.species.values().next().value || null;
-    return null;
+    const p = this.sys.plan(this.species);
+    return p.show ? this.sys.species.get(p.show) : null;
+  }
+
+  // Fetch the model this avatar needs (the local player always; remotes once they are on screen).
+  want() {
+    this.asked = true;
+    const p = this.sys.plan(this.species);
+    if (p.need) this.sys.load(p.need);
   }
 
   detachModel() {
@@ -278,8 +276,11 @@ class Avatar {
     this.mixer?.stopAllAction();
     this.holder.remove(this.model);
     if (this.fallback) this.model.traverse((o) => { o.geometry?.dispose(); o.material?.dispose?.(); });
+    else this.model.traverse((o) => o.skeleton?.dispose());
     this.mainMat?.dispose();
     this.mainMat = null;
+    this.hat?.geometry?.dispose();
+    this.hat?.material?.dispose();
     this.hat = null;
     this.model = null;
     this.mixer = null;
@@ -294,7 +295,7 @@ class Avatar {
     id = speciesId(id);
     if (id === this.species) return;
     this.species = id;
-    this.detachModel();
+    this.asked = false;
     this.attach();
   }
 
@@ -304,11 +305,23 @@ class Avatar {
   }
 
   attach() {
-    if (this.disposed || (this.model && !this.fallback)) return;
-    const spec = this.spec();
+    if (this.disposed) return;
+    const p = this.sys.plan(this.species);
+    // A real model stays until this species' own model is in (a species change never drops to the stand-in).
+    if (this.model && !this.fallback) {
+      if (p.show !== this.species) {
+        if (p.need) this.sys.waiting.add(this);
+        if (this.local) this.want();
+        return;
+      }
+      if (this.modelSpecies === this.species) return;
+      this.detachModel();
+    }
+    const spec = p.show ? this.sys.species.get(p.show) : null;
     if (!spec) {
       if (!this.fallback) this.attachFallback();
-      if (!(this.sys.failed || (this.sys.pending === 0 && this.sys.species.size === 0))) this.sys.waiting.add(this);
+      if (p.need) this.sys.waiting.add(this);
+      if (this.local) this.want();
       return;
     }
     if (this.fallback) this.detachModel();
@@ -326,7 +339,7 @@ class Avatar {
     });
     this.holder.add(model);
     this.model = model;
-    this.modelSpecies = spec === sys.species.get(this.species) ? this.species : 1;
+    this.modelSpecies = p.show;
     this.mixer = new THREE.AnimationMixer(model);
     this.actions = {};
     for (const clip of spec.gltf.animations) {

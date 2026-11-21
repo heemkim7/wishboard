@@ -24,6 +24,7 @@ import { claimRockefeller, buildRockefeller } from './ts3d/rockefeller.js?v=2026
 import { claimIcons, buildIcons } from './ts3d/icons.js?v=202611210015';
 import { buildLandmarks } from './ts3d/landmarks.js?v=202611210015';
 import { createAvatars, EMOTES, REACTIONS, AVATAR_COLORS, speciesId } from './ts3d/avatars.js?v=202611210015';
+import { seesAvatar, prefetchDelay } from './ts3d/loadplan.js?v=202611210015';
 import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, paintLabel, fontsReady, chars, hashStr } from './ts3d/art.js?v=202611210015';
 import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=202611210015';
 
@@ -32,7 +33,6 @@ export const PLAZA = LAYOUT;
 const STICKER_GLYPHS = ['🔥부럽다!', '👑성지순례', '💖하트폭탄', '👀내자리찜'];
 
 const RUN = 6.2, WALK = 2.4, RADIUS = 0.36, DEG = Math.PI / 180, EYE = 1.9, CAR_EYE = 2.5;
-const MODELS = { 1: '/assets/models/Mousey.glb', 2: '/assets/models/Cat.glb', 3: '/assets/models/Bear.glb' };
 const CAR = { max: 22, boost: 31, accel: 9, brake: 20, reverse: 7, drag: 4.5, steer: 1.9, radius: 1.05 };
 const MOVE_CODES = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ShiftLeft', 'ShiftRight']);
 const COLOR_RE = /^#[0-9a-f]{6}$/i;
@@ -190,7 +190,7 @@ void main(){
   const fireworks = [];
   const sparkTex = new THREE.CanvasTexture(paintGlow(makeCanvas(64, 64)));
   const boards = createBoards({ renderer, kitMats, pick, quality, onBurst: (p, color, tier) => celebrateAt(p, color, tier) });
-  const avatars = createAvatars({ scene, models: MODELS, first: opts.species });
+  const avatars = createAvatars({ scene, first: opts.species });
   {
     const S = LAYOUT.stairs, G = LAYOUT.stage;
     carColliders.push({ x0: S.x0 - 0.4, x1: S.x1 + 0.4, z0: S.back, z1: S.front + 0.2 });
@@ -654,10 +654,12 @@ void main(){
   const remotes = new Map();
   const remoteCars = [];
   function remoteFor(id) { return remotes.get(id)?.av || null; }
+  const seeFrustum = new THREE.Frustum(), seeM = new THREE.Matrix4(), seeP = new THREE.Vector3();
   function syncRemotes(dt, t) {
     remoteCars.length = 0;
     if (!net?.peers) { traffic?.setRemoteTaxis(remoteCars); return; }
     const seen = new Set();
+    seeFrustum.setFromProjectionMatrix(seeM.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
     for (const [id, peer] of net.peers) {
       if (!peer || id === net.id) continue;
       const s = net.sample(peer);
@@ -701,6 +703,8 @@ void main(){
       r.yaw = dampAngle(r.yaw, want, 9, dt);
       r.av.holder.visible = !inCar;
       r.av.root.position.set(r.x, r.y, r.z);
+      // Another species' GLB is fetched the first time one of its avatars is on screen; the stand-in shows until then.
+      if (r.av.modelSpecies !== r.av.species && !r.av.asked && !inCar && seesAvatar(camera.position.distanceTo(r.av.root.position), seeFrustum.containsPoint(seeP.set(r.x, r.y + 1, r.z)))) r.av.want();
       r.av.holder.rotation.y = r.yaw;
       r.av.setMotion(inCar ? 0 : Math.min(r.spd, 9), !inCar && s.anim === 'sit' && r.spd < 0.3);
       r.av.update(dt, t);
@@ -2271,6 +2275,7 @@ void main(){
     resize();
   }
 
+  let prefetchArmed = false;
   const api = {
     canvas, scene, camera, renderer, quality,
     start, stop, dispose, resize,
@@ -2281,6 +2286,15 @@ void main(){
     setName(n) { name = chars(n || '네온손님', 16) || '네온손님'; me.setName(name); },
     setColor(c) { if (!COLOR_RE.test(c || '')) return; color = c; me.setColor(c); },
     setSpecies(id) { species = speciesId(id); me.setSpecies(species); netState.av = species; },
+    // A species picked in the character sheet: start its download now so saving swaps sooner.
+    wantSpecies(id) { avatars.want(speciesId(id)); },
+    // After entering: fetch the other species while idle, a minute later (skipped on low tier and Save-Data).
+    prefetchAvatars() {
+      const ms = prefetchDelay({ quality, saveData: !!navigator.connection?.saveData });
+      if (ms == null || prefetchArmed) return;
+      prefetchArmed = true;
+      setTimeout(() => (window.requestIdleCallback || ((f) => setTimeout(f, 0)))(() => avatars.prefetch(), { timeout: 15000 }), ms);
+    },
     setEquip(ids) {
       myEquip = (Array.isArray(ids) ? ids : []).map((id) => String(id || '')).filter((id) => id && id !== 'taxi').slice(0, 4);
       me.setEquip(myEquip);

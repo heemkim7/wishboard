@@ -3098,7 +3098,7 @@ export function createUI(root, hooks) {
         h('div', { class: 'field' }, h('label', null, '닉네임'), input),
         h('div', { class: 'field' }, h('label', null, '발밑 링 색', h('span', { text: '캐릭터 색이 아니라, 발밑 동그라미입니다' })), colorPicker(color, (c) => { color = c; })),
       ];
-      if (SPECIES.length > 1) fields.splice(1, 0, h('div', { class: 'field' }, h('label', null, '캐릭터'), speciesPicker(species, (id) => { species = id; })));
+      if (SPECIES.length > 1) fields.splice(1, 0, h('div', { class: 'field' }, h('label', null, '캐릭터'), speciesPicker(species, (id) => { species = id; hooks.wantSpecies?.(id); })));
       const prof = hooks.profile?.() || { level: 1, reputation: 0, equip: [], owned: [] };
       const equipped = new Set(Array.isArray(prof.equip) ? prof.equip : []);
       const owned = new Set(Array.isArray(prof.owned) ? prof.owned : []);

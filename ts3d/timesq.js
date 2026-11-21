@@ -9,6 +9,7 @@ import { LAYOUT } from './layout.js?v=202611210015';
 import { Kit, cropPlane, imgCrop } from './kit.js?v=202611210015';
 import { makeCanvas, paintAdAtlas, paintBlade, paintLabel, paintGlow, paintNeonSign } from './art.js?v=202611210015';
 import { screenTime } from './screens.js?v=202611210015';
+import { ENV_PHOTOS, envPhotoUrl } from './loadplan.js?v=202611210015';
 
 const ONE = new THREE.Vector3(1, 1, 1);
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
@@ -33,7 +34,8 @@ const C = {
   p2B: ['night-pano2', imgCrop(0.42, 0.05, 0.62, 0.62), 1.62],
   p2C: ['night-pano2', imgCrop(0.66, 0.15, 0.84, 0.62), 1.77],
 };
-export const PHOTO_FILES = [...new Set(Object.values(C).map(c => c[0]))];
+// Only the four photos the environment map uses are fetched (photoAt is not called; the facades are ad screens now).
+export const PHOTO_FILES = ENV_PHOTOS;
 const PHOTO_KEYS = Object.keys(C);
 const TALL_KEYS = PHOTO_KEYS.filter(k => C[k][2] < 1);
 const WIDE_KEYS = PHOTO_KEYS.filter(k => C[k][2] >= 1);
@@ -66,7 +68,7 @@ export function buildTimesSquare(ctx) {
   // ---- materials ---------------------------------------------------------------------------------------
   const photoMats = {}, photoTextures = {};
   for (const name of PHOTO_FILES) {
-    const t = loader.load(`/assets/times-square/${name}${low ? '.m' : ''}.jpg`);
+    const t = loader.load(envPhotoUrl(name));
     t.colorSpace = THREE.SRGBColorSpace;
     t.anisotropy = aniso;
     photoTextures[name] = t;

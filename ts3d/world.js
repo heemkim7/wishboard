@@ -168,7 +168,8 @@ export function createWorld(ctx) {
   // ---- materials ------------------------------------------------------------------------------------------
   const loader = new THREE.TextureLoader(manager);
   const tex = (name, srgb, rep = 1) => {
-    const t = loader.load(`/assets/textures/${name}.jpg`);
+    // low tier: half-size colour and normal maps from assets/textures/512/ (roughness maps are 512 already)
+    const t = loader.load(`/assets/textures/${low && !name.endsWith('_rough') ? '512/' : ''}${name}.jpg`);
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
     t.anisotropy = aniso;
     if (srgb) t.colorSpace = THREE.SRGBColorSpace;

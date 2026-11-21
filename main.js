@@ -200,6 +200,7 @@ const ui = createUI(document.getElementById('ui'), {
   nick: () => state.nick,
   color: () => state.color,
   species: () => state.species,
+  wantSpecies: (id) => world?.wantSpecies?.(id),
   profile: () => state.profile,
   starterUsed: () => state.starterUsed,
   wear: (id) => wear(id),
@@ -1720,6 +1721,7 @@ async function enter({ nick, color, species }) {
   world.setName(state.nick);
   world.setColor(state.color);
   world.setSpecies(state.species);
+  world.prefetchAvatars?.();
   pullProfile();
   ui.refreshProfile();
   if (!recall('kts_hello')) {
