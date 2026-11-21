@@ -11,20 +11,21 @@ import { makeCanvas, paintPuddles, paintGlow } from './art.js?v=202611211159';
 export const FAR_LAYER = 3;
 const SKY_H = 150;
 
-// Wall albedo: one desaturated slate / indigo / charcoal family. Under the night lights (hemisphere 2.8, moon 1.0,
-// see timesSquare3d.js) and the neutral tone map these show as about #071332..#162246 on an unlit wall, and the fog
-// lifts far walls toward #1c1a3a. Each style keeps its own slight hue and value so neighbouring blocks still separate.
+// Wall albedo: one desaturated slate / charcoal family, nearly neutral (the light and the tone map's toe add the
+// blue). Under the night lights (hemisphere 2.8 #b4b8c8 / #2c2e36, moon 1.0, see timesSquare3d.js) an unlit wall
+// shows as about #0f152b (away from the moon) .. #151b34 (moonlit), centred on #141a33; the fog lifts far walls toward
+// #1c1a3a. Each style keeps its own slight hue and value so neighbouring blocks still separate.
 const STYLE_COLORS = [
-  ['#4c566c', '#525c74', '#48526a', '#56607a', '#4e5870', '#505a6e'], // glass towers: blue slate
-  ['#56586a', '#5c5e70', '#525466', '#606274', '#585a6c'], // office stone: charcoal
-  ['#58546c', '#5c5670', '#545068', '#605a72', '#5a566c', '#5e586e'], // old brick: indigo charcoal, never red
-  ['#60667a', '#666c80', '#5c6276', '#6a7084', '#626878'], // limestone: lighter slate
-  ['#545a6a', '#4e5464', '#5a6070'],
-  ['#4a4e5e', '#525666', '#464a5a'],
-  ['#50546a', '#56586c', '#5c5e70'],
+  ['#5a6070', '#5e6474', '#565c6c', '#626878', '#5c6272', '#586070'], // glass towers: cool slate
+  ['#606270', '#646674', '#5c5e6c', '#686a78', '#626470'], // office stone: charcoal
+  ['#626070', '#666474', '#5e5c6c', '#6a6878', '#646272', '#605e6e'], // old brick: a hint warmer, never red
+  ['#686a7a', '#6e707e', '#646676', '#727484', '#6a6c7a'], // limestone: lighter slate
+  ['#5e606e', '#585a68', '#62646e'],
+  ['#545664', '#5a5c6a', '#505260'],
+  ['#5a5c6c', '#5e606e', '#646670'],
 ].map(list => list.map(c => new THREE.Color(c)));
 const FLOOR_H = [3.9, 3.7, 3.1, 3.4, 5.5, 4.6, 3.6];
-const ROOF_COLORS = ['#30333e', '#34374a', '#2e3140', '#383a46', '#323544'].map(c => new THREE.Color(c));
+const ROOF_COLORS = ['#34363e', '#383a44', '#32343c', '#3c3e46', '#36383f'].map(c => new THREE.Color(c));
 const CAP_COLOR = new THREE.Color('#5a6274');
 
 const hash1 = (n) => { let x = Math.imul(n ^ 0x9e3779b9, 0x85ebca6b); x ^= x >>> 13; x = Math.imul(x, 0xc2b2ae35); x ^= x >>> 16; return (x >>> 0) / 4294967296; };
@@ -112,8 +113,11 @@ uniform float uWin;
 flat varying vec4 vWin;
 varying vec2 vFac;
 float wHash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
-float gWin = 0.0, gLit = 0.0, gGlass = 0.0;
-vec3 gTint = vec3(0.0);`)
+float sfBand(float x, float a, float b, float w) { return smoothstep(a - w, a + w, x) * (1.0 - smoothstep(b - w, b + w, x)); }
+// thin dark line of half-width hw at distance d: crisp when near, and its average stays at its true coverage when far
+float sfLine(float d, float hw, float w) { return (1.0 - smoothstep(hw - w, hw + w, d)) * min(1.0, hw / max(w, 1e-4)); }
+float gRefl = 0.0;
+vec3 gEmit = vec3(0.0);`)
       .replace('#include <color_fragment>', `#include <color_fragment>
 if (vWin.z < 0.5) {
   float style = vWin.x, seed = vWin.y, fh = vWin.w;
@@ -149,28 +153,65 @@ if (vWin.z < 0.5) {
   // far field: an even dim glow at 40% of the true average (lit dots near the camera also get bloom, the far field
   // does not), tinted a little cooler than the average so distant towers read plum rather than brown
   lit = mix(share * 0.4, lit, detail);
-  gTint = mix(mix(warm, cool, 0.25), tint, detail) * 2.1;
-  gWin = win * (1.0 - street);
-  gLit = lit;
-  gGlass = style < 0.5 ? 1.0 : 0.55;
+  // a lit room is a little brighter toward its ceiling, so a near window is not one flat cream panel
+  float room = mix(1.0, 0.72 + 0.28 * smoothstep(m.y, 1.0 - m.y, f.y), detail * shape);
+  vec3 upTint = mix(mix(warm, cool, 0.25), tint, detail) * 2.1;
+  float upWin = win * (1.0 - street);
+  float glassK = style < 0.5 ? 1.0 : 0.55;
   vec3 glass = style < 0.5 ? vec3(0.026, 0.034, 0.05) : vec3(0.022, 0.024, 0.03);
-  diffuseColor.rgb = mix(diffuseColor.rgb, glass, gWin * 0.88);
-  // street-level shop band: same height everywhere (0.25 - 3.4 m), mostly lit, warm
-  float bay = fract(vFac.x / 6.4);
-  float shop = street * step(0.25, vFac.y) * smoothstep(0.02, 0.08, bay) * (1.0 - smoothstep(0.86, 0.92, bay)) * (1.0 - smoothstep(3.3, 3.5, vFac.y));
-  float bayHash = wHash(vec2(floor(vFac.x / 6.4), seed * 3.1));
-  float shopLit = step(0.22, bayHash);
-  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.03), shop * 0.8);
-  gWin += shop;
-  gLit = mix(gLit, shopLit, street);
-  gTint = mix(gTint, mix(vec3(1.0, 0.66, 0.34), vec3(0.92, 0.86, 0.8), step(0.86, bayHash)) * 1.3, street);
+  diffuseColor.rgb = mix(diffuseColor.rgb, glass, upWin * 0.88);
+  gEmit = upTint * upWin * lit * room;
+  gRefl = upWin * glassK;
+
+  // ---- street-level storefronts, 6.4 m bays, all in metres along the wall (x) and up (y) ----
+  // 0-0.4 plinth, 0.4-3.0 glass in 3-4 panes with a transom at 2.55, 3.0-3.5 fascia with a 0.16 m sign strip,
+  // 0.35 m piers between bays. Lines are anti-aliased with fwidth; once a bay is only a few pixels wide the whole
+  // band fades to one even dim warm value (no flicker, no bright strip).
+  float y = vFac.y;
+  float sf = street * (1.0 - smoothstep(3.45, 3.55, y));
+  {
+    vec2 sw = max(fwidth(vFac), vec2(1e-4));
+    float sfFar = smoothstep(0.3, 1.0, max(sw.x, sw.y));
+    float aw = sw.x * 0.75, ah = sw.y * 0.75;
+    float bayI = floor(vFac.x / 6.4), bx = fract(vFac.x / 6.4) * 6.4;
+    float bh = wHash(vec2(bayI, seed * 3.1));
+    float shut = step(bh, 0.1);                       // about one bay in ten shuttered
+    float on = step(0.1, bh) * step(bh, 0.67);         // about 57% lit, the rest dark glass
+    float panes = 3.0 + step(0.5, fract(bh * 7.31));
+    float pt = (bx - 0.35) / 5.7 * panes;
+    float md = abs(fract(pt + 0.5) - 0.5) * 5.7 / panes;
+    float mull = max(sfLine(md, 0.03, aw), sfLine(abs(y - 2.55), 0.03, ah));
+    float pane = sfBand(bx, 0.35, 6.05, aw) * sfBand(y, 0.4, 3.0, ah);
+    float glassM = pane * (1.0 - mull);
+    float strip = sfBand(y, 3.17, 3.33, ah) * sfBand(bx, 0.6, 5.8, aw);
+    float slat = sfLine(abs(fract(y / 0.12 + 0.5) - 0.5) * 0.12, 0.012, ah) * (1.0 - smoothstep(0.03, 0.06, sw.y));
+    // diffuse: dark frame, plinth and fascia; dark glass; shutters flat dark grey with thin slat lines
+    vec3 frame = vec3(0.02, 0.022, 0.028);
+    vec3 dGlass = vec3(0.014, 0.018, 0.026);
+    vec3 dShut = vec3(0.05, 0.05, 0.055) * (1.0 - 0.55 * slat);
+    vec3 nearD = mix(frame, mix(dGlass, dShut, shut), mix(glassM, pane, shut));
+    // emission: warm amber glass, brightest in the upper third, about 45% of the old shop band, +-25% per bay
+    float fall = mix(0.3, 1.0, smoothstep(0.4, 2.3, y));
+    float vary = 0.75 + 0.5 * fract(bh * 13.7);
+    vec3 amber = vec3(1.0, 0.6, 0.26);
+    vec3 nearE = amber * (0.75 * fall * vary * on) * glassM;
+    nearE += vec3(0.012, 0.02, 0.034) * glassM * (1.0 - on) * (1.0 - shut);
+    float hue = fract(bh * 29.3);
+    vec3 signC = hue < 0.334 ? vec3(1.0, 0.078, 0.366) : hue < 0.667 ? vec3(0.065, 0.672, 0.871) : vec3(1.0, 0.434, 0.014);
+    nearE += signC * (2.6 * on * strip);
+    // far: one even dim warm value (60% of the average glass glow, strips folded in)
+    vec3 farE = amber * 0.13;
+    diffuseColor.rgb = mix(diffuseColor.rgb, mix(nearD, frame, sfFar), sf);
+    gEmit = mix(gEmit, mix(nearE, farE, sfFar), sf);
+    gRefl = mix(gRefl, glassM * (1.0 - shut) * (1.0 - sfFar), sf);
+  }
 }`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-roughnessFactor = mix(roughnessFactor, 0.38, clamp(gWin, 0.0, 1.0) * gGlass);`)
+roughnessFactor = mix(roughnessFactor, 0.38, clamp(gRefl, 0.0, 1.0));`)
       .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
-metalnessFactor = mix(metalnessFactor, 0.22, clamp(gWin, 0.0, 1.0) * gGlass);`)
+metalnessFactor = mix(metalnessFactor, 0.22, clamp(gRefl, 0.0, 1.0));`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-totalEmissiveRadiance += gTint * gWin * gLit * uWin;`);
+totalEmissiveRadiance += gEmit * uWin;`);
   };
   mat.customProgramCacheKey = () => 'kts-facade';
   return { mat, uWin };
@@ -188,6 +229,8 @@ export function createWorld(ctx) {
   // Pavement shows as dark neutral concrete (about #1a1d2b) with large low-contrast joints drawn in the wet-street
   // shader (ts3d/ground.js); the road is near-black wet asphalt (about #0b0d16) and glossy enough for the reflection
   // pass on medium/high. Damp darkening (1 - 0.38 * wet) is already folded into those on-screen values.
+  // Low has no reflection pass, so its road is a step lighter (about #12131f), its paint 25% stronger, and every tier's
+  // road carries a very soft two-octave wet/dry value variation (+-5%, 23 m and 7.7 m) from ts3d/ground.js.
   const puddleTex = new THREE.CanvasTexture(paintPuddles(makeCanvas(512, 512)));
   puddleTex.wrapS = puddleTex.wrapT = THREE.RepeatWrapping;
   const glowTex = new THREE.CanvasTexture(paintGlow(makeCanvas(128, 128)));
@@ -196,12 +239,12 @@ export function createWorld(ctx) {
     polygonOffset: true, polygonOffsetFactor: o.po ?? 0, polygonOffsetUnits: (o.po ?? 0) * 2,
   }), reflection, puddleTex, o);
   const mats = {
-    land: surface('#56534f', 0.8, { wet: 0.55, puddles: 0.5, reflect: 0.75, pave: [1.6, 1.6, 0.26, 0] }),
-    asphalt: surface('#4a463f', 0.62, { wet: 0.82, puddles: 1, reflect: 1, po: -2 }),
-    pavers: surface('#5a5651', 0.74, { wet: 0.62, puddles: 0.7, reflect: 0.9, po: -1, pave: [2.0, 1.0, 0.24, 1] }),
+    land: surface('#565558', 0.8, { wet: 0.55, puddles: 0.5, reflect: 0.75, pave: [1.6, 1.6, 0.26, 0] }),
+    asphalt: surface(low ? '#524f50' : '#4c4a4a', 0.62, { wet: 0.82, puddles: 1, reflect: 1, po: -2, vary: 0.05 }),
+    pavers: surface('#585658', 0.74, { wet: 0.62, puddles: 0.7, reflect: 0.9, po: -1, pave: [2.0, 1.0, 0.24, 1] }),
     grass: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.96, metalness: 0, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 }),
     pool: patchWet(new THREE.MeshStandardMaterial({ color: '#0b1522', roughness: 0.05, metalness: 0.2, envMapIntensity: 1.2, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6 }), reflection, puddleTex, { wet: 1, puddles: 0, reflect: 1.25 }),
-    paint: patchWet(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 }), reflection, puddleTex, { wet: 0.55, puddles: 0.6, reflect: 0.35 }),
+    paint: patchWet(new THREE.MeshStandardMaterial({ vertexColors: true, color: new THREE.Color(1, 1, 1).multiplyScalar(low ? 1.25 : 1), roughness: 0.55, metalness: 0, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 }), reflection, puddleTex, { wet: 0.55, puddles: 0.6, reflect: 0.35 }),
     river: patchWet(new THREE.MeshStandardMaterial({ color: '#08101c', roughness: 0.04, metalness: 0.15, envMapIntensity: 1.1 }), reflection, puddleTex, { wet: 1, puddles: 0, reflect: 1.35 }),
     wall: new THREE.MeshStandardMaterial({ color: '#3a3b40', roughness: 0.9, metalness: 0.05 }),
     shore: new THREE.MeshStandardMaterial({ color: '#15171c', roughness: 0.95, metalness: 0 }),
