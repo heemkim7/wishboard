@@ -67,7 +67,9 @@ async function main() {
   let same = 0; const diff = [];
   for (let i = 0; i < files.length; i += 8) {
     await Promise.all(files.slice(i, i + 8).map(async (f) => {
-      const r = await get('/' + f.split('/').map(encodeURIComponent).join('/'));
+      let r = await get('/' + f.split('/').map(encodeURIComponent).join('/'));
+      // html_handling serves x.html at /x (and index.html at /) and answers the .html path with a redirect to it.
+      if (r.status >= 300 && r.status < 400 && r.loc && f.endsWith('.html')) { const to = new URL(r.loc, ORIGIN); if (to.origin === new URL(ORIGIN).origin) r = await get(to.pathname); }
       const local = fs.readFileSync(f);
       if (r.status === 200 && sha(r.buf) === sha(local)) same++;
       else diff.push(`${f} status=${r.status} live=${r.buf.length}B local=${local.length}B`);
