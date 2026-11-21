@@ -2,7 +2,7 @@
 // scrolling news tickers, and the slot registry (MAIN_S, SUB_B1..4, PLOT_1..20).
 import * as THREE from 'three';
 import { Kit, arcSlab } from './kit.js?v=202611211159';
-import { THEMES, makeCanvas, paintBillboard, paintTicker, fontsReady, tierOf, boardPhoto, photoReady, SANS, rgba, chars, paintWish, wishOrd, wishRotates, wishStrip, cleanWishes, sameWishes, rowUntil, wishPlan, wishRelist, wishFontTargets, wishPinPlan, freshWish, wishSettled, WISH_CYCLE, WISH_CYCLE_LOW, WISH_BUDGET, WISH_BUDGET_LOW, WISH_NOW, WISH_DROPS } from './art.js?v=202611211159';
+import { THEMES, makeCanvas, paintBillboard, paintTicker, fontsReady, tierOf, boardPhoto, photoReady, SANS, roundRect, chars, paintWish, wishOrd, wishRotates, wishStrip, cleanWishes, sameWishes, rowUntil, wishPlan, wishRelist, wishFontTargets, wishPinPlan, freshWish, wishSettled, WISH_CYCLE, WISH_CYCLE_LOW, WISH_BUDGET, WISH_BUDGET_LOW, WISH_NOW, WISH_DROPS } from './art.js?v=202611211159';
 import { askBid } from '../balance.js';
 import { floorOf, live } from '../balance.js';
 import { auctionClosed } from '../balance.js';
@@ -10,7 +10,8 @@ import { nowMs, kingCovers } from '../live.js';
 
 export const screenTime = { value: 0 };
 
-/** Unlit LED material: dot-matrix pixels up close, light sweep, gentle scan flicker. */
+/** Unlit LED material: dot-matrix pixels up close and a faint light sweep on the nearest boards (no rim chase, grid,
+ *  wave or flicker: the artwork carries the board). */
 export function screenMaterial(map, { gain = 1.6, grid = [208, 117], led = 1, sweep = 1 } = {}) {
   const m = new THREE.MeshBasicMaterial({ map, color: new THREE.Color(gain, gain, gain) });
   m.onBeforeCompile = (sh) => {
@@ -28,35 +29,12 @@ export function screenMaterial(map, { gain = 1.6, grid = [208, 117], led = 1, sw
   vec2 f = abs(fract(gp) - 0.5);
   float fw = max(fwidth(gp.x), fwidth(gp.y));
   float cell = 1.0 - smoothstep(0.3, 0.5, max(f.x, f.y));
-  float ledMask = mix(0.74 + 0.26 * cell, 1.0, smoothstep(0.3, 0.85, fw));
+  float ledMask = mix(0.8 + 0.2 * cell, 1.0, smoothstep(0.3, 0.85, fw));
   diffuseColor.rgb *= mix(1.0, ledMask, uLed);
   float tt = uTime * uSweep;
-  float s = fract(tt * 0.06 + vMapUv.x * 0.5 - vMapUv.y * 0.28);
-  float band = smoothstep(0.0, 0.03, s) * (1.0 - smoothstep(0.03, 0.1, s));
-  diffuseColor.rgb += band * 0.2 * uSweep * (0.5 + diffuseColor.rgb);
-  diffuseColor.rgb *= 0.95 + 0.05 * sin(tt * 2.1 + vMapUv.y * 37.0);
-  float edge = min(min(vMapUv.x, vMapUv.y), min(1.0 - vMapUv.x, 1.0 - vMapUv.y));
-  float rim = 1.0 - smoothstep(0.0, 0.028, edge);
-  float around = vMapUv.x;
-  if (vMapUv.y > 0.972) around = 1.0 + (1.0 - vMapUv.x);
-  else if (vMapUv.x > 0.972) around = 2.0 + (1.0 - vMapUv.y);
-  else if (vMapUv.y < 0.028) around = 3.0 + vMapUv.x;
-  else if (vMapUv.x < 0.028) around = 4.0 + vMapUv.y;
-  float chase = fract(around * 0.25 - tt * 0.35);
-  float lamp = smoothstep(0.0, 0.015, chase) * (1.0 - smoothstep(0.015, 0.14, chase));
-  diffuseColor.rgb += rim * (0.18 + lamp * 1.35) * vec3(0.45, 0.95, 1.0);
-  if (vMapUv.y < 0.42 && vMapUv.y > 0.1) {
-    float gx = abs(fract(vMapUv.x * 14.0 - tt * 0.35) - 0.5);
-    float gy = abs(fract(vMapUv.y * 9.0 + tt * 0.45) - 0.5);
-    float grid = 1.0 - smoothstep(0.0, 0.08, min(gx, gy));
-    float wave = 1.0 - smoothstep(0.0, 0.035, abs(vMapUv.y - 0.26 - 0.05 * sin(vMapUv.x * 12.0 + tt * 2.1)));
-    diffuseColor.rgb += vec3(0.15, 0.75, 1.0) * grid * 0.28 + vec3(1.0, 0.25, 0.62) * wave * 0.55;
-  }
-  if (vMapUv.y < 0.085) {
-    float slide = fract(vMapUv.x - tt * 0.15);
-    float bit = smoothstep(0.0, 0.03, fract(slide * 9.0)) * (1.0 - smoothstep(0.03, 0.11, fract(slide * 9.0)));
-    diffuseColor.rgb += vec3(1.0, 0.78, 0.25) * bit * 0.65;
-  }
+  float s = fract(tt * 0.05 + vMapUv.x * 0.5 - vMapUv.y * 0.28);
+  float band = smoothstep(0.0, 0.04, s) * (1.0 - smoothstep(0.04, 0.12, s));
+  diffuseColor.rgb += band * 0.06 * uSweep * (0.4 + diffuseColor.rgb);
 }
 #endif`);
   };
@@ -170,7 +148,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   // full-face. A live takeover wins. Entering and leaving repaint at most kingBudget boards per 0.08 s tick, nearest first.
   // A wish card gives way only when its board turns (wishOk), so the wish tick never drops every card at once for the king.
   const kingBudget = quality === 'low' ? 1 : 3;
-  const KING_CARD = { chip: '👑 어제의 소원왕', strip: '👑 어제 하트를 가장 많이 받은 소원' };
+  const KING_CARD = { chip: '어제의 소원왕', strip: '어제 하트를 가장 많이 받은 소원' };
   let king = null, kingDirty = false, kingGen = 0;
   function kingFor(b) { return !!king && !b.shared && CLAIM.test(b.slotId) && !String(b.slotId).startsWith('MAIN_') && !airOn() && kingCovers(live(b.row)); } // NINE.overLit
   // b.kingOn: the kingGen whose card this board shows, 0 for none. A board is stale when it differs from kingWant.
@@ -196,20 +174,16 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     const stack = Math.floor(i / 4);
     const x = corner % 2 === 0 ? 14 * k : W - bw - 14 * k;
     const y = (corner < 2 ? 14 * k : H * 0.5) + stack * (bh + 6 * k);
+    // A player's sticker: the quiet dark pill of the board family, hairline edge, white type. No glow.
     g.save();
-    g.fillStyle = 'rgba(10, 6, 24, 0.88)';
-    g.strokeStyle = '#ffcf5a';
-    g.lineWidth = Math.max(2, 3 * k);
-    g.shadowColor = '#ffcf5a';
-    g.shadowBlur = 16 * k;
-    g.beginPath();
-    if (g.roundRect) g.roundRect(x, y, bw, bh, 10 * k);
-    else g.rect(x, y, bw, bh);
+    roundRect(g, x, y, bw, bh, bh / 2);
+    g.fillStyle = 'rgba(10,14,28,0.88)';
     g.fill();
+    g.strokeStyle = 'rgba(255,255,255,0.14)';
+    g.lineWidth = Math.max(1, 2 * k);
     g.stroke();
-    g.shadowBlur = 0;
-    g.fillStyle = '#fff6d0';
-    g.font = `800 ${Math.max(14, Math.round(22 * k))}px ${SANS}`;
+    g.fillStyle = '#f2f4ff';
+    g.font = `700 ${Math.max(14, Math.round(22 * k))}px ${SANS}`;
     g.textAlign = 'center';
     g.textBaseline = 'middle';
     g.fillText(text, x + bw / 2, y + bh / 2);
@@ -420,6 +394,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
       line2: '주인이 다시 켤 수 있어요',
       line3: (floorOf(slotId) || 0).toLocaleString('en-US') + ' 코인부터',
       emoji: '💡',
+      unlit: true,
     } : { ...defaultData(slotId), views: b.row.views, clicks: b.row.clicks, cheers: b.row.cheers, ...(opsLine ? { line2: opsLine } : {}) };
     if (b.shared && !next.holder_id && !opsLine) { b.data = next; b.sig = sigOf(next); return false; }
     if (b.shared) ownCanvas(b);
@@ -452,7 +427,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   function setTicker(text) {
     paintTicker(tickerCanvas, text);
     tickerTex.needsUpdate = true;
-    if (text) liveHead = `${text}      ✦      WISH BOARD  ·  모두의 전광판  ·  `;
+    if (text) liveHead = `${text}      ·      WISH BOARD  ·  모두의 전광판  ·  `;
   }
 
   function repaintAll() {
@@ -460,115 +435,55 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     tickerTex.needsUpdate = true;
   }
 
-  function perimeterPoint(u, x0, y0, x1, y1) {
-    const w = Math.max(1, x1 - x0), h = Math.max(1, y1 - y0);
-    let d = (((u % 1) + 1) % 1) * 2 * (w + h);
-    if (d < w) return { x: x0 + d, y: y0 };
-    d -= w;
-    if (d < h) return { x: x1, y: y0 + d };
-    d -= h;
-    if (d < w) return { x: x1 - d, y: y1 };
-    d -= w;
-    return { x: x0, y: y1 - d };
-  }
-
+  // The nearest boards get a moving info strip over the bottom band of their artwork (the band art.js paints:
+  // max(28, 46k) high). State tag on the left, a slow scroll of the board's numbers and the house line. Nothing else moves.
+  const TAGS = { king: ['소원왕', 'rgba(255,176,32,0.16)', '#ffb020'], wish: ['소원', 'rgba(255,176,32,0.16)', '#ffb020'], live: ['LIVE', '#ff4fa3', '#ffffff'], dark: ['꺼짐', '#1c2440', '#8f96b8'], free: ['빈칸', '#1c2440', '#b9bfdc'] };
   function drawLive(b, t) {
     const canvas = b.canvas;
     const plate = plates.get(canvas) || remember(canvas);
     const g = canvas.getContext('2d');
     const W = canvas.width, H = canvas.height, k = W / 1024;
-    const theme = (b.shared ? THEMES.cyber_navy : THEMES[b.data?.bg_theme]) || THEMES.cyber_navy;
-    const accent = theme.accent || '#3fe6ff';
-    const accent2 = theme.accent2 || '#ff3d9a';
-    const photoOn = b.data?.photo_status === 'approved' && b.data?.holder_id && b.data?.photo_id;
     const wishOn = !!b.wish, kingOn = !!b.kingOn;
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.drawImage(plate, 0, 0);
 
-    const th = Math.max(18, Math.round(46 * k));
+    const th = Math.max(28, Math.round(46 * k));
     const body = H - th;
-    if (!photoOn && !wishOn && !kingOn) {
-      g.save();
-      g.beginPath();
-      g.rect(0, H * 0.58, W, body - H * 0.58);
-      g.clip();
-      g.globalCompositeOperation = 'lighter';
-      const gap = 22 * k;
-      const shift = (t * 42) % gap;
-      g.strokeStyle = rgba(accent, 0.28);
-      g.lineWidth = Math.max(1, k);
-      for (let x = -gap + shift; x < W; x += gap) {
-        g.beginPath();
-        g.moveTo(x, H * 0.58);
-        g.lineTo(x + gap * 0.35, body);
-        g.stroke();
-      }
-      const vShift = (t * 26) % (16 * k);
-      for (let y = H * 0.6 + vShift; y < body; y += 16 * k) {
-        g.beginPath();
-        g.moveTo(0, y);
-        g.lineTo(W, y);
-        g.stroke();
-      }
-      g.strokeStyle = rgba(accent2, 0.7);
-      g.lineWidth = Math.max(1.5, 2.2 * k);
-      g.beginPath();
-      for (let x = 0; x <= W; x += 8 * k) {
-        const y = H * 0.8 + Math.sin(x * 0.012 / Math.max(k, 0.4) + t * 2.3) * 14 * k + Math.sin(x * 0.004 - t * 1.2) * 6 * k;
-        if (x === 0) g.moveTo(x, y);
-        else g.lineTo(x, y);
-      }
-      g.stroke();
-      g.restore();
-    }
-
-    g.fillStyle = '#05060f';
+    g.fillStyle = '#060914';
     g.fillRect(0, body, W, th);
-    g.fillStyle = accent;
-    g.fillRect(0, body, W, Math.max(2, 2 * k));
+    g.fillStyle = 'rgba(255,255,255,0.08)';
+    g.fillRect(0, body, W, Math.max(1, Math.round(k)));
     const onAir = live(b.row);
     const held = !!b.row?.holder_id;
-    g.fillStyle = wishOn || kingOn ? '#9a5a24' : onAir ? '#ff2e4d' : held ? '#5c657a' : '#2a6f9e';
-    g.fillRect(0, body, 108 * k, th);
-    g.fillStyle = '#fff';
-    g.font = `900 ${Math.max(11, Math.round(20 * k))}px ${SANS}`;
+    const [tag, tagBg, tagInk] = TAGS[kingOn ? 'king' : wishOn ? 'wish' : onAir ? 'live' : held ? 'dark' : 'free'];
+    const ph = Math.max(16, th - 16 * k), pw = 92 * k, px = 12 * k;
+    roundRect(g, px, body + (th - ph) / 2, pw, ph, ph / 2);
+    g.fillStyle = tagBg;
+    g.fill();
+    g.fillStyle = tagInk;
+    g.font = `800 ${Math.max(11, Math.round(20 * k))}px ${SANS}`;
     g.textAlign = 'center';
     g.textBaseline = 'middle';
-    g.fillText(kingOn ? '소원왕' : wishOn ? '소원' : onAir ? 'LIVE' : held ? '꺼짐' : '빈칸', 54 * k, body + th / 2);
+    g.fillText(tag, px + pw / 2, body + th / 2 + 1);
+    const sx = px + pw + 14 * k;
     g.save();
     g.beginPath();
-    g.rect(112 * k, body, Math.max(1, W - 112 * k), th);
+    g.rect(sx, body, Math.max(1, W - sx), th);
     g.clip();
-    g.font = `800 ${Math.max(12, Math.round(22 * k))}px ${SANS}`;
+    g.font = `700 ${Math.max(12, Math.round(22 * k))}px ${SANS}`;
     g.textAlign = 'left';
-    g.fillStyle = '#ffcf5a';
+    g.fillStyle = '#b9bfdc';
     const views = Math.max(0, Math.floor(Number(b.data?.views) || 0));
     const cheers = Math.max(0, Math.floor(Number(b.data?.cheers) || 0));
     const clicks = Math.max(0, Math.floor(Number(b.data?.clicks) || 0));
     const notes = Array.isArray(b.data?.notes) ? b.data.notes.map((t) => chars(String(t || ''), 16)).filter(Boolean).slice(-5) : [];
-    const msg = kingOn ? `👑 어제의 소원왕   ·   ${chars(b.kingNick || '', 16)}   ·   ${liveHead}` : wishOn ? `🌠 오늘의 소원   ·   ${b.wishMsg}   ·   ${liveHead}` : `👁 택시 정차 ${views}회   ·   🙌 응원 ${cheers}회   ·   🔗 링크 클릭 ${clicks}회   ·   ${notes.length ? notes.join('   ·   ') + '   ·   ' : ''}${liveHead}`;
+    const msg = kingOn ? `어제의 소원왕   ·   ${chars(b.kingNick || '', 16)}   ·   ${liveHead}` : wishOn ? `오늘의 소원   ·   ${b.wishMsg}   ·   ${liveHead}` : `택시 정차 ${views}회   ·   응원 ${cheers}회   ·   링크 클릭 ${clicks}회   ·   ${notes.length ? notes.join('   ·   ') + '   ·   ' : ''}${liveHead}`;
     const tw = Math.max(8, g.measureText(msg).width);
-    const x0 = 120 * k - ((t * 90) % tw);
-    g.fillText(msg, x0, body + th / 2);
-    g.fillText(msg, x0 + tw, body + th / 2);
+    const x0 = sx + 6 * k - ((t * 90) % tw);
+    g.fillText(msg, x0, body + th / 2 + 1);
+    g.fillText(msg, x0 + tw, body + th / 2 + 1);
     g.restore();
 
-    const inset = 8 * k;
-    const n = 42;
-    const head = (t * 0.42) % 1;
-    for (let i = 0; i < n; i++) {
-      const u = i / n;
-      let d = u - head;
-      if (d < 0) d += 1;
-      const hot = d < 0.14 ? 1 - d / 0.14 : 0.12;
-      const p = perimeterPoint(u, inset, inset, W - inset, body - inset);
-      g.globalAlpha = 0.35 + hot * 0.65;
-      g.fillStyle = hot > 0.72 ? '#fff' : accent;
-      g.beginPath();
-      g.arc(p.x, p.y, (1.8 + hot * 2.8) * k, 0, Math.PI * 2);
-      g.fill();
-    }
-    g.globalAlpha = 1;
     applyOverlay(b);
     b.tex.needsUpdate = true;
   }

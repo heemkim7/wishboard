@@ -43,15 +43,18 @@ export function createAvatars({ scene, urls, models, first, height = 1.8 }) {
   {
     const g = shadowC.getContext('2d');
     const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
-    gr.addColorStop(0, 'rgba(0,0,0,0.62)');
-    gr.addColorStop(0.55, 'rgba(0,0,0,0.3)');
+    // Tighter and darker than before so a character sits on the near-black ground.
+    gr.addColorStop(0, 'rgba(0,0,0,0.78)');
+    gr.addColorStop(0.45, 'rgba(0,0,0,0.46)');
+    gr.addColorStop(0.8, 'rgba(0,0,0,0.1)');
     gr.addColorStop(1, 'rgba(0,0,0,0)');
     g.fillStyle = gr;
     g.fillRect(0, 0, 128, 128);
   }
-  sys.shadowGeo = new THREE.PlaneGeometry(1.5, 1.5).rotateX(-Math.PI / 2);
+  sys.shadowGeo = new THREE.PlaneGeometry(1.25, 1.25).rotateX(-Math.PI / 2);
   sys.shadowMat = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(shadowC), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4 });
-  sys.ringGeo = new THREE.RingGeometry(0.62, 0.7, 48).rotateX(-Math.PI / 2);
+  // Foot ring: a thin line (4 cm) in the player's colour.
+  sys.ringGeo = new THREE.RingGeometry(0.645, 0.685, 48).rotateX(-Math.PI / 2);
   const bubbles = new Map();
   sys.bubbleTex = (glyph) => {
     let t = bubbles.get(glyph);
