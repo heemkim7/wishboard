@@ -931,6 +931,7 @@ function applyWishWorld(src) {
 function mergeWishes(r, id) {
   const w = state.wish;
   w.known = true;
+  w.busy = r.busy === true; // budget hard: a copy without my wish; the sheet offers no form or hearts
   w.at = Date.now();
   w.day = String(r.day || '');
   w.top = wishRows(r.top, WISH.topMax);

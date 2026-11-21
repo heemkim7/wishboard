@@ -4,7 +4,7 @@ import { paintBillboard, paintNeonSign, THEMES, makeCanvas, chars, fontsReady, t
 import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, LANDMARKS } from './ts3d/layout.js?v=202611210015';
 import { BALANCE, PAY, askBid, auctionClosed, buildingOf, chainBoost, floorOf, nextChainFace, slotName } from './balance.js';
 import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, tutorialTap, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611210015';
-import { WISH, cleanWish, wishRejected, wishShareText } from './wish.js';
+import { WISH, WISH_ERR, cleanWish, wishRejected, wishShareText } from './wish.js';
 import { backFields, returnGap } from './growth.js?v=202611210015';
 import { nineSlot, nowMs } from './live.js';
 import { cardUrl, vipShareLink, composeWishShot, kakaoFeed, kakaoKey, kakaoSend, loadKakao } from './share.js?v=202611210015';
@@ -1773,8 +1773,9 @@ export function createUI(root, hooks) {
       yesterday: (Array.isArray(n.yesterday) ? n.yesterday : []).filter((y) => y && y.txt).map((y) => ({ ...y })),
       focus: n.focus ? { ...n.focus } : null,
       miss: String(n.miss || ''),
+      busy: n.busy === true,
     };
-    wishDot.hidden = !(wishView.known && !wishView.mine);
+    wishDot.hidden = !(wishView.known && !wishView.mine && !wishView.busy);
     renderGoal();
     wishRepaint?.();
   }
@@ -1867,7 +1868,7 @@ export function createUI(root, hooks) {
         const st = heartOf(f);
         const btn = thanks && !wishView.mine
           ? h('button', { class: 'btn gold wish-go', type: 'button', text: '나도 소원 걸기', onclick: () => focusInput() })
-          : h('button', { class: 'btn gold wish-go', type: 'button', text: thanks ? '♥ 보냈어요' : '♥ 하트 보내기', disabled: !st.ok || pending.has(f.id), onclick: async () => {
+          : h('button', { class: 'btn gold wish-go', type: 'button', text: thanks ? '♥ 보냈어요' : '♥ 하트 보내기', disabled: !st.ok || pending.has(f.id) || wishView.busy, onclick: async () => {
             if (await sendHeart(f.id)) { thanks = '하트를 보냈어요. 고마워요!'; paintFocus(); }
           } });
         fill(focusBox,
@@ -1913,7 +1914,7 @@ export function createUI(root, hooks) {
       function paintMine(force) {
         const m = wishView.mine;
         // The count of other people's wishes is not in the signature: it only changes the rank line, in place.
-        const sig = !wishView.known && !settled ? 'wait' : editing ? 'edit' : m ? [m.id, m.txt, Number(m.hearts) > 0 ? 1 : 0, m.hidden ? 1 : 0].join('|') : 'none';
+        const sig = !wishView.known && !settled ? 'wait' : wishView.busy ? 'busy' : editing ? 'edit' : m ? [m.id, m.txt, Number(m.hearts) > 0 ? 1 : 0, m.hidden ? 1 : 0].join('|') : 'none';
         if (m && sig !== 'wait' && wishView.known) rememberSeen(m);
         if (!force && sig === mineSig) {
           if (m && rankEl) { const line = rankLine(m); rankEl.textContent = line; rankEl.hidden = !line; }
@@ -1923,6 +1924,7 @@ export function createUI(root, hooks) {
         mineSig = sig;
         input = null; counter = null; errEl = null; sendBtn = null; shareBox = null; rankEl = null; heartsEl = null;
         if (sig === 'wait') { fill(mineBox, h('p', { class: 'note', text: '내 소원을 확인하는 중…' })); return; }
+        if (sig === 'busy') { fill(mineBox, h('p', { class: 'note wish-busy', text: WISH_ERR.busy })); return; } // the server is saving its budget: no form
         if (!m || editing) {
           input = h('input', { class: 'input wish-in', maxLength: 64, placeholder: '예: 올해는 꼭 합격', 'aria-label': '오늘의 소원 한 줄', autocomplete: 'off', enterkeyhint: 'done' });
           if (editing && m) input.value = m.txt;
@@ -2013,7 +2015,7 @@ export function createUI(root, hooks) {
         const own = isOwn(w);
         const st = heartOf(w);
         const who = w.nick || '누군가';
-        const busy = pending.has(w.id);
+        const busy = pending.has(w.id) || wishView.busy;
         const heart = h('button', { class: 'wish-heart', type: 'button', text: st.short, disabled: !st.ok || busy, title: st.why || '하트 보내기', 'aria-label': st.ok ? `${who}님의 소원에 하트 보내기` : `${who}님의 소원 · ${st.why || st.short}`, onclick: () => sendHeart(w.id) });
         const rep = own ? null : h('button', { class: 'wish-report' + (armed === w.id ? ' arm' : ''), type: 'button', text: armed === w.id ? '한 번 더 누르면 신고' : '신고', onclick: () => armReport(w.id) });
         return h('div', { class: 'wish-row' + (own ? ' mine' : '') },
@@ -2024,7 +2026,7 @@ export function createUI(root, hooks) {
       }
       function paintList() {
         for (const [b, on] of [[tabTop, tab === 'top'], [tabNew, tab === 'recent']]) { b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
-        leftEl.hidden = !wishView.known;
+        leftEl.hidden = !wishView.known || wishView.busy;
         const left = leftNow();
         leftEl.textContent = !wishView.known ? '' : left > 0 ? `오늘 줄 수 있는 하트 ${left}개` : '오늘 하트를 다 썼어요. 내일 다시 5개가 생겨요.';
         if (!wishView.known) {

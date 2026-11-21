@@ -892,7 +892,7 @@ describe('times square plaza', { concurrency: false }, () => {
 
   it('S3: the fever gauge moves only for fares the server accepted', async () => {
     const origFetch = globalThis.fetch, origNow = Date.now;
-    let clock = NOON;
+    let clock = NOON - 400000; // the 20 fares below straddle an hour (10 + 10): PAY.fare.perHour pays at most 15 in one
     Date.now = () => clock;
     globalThis.fetch = okFetch;
     try {

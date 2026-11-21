@@ -22,6 +22,33 @@ let BUD = FREE;
 const budget = env => { const p = env && env.PLAN === 'paid' ? PAID : FREE; BUD = { DAY: +(env && env.BUDGET_REQ_DAY) || p.DAY, GBS: +(env && env.BUDGET_GBS_DAY) || p.GBS }; return BUD; };
 const lvlOf = (n, g = 0) => { const f = Math.max(n / BUD.DAY, g / BUD.GBS); return f >= HARD ? 2 : f >= LEAN ? 1 : 0; };
 const today = () => new Date().toISOString().slice(0, 10);
+// Budget tally: DO calls the Worker makes for HTTP routes, summed per isolate and added to 'day' at most once per TALLY_MS (a /rt/gate read that comes
+// first carries it too). Not counted here: Meter.add (it counts its own call) and the /rt/ws upgrade (the Room counts the connection). A tail lost with
+// the isolate is accepted; a failed add is not retried, so nothing is counted twice. LVL is the level the last add answered, at most LVL_TTL old.
+const TALLY_MS = 25000, LVL_TTL = 60000, FLUSH_DEAD = 10000, CTX = Symbol('ctx');
+let TALLY = { n: 0, at: 0, p: null, pAt: 0 }, LVL = { l: 0, at: 0 };
+const stale = (at, ms, now = Date.now()) => now - at >= ms || now < at;
+const upgrade = r => /^websocket$/i.test(String(r?.headers?.get?.('Upgrade') || ''));
+// Every function handed out runs on the real stub (never with the Proxy as receiver). Not counted: add (counts itself), the /rt/ws upgrade, symbol keys.
+// Non-functions and then pass through untouched.
+const tallyStub = s => new Proxy(s, { get(t, k) { const v = Reflect.get(t, k); if (typeof v !== 'function' || k === 'then') return v;
+  return (...a) => { if (typeof k === 'string' && k !== 'add' && !(k === 'fetch' && upgrade(a[0]))) TALLY.n++; return Reflect.apply(v, t, a); }; } });
+const tallyNs = ns => ns && new Proxy(ns, { get(t, k) { const v = Reflect.get(t, k); if (typeof v !== 'function') return v;
+  return k === 'get' || k === 'getByName' ? (...a) => tallyStub(Reflect.apply(v, t, a)) : k === 'jurisdiction' ? (...a) => tallyNs(Reflect.apply(v, t, a)) : (...a) => Reflect.apply(v, t, a); } });
+// One add carrying the pending count; it sets LVL. A throw drops the taken count (never re-added) and keeps the old level until LVL_TTL (fail open).
+async function tallyAdd(env) { const n = TALLY.n; TALLY.n = 0; TALLY.at = Date.now();
+  try { const r = await env.METER.get(env.METER.idFromName('day')).add(n); LVL = { l: Number(r?.lvl) || 0, at: Date.now() }; return r; } catch (e) { LVL.at = Date.now(); throw e; } }
+// Starts an add in this request's waitUntil, or null while another request's add is in flight. One older than FLUSH_DEAD (its request may have been
+// cancelled) is forgotten, so a lost promise never blocks later requests.
+function tallyFlush(env, ctx) { const now = Date.now(); if (TALLY.p && !stale(TALLY.pAt, FLUSH_DEAD, now)) return null;
+  const p = TALLY.p = tallyAdd(env).catch(() => null).finally(() => { if (TALLY.p === p) TALLY.p = null; }); TALLY.pAt = now; try { ctx?.waitUntil?.(p); } catch { } return p; }
+// The env every HTTP route sees: inherits every binding from the runtime env (no Proxy over it), with own counting METER / ROOM and env[CTX] = this
+// request's ctx and the add it started. Durable Objects and scheduled keep the raw env. The count of earlier requests goes out once TALLY_MS has passed.
+function tallied(env, ctx) { const me = { ctx, own: TALLY.n > 0 && stale(TALLY.at, TALLY_MS) ? tallyFlush(env, ctx) : null };
+  return Object.create(env, { METER: { value: tallyNs(env.METER), enumerable: true }, ROOM: { value: tallyNs(env.ROOM), enumerable: true }, [CTX]: { value: me } }); }
+// The level the wish, share and push routes obey, without a DO call per request: once LVL_TTL old, this request refreshes it with its own add
+// (carrying the tally). It never waits on another request's add: while one is in flight the current level stands.
+async function lvlNow(env) { if (stale(LVL.at, LVL_TTL)) { const me = env[CTX], p = tallyFlush(env, me?.ctx) || me?.own; if (p) await p; } return LVL.l; }
 const SUPA = 'https://yxddhpacuyaffaoutxjn.supabase.co', ANON = 'sb_publishable_Vd-7c6e2f2s3G1d5Jbx9vw_0UCuHm-B'; // public
 // Supabase JWT check (guest = anonymous sign-in tokens too). Public JWKS only: no secret needed or stored.
 let JW = { at: 0, keys: new Map() };
@@ -662,10 +689,13 @@ export class Room extends DurableObject {
     if (now - agGet(q, a.k, 'fareAt', '') < PAY.fare.gapMs - GAP_EARLY) { this.tx(w, { t: 'PAY', kind: 'fare', amount: 0, why: 'soon' }); return; }
     const riders = n;
     agSet(q, a.k, 'pickN', '', 0); agSet(q, a.k, 'fareAt', '', now);
+    const hb = String(Math.floor(now / 3600000)), hn = agGet(q, a.k, 'hr:fare', hb); // PAY.fare.perHour paid fares per clock hour, the repeatPay bucket
+    if (hn >= PAY.fare.perHour) { this.tx(w, { t: 'PAY', kind: 'fare', amount: 0, why: 'cap' }); return; }
     const state = this.payState(a);
     state.revenge = this.fareMult(a.k) > 1;
     const amount = farePay(riders, state);
     if (amount < 1) { this.tx(w, { t: 'PAY', kind: 'fare', amount: 0, why: 'cap' }); return; }
+    agPut(q, a.k, 'hr:fare', hb, hn + 1);
     this.notePlay(a, 40, amount);
     this.grantFinal(a, amount, '', 'fare', 'fare');
     const gauge = this.bumpFeverCount(a.k);
@@ -1404,7 +1434,7 @@ async function readWorld(env) {
     fetch(SUPA + '/rest/v1/wallets?select=actor_id, nickname, spent, linked&spent=gt.0&order=spent.desc&limit=20', { headers: h }),
     Promise.resolve().then(() => acct(env).tallyOf(kstDay())).catch(() => null),
     supabaseRpc('plaza_live', { p_key: env.FLUSH_KEY || '' }).catch(() => null),
-    Promise.resolve().then(() => wishM(env).wWorld(kstDay())).catch(() => null),
+    lvlNow(env).then(l => l >= 2 ? (WWLAST.day === kstDay() ? WWLAST.v : null) : wishM(env).wWorld(kstDay()).then(v => { WWLAST = { day: kstDay(), v }; return v; })).catch(() => null), // budget hard: the last copy, no wish-DO call
   ]);
   if (!bs.ok || !ps.ok) return { err: 'upstream ' + (bs.ok ? ps.status : bs.status) };
   const [billboards, plots, ranks] = await Promise.all([bs.json(), ps.json(), rs.ok ? rs.json() : null]);
@@ -1479,6 +1509,7 @@ const wishM = env => env.METER.get(env.METER.idFromName('wish'));
 const WISH_ID = /^[0-9a-z]{10}$/, WISH_PATHS = new Set(['/rt/wishes', '/rt/wish', '/rt/wish/heart', '/rt/wish/report', '/rt/admin/wish', '/rt/admin/wishes']);
 const WISHC = { at: 0, day: '', v: null }; // anonymous list, 10 s per isolate; cleared on post / hide
 const WONE = new Map(); // single wish by id (share page, ?id=), 10 s per isolate, misses too
+let WWLAST = { day: '', v: null }; // the last wWorld answer, served instead of the wish DO while the budget is hard
 let WSET = { day: '', at: 0, more: false }; // settlement: once per isolate per day, again every 60 s after a clear refusal
 let WFULL = 0; // last full world refill caused by a wish, so a burst of wishes refills at most once per 10 s per isolate
 let WLIVE = { at: 0, day: '', v: null }; // rooms with seated accounts (Meter 'acct' liveRooms), 30 s per isolate, for the fresh-wish fan-out
@@ -1496,6 +1527,7 @@ async function wishIp(env, req) {
 // With req, a cache miss first passes EVENT_RL (random ids must not reach the instance unthrottled): undefined = refused, null = no such wish.
 async function wishOne(env, id, req) {
   const hit = WONE.get(id); if (hit && Date.now() - hit.at < 10000) return hit.v;
+  if (await lvlNow(env) >= 2) return hit ? hit.v : null; // budget hard: the cached copy of any age, a miss reads as no such wish (no wish-DO call)
   if (req && !(await rateOk(env.EVENT_RL, req))) return undefined;
   const v = await wishM(env).wOne(id); if (WONE.size > 500) WONE.clear(); WONE.set(id, { at: Date.now(), v }); return v;
 }
@@ -1538,9 +1570,12 @@ async function wishPage(req, env, u) {
   return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=30' } });
 }
 async function wishApi(req, env, ctx, u) {
-  const day = kstDay(), M = wishM(env);
+  const day = kstDay(), M = wishM(env), lv = u.pathname.startsWith('/rt/admin/') ? 0 : await lvlNow(env);
   if (u.pathname === '/rt/wishes') {
     if (req.method !== 'GET') return J({ err: 'get' }, 405);
+    if (lv >= 2) { const id = String(u.searchParams.get('id') || ''), f = WONE.get(id); // budget hard: copies only, no wish-DO call and no settlement (the next request after the drop settles)
+      const v = WISHC.day === day && WISHC.v ? WISHC.v : { day, count: 0, top: [], recent: [], mine: null, left: 0, given: [], yesterday: [] };
+      return J({ ...v, ...(f?.v ? { focus: f.v } : {}), busy: true }); }
     wishSettle(env, ctx, day);
     const tok = tokenOf(req), actor = tok ? await resolveActor(env, tok) : null, id = String(u.searchParams.get('id') || '');
     if (actor && !(await rateOk(env.EVENT_RL, req))) return wishNo('rate', 429);
@@ -1565,6 +1600,7 @@ async function wishApi(req, env, ctx, u) {
       const r = await M.wHide(id, b.hide); if (r.locked) return J({ ok: false, code: 'locked', error: '되살릴 수 없는 소원이에요' }, 409);
       if (r.ok) wishFresh(env, ctx, true, id); return J({ ok: !!r.ok }, r.ok ? 200 : 404);
     }
+    if (lv >= 2) return wishNo('busy', 503);
     if (!(await rateOk(env.EVENT_RL, req))) return wishNo('rate', 429);
     const actor = await resolveActor(env, tokenOf(req)); if (!actor) return J({ err: 'auth', code: 'auth', error: WISH_ERR.auth }, 401);
     const b = await readJson(req); if (!b) return J({ err: 'json' }, 400);
@@ -1574,14 +1610,14 @@ async function wishApi(req, env, ctx, u) {
       const nick = cleanNick(b.nick ?? b.nickname ?? '') || '네온손님'; if (wishNickFault(nick)) return wishNo('nick');
       const r = await M.wPost(actor.id, nick, cleanWish(b.text), day, Date.now(), await wishIp(env, req)); if (!r.ok) return wishNo(r.error || 'already', 409);
       wishFresh(env, ctx, !!r.fresh, r.wish.id); // an edit (fresh false) reaches boards with the next world read; no refill, no fan-out
-      const topic = typeof b.topic === 'string' ? b.topic : '';
+      const topic = typeof b.topic === 'string' ? b.topic : ''; // at budget lean (lv 1) the fresh wish goes to the poster's own room only
       if (r.fresh && PLAZA_TOPICS.includes(topic)) { const body = JSON.stringify({ t: 'WISH', w: { id: r.wish.id, nick: r.wish.nick, txt: r.wish.txt, hearts: r.wish.hearts } });
-        ctx.waitUntil(wishRooms(env, topic).then(names => Promise.all(names.map(name => env.ROOM.get(env.ROOM.idFromName(name)).fetch(new Request('https://room.internal/wish', { method: 'POST', headers: { 'content-type': 'application/json' }, body })).catch(() => null)))).catch(() => null)); }
+        ctx.waitUntil((lv >= 1 ? Promise.resolve([topic]) : wishRooms(env, topic)).then(names => Promise.all(names.map(name => env.ROOM.get(env.ROOM.idFromName(name)).fetch(new Request('https://room.internal/wish', { method: 'POST', headers: { 'content-type': 'application/json' }, body })).catch(() => null)))).catch(() => null)); }
       return J({ ok: true, wish: r.wish, fresh: !!r.fresh });
     }
     const id = String(b.id || ''); if (!WISH_ID.test(id)) return wishNo('gone');
     if (u.pathname === '/rt/wish/heart') { const r = await M.wHeart(actor.id, id, await wishIp(env, req), day); if (!r.ok) return wishNo(r.error);
-      if (r.au && WISH_PUSH_AT.includes(r.hearts)) pushNow(env, ctx, r.au, { kind: 'wish', n: r.hearts, wid: id }); // r.au stays here: the response lists its fields
+      if (lv < 1 && r.au && WISH_PUSH_AT.includes(r.hearts)) pushNow(env, ctx, r.au, { kind: 'wish', n: r.hearts, wid: id }); // r.au stays here: the response lists its fields
       return J({ ok: true, hearts: r.hearts, left: r.left }); }
     if (u.pathname === '/rt/wish/report') { const r = await M.wReport(actor.id, id, await wishIp(env, req)); if (!r.ok) return wishNo(r.error); if (r.hidden) wishFresh(env, ctx, true, id); return J({ ok: true, hidden: !!r.hidden }); }
     return J({ err: 'path' }, 404);
@@ -2050,7 +2086,7 @@ async function photos(req, env, ctx, u) {
     const today = kstDay(), n = Math.min(90, Math.max(1, Math.floor(Number(u.searchParams.get('days'))) || 14));
     try {
       const days = await env.METER.get(env.METER.idFromName('ev')).evStats(today, n);
-      return J({ ok: true, today, days: days.map(d => ({ ...d, ...statsFromCounts(d.events) })) });
+      return J({ ok: true, today, days: days.map(d => ({ ...d, ...statsFromCounts(d.events) })), tally: { pending: TALLY.n, flushAgeMs: TALLY.at ? Date.now() - TALLY.at : -1, lvl: LVL.l } }); // this isolate's budget tally, numbers only
     } catch { return J({ err: 'meter' }, 503); }
   }
   if (u.pathname === '/rt/admin/reports' && req.method === 'GET') {
@@ -2325,7 +2361,7 @@ async function snapFor(env, k, r, owner) {
 }
 async function snapCtx(env, id) { const hit = memoHit(SNC, id); if (hit) return hit.v; return memo(SNC, id, await snapM(env).snapCtx(id)); }
 // '' when the wish is missing, hidden or the instance fails.
-async function wishAuthor(env, wid) { const hit = memoHit(WAU, wid); if (hit) return hit.v; let a = ''; try { a = String(await wishM(env).wAuthor(wid) || ''); } catch { return ''; } return memo(WAU, wid, a); }
+async function wishAuthor(env, wid) { const hit = memoHit(WAU, wid); if (hit) return hit.v; if (await lvlNow(env) >= 2) return ''; /* hard: no wish-DO call, the page uses /og.jpg */ let a = ''; try { a = String(await wishM(env).wAuthor(wid) || ''); } catch { return ''; } return memo(WAU, wid, a); }
 // The holder and first line of a board: the isolate's world copy while it is under a minute old, else one row from Supabase.
 // fresh: skip the isolate copy (an upload whose cached holder is someone else re-reads, the copy may predate the claim).
 async function snapBoard(slot, fresh = false) {
@@ -2368,8 +2404,9 @@ async function snapPage(req, env, u) {
 }
 export default {
   async fetch(req, env, ctx) {
-    const u = new URL(req.url); budget(env);
+    const u = new URL(req.url); budget(env); env = tallied(env, ctx);
     if (u.pathname === '/rt/snap' && req.method === 'POST') {
+      if (await lvlNow(env) >= 2) return wishNo('busy', 503);
       const actor = await resolveActor(env, tokenOf(req)); if (!actor) return J({ err: 'auth' }, 401);
       const buf = await req.arrayBuffer();
       if (buf.byteLength < 800 || buf.byteLength > 900000) return J({ err: 'size' }, 400);
@@ -2421,7 +2458,7 @@ export default {
         return J({ live: Number(s?.live) || 0 });
       } catch { return J({ live: 0 }); }
     }
-    if (u.pathname === '/rt/gate') { try { const now = Date.now(); if (!GATE.r || now - GATE.at > GATE_TTL) { GATE = { at: now, r: await env.METER.get(env.METER.idFromName('day')).add(0) }; }
+    if (u.pathname === '/rt/gate') { try { const now = Date.now(); if (!GATE.r || now - GATE.at > GATE_TTL) { GATE = { at: now, r: await tallyAdd(env) }; }
         const r = GATE.r, l = r.lvl, used = Math.round(r.n), gbs = Math.round(r.g);
         return J(l >= 2 ? { full: true, used, gbs } : { ok: true, cap: CAP, used, gbs, lean: l >= 1 }); } catch (e) { return J({ full: true, err: 1 }, 503); } }
     if (u.pathname === '/rt/sponsor' && req.method === 'GET') return J({ url: extUrl(env.SPONSOR_INQUIRY_URL) || '' });
