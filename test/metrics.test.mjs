@@ -262,9 +262,13 @@ describe('G2 wiring in the client sources', () => {
     assert.match(ui, /\(await sendKakao\(words\)\) \|\| \(await sendLink\(/);
     assert.match(ui, /viaKakao && \(await sendKakao\(\{ kind: 'wish'[^)]*\)+ \|\| \(await sendLink\(/);
   });
-  it('leaves the GA snippet as the placeholder and puts no Kakao key in any file', () => {
+  it('keeps the GA id in one constant, still switched off by the placeholder, and puts no Kakao key in any file', () => {
     const idx = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-    assert.match(idx, /const GA_MEASUREMENT_ID = 'G-XXXXXXXXXX';/);
+    // One real GA4 id or the placeholder; the tag is added to the page only for a real id.
+    assert.equal((idx.match(/GA_MEASUREMENT_ID = '/g) || []).length, 1);
+    assert.match(idx, /const GA_MEASUREMENT_ID = 'G-[A-Z0-9]{8,12}';/);
+    assert.match(idx, /if \(GA_MEASUREMENT_ID && GA_MEASUREMENT_ID !== 'G-XXXXXXXXXX'\) \{/);
+    assert.equal((idx.match(/googletagmanager\.com/g) || []).length, 1);
     const worker = readFileSync(new URL('../worker.js', import.meta.url), 'utf8');
     assert.match(worker, /env\.KAKAO_JS_KEY/);
     assert.equal(/Kakao\.init\(['"]/.test(ui + readFileSync(new URL('../share.js', import.meta.url), 'utf8')), false);
