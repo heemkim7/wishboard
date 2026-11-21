@@ -511,16 +511,21 @@ describe('service worker notifications', () => {
     await sw.fire('push', { data: data('not json') });
     assert.deepEqual(sw.shown.map((n) => [n.title, n.body, n.data.url]), [['모두의 전광판', '하나', '/'], ['제목', '둘', '/?wish=abcde12345'], ['모두의 전광판', 'not json', '/']]);
   });
-  it('opens the payload url on click, same-origin only, focusing an open tab', async () => {
+  // An open game tab is told where to go (postMessage) and focused. It is never navigated: that would reboot the game.
+  it('opens the payload url on click, same-origin only; an open game tab gets a message and focus, not a reload', async () => {
     const sw = loadSw();
     await sw.fire('notificationclick', { notification: { data: { url: '/?focus=STREET_5' }, close() {} } });
     await sw.fire('notificationclick', { notification: { data: { url: 'https://evil.example/x' }, close() {} } });
     await sw.fire('notificationclick', { notification: { close() {} } });
     assert.deepEqual(sw.opened, ['/?focus=STREET_5', '/', '/']);
-    const nav = []; let focused = 0;
-    sw.self.clients.list = [{ url: 'https://sq.example/', async navigate(u) { nav.push(u); return this; }, async focus() { focused++; return this; } }];
+    const nav = [], posted = []; let focused = 0;
+    sw.self.clients.list = [{ url: 'https://sq.example/', async navigate(u) { nav.push(u); return this; }, postMessage(m) { posted.push(m); }, async focus() { focused++; return this; } }];
     await sw.fire('notificationclick', { notification: { data: { url: '/?wish=abcde12345' }, close() {} } });
-    assert.deepEqual(nav, ['/?wish=abcde12345']); assert.equal(focused, 1); assert.equal(sw.opened.length, 3);
+    assert.deepEqual(posted.map((m) => [m.t, m.url]), [['push', '/?wish=abcde12345']]); assert.deepEqual(nav, []); assert.equal(focused, 1); assert.equal(sw.opened.length, 3);
+    // A tab that cannot be reached falls back to a new window.
+    sw.self.clients.list = [{ url: 'https://sq.example/', postMessage() { throw new Error('gone'); }, async focus() { focused++; return this; } }];
+    await sw.fire('notificationclick', { notification: { data: { url: '/?focus=STREET_5' }, close() {} } });
+    assert.equal(focused, 1); assert.deepEqual(sw.opened.at(-1), '/?focus=STREET_5');
   });
   it('protocol-relative, backslash, javascript: and external urls all open /', async () => {
     const sw = loadSw(), bad = ['//evil.com', '/\\evil.com', 'javascript:alert(1)', 'https://evil.example/x', '\\\\evil.com/x'];
@@ -531,11 +536,11 @@ describe('service worker notifications', () => {
   });
   it('never takes over an admin or other non-game tab', async () => {
     const sw = loadSw(), nav = [];
-    sw.self.clients.list = [{ url: 'https://sq.example/admin.html', async navigate(u) { nav.push(u); return this; }, async focus() { return this; } },
-      { url: 'https://sq.example/rt/s/' + 'a'.repeat(32), async navigate(u) { nav.push(u); return this; }, async focus() { return this; } }];
+    const tab = (url) => ({ url, async navigate(u) { nav.push(u); return this; }, postMessage(m) { nav.push(m.url); }, async focus() { return this; } });
+    sw.self.clients.list = [tab('https://sq.example/admin.html'), tab('https://sq.example/rt/s/' + 'a'.repeat(32))];
     await sw.fire('notificationclick', { notification: { data: { url: '/?focus=STREET_5' }, close() {} } });
     assert.deepEqual(nav, []); assert.deepEqual(sw.opened, ['/?focus=STREET_5']);
-    sw.self.clients.list.push({ url: 'https://sq.example/index.html?q=low', async navigate(u) { nav.push(u); return this; }, async focus() { return this; } });
+    sw.self.clients.list.push(tab('https://sq.example/index.html?q=low'));
     await sw.fire('notificationclick', { notification: { data: { url: '/?wish=abcde12345' }, close() {} } });
     assert.deepEqual(nav, ['/?wish=abcde12345']); assert.equal(sw.opened.length, 1);
   });

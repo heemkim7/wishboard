@@ -185,10 +185,10 @@ visualViewport?.addEventListener('scroll', fitVV);
   .wallet .sub-fixed, .wallet .sub-live { display: inline-flex; gap: 6px; align-items: center; min-width: 0; }
   .wallet .sub-fixed { flex: none; }
   .wallet .sub-live { margin-left: auto; }
-  .nextgoal { flex: 1 0 100%; font: inherit; font-size: 12px; font-weight: 700; line-height: 1.35; color: var(--info); background: none; border: 0; padding: 0; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+  .nextgoal { position: relative; flex: 1 0 100%; font: inherit; font-size: 12px; font-weight: 700; line-height: 1.35; color: var(--info); background: none; border: 0; padding: 0; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
   .nextline { margin: 0; padding: 8px 10px; border-radius: 14px; background: var(--surface-hud); border: 1px solid var(--line); color: var(--text); font: 700 13px/1.35 var(--font); pointer-events: auto; }
   .nextline .chip { pointer-events: auto; }
-  .wallet .protect { font: inherit; font-size: 12px; font-weight: 700; color: var(--muted); white-space: nowrap; background: none; border: 0; padding: 0; cursor: pointer; }
+  .wallet .protect { position: relative; font: inherit; font-size: 12px; font-weight: 700; color: var(--muted); white-space: nowrap; background: none; border: 0; padding: 0; cursor: pointer; }
   .chip { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; font-size: 12px; font-weight: 700; padding: 0 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2); }
   .chip.gold { color: var(--accent); background: var(--accent-weak); }
   .attend-week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin: 4px 0 12px; }
@@ -287,7 +287,7 @@ visualViewport?.addEventListener('scroll', fitVV);
   .legend .osm { color: var(--muted); font-size: 12px; text-decoration: none; }
   .quick { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 10px; scrollbar-width: none; }
   .quick::-webkit-scrollbar { display: none; }
-  .quick button { flex: none; height: 32px; padding: 0 12px; border-radius: 999px; font-size: 12px; font-weight: 700; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); white-space: nowrap; }
+  .quick button { position: relative; flex: none; height: 32px; padding: 0 12px; border-radius: 999px; font-size: 12px; font-weight: 700; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); white-space: nowrap; }
   .quick button:hover { border-color: var(--line-strong); color: var(--text); }
   .place { margin: 4px 0 12px; padding: 12px 14px; border-radius: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; background: var(--surface-2); border: 1px solid var(--line); }
   .place .where { flex: 1 1 260px; min-width: 0; }
@@ -305,7 +305,7 @@ visualViewport?.addEventListener('scroll', fitVV);
   .range { flex: 1; -webkit-appearance: none; appearance: none; height: 6px; border-radius: 999px; background: var(--line-strong); outline: none; }
   .range::-webkit-slider-thumb { -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%; background: var(--text); cursor: pointer; }
   .range::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: var(--text); border: 0; cursor: pointer; }
-  .linkbtn { color: var(--info); font-weight: 700; text-decoration: underline; }
+  .linkbtn { position: relative; color: var(--info); font-weight: 700; text-decoration: underline; }
 
   /* ---------- news ---------- */
   .news { position: absolute; top: calc(68px + var(--safe-t)); left: 50%; height: 46px; width: min(440px, calc(100vw - 780px)); min-width: 0; transform: translate(-50%, calc(-100% - 30px)); transition: transform .55s cubic-bezier(.16,1,.3,1), opacity .3s; opacity: 0; display: flex; align-items: stretch; overflow: hidden; pointer-events: none; }
@@ -393,10 +393,65 @@ visualViewport?.addEventListener('scroll', fitVV);
   .toast { padding: 10px 16px; font-size: 13px; font-weight: 700; color: var(--text); background: var(--surface-2); border-color: var(--line); border-radius: 10px; box-shadow: var(--shadow-pop); animation: toastIn .35s cubic-bezier(.2,1.2,.4,1); width: max-content; max-width: min(440px, calc(100vw - 24px)); height: auto; white-space: normal; text-align: center; line-height: 1.4; }
   /* The kind is a 6px dot before the text: --info by default, --ok, --danger. */
   .toast::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 8px; border-radius: 50%; background: var(--info); vertical-align: 2px; }
-  .toast.hit { pointer-events: auto; cursor: pointer; }
+  .toast.hit { pointer-events: auto; cursor: pointer; border-color: var(--line-strong); }
   .toast.err::before { background: var(--danger); }
   .toast.ok::before { background: var(--ok); }
   .toast.out { animation: toastOut .3s ease forwards; }
+  /* A tappable toast ends in a chevron. */
+  .toast .go { display: inline-block; margin-left: 6px; font-style: normal; color: var(--text-2); }
+  .toast .go svg.ico { width: 15px; height: 15px; vertical-align: -3px; }
+  /* While a sheet or the proof bar is up the toasts sit at the top: clear of the sheet's buttons and of the phone keyboard. */
+  body.has-sheet .toasts, body.has-proof .toasts { top: calc(var(--app-top, 0px) + 10px + var(--safe-t)); bottom: auto !important; flex-direction: column; }
+  /* Sheets stack: a parent under its child keeps its layout (inputs, scroll) and is only hidden. */
+  .modal.under { visibility: hidden; }
+  .sheet:focus { outline: none; }
+  /* Asked once when a backdrop tap would throw away typing. */
+  .sheet-keep { position: sticky; bottom: 0; z-index: 3; flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 18px; font-size: 13px; font-weight: 700; color: var(--text); background: var(--surface-2); border-top: 1px solid var(--line-strong); }
+  .sheet-keep span { flex: 1 1 160px; }
+  .sheet-keep .btn { height: 44px; }
+  /* Proof bar while a 5 s clip records: only the countdown and its cancel. */
+  .proof .rec-row { flex: 1 1 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 15px; color: var(--text); }
+  .proof.rec > p, .proof.rec > .btn, .proof.rec > .manual-copy { display: none; }
+  /* The lottery strip clips its text in a span, so the strip itself can carry the hit area below. */
+  .stay-ticket .t { display: block; overflow: hidden; text-overflow: ellipsis; }
+  /* Touch: small controls keep their look and get a larger hit area through ::after (44px tall where the neighbours leave room;
+     rows that sit against each other only grow into the gap between them, so no control takes another one's taps). */
+  html.touch .x::after, html.touch .guestwarn .btn::after, html.touch .tools:not(.open) .btn::after, html.touch .rank .mini::after,
+  html.touch .quick button::after, html.touch .sheet .more .emo-row button::after, html.touch .sheet .more .swatch::after,
+  html.touch .stay-ticket::after, html.touch .reacts button::after, html.touch .wallet .chip::after,
+  html.touch .wallet .protect::after, html.touch .nextgoal:not(.task)::after, html.touch .linkbtn::after { content: ""; position: absolute; inset: -6px 0; }
+  html.touch .x::after { inset: -3px; }
+  html.touch .guestwarn .btn::after { inset: -8px -10px -8px -6px; }
+  html.touch .tools:not(.open) .btn::after { inset: -4px 0; }
+  html.touch .rank .mini::after { inset: -6px -3px; }
+  html.touch .sheet .more .emo-row button::after { inset: -7px -2px; }
+  html.touch .sheet .more .swatch::after { inset: -9px -4px; }
+  html.touch .stay-ticket::after { inset: -8px 0; }
+  html.touch .reacts button::after { inset: -2px; }
+  html.touch .wallet .chip::after, html.touch .wallet .protect::after, html.touch .nextgoal:not(.task)::after { inset: -6px 0 -3px; }
+  html.touch .wallet .sub-fixed .chip::after { inset: -14px 0 -3px; }
+  html.touch .linkbtn::after { inset: -14px -8px; }
+  /* Scrolling rows clip what leaves them: the row grows by the same amount it pulls back, so the hit area stays inside it. */
+  html.touch .quick { padding-top: 6px; margin-top: -6px; }
+  html.touch .sheet .more .emo-row { padding: 7px 0; margin: -7px 0; }
+  /* Mission rows are buttons that look like notes: a full 44px row on touch. */
+  html.touch .sheet button.note { padding: 13px 0; margin-top: 0; }
+  /* Desktop news bar placement, on the same columns as the ticker (see the .stay-ticket breakpoints): the left column ends at
+     354px, the tool row is the top row (14px … 60px), the minimap column starts 198px from the right. The bar never lies on the
+     identity card or the tool row, and never where the ticker is:
+     >= 820px   the row under the top bar (68px), centred between the left column and the minimap (378px … right 222px);
+                the ticker is in the top row (>= 1090px) or one row further down (134px);
+     641-819px  no room in that row: its own row under the right-hand column and the ticker (424px), right-aligned like the ticker;
+     <= 640px   along the bottom edge, above the ticker. */
+  @media (min-width: 820px) {
+    html:not(.touch) .news { top: calc(68px + var(--safe-t)); left: calc(50% + 78px); width: min(440px, calc(100vw - 600px)); }
+  }
+  @media (min-width: 641px) and (max-width: 819px) {
+    html:not(.touch) .news { --news-w: min(320px, calc(100vw - 380px)); top: calc(424px + var(--safe-t)); left: calc(100% - 14px - var(--safe-r) - var(--news-w) / 2); width: var(--news-w); }
+  }
+  @media (max-width: 640px) {
+    html:not(.touch) .news { top: auto; bottom: calc(50px + var(--safe-b)); left: 50%; width: min(440px, calc(100vw - 20px)); }
+  }
   @keyframes toastIn { from { opacity: 0; transform: translateY(10px) scale(.96); } }
   @keyframes toastOut { to { opacity: 0; transform: translateY(-6px); } }
   .coin-fly { position: fixed; left: 0; top: 0; width: 26px; height: 26px; margin: -13px 0 0 -13px; border-radius: 50%; z-index: 30; pointer-events: none;
@@ -405,10 +460,11 @@ visualViewport?.addEventListener('scroll', fitVV);
   @keyframes plus { 0% { opacity: 0; transform: translate(-50%, 0) scale(.6); } 20% { opacity: 1; transform: translate(-50%, -10px) scale(1.15); } 100% { opacity: 0; transform: translate(-50%, -64px) scale(1); } }
 
   /* ---------- modals ---------- */
-  .modal { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 28px 32px; background: rgba(0,0,0,.64); pointer-events: auto !important; transform: translateZ(0); }
-  .sheet { width: min(980px, 100%); max-height: min(88vh, 860px); overflow: auto; padding: 0; background: var(--surface); border-radius: 20px; box-shadow: var(--shadow-sheet); scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+  /* Like #view and #ui, the modal covers the visible viewport (--app-top / --app-h): with the phone keyboard up the sheet ends above it. */
+  .modal { position: fixed; inset: 0; top: var(--app-top, 0px); bottom: auto; height: var(--app-h, 100dvh); z-index: 40; display: grid; place-items: center; padding: max(28px, var(--safe-t)) max(32px, var(--safe-r)) max(28px, var(--safe-b)) max(32px, var(--safe-l)); background: rgba(0,0,0,.64); pointer-events: auto !important; transform: translateZ(0); }
+  .sheet { width: min(980px, 100%); max-height: min(88vh, 860px, calc(var(--app-h, 100dvh) - 56px)); overflow: auto; padding: 0; background: var(--surface); border-radius: 20px; box-shadow: var(--shadow-sheet); scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
   .sheet.narrow { width: min(560px, 100%); }
-  .sheet.steady { width: min(640px, 100%); height: min(680px, 78vh); display: flex; flex-direction: column; overflow: hidden; }
+  .sheet.steady { width: min(640px, 100%); height: min(680px, 78vh, calc(var(--app-h, 100dvh) - 56px)); display: flex; flex-direction: column; overflow: hidden; }
   .sheet.steady > header { flex: none; }
   .sheet.steady .content { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
   .sheet.steady .ranks { flex: 1; min-height: 0; overflow: auto; }
@@ -416,21 +472,21 @@ visualViewport?.addEventListener('scroll', fitVV);
   .sheet > header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 18px 24px 14px; background: var(--surface); border-bottom: 1px solid var(--line); }
   .sheet h2 { margin: 0; display: flex; align-items: center; gap: 10px; font: 800 17px/1.2 var(--font); letter-spacing: -.01em; }
   .sheet h2 .badge { font: 700 12px/1 var(--font); letter-spacing: .02em; padding: 5px 8px; border-radius: 999px; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); }
-  .x { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; font-size: 20px; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); }
+  .x { position: relative; width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; font-size: 20px; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); }
   .x:hover { color: var(--text); border-color: var(--line-strong); }
   .sheet .more { margin-top: 12px; }
   .sheet .more summary { cursor: pointer; font-weight: 700; color: var(--text-2); }
   .sheet .more .field { margin-top: 10px; }
   .sheet .more .emo-row { display: flex; gap: 4px; align-items: center; overflow-x: auto; }
-  .sheet .more .emo-row button { flex: 0 0 30px; width: 30px; height: 30px; border-radius: 10px; font-size: 15px; background: var(--surface-2); border: 1px solid var(--line); }
+  .sheet .more .emo-row button { position: relative; flex: 0 0 30px; width: 30px; height: 30px; border-radius: 10px; font-size: 15px; background: var(--surface-2); border: 1px solid var(--line); }
   .sheet .more .emo-row button.on { border-color: var(--line-strong); background: var(--accent-weak); }
   .sheet .more .emo-row .input { width: 42px; height: 30px; flex: 0 0 42px; padding: 0; text-align: center; font-size: 15px; }
   .sheet .more .themes { display: flex; flex-wrap: wrap; gap: 6px; }
   .sheet .more .theme { height: 28px; width: auto; padding: 4px 8px; border-radius: 10px; font-size: 12px; align-items: center; }
-  .sheet .more .swatch { width: 26px; height: 26px; }
+  .sheet .more .swatch { position: relative; width: 26px; height: 26px; }
   .sheet .more .swatches input[type=color] { width: 28px; height: 28px; }
   .grid2 { display: grid; grid-template-columns: 1.15fr 1fr; gap: 22px; }
-  .sheet.bill { display: flex; flex-direction: column; overflow: hidden; height: min(88vh, 860px); width: min(1080px, 100%); }
+  .sheet.bill { display: flex; flex-direction: column; overflow: hidden; height: min(88vh, 860px, calc(var(--app-h, 100dvh) - 56px)); width: min(1080px, 100%); }
   .sheet.bill > header { flex: none; }
   .sheet.bill > .content { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
   .sheet.bill .grid2.bb { flex: 1; min-height: 0; }
@@ -552,7 +608,7 @@ visualViewport?.addEventListener('scroll', fitVV);
   .rank b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rank .pts { font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
   .rank.me { border-color: var(--line-strong); background: var(--accent-weak); }
-  .rank .mini { height: 32px; padding: 0 8px; border-radius: 10px; font-size: 12px; font-weight: 700; color: var(--text); background: var(--surface); border: 1px solid var(--line-strong); flex: none; }
+  .rank .mini { position: relative; height: 32px; padding: 0 8px; border-radius: 10px; font-size: 12px; font-weight: 700; color: var(--text); background: var(--surface); border: 1px solid var(--line-strong); flex: none; }
   .colors { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
   .species { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
   .species button { height: 42px; padding: 0 14px; border-radius: 10px; font-size: 15px; font-weight: 700; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); }
@@ -647,8 +703,8 @@ visualViewport?.addEventListener('scroll', fitVV);
     .sheet > header { padding: 16px 18px 12px; }
     .sheet h2 { font-size: 17px; }
     .sheet .content { padding: 16px 18px 22px; }
-    .modal { padding: 12px 12px 0; place-items: end center; }
-    .sheet { max-height: 92vh; border-radius: 20px 20px 0 0; }
+    .modal { padding: max(12px, var(--safe-t)) max(12px, var(--safe-r)) 0 max(12px, var(--safe-l)); place-items: end center; }
+    .sheet { max-height: min(92vh, calc(var(--app-h, 100dvh) - 12px - var(--safe-t))); border-radius: 20px 20px 0 0; }
     .themes { grid-template-columns: repeat(3, 1fr); }
     .plots { grid-template-columns: repeat(5, 1fr); }
     .hub { grid-template-columns: 1fr; }
@@ -672,9 +728,9 @@ visualViewport?.addEventListener('scroll', fitVV);
   html.touch .reacts { left: auto; right: calc(8px + var(--safe-r)); bottom: calc(76px + var(--safe-b)); transform: none; grid-template-columns: repeat(4, 36px); gap: 4px; padding: 6px; max-height: 42vh; overflow: auto; }
   html.touch .reacts .emote { width: 36px; height: 36px; border-radius: 10px; }
   html.touch .reacts .emote .e { font-size: 17px; }
-  html.touch .reacts button { width: 36px; height: 36px; font-size: 17px; }
+  html.touch .reacts button { position: relative; width: 36px; height: 36px; font-size: 17px; }
   html.touch .prompt { bottom: calc(78px + var(--safe-b)); }
-  html.touch .guestwarn .btn { height: 28px; padding: 0 8px; font-size: 12px; }
+  html.touch .guestwarn .btn { position: relative; height: 28px; padding: 0 8px; font-size: 12px; }
   html.touch .wallet .sub { flex-wrap: wrap; min-height: 24px; overflow: visible; }
   /* The next goal wraps to a second line inside the wallet instead of being cut mid-word. */
   html.touch .nextgoal { flex: 1 0 100%; width: 100%; white-space: normal; overflow: visible; }
@@ -682,8 +738,8 @@ visualViewport?.addEventListener('scroll', fitVV);
   html.touch .prompt { width: min(168px, calc(100vw - 220px)); z-index: 4; }
   html.touch .prompt button { max-width: 100%; padding: 6px 8px; font-size: 12px; gap: 6px; }
   html.touch .prompt .sub { display: block; font-size: 12px; }
-  html.touch .modal { padding: 10px; place-items: start center; }
-  html.touch .sheet { max-height: min(76vh, calc(100dvh - 24px)); border-radius: 20px; }
+  html.touch .modal { padding: calc(10px + var(--safe-t)) calc(10px + var(--safe-r)) calc(10px + var(--safe-b)) calc(10px + var(--safe-l)); place-items: start center; }
+  html.touch .sheet { max-height: min(76vh, calc(var(--app-h, 100dvh) - 20px - var(--safe-t) - var(--safe-b))); border-radius: 20px; }
   html.touch .profile .edit { display: none; }
   html.touch .avatar { width: 30px; height: 30px; font-size: 15px; border-radius: 10px; }
   html.touch .profile .name { font-size: 13px; }
@@ -693,7 +749,7 @@ visualViewport?.addEventListener('scroll', fitVV);
   html.touch .hud-r { top: calc(8px + var(--safe-t)); right: calc(8px + var(--safe-r)); gap: 6px; }
   html.touch .bar .channel-pill { display: inline-flex; height: 36px; padding: 0 10px; font-size: 12px; }
   html.touch .tools { height: 42px; padding: 0 3px; }
-  html.touch .tools .btn { width: 36px; height: 36px; font-size: 17px; }
+  html.touch .tools .btn { position: relative; width: 36px; height: 36px; font-size: 17px; }
   html.touch .tools .tool-desk { display: none; }
   html.touch .minimap { width: 76px; height: 76px; padding: 4px; }
   html.touch .minimap:hover { transform: none; }
@@ -727,7 +783,7 @@ visualViewport?.addEventListener('scroll', fitVV);
   html.touch .dock .sep { display: none; }
   html.touch .reacts { left: auto; right: calc(8px + var(--safe-r)); bottom: calc(76px + var(--safe-b)); transform: none; grid-template-columns: repeat(4, 36px); gap: 4px; padding: 6px; max-height: 42vh; overflow: auto; }
   html.touch .reacts .emote { width: 36px; height: 36px; border-radius: 10px; }
-  html.touch .reacts button { width: 36px; height: 36px; font-size: 17px; }
+  html.touch .reacts button { position: relative; width: 36px; height: 36px; font-size: 17px; }
   html.touch .prompt { bottom: calc(78px + var(--safe-b)); }
   html.touch .toasts { bottom: calc(228px + var(--safe-b)); }
   body.has-sponsor .toasts { bottom: calc(360px + var(--safe-b)); }
@@ -768,7 +824,7 @@ visualViewport?.addEventListener('scroll', fitVV);
   /* Narrow touch column: every wallet chip flows in one wrapping row, so none runs past the panel edge or onto the row above. */
   html.touch .wallet .sub-fixed, html.touch .wallet .sub-live { display: contents; }
   html.touch .wallet .protect { white-space: normal; text-align: left; }
-  html.touch .wallet .chip { font-size: 12px; min-height: 24px; padding: 0 8px; }
+  html.touch .wallet .chip { position: relative; font-size: 12px; min-height: 24px; padding: 0 8px; }
   html.touch .wallet .sub-live { overflow: hidden; white-space: nowrap; }
   html.touch .hud-l .guestwarn { position: static; width: 100%; }
   html.touch .act,
@@ -788,7 +844,7 @@ visualViewport?.addEventListener('scroll', fitVV);
   .stay-ticket, .stay-balloon, .stay-lounge { position: absolute; left: 50%; transform: translateX(-50%); z-index: 6; width: min(520px, calc(100% - 300px)); max-width: calc(100% - 24px); }
   .stay-draw { position: absolute; z-index: 8; left: 50%; top: 42%; transform: translate(-50%, -50%); width: min(480px, calc(100% - 32px)); padding: 18px 16px; border-radius: 14px; text-align: center; font: 800 20px/1.35 var(--font); color: var(--on-accent); background: var(--accent); box-shadow: var(--shadow-pop); pointer-events: none; }
   /* A block, not a flex box: the ellipsis only works on a block, and a centred flex line spilled out at both ends. */
-  .stay-ticket { top: calc(14px + var(--safe-t)); left: 50%; transform: translateX(-50%); height: 46px; width: min(440px, calc(100vw - 780px)); max-width: calc(100vw - 780px); display: block; padding: 0 14px; border-radius: 14px; font: 700 12px/44px var(--font); color: var(--text-2); background: var(--surface-hud); border: 1px solid var(--line); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; pointer-events: auto; }
+  .stay-ticket { top: calc(14px + var(--safe-t)); left: 50%; transform: translateX(-50%); height: 46px; width: min(440px, calc(100vw - 780px)); max-width: calc(100vw - 780px); display: block; padding: 0 14px; border-radius: 14px; font: 700 12px/44px var(--font); color: var(--text-2); background: var(--surface-hud); border: 1px solid var(--line); text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; pointer-events: auto; }
   /* A neutral HUD pill (not the primary action): only the packet icon is amber. */
   .hud-r .stay-balloon { position: static; left: auto; right: auto; top: auto; bottom: auto; transform: none; width: 100%; max-width: 184px; margin-top: 8px; pointer-events: auto; padding: 8px 10px; border-radius: 999px; display: flex; align-items: center; justify-content: center; gap: 6px; font: 700 12px/1.3 var(--font); color: var(--text); background: var(--surface-hud); border: 1px solid var(--line); text-align: center; font-variant-numeric: tabular-nums; }
   .hud-r .stay-balloon svg.ico { color: var(--accent); }
@@ -1020,7 +1076,7 @@ const CLARITY_ID = '';
   </div>
 </div>
 <script>
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js?v=8');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js?v=9');
 </script>
 <script type="module" src="./legal.js?v=202611211159"></script>
 <script type="module" src="./main.js?v=202611211159"></script>

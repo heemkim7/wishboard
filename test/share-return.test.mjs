@@ -9,6 +9,7 @@ import {
 import { snapQuery, vipShareLink, dropParams, DEEP_KEYS, cardUrl } from '../share.js';
 import { resendPush, PUSH_DONE } from '../push.js';
 import { applyInboxPush } from '../inbox.js';
+import { proofOffers } from '../overlay.js';
 import { EVENT_NAMES } from '../plaza-account.js';
 
 const read = (f) => readFileSync(new URL('../' + f, import.meta.url), 'utf8');
@@ -48,9 +49,13 @@ describe('push offer decision', () => {
     assert.ok(PUSH_WHY.share);
     assert.match(PUSH_DONE, /전광판을 빼앗기거나 내 소원에 하트가 오면 알려 드려요\./);
   });
-  it('ui.js wires the three moments through queuePushOffer and stores the back-off', () => {
+  // The claim moment no longer opens the push sheet: its ask is the "알림 받기" button on the proof bar (test/overlay.test.mjs
+  // proofOffers), and showing that button is this session's offer.
+  it('ui.js wires the share and wish moments through queuePushOffer, the claim moment through the proof bar, and stores the back-off', () => {
     const ui = read('ui.js');
-    assert.match(ui, /queuePushOffer\('claim'\)/);
+    assert.equal(/queuePushOffer\('claim'\)/.test(ui), false);
+    assert.match(ui, /proofPush\.hidden = !offers\.push;/);
+    assert.match(ui, /if \(offers\.push\) \{\s*pushQueued = false;\s*pushOffered = true;/);
     assert.match(ui, /if \(postedFresh\) queuePushOffer\('wish'\)/);
     assert.match(ui, /function askShot\(\) \{\s*queuePushOffer\(\);/);
     assert.match(ui, /store\(PUSH_ASK_KEY, Date\.now\(\)\)/);
@@ -147,7 +152,9 @@ describe('다녀간 사이 rows', () => {
     const main = read('main.js');
     assert.equal(main.includes('showAwayInbox'), false);
     const fn = main.slice(main.indexOf('async function showAway()'), main.indexOf('async function pullProfile()'));
-    assert.match(fn, /readInbox\(plan\.inboxIds\)/);
+    // What is read on close now comes from overlay.js awayRead (everything on an explicit close, only the rows acted on otherwise).
+    assert.match(fn, /const read = awayRead\(plan, how\?\.acted, how\?\.explicit !== false\);/);
+    assert.match(fn, /readInbox\(read\.inboxIds\)/);
     assert.match(fn, /ui\.openAway\?\.\(plan\.rows,/);
     assert.match(fn, /if \(WISH_ID && !FOCUS\) await/);
     const ui = read('ui.js');
@@ -376,7 +383,10 @@ describe('final fix pass', () => {
     assert.equal(pushAsk({ ...base, placement: 'inline', dismissedAt: NOW - 1000 }), 'no');
     const ui = read('ui.js');
     assert.match(ui, /if \(offer && !done && !replacingSheet\) store\(PUSH_ASK_KEY, Date\.now\(\)\)/);
-    assert.match(ui, /if \(proof\.dataset\.gift \|\| String\(proof\.dataset\.slot \|\| ''\)\.startsWith\('PLOT_'\)\) pumpQueued\(\);/);
+    // No claim offer after a gift or a plot: that rule is proofOffers now (the bar's push button is hidden for both).
+    assert.equal(proofOffers({ pushSupported: true, permission: 'default', gift: '민지', slot: 'STREET_8' }).push, false);
+    assert.equal(proofOffers({ pushSupported: true, permission: 'default', gift: '', slot: 'PLOT_2' }).push, false);
+    assert.equal(proofOffers({ pushSupported: true, permission: 'default', gift: '', slot: 'STREET_8' }).push, true);
     assert.match(ui, /'🔔 하트가 오면 바로 알려 드릴까요\?'/);
     assert.match(ui, /text: '알림 켜기'/);
   });

@@ -19,6 +19,7 @@ import { bindSfx, play } from './audio.js?v=202611211159';
 import { AD, AD_TEMPLATES, adSums, adBars } from './adreport.js';
 import { qrEncode, paintQr } from './qr.js?v=202611211159';
 import { icon } from './uiicons.js?v=202611211159';
+import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, proofOffers } from './overlay.js?v=202611211159';
 
 const LEVELS = [
   { src: 'icons/lot.jpg', t: '빈 땅' },
@@ -152,6 +153,10 @@ export function createUI(root, hooks) {
   let near = null, world = { billboards: [], plots: [] };
   let coolUntil = 0, baking = null, sheet = null, soundOn = recall('kts_sound', true);
   let dance = null, driving = false, waypoint = null, rideLine = '';
+  // Movement is locked by owner (overlay.js): it comes back only when no sheet, mini-game, proof bar or countdown still wants it.
+  // A caller that names no owner (hooks.lockInput(true)) shares the 'other' slot.
+  const inputLock = createInputLock(typeof hooks.lockInput === 'function' ? hooks.lockInput.bind(hooks) : () => {});
+  hooks.lockInput = (on, owner) => inputLock.set(owner, !!on);
 
   // ---------------------------------------------------------------- audio
   const audio = { ctx: null, master: null };
@@ -327,21 +332,22 @@ export function createUI(root, hooks) {
     soundOn = !soundOn;
     store('kts_sound', soundOn);
     soundBtn.replaceChildren(icon(soundOn ? 'soundOn' : 'soundOff'));
-    if (!soundOn) { cityStop(); lofiStop(); if (dance) endDance(true); return; }
+    if (!soundOn) { cityStop(); lofiStop(); stopDanceAudio(); return; } // a dance in progress goes on without its music
     cityStart();
     if (!loungeEl.hidden) lofiStart();
     sfx.click();
   } }, icon(soundOn ? 'soundOn' : 'soundOff'));
   const fsOn = () => document.fullscreenElement || document.webkitFullscreenElement;
-  function askFullscreen() {
+  // byUser: the fullscreen button. Without it (entering the plaza) only a touch device goes fullscreen; a desktop window stays
+  // as it is. Escape is never locked: it leaves fullscreen the way the browser says it does.
+  function askFullscreen(byUser) {
+    if (!byUser && !coarse) return;
     const el = document.documentElement;
     const req = el.requestFullscreen || el.webkitRequestFullscreen;
     if (!req || fsOn()) return;
     try {
       const p = req.call(el, { navigationUI: 'hide' });
-      const lockKeys = () => { if (navigator.keyboard?.lock) navigator.keyboard.lock(['Escape']).catch(() => {}); };
-      if (p && p.then) p.then(lockKeys).catch(() => {});
-      else lockKeys();
+      if (p && p.catch) p.catch(() => {});
     } catch {
       try { const p = req.call(el); if (p && p.catch) p.catch(() => {}); } catch { /* this browser keeps its own chrome */ }
     }
@@ -351,10 +357,10 @@ export function createUI(root, hooks) {
       const exit = document.exitFullscreen || document.webkitExitFullscreen;
       const p = exit && exit.call(document);
       if (p && p.catch) p.catch(() => {});
-    } else askFullscreen();
+    } else askFullscreen(true);
   } }, icon('fullscreen'));
   const syncFs = () => { fsBtn.replaceChildren(icon(fsOn() ? 'fullscreenExit' : 'fullscreen')); };
-  document.addEventListener('fullscreenchange', () => { syncFs(); if (!fsOn() && dance) endDance(true); });
+  document.addEventListener('fullscreenchange', syncFs); // leaving fullscreen does not end a dance
   document.addEventListener('webkitfullscreenchange', syncFs);
   const mapCanvas = h('canvas', { width: 368, height: 368 });
   const locText = h('span', { text: '맨해튼' });
@@ -383,12 +389,21 @@ export function createUI(root, hooks) {
         soundBtn,
         fsBtn,
         h('button', { class: 'btn ghost icon tool-more', type: 'button', 'aria-label': '설정', title: '설정', onclick: () => openSettings() }, icon('gear')),
-        h('button', { class: 'btn icon tool-fold', type: 'button', 'aria-label': '메뉴 더보기', title: '메뉴', onclick: (e) => e.currentTarget.parentElement.classList.toggle('open') }, icon('more')),
+        h('button', { class: 'btn icon tool-fold', type: 'button', 'aria-label': '메뉴 더보기', title: '메뉴', 'aria-expanded': 'false', onclick: (e) => foldTools(!e.currentTarget.parentElement.classList.contains('open')) }, icon('more')),
       ),
     ),
     mapEl,
     locPill,
   ));
+  // The phone ⋯ fold: closed again once one of its items is chosen, or on a tap anywhere outside the capsule.
+  const toolsEl = root.querySelector('.tools');
+  function foldTools(open) {
+    if (!toolsEl) return;
+    toolsEl.classList.toggle('open', !!open);
+    toolsEl.querySelector('.tool-fold')?.setAttribute('aria-expanded', String(!!open));
+  }
+  toolsEl?.addEventListener('click', (e) => { if (e.target.closest?.('.tool-more')) foldTools(false); });
+  document.addEventListener('pointerdown', (e) => { if (toolsEl?.classList.contains('open') && !e.target.closest?.('.tools')) foldTools(false); });
 
   const newsKick = h('div', { class: 'kick' }, h('b', { text: '속보' }), 'LIVE');
   const newsSmall = h('small');
@@ -729,14 +744,21 @@ export function createUI(root, hooks) {
     if (channelEl) channelEl.textContent = peopleCh + '채널';
     statusDot.className = 'live-dot' + (statusKind === 'off' ? ' off' : statusKind === 'ok' ? '' : ' warn');
   }
-  function note(text, kind = '', onClick) {
-    if (!text) return;
+  // note(text, kind, onClick): how long it stays comes from its length (overlay.js toastMs; a tappable one at least 8 s),
+  // a tappable one carries a chevron, and while a sheet or the proof bar is up the stack sits at the top (index.html).
+  // opts.ms overrides the time. Returns the toast element.
+  function note(text, kind = '', onClick, opts) {
+    const say = toastText(text, kind);
+    if (!say) return null;
     const click = typeof onClick === 'function' ? onClick : null;
-    const t = h(click ? 'button' : 'div', { class: `glass toast ${kind}${click ? ' hit' : ''}`, type: click ? 'button' : null, text });
-    if (click) t.addEventListener('click', () => { click(); t.remove(); });
+    const t = h(click ? 'button' : 'div', { class: `glass toast ${kind}${click ? ' hit' : ''}`, type: click ? 'button' : null },
+      say, click ? h('i', { class: 'go', 'aria-hidden': 'true' }, icon('chevronRight')) : null);
+    if (click) t.addEventListener('click', () => { t.remove(); click(); });
     toasts.append(t);
-    while (toasts.children.length > 3) toasts.firstChild.remove();
-    setTimeout(() => { if (!t.isConnected) return; t.classList.add('out'); setTimeout(() => t.remove(), 320); }, click ? 8000 : 2800);
+    // Over three: the oldest plain one goes first, so a tappable notice is not pushed out by a burst of coin lines.
+    while (toasts.children.length > 3) ([...toasts.children].find((c) => c !== t && !c.classList.contains('hit')) || toasts.firstChild).remove();
+    setTimeout(() => { if (!t.isConnected) return; t.classList.add('out'); setTimeout(() => t.remove(), 320); }, Number(opts?.ms) > 0 ? Number(opts.ms) : toastMs(say, !!click));
+    return t;
   }
   const newsQueue = [];
   let newsBusy = false;
@@ -859,7 +881,7 @@ export function createUI(root, hooks) {
     hooks.beginBake?.();
     bakeEl.classList.add('show');
     bakeEl.setAttribute('aria-hidden', 'false');
-    hooks.lockInput(true);
+    hooks.lockInput(true, 'bake');
     renderPrompt();
     sfx.click();
     return true;
@@ -870,7 +892,7 @@ export function createUI(root, hooks) {
     baking = null;
     bakeEl.classList.remove('show');
     bakeEl.setAttribute('aria-hidden', 'true');
-    hooks.lockInput(false);
+    hooks.lockInput(false, 'bake');
     renderPrompt();
     if (awayWant) setTimeout(pumpQueued, 1500);
     if (cancel) return;
@@ -983,7 +1005,7 @@ export function createUI(root, hooks) {
     dance = { notes, beat, lead, t0: performance.now() + delay * 1000, end: (lead + beats + 1) * beat, judge: '', judgeAt: 0, combo: 0, max: 0, score: 0 };
     rhythmEl.classList.add('show');
     rhythmEl.setAttribute('aria-hidden', 'false');
-    hooks.lockInput(true);
+    hooks.lockInput(true, 'dance');
     hooks.danceStart?.();
     renderPrompt();
     return true;
@@ -1018,7 +1040,7 @@ export function createUI(root, hooks) {
     stopDanceAudio();
     rhythmEl.classList.remove('show');
     rhythmEl.setAttribute('aria-hidden', 'true');
-    hooks.lockInput(false);
+    hooks.lockInput(false, 'dance');
     danceCool = performance.now() + 2500;
     renderPrompt();
     if (awayWant) setTimeout(pumpQueued, 1500);
@@ -1117,43 +1139,128 @@ export function createUI(root, hooks) {
       host.append(row);
     }, true);
   }
-  function closeSheet(fromPop) {
-    if (!sheet) return;
-    sheet.el.remove();
-    sheet.cleanup?.();
-    sheet = null;
-    hooks.lockInput(false);
+  // ---- sheet stack. `sheet` is the top one. A sheet opened from another sheet goes on top and its parent stays alive (hidden,
+  // inputs and scroll as they were). backSheet() closes one level (✕, Escape, back, backdrop); closeSheet() closes them all,
+  // for when an action is done and the player returns to the plaza. History follows through syncBack (overlay.js).
+  const sheets = [];
+  let closingAll = false;
+  function dropTop(replaced) {
+    const top = sheets[sheets.length - 1];
+    if (!top) return null;
+    replacingSheet = !!replaced;
+    try { top.el.remove(); top.cleanup?.(); } finally { replacingSheet = false; }
+    sheets.pop();
+    sheet = sheets[sheets.length - 1] || null;
+    return top;
+  }
+  function showTop() {
+    sheets.forEach((s, i) => {
+      const under = i < sheets.length - 1;
+      s.el.classList.toggle('under', under);
+      s.el.inert = under;
+    });
+  }
+  function afterSheets(gone) {
+    showTop();
+    hooks.lockInput(sheets.length > 0, 'sheet');
+    document.body.classList.toggle('has-sheet', sheets.length > 0);
     renderPrompt();
-    if (!fromPop && history.state?.ktsSheet) history.back();
-    if (pushQueued || awayWant) setTimeout(pumpQueued, 0);
+    syncBack();
+    // Focus goes back to what opened the sheet that just closed (a button in the parent sheet, or the HUD).
+    const back = gone?.opener;
+    if (back && back.isConnected && typeof back.focus === 'function') { try { back.focus({ preventScroll: true }); } catch { /* focus stays where the browser put it */ } }
+    if (!sheet && (pushQueued || awayWant)) setTimeout(pumpQueued, 0);
+  }
+  function backSheet() {
+    if (!sheet) return false;
+    afterSheets(dropTop(false));
+    return true;
+  }
+  function closeSheet() {
+    if (!sheet) return;
+    const first = sheets[0];
+    closingAll = true;
+    try { while (sheets.length) dropTop(false); } finally { closingAll = false; }
+    afterSheets(first);
+  }
+  // The parent of the top sheet, when it is of that kind: "전광판으로 돌아가기" in a child goes back to the live parent.
+  function backTo(kind) {
+    if (sheets.length < 2 || sheets[sheets.length - 2].kind !== kind) return false;
+    return backSheet();
+  }
+  // A backdrop tap closes a sheet, except one with typing in it: that one asks once, inside the sheet.
+  function backdropTap(s) {
+    if (s !== sheet) return;
+    const values = [...s.box.querySelectorAll('input, textarea')].filter((f) => !f.readOnly && !f.disabled && !/^(checkbox|radio|range|color|file|button|submit|hidden)$/.test(f.type)).map((f) => f.value);
+    if (!draftAtRisk(s.typed, values)) { backSheet(); return; }
+    if (s.keep?.isConnected) return;
+    s.keep = h('div', { class: 'sheet-keep', role: 'alert' },
+      h('span', { text: '작성 중인 내용이 있어요. 닫을까요?' }),
+      h('button', { class: 'btn ghost', type: 'button', text: '계속 쓰기', onclick: () => s.keep.remove() }),
+      h('button', { class: 'btn', type: 'button', text: '닫기', onclick: () => { if (s === sheet) backSheet(); } }));
+    s.box.append(s.keep);
   }
   // title: the plain text, or [iconName, text] for a title with a line icon in front.
-  function openSheet(titleIn, badge, build, narrow, variant) {
+  // opts.kind: what decides "the same sheet again" (default: the title).
+  function openSheet(titleIn, badge, build, narrow, variant, opts) {
     const [titleIcon, title] = Array.isArray(titleIn) ? titleIn : ['', titleIn];
     if (quietBlock && (title === '미션' || title === '계정 연결' || String(title || '').includes('알림'))) return;
-    const nested = !!sheet;
-    replacingSheet = true;
-    closeSheet(true);
-    replacingSheet = false;
+    // The proof bar and a sheet are never up together: opening a sheet leaves the bar first (input and history are settled there).
+    if (!proof.hidden) leaveProof({ quiet: true });
+    const kind = String(opts?.kind || title || '');
+    const opener = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
+    const plan = sheetPlan(sheets.map((s) => s.kind), kind);
+    for (let i = 0; i < plan.pop; i++) dropTop(false);
+    const old = plan.replace ? dropTop(true) : null;
     const content = h('div', { class: 'content' });
-    const x = h('button', { class: 'x', type: 'button', 'aria-label': '닫기', onclick: closeSheet }, icon('close'));
-    const box = h('div', { class: `glass sheet${narrow ? ' narrow' : ''}${variant ? ' ' + variant : ''}`, role: 'dialog', 'aria-label': title },
+    const x = h('button', { class: 'x', type: 'button', 'aria-label': '닫기', onclick: () => backSheet() }, icon('close'));
+    const box = h('div', { class: `glass sheet${narrow ? ' narrow' : ''}${variant ? ' ' + variant : ''}`, role: 'dialog', 'aria-modal': 'true', 'aria-label': title, tabindex: '-1' },
       h('header', null, h('h2', null, ...withIcon(titleIcon, title), badge ? h('span', { class: 'badge', text: badge }) : null), x), content);
-    const el = h('div', { class: 'modal', onclick: (e) => { if (e.target === el) closeSheet(); } }, box);
+    const el = h('div', { class: 'modal' }, box);
     document.body.append(el);
-    sheet = { el, cleanup: null, title };
-    hooks.lockInput(true);
+    // A re-rendered sheet keeps the opener of the one it replaced; a child remembers the control in its parent.
+    const me = { el, box, cleanup: null, title, kind, typed: false, keep: null, opener: old ? old.opener : opener };
+    el.addEventListener('click', (e) => { if (e.target === el) backdropTap(me); });
+    box.addEventListener('input', (e) => { if (e.isTrusted) me.typed = true; });
+    sheets.push(me);
+    sheet = me;
+    showTop();
+    hooks.lockInput(true, 'sheet');
+    document.body.classList.add('has-sheet');
     renderPrompt();
     const rawAppend = content.append.bind(content);
     content.append = (...nodes) => rawAppend(...nodes.filter((n) => n != null && n !== false));
-    sheet.cleanup = build(content) || null;
-    if (!nested) history.pushState({ ...(history.state || {}), ktsSheet: 1 }, '');
+    me.cleanup = build(content) || null;
+    syncBack();
+    // Focus moves into the dialog (the box itself, so a phone does not raise its keyboard), unless the sheet focused a field of its own.
+    if (sheet === me && !box.contains(document.activeElement)) { try { box.focus({ preventScroll: true }); } catch { /* not focusable here */ } }
     sfx.click();
   }
+  // ---- history (overlay.js createBackKeeper): one entry per open level, one guard entry under them once the plaza is entered.
+  // The proof bar is a level from the moment it is asked for: while it waits for the celebration (proofWait) it keeps the
+  // entry of the sheet that just closed, so nothing is pushed five seconds later without a tap.
+  const backKeeper = createBackKeeper({ hist: history });
+  // Entries are pushed only after a real gesture (overlay.js rule 2). pointerup and keydown come before the click they cause.
+  addEventListener('pointerup', () => backKeeper.touch(), true);
+  addEventListener('keydown', (e) => { if (e.key !== 'Escape') backKeeper.touch(); }, true);
+  const proofLevel = () => (!proof.hidden || (proofWait && !proofWait.skip) ? 1 : 0);
+  function syncBack() { backKeeper.want(sheets.length + proofLevel()); }
+  // Back during the celebration: the bar will not come up, only its notice.
+  function skipProofWait() {
+    if (!proofWait || proofWait.skip) return false;
+    proofWait.skip = true;
+    return true;
+  }
   addEventListener('popstate', () => {
-    if (sheet) closeSheet(true);
-    else if (!proof.hidden) dismissProof(true);
+    const act = backKeeper.pop();
+    if (act.back) {
+      for (let i = 0; i < act.back; i++) { if (!(sheet ? backSheet() : (leaveProof() || skipProofWait()))) break; }
+      syncBack();
+    } else if (act.exit) note('한 번 더 누르면 나가요', '', null, { ms: 2000 });
   });
+  // Entering the plaza arms the guard after this click has finished (arrive() cleans the address bar first).
+  const rawEnter = hooks.enter;
+  if (typeof rawEnter === 'function') hooks.enter = (...args) => { const r = rawEnter(...args); setTimeout(() => backKeeper.arm(), 0); return r; };
   const SHARE_TEXT = '붕어빵 구워 뉴욕 타임스퀘어 전광판과 건물을 차지하세요!';
   function countShot() {
     return new Promise((resolve) => {
@@ -1579,7 +1686,7 @@ export function createUI(root, hooks) {
         h('p', { class: 'note' }, ...withIcon((d.qPaid || {}).all ? 'gift' : 'todo', `택시·응원·링을 모두 끝내면 +${PAY.quest.all}`)),
         h('p', { class: 'note', text: `출석 ${d.streak || 0}일 · 내일 접속하면 +${tomorrow}` }),
         h('p', { class: 'note', text: todayFacts(d) }),
-        h('p', { class: 'note', text: `${feverEl.textContent}. 20이 되면 잠시 코인이 2배입니다.` }),
+        h('p', { class: 'note', text: `${feverEl.textContent}. ${feverEl.title}` }),
       );
     }, true);
   }
@@ -1602,6 +1709,7 @@ export function createUI(root, hooks) {
   function openHolds() {
     const mine = myBoards();
     const lost = (recall('kts_taken', []) || []).filter((x) => x?.slot);
+    const fresh = lost.some((x) => Date.now() - (Number(x.at) || 0) < 600000);
     openSheet('내 전광판', '점령 · 빼앗김', (host) => {
       host.append(h('b', { text: '지금 내 것' }));
       host.append(mine.length ? h('div', { class: 'rows' }, ...mine.map((b) => h('div', { class: 'row', style: { display: 'flex', gap: '8px' } },
@@ -1611,20 +1719,77 @@ export function createUI(root, hooks) {
       ))) : h('p', { class: 'note', text: '점령 중인 전광판이 없어요' }));
       host.append(h('b', { text: '빼앗긴 것' }));
       host.append(lost.length ? h('div', { class: 'rows' }, ...lost.map((x) => h('button', { class: 'chip', type: 'button', text: `${slotName(x.slot)} · ${x.by}`, onclick: () => openAd(x.slot) }))) : h('p', { class: 'note', text: '아직 빼앗긴 전광판이 없어요' }));
-    }, true);
+      // The fare boost the server allows for 10 minutes after a board is taken.
+      if (fresh) host.append(h('button', { class: 'btn ghost', type: 'button', onclick: () => hooks.revenge?.() }, ...withIcon('taxi', '되찾을 코인 모으기 · 택시 운임 2배 켜기')));
+    }, true, '', { kind: 'holds' });
   }
+  // seenHold: slot -> the lines I had on it, so a board that leaves my hands can be offered back with them filled in.
+  let seenMe = '';
   function watchHold() {
-    const now = new Set(myBoards().map((b) => b.slot_id));
+    const me = hooks.actorId?.() || '';
+    if (me !== seenMe) { seenMe = me; seenHold = null; } // another account now: its boards were not taken from anyone
+    const now = new Map(myBoards().map((b) => [b.slot_id, { line1: b.line1 || '', line2: b.line2 || '', line3: b.line3 || '', emoji: b.emoji || '' }]));
     if (seenHold) {
-      for (const id of seenHold) if (!now.has(id)) {
+      for (const [id, mine] of seenHold) if (!now.has(id)) {
         const b = boardById(id);
-        if (b?.holder_id && b.holder_id !== hooks.actorId?.()) {
-          rememberTake(id, b.holder_name);
-          note(`${slotName(id)}을 ${b.holder_name || '누군가'}님이 빼앗았어요`, 'err', () => openBillboard(id));
-        }
+        if (b?.holder_id && b.holder_id !== hooks.actorId?.()) queueTaken({ slot: id, attacker: b.holder_name, ...mine });
       }
     }
     seenHold = now;
+  }
+  // "○○님이 △△을 가져갔어요 · 되찾기". The socket's TAKE and the world update both report the same loss: one notice per board.
+  // It waits while the screen is busy (screenBusy, the gates 다녀간 사이 uses) and is dropped after 10 minutes; the news
+  // itself is in 받은 소식 either way (the room stores a `taken` inbox row).
+  const takenWant = [], takenSeen = new Map();
+  let takenQuietAt = 0;
+  function queueTaken(ev) {
+    const slot = String(ev?.slot || '');
+    if (!slot) return;
+    const by = chars(ev.attacker || '', 16) || '누군가';
+    rememberTake(slot, by);
+    const lines = { line1: String(ev.line1 || ''), line2: String(ev.line2 || ''), line3: String(ev.line3 || ''), emoji: String(ev.emoji || '') };
+    const price = Math.max(0, Math.floor(Number(ev.price) || 0));
+    const waiting = takenWant.find((t) => t.slot === slot);
+    if (waiting) {
+      if (ev.attacker) waiting.by = by;
+      if (lines.line1 || lines.line2 || lines.line3) waiting.lines = lines;
+      if (price) waiting.price = price;
+      return;
+    }
+    if (Date.now() - (takenSeen.get(slot) || 0) < 60000) return;
+    takenWant.push({ slot, by, lines, price, at: Date.now() });
+  }
+  function pumpTaken(now = performance.now()) {
+    while (takenWant.length && Date.now() - takenWant[0].at > 600000) takenWant.shift();
+    if (!takenWant.length) return;
+    if (!entered || screenBusy()) { takenQuietAt = 0; return; }
+    if (!takenQuietAt) { takenQuietAt = now; return; }
+    if (now - takenQuietAt < 1000) return;
+    takenQuietAt = 0;
+    const t = takenWant.shift();
+    if (boardById(t.slot)?.holder_id === hooks.actorId?.()) return; // already mine again
+    takenSeen.set(t.slot, Date.now());
+    sfx.siren();
+    note(`${t.by}님이 ${slotName(t.slot)}을 가져갔어요 · 되찾기`, 'err', () => retake(t));
+  }
+  // The ordinary billboard sheet for that board with my old lines filled in; its priced button is the confirmation.
+  function retake(t) {
+    openBillboard(t.slot);
+    const s = sheet;
+    if (!s || s.kind !== '전광판 점령') return;
+    const fill = (sel, val) => {
+      const f = s.box.querySelector(sel);
+      if (!f || !val) return;
+      f.value = chars(val, f.maxLength > 0 ? f.maxLength : 16);
+      f.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    fill('input[placeholder^="메인 문구"]', t.lines.line1);
+    fill('input[placeholder^="둘째 줄"]', t.lines.line2);
+    fill('input[placeholder^="셋째 줄"]', t.lines.line3);
+    fill('input[aria-label="이모지"]', t.lines.emoji);
+    const have = wallet.confirmed + wallet.pending;
+    const need = t.price || minBid(boardById(t.slot) || { slot_id: t.slot }, world.billboards, hooks.actorId?.());
+    if (have < need) note(`코인이 ${money(need - have)} 모자라요 · 택시 운임 2배 켜기`, '', () => hooks.revenge?.());
   }
   function firstOpenStarter() {
     for (const id of BALANCE.starterSlots) if (starterOpen(id)) return id;
@@ -1721,7 +1886,7 @@ export function createUI(root, hooks) {
           try {
             await hooks.report?.(slotId, id);
             note('신고를 접수했어요', 'ok');
-            closeSheet();
+            backSheet();
           } catch (e) { note(e?.message || '신고를 접수하지 못했어요', 'err'); }
         },
       }))));
@@ -2703,18 +2868,17 @@ export function createUI(root, hooks) {
         sfx.jackpot();
         note(mode === 'edit' ? '문구를 고쳤어요' : giftName ? `${giftName}님 선물을 걸었습니다` : '전광판에 등록됐습니다', 'ok');
         if (mode === 'edit') return;
-        hooks.focusShot?.(slot);
         hooks.giftPop?.(slot);
-        showProof(slot, giftName);
+        const up = showProof(slot, giftName);
         const nxt = nextChainFace(slot, world.billboards, hooks.actorId?.());
-        if (nxt) {
-          openSheet('연속 점령', 'CHAIN', (box) => {
+        if (nxt && up) {
+          proofNext = () => openSheet('연속 점령', 'CHAIN', (box) => {
             box.append(
               h('p', { text: nxt.left === 1
                 ? `🔥 ${nxt.building}의 ${slotName(nxt.id)}까지 점령하면 이 빌딩 전체가 회원님의 독점 타워로 합체됩니다.`
                 : `🔥 ${nxt.building}의 ${slotName(nxt.id)}를 이으면 독점에 한 칸 더 가까워집니다.` }),
               h('p', { class: 'note', text: `필요 코인 ${money(nxt.price)}부터` }),
-              h('button', { class: 'btn primary', type: 'button', onclick: () => openBillboard(nxt.id) }, ...withIcon('bolt', '연속으로 점령하기')),
+              h('button', { class: 'btn primary', type: 'button', onclick: () => { closeSheet(); openBillboard(nxt.id); } }, ...withIcon('bolt', '연속으로 점령하기')),
             );
           }, true);
         }
@@ -2777,7 +2941,7 @@ export function createUI(root, hooks) {
       const share = h('button', { class: 'btn gold', type: 'button', text: '이 전광판 링크 공유하기', onclick: async () => {
         if (await sendLink({ kind: 'invite', url: cardUrl(slot), native: true, into: copyBox }) === 'copied') note('링크를 복사했어요', 'ok');
       } });
-      host.append(body, share, copyBox, h('button', { class: 'btn ghost', type: 'button', text: '전광판으로 돌아가기', onclick: () => openBillboard(slot) }));
+      host.append(body, share, copyBox, h('button', { class: 'btn ghost', type: 'button', text: '전광판으로 돌아가기', onclick: () => { if (!backTo('전광판 점령')) openBillboard(slot); } }));
       let alive = true;
       const md = (day) => `${Number(day.slice(5, 7))}월 ${Number(day.slice(8, 10))}일`;
       const render = (r) => {
@@ -2822,7 +2986,7 @@ export function createUI(root, hooks) {
         }, 'image/png');
       } });
       host.append(canvas, h('p', { class: 'note', text: '계산대 옆에 붙여 두세요. 휴대폰 카메라로 찍으면 이 전광판 앞으로 바로 와요.' }), h('p', { class: 'note', text: url }), save,
-        h('button', { class: 'btn ghost', type: 'button', text: '전광판으로 돌아가기', onclick: () => openBillboard(slot) }));
+        h('button', { class: 'btn ghost', type: 'button', text: '전광판으로 돌아가기', onclick: () => { if (!backTo('전광판 점령')) openBillboard(slot); } }));
     }, true);
   }
 
@@ -2869,7 +3033,7 @@ export function createUI(root, hooks) {
           closeSheet();
           sfx.jackpot();
           note(mine ? '건물이 한 층 더 올라갔습니다!' : '이 땅의 주인이 되었습니다!', 'ok');
-          hooks.focusShot?.('PLOT_' + id);
+          (hooks.celebrateShot || hooks.focusShot)?.('PLOT_' + id);
           showProof('PLOT_' + id);
         } catch (e) {
           note(e?.message || '분양에 실패했습니다', 'err');
@@ -3277,7 +3441,7 @@ export function createUI(root, hooks) {
     if (quietBlock || !proofWait) return;
     const w = proofWait;
     proofWait = null;
-    showProof(w.slot, w.gift);
+    showProof(w.slot, w.gift, { waited: true, skip: !!w.skip });
   }
   function openCheerReply(slot, to) {
     if (!slot || !to) return;
@@ -3286,7 +3450,7 @@ export function createUI(root, hooks) {
       host.append(h('div', { class: 'chips' }, ...CHEER_PHRASES.map((text, i) => h('button', {
         type: 'button',
         text,
-        onclick: () => { if (hooks.replyCheer?.(slot, i + 1, to)) closeSheet(); },
+        onclick: () => { if (hooks.replyCheer?.(slot, i + 1, to)) backSheet(); },
       }))));
     }, true);
   }
@@ -3682,45 +3846,102 @@ export function createUI(root, hooks) {
       note('초대 문구를 복사했어요', 'ok');
     }
   }
+  // ---- proof bar: after a claim or a plot purchase. One way in (showProof), one way out (leaveProof).
+  // This moment's "계정 연결 +300" and "알림 받기" are buttons here (overlay.js proofOffers); their sheets do not open for it.
   const proofText = h('p');
   const proofCopy = h('div', { class: 'manual-copy', hidden: true });
+  const recText = h('b', { class: 'tnum' });
+  const recRow = h('div', { class: 'rec-row', hidden: true }, recText, h('button', { class: 'btn ghost', type: 'button', text: '취소', onclick: () => clipStop?.() }));
+  const proofClip = h('button', { class: 'btn ghost', type: 'button', text: '5초 영상 저장', onclick: () => recordClip() });
+  const proofLink = h('button', { class: 'btn ghost', type: 'button', text: '계정 연결 +300', hidden: true, onclick: () => { leaveProof({ quiet: true }); openLogin(); } });
+  const proofPush = h('button', { class: 'btn ghost', type: 'button', hidden: true, onclick: () => proofPushOn() }, ...withIcon('bell', '빼앗기면 알림 받기'));
   const proof = h('div', { class: 'glass proof', hidden: true },
     proofText,
     proofCopy,
+    recRow,
     h('button', { class: 'btn gold', type: 'button', onclick: () => copyInvite(proof.dataset.slot || 'MAIN_TOP', proof.dataset.gift || '', proofCopy) }, ...withIcon('link', '초대 문구 복사하기')),
-    h('button', { class: 'btn ghost', type: 'button', text: '사진 찍어 공유', onclick: async () => {
-      const slot = proof.dataset.slot;
-      proof.hidden = true;
-      root.classList.remove('proofing');
-      if (slot) hooks.frameBillboard?.(slot);
-      try {
-        let clip = null;
-        try { clip = await hooks.saveClip?.(); } catch { clip = null; }
-        if (clip) note('5초 영상을 기기에 저장했어요', 'ok');
-        else await openShot({ slot });
-      } finally { hooks.endFocus?.(); }
-      askShot();
-    } }),
+    h('button', { class: 'btn ghost', type: 'button', text: '사진 찍어 공유', onclick: () => proofShot() }),
+    proofClip,
     h('button', { class: 'btn ghost', type: 'button', onclick: () => downloadPaper() }, ...withIcon('news', '신문으로 저장')),
-    h('button', { class: 'btn ghost', type: 'button', text: '둘러보기', onclick: () => dismissProof() }),
+    proofLink,
+    proofPush,
+    h('button', { class: 'btn ghost', type: 'button', text: '둘러보기', onclick: () => leaveProof() }),
   );
   root.append(proof);
-  let proofHist = false;
-  function dismissProof(fromPop) {
+  let proofNext = null, clipStop = null;
+  // The one way out. Whatever else happens, input is unlocked, the focus camera ends (keepFocus: a photo frames the board
+  // next and ends it itself) and the bar's history entry goes. quiet: something else takes over (a sheet, the photo), so
+  // the follow-up that waited for the bar (the chain upsell) is dropped.
+  function leaveProof({ keepFocus = false, quiet = false } = {}) {
     if (proof.hidden) return false;
-    proof.hidden = true;
-    root.classList.remove('proofing');
-    hooks.lockInput?.(false);
-    hooks.endFocus?.();
-    if (!fromPop && proofHist) {
-      proofHist = false;
-      history.back();
-    } else proofHist = false;
-    // Right after a board claim's celebration: the moment "빼앗기면 알려 드릴까요?" makes sense. Plots cannot be taken.
-    // Not after a gift (the board went to someone else) or a plot.
-    if (proof.dataset.gift || String(proof.dataset.slot || '').startsWith('PLOT_')) pumpQueued();
-    else queuePushOffer('claim');
+    try {
+      clipStop?.();
+      proof.hidden = true;
+      proof.classList.remove('rec');
+      recRow.hidden = true;
+      root.classList.remove('proofing');
+      document.body.classList.remove('has-proof');
+    } finally {
+      hooks.lockInput?.(false, 'proof');
+      if (!keepFocus) hooks.endFocus?.();
+      syncBack();
+    }
+    const next = proofNext;
+    proofNext = null;
+    if (next && !quiet) next();
+    else if (quiet) setTimeout(pumpQueued, 0);
+    else pumpQueued();
     return true;
+  }
+  // "사진 찍어 공유": leave the bar, frame the board, take the photo and open the photo/share sheet for that board.
+  async function proofShot() {
+    const slot = proof.dataset.slot;
+    leaveProof({ keepFocus: true, quiet: true });
+    if (slot) hooks.frameBillboard?.(slot);
+    try { await openShot({ slot }); } finally { hooks.endFocus?.(); }
+    askShot();
+  }
+  // "5초 영상 저장": the bar shows "녹화 중 5…1" and a cancel while share.js saveClip records the view.
+  const clipOk = () => { try { return typeof MediaRecorder !== 'undefined' && !!HTMLCanvasElement.prototype.captureStream; } catch { return false; } };
+  async function recordClip() {
+    if (clipStop || proof.hidden) return;
+    const slot = proof.dataset.slot;
+    const ctl = new AbortController();
+    let left = 5;
+    const paint = () => { recText.textContent = `녹화 중 ${left}`; };
+    paint();
+    const tick = setInterval(() => { left = Math.max(1, left - 1); paint(); }, 1000);
+    clipStop = () => ctl.abort();
+    proof.classList.add('rec');
+    recRow.hidden = false;
+    if (slot) hooks.frameBillboard?.(slot);
+    let clip = null;
+    try { clip = await hooks.saveClip?.({ signal: ctl.signal }); } catch { clip = null; }
+    finally {
+      clearInterval(tick);
+      clipStop = null;
+      proof.classList.remove('rec');
+      recRow.hidden = true;
+    }
+    if (ctl.signal.aborted) { note('녹화를 취소했어요'); return; }
+    if (!clip) { note('이 브라우저에서는 영상을 저장할 수 없어요. 사진 찍어 공유를 써 주세요', 'err'); return; }
+    note('5초 영상을 기기에 저장했어요', 'ok');
+    askShot();
+  }
+  async function proofPushOn() {
+    proofPush.disabled = true;
+    try {
+      const r = await subscribePush();
+      if (r?.ok) {
+        trackEvent('push_on');
+        proofPush.hidden = true;
+        note(msgText(r.hint) || '알림을 켰어요', 'ok');
+        return;
+      }
+      if (r?.hint) note(msgText(r.hint));
+      else note('알림 권한이 필요해요', 'err');
+    } catch (err) { note(err?.message || '이 브라우저에서는 알림을 켤 수 없어요', 'err'); }
+    finally { proofPush.disabled = false; }
   }
   // Push offer moments: 'share' (after a photo share), 'wish' (first wish of the day), 'claim'. ftue.js pushAsk decides.
   try { pushOffered = sessionStorage.getItem('kts_push_offered') === '1'; } catch { /* private mode: per page */ }
@@ -3755,7 +3976,7 @@ export function createUI(root, hooks) {
             note('알림 권한이 필요해요', 'err');
           } catch (e) { note(e?.message || '이 브라우저에서는 알림을 켤 수 없어요', 'err'); }
         } }),
-        offer ? h('button', { class: 'btn ghost', type: 'button', text: '나중에', onclick: () => closeSheet() }) : null,
+        offer ? h('button', { class: 'btn ghost', type: 'button', text: '나중에', onclick: () => backSheet() }) : null,
       );
       // Closed without subscribing: do not offer again for 3 days.
       // Replaced by another sheet is not a "no".
@@ -3833,11 +4054,13 @@ export function createUI(root, hooks) {
     if (!awayWant) return false;
     if (newbieOn || Date.now() - awayWant.at > 120000) { awayWant = null; return false; }
     // Never on top of play: a sheet (claim wizard included), a celebration, the focus camera, bake/dance, a taxi, lounge/watch.
-    if (quietBlock || sheet || !proof.hidden || proofWait || focusOn || baking || dance || driving || loungeWatch) return false;
+    if (screenBusy()) return false;
     const { rows, onClose } = awayWant;
     awayWant = null;
     openSheet('다녀간 사이', null, (host) => {
+      const acted = new Set();
       const go = (r) => {
+        acted.add(r);
         if (r.kind === 'taken') { openBillboard(r.slot); return; }
         if (r.kind === 'look') { closeSheet(); hooks.focusShot?.(r.slot); return; }
         openWish({ from: 'away' });
@@ -3847,16 +4070,37 @@ export function createUI(root, hooks) {
         h('p', { text: msgText(r.text) }),
         h('button', { class: i === lead ? 'btn gold' : 'btn ghost', type: 'button', text: msgText(r.label), onclick: () => go(r) }),
       ))));
-      return () => { try { onClose?.(rows); } catch { /* the rows just show again next time */ } };
+      // Closed by the player (✕, back, Escape, backdrop): every row was seen. Closed by going to look at one: only the rows acted on.
+      return () => { try { onClose?.(rows, { acted: [...acted], explicit: !closingAll }); } catch { /* the rows just show again next time */ } };
     }, true, 'away');
     return true;
+  }
+  // The screen is not free for something new: a sheet, a celebration or its proof bar, the focus camera, bake/dance, a taxi,
+  // lounge/watch, the photo countdown.
+  function screenBusy() {
+    return !!(quietBlock || sheet || !proof.hidden || proofWait || focusOn || baking || dance || driving || loungeWatch || shotBusy);
   }
   function pumpQueued() {
     if (maybeAway()) return;
     maybeOfferPush();
+    pumpTaken();
   }
-  function showProof(slot, giftName = '') {
-    if (quietBlock) { proofWait = { slot, gift: giftName || '' }; return; }
+  const pushPermission = () => { try { return typeof Notification !== 'undefined' ? Notification.permission : ''; } catch { return ''; } };
+  // Returns true when the bar is up or waits for the celebration to end, false when only the notice went out.
+  function showProof(slot, giftName = '', opts = {}) {
+    if (quietBlock) { proofWait = { slot, gift: giftName || '' }; syncBack(); return true; }
+    const offers = proofOffers({ ready: accountView.ready, guest: accountView.guest, linked: accountView.linked, gift: giftName, slot, pushSupported: pushSupported(), permission: pushPermission() });
+    // This moment's "계정 연결" ask is the button on the bar (the notice below leads to it too): its sheet stays closed.
+    if (offers.link) linkWant = false;
+    // The player walked on while the celebration ran (the focus camera is gone), or opened a sheet: nothing is locked and
+    // nothing is covered; a tappable notice brings the bar up when they want it.
+    if (!opts.force && ((opts.waited && (!focusOn || opts.skip)) || sheet)) {
+      proofNext = null;
+      syncBack();
+      note('전광판에 등록됐어요 · 친구에게 자랑하기', 'ok', () => showProof(slot, giftName, { force: true }));
+      return false;
+    }
+    if (sheet) closeSheet();
     proof.dataset.slot = slot;
     proof.dataset.gift = giftName || '';
     proofCopy.replaceChildren();
@@ -3864,13 +4108,21 @@ export function createUI(root, hooks) {
     proofText.textContent = giftName
       ? `등록됐습니다. ${giftName}님 선물 문구를 복사해 보내세요.`
       : '등록됐습니다. 지금 전광판 앞에서 폭죽이 터집니다.';
-    root.classList.add('proofing');
-    proof.hidden = false;
-    hooks.lockInput?.(true);
-    if (!proofHist) {
-      proofHist = true;
-      history.pushState({ ...(history.state || {}), ktsProof: 1 }, '');
+    proofClip.hidden = !clipOk();
+    proofLink.hidden = !offers.link;
+    proofPush.hidden = !offers.push;
+    // Showing "알림 받기" here is this session's push offer: no push sheet follows the bar.
+    if (offers.push) {
+      pushQueued = false;
+      pushOffered = true;
+      try { sessionStorage.setItem('kts_push_offered', '1'); } catch { /* private mode */ }
     }
+    root.classList.add('proofing');
+    document.body.classList.add('has-proof');
+    proof.hidden = false;
+    hooks.lockInput?.(true, 'proof');
+    syncBack();
+    return true;
   }
   function openVip() {
     trackEvent('vip_modal_open');
@@ -4567,7 +4819,7 @@ export function createUI(root, hooks) {
     if (left > 0) coolSvg.fg.setAttribute('stroke-dashoffset', String(69.1 * (left / COOLDOWN)));
     if (now - mapAt > 125 && !document.hidden) { mapAt = now; drawMini(hooks.minimap?.()); }
     if (now - hudAt > 66 && !document.hidden) { hudAt = now; renderHud(hooks.hud?.()); }
-    if (now - rankAt > 1000 && !document.hidden) { rankAt = now; paintLive(); renderGoal(); maybeStarterToast(); payDue(); pumpLink(now); }
+    if (now - rankAt > 1000 && !document.hidden) { rankAt = now; paintLive(); renderGoal(); maybeStarterToast(); payDue(); pumpLink(now); pumpTaken(now); }
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
@@ -4580,12 +4832,12 @@ export function createUI(root, hooks) {
       return;
     }
     if (e.key === 'Escape') {
-      if (!proof.hidden) { dismissProof(); e.preventDefault(); e.stopPropagation(); return; }
+      if (!proof.hidden) { leaveProof(); e.preventDefault(); e.stopPropagation(); return; }
       const open = dance || baking || !reactPanel.hidden || !!sheet;
       if (dance) endDance(true);
       else if (!reactPanel.hidden) toggleReacts(false);
       else if (baking) stopBake(true);
-      else if (sheet) closeSheet();
+      else if (sheet) backSheet();
       if (open) { e.preventDefault(); e.stopPropagation(); }
       else if (fsOn()) {
         const exit = document.exitFullscreen || document.webkitExitFullscreen;
@@ -4595,13 +4847,14 @@ export function createUI(root, hooks) {
     }
     if (typing) return;
     if (baking && (e.code === 'Space' || e.code === 'Enter' || e.code === 'KeyE')) { e.preventDefault(); stopBake(); return; }
-    if (e.code === 'KeyM' && !e.repeat) { if (sheet?.el.querySelector('.map')) closeSheet(); else if (!sheet && !baking) openMap(); }
+    if (e.code === 'KeyM' && !e.repeat) { if (sheet?.el.querySelector('.map')) backSheet(); else if (!sheet && !baking) openMap(); }
     if (e.code === 'Digit5' && !e.repeat && !sheet && !baking && !driving) toggleReacts();
   }, true);
   bakeEl.addEventListener('pointerdown', (e) => { if (e.target.closest('button')) return; stopBake(); });
 
   const loungeEl = h('div', { class: 'stay-lounge', hidden: true });
-  const ticketEl = h('button', { class: 'stay-ticket', type: 'button' });
+  const ticketText = h('span', { class: 't' });
+  const ticketEl = h('button', { class: 'stay-ticket', type: 'button' }, ticketText);
   const questEl = h('div', { class: 'stay-quest' });
   const balloonEl = h('button', { class: 'stay-balloon', type: 'button', hidden: true, onclick: () => hooks.throwPouch?.() });
   const loungeBtn = h('button', { class: 'stay-lounge-btn', type: 'button', title: '전광판 관람. 8초마다 다른 전광판, 20초마다 +2. 움직이면 끝', onclick: () => hooks.toggleLounge?.() },
@@ -4611,6 +4864,32 @@ export function createUI(root, hooks) {
   root.querySelector('.hud-l')?.append(questEl);
   root.querySelector('.hud-r')?.append(balloonEl);
   root.append(ticketEl, loungeEl, focusBtn);
+  // A title tooltip never shows on a touch screen. Where the tap already means something, a long press says the same
+  // text as a notice (and that press does not also count as the tap).
+  function holdTip(el, text) {
+    if (!coarse) return;
+    let timer = 0, fired = false;
+    const stop = () => { clearTimeout(timer); timer = 0; };
+    el.addEventListener('pointerdown', () => {
+      fired = false;
+      stop();
+      timer = setTimeout(() => { fired = true; note(typeof text === 'function' ? text() : text); }, 550);
+    });
+    for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) el.addEventListener(ev, stop);
+    el.addEventListener('contextmenu', (e) => e.preventDefault());
+    document.addEventListener('click', (e) => {
+      if (!fired || !el.contains(e.target)) return;
+      fired = false;
+      e.preventDefault();
+      e.stopPropagation();
+    }, true);
+  }
+  holdTip(feverEl, () => feverEl.title);
+  holdTip(loungeBtn, () => loungeBtn.title);
+  holdTip(balloonEl, () => balloonEl.title);
+  // The pouch balloon shows only a number on a phone: its first tap of the session also says what it is.
+  let balloonTold = false;
+  balloonEl.addEventListener('click', () => { if (coarse && !balloonTold && balloonEl.title) { balloonTold = true; note(balloonEl.title); } });
   let loungeN = 0;
   let loungeWatch = false;
   const portraitMq = matchMedia('(orientation: portrait)');
@@ -4632,7 +4911,7 @@ export function createUI(root, hooks) {
     const ss = String(s % 60).padStart(2, '0');
     const inDraw = lotBucket === Math.floor(Date.now() / 300000);
     const mine = inDraw && lotNum ? `내 번호 ${lotNum}` : '';
-    setIconText(ticketEl, 'ticket', inDraw
+    setIconText(ticketText, 'ticket', inDraw
       ? `다음 추첨까지 ${mm}:${ss} · 이번 5분 응모함${mine ? ' · ' + mine : ''} · 1/15, 맞으면 25코인`
       : `다음 추첨까지 ${mm}:${ss} · 택시 하차가 이번 5분의 1장 · 1/15, 맞으면 25코인`);
   }
@@ -4746,26 +5025,9 @@ export function createUI(root, hooks) {
     noteLot,
     lounge(on, n) { paintLounge(on, n); loungeWatch = !!on; syncWatchPortrait(); if (on) lofiStart(); else lofiStop(); if (!on && awayWant) setTimeout(pumpQueued, 0); },
     focusLock(on) { focusOn = !!on; focusBtn.hidden = !on; renderPrompt(); if (!on) setTimeout(pumpQueued, 0); },
-    revenge(ev) {
-      sfx.siren();
-      const have = (wallet.confirmed || 0) + (wallet.pending || 0);
-      const price = Math.floor(Number(ev.price) || 0);
-      const short = have < price;
-      rememberTake(ev.slot, ev.attacker);
-      openSheet('전광판을 빼앗겼어요', ev.slotName || slotName(ev.slot), (host) => {
-        host.append(
-          h('p', { text: `🚨 방금 ${ev.attacker || '누군가'}님이 회원님의 ${ev.slotName || slotName(ev.slot)}을 빼앗았습니다!` }),
-          h('button', { class: 'btn gold', type: 'button', onclick: async () => {
-            closeSheet();
-            try {
-              await hooks.claim({ slot_id: ev.slot, bid: price, line1: ev.line1 || '', line2: ev.line2 || '', line3: ev.line3 || '', emoji: ev.emoji || '⚔️', bg_theme: ev.theme || 'cyber_navy', text_color: ev.color || '#ffffff' });
-              note('되찾았습니다', 'ok');
-            } catch (e) { note(e?.message || '되찾지 못했어요', 'err'); }
-          } }, ...withIcon('flag', `즉시 되찾아오기 (필요 코인: ${money(price)})`)),
-          short ? h('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); hooks.revenge?.(); } }, ...withIcon('taxi', '복수 자금 모으러 2배 보상 긴급 손님 태우기!')) : null,
-        );
-      });
-    },
+    // A board of mine was taken (socket TAKE): queued as a tappable notice, see queueTaken.
+    taken(ev) { queueTaken(ev); },
+    closeSheets: () => closeSheet(),
     showDraw(win, hit, pay, lot) {
       const mine = Math.floor(Number(lot));
       const who = mine >= 1 && mine <= 15 ? `내 번호 ${mine} · ` : '';
