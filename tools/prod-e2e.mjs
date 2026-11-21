@@ -114,6 +114,12 @@ export function slotCandidates(world, starter = BALANCE.starterSlots) {
   });
   return out.sort((a, b) => a.bid - b.bid || a.order - b.order);
 }
+// The free-first slots to stay off: BALANCE.starterSlots plus every slot GET /rt/config lists in `starter` (the database's list may differ).
+export function starterOf(config) {
+  const out = [...BALANCE.starterSlots];
+  for (const id of Array.isArray(config?.starter) ? config.starter : []) if (typeof id === 'string' && !out.includes(id)) out.push(id);
+  return out;
+}
 export const kstDay = (t = Date.now()) => new Date(t + 9 * 36e5).toISOString().slice(0, 10);
 export const kstMinutesToMidnight = (t = Date.now()) => { const d = new Date(t + 9 * 36e5); return 1440 - (d.getUTCHours() * 60 + d.getUTCMinutes()); };
 export function defaultStatePath(origin, dir = os.tmpdir()) { return path.join(dir, 'kts-prod-e2e-' + new URL(origin).host.replace(/[^\w.-]/g, '_') + '.json'); }
@@ -360,7 +366,9 @@ const STEPS = {
     const [g1, g2] = c.guests;
     const { r: wr, world } = await worldNow(c);
     need(world, 'cannot read /rt/world: ' + wr.brief);
-    const cands = slotCandidates(world);
+    const cfg = await c.api(null, 'GET', '/rt/config');
+    need(cfg.status === 200 && Array.isArray(cfg.json?.starter), 'cannot read the free-first slots from /rt/config: ' + cfg.brief); // never guess which boards are free-first
+    const cands = slotCandidates(world, starterOf(cfg.json));
     if (cands.length < 2) { t.skip('claim, relight, cheer, inbox', `${cands.length} empty non-starter board(s) left; the run never takes the last one`); return; }
     const { slot, bid } = cands[0];
     const f = await flush(c, g1); need(f.status === 200, 'cannot settle guest 1 before the claim: ' + f.brief);
@@ -386,26 +394,25 @@ const STEPS = {
     const rl = await c.api(g1, 'POST', '/rt/relight', { slot, topic: TOPIC });
     if (kstDay(c.now()) !== day) t.skip('same-day relight keeps the clock', 'the KST day changed since the claim');
     else t.expect('a same-day relight keeps the clock', rl, 200, (j) => j.ok === true && Math.abs(Date.parse(j.lit_until) - Date.parse(litUntil)) < 1000 && j.scored !== true, (j) => `lit_until ${j.lit_until}, lit_days ${j.lit_days}`);
-    // main.js cheer() -> tribe.js sendCheer: {t:'CHEER', slot, p} over the socket; the Room pays PAY kind cheer and queues an inbox row for the holder
+    // main.js cheer() -> tribe.js sendCheer: {t:'CHEER', slot, p} over the socket; the Room pays PAY kind cheer and queues an inbox row for the holder.
+    // Right after the claim on purpose: the Room keeps the claim's WORLD_UPDATE row (or reads the board), so the holder is known at once. No retry.
     if (!g2.sock || !g1.sock) { t.skip('cheer and inbox', 'no sockets'); return; }
-    let pay = null, from1 = 0, cheerAt = 0;
-    for (let k = 0; k < 3; k++) {
-      from1 = g1.sock.mark(); const from = g2.sock.mark(); cheerAt = c.now();
-      need(g2.sock.send({ t: 'CHEER', slot, p: 1 }), "guest 2's socket is not open");
-      pay = await g2.sock.waitFor((m) => m.t === 'PAY' && m.kind === 'cheer', 10000, 'the cheer PAY', from);
-      if (pay.amount > 0 || pay.why !== 'dark' || k === 2) break;
-      c.log(`NOTE  board       cheer refused as dark: the Room's isolate world copy does not show guest 1 on ${slot} yet; retrying in 15 s`);
-      await c.sleep(15000);
-    }
-    t.check('guest 2 cheers the board and gets a PAY', pay.amount > 0, `PAY amount 0, why ${pay.why}${pay.why === 'dark' ? " (the Room's cachedBoard: its isolate's world copy predates the claim or has no world)" : ''}`, `+${pay.amount}`);
-    const note = await g1.sock.maybe((m) => m.t === 'INBOX' && m.kind === 'cheer' && m.slot_id === slot, 5000, from1);
-    t.check('guest 1 gets the cheer live (INBOX)', note, "no {t:INBOX, kind:cheer} on guest 1's socket: the Room's world copy had no holder for the board, so the inbox row has no recipient either");
+    const from1 = g1.sock.mark(), from = g2.sock.mark(), cheerAt = c.now();
+    need(g2.sock.send({ t: 'CHEER', slot, p: 1 }), "guest 2's socket is not open");
+    const pay = await g2.sock.waitFor((m) => m.t === 'PAY' && m.kind === 'cheer', 10000, 'the cheer PAY', from);
+    t.check('guest 2 cheers the board and gets a PAY', pay.amount > 0, `PAY amount 0, why ${pay.why}${pay.why === 'wait' ? ' (the Room could not tell the holder: no WORLD_UPDATE row kept and the board read failed)' : pay.why === 'dark' ? ' (the Room sees the board as not lit or not held by guest 1)' : ''}`, `+${pay.amount}`);
+    const note = await g1.sock.maybe((m) => m.t === 'INBOX' && m.kind === 'cheer' && m.slot_id === slot && m.from === g2.id, 5000, from1);
+    t.check('guest 1 gets the cheer live (INBOX)', note, "no {t:INBOX, kind:cheer} from guest 2 on guest 1's socket in 5 s");
     // inbox rows go out with the Room's coin flush (flushInbox after coin_batch); settling guest 2 runs that flush now
     const f2 = await flush(c, g2); t.expect("settle guest 2 (flushes the room's inbox queue)", f2, 200, (j) => j.ok === true);
     const inb = await poll(c, async (i) => { const r = await c.api(g1, 'GET', '/rt/inbox'); const it = (r.json?.items || []).find((x) => x.kind === 'cheer' && x.slot_id === slot && x.from === g2.id && Date.parse(x.created_at) >= cheerAt - 600000); return { done: !!it, it, r, i }; }, 12, 5000);
     if (!t.check("guest 1's /rt/inbox has the cheer row", inb?.done, `none after ~60 s; ${inb?.r?.brief}`, `id ${inb?.it?.id} after ~${(inb?.i || 0) * 5} s`)) return;
-    t.expect('POST /rt/inbox/read marks it read', await c.api(g1, 'POST', '/rt/inbox/read', { ids: [inb.it.id] }), 200, (j) => j.ok === true);
-    t.skip('the read flag is visible', 'GET /rt/inbox (inbox_list) does not return read_at; only the POST answer can be checked');
+    if (!t.expect('POST /rt/inbox/read marks it read', await c.api(g1, 'POST', '/rt/inbox/read', { ids: [inb.it.id] }), 200, (j) => j.ok === true)) return;
+    // `read` is in GET /rt/inbox only once the optional inbox_list migration is in the database; without it only the POST answer can be checked
+    if (typeof inb.it.read !== 'boolean') { t.skip('the read flag is visible', 'GET /rt/inbox has no read flag (inbox_list migration not applied); only the POST answer was checked'); return; }
+    t.check('the row was unread before', inb.it.read === false, `read ${inb.it.read} before POST /rt/inbox/read`);
+    const back = await c.api(g1, 'GET', '/rt/inbox'), again = (back.json?.items || []).find((x) => x.id === inb.it.id);
+    t.check('GET /rt/inbox shows it read', back.status === 200 && again?.read === true, again ? `read ${again.read}; ${back.brief}` : `the row is gone from GET /rt/inbox; ${back.brief}`);
   },
   async moderation(t, c) {
     if (!c.wish) { t.skip('moderation checks', 'no visible wish from the wish step'); return; }

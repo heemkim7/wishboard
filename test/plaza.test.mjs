@@ -1312,6 +1312,8 @@ describe('times square plaza', { concurrency: false }, () => {
     globalThis.fetch = okFetch;
     try {
       const { room } = makeRoom();
+      // The room must know who holds the board (a cheer on a board of unknown holder is refused): the claim's WORLD_UPDATE tells it.
+      await room.fetch(new Request('https://room.internal/world', post({ t: 'WORLD_UPDATE', kind: 'BILLBOARD', data: { slot_id: 'STREET_8', holder_id: 'guest:owner', holder_name: '주인', lit_until: new Date(clock + 864e5).toISOString(), expires_at: null } })));
       const me = openSock(room, 'guest:cheer');
       await room.webSocketMessage(me, JSON.stringify({ t: 'CHEER', slot: 'STREET_8', p: 1 }));
       const pay = msgs(me).filter((m) => m.t === 'PAY').at(-1);

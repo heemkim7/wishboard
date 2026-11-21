@@ -37,7 +37,7 @@ node tools/prod-e2e.mjs https://studio.wishboard.workers.dev
 | `wish` | 게스트 3의 링크·전화번호 소원이 `link`로 거절되고 그날 소원이 남는지. 게스트 1이 `소원 점검 중이에요 🌠`를 올리고, 바로 고치면 `soon`, 방에 `WISH`, `mine`·`recent`, 게스트 2의 하트(하트 1, `left` 1 감소), 두 번째 하트 `dup`, 자기 하트 `own`, `?id=`의 `focus`, `/rt/world` `wish.board` |
 | `share` | `og.jpg`(117KB)를 `POST /rt/snap?wish=<id>`로. `/rt/s/<id>`의 `og:image`가 `/rt/snap/<id>`이고 그것이 `image/jpeg`. `/rt/w/<id>`의 `og:description`이 소원 글, 그림이 그 사진. 게스트 2가 같은 `?wish=`로 올려도 미리보기는 그대로이고 게스트 2 사진 페이지는 사이트 기본 제목 |
 | `push` | `GET /rt/push/key`만. 가짜 구독은 넣지 않는다 |
-| `board` | `/rt/world`에서 주인 없는 칸 가운데 메인 타워, 무료 칸(`BALANCE.starterSlots`), 주인 있는 분양 필지 앞(입찰 절반이 그 사람에게 간다)을 빼고 가장 싼 칸. 그런 칸이 2개 미만이면 SKIP(마지막 빈 칸은 가져가지 않는다). `ui.js`가 보내는 몸으로 `claim` 최소 입찰, 세 줄 `점검 중` / `곧 내려갑니다` / 빈 줄. 월드의 주인, 지갑 감소, 방의 `WORLD_UPDATE`, 같은 날 `/rt/relight`가 `lit_until`을 바꾸지 않는지. 게스트 2가 `{t:'CHEER', slot, p:1}`을 보내 `PAY` kind `cheer`를 받고, 게스트 1 소켓에 `INBOX` cheer, 게스트 2를 정산하면 방의 우편 대기열이 나가서 게스트 1 `/rt/inbox`에 cheer 줄(`from`이 게스트 2), `/rt/inbox/read`가 `ok` |
+| `board` | `/rt/world`에서 주인 없는 칸 가운데 메인 타워, 무료 칸(`BALANCE.starterSlots`와 `GET /rt/config`의 `starter`에 있는 칸 모두. `/rt/config`를 못 읽으면 점령하지 않고 FAIL), 주인 있는 분양 필지 앞(입찰 절반이 그 사람에게 간다)을 빼고 가장 싼 칸. 그런 칸이 2개 미만이면 SKIP(마지막 빈 칸은 가져가지 않는다). `ui.js`가 보내는 몸으로 `claim` 최소 입찰, 세 줄 `점검 중` / `곧 내려갑니다` / 빈 줄. 월드의 주인, 지갑 감소, 방의 `WORLD_UPDATE`, 같은 날 `/rt/relight`가 `lit_until`을 바꾸지 않는지. 점령 직후 게스트 2가 `{t:'CHEER', slot, p:1}`을 한 번 보내 `PAY` kind `cheer`를 받고(다시 해 보지 않는다), 게스트 1 소켓에 게스트 2가 보낸 `INBOX` cheer, 게스트 2를 정산하면 방의 우편 대기열이 나가서 게스트 1 `/rt/inbox`에 cheer 줄(`from`이 게스트 2), `/rt/inbox/read`가 `ok`. `/rt/inbox` 줄에 `read`가 있으면(선택 마이그레이션 뒤) 읽기 전 `false`, 읽은 뒤 다시 읽어 `true`인지 본다. 없으면 SKIP 한 줄 |
 | `moderation` | `/rt/admin/wishes`에 있고, `POST /rt/admin/wish {id, hide:true}`로 가리면 `/rt/wishes` 목록에서 빠지고 게스트 1에게는 `hidden`, `/rt/w/<id>`는 `/`로 302 |
 | `cleanup` | 이번과 앞선 실행이 만든 소원을 모두 가린다. 칸은 아래 조건이 모두 맞을 때만 건드린다: `/rt/world`를 읽었고, 그 칸의 주인이 테스트 게스트이고, 상태 파일의 점령이 30분 보호 시간 안이다(`min(보낸 시각+30분, protected_until)`에서 1분 여유, 그 안에서는 누구도 빼앗지 못했다). `takedown_billboard`와 주인 고치기는 서버가 주인을 따지지 않으므로 이것이 유일한 가드다. 맞으면 먼저 주인으로 `mode:'edit'`, 입찰 그대로(돈이 들지 않는다), 세 줄 `여기도 소원 자리예요` / `불이 꺼지면` / `누구나 걸 수 있어요`로 고친다. 고치기가 거절될 때만(FAIL 한 줄) `POST /rt/admin/takedown {slot}`. 조건이 안 맞으면 손대지 않고 `handle by hand: <칸> (이유)`를 쓰며 그 칸은 다음 실행에도 남는다. 소켓을 닫고 지갑 잔액을 쓴다 |
 
@@ -56,6 +56,5 @@ node tools/prod-e2e.mjs https://studio.wishboard.workers.dev
 
 ### 확인하지 못한 가정
 
-- 응원 보상과 주인 알림은 Room DO가 있는 isolate의 월드 사본(`cachedBoard`, 나이 검사 없음)을 본다. 그 사본이 점령보다 오래됐으면 `PAY` `why:'dark'`로 거절되고, 사본이 없으면 코인은 주지만 우편 줄의 받는 사람이 비어 우편함에 남지 않는다. 스크립트는 `dark`면 15초 뒤 두 번 다시 해 보고, 게스트 1 소켓에 `INBOX`가 오지 않으면 그 이유로 FAIL을 쓴다.
-- 우편 대기열(`inboxQ`)은 Room 메모리에 있고 코인 정산 때만 나간다. 하이버네이션으로 메모리가 비면 그 줄은 사라진다.
-- `GET /rt/inbox`는 `read_at`을 주지 않아 읽음 표시는 `/rt/inbox/read`의 `ok`만 본다(SKIP 한 줄).
+- 응원의 주인은 Room이 받은 `WORLD_UPDATE` 줄(또는 Room이 읽은 그 칸 한 줄)로 정한다(`docs/pending/inbox.md`). 2026-11-21 아침 운영 실행의 FAIL 두 줄(게스트 1 소켓의 `INBOX`, `/rt/inbox`의 cheer 줄)은 Room이 isolate 월드 사본만 보던 때의 것이다. 테스트의 모의 실행은 Room을 따로 불러온 `worker.js` 사본(다른 isolate처럼 월드 사본이 없다)으로 돌려 그 경우를 재현한다.
+- `GET /rt/inbox`의 `read`는 선택 마이그레이션 뒤에만 있다. 그 전에는 읽음 표시를 `/rt/inbox/read`의 `ok`만 본다(SKIP 한 줄).

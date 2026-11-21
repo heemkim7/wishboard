@@ -5,7 +5,7 @@
 // Meter DO: daily (UTC) estimate of billed DO requests -> lean mode at 80%, solo (down) at 95% of the Free 100k/day.
 // Supabase keeps auth, DB and RPCs only. No timers in DOs (hibernation-friendly); alarms only while someone waits.
 import { DurableObject } from 'cloudflare:workers';
-import { BALANCE, slotName, SLOT_IDS, PAY, scaledPay, bakeBase, danceBase, farePay, ballOpen, auctionClosed, stickerNext, chainBoost, cheerCount, STARTER_DEFAULT, starterList } from './balance.js';
+import { BALANCE, slotName, SLOT_IDS, PAY, scaledPay, bakeBase, danceBase, farePay, ballOpen, auctionClosed, stickerNext, chainBoost, buildingOf, cheerCount, STARTER_DEFAULT, starterList } from './balance.js';
 import { nextBallUntil, drawSpan } from './live.js';
 import { CHEER_PHRASES, EVENT_NAMES, allowedLink, blockedText, parseGuestHandover, statsFromCounts } from './plaza-account.js';
 import { renderCardPng } from './cardpng.js';
@@ -711,7 +711,7 @@ export class Room extends DurableObject {
     }
     if (next !== prev) agSet(q, 'room', 'ball', day, next);
   }
-  async alarm() { this.tapDb(); this.scan(true); this.meter(true); await this.drawDue(); if (this.tapN && Date.now() - (this.tapAt || 0) >= FLUSH_MS - 1000) await this.flush(); if (this.adDirty && Date.now() - (this.adFlushAt || 0) > 30000) await this.flushAds(); try { await this.flushTribeScores(); } catch { /* scores retry on the next alarm */ }
+  async alarm() { this.tapDb(); this.scan(true); this.meter(true); await this.drawDue(); if (this.tapN && Date.now() - (this.tapAt || 0) >= FLUSH_MS - 1000) await this.flush(); if (this.adDirty && Date.now() - (this.adFlushAt || 0) > 30000) await this.flushAds(); if (!this.tapN && Date.now() - (this.ibAt || 0) > 30000 && this.ibWait()) await this.flushInbox(); try { await this.flushTribeScores(); } catch { /* scores retry on the next alarm */ }
     if (this.socks().size) { try { this.noteBall(); } catch { /* the next scan retries the ball */ } }
     if (this.waiters().length || this.tapN) await this.ctx.storage.setAlarm(Date.now() + (this.waiters().length ? SCAN : FLUSH_MS)); else if (this.socks().size) await this.ctx.storage.setAlarm(Date.now() + IDLE_SCAN); }
   // Bungeo-ppang coins: 2s per actor, ≤15 per mine, summed in DO SQLite (survives hibernation) with tapN in memory.
@@ -729,6 +729,8 @@ export class Room extends DurableObject {
     q.exec('create table if not exists sess(id text primary key, uid text not null, kind text not null, t0 integer not null, x integer not null, z integer not null)');
     q.exec('create table if not exists stk(slot text primary key, g text not null)');
     q.exec('create table if not exists chr(slot text primary key, n integer not null)');
+    q.exec('create table if not exists brd(slot text primary key, b text not null, at integer not null)');
+    q.exec('create table if not exists ibq(id integer primary key autoincrement, it text not null, at integer not null)');
     this._tdb = 1; this.syncPending(); this.moveHello(); }
   // One-time: hello gates written before the account registry existed move from `gate` to `ag` and are reported to the registry. '!ag1' marks the job done.
   moveHello() { if (this.gateAt('!ag1')) return; const q = this.ctx.storage.sql, old = q.exec("select k from gate where k like '%|hello' limit 2000").toArray().map(r => String(r.k));
@@ -941,18 +943,24 @@ export class Room extends DurableObject {
       this.tx(w, { t: 'PAY', kind: 'quest', amount: PAY.quest.all, key: 'all' });
     }
   }
-  cheer(w, a, m) {
+  // The holder comes from boardsFor (this room's own rows, a fresh isolate copy, or one read), never from an unchecked world copy.
+  // Holder unknown (the read failed): 'wait'. No holder, own board or not lit: 'dark'. Budget hard: 'cap' before any read.
+  async cheer(w, a, m) {
     const p = Math.floor(Number(m.p));
     const slot = String(m.slot || '');
     if (!AD_SLOT.test(slot) || p < 1 || p > 12) return;
+    const soon = () => Date.now() - this.gateAt(a.k + '|cheer:' + slot) < PAY.cheer.gapMs - GAP_EARLY;
+    if (this.lvl >= 2) { this.tx(w, { t: 'PAY', kind: 'cheer', amount: 0, why: 'cap' }); return; }
+    if (soon()) { this.tx(w, { t: 'PAY', kind: 'cheer', amount: 0, why: 'soon' }); return; } // before any board read
+    const boards = await this.boardsFor(buildingOf(slot)?.slots || [slot]), board = boards.get(slot);
     const now = Date.now();
-    const board = cachedBoard(slot);
-    const until = Date.parse((board && (board.lit_until || board.expires_at)) || '');
-    if (board && (!board.holder_id || board.holder_id === a.k || !(until > now))) { this.tx(w, { t: 'PAY', kind: 'cheer', amount: 0, why: 'dark' }); return; }
+    if (!board) { this.tx(w, { t: 'PAY', kind: 'cheer', amount: 0, why: 'wait' }); return; }
+    const until = Date.parse(board.lit_until || board.expires_at || '');
+    if (!board.holder_id || board.holder_id === a.k || !(until > now)) { this.tx(w, { t: 'PAY', kind: 'cheer', amount: 0, why: 'dark' }); return; }
     this.tapDb();
-    if (now - this.gateAt(a.k + '|cheer:' + slot) < PAY.cheer.gapMs - GAP_EARLY) { this.tx(w, { t: 'PAY', kind: 'cheer', amount: 0, why: 'soon' }); return; }
+    if (soon()) { this.tx(w, { t: 'PAY', kind: 'cheer', amount: 0, why: 'soon' }); return; } // again: another cheer may have landed during the read
     this.gateSet(a.k + '|cheer:' + slot, now);
-    const base = chainBoost(cachedBoards(), slot, now) ? BALANCE.cheerGroup : PAY.cheer.base;
+    const base = chainBoost([...boards.values()], slot, now) ? BALANCE.cheerGroup : PAY.cheer.base;
     const amount = this.repeatPay(a, base, '', 'cheer', 12, PAY.cheer.perHour);
     if (amount < 1) { this.tx(w, { t: 'PAY', kind: 'cheer', amount: 0, why: 'cap' }); return; }
     const q = this.ctx.storage.sql, day = kstDay();
@@ -960,27 +968,25 @@ export class Room extends DurableObject {
     this.tx(w, { t: 'PAY', kind: 'cheer', amount });
     this.adTally(slot, 'h', a.k);
     this.shareCheer(slot, p);
-    if (!this.inboxQ) this.inboxQ = [];
-    const holder = board?.holder_id && board.holder_id !== a.k ? String(board.holder_id) : '';
+    const holder = String(board.holder_id);
     const fromName = clip(a.m?.name || '', 12);
-    this.inboxQ.push({ kind: 'cheer', slot_id: slot, phrase: p, from_name: fromName, from: a.k, to: holder });
-    if (holder) {
-      const note = { t: 'INBOX', kind: 'cheer', slot_id: slot, phrase: p, from_name: fromName, from: a.k };
-      for (const [sock, peer] of this.socks()) if (peer.q && peer.k === holder) this.tx(sock, note);
-    }
+    this.ibPut({ kind: 'cheer', slot_id: slot, phrase: p, from_name: fromName, from: a.k, to: holder });
+    const note = { t: 'INBOX', kind: 'cheer', slot_id: slot, phrase: p, from_name: fromName, from: a.k };
+    for (const [sock, peer] of this.socks()) if (peer.q && peer.k === holder) this.tx(sock, note);
     this.noteTribe(a.k, 1);
     try {
       const job = this.env.METER.get(this.env.METER.idFromName('ev'))?.touch?.(isoWeek(now), a.k);
       if (job && typeof job.then === 'function') job.catch(() => {});
     } catch { /* north-star touch is best-effort */ }
   }
-  replyCheer(w, a, m) {
+  async replyCheer(w, a, m) {
     const p = Math.floor(Number(m?.p));
     const slot = String(m?.slot || '');
     const to = String(m?.to || '').slice(0, 80);
     const ack = (ok) => this.tx(w, { t: 'INBOX', kind: 'reply_ack', ok: !!ok, phrase: p });
     if (!AD_SLOT.test(slot) || p < 1 || p > 12 || !to || to === a.k) return ack(false);
-    const board = cachedBoard(slot);
+    if (this.lvl >= 2 || Date.now() - this.gateAt(a.k + '|reply') < 3000) return ack(false); // before any board read
+    const board = (await this.boardsFor([slot])).get(slot);
     if (!board || board.holder_id !== a.k) return ack(false);
     const now = Date.now();
     if (now - this.gateAt(a.k + '|reply') < 3000) return ack(false);
@@ -993,6 +999,32 @@ export class Room extends DurableObject {
     }
     ack(hit);
   }
+  // Boards as this room last heard them (WORLD_UPDATE rows, single reads) in SQLite `brd`, so a woken room keeps them. at: when the row was known current
+  // (a relayed row: when it arrived; a read: 1 ms before the read started, so it never ties an update relayed meanwhile); an older answer never replaces a newer row.
+  brdPut(b, at) { const r = brdRow(b); if (r) this.ctx.storage.sql.exec('insert into brd(slot, b, at) values(?, ?, ?) on conflict(slot) do update set b = excluded.b, at = excluded.at where excluded.at >= brd.at', r.slot_id, JSON.stringify(r), at); }
+  brdGet(slot, now) { const r = this.ctx.storage.sql.exec('select b, at from brd where slot = ?', slot).toArray()[0]; if (!r || !(now - Number(r.at) < BRD_TTL)) return null; try { return { b: JSON.parse(r.b), at: Number(r.at) }; } catch { return null; } }
+  // slot -> row for these slots: this room's row (BRD_TTL) or the isolate's world copy when it is under a minute old and newer; the rest in one Supabase
+  // read (BRD_MS). A slot left out is unknown: the caller must not guess its holder.
+  async boardsFor(slots) { this.tapDb(); const now = Date.now(), out = new Map(), mem = PC.get('world'), wAt = mem && now - mem.at < 60000 ? mem.at : 0, world = wAt ? cachedBoards() : [];
+    const pick = (s) => { const own = this.brdGet(s, Date.now()), w = wAt ? world.find((x) => x?.slot_id === s) : null, b = w && (!own || wAt > own.at) ? w : own?.b; if (b) out.set(s, b); };
+    slots.forEach(pick); const miss = slots.filter((s) => !out.has(s)); if (!miss.length) return out;
+    if (await this.boardRead(miss)) miss.forEach(pick);
+    return out; }
+  // One read of these boards into brd, shared by cheers that ask at the same time; false when Supabase fails or does not answer in BRD_MS. A late answer
+  // still lands in brd. After a failure or a late answer the same set of slots is not read again for BRD_FAIL (the cheers in between get 'wait').
+  boardRead(slots) { const key = slots.join(','); if (!this._br) { this._br = new Map(); this._bf = new Map(); }
+    if (this._br.has(key)) return this._br.get(key);
+    if (Date.now() < (this._bf.get(key) || 0)) return Promise.resolve(false);
+    const t0 = Date.now(), fail = () => { this._bf.set(key, Date.now() + BRD_FAIL); return false; }; let t = 0;
+    const read = (async () => { const r = await fetch(SUPA + '/rest/v1/billboards?select=' + BRD_KEYS + '&slot_id=in.(' + slots.join(',') + ')', { headers: { apikey: ANON, accept: 'application/json' } });
+      const rows = r.ok ? await r.json() : null; if (!Array.isArray(rows)) throw new Error('board ' + r.status);
+      const got = new Map(); for (const b of rows) if (slots.includes(String(b?.slot_id))) { if (!brdRow(b)) throw new Error('board row'); got.set(String(b.slot_id), b); }
+      for (const s of slots) this.brdPut(got.get(s) || { slot_id: s, holder_id: null, lit_until: null }, t0 - 1); // no row in Supabase: nobody holds it
+      this._bf.delete(key); return true; })().catch(fail);
+    const job = Promise.race([read, new Promise((ok) => { t = setTimeout(() => ok(fail()), BRD_MS); })]).finally(() => { clearTimeout(t); this._br.delete(key); });
+    this._br.set(key, job); return job; }
+  // Inbox rows wait in SQLite `ibq` until flushInbox; a row without a recipient is never queued.
+  ibPut(it) { if (!it?.to) return; this.tapDb(); this.ctx.storage.sql.exec('insert into ibq(it, at) values(?, ?)', JSON.stringify(it), Date.now()); }
   noteTribe(uid, bit) {
     const n = Math.floor(Number(bit));
     if (!uid || (n !== 1 && n !== 2 && n !== 4)) return 0;
@@ -1204,19 +1236,27 @@ export class Room extends DurableObject {
       this.syncPending(); this.flushErr = String(e).slice(0, 80); try { this.arm(); } catch { }
       return { ok: false, error: '미정산 코인을 반영하지 못했습니다. 잠시 후 다시 시도해 주세요.', pending: true };
     } }
-  // inbox_batch writes the queued rows and trims each account to 50. A missing RPC keeps the queue.
-  async flushInbox() {
-    const items = this.inboxQ;
-    if (!items?.length) return;
+  // inbox_batch writes the queued rows (ibq, oldest first, IBQ_N per call) and trims each account to 50. Sent rows leave ibq; a failure or a missing RPC
+  // keeps them for the next flush. Rows older than IBQ_DAYS or past the newest IBQ_MAX are dropped first. One send at a time.
+  flushInbox() { if (!this._ib) this._ib = this._flushInbox().catch(() => { }).finally(() => { this._ib = null; }); return this._ib; }
+  async _flushInbox() {
+    this.tapDb(); const q = this.ctx.storage.sql, now = Date.now(); this.ibAt = now;
+    q.exec('delete from ibq where at < ?', now - IBQ_DAYS * 864e5); q.exec('delete from ibq where id <= (select max(id) from ibq) - ?', IBQ_MAX);
+    const rows = q.exec('select id, it from ibq order by id limit ?', IBQ_N).toArray();
+    if (!rows.length) return;
+    const items = []; for (const r of rows) { try { const it = JSON.parse(r.it); if (it?.to) items.push(it); } catch { /* a broken row is dropped with the batch */ } }
     const key = this.env.FLUSH_KEY;
-    if (typeof key !== 'string' || !key) return;
-    try {
-      const r = await fetch(SUPA + '/rest/v1/rpc/inbox_batch', { method: 'POST', headers: { apikey: ANON, 'content-type': 'application/json' }, body: JSON.stringify({ p_key: key, p_items: items }) });
-      const text = await r.text();
-      if (!r.ok || /schema cache|Could not find|does not exist|42P01/i.test(text)) return;
-      this.inboxQ = [];
-    } catch { /* coin flush must not depend on the inbox table */ }
+    if (items.length) {
+      if (typeof key !== 'string' || !key) return;
+      try {
+        const r = await fetch(SUPA + '/rest/v1/rpc/inbox_batch', { method: 'POST', headers: { apikey: ANON, 'content-type': 'application/json' }, body: JSON.stringify({ p_key: key, p_items: items }) });
+        const text = await r.text();
+        if (!r.ok || /schema cache|Could not find|does not exist|42P01/i.test(text)) return;
+      } catch { return; } // coin flush must not depend on the inbox table
+    }
+    q.exec('delete from ibq where id <= ?', rows[rows.length - 1].id);
   }
+  ibWait() { this.tapDb(); return this.ctx.storage.sql.exec('select 1 from ibq limit 1').toArray().length > 0; }
   async httpFlush(req) { const uid = String(req.headers.get('x-uid') || ''); if (!uid) return J({ ok: false, error: 'auth' }, 401);
     try { this.tapDb(); const row = this.ctx.storage.sql.exec('select delta from coin where uid = ?', uid).toArray()[0]; if (!row?.delta) return J({ ok: true, pending: 0, flushed: 0 });
       const r = await this.flush(uid); return J(r.ok ? { ok: true, pending: 0, flushed: r.flushed || 0 } : r, r.ok ? 200 : 409);
@@ -1224,8 +1264,9 @@ export class Room extends DurableObject {
   // Clients no longer poll /rt/world or /rt/wallet while connected, so this push carries everything a claim changes: the row, the top-20 ranks,
   // and a WALLET_SYNC for third parties whose balance moved (m.sync). A message without kind tells clients to refetch the world (bulk change).
   async httpWorld(req) { let m = null; try { m = await req.json(); } catch { return J({ err: 'json' }, 400); }
-    if (m && m.t === 'WORLD_UPDATE' && !m.kind) { const s = JSON.stringify({ t: 'WORLD_UPDATE' }); for (const w of this.socks().keys()) this.tx(w, s); return J({ ok: true, n: this.socks().size }); }
+    if (m && m.t === 'WORLD_UPDATE' && !m.kind) { this.tapDb(); this.ctx.storage.sql.exec('delete from brd'); const s = JSON.stringify({ t: 'WORLD_UPDATE' }); for (const w of this.socks().keys()) this.tx(w, s); return J({ ok: true, n: this.socks().size }); } // bulk change: the room's boards are read again
     if (!m || m.t !== 'WORLD_UPDATE' || (m.kind !== 'BILLBOARD' && m.kind !== 'PLOT') || !m.data || typeof m.data !== 'object') return J({ err: 'world' }, 400);
+    if (m.kind === 'BILLBOARD') { this.tapDb(); if (brdRow(m.data)) this.brdPut(m.data, Date.now()); else this.ctx.storage.sql.exec('delete from brd where slot = ?', String(m.data.slot_id || '')); } // a row without holder and clock: read it again
     const msg = { t: 'WORLD_UPDATE', kind: m.kind, data: m.data }; this.pushEv(msg); const s = JSON.stringify(Array.isArray(m.ranks) ? { ...msg, ranks: m.ranks } : msg); for (const w of this.socks().keys()) this.tx(w, s);
     for (const id of Array.isArray(m.sync) ? m.sync : []) this.walletSync(String(id));
     const take = m.take;
@@ -1355,8 +1396,8 @@ export class Room extends DurableObject {
     else if (m.t === 'PICK' && a.q) this.pick(a);
     else if (m.t === 'FARE' && a.q) this.fare(w, a, m);
     else if (m.t === 'QUEST' && a.q) this.quest(w, a, m);
-    else if (m.t === 'CHEER' && a.q) this.cheer(w, a, m);
-    else if (m.t === 'REPLY' && a.q) this.replyCheer(w, a, m);
+    else if (m.t === 'CHEER' && a.q) await this.cheer(w, a, m);
+    else if (m.t === 'REPLY' && a.q) await this.replyCheer(w, a, m);
     else if (m.t === 'DRAW_CHECK' && a.q) await this.drawCheck(w, a);
     else if (m.t === 'FEVER' && a.q) { this.tx(w, { t: 'FEVER', until: this.startFever(a.k) }); }
     else if (m.t === 'REV' && a.q) { const until = this.startRevenge(a.k); this.tx(w, { t: 'REV', until: until || 0 }); }
@@ -1596,6 +1637,12 @@ function cachedBoards() {
     return Array.isArray(world?.billboards) ? world.billboards : [];
   } catch { return []; }
 }
+// Room board rows (brd): trusted for BRD_TTL, a missing one is read with a BRD_MS limit, not again for BRD_FAIL after a failure. Room inbox queue (ibq):
+// IBQ_N rows per inbox_batch, kept IBQ_DAYS, IBQ_MAX rows.
+const BRD_TTL = 300000, BRD_MS = 2500, BRD_FAIL = 10000, BRD_KEYS = 'slot_id,holder_id,holder_name,line1,line2,line3,lit_until,expires_at', IBQ_N = 100, IBQ_DAYS = 7, IBQ_MAX = 500;
+// The fields a cheer reads (holder, clock, lines for a chain #tag), or null for a row that does not carry both the holder and a clock.
+function brdRow(b) { if (!b || typeof b !== 'object' || !SLOT_RE.test(String(b.slot_id || '')) || !('holder_id' in b) || !('lit_until' in b || 'expires_at' in b)) return null;
+  const o = {}; for (const k of BRD_KEYS.split(',')) o[k] = b[k] ?? null; return o; }
 function cachedBoard(slot) {
   const mem = PC.get('world');
   if (!mem?.b) return null;
@@ -2045,12 +2092,7 @@ async function plaza(req, env, ctx, u) {
     if (kind === 'wash') {
       const slot = String(b.slot_id || '');
       if (!SLOT_RE.test(slot)) return J({ ok: false, error: '전광판 슬롯이 올바르지 않습니다.' }, 400);
-      let holder = cachedBoard(slot)?.holder_id || '';
-      if (!holder) {
-        const s = await fetch(SUPA + '/rest/v1/billboards?select=holder_id&slot_id=eq.' + encodeURIComponent(slot), { headers: { apikey: ANON, accept: 'application/json' } });
-        const rows = s.ok ? await s.json() : [];
-        holder = Array.isArray(rows) ? (rows[0]?.holder_id || '') : '';
-      }
+      const holder = String((await snapBoard(slot, true))?.holder_id || ''); // one fresh row: an isolate copy may still show the previous holder
       if (!holder || holder !== actor.id) return J({ ok: false, error: '내 전광판만 씻을 수 있어요.' }, 400);
       const peeled = await pushSticker(env, topic, { op: 'pop', slot });
       if (!peeled.ok) return J({ ok: false, error: '지울 스티커가 없어요.' }, 400);
@@ -2192,8 +2234,10 @@ async function plaza(req, env, ctx, u) {
     const sync = claim ? [data.prev_holder_id, owner].filter(id => id && id !== actor.id) : [];
     const ranks = claim && fresh?.ranked ? fresh.world.ranks : undefined;
     for (const name of squareTopics(topic)) {
-      const br = await env.ROOM.get(env.ROOM.idFromName(name)).fetch(new Request('https://room.internal/world', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ t: 'WORLD_UPDATE', kind, data: row, ranks, sync, take, mono: data.monopoly_name || '' }) }));
-      broadcast = broadcast || br.ok;
+      try { // one shard failing must not keep the update from the shards after it
+        const br = await env.ROOM.get(env.ROOM.idFromName(name)).fetch(new Request('https://room.internal/world', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ t: 'WORLD_UPDATE', kind, data: row, ranks, sync, take, mono: data.monopoly_name || '' }) }));
+        broadcast = broadcast || br.ok;
+      } catch { /* that room misses this row; its cheers read the board again after BRD_TTL */ }
     }
     await env.ROOM.get(env.ROOM.idFromName(topic)).fetch(new Request('https://room.internal/sync', { method: 'POST', headers: { 'x-uid': actor.id } }));
     if (claim) {
@@ -2622,6 +2666,8 @@ async function accountApi(req, env, ctx, u) {
     return J({ ok: true });
   }
   if (req.method !== 'POST') return J({ err: 'post' }, 405);
+  // A link is done once per person; a replay loop must not reach the RPC or any Durable Object (GUEST_RL: 10 a minute per client IP).
+  if (u.pathname === '/rt/auth/merge' && !(await rateOk(env.GUEST_RL, req))) return J({ ok: false, err: 'rate', error: '계정을 연결하지 못했어요. 잠시 뒤 다시 해 주세요.' }, 429, { 'retry-after': '60' });
   const actor = await resolveActor(env, tokenOf(req));
   if (!actor || actor.guest || !actor.id.startsWith('user:')) return J({ err: 'auth' }, 401);
   if (u.pathname === '/rt/auth/withdraw') {
@@ -2642,10 +2688,17 @@ async function accountApi(req, env, ctx, u) {
   const guestId = 'guest:' + sub;
   const G = await guestVerify(env, b?.guest_token, 180 * 86400);
   if (!G || G.s !== sub) return J({ err: 'guest' }, 401);
+  // Does the link move a board? merge_guest_account does not say, so one row is read first. A replay moves nothing and tells no room. Unreadable: assume yes.
+  let held = true; try { const s = await fetch(SUPA + '/rest/v1/billboards?select=slot_id&holder_id=eq.' + encodeURIComponent(guestId) + '&limit=1', { headers: { apikey: ANON, accept: 'application/json' } }); const rows = s.ok ? await s.json() : null; if (Array.isArray(rows)) held = rows.length > 0; } catch { held = true; }
   const rpc = await supabaseRpc('merge_guest_account', { p_key: env.FLUSH_KEY || '', p_user_id: actor.id, p_guest_id: guestId, p_nickname: botNick(b?.nickname) ? '' : clip(b?.nickname || '', 16) });
   const data = rpc.data || {};
   if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || '계정을 연결하지 못했습니다.' }, rpc.ok ? 400 : 502);
   try { await invalidateWorld(env, ctx); } catch { }
+  // The guest's boards now have the user as holder: a bulk change, so the live rooms drop their board rows (brd) and clients refetch the world. Live rooms
+  // as the wish fan-out picks them (wishRooms: the caller's shard and shards with a seated account today or yesterday; unreadable: the caller's only).
+  // Other rooms read the board again within BRD_TTL.
+  if (held) { const topic = PLAZA_TOPICS.includes(b?.topic) ? b.topic : 'chapel:square';
+    ctx.waitUntil(wishRooms(env, topic).then(names => Promise.all(names.map(t => env.ROOM.get(env.ROOM.idFromName(t)).fetch(new Request('https://room.internal/world', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"t":"WORLD_UPDATE"}' })).catch(() => null)))).catch(() => null)); }
   ctx.waitUntil(Promise.resolve().then(() => env.METER.get(env.METER.idFromName('ev')).evAlias(guestId, actor.id)).catch(() => { })); // return and funnel numbers follow the person across the link
   // Pushes to the user: id reach the guest's browsers, and the guest's board shots stay the holder's own (card page, share-page title).
   // The guest's wish, hearts, reports and unpaid prizes become the user's (wMove), so mine, the one-wish-a-day rule and the prize follow the person.

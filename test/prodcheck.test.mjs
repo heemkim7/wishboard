@@ -15,7 +15,9 @@ registerHooks({
 globalThis.WebSocketRequestResponsePair = class { constructor(req, res) { this.req = req; this.res = res; } };
 
 const W = await import('../worker.js');
-const worker = W.default, { Room, Meter, resolveActor } = W;
+const worker = W.default, { Meter, resolveActor } = W;
+// The Room from a second copy of worker.js: like a Durable Object in its own isolate, it never sees the Worker's per-isolate world copy (PC).
+const { Room } = await import('../worker.js?isolate=room');
 const E = await import('../tools/prod-e2e.mjs');
 const C = await import('../tools/prod-check.mjs');
 const { SLOTS, BALANCE, floorOf } = await import('../balance.js');
@@ -79,6 +81,13 @@ describe('prod-e2e pure helpers', () => {
     c = E.slotCandidates({ billboards: boards, plots: [] });
     assert.deepEqual(c.map((x) => x.slot), ['STREET_30']); // one left: the step then refuses to take it
     assert.deepEqual(E.slotCandidates(null), []);
+    // the free-first list from GET /rt/config is excluded on top of BALANCE.starterSlots
+    boards.forEach((b) => { b.holder_id = null; });
+    const st = E.starterOf({ starter: ['STREET_1', 'STREET_2', 'STREET_1', 7] });
+    assert.deepEqual(st, [...BALANCE.starterSlots, 'STREET_1', 'STREET_2']);
+    assert.deepEqual(E.starterOf(null), [...BALANCE.starterSlots]);
+    c = E.slotCandidates({ billboards: boards.filter((b) => b.slot_id.startsWith('STREET_')), plots: [] }, st);
+    assert.equal(c[0].slot, 'STREET_3'); assert.ok(!c.some((x) => st.includes(x.slot)));
   });
   it('uses copy the server accepts, and refusal copy it refuses as link', () => {
     assert.equal(wishFault(E.WISH_TEXT), ''); assert.equal(wishFault(E.WISH_EDIT), '');
@@ -166,8 +175,9 @@ function fakeSupa(db) {
     relight_billboard: (a) => { const b = db.boards.get(a.p_slot_id); if (!b || b.holder_id !== a.p_actor_id) return { ok: false, error: 'holder' }; if (b.lit_on === kst()) return { ok: true, lit_until: b.lit_until, lit_days: b.lit_days };
       b.lit_until = b.expires_at = new Date(Date.now() + 72 * 36e5).toISOString(); b.lit_on = kst(); b.lit_days += 1; return { ok: true, lit_until: b.lit_until, lit_days: b.lit_days, scored: true }; },
     takedown_billboard: (a) => { const b = db.boards.get(a.p_slot_id); if (!b) return { ok: false, error: 'slot' }; Object.assign(b, { line1: '운영자가 내렸습니다', line2: '', line3: '', external_url: null }); db.takedowns.push(a.p_slot_id); return { ok: true, billboard: { ...b } }; },
-    inbox_batch: (a) => { for (const it of a.p_items) { const to = it.actor_id || it.to; if (!to) continue; db.inbox.push({ id: ++db.seq, actor_id: to, kind: it.kind, slot_id: it.slot_id || null, phrase: it.phrase ?? null, from_name: it.from_name || null, from_id: it.from || null, created_at: new Date().toISOString(), read_at: null }); } return { ok: true }; },
-    inbox_list: (a) => ({ items: db.inbox.filter((r) => r.actor_id === a.p_actor_id).sort((x, y) => (x.read_at ? 1 : 0) - (y.read_at ? 1 : 0) || y.id - x.id).slice(0, 20).map((r) => ({ id: r.id, kind: r.kind, slot_id: r.slot_id, phrase: r.phrase, from_name: r.from_name, from: r.from_id, created_at: r.created_at })) }),
+    inbox_batch: (a) => { db.inboxSent.push(...a.p_items); for (const it of a.p_items) { const to = it.actor_id || it.to; if (!to) continue; db.inbox.push({ id: ++db.seq, actor_id: to, kind: it.kind, slot_id: it.slot_id || null, phrase: it.phrase ?? null, from_name: it.from_name || null, from_id: it.from || null, created_at: new Date(Date.now()).toISOString(), read_at: null }); } return { ok: true }; },
+    inbox_list: (a) => ({ items: db.inbox.filter((r) => r.actor_id === a.p_actor_id).sort((x, y) => (x.read_at ? 1 : 0) - (y.read_at ? 1 : 0) || y.id - x.id).slice(0, 20).map((r) => ({ id: r.id, kind: r.kind, slot_id: r.slot_id, phrase: r.phrase, from_name: r.from_name, from: r.from_id, created_at: r.created_at, ...(db.readFlag ? { read: !!r.read_at } : {}) })) }), // readFlag: the optional migration
+    starter_slot_list: () => (db.starter ? { ok: true, slots: db.starter } : { ok: false }),
     inbox_read: (a) => { for (const r of db.inbox) if (r.actor_id === a.p_actor_id && a.p_ids.includes(r.id)) r.read_at ||= new Date().toISOString(); return { ok: true }; },
   };
   return async (url, opt = {}) => {
@@ -185,7 +195,7 @@ function fakeSupa(db) {
 }
 function makeDb() {
   const boards = new Map(SLOTS.map((s) => [s.id, { slot_id: s.id, tier: s.tier, holder_id: null, holder_name: null, line1: '', line2: '', line3: '', emoji: '✨', bg_theme: 'cyber_navy', text_color: '#ffffff', current_bid: 0, protected_until: null, expires_at: null, lit_until: null, lit_on: null, lit_days: 0, plot_id: s.id.startsWith('PLOT_') ? Number(s.id.slice(5)) : null, photo_id: null, photo_status: null }]));
-  return { boards, plots: [{ plot_id: 1, owner_id: 'guest:g-11111111-1111-4111-8111-111111111111', stage: 1 }], wallets: new Map(), claims: [], edits: [], takedowns: [], inbox: [], seq: 0 };
+  return { boards, plots: [{ plot_id: 1, owner_id: 'guest:g-11111111-1111-4111-8111-111111111111', stage: 1 }], wallets: new Map(), claims: [], edits: [], takedowns: [], inbox: [], inboxSent: [], seq: 0 };
 }
 // What /rt/ws does (topic list, masil2 + at.<token> subprotocols, resolveActor, the Room's seat and admit), wired to the real Room's message handler.
 function fakeWebSocket(env) {
@@ -268,6 +278,11 @@ describe('prod-e2e dry run (in-memory Worker, Meter, Room; fake Supabase)', { co
       assert.deepEqual(state.wishes.map((w) => w.hidden), [true]); assert.deepEqual(state.slots.map((s) => s.status), ['neutral']);
       const row = h.db.inbox.find((x) => x.actor_id === g1 && x.kind === 'cheer');
       assert.ok(row && row.slot_id === 'PLOT_2' && row.read_at, JSON.stringify(h.db.inbox));
+      // the Room runs without the Worker's world copy (its own isolate), and still knows the holder right after the claim
+      for (const what of ['guest 2 cheers the board and gets a PAY', 'guest 1 gets the cheer live (INBOX)', "guest 1's /rt/inbox has the cheer row", 'POST /rt/inbox/read marks it read'])
+        assert.ok(r1.out.some((l) => l.startsWith('PASS') && l.includes(what)), 'no PASS for ' + what);
+      assert.match(r1.text, /SKIP {2}board +the read flag is visible {2}\(GET \/rt\/inbox has no read flag/);
+      assert.ok(h.db.inboxSent.length >= 1 && h.db.inboxSent.every((it) => it.to), 'an inbox row without a recipient: ' + JSON.stringify(h.db.inboxSent));
       assert.equal(state.snaps.length, 2);
       assert.match(r1.text, /Left behind/); assert.match(r1.text, /wallet 점검1 …\w{4} {2}\d+ coins/);
 
@@ -298,6 +313,23 @@ describe('prod-e2e dry run (in-memory Worker, Meter, Room; fake Supabase)', { co
       assert.deepEqual(h.db.claims.map((x) => x.p_slot_id), ['PLOT_2', 'PLOT_3', 'PLOT_4']);
       if (process.env.PRODCHECK_SHOW) console.log(r1.text + '\n\n' + r2.text + '\n\n' + r3.text);
     }
+  });
+
+  it('checks the read flag when GET /rt/inbox carries it, and stays off every free-first slot /rt/config lists', async () => {
+    const h = setup(); h.db.readFlag = true;
+    // every plot front is taken by a player, so the cheapest empty boards are STREET_1, STREET_2, ...; the database lists STREET_1 and STREET_2 as free-first
+    for (const b of h.db.boards.values()) if (b.slot_id.startsWith('PLOT_')) Object.assign(b, { holder_id: 'guest:g-33333333-3333-4333-8333-333333333333', holder_name: '손님' });
+    h.db.starter = ['STREET_1', 'STREET_2']; bump(61000); await W.starterSlots(h.env); // the Worker's 10-minute copy of starter_slot_list
+    const r = await go(h, { statePath: path.join(dir, 'flag.json') });
+    assert.deepEqual(fails(r), [], r.text); assert.equal(r.code, 0, r.text);
+    assert.deepEqual(h.db.claims.map((x) => x.p_slot_id), ['STREET_3']);
+    assert.match(r.text, /PASS {2}board +the row was unread before/); assert.match(r.text, /PASS {2}board +GET \/rt\/inbox shows it read/);
+    assert.ok(!/the read flag is visible/.test(r.text));
+    // config unreadable: the board step stops before any claim
+    const h2 = setup(); h2.drop.push({ key: 'GET /rt/config' });
+    const r2 = await go(h2, { statePath: path.join(dir, 'noconfig.json'), only: new Set(['board']) });
+    assert.match(r2.text, /FAIL {2}board +step stopped {2}\(cannot read the free-first slots from \/rt\/config/); assert.deepEqual(h2.db.claims, []);
+    // the Worker keeps that list for 10 minutes; later cases still claim PLOT_2 (no STREET_ board is the cheapest there)
   });
 
   it('falls back to the operator takedown only when the holder edit is refused', async () => {

@@ -114,7 +114,7 @@ describe('board report', { concurrency: false }, () => {
     const { clock, state, done } = setup();
     try {
       const env = makeEnv(), { guest, post, report } = harness(env), A = await guest(), B = await guest();
-      state.boards = [board('STREET_5', A.id)];
+      state.boards = [board('STREET_5', A.id), board('STREET_6', B.id)]; // STREET_6: a cheer needs a known holder
       assert.equal((await post('/rt/claim-billboard', CLAIM('STREET_5'), A.token)).status, 200);
       clock.add(61000);
       const room = env.room(SQ).do, c = sock(room, 'guest:c'), d = sock(room, 'guest:d'), e = sock(room, 'guest:e');

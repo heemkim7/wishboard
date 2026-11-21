@@ -1280,6 +1280,7 @@ net.on('pay', (m) => {
   if (m?.why === 'nopick') { ui.note('손님을 태운 뒤에 운임이 들어와요. 초록 기둥에서 속도를 줄이세요', 'err'); return; }
   if (m?.why === 'place') { ui.note('전광판 앞에서 내려야 운임이 들어와요', 'err'); return; }
   if (m?.why === 'dark') { ui.note('켜져 있는 다른 사람 전광판에만 응원할 수 있어요', 'err'); return; }
+  if (m?.why === 'wait') { ui.note('잠시 뒤 다시 응원해 주세요', 'err'); return; }
   if (m?.why === 'soon') {
     const wait = {
       fare: '손님을 태운 뒤 40초가 지나야 운임이 들어와요',
