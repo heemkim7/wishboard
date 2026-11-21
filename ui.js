@@ -3241,10 +3241,13 @@ export function createUI(root, hooks) {
     openSheet('전광판 걸기', n + '/3', (host) => {
       if (n === 1) {
         // Only what can be taken now: open starter slots, and the slot asked for when it is not a taken starter.
+        // The server list can hold 12; show the first four open ones (nearest first) so the step stays as short as before.
         const ids = [];
+        let free = 0;
         for (const id of [...BALANCE.starterSlots, model.slot]) {
           if (!id || ids.includes(id)) continue;
-          if (BALANCE.starterSlots.includes(id) && !starterOpen(id)) continue;
+          if (BALANCE.starterSlots.includes(id) && (!starterOpen(id) || (free >= 4 && id !== model.slot))) continue;
+          if (BALANCE.starterSlots.includes(id)) free += 1;
           ids.push(id);
         }
         if (ids.length && !ids.includes(model.slot)) model.choose(ids[0]);

@@ -845,6 +845,36 @@ AS $$
   END;
 $$;
 
+-- Free first slots (claim_billboard p_mode = 'starter'). The one list the database enforces; nearest the bakery walk first.
+-- The Worker reads it with starter_slot_list and serves it in /rt/config. migrations/2026-11-21-mid.sql part 1 adds both to production.
+CREATE OR REPLACE FUNCTION public.starter_slots()
+RETURNS TEXT[]
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT ARRAY['STREET_20','STREET_23','STREET_28','STREET_19','STREET_27','STREET_16',
+               'STREET_22','STREET_7','STREET_11','STREET_9','STREET_8','STREET_10']::TEXT[];
+$$;
+
+CREATE OR REPLACE FUNCTION public.starter_slot_list(p_key TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  RETURN jsonb_build_object('ok', true, 'slots', to_jsonb(public.starter_slots()));
+END;
+$$;
+GRANT EXECUTE ON FUNCTION public.starter_slots() TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.starter_slot_list(TEXT) TO anon, authenticated, service_role;
+
 -- 14-arg claim. The 12-arg claim_billboard stays. Drop only the old caption_y signature.
 DROP FUNCTION IF EXISTS public.claim_billboard(text, text, text, text, bigint, text, text, text, text, text, text, text, integer);
 CREATE OR REPLACE FUNCTION public.claim_billboard(
@@ -971,7 +1001,7 @@ BEGIN
   v_mono_before := public.monopoly_name();
 
   IF p_mode = 'starter' THEN
-    IF p_bid <> 0 OR p_slot_id NOT IN ('STREET_8','STREET_9','STREET_10','STREET_11') OR v_live THEN
+    IF p_bid <> 0 OR NOT (p_slot_id = ANY (public.starter_slots())) OR v_live THEN
       RETURN jsonb_build_object('ok', false, 'error', 'starter');
     END IF;
     INSERT INTO public.profiles (actor_id) VALUES (p_actor_id) ON CONFLICT (actor_id) DO NOTHING;
@@ -1502,6 +1532,8 @@ BEGIN
   SET status = 'removed', jpeg = ''::BYTEA, reviewed_at = now()
   WHERE actor_id = p_actor_id AND status IN ('pending', 'approved');
 
+  -- Push subscriptions saved only here (before the Worker kept its own copy) go with the account.
+  DELETE FROM public.push_subs WHERE actor_id = p_actor_id;
   DELETE FROM public.wallets WHERE actor_id = p_actor_id;
   RETURN jsonb_build_object('ok', true, 'actor_id', p_actor_id);
 END;
@@ -2221,7 +2253,8 @@ BEGIN
     'phrase', s.phrase,
     'from_name', s.from_name,
     'from', s.from_id,
-    'created_at', s.created_at
+    'created_at', s.created_at,
+    'read', (s.read_at IS NOT NULL)
   ) ORDER BY (s.read_at IS NULL) DESC, s.created_at DESC), '[]'::jsonb)
   INTO v_items
   FROM (
@@ -2864,7 +2897,15 @@ BEGIN
 END;
 $$;
 
--- Sunday 21:00 KST. The week's top tribe keeps the roof for seven days. Scores stay.
+-- One roof award per finished KST ISO week, on any day after it ends. A NULL tribe_id records a week nobody won. Server only.
+CREATE TABLE IF NOT EXISTS public.tribe_roofs (
+  week TEXT PRIMARY KEY,
+  tribe_id TEXT,
+  awarded_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE public.tribe_roofs ENABLE ROW LEVEL SECURITY;
+
+-- The finished week's top tribe keeps the roof for seven days from the award. Scores stay.
 CREATE OR REPLACE FUNCTION public.award_tribe_roof(p_key TEXT, p_week TEXT)
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -2879,17 +2920,28 @@ BEGIN
   IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
     RAISE EXCEPTION 'Unauthorized worker key';
   END IF;
-  IF p_week !~ '^[0-9]{4}W[0-9]{2}$' THEN
+  IF p_week !~ '^[0-9]{4}W(0[1-9]|[1-4][0-9]|5[0-3])$' THEN
     RETURN jsonb_build_object('ok', false, 'error', 'week');
   END IF;
-  IF EXTRACT(DOW FROM timezone('Asia/Seoul', now()))::int <> 0 THEN
-    RETURN jsonb_build_object('ok', true, 'skipped', true);
+  IF p_week >= to_char(timezone('Asia/Seoul', now()), 'IYYY"W"IW') THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'open');
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.tribe_roofs WHERE week = p_week) THEN
+    RETURN jsonb_build_object('ok', true, 'done', true);
   END IF;
   SELECT tribe_id INTO v_id
   FROM public.tribe_scores
   WHERE week = p_week AND points > 0
   ORDER BY points DESC, tribe_id ASC
   LIMIT 1;
+  INSERT INTO public.tribe_roofs (week, tribe_id) VALUES (p_week, v_id) ON CONFLICT (week) DO NOTHING;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('ok', true, 'done', true);
+  END IF;
+  -- A late award for an older week is recorded but does not take the roof from a newer week's winner.
+  IF EXISTS (SELECT 1 FROM public.tribe_roofs WHERE week > p_week) THEN
+    RETURN jsonb_build_object('ok', true, 'done', true);
+  END IF;
   UPDATE public.tribes SET roof_until = NULL WHERE roof_until IS NOT NULL;
   IF v_id IS NULL THEN
     RETURN jsonb_build_object('ok', true, 'roof', '');

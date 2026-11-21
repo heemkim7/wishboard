@@ -1,5 +1,8 @@
 // Coin amounts and trigger sizes. Map coordinates stay in ts3d/layout.js.
 // Claimable screens: 3 main, 8 corners, 30 main-street faces, 18 plot fronts.
+// Free first slots: the database owns the list (public.starter_slots()), /rt/config carries it. Until it arrives, these four.
+export const STARTER_DEFAULT = Object.freeze(['STREET_8', 'STREET_9', 'STREET_10', 'STREET_11']);
+let STARTER = null;
 export const BALANCE = {
   cooldownMs: 2200,
   stallR: 9,
@@ -14,7 +17,7 @@ export const BALANCE = {
   cheerGroup: 8,
   cheerSolo: 2,
   floors: { S: 3000, B: 500, C: 100 },
-  starterSlots: ['STREET_8', 'STREET_9', 'STREET_10', 'STREET_11'],
+  get starterSlots() { return STARTER || STARTER_DEFAULT; }, // every offer of a free slot reads this one getter
   starterBid: 30,
   firstCoins: 40,
   bakeGold: 15,
@@ -62,6 +65,15 @@ export const BUILDINGS = [
 ];
 const TAG_RE = /#[0-9A-Za-z가-힣_]{1,16}/g;
 
+/** A starter list from the server: main-street ids only, no repeats, in order. Anything else (or an empty list) is null. */
+export function starterList(raw) {
+  if (!Array.isArray(raw) || raw.length > 30) return null;
+  const out = [];
+  for (const id of raw) if (typeof id === 'string' && /^STREET_\d+$/.test(id) && SLOT_BY.has(id) && !out.includes(id)) out.push(id);
+  return out.length ? out : null;
+}
+/** Adopt the server's list; a missing or bad one goes back to STARTER_DEFAULT. */
+export function setStarterSlots(raw) { STARTER = starterList(raw); return BALANCE.starterSlots; }
 export function slotOf(slotId) { return SLOT_BY.get(String(slotId || '')) || null; }
 export function floorOf(slotId) { return slotOf(slotId)?.bid || 0; }
 export function slotName(slotId) { return slotOf(slotId)?.name || String(slotId || ''); }

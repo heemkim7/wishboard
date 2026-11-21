@@ -14,12 +14,11 @@ export function lockCelebration(ms) {
 }
 
 export function claimWizard(slot) {
-  const freeIds = BALANCE.starterSlots;
   const state = { step: 1, slot: String(slot || ''), lines: ['', '', ''], emoji: '✨', theme: 'cyber_navy' };
   return {
     get step() { return state.step; },
     get slot() { return state.slot; },
-    get free() { return freeIds.includes(state.slot); },
+    get free() { return BALANCE.starterSlots.includes(state.slot); }, // live: the server list can arrive while the wizard is open
     get mode() { return this.free ? 'starter' : 'claim'; },
     choose(id) { state.slot = String(id || ''); state.step = 1; },
     linesOk(a, b, c) {

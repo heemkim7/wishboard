@@ -174,7 +174,8 @@ describe('G2 KakaoTalk share behind a key', () => {
   it('GET /rt/config carries kakao only when KAKAO_JS_KEY is set, and never anything else of the env', async () => {
     const none = harness(makeEnv()), off = await (await none.call('/rt/config')).json();
     assert.equal('kakao' in off, false);
-    assert.deepEqual(Object.keys(off).sort(), ['key', 'url']);
+    assert.deepEqual(Object.keys(off).sort(), ['key', 'starter', 'url']); // starter: the free first-slot list (package db), not env
+    assert.ok(Array.isArray(off.starter) && off.starter.every((s) => /^STREET_\d+$/.test(s)));
     const KEYV = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
     const on = await (await harness(makeEnv({ KAKAO_JS_KEY: KEYV })).call('/rt/config')).json();
     assert.equal(on.kakao, KEYV);

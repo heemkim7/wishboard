@@ -5,7 +5,7 @@
 // Meter DO: daily (UTC) estimate of billed DO requests -> lean mode at 80%, solo (down) at 95% of the Free 100k/day.
 // Supabase keeps auth, DB and RPCs only. No timers in DOs (hibernation-friendly); alarms only while someone waits.
 import { DurableObject } from 'cloudflare:workers';
-import { BALANCE, slotName, SLOT_IDS, PAY, scaledPay, bakeBase, danceBase, farePay, ballOpen, auctionClosed, stickerNext, chainBoost, cheerCount } from './balance.js';
+import { BALANCE, slotName, SLOT_IDS, PAY, scaledPay, bakeBase, danceBase, farePay, ballOpen, auctionClosed, stickerNext, chainBoost, cheerCount, STARTER_DEFAULT, starterList } from './balance.js';
 import { nextBallUntil, drawSpan } from './live.js';
 import { CHEER_PHRASES, EVENT_NAMES, allowedLink, blockedText, parseGuestHandover, statsFromCounts } from './plaza-account.js';
 import { renderCardPng } from './cardpng.js';
@@ -305,6 +305,9 @@ export class Meter extends DurableObject {
   }
   sipGet(hash, day) { this.acInit(); return agGet(this.ctx.storage.sql, String(hash || '').slice(0, 16), 'sip', String(day || '')); }
   sipAdd(hash, day) { this.acInit(); const q = this.ctx.storage.sql, id = String(hash || '').slice(0, 16), d = String(day || ''); agPut(q, id, 'sip', d, agGet(q, id, 'sip', d) + 1); return agGet(q, id, 'sip', d); }
+  // Check and count in one call (a DO runs one call at a time), so parallel starter claims from one IP cannot pass the cap.
+  sipTake(hash, day, cap) { this.acInit(); const q = this.ctx.storage.sql, id = String(hash || '').slice(0, 16), d = String(day || ''), n = agGet(q, id, 'sip', d); if (n >= cap) return false; agPut(q, id, 'sip', d, n + 1); return true; }
+  sipGive(hash, day) { this.acInit(); const q = this.ctx.storage.sql, id = String(hash || '').slice(0, 16), d = String(day || ''), n = agGet(q, id, 'sip', d); if (n > 0) agSet(q, id, 'sip', d, n - 1); return Math.max(0, n - 1); }
   cardInit() { if (this.ci) return; this.ci = 1; this.ctx.storage.sql.exec('create table if not exists cards(k text primary key, png blob, at integer)'); }
   cardGet(key) { this.cardInit(); const row = this.ctx.storage.sql.exec('select png from cards where k = ?', String(key || '')).toArray()[0]; return row?.png || null; }
   cardPut(key, bytes) { this.cardInit(); const png = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []); if (png.byteLength > 40000) return { ok: false };
@@ -1313,7 +1316,7 @@ async function inboxList(req, env) {
   const actor = await resolveActor(env, tokenOf(req)); if (!actor) return J({ err: 'auth' }, 401);
   const rpc = await supabaseRpc('inbox_list', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id });
   const rows = Array.isArray(rpc.data?.items) ? rpc.data.items : [];
-  const items = rows.slice(0, 20).map((row) => ({ id: row.id, kind: row.kind, slot_id: row.slot_id ?? null, phrase: row.phrase ?? null, from_name: row.from_name ?? null, from: row.from ?? null, created_at: row.created_at }));
+  const items = rows.slice(0, 20).map((row) => ({ id: row.id, kind: row.kind, slot_id: row.slot_id ?? null, phrase: row.phrase ?? null, from_name: row.from_name ?? null, from: row.from ?? null, created_at: row.created_at, ...(typeof row.read === 'boolean' ? { read: row.read } : {}) })); // read: after the 2026-11-21 migration
   return J({ items });
 }
 async function inboxRead(req, env) {
@@ -1468,6 +1471,21 @@ async function supabaseRpc(name, args) {
   const text = await r.text(); let data = null; try { data = JSON.parse(text); } catch { data = { ok: false, error: text.slice(0, 180) }; }
   if (typeof data === 'string') { try { data = JSON.parse(data); } catch { } }
   return { ok: r.ok, status: r.status, data };
+}
+// Free first slots as the database enforces them (starter_slot_list). Per isolate: a good list for 10 minutes. A failure, a missing
+// function or no answer in 1.5 s keeps the last good list (or the old four if there never was one) and asks again after 60 s.
+// good=false means the list is only the fallback: then the starter claim checks just the STREET_ shape and claim_billboard decides.
+let STARTER_C = { at: 0, ttl: 0, list: [...STARTER_DEFAULT], good: false, p: null };
+export function starterSlots(env) {
+  if (Date.now() - STARTER_C.at < STARTER_C.ttl) return Promise.resolve(STARTER_C);
+  if (STARTER_C.p) return STARTER_C.p;
+  const ask = supabaseRpc('starter_slot_list', { p_key: env.FLUSH_KEY || '' }).then((r) => (r.ok && r.data?.ok === true ? starterList(r.data.slots) : null), () => null);
+  let timer; const late = new Promise((res) => { timer = setTimeout(res, 1500, null); });
+  return STARTER_C.p = Promise.race([ask, late]).then((list) => {
+    clearTimeout(timer);
+    STARTER_C = list ? { at: Date.now(), ttl: 600000, list, good: true, p: null } : { ...STARTER_C, at: Date.now(), ttl: 60000, p: null };
+    return STARTER_C;
+  });
 }
 async function settle(env, topic, actorId) {
   const res = await env.ROOM.get(env.ROOM.idFromName(topic)).fetch(new Request('https://room.internal/flush', { method: 'POST', headers: { 'x-uid': actorId } }));
@@ -1713,7 +1731,7 @@ async function plaza(req, env, ctx, u) {
   }
   const claim = u.pathname === '/rt/claim-billboard';
   const sell = u.pathname === '/rt/sell-coins';
-  let rpc, mode = 'claim';
+  let rpc, mode = 'claim', sip = null;
   if (sell) {
     const slot = String(b.slot_id || '');
     const amount = Math.floor(Number(b.amount));
@@ -1731,6 +1749,8 @@ async function plaza(req, env, ctx, u) {
     mode = ['claim', 'edit', 'starter', 'tribe'].includes(b.mode) ? b.mode : 'claim';
     if (mode === 'starter') {
       if (b.bid !== 0) return J({ ok: false, error: 'starter' }, 400);
+      const sc = await starterSlots(env); // without a list from the database, claim_billboard is the only judge
+      if (sc.good ? !sc.list.includes(slot) : !/^STREET_\d+$/.test(slot)) return J({ ok: false, error: '무료 칸은 계정당 한 번이고, 비어 있는 거리 칸만 돼요' }, 400);
       let held = false;
       try {
         const s = await fetch(SUPA + '/rest/v1/billboards?select=holder_id&slot_id=eq.' + encodeURIComponent(slot), { headers: { apikey: ANON, accept: 'application/json' } });
@@ -1747,14 +1767,13 @@ async function plaza(req, env, ctx, u) {
       try { hello = await env.ROOM.get(env.ROOM.idFromName(topic)).hasHello(actor.id); } catch { hello = false; }
       if (!hello) return J({ ok: false, error: '무료 칸은 광장에 연결된 뒤에 열려요. 잠시 뒤 다시 눌러 주세요' }, 400);
     }
-    if (mode === 'starter') {
-      let used = 0;
-      try { used = await acct(env).sipGet(await ipHash(env, req), kstDay()); } catch { used = 0; }
-      if (used >= 3) return J({ ok: false, error: '오늘 무료 점령은 이 연결에서 세 번까지예요' }, 400);
-    }
     const theme = String(b.bg_theme || '');
     if (rejectedCopy(nick, b.line1, b.line2, b.line3)) return J({ ok: false, error: 'blocked' }, 400);
-    rpc = await supabaseRpc('claim_billboard', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_nickname: nick, p_slot_id: slot, p_bid: b.bid, p_line1: clip(b.line1, 16), p_line2: clip(b.line2, 16), p_line3: clip(b.line3, 16), p_emoji: clip(b.emoji || '✨', 4) || '✨', p_bg_theme: /^[\w-]{1,32}$/.test(theme) ? theme : 'cyber_navy', p_text_color: hexColor(b.text_color, '#ffffff'), p_external_url: allowedLink(b.external_url), p_caption_y: Math.min(88, Math.max(12, Math.round(Number(b.caption_y) || 72))), p_mode: mode });
+    if (mode === 'starter') { // one atomic take of today's 3 per IP; given back below if the claim is refused
+      try { sip = { h: await ipHash(env, req), d: kstDay() }; if (!(await acct(env).sipTake(sip.h, sip.d, 3))) return J({ ok: false, error: '오늘 무료 점령은 이 연결에서 세 번까지예요' }, 400); } catch { sip = null; }
+    }
+    rpc =await supabaseRpc('claim_billboard', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_nickname: nick, p_slot_id: slot, p_bid: b.bid, p_line1: clip(b.line1, 16), p_line2: clip(b.line2, 16), p_line3: clip(b.line3, 16), p_emoji: clip(b.emoji || '✨', 4) || '✨', p_bg_theme: /^[\w-]{1,32}$/.test(theme) ? theme : 'cyber_navy', p_text_color: hexColor(b.text_color, '#ffffff'), p_external_url: allowedLink(b.external_url), p_caption_y: Math.min(88, Math.max(12, Math.round(Number(b.caption_y) || 72))), p_mode: mode })
+      .catch(async (e) => { if (sip) await acct(env).sipGive(sip.h, sip.d).catch(() => {}); throw e; }); // a network throw gives the take back too
   } else {
     if (!Number.isInteger(b.plot_id) || b.plot_id < 1 || b.plot_id > 18) return J({ ok: false, error: '토지 번호가 올바르지 않습니다.' }, 400);
     if (rejectedCopy(nick, b.sign_text)) return J({ ok: false, error: 'blocked' }, 400);
@@ -1762,7 +1781,10 @@ async function plaza(req, env, ctx, u) {
   }
   const data = rpc.data || {};
   const claimErr = data.error === 'tribe' ? '소속에 들어간 뒤에 소속 코인으로 걸 수 있어요' : data.error === 'starter' ? '무료 칸은 계정당 한 번이고, 비어 있는 거리 칸만 돼요' : playerErr(data.error, data.message || '요청을 처리하지 못했습니다.');
-  if (!rpc.ok || data.ok === false) return J({ ok: false, error: claimErr }, rpc.ok ? 400 : 502);
+  if (!rpc.ok || data.ok === false) {
+    if (sip) { try { await acct(env).sipGive(sip.h, sip.d); } catch { } }
+    return J({ ok: false, error: claimErr }, rpc.ok ? 400 : 502);
+  }
   if (claim && data.review_id) {
     try { await env.ROOM.get(env.ROOM.idFromName(topic)).fetch(new Request('https://room.internal/sync', { method: 'POST', headers: { 'x-uid': actor.id } })); } catch { }
     return J({ ok: true, review_id: data.review_id, remaining_coins: data.remaining_coins ?? null });
@@ -1782,9 +1804,6 @@ async function plaza(req, env, ctx, u) {
     }
     if (mode === 'claim' || mode === 'tribe') {
       try { ctx.waitUntil(noteTribe(env, topic, actor.id, 4)); } catch { /* the room keeps the day's score */ }
-    }
-    if (mode === 'starter') {
-      try { await acct(env).sipAdd(await ipHash(env, req), kstDay()); } catch { }
     }
   }
   let fresh = null; try { fresh = await invalidateWorld(env, ctx); } catch { }
@@ -2195,7 +2214,9 @@ async function accountApi(req, env, ctx, u) {
   if (u.pathname === '/rt/config') {
     if (req.method !== 'GET') return J({ err: 'get' }, 405);
     const kakao = String(env.KAKAO_JS_KEY || '').trim(); // a public JavaScript key (not a secret); the share button exists only when it is set
-    return J(/^[\w-]{16,80}$/.test(kakao) ? { url: SUPA, key: ANON, kakao } : { url: SUPA, key: ANON });
+    // On every visitor's boot path: never wait for Supabase. A stale list (or the old four, a subset) is safe; refresh behind the response.
+    if (Date.now() - STARTER_C.at >= STARTER_C.ttl) ctx?.waitUntil?.(starterSlots(env));
+    return J(/^[\w-]{16,80}$/.test(kakao) ? { url: SUPA, key: ANON, kakao, starter: STARTER_C.list } : { url: SUPA, key: ANON, starter: STARTER_C.list });
   }
   if (u.pathname === '/rt/event') {
     if (req.method !== 'POST') return J({ err: 'post' }, 405);

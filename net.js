@@ -5,6 +5,7 @@
 // Fully optional: if the CDN or Supabase is unreachable, the game keeps running single-player.
 // v6: Seoul project (ap-northeast-2). Rooms = 행정동 code + scene; a shared lobby presence channel gives per-dong head counts.
 import { GT_LS, SESSION_LS, isInAppWebView } from './plaza-account.js';
+import { setStarterSlots } from './balance.js';
 import { snapQuery } from './share.js?v=202611210015';
 export const SUPA_URL = 'https://yxddhpacuyaffaoutxjn.supabase.co';
 export const SUPA_KEY = 'sb_publishable_Vd-7c6e2f2s3G1d5Jbx9vw_0UCuHm-B'; // publishable key: public by design
@@ -107,9 +108,10 @@ export class Net {
   async init() {
     if (DO_MODE) { Net.GRID_ON = 1e9; Net.GRID_OFF = 1e9 - 1; try { const g = await guestToken(); if (g?.sub) this.id = 'guest:' + g.sub; } catch { } }
     if (DO_MODE && isInAppWebView(navigator.userAgent)) { const warm = () => { if (!document.hidden) this.handoverTicket(); }; warm(); setInterval(warm, 300000); document.addEventListener('visibilitychange', warm); } // the login sheet reads the ticket synchronously
+    const cfgP = this.loadConfig(); // also brings the free-slot list, so it runs even when the CDN does not answer
     try { let m = globalThis.__SUPA_MOD; if (!m?.createClient) m = await Promise.race([import(CDN).then((mod) => { globalThis.__SUPA_MOD = mod; return mod; }), soon(4000)]);
       if (!m?.createClient) throw new Error('cdn timeout');
-      const cfg = await this.loadConfig();
+      const cfg = await cfgP;
       this.sb = m.createClient(cfg.url, cfg.key, { realtime: { params: { eventsPerSecond: 30 } }, auth: { persistSession: true, storageKey: SESSION_LS, detectSessionInUrl: true, flowType: 'pkce' } }); rtPatch(this.sb, this);
     } catch (e) { console.warn('[net] offline:', e.message); this.setStatus('offline'); }
     if (DO_MODE && this.sb?.auth?.getSession) { try { const s = await Promise.race([this.sb.auth.getSession().then((x) => x?.data?.session || null).catch(() => null), soon(1500)]); if (s?.user?.id) this.id = 'user:' + s.user.id; } catch { } }
@@ -224,7 +226,7 @@ export class Net {
   async leaveLobby() { if (this.lb) { const c = this.lb; this.lb = null; this.lbKey = null; try { await c.untrack(); await this.sb.removeChannel(c); } catch { } } this.counts = {}; }
   // ---- prayer wall (RLS: public rows readable; writes only via rate-limited security-definer RPCs)
   secret() { let s = localStorage.getItem('maeul_secret'); if (!s) { s = Array.from(crypto.getRandomValues(new Uint8Array(18)), b => b.toString(16).padStart(2, '0')).join(''); localStorage.setItem('maeul_secret', s); } return s; }
-  async loadConfig() { try { const r = await fetch('/rt/config', { cache: 'no-store' }); if (r.ok) { const j = await r.json(); if (typeof j?.url === 'string' && j.url.startsWith('https://') && typeof j?.key === 'string' && j.key && !/service_role/i.test(j.key)) return { url: j.url, key: j.key }; } } catch { } return { url: SUPA_URL, key: SUPA_KEY }; }
+  async loadConfig() { try { const r = await fetch('/rt/config', { cache: 'no-store' }); if (r.ok) { const j = await r.json(); setStarterSlots(j?.starter); if (typeof j?.url === 'string' && j.url.startsWith('https://') && typeof j?.key === 'string' && j.key && !/service_role/i.test(j.key)) return { url: j.url, key: j.key }; } } catch { } return { url: SUPA_URL, key: SUPA_KEY }; }
   async currentSession() { try { const s = await this.sb?.auth?.getSession(); return s?.data?.session || null; } catch { return null; } }
   async startOAuth(provider) { if (!this.sb?.auth) throw new Error('로그인 준비 중이에요'); const back = new URL(location.href); for (const k of ['autologin', 'handover', 'code']) back.searchParams.delete(k); const redirectTo = back.origin + back.pathname + back.search; const { error } = await this.sb.auth.signInWithOAuth({ provider, options: { redirectTo } }); if (error) throw error; }
   async passwordAuth(kind, email, password) { const auth = this.sb?.auth; if (!auth) throw new Error('로그인 준비 중이에요'); const first = kind === 'up' ? await auth.signUp({ email, password }) : await auth.signInWithPassword({ email, password }); if (first.error) throw first.error; if (first.data?.session) return first.data.session; if (kind === 'up') { const again = await auth.signInWithPassword({ email, password }); if (again.data?.session) return again.data.session; const err = new Error('가입은 기록됐지만 이 창에서 바로 로그인되지 않았어요. 메일 확인이 켜져 있으면 확인 후 다시 로그인해 주세요.'); err.code = 'confirm'; throw err; } throw new Error('로그인에 실패했어요'); }
