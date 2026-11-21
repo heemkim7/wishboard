@@ -123,6 +123,12 @@ async function main() {
     console.log(`[api] POST ${p.padEnd(16)} without a token -> ${r.status} ${e}`);
   }
   const swr = await get('/sw.js'); console.log(`[sw]  /sw.js -> ${swr.status} ${swr.type.split(';')[0]} cache-control: ${swr.cc}`);
+  // The Google sign-in window comes back to /oauth?code=…: it must be oauth.html itself, not a redirect (which could lose the code).
+  if (fs.existsSync('oauth.html')) {
+    const oa = await get('/oauth?code=probe'); const okOa = oa.status === 200 && /html/.test(oa.type) && sha(oa.buf) === sha(fs.readFileSync('oauth.html'));
+    if (!okOa) bad++;
+    console.log(`[oauth] /oauth?code=probe -> ${oa.status} ${oa.type.split(';')[0]} ${oa.loc ? '-> ' + oa.loc : ''}${okOa ? '' : '  <-- not oauth.html'}`);
+  }
   console.log(bad ? `\n${bad} problem(s)` : '\nno problems');
   process.exit(bad ? 1 : 0);
 }

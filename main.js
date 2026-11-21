@@ -9,7 +9,8 @@ import { haptic, startMusic } from './audio.js?v=202611211159';
 import { BALANCE, PAY, chainsOf, live, monopolyOf, slotName, slotOf, takeGrants, cheerCount, countsAsPlay } from './balance.js';
 import { auctionClosed } from './balance.js';
 import { trackEvent } from './analytics.js?v=202611211159';
-import { adoptHandover, allowedLink, blockedText, chromeIntent, handoverHref, isAndroid, isInAppWebView, loginEmail, profileName, CHEER_PHRASES, GT_LS, SESSION_LS, slotTier } from './plaza-account.js';
+import { adoptHandover, allowedLink, blockedText, chromeIntent, handoverHref, isAndroid, isInAppWebView, loginEmail, CHEER_PHRASES, GT_LS, SESSION_LS, slotTier } from './plaza-account.js';
+import { authErrorText, cleanAddress, externalRoutes, oauthErrorText, oauthMessage, oauthReturn, OAUTH_ACK, OAUTH_CHANNEL } from './plaza-account.js';
 import { invCode, inviteFrom, inviteView } from './invite.js';
 import { saveClip, dropParams } from './share.js?v=202611211159';
 import { ftueDue, crowdFacts, kstDay, lockCelebration, startFtue, wishAutoOpen, wishBootLine, awayRows, inboxUnread, seenAdd, liveKey, liveSeenAdd } from './ftue.js?v=202611211159';
@@ -19,6 +20,9 @@ import { openTribe, pledge, sendCheer } from './tribe.js?v=202611211159';
 import { applyOps, ballNotice, sessionEndPlan, nineBanner, kingMinute, clockSkew, clock, nowMs } from './live.js';
 
 adoptHandover(location.search, localStorage);
+// Back from a full-page sign-in (the fallback when the Google window could not open): read once here, because supabase-js takes
+// ?code= out of the address during net.init(). { code, failed, error, errorCode, description }
+const ARRIVED = oauthReturn(location.search, location.hash);
 // 친구 초대: ?inv=<code> is kept (kts_inv_from, first one wins) only when this browser had no account of its own before this visit,
 // and goes out once with the first wish post. kts_inv_code is my own code, kts_inv_seen the newest reward the away sheet showed.
 const INV_FROM_KEY = 'kts_inv_from', INV_CODE_KEY = 'kts_inv_code', INV_SEEN_KEY = 'kts_inv_seen', INV_GOT_KEY = 'kts_inv_got', INV_WAIT_KEY = 'kts_inv_wait';
@@ -228,9 +232,11 @@ const ui = createUI(document.getElementById('ui'), {
   linked: () => !!sessionUser,
   email: () => sessionUser?.email || '',
   authEnv,
-  oauth: (provider) => startOAuth(provider),
+  oauth: (provider) => startOAuth(provider), // synchronous up to window.open: call it straight from the click
   passwordAuth: (kind, id, password) => passwordSign(kind, id, password),
   withdraw: () => withdrawAccount(),
+  signOut: () => signOutAccount(),
+  handoverFired: () => handoverFired(),
   mine: (amount, source = 'cart') => grant(amount, source),
   beginBake: () => beginBake(),
   finishBake: (result) => finishBake(result),
@@ -1602,15 +1608,11 @@ function authEnv() {
   const inApp = isInAppWebView(ua);
   const ticket = inApp ? net.handoverTicket() : '';
   const href = ticket ? handoverHref(ticket, 'google') : '';
-  return { inApp, android: isAndroid(ua), handoverUrl: href, intent: href ? chromeIntent(href) : '' };
+  // routes: what to open, in order, to reach the system browser (KakaoTalk's own way out, then the Android intent).
+  // routed: this in-app browser has such a way at all, known before the ticket is ready.
+  return { inApp, android: isAndroid(ua), handoverUrl: href, intent: href ? chromeIntent(href) : '', routes: href ? externalRoutes(ua, href) : [], routed: inApp && externalRoutes(ua, handoverHref('', '')).length > 0 };
 }
-function authMessage(e) {
-  const m = String(e?.message || '');
-  if (/invalid login credentials/i.test(m)) return '아이디 또는 비밀번호가 맞지 않아요';
-  if (/already registered|already been registered/i.test(m)) return '이미 가입한 아이디예요. 로그인해 주세요.';
-  if (/password/i.test(m)) return '비밀번호는 6자 이상이어야 해요';
-  return m || '로그인에 실패했어요';
-}
+function authMessage(e) { return authErrorText(e); }
 async function rejoin() {
   const room = net.room;
   const me = world?.netState?.();
@@ -1624,12 +1626,7 @@ async function finishLink(session, fresh) {
   sessionUser = user;
   accountReady = true;
   net.id = 'user:' + user.id;
-  const name = profileName(user);
-  if (name) {
-    state.nick = chars(name, 16);
-    keep(NICK_KEY, state.nick);
-    world?.setName(state.nick);
-  }
+  // The nickname stays the player's own. The provider's profile name (a real name, for Google) is never taken.
   let guest = guestActor();
   if (guest?.id && !guest.token) {
     const issued = await guestToken();
@@ -1642,7 +1639,7 @@ async function finishLink(session, fresh) {
   let failed = false;
   if (guest?.id && guest.token && guest.id !== net.id && mergedMark !== mark) {
     try {
-      merged = await net.mergeGuest(guest.id, guest.token, name || state.nick);
+      merged = await net.mergeGuest(guest.id, guest.token, state.nick);
       try { sessionStorage.setItem('kts_merged', mark); } catch { /* private mode */ }
     } catch (e) { failed = true; ui.note(authMessage(e), 'err'); } // not kept: the next boot tries again
   }
@@ -1660,24 +1657,105 @@ async function bootAccount() {
   const q = new URLSearchParams(location.search);
   let session = null;
   try { session = await net.currentSession(); } catch { session = null; }
-  if (q.get('autologin') === 'google' && !session?.user && !isInAppWebView(navigator.userAgent)) {
-    try { await net.startOAuth('google'); return; } catch (e) { ui.note(authMessage(e), 'err'); }
-  }
-  if (session?.user) await finishLink(session, q.has('code'));
+  // A handover link (?autologin=google) never starts the sign-in by itself: the sheet opens and the player taps 구글로 계속.
+  const resume = q.get('autologin') === 'google' && !session?.user;
+  if (session?.user) await finishLink(session, ARRIVED.code); // fresh: this load came back from the full-page sign-in with a code
   else {
     accountReady = true;
     ui.setAccount?.({ ready: true, guest: true, linked: false });
+    if (ARRIVED.code && !ARRIVED.failed) ui.note('로그인을 마치지 못했어요. 다시 시도해 주세요.', 'err');
   }
-  if (q.has('handover') || q.has('autologin')) {
-    q.delete('handover');
-    q.delete('autologin');
-    const s = q.toString();
-    history.replaceState(null, '', location.pathname + (s ? '?' + s : '') + location.hash);
+  if (ARRIVED.failed) ui.note(oauthErrorText(ARRIVED), 'err');
+  // One-time parameters leave the address: handover, autologin, a code that could not be used, error*.
+  try {
+    const next = cleanAddress(location.href);
+    if (next !== location.pathname + location.search + location.hash) history.replaceState(history.state, '', next);
+  } catch { /* the address just stays */ }
+  if (resume) ui.openLogin?.({ resume: true });
+}
+
+// ---- Google sign-in in a second window -------------------------------------------------------
+// startOAuth opens the window inside the click, loads the provider address into it, and waits. The window comes back to /oauth
+// (oauth.html), which sends { code } or { error } over BroadcastChannel and window.opener.postMessage. This tab answers, exchanges
+// the code (PKCE: the verifier is in localStorage) and finishes the link, so the plaza never unloads.
+// One result per attempt; with no attempt pending a message is ignored and oauth.html finishes on its own (/?code=).
+const OAUTH_KEEP_MS = 10 * 60000;
+let oauthTry = null, oauthChan = null;
+function onOAuthMessage(data, source) {
+  const msg = oauthMessage(data);
+  const t = oauthTry;
+  if (!msg || !t) return;
+  oauthTry = null;
+  clearInterval(t.timer);
+  const ack = { t: OAUTH_ACK };
+  try { oauthChan?.postMessage(ack); } catch { /* channel closed */ }
+  try { (source || t.w)?.postMessage?.(ack, location.origin); } catch { /* that window is gone */ }
+  setTimeout(() => { try { if (!t.w.closed) t.w.close(); } catch { /* it closed itself */ } }, 1500);
+  finishOAuth(msg);
+}
+try { oauthChan = new BroadcastChannel(OAUTH_CHANNEL); oauthChan.onmessage = (e) => onOAuthMessage(e.data, null); } catch { oauthChan = null; }
+window.addEventListener('message', (e) => { if (e.origin === location.origin) onOAuthMessage(e.data, e.source); });
+// Back from the provider through the browser's back button after the full-page fallback: the button must not stay disabled.
+window.addEventListener('pageshow', (e) => { if (e.persisted && !oauthTry) ui.setLogin?.({ wait: false, info: '' }); });
+async function finishOAuth(msg) {
+  if (msg.error) { ui.setLogin?.({ wait: false, text: '', err: oauthErrorText(msg) }); return; }
+  ui.setLogin?.({ wait: true, text: '로그인하는 중…', err: '', info: '' });
+  let session = null;
+  try { session = await net.exchangeCode(msg.code); }
+  catch (e) {
+    // The code may have been used already by the window itself (it waited too long for this tab): its session is in shared storage.
+    try { session = await net.currentSession(); } catch { session = null; }
+    if (!session?.user) { ui.setLogin?.({ wait: false, text: '', err: authMessage(e) }); return; }
+  }
+  try { await finishLink(session, true); }
+  finally { ui.setLogin?.({ wait: false, text: '', err: '', info: '' }); ui.closeLogin?.(); }
+}
+async function popupOAuth(provider, w) {
+  if (oauthTry) clearInterval(oauthTry.timer); // a new attempt replaces the old one (its code verifier is overwritten anyway)
+  const t = oauthTry = { w, at: Date.now(), shut: false, timer: 0 };
+  ui.setLogin?.({ wait: true, text: '', err: '', info: '' });
+  t.timer = setInterval(() => {
+    if (oauthTry !== t) { clearInterval(t.timer); return; }
+    let closed = false;
+    try { closed = !!w.closed; } catch { closed = true; }
+    // The player closed the window: the button comes back. The attempt itself stays for a while, because some browsers report a
+    // window as closed once it is on another site, and its result can still arrive over BroadcastChannel.
+    if (closed && !t.shut) { t.shut = true; ui.setLogin?.({ wait: false, text: '' }); }
+    if (Date.now() - t.at > OAUTH_KEEP_MS) { clearInterval(t.timer); oauthTry = null; if (!t.shut) ui.setLogin?.({ wait: false, text: '' }); }
+  }, 500);
+  try {
+    const url = await net.oauthUrl(provider, location.origin + '/oauth');
+    if (oauthTry !== t) return;
+    w.location = url;
+  } catch (e) {
+    if (oauthTry === t) { oauthTry = null; clearInterval(t.timer); }
+    try { w.close(); } catch { /* already gone */ }
+    ui.setLogin?.({ wait: false, text: '', err: authMessage(e) });
   }
 }
-async function startOAuth(provider) {
-  if (provider === 'google' && isInAppWebView(navigator.userAgent)) return;
-  await net.startOAuth(provider);
+// The second window was blocked: say so in the sheet, keep the player's place, and let this tab go to the provider (the old path).
+async function redirectOAuth(provider) {
+  ui.setLogin?.({ wait: true, text: '', err: '', info: '새 창이 막혀 있어 이 화면에서 로그인합니다' });
+  savePlace();
+  try {
+    await sleep(1200); // long enough to read the line
+    await net.startOAuth(provider);
+    await sleep(8000); // the page should be gone by now; if it is not, the button must not stay disabled
+    ui.setLogin?.({ wait: false, text: '', info: '' });
+  } catch (e) { ui.setLogin?.({ wait: false, text: '', info: '', err: authMessage(e) }); }
+}
+// Not async: window.open has to run in the same task as the click or the browser blocks it.
+function startOAuth(provider) {
+  if (provider === 'google' && isInAppWebView(navigator.userAgent)) return; // Google refuses embedded webviews: the sheet hands over instead
+  let w = null;
+  try { w = window.open('', 'kts_oauth', 'popup,width=480,height=680'); } catch { w = null; }
+  if (!w || w.closed) { redirectOAuth(provider); return; }
+  try {
+    w.document.title = '구글 로그인';
+    w.document.body.style.cssText = 'margin:0;height:100vh;display:grid;place-items:center;background:#0a0e1c;color:#f2f4ff;font:500 15px system-ui,sans-serif';
+    w.document.body.textContent = '구글 로그인으로 이동하는 중…';
+  } catch { /* a reused window that is already on another site */ }
+  popupOAuth(provider, w);
 }
 async function passwordSign(kind, id, password) {
   const email = loginEmail(id);
@@ -1688,21 +1766,70 @@ async function passwordSign(kind, id, password) {
   catch (e) { throw new Error(authMessage(e)); }
   await finishLink(session, true);
 }
-async function withdrawAccount() {
-  await net.withdrawAccount();
+// After a withdrawal or a sign-out this device goes on as a brand-new guest. The stored guest token goes first: that guest was already
+// merged into the account, and keeping it would offer the same guest to the next sign-in again. Resolves false when no new guest came.
+async function becomeGuest() {
   sessionUser = null;
   try { localStorage.removeItem(GT_LS); localStorage.removeItem(INV_CODE_KEY); } catch { /* private mode */ }
+  try { sessionStorage.removeItem('kts_merged'); } catch { /* private mode */ }
   state.invite = null;
-  const g = await guestToken(true);
-  if (g?.sub) net.id = 'guest:' + g.sub;
+  state.league = null;
+  state.starterUsed = null;
+  let g = await guestToken(true);
+  if (!g?.sub) { await sleep(1500); g = await guestToken(true); }
+  net.id = g?.sub ? 'guest:' + g.sub : Net.cid(); // never keep presenting the account's id
   accountReady = true;
   ui.setAccount?.({ ready: true, guest: true, linked: false });
   ui.refreshProfile?.();
   try { await refreshWallet(); } catch { /* the new guest balance follows */ }
   try { await refreshWorld(); } catch { /* boards clear on the next fetch */ }
   await rejoin();
+  if (g?.sub) { pullProfile(); loadWishes('', true).catch(() => {}); }
+  return !!g?.sub;
+}
+async function withdrawAccount() {
+  await net.withdrawAccount();
+  await becomeGuest();
   ui.note('탈퇴했고, 내 전광판과 토지 소유를 비웠어요', 'ok');
 }
+// 로그아웃: this device only. Coins, boards and plots stay with the account; signing in again brings them back.
+async function signOutAccount() {
+  if (!sessionUser) return;
+  try { await net.signOut(); }
+  catch (e) { console.warn('[auth] sign-out', e?.message || e); throw new Error('로그아웃하지 못했어요. 연결을 확인하고 다시 해 주세요.'); }
+  const ok = await becomeGuest();
+  ui.note(ok ? '로그아웃했어요. 코인과 전광판은 계정에 남아 있어요' : '로그아웃했어요. 새로고침하면 새 손님으로 이어져요', ok ? 'ok' : 'err');
+}
+// In-app browser: after the player was sent to the system browser, that browser adopts this guest and links it to an account, which
+// moves the coins and boards away. When this page is looked at again, the wallet is read again and, if it was emptied, the player is told.
+let handoverAt = 0, handoverHad = null, handoverBusy = false;
+function myHoldings() {
+  return state.billboards.filter((b) => b.holder_id && b.holder_id === net.id).length + state.plots.filter((p) => p.owner_id && p.owner_id === net.id).length;
+}
+// What this guest had when the page was last in front (nothing is spent here while it is hidden).
+function handoverMark() { handoverHad = { coins: state.walletKnown ? state.confirmed : 0, held: myHoldings() }; }
+function handoverFired() {
+  handoverAt = Date.now();
+  handoverMark();
+  savePlace();
+}
+async function handoverBack() {
+  if (!handoverAt || handoverBusy || sessionUser || Date.now() - handoverAt > 30 * 60000) return;
+  handoverBusy = true;
+  try {
+    const had = handoverHad || { coins: 0, held: 0 };
+    const read = await refreshWallet();
+    await refreshWorld();
+    // The link empties the guest wallet and moves every board and plot to the account.
+    const moved = read === true && ((had.coins > 0 && state.confirmed === 0) || (had.coins === 0 && had.held > 0 && myHoldings() === 0));
+    if (moved) { handoverAt = 0; ui.handoverMoved?.(); }
+  } finally { handoverBusy = false; }
+}
+document.addEventListener('visibilitychange', () => {
+  if (!handoverAt) return;
+  if (document.visibilityState === 'hidden') handoverMark();
+  else handoverBack();
+});
 
 // ---- lifecycle ------------------------------------------------------------------------------
 function markInboxSeen(ids) {

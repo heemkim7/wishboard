@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<meta name="referrer" content="no-referrer" />
+<meta name="theme-color" content="#0a0e1c" />
+<title>로그인 · WISH BOARD</title>
+<style>
+  html, body { height: 100%; margin: 0; }
+  body { display: grid; place-items: center; background: #0a0e1c; color: #f2f4ff; font: 500 15px/1.6 system-ui, -apple-system, 'Segoe UI', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; text-align: center; }
+  main { max-width: 360px; padding: 24px; }
+  p { margin: 0 0 14px; }
+  a { color: #48d6f0; font-weight: 700; }
+</style>
+</head>
+<body>
+<main>
+  <p id="msg" role="status">로그인을 마무리하는 중…</p>
+  <p id="more" hidden><a href="/">게임으로 돌아가기</a></p>
+</main>
+<script>
+// The second window of the Google sign-in (main.js opens it, Supabase sends it back here with ?code= or ?error=).
+// It has no game code and no supabase-js: it hands the code to the game tab, waits for that tab to answer, and closes.
+// If no game tab answers, this window becomes the game and finishes the sign-in itself (/?code=, the old full-page path).
+// Nothing from the address is ever written as HTML.
+(function () {
+  var msgEl = document.getElementById('msg'), moreEl = document.getElementById('more');
+  function say(text, link) { msgEl.textContent = text; moreEl.hidden = !link; }
+  var q = new URLSearchParams(location.search), f = new URLSearchParams(String(location.hash || '').replace(/^#/, ''));
+  function pick(k) { return String(q.get(k) || f.get(k) || ''); }
+  var code = String(q.get('code') || '');
+  var error = pick('error'), errorCode = pick('error_code'), description = pick('error_description');
+  // The one-time code leaves the address bar and this window's history at once.
+  try { history.replaceState(null, '', location.pathname); } catch (e) { /* the address just stays */ }
+  var out = code
+    ? { t: 'kts-oauth', code: code }
+    : { t: 'kts-oauth', error: (error || errorCode || 'no_code').slice(0, 80), errorCode: errorCode.slice(0, 80), description: description.slice(0, 200) };
+  var acked = false, ended = false, chan = null;
+  function onAck(d) { if (d && d.t === 'kts-oauth-ack') acked = true; }
+  try { chan = new BroadcastChannel('kts-oauth'); chan.onmessage = function (e) { onAck(e.data); }; } catch (e) { chan = null; }
+  addEventListener('message', function (e) { if (e.origin === location.origin) onAck(e.data); });
+  function send() {
+    try { if (chan) chan.postMessage(out); } catch (e) { /* closed channel */ }
+    try { if (window.opener && !window.opener.closed) window.opener.postMessage(out, location.origin); } catch (e) { /* the opener went elsewhere */ }
+  }
+  function end() {
+    if (ended) return;
+    ended = true;
+    if (acked) {
+      say(code ? '로그인이 끝났어요.' : '게임 창으로 돌아갑니다.', false);
+      try { window.close(); } catch (e) { /* not ours to close */ }
+      // Still here: this browser did not let the window close itself.
+      setTimeout(function () { say(code ? '로그인이 끝났어요. 이 창을 닫고 게임으로 돌아가세요' : '이 창을 닫고 게임으로 돌아가세요', false); }, 400);
+      return;
+    }
+    if (code) { location.replace('/?code=' + encodeURIComponent(code)); return; }
+    say(error === 'access_denied' ? '로그인을 취소했어요.' : '로그인을 마치지 못했어요. 게임에서 다시 시도해 주세요.', true);
+  }
+  // The game tab can be slow to wake behind this window: say it a few times, then decide at about 1.5 s.
+  var started = Date.now(), tries = 0;
+  send();
+  var timer = setInterval(function () {
+    tries += 1;
+    var late = Date.now() - started >= 1500;
+    if (acked || late) { clearInterval(timer); end(); return; }
+    if (tries % 3 === 0) send();
+  }, 100);
+})();
+</script>
+</body>
+</html>
