@@ -138,7 +138,7 @@ visualViewport?.addEventListener('scroll', fitVV);
   .liveboard .f { display: block; color: var(--text-2); font-size: 12px; font-weight: 500; line-height: 1.35; }
   .liveboard button.f { width: 100%; text-align: left; background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; }
   .liveboard .f b { color: var(--live); font-size: 12px; letter-spacing: .02em; margin-right: 4px; }
-  .liveboard .f em { font-style: normal; color: var(--accent); }
+  .liveboard .f em { font-style: normal; font-weight: 700; color: var(--text); }
   .liveboard button.rank { width: 100%; background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; padding: 0; }
   .liveboard .feed .f:nth-child(n + 4) { display: none; }
   .sheet .content > .btn { margin-top: 10px; }
@@ -189,7 +189,7 @@ visualViewport?.addEventListener('scroll', fitVV);
   .nextline { margin: 0; padding: 8px 10px; border-radius: 14px; background: var(--surface-hud); border: 1px solid var(--line); color: var(--text); font: 700 13px/1.35 var(--font); pointer-events: auto; }
   .nextline .chip { pointer-events: auto; }
   .wallet .protect { font: inherit; font-size: 12px; font-weight: 700; color: var(--muted); white-space: nowrap; background: none; border: 0; padding: 0; cursor: pointer; }
-  .chip { display: inline-flex; align-items: center; gap: 5px; min-height: 28px; font-size: 12px; font-weight: 700; padding: 0 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2); }
+  .chip { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; font-size: 12px; font-weight: 700; padding: 0 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2); }
   .chip.gold { color: var(--accent); background: var(--accent-weak); }
   .attend-week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin: 4px 0 12px; }
   .attend-day { display: grid; place-items: center; height: 36px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); font-weight: 800; color: var(--muted); }
@@ -203,7 +203,7 @@ visualViewport?.addEventListener('scroll', fitVV);
   .bar { display: flex; gap: 8px; align-items: center; }
   .tools { pointer-events: auto; display: flex; align-items: center; height: 46px; padding: 0 4px; border-radius: 999px; }
   .pill { pointer-events: auto; height: 42px; padding: 0 14px; display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; border-radius: 999px; }
-  .btn { pointer-events: auto; height: 42px; padding: 0 16px; border-radius: 10px; display: inline-flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); transition: transform .15s, background-color .2s, border-color .2s; white-space: nowrap; }
+  .btn { pointer-events: auto; height: 42px; padding: 0 16px; border-radius: 10px; display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 15px; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); transition: transform .15s, background-color .2s, border-color .2s; white-space: nowrap; }
   .btn:active { transform: translateY(1px) scale(.98); }
   .btn.primary { color: var(--on-accent); background: var(--accent); border-color: transparent; }
   .btn.primary:hover { filter: brightness(1.06); }
@@ -316,8 +316,8 @@ visualViewport?.addEventListener('scroll', fitVV);
   /* Centred in the fixed-height bar, so the two lines never run past its bottom edge. */
   .news .body { padding: 0 16px; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
   .news .body small { display: block; font-size: 12px; font-weight: 700; line-height: 1.2; color: var(--live); letter-spacing: .04em; }
-  .news .body strong { display: block; margin-top: 3px; font-size: 15px; font-weight: 800; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .news .body em { font-style: normal; color: var(--accent); }
+  .news .body strong { display: block; margin-top: 3px; font-size: 15px; font-weight: 500; line-height: 1.2; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .news .body em { font-style: normal; font-weight: 700; color: var(--text); }
 
   /* ---------- prompt / dock ---------- */
   .prompt { position: absolute; left: 50%; bottom: calc(118px + var(--safe-b)); transform: translate(-50%, 12px) scale(.96); opacity: 0; transition: all .25s cubic-bezier(.2,1.2,.4,1); pointer-events: none !important; }
@@ -334,7 +334,7 @@ visualViewport?.addEventListener('scroll', fitVV);
   .emote:hover { border-color: var(--line-strong); transform: translateY(-2px); }
   .emote:active { transform: translateY(0) scale(.96); }
   .emote .e { font-size: 28px; line-height: 1; }
-  .emote .l { font-size: 12px; font-weight: 700; color: var(--muted); }
+  .emote .l { font-size: 12px; font-weight: 700; color: var(--text-2); }
   .emote .k { position: absolute; top: 5px; right: 6px; font: 700 11px/1 var(--font); color: var(--muted); }
   .emote.fire { animation: fire .45s ease; }
   @keyframes fire { 30% { transform: translateY(-6px) scale(1.06); background: var(--line-strong); } }
@@ -777,9 +777,11 @@ visualViewport?.addEventListener('scroll', fitVV);
   html.touch .hud-r .stay-balloon { border-radius: 50%; }
   .dock .stay-lounge-btn { pointer-events: auto; width: 74px; height: 70px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font: 700 12px/1.15 var(--font); color: var(--text); background: var(--surface-2); border: 1px solid transparent; }
   .dock .stay-lounge-btn .e { font-size: 28px; line-height: 1; }
+  .dock .stay-lounge-btn .l { font-size: 12px; font-weight: 700; color: var(--text-2); }
+  .dock .stay-lounge-btn.on .l { color: var(--accent); }
   .dock .stay-lounge-btn.on { color: var(--accent); background: var(--accent-weak); border-color: var(--line-strong); }
   .hud-l .stay-quest { pointer-events: none; padding: 10px 12px; border-radius: 14px; background: var(--surface-hud); border: 1px solid var(--line); font: 500 12px/1.45 var(--font); color: var(--text); }
-  .stay-quest button { pointer-events: auto; display: block; width: 100%; margin: 0; padding: 0; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+  .stay-quest button { pointer-events: auto; display: flex; align-items: center; gap: 6px; width: 100%; margin: 0; padding: 0; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
   .stay-quest b { display: block; margin-bottom: 4px; font-weight: 800; color: var(--text); }
   .stay-quest .ok { color: var(--ok); }
   #ui > .stay-ticket, #ui > .stay-balloon, #ui > .stay-focus { pointer-events: auto; }
@@ -787,7 +789,10 @@ visualViewport?.addEventListener('scroll', fitVV);
   .stay-draw { position: absolute; z-index: 8; left: 50%; top: 42%; transform: translate(-50%, -50%); width: min(480px, calc(100% - 32px)); padding: 18px 16px; border-radius: 14px; text-align: center; font: 800 20px/1.35 var(--font); color: var(--on-accent); background: var(--accent); box-shadow: var(--shadow-pop); pointer-events: none; }
   /* A block, not a flex box: the ellipsis only works on a block, and a centred flex line spilled out at both ends. */
   .stay-ticket { top: calc(14px + var(--safe-t)); left: 50%; transform: translateX(-50%); height: 46px; width: min(440px, calc(100vw - 780px)); max-width: calc(100vw - 780px); display: block; padding: 0 14px; border-radius: 14px; font: 700 12px/44px var(--font); color: var(--text-2); background: var(--surface-hud); border: 1px solid var(--line); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; pointer-events: auto; }
-  .hud-r .stay-balloon { position: static; left: auto; right: auto; top: auto; bottom: auto; transform: none; width: 100%; max-width: 184px; margin-top: 8px; pointer-events: auto; padding: 8px 10px; border-radius: 10px; font: 800 12px/1.3 var(--font); color: var(--on-accent); background: var(--accent); text-align: center; }
+  /* A neutral HUD pill (not the primary action): only the packet icon is amber. */
+  .hud-r .stay-balloon { position: static; left: auto; right: auto; top: auto; bottom: auto; transform: none; width: 100%; max-width: 184px; margin-top: 8px; pointer-events: auto; padding: 8px 10px; border-radius: 999px; display: flex; align-items: center; justify-content: center; gap: 6px; font: 700 12px/1.3 var(--font); color: var(--text); background: var(--surface-hud); border: 1px solid var(--line); text-align: center; font-variant-numeric: tabular-nums; }
+  .hud-r .stay-balloon svg.ico { color: var(--accent); }
+  .hud-r .stay-balloon:disabled { color: var(--muted); cursor: default; }
   .stay-lounge { top: calc(176px + var(--safe-t)); padding: 12px 14px; border-radius: 14px; text-align: center; font: 700 13px/1.4 var(--font); color: var(--text); background: var(--surface-hud); border: 1px solid var(--line); pointer-events: none; }
   .stay-focus { position: absolute; left: 50%; bottom: calc(310px + var(--safe-b)); transform: translateX(-50%); z-index: 9; padding: 12px 22px; border-radius: 999px; border: 1px solid var(--line); font: 700 15px/1 var(--font); color: var(--text); background: var(--surface-hud); pointer-events: auto; }
   @media (max-width: 900px) {
@@ -795,6 +800,34 @@ visualViewport?.addEventListener('scroll', fitVV);
     .stay-ticket { top: calc(14px + var(--safe-t)); width: min(280px, calc(100vw - 520px)); max-width: calc(100vw - 520px); }
     .stay-balloon { position: static; left: auto; right: auto; bottom: auto; top: auto; transform: none; width: 100%; max-width: 184px; }
     .stay-lounge { top: calc(310px + var(--safe-t)); }
+  }
+  /* Desktop ticker placement. The left column ends at 14 + 340 = 354px; the tool row is at most 11 × 40px + 10px = 450px
+     wide, 14px from the right (464px); the minimap column is 184px wide. With a 12px gap on each side the ticker sits:
+     ≥ 1090px in the top row between the identity card and the tools (366px … right 476px, at least 248px wide);
+     820–1089px in its own row under the news bar and the waypoint pill (top 134px), between the left column and the minimap (366px … right 210px);
+     641–819px under the right-hand column (top 384px, below the minimap, location pill and balloon), right-aligned;
+     ≤ 640px along the bottom edge (the dock moves to the right-hand column there). */
+  @media (min-width: 1090px) {
+    html:not(.touch) .stay-ticket { left: calc(366px + var(--safe-l)); right: calc(476px + var(--safe-r)); width: auto; max-width: 440px; margin: 0 auto; transform: none; }
+  }
+  @media (min-width: 820px) and (max-width: 1089px) {
+    html:not(.touch) .stay-ticket { top: calc(134px + var(--safe-t)); left: calc(366px + var(--safe-l)); right: calc(210px + var(--safe-r)); width: auto; max-width: 440px; margin: 0 auto; transform: none; height: 32px; line-height: 30px; }
+  }
+  @media (min-width: 641px) and (max-width: 819px) {
+    html:not(.touch) .stay-ticket { top: calc(384px + var(--safe-t)); left: auto; right: calc(14px + var(--safe-r)); width: min(320px, calc(100vw - 380px)); max-width: none; transform: none; height: 32px; line-height: 30px; }
+  }
+  @media (max-width: 640px) {
+    html:not(.touch) .stay-ticket { top: auto; bottom: calc(10px + var(--safe-b)); left: calc(10px + var(--safe-l)); right: calc(10px + var(--safe-r)); width: auto; max-width: none; transform: none; height: 32px; line-height: 30px; }
+  }
+  /* Touch landscape taller than a phone: the same gap rule against the folded tool row (at most 5 × 36px + 8px, 8px from the right). */
+  @media (orientation: landscape) and (min-height: 521px) {
+    html.touch .stay-ticket { left: calc(366px + var(--safe-l)); right: calc(208px + var(--safe-r)); width: auto; max-width: 440px; margin: 0 auto; transform: none; }
+  }
+  /* Desktop at short heights: the 오늘의 드라이버 panel would run under the emote dock, so it goes, and the left column stops above the dock (18px + 88px from the bottom, plus a gap). */
+  @media (max-height: 640px) {
+    html:not(.touch) .stay-quest { display: none; }
+    html:not(.touch) .hud-l { max-height: calc(var(--app-h, 100dvh) - 136px - var(--safe-t) - var(--safe-b)); overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; }
+    html:not(.touch) .hud-l > * { flex-shrink: 0; }
   }
   /* Newcomer focus mode: ui.js toggles #ui.newbie until kts_grad is set. Hidden, not removed. */
   #ui.newbie .liveboard, #ui.newbie .fever, #ui.newbie .stay-quest, #ui.newbie .stay-ticket, #ui.newbie .stay-balloon, #ui.newbie .channel-card, #ui.newbie .tool-adv, #ui.newbie .guestwarn, #ui.newbie .nextline { display: none !important; }
@@ -900,6 +933,24 @@ visualViewport?.addEventListener('scroll', fitVV);
     /* The pill moves below the prompt, between the joystick and the right-hand buttons, clear of the left column and the tools. */
     html.touch .waypill { top: auto; bottom: calc(142px + var(--safe-b)); max-width: calc(100vw - 240px); }
   }
+  /* Slot chooser in the billboard sheet: full-width secondary rows, the chosen one tinted (not filled), then the one primary 다음. */
+  .btn.pick { display: flex; width: 100%; height: auto; min-height: 44px; padding: 10px 14px; justify-content: flex-start; text-align: left; white-space: normal; line-height: 1.3; }
+  .sheet .content > .btn.pick, .btn.pick + .btn.pick { margin-top: 8px; }
+  .btn.pick.on { color: var(--accent); background: var(--accent-weak); border-color: var(--line-strong); }
+  .sheet .content > .btn.pick + .btn:not(.pick), .btn.pick + .btn:not(.pick) { margin-top: 12px; }
+  /* Icon + label on one line: the same small gap everywhere. Multi-line text (.note, .callout, .taxihud .keys, the ticker, lounge and draw lines) keeps the icon inline, spaced by the text's own leading space. */
+  .liveboard .livehead b, .ph-head b, .wish-row .wh { display: inline-flex; align-items: center; gap: 6px; }
+  .sheet h2 { gap: 6px; }
+  .sheet h2 .badge { margin-left: 4px; }
+  .bake h3, .rhythm h3, .vipcard h4, .wish-hearts { display: flex; align-items: center; gap: 6px; }
+  .chip-btn, .quick button, .wish-heart { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+  .stay-quest > div { display: flex; align-items: center; gap: 6px; }
+  .verified svg.ico { width: 12px; height: 12px; stroke-width: 2.5; vertical-align: 0; }
+  .verified:has(svg.ico) { padding: 0 2px; }
+  .ico-missing { display: none !important; }
+  /* Dock: the same 22px icon and 12px label on all six buttons; on touch the round buttons show the icon only. */
+  .emote .e, .dock .stay-lounge-btn .e { display: grid; place-items: center; min-height: 22px; }
+  html.touch .dock .emote .l, html.touch .dock .emote .k { display: none; }
   /* Icons from icons.js: one stroke style, sized by the text around them. Inside an icon button or a round HUD button the icon is a fixed 22px, centred, and never changes the button's size. */
   svg.ico { width: 1.25em; height: 1.25em; flex: none; vertical-align: -0.22em; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
   .btn.icon svg.ico, .tools .btn svg.ico, .act svg.ico, .emote .e svg.ico, .dock .stay-lounge-btn .e svg.ico, .x svg.ico, .mapzoom button svg.ico { width: 22px; height: 22px; display: block; }
