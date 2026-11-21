@@ -1,6 +1,6 @@
 // End-to-end check of a deployed plaza with three test guests. Run from the repo root:
 //   node tools/prod-e2e.mjs https://studio.wishboard.workers.dev [--only=wish,board] [--keep] [--fresh] [--state=<file>]
-// It writes to the live service (guests, wallets, one wish, two photos, one board). docs/pending/prodcheck.md says what it leaves behind.
+// It writes to the live service (guests, wallets, one wish, two photos, one board). IMPLEMENTED.md (실서비스 점검 도구) says what it leaves behind.
 // ADMIN_KEY comes from ./.dev.vars. Secrets and guest tokens are never printed; ids show their last 4 characters only.
 // The tokens live in the state file under os.tmpdir() so a later run reuses the same guests instead of minting more.
 // Node 22+ built-ins only (global fetch and WebSocket).

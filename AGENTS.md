@@ -41,6 +41,13 @@
 - 재질 이름이 `Main`인 메시만 이름표 색으로 칠해진다. 고양이 털·배·발은 그 이름이 아니어야 색이 유지된다.
 - 사진 전광판은 점령자만 올리고, `ADMIN_KEY`로 `admin.html`에서 승인한 것만 송출한다.
 
+## 운영 DB와 스위치
+
+- 운영 DB는 배포로 바뀌지 않는다. `migrations/*.sql`은 주인이 Supabase SQL 편집기에서 손으로 돌린다. Worker와 화면은 마이그레이션 전후 두 상태에서 모두 동작해야 한다. 마이그레이션 전 함수 모양(옛 `award_tribe_roof`의 `skipped`, `inbox_list`에 `read` 없음, `starter_slot_list` 없음)을 처리하는 분기를 지우지 마라.
+- 친구 초대는 Worker 환경 `INVITE_ON`이 정확히 `1`일 때만 켜진다. 주인이 켜기 전에는 기본값을 바꾸거나 코드에서 켜지 마라. `KAKAO_JS_KEY`는 코드에 넣지 말고 Worker 변수로만 둔다.
+- 새 기능은 크론(`scheduled`, `PLAN=paid`)에 기대지 않는다. 주기 작업은 요청이 올 때 하거나 Meter DO `dark` 알람으로 한다. 일일 예산 hard(`lvlNow` 2)에서는 DO 호출을 줄이는 길을 둔다. Worker가 HTTP 경로에서 부르는 DO 호출은 `tallied` env를 거쳐 예산에 센다.
+- `tools/prod-e2e.mjs`는 실서비스에 쓴다. 무료 첫 칸과 메인 타워는 가져가지 않는다. 상태 파일(살아 있는 게스트 토큰)은 `os.tmpdir()` 밖에 두지 마라.
+
 ## 하지 말 것
 
 - `.dev.vars`, `.env*`, `*.fbx`, `*.blend`를 커밋하지 마라.
