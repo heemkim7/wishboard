@@ -14,6 +14,8 @@ import { trackEvent } from './analytics.js?v=202611210015';
 import { CHEER_PHRASES, allowedLink, blockedText, linkedActor } from './plaza-account.js';
 import { subscribePush, resendPush } from './push.js?v=202611210015';
 import { bindSfx, play } from './audio.js?v=202611210015';
+import { AD, AD_TEMPLATES, adSums, adBars } from './adreport.js';
+import { qrEncode, paintQr } from './qr.js?v=202611210015';
 
 const LEVELS = [
   { src: 'icons/lot.jpg', t: '빈 땅' },
@@ -2181,6 +2183,10 @@ export function createUI(root, hooks) {
       const stHolder = h('b'), stBid = h('b', { class: 'gold' }), stProt = h('b'), stScore = h('b', { class: 'gold' }), stStreak = h('b', { class: 'gold' });
       const chainNote = h('p', { class: 'note' });
       const relightBtn = h('button', { class: 'btn gold', type: 'button', text: '불 켜기', hidden: true });
+      // The holder's own tools: the report since the claim, and a QR of the board's share page for the shop counter.
+      const ownRow = h('div', { hidden: true, style: { gridColumn: '1 / -1', display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+        h('button', { class: 'btn ghost', type: 'button', text: '📊 내 전광판 리포트', onclick: () => openAdReport(slot) }),
+        h('button', { class: 'btn ghost', type: 'button', text: 'QR 코드 받기', onclick: () => openAdQr(slot) }));
       const emojiIn = h('input', { class: 'input', maxLength: 4, 'aria-label': '이모지' });
       const emo = h('div', { class: 'emo' });
       const themes = h('div', { class: 'themes' });
@@ -2426,6 +2432,7 @@ export function createUI(root, hooks) {
         const days = Math.max(0, Math.floor(Number(b?.lit_days) || 0));
         stStreak.textContent = days > 0 ? `연속 ${days}일` : '';
         relightBtn.hidden = !mineNow;
+        ownRow.hidden = !mineNow;
         stScore.textContent = `택시 ${Math.floor(Number(b?.views) || 0)} · 응원 ${Math.floor(Number(b?.cheers) || 0)} · 링크 ${Math.floor(Number(b?.clicks) || 0)}`;
         const boost = chainBoost(world.billboards, slot);
         chainNote.hidden = !boost;
@@ -2692,6 +2699,7 @@ export function createUI(root, hooks) {
             h('div', { class: 'stat' }, h('small', { text: '연속' }), stStreak),
             h('div', { class: 'stat' }, h('small', { text: '반응' }), stScore),
             relightBtn,
+            ownRow,
             chainNote),
         ),
         h('div', null,
@@ -2718,6 +2726,62 @@ export function createUI(root, hooks) {
       fontsReady('타임스퀘어 전광판 점령 ' + hooks.nick()).then(paint);
       return () => { clearInterval(timer); cancelAnimationFrame(raf); };
     }, false, 'bill');
+  }
+  // The holder's report (GET /rt/ad-report through hooks.adReport). Only real counts since this holder's claim; no estimates.
+  function openAdReport(slot) {
+    openSheet('📊 내 전광판 리포트', slotName(slot), (host) => {
+      const body = h('div', null, h('p', { class: 'note', text: '불러오는 중…' }));
+      const copyBox = h('div', { class: 'manual-copy', hidden: true });
+      const share = h('button', { class: 'btn gold', type: 'button', text: '이 전광판 링크 공유하기', onclick: async () => {
+        if (await sendLink({ kind: 'invite', url: cardUrl(slot), native: true, into: copyBox }) === 'copied') note('링크를 복사했어요', 'ok');
+      } });
+      host.append(body, share, copyBox, h('button', { class: 'btn ghost', type: 'button', text: '전광판으로 돌아가기', onclick: () => openBillboard(slot) }));
+      let alive = true;
+      const md = (day) => `${Number(day.slice(5, 7))}월 ${Number(day.slice(8, 10))}일`;
+      const render = (r) => {
+        const s = adSums(r.days, r.today), bars = adBars(r.days, r.today, r.since), top = Math.max(1, ...bars.map((b) => b.n));
+        const cell = (text, head) => h(head ? 'small' : 'b', { class: head ? '' : 'tnum', text: String(text), style: { textAlign: head ? 'left' : 'right' } });
+        const rows = [['', '오늘', '7일', '14일'], ['택시 손님', s.today.views, s.d7.views, s.d14.views], ['응원', s.today.cheers, s.d7.cheers, s.d14.cheers], ['링크 방문', s.today.clicks, s.d7.clicks, s.d14.clicks], ['반응한 사람', s.today.people, s.d7.people, s.d14.people]];
+        const table = h('div', { style: { display: 'grid', gridTemplateColumns: 'auto repeat(3, 1fr)', gap: '6px 12px', alignItems: 'baseline', marginTop: '6px' } },
+          ...rows.flatMap((row, i) => row.map((v, j) => (i === 0 ? h('small', { text: v, style: { textAlign: j ? 'right' : 'left' } }) : j === 0 ? cell(v, true) : cell(money(v))))));
+        const chart = h('div', { role: 'img', 'aria-label': `14일 동안 하루 반응 수: ${bars.map((b) => (b.before ? '-' : b.n)).join(', ')}`, style: { display: 'flex', alignItems: 'flex-end', gap: '3px', height: '96px', marginTop: '14px' } },
+          ...bars.map((b) => h('div', { title: `${md(b.day)} · ${b.before ? '기록 전' : b.n}`, style: { flex: '1', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', height: '100%', minWidth: '0' } },
+            h('div', { style: { width: '100%', height: b.before ? '2px' : b.n ? `${Math.max(4, Math.round(b.n / top * 72))}px` : '2px', borderRadius: '3px 3px 0 0', background: b.before ? 'rgba(255,255,255,.08)' : b.n ? 'var(--gold-2)' : 'rgba(255,255,255,.18)' } }),
+            h('small', { class: 'tnum', text: String(Number(b.day.slice(8, 10))), style: { fontSize: '9px', marginTop: '3px', color: 'var(--muted)', opacity: b.before ? '.4' : '1' } }))));
+        const kids = [table, chart, h('p', { class: 'note', text: `${md(new Date(Date.parse(r.since) + 9 * 36e5).toISOString().slice(0, 10))}부터 센 숫자예요. 막대는 하루의 택시 손님·응원·링크 방문을 더한 수예요.` }),
+          h('p', { class: 'note', text: '택시 손님은 이 전광판 앞에 내린 택시, 링크 방문은 코인이 들어간 방문, 반응한 사람은 그날 셋 중 하나라도 한 계정 수예요. 사람 수는 하루마다 따로 세어 더해요.' })];
+        if (s.d14.views + s.d14.cheers + s.d14.clicks < AD.small) kids.unshift(h('div', { class: 'callout warn', text: '아직 본 사람이 적어요. 링크를 공유하면 늘어요' }));
+        body.replaceChildren(...kids);
+      };
+      Promise.resolve(hooks.adReport?.(slot)).then((r) => {
+        if (!alive) return;
+        if (!r?.ok || !Array.isArray(r.days)) throw new Error('리포트를 불러오지 못했어요. 잠시 뒤 다시 해 주세요.');
+        render(r);
+      }).catch((e) => { if (alive) body.replaceChildren(h('p', { class: 'note', text: e?.message || '리포트를 불러오지 못했어요' })); });
+      return () => { alive = false; };
+    }, true);
+  }
+  // A QR of the board's share page (/rt/card/<slot>) with the first line under it, as a PNG to print for the counter.
+  function openAdQr(slot) {
+    const url = cardUrl(slot), b = boardById(slot);
+    openSheet('QR 코드', slotName(slot), (host) => {
+      let qr = null; try { qr = qrEncode(url); } catch { qr = null; }
+      if (!qr) { host.append(h('p', { class: 'note', text: 'QR 코드를 만들지 못했어요' })); return; }
+      const caption = chars(String(b?.line1 || '').trim(), 16) || slotName(slot);
+      const canvas = paintQr(makeCanvas(1, 1), qr, { scale: 16, caption, sub: '찍으면 타임스퀘어의 이 전광판으로 가요' });
+      Object.assign(canvas.style, { display: 'block', width: '100%', maxWidth: '300px', margin: '6px auto 0', borderRadius: '10px', background: '#fff', imageRendering: 'pixelated' });
+      canvas.setAttribute('role', 'img'); canvas.setAttribute('aria-label', `${slotName(slot)} 전광판으로 가는 QR 코드`);
+      const save = h('button', { class: 'btn gold', type: 'button', text: 'PNG로 저장', onclick: () => {
+        canvas.toBlob((blob) => {
+          if (!blob) { note('저장하지 못했어요', 'err'); return; }
+          const a = document.createElement('a'), href = URL.createObjectURL(blob);
+          a.href = href; a.download = `wishboard-qr-${slot}.png`; a.click();
+          setTimeout(() => URL.revokeObjectURL(href), 4000);
+        }, 'image/png');
+      } });
+      host.append(canvas, h('p', { class: 'note', text: '계산대 옆에 붙여 두세요. 휴대폰 카메라로 찍으면 이 전광판 앞으로 바로 와요.' }), h('p', { class: 'note', text: url }), save,
+        h('button', { class: 'btn ghost', type: 'button', text: '전광판으로 돌아가기', onclick: () => openBillboard(slot) }));
+    }, true);
   }
 
   function openPlot(plotId) {
@@ -3284,10 +3348,23 @@ export function createUI(root, hooks) {
         host.append(h('div', { class: 'screen' }, canvas));
         host.append(h('p', { class: 'note', text: '전광판에는 이렇게 보여요. 줄마다 16자까지.' }));
         inputs.forEach((el, i) => host.append(h('label', { class: 'claimline' }, el, counts[i])));
+        // Shop templates and a link: folded for a newcomer (and while that is still undecided), open for everyone else. The filled lines stay editable and pass the same checks.
+        const linkIn = h('input', { class: 'input', type: 'url', placeholder: 'https://smartstore.naver.com/...', value: model.link || '', 'aria-label': '가게 링크' });
+        host.append(h('details', { class: 'more', open: newbieOn === false },
+          h('summary', { text: '가게·행사 예시 문구와 링크' }),
+          h('div', { class: 'chips' }, ...AD_TEMPLATES.map((t) => h('button', { type: 'button', text: t.label, onclick: () => {
+            t.lines.forEach((line, i) => { inputs[i].value = chars(line, 16); });
+            paint(); inputs[0].focus(); inputs[0].select();
+          } }))),
+          h('div', { class: 'field' }, h('label', null, '링크', h('span', { text: '인스타·스레드·유튜브·스마트스토어 https 주소만 저장됩니다. 전광판을 누르면 상세보기에서 열 수 있습니다' })), linkIn)));
         paint();
         fontsReady(examples.join(' ') + ' ' + hooks.nick()).then(paint);
         host.append(h('button', { class: 'btn gold', type: 'button', text: '다음', style: { position: 'sticky', bottom: '0' }, onclick: () => {
           if (!model.linesOk(inputs[0].value, inputs[1].value, inputs[2].value)) { note('쓸 수 없는 문구예요', 'err'); return; }
+          let link = linkIn.value.trim();
+          if (link && !/^https?:\/\//i.test(link)) link = 'https://' + link;
+          if (link && !allowedLink(link)) { note('인스타, 스레드, 유튜브, 스마트스토어 주소만 저장됩니다', 'err'); return; }
+          model.link = link ? allowedLink(link) : '';
           openClaimStep(3, model);
         } }));
       } else {
@@ -3300,6 +3377,7 @@ export function createUI(root, hooks) {
           const payload = model.payload();
           payload.mode = free ? 'starter' : 'claim';
           payload.bid = free ? 0 : floor;
+          if (model.link) payload.external_url = model.link;
           const run = hooks.submitClaim?.(payload);
           if (!run || typeof run.then !== 'function') { note('지금은 걸 수 없어요', 'err'); return; }
           go.disabled = true;

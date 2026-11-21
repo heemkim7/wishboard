@@ -12,6 +12,7 @@ import { renderCardPng } from './cardpng.js';
 import { WISH, WISH_ERR, cleanWish, cleanNick, wishFault, wishNickFault, ipNet, rankWishes, prizeFor, boardMix, wishShareText } from './wish.js';
 import { ghostPacket } from './ts3d/walkers.js';
 import { DARK, quietShift, darkNext, darkHours, darkText, litOf } from './dark.js';
+import { adTables, adIngest, adTenure, adRename, adForget, adReport } from './adreport.js';
 // v16 cost pass: ping 25s (client) / STALE 75s, idle scan alarm 60s, meter report 60s, compact pos ('p'/'P'), nearby fanout, event ring + world cache, HMAC guest tokens.
 const CAP = 50, MEM = 0.125, LEAN = 0.8, HARD = 0.95, STALE = 75000, SCAN = 5000, IDLE_SCAN = 60000, REP = 60000;
 const NEAR_R = 1600, FAR_MS = 3000, HIST_N = 10, PRAY_TTL = 15;
@@ -133,6 +134,13 @@ export class Meter extends DurableObject {
   // attributed and stays until the 7-day prune.
   snapForget(uid) { this.snapInit(); const u = String(uid || ''); if (!u) return { ok: false }; const q = this.ctx.storage.sql;
     q.exec('delete from snap where id in (select id from snx where u = ?)', u); q.exec('delete from snx where u = ?', u); return { ok: true }; }
+  // Board report (instance 'ad', adreport.js): what the rooms counted per slot and KST day, since the current holder's tenure began.
+  adI() { if (!this.ai) { this.ai = 1; adTables(this.ctx.storage.sql); } }
+  adAdd(items, people) { this.adI(); return adIngest(this.ctx.storage.sql, items, people); }
+  adClaim(slot, holder, prev) { this.adI(); return adTenure(this.ctx.storage.sql, slot, holder, prev); }
+  adMove(from, to) { this.adI(); return adRename(this.ctx.storage.sql, from, to); }
+  adForget(uid) { this.adI(); return adForget(this.ctx.storage.sql, uid); }
+  adRead(slot, holder) { this.adI(); return adReport(this.ctx.storage.sql, slot, holder); }
   snapFor(k, r, u) { this.snapInit(); if (!u) return null; const x = this.ctx.storage.sql.exec('select x.id from snx x join snap s on s.id = x.id where x.k = ? and x.r = ? and x.u = ? order by x.at desc limit 1', String(k), String(r), String(u)).toArray()[0]; return x ? String(x.id) : null; }
   // Immediate push (instance 'push', new tables). pss: up to 3 subscriptions per actor, keyed by endpoint (a browser belongs to its latest subscriber).
   // psg: last notice per (actor, kind), the minimum gap. Endpoints and actor ids never leave the Worker.
@@ -514,6 +522,9 @@ export class Room extends DurableObject {
     q.exec('create table if not exists rate(uid text primary key, at integer not null)');
     q.exec('create table if not exists gate(k text primary key, at integer not null)');
     q.exec('create table if not exists adstat(slot text primary key, views integer not null, clicks integer not null, dirty integer not null)');
+    q.exec('create table if not exists adq(slot text not null, b integer not null, v integer not null default 0, c integer not null default 0, h integer not null default 0, primary key(slot, b))');
+    q.exec('create table if not exists adw(slot text not null, d text not null, uid text not null, b integer not null, primary key(slot, d, uid))');
+    if (q.exec('select 1 from adq union all select 1 from adw limit 1').toArray().length) this.adDirty = 1; // tallies from before hibernation still go out
     q.exec('create table if not exists seat(uid text primary key, fl integer not null)'); q.exec(AG);
     q.exec('create table if not exists sess(id text primary key, uid text not null, kind text not null, t0 integer not null, x integer not null, z integer not null)');
     q.exec('create table if not exists stk(slot text primary key, g text not null)');
@@ -747,6 +758,7 @@ export class Room extends DurableObject {
     const q = this.ctx.storage.sql, day = kstDay();
     agPut(q, a.k, 'qc', day, agGet(q, a.k, 'qc', day) + 1);
     this.tx(w, { t: 'PAY', kind: 'cheer', amount });
+    this.adTally(slot, 'h', a.k);
     this.shareCheer(slot, p);
     if (!this.inboxQ) this.inboxQ = [];
     const holder = board?.holder_id && board.holder_id !== a.k ? String(board.holder_id) : '';
@@ -927,7 +939,23 @@ export class Room extends DurableObject {
     else q.exec('update adstat set views = views + 1, dirty = 1 where slot = ?', slot);
     const row = q.exec('select views, clicks from adstat where slot = ?', slot).toArray()[0];
     this.bc({ t: 'AD', slot, kind: kind === 'clicks' ? 'clicks' : 'views', views: Number(row?.views) || 0, clicks: Number(row?.clicks) || 0, by });
+    this.adTally(slot, kind === 'clicks' ? 'c' : 'v', by); }
+  // The holder's report (Meter 'ad'): per slot and minute, plus who acted today, until the next flushAds hands them over.
+  adTally(slot, col, uid) { if (!AD_SLOT.test(String(slot || '')) || !['v', 'c', 'h'].includes(col)) return; this.tapDb(); const q = this.ctx.storage.sql, now = Date.now(), b = Math.floor(now / 60000);
+    q.exec('insert into adq(slot, b, ' + col + ') values(?, ?, 1) on conflict(slot, b) do update set ' + col + ' = ' + col + ' + 1', slot, b);
+    if (uid) q.exec('insert or ignore into adw(slot, d, uid, b) values(?, ?, ?, ?)', slot, kstDay(now), String(uid).slice(0, 80), b);
     this.adDirty = 1; }
+  // Hands the tallies to Meter 'ad' (one call). Sent rows are taken off by what was sent, so events counted meanwhile stay. Returns rows still waiting.
+  async adPush() { const q = this.ctx.storage.sql, now = Date.now();
+    // Bounded while the Meter keeps failing: what it would drop anyway (older than its 35 days, people of another day) goes here first.
+    q.exec('delete from adq where b < ?', Math.floor((now - 35 * 864e5) / 60000)); q.exec('delete from adw where d <> ?', kstDay(now));
+    const rows = q.exec('select slot, b, v, c, h from adq limit 200').toArray(), ppl = q.exec('select slot, d, uid, b from adw limit 400').toArray();
+    if (rows.length || ppl.length) { this.conns++; // one DO call, counted toward the daily budget like the seat calls
+      try { await this.env.METER.get(this.env.METER.idFromName('ad')).adAdd(rows.map(r => ({ s: String(r.slot), b: Number(r.b), v: Number(r.v) || 0, c: Number(r.c) || 0, h: Number(r.h) || 0 })), ppl.map(r => ({ s: String(r.slot), d: String(r.d), u: String(r.uid), b: Number(r.b) })));
+        for (const r of rows) q.exec('update adq set v = v - ?, c = c - ?, h = h - ? where slot = ? and b = ?', r.v, r.c, r.h, r.slot, r.b);
+        q.exec('delete from adq where v <= 0 and c <= 0 and h <= 0'); for (const r of ppl) q.exec('delete from adw where slot = ? and d = ? and uid = ?', r.slot, r.d, r.uid);
+      } catch { /* the rows wait for the next flush */ } }
+    return Number(q.exec('select (select count(*) from adq) + (select count(*) from adw) n').one().n) || 0; }
   // Link visit pays once per account per board per KST day, AD_DAY boards a day.
   adClick(w, a, nick, slot) { if (!a?.k || !AD_SLOT.test(slot)) return false; this.tapDb(); const q = this.ctx.storage.sql, day = kstDay(), n = agGet(q, a.k, 'adn', day);
     if (n >= AD_DAY || agGet(q, a.k, 'ad:' + slot, day)) { if (w) this.tx(w, { t: 'PAY', kind: 'click', amount: 0, why: 'day', key: slot }); return false; }
@@ -935,15 +963,15 @@ export class Room extends DurableObject {
     agPut(q, a.k, 'adn', day, n + 1); agPut(q, a.k, 'ad:' + slot, day, 1); this.bumpAd(slot, 'clicks', a.k);
     if (w) this.tx(w, { t: 'PAY', kind: 'click', amount: pay });
     return true; }
-  async flushAds() { this.tapDb(); const q = this.ctx.storage.sql; this.adFlushAt = Date.now();
+  async flushAds() { this.tapDb(); const q = this.ctx.storage.sql; this.adFlushAt = Date.now(); const wait = await this.adPush();
     const rows = q.exec('select slot, views, clicks from adstat where dirty = 1 limit 40').toArray();
-    if (!rows.length || typeof this.env.FLUSH_KEY !== 'string' || !this.env.FLUSH_KEY) { this.adDirty = rows.length ? 1 : 0; return; }
+    if (!rows.length || typeof this.env.FLUSH_KEY !== 'string' || !this.env.FLUSH_KEY) { this.adDirty = rows.length || wait ? 1 : 0; return; }
     const items = rows.map(r => ({ slot_id: String(r.slot), views: Number(r.views) || 0, clicks: Number(r.clicks) || 0 }));
     try {
       const r = await fetch(SUPA + '/rest/v1/rpc/ad_stat_batch', { method: 'POST', headers: { apikey: ANON, 'content-type': 'application/json' }, body: JSON.stringify({ p_key: this.env.FLUSH_KEY, p_items: items }) });
       if (!r.ok) throw new Error('ad ' + r.status);
       for (const row of rows) q.exec('update adstat set dirty = 0 where slot = ? and views = ? and clicks = ?', row.slot, row.views, row.clicks);
-      this.adDirty = q.exec('select count(*) n from adstat where dirty = 1').one().n > 0 ? 1 : 0;
+      this.adDirty = wait || q.exec('select count(*) n from adstat where dirty = 1').one().n > 0 ? 1 : 0;
     } catch { this.adDirty = 1; } }
   flush(onlyUid) { const prev = this._fq || Promise.resolve(); const job = prev.then(() => this._flush(onlyUid)); this._fq = job.then(() => {}, () => {}); return job; }
   async _flush(onlyUid) { this.tapDb(); const q = this.ctx.storage.sql;
@@ -1799,6 +1827,7 @@ async function plaza(req, env, ctx, u) {
   if (claim) {
     darkNote(env, ctx, row); // any mode: a takeover replaces the old holder's row, an edit with the same holder and clock keeps it
     try { await acct(env).wish(kstDay()); } catch { }
+    if (mode !== 'edit') await adSoon(ctx, () => adM(env).adClaim(row.slot_id, String(row.holder_id || actor.id), String(data.prev_holder_id || ''))); // a new holder's report starts now
     if (mode === 'claim' || mode === 'starter' || mode === 'tribe') {
       try { await env.METER.get(env.METER.idFromName('ev')).touch(isoWeek(), actor.id); } catch { }
     }
@@ -2009,6 +2038,28 @@ async function relightBoard(req, env, ctx) {
   } catch { /* the caller still has lit_until */ }
   return J({ ok: true, lit_until: data.lit_until, lit_days: data.lit_days, scored: data.scored === true });
 }
+// GET /rt/ad-report?slot=: the holder's own numbers (Meter 'ad', adreport.js). The holder is read from Supabase every time, never the isolate copy:
+// a stale copy could show the last minute to someone who was just displaced, and would close the new holder's tenure. A tribe board: its members.
+const adM = env => env.METER.get(env.METER.idFromName('ad'));
+// A report hook on a claim / review / merge: waited for up to AD_WAIT so the next report sees it, never longer (the call finishes in waitUntil).
+// A failure is dropped: the next report closes a tenure not named for its reader.
+const AD_WAIT = 800;
+function adSoon(ctx, call) { const job = Promise.resolve().then(call).catch(() => { }); try { ctx?.waitUntil?.(job); } catch { } return Promise.race([job, new Promise((r) => setTimeout(r, AD_WAIT))]); }
+async function adReportApi(req, env, u) {
+  if (req.method !== 'GET') return J({ err: 'get' }, 405);
+  const actor = await resolveActor(env, tokenOf(req)); if (!actor) return J({ ok: false, error: playerErr('auth') }, 401);
+  if (!(await rateOk(env.EVENT_RL, req))) return J({ ok: false, error: 'rate' }, 429);
+  const slot = String(u.searchParams.get('slot') || ''); if (!SLOT_RE.test(slot)) return J({ ok: false, error: playerErr('slot') }, 400);
+  let b = null; try { const s = await fetch(SUPA + '/rest/v1/billboards?select=slot_id,holder_id&slot_id=eq.' + encodeURIComponent(slot), { headers: { apikey: ANON, accept: 'application/json' } }); const rows = s.ok ? await s.json() : null; if (!Array.isArray(rows)) throw new Error('board'); b = rows[0] || {}; } catch { b = null; }
+  if (!b) return J({ ok: false, error: '리포트를 불러오지 못했어요. 잠시 뒤 다시 해 주세요.' }, 503); // could not read the holder: not a 403
+  const holder = String(b.holder_id || '');
+  let ok = !!holder && holder === actor.id;
+  if (!ok && holder.startsWith('tribe:')) { try { const t = await supabaseRpc('my_tribe', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id }); ok = !!t.data?.tribe_id && 'tribe:' + t.data.tribe_id === holder; } catch { ok = false; } }
+  if (!ok) return J({ ok: false, error: playerErr('holder') }, 403);
+  let r = null; try { r = await adM(env).adRead(slot, holder); } catch { r = null; }
+  if (!r) return J({ ok: false, error: '리포트를 불러오지 못했어요. 잠시 뒤 다시 해 주세요.' }, 503);
+  return J({ ok: true, slot, days: r.days, total: r.total, since: r.since, today: r.today });
+}
 async function announce(env, ctx, topics, uid, row) {
   try { await invalidateWorld(env, ctx); } catch { }
   for (const topic of topics) {
@@ -2146,6 +2197,7 @@ async function photos(req, env, ctx, u) {
     if (data.billboard) {
       const take = data.prev_holder_id && data.prev_holder_id !== data.actor_id ? { victim: data.prev_holder_id, attacker: data.billboard.holder_name || '', slot: data.billboard.slot_id, name: slotName(data.billboard.slot_id), price: Number(data.reclaim_bid) || 0, line1: data.prev_line1, line2: data.prev_line2, line3: data.prev_line3, emoji: data.prev_emoji, theme: data.prev_theme, color: data.prev_color } : null;
       if (take) queueTaken(env, ctx, take.victim, take.attacker, take.slot);
+      if (b?.approve === true && data.billboard.holder_id) await adSoon(ctx, () => adM(env).adClaim(data.billboard.slot_id, String(data.billboard.holder_id), String(data.prev_holder_id || '')));
       darkNote(env, ctx, data.billboard);
       try { await invalidateWorld(env, ctx); } catch { }
       const msg = { t: 'WORLD_UPDATE', kind: 'BILLBOARD', data: data.billboard, sync: [data.prev_holder_id, data.landlord_id].filter((uid) => uid && uid !== data.actor_id), take, mono: data.monopoly_name || '' };
@@ -2260,6 +2312,7 @@ async function accountApi(req, env, ctx, u) {
   // The guest's wish, hearts, reports and unpaid prizes become the user's (wMove), so mine, the one-wish-a-day rule and the prize follow the person.
   ctx.waitUntil(Promise.resolve().then(() => Promise.all([pushM(env).psMove(guestId, actor.id), snapM(env).snapMove(guestId, actor.id).then(() => { SNX.clear(); SNC.clear(); }),
     wishM(env).wMove(guestId, actor.id).then(() => { WISHC.at = 0; WONE.clear(); WAU.clear(); }), darkM(env).dkMove(guestId, actor.id)])).catch(() => { }));
+  await adSoon(ctx, () => adM(env).adMove(guestId, actor.id)); // the moved boards keep their report; waited for (up to 0.8 s) so a report right after the link finds it
   return J({ ok: true, actor_id: actor.id, coins: data.coins, bonus: data.bonus || 0, linked: true, nickname: data.nickname || '' });
 }
 // Account withdrawal, outside Supabase: push subscriptions and gaps, wishes (hidden and emptied), hearts given, reports filed, and the uploader link of
@@ -2269,6 +2322,7 @@ async function forgetActor(env, uid) {
   const dropSubs = async (id) => { const r = await pushM(env).psForget(id); // the Supabase copies of the endpoints this instance knew (older ones only Supabase knows stay)
     await Promise.all((r?.e || []).map(e => supabaseRpc('push_unsubscribe', { p_key: env.FLUSH_KEY || '', p_actor_id: id, p_endpoint: e }).catch(() => null))); };
   await Promise.all(ids.map(id => Promise.all([dropSubs(id), wishM(env).wForget(id), snapM(env).snapForget(id), darkM(env).dkForget(id)].map(p => p.catch(() => null)))));
+  await Promise.all(ids.map(id => adM(env).adForget(id).catch(() => null))); // the board reports of their tenures go too
   WISHC.at = 0; WONE.clear(); WAU.clear(); SNX.clear(); SNC.clear(); PC.delete('world');
   try { await caches.default.delete(new Request(WORLD_CACHE)); } catch { }
 }
@@ -2487,6 +2541,7 @@ export default {
     if (u.pathname === '/rt/report') return fileReport(req, env);
     if (u.pathname.startsWith('/rt/card/')) return cardPage(req, env, u);
     if (u.pathname === '/rt/relight') return relightBoard(req, env, ctx);
+    if (u.pathname === '/rt/ad-report') return adReportApi(req, env, u);
     if (u.pathname === '/rt/tribe' || u.pathname === '/rt/tribe/pledge') return tribeApi(req, env, u);
     if (u.pathname === '/rt/world' || u.pathname === '/rt/wallet' || u.pathname === '/rt/claim-billboard' || u.pathname === '/rt/buy-plot' || u.pathname === '/rt/sell-coins' || u.pathname === '/rt/flush-wallet' || u.pathname === '/rt/spend') return plaza(req, env, ctx, u);
     if (WISH_PATHS.has(u.pathname)) return wishApi(req, env, ctx, u);

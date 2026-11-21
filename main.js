@@ -219,6 +219,7 @@ const ui = createUI(document.getElementById('ui'), {
   baked: () => noteBakePay(),
   claim: (payload) => claim(payload),
   relight: (slot) => relight(slot),
+  adReport: (slot) => net.adReport(slot),
   submitClaim: (payload) => claim(payload),
   sticker: (slot, glyph) => buySticker(slot, glyph),
   washSticker: (slot) => washSticker(slot),
