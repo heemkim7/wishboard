@@ -13,3 +13,4 @@ out/
 Thumbs.db
 __pycache__/
 *.pyc
+.claude/worktrees/
