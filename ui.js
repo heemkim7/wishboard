@@ -16,7 +16,8 @@ import { trackEvent } from './analytics.js?v=202611211159';
 import { CHEER_PHRASES, accountLabel, allowedLink, blockedText, linkedActor } from './plaza-account.js';
 import { policyDoc } from './legal.js?v=202611211159';
 import { subscribePush, resendPush } from './push.js?v=202611211159';
-import { bindSfx, play } from './audio.js?v=202611211159';
+import { bindSfx, play, setSound, haptic, musicVisible } from './audio.js?v=202611211159';
+import { stickVec, isTouchUI, STICK_W, STICK_H, STICK_THROW, STICK_ENGAGE, bakeFlip, bakeBest, BAKE_FLIPS, BAKE_ROUND_MS } from './interact.js?v=202611211159';
 import { AD, AD_TEMPLATES, adSums, adBars } from './adreport.js';
 import { qrEncode, paintQr } from './qr.js?v=202611211159';
 import { icon } from './uiicons.js?v=202611211159';
@@ -137,7 +138,8 @@ const PASSENGER_LINES = [
 
 export function createUI(root, hooks) {
   root.replaceChildren();
-  const coarse = matchMedia('(pointer: coarse)').matches;
+  // The same test as index.html's html.touch (interact.js isTouchUI): a coarse pointer or more than one touch point.
+  const coarse = isTouchUI({ coarse: matchMedia('(pointer: coarse)').matches, points: navigator.maxTouchPoints });
   let wallet = { confirmed: 0, pending: 0, earned: 0 };
   let earnedSeen = 0;
   let plazaReady = false, starterToastShown = false;
@@ -154,7 +156,7 @@ export function createUI(root, hooks) {
   let people = 1, peopleCh = 1, statusKind = 'warn', statusText = '연결 중';
   let near = null, world = { billboards: [], plots: [] };
   let coolUntil = 0, baking = null, sheet = null, soundOn = recall('kts_sound', true);
-  let dance = null, driving = false, waypoint = null, rideLine = '';
+  let dance = null, driving = false, waypoint = null, rideLine = '', offerTold = 0;
   // Movement is locked by owner (overlay.js): it comes back only when no sheet, mini-game, proof bar or countdown still wants it.
   // A caller that names no owner (hooks.lockInput(true)) shares the 'other' slot.
   const inputLock = createInputLock(typeof hooks.lockInput === 'function' ? hooks.lockInput.bind(hooks) : () => {});
@@ -218,6 +220,15 @@ export function createUI(root, hooks) {
     siren: () => tone([{ f: 740, d: 0.16, type: 'sawtooth', g: 0.06 }, { f: 460, d: 0.16, type: 'sawtooth', g: 0.06, at: 0.18 }, { f: 740, d: 0.16, type: 'sawtooth', g: 0.05, at: 0.36 }, { f: 460, d: 0.22, type: 'sawtooth', g: 0.05, at: 0.54 }]),
   };
   bindSfx(sfx);
+  setSound(soundOn); // music and vibration follow the 🔊 setting too (audio.js)
+  // In the background the synth ambience and the music stop; they come back with the page (if the sound is on).
+  document.addEventListener('visibilitychange', () => {
+    const hidden = document.visibilityState === 'hidden';
+    musicVisible(!hidden);
+    if (!audio.ctx) return;
+    if (hidden) audio.ctx.suspend?.().catch?.(() => {});
+    else if (soundOn) audio.ctx.resume?.().catch?.(() => {});
+  });
   let lofi = null;
   function lofiStart() {
     if (!soundOn) return;
@@ -333,6 +344,7 @@ export function createUI(root, hooks) {
   const soundBtn = h('button', { class: 'btn ghost icon tool-more', type: 'button', 'aria-label': '사운드', title: '사운드', onclick: () => {
     soundOn = !soundOn;
     store('kts_sound', soundOn);
+    setSound(soundOn);
     soundBtn.replaceChildren(icon(soundOn ? 'soundOn' : 'soundOff'));
     if (!soundOn) { cityStop(); lofiStop(); stopDanceAudio(); return; } // a dance in progress goes on without its music
     cityStart();
@@ -484,7 +496,8 @@ export function createUI(root, hooks) {
     if (fold) tools.insertBefore(keyBtn, fold);
     else tools?.append(keyBtn);
   }
-  setTimeout(() => help.classList.add('fade'), 16000);
+  // The controls card fades 16 s after entering (helpFade from the boot card's enter), not after the page load.
+  const helpFade = () => setTimeout(() => help.classList.add('fade'), 16000);
 
   // taxi HUD + waypoint pill
   const spdEl = h('b', { class: 'tnum', text: '0' });
@@ -500,7 +513,7 @@ export function createUI(root, hooks) {
     h('div', { class: 'meter' }, h('small', { text: '승객' }), fareEl),
     jobEl,
     trainEl,
-    h('div', { class: 'keys' }, ...(coarse ? ['조이스틱 ↑↓ 가속·후진 · ←→ 핸들 · ', icon('bolt'), ' 부스트 · 하차 버튼'] : ['W/S 가속·브레이크 · A/D 핸들 · Shift 부스트 · Space 경적 · E 하차'])),
+    h('div', { class: 'keys' }, ...(coarse ? ['조이스틱 ↑↓ 가속·후진 · ←→ 핸들 · ', icon('bolt'), ' 부스트 · 택시 내리기 버튼'] : ['W/S 가속·브레이크 · A/D 핸들 · Shift 부스트 · Space 경적 · E 택시 내리기'])),
   );
   root.append(taxiHud);
   const sponsorTitle = h('h3');
@@ -549,15 +562,19 @@ export function createUI(root, hooks) {
   document.body.append(toasts);
 
   const needle = h('div', { class: 'needle' });
-  const bakeHint = h('span', { class: 'hint', text: coarse ? '버튼을 눌러 굽기를 멈추세요' : 'Space · Enter · 클릭으로 멈추기' });
+  // One bake = BAKE_FLIPS flips, one per BAKE_ROUND_MS (interact.js); the best flip is the session's result.
+  const BAKE_STOP = coarse ? '버튼을 눌러 뒤집으세요' : 'Space · Enter · 클릭으로 뒤집기';
+  const bakeHint = h('span', { class: 'hint', text: BAKE_STOP });
+  const bakeMarks = h('span', { class: 'tnum' });
+  const bakeBtn = h('button', { class: 'btn gold stop', type: 'button', onclick: () => stopBake(), text: '지금 뒤집기!' });
   const bakeEl = h('div', { class: 'glass bake', role: 'dialog', 'aria-hidden': 'true', 'aria-label': '붕어빵 굽기' },
-    h('header', null, h('h3', null, ...withIcon('fish', '황금 붕어빵 굽기')), h('span', { text: '초록 +6 · 금색 정중앙 +16' })),
+    h('header', null, h('h3', null, ...withIcon('fish', '황금 붕어빵 굽기')), bakeMarks),
     h('div', { class: 'gauge' },
       h('span', { class: 'lbl side', style: { left: '42.5%' }, text: 'GOOD' }),
       h('span', { class: 'lbl', style: { left: '50%', color: 'var(--on-accent, #1c1300)' }, text: 'GOLD' }),
       h('span', { class: 'lbl side', style: { left: '57.5%' }, text: 'GOOD' }),
       needle),
-    h('div', { class: 'row' }, bakeHint, h('button', { class: 'btn gold stop', type: 'button', onclick: () => stopBake(), text: '지금 뒤집기!' })),
+    h('div', { class: 'row' }, bakeHint, bakeBtn),
   );
   root.append(bakeEl);
   const resultB = h('b'), resultS = h('span');
@@ -587,22 +604,101 @@ export function createUI(root, hooks) {
   boostBtn.addEventListener('pointercancel', boostOff);
   boostBtn.addEventListener('pointerleave', boostOff);
   const jumpBtn = h('button', { class: 'glass act jump', type: 'button', 'aria-label': '점프', onpointerdown: tap(() => hooks.jump()) }, icon('arrowUp'));
+  // In a taxi the same button is the horn.
+  function paintJump() {
+    jumpBtn.classList.toggle('honk', driving);
+    jumpBtn.setAttribute('aria-label', driving ? '경적' : '점프');
+    if (driving) jumpBtn.textContent = '빵!';
+    else jumpBtn.replaceChildren(icon('arrowUp'));
+  }
+  // Floating stick: a touch in the lower-left area (interact.js stickZone, STICK_W x STICK_H) that moves STICK_ENGAGE px
+  // becomes the stick, centred where it went down, with STICK_THROW px of throw. The area sits under every other HUD
+  // piece (first child of #ui), so their buttons keep their taps; a touch that does not move is handed to the world as
+  // a tap (hooks.tapDown / tapUp), so a board or a plot under the area still opens. A mouse never uses it (touch laptops).
+  const joyZone = h('div', { class: 'joyzone', 'aria-hidden': 'true', style: { width: `${STICK_W * 100}%`, height: `${STICK_H * 100}%` } });
   if (coarse) {
+    root.prepend(joyZone);
     root.append(joy, h('div', { class: 'acts' }, boostBtn, actBtn, jumpBtn));
-    let jp = null;
-    const setJoy = (ev) => {
-      const r = joy.getBoundingClientRect();
-      let dx = ev.clientX - (r.left + r.width / 2), dy = ev.clientY - (r.top + r.height / 2);
-      const max = r.width * 0.36, d = Math.hypot(dx, dy);
-      if (d > max) { dx *= max / d; dy *= max / d; }
-      knob.style.transform = `translate(${dx}px, ${dy}px)`;
-      hooks.joystick(dx / max, dy / max);
+    let jp = null, origin = null, engaged = false;
+    const rest = () => {
+      engaged = false;
+      joy.classList.remove('live');
+      joy.style.left = joy.style.top = joy.style.bottom = '';
+      knob.style.transform = '';
     };
-    joy.addEventListener('pointerdown', (ev) => { jp = ev.pointerId; joy.setPointerCapture(ev.pointerId); setJoy(ev); });
-    joy.addEventListener('pointermove', (ev) => { if (ev.pointerId === jp) setJoy(ev); });
-    const end = (ev) => { if (ev.pointerId !== jp) return; jp = null; knob.style.transform = ''; hooks.joystick(0, 0); };
-    joy.addEventListener('pointerup', end);
-    joy.addEventListener('pointercancel', end);
+    const place = () => {
+      const rr = root.getBoundingClientRect();
+      const s = joy.offsetWidth || 116;
+      joy.style.left = `${origin.x - rr.left - s / 2}px`;
+      joy.style.top = `${origin.y - rr.top - s / 2}px`;
+      joy.style.bottom = 'auto';
+      joy.classList.add('live');
+    };
+    joyZone.addEventListener('pointerdown', (ev) => {
+      if (ev.pointerType === 'mouse' || jp != null) return;
+      ev.preventDefault();
+      jp = ev.pointerId;
+      try { joyZone.setPointerCapture(jp); } catch { /* already gone */ }
+      origin = { x: ev.clientX, y: ev.clientY };
+      engaged = false;
+      hooks.tapDown?.(ev.clientX, ev.clientY);
+    });
+    joyZone.addEventListener('pointermove', (ev) => {
+      if (ev.pointerId !== jp || !origin) return;
+      const dx = ev.clientX - origin.x, dy = ev.clientY - origin.y;
+      if (!engaged) {
+        if (Math.hypot(dx, dy) < STICK_ENGAGE) return;
+        engaged = true;
+        place();
+      }
+      const v = stickVec(dx, dy, STICK_THROW);
+      knob.style.transform = `translate(${v.ox}px, ${v.oy}px)`;
+      hooks.joystick(v.x, v.y);
+    });
+    const end = (ev) => {
+      if (ev.pointerId !== jp) return;
+      jp = null;
+      // The world decides whether this was a tap (it moved 7 px or less, under 450 ms); a cancelled touch never is.
+      if (ev.type === 'pointercancel') hooks.tapUp?.(origin.x + 999, origin.y);
+      else hooks.tapUp?.(ev.clientX, ev.clientY);
+      origin = null;
+      if (engaged) hooks.joystick(0, 0);
+      rest();
+    };
+    joyZone.addEventListener('pointerup', end);
+    joyZone.addEventListener('pointercancel', end);
+    // A touch laptop's mouse drags the camera everywhere: the area stands aside while the mouse is in use.
+    window.addEventListener('pointermove', (ev) => { if (ev.pointerType === 'mouse' && jp == null) joyZone.style.pointerEvents = 'none'; }, { passive: true });
+    window.addEventListener('pointerdown', (ev) => { if (ev.pointerType !== 'mouse') joyZone.style.pointerEvents = ''; }, { passive: true, capture: true });
+  }
+  // One-time coach line for touch: how to look around, until the first drag on the city (kts_coach).
+  const coachEl = h('div', { class: 'coach', role: 'status', hidden: true, text: '화면을 끌어 둘러보기 · 두 손가락으로 확대' });
+  if (coarse) root.append(coachEl);
+  let coachTimer = 0;
+  function coachDone() {
+    clearTimeout(coachTimer);
+    if (!coachEl.hidden) coachEl.hidden = true;
+  }
+  function coachStart() {
+    if (!coarse || recall('kts_coach', 0)) return;
+    const view = document.getElementById('view');
+    let from = null;
+    const down = (e) => { if (e.pointerType !== 'mouse') from = { x: e.clientX, y: e.clientY }; };
+    const move = (e) => {
+      if (!from || Math.hypot(e.clientX - from.x, e.clientY - from.y) < 24) return;
+      store('kts_coach', 1);
+      coachDone();
+      view?.removeEventListener('pointerdown', down);
+      view?.removeEventListener('pointermove', move);
+    };
+    view?.addEventListener('pointerdown', down, { passive: true });
+    view?.addEventListener('pointermove', move, { passive: true });
+    view?.addEventListener('pointerup', () => { from = null; }, { passive: true });
+    coachTimer = setTimeout(() => {
+      if (recall('kts_coach', 0)) return;
+      coachEl.hidden = false;
+      coachTimer = setTimeout(coachDone, 15000);
+    }, 4000);
   }
 
   // ---------------------------------------------------------------- helpers
@@ -796,23 +892,26 @@ export function createUI(root, hooks) {
   function cooldownLeft() { return Math.max(0, coolUntil - performance.now()); }
   function armCooldown() { coolUntil = performance.now() + COOLDOWN; }
   setInterval(() => { if (near && (near.kind === 'crowd' || near.kind === 'cart')) renderPrompt(); }, 400);
+  // Second line per device: a phone has the round button (and no keys), a keyboard has Space / E.
+  const PRESS = coarse ? '버튼을 누르면' : 'Space 또는 E를 누르면';
   const PROMPTS = {
     crowd: ['같이 함성', '옆에 사람이 있어야 해요', '함성'],
-    cart: ['붕어빵 굽기', 'Space 또는 E · 포차 앞에 서면 열려요', '굽기!'],
+    cart: ['붕어빵 굽기', `${PRESS} 시작 · 세 번 뒤집어요`, '굽기!'],
     atm: ['황금 ATM 열기', '전광판 · 토지 거래', 'ATM'],
-    stage: ['댄스 시작', 'Space 또는 E · 이모지 4번은 게임이 아니에요', '댄스!'],
+    stage: ['댄스 시작', `${PRESS} 시작 · 이모지 4번은 게임이 아니에요`, '댄스!'],
     taxi: ['정차한 택시 탑승', '지나가는 택시는 타지 않아요', '탑승'],
     stand: ['택시 호출', '오면 그 자리에서 탑승', '호출'],
     fountain: ['포춘쿠키 뽑기', '빨간 계단 앞 분수', '뽑기'],
-    ring: ['황금 링 통과', '링 안으로 걸어 들어가면 +8', '통과'],
+    ring: ['황금 링 통과', '걸어서도, 택시로도 링을 지나가면 +8', '통과'],
     lounge: ['빨간 계단에서 멍때리기', '켜 두면 20초마다 +2', '관람'],
   };
-  let focusOn = false;
+  let focusOn = false, exitLabel = '';
   function renderPrompt() {
     const show = !!near && !baking && !sheet && !dance && !driving && !focusOn;
     promptEl.classList.toggle('show', show);
     actBtn.hidden = driving ? false : !(show && coarse);
-    if (driving) { actBtn.textContent = '하차'; return; }
+    if (driving) { exitLabel = '택시 내리기'; actBtn.textContent = exitLabel; return; }
+    exitLabel = '';
     if (!near) return;
     const left = cooldownLeft();
     // A board in front of the player: the world sends the line for its state (빈 전광판 / {이름}님의 전광판 / 내 전광판).
@@ -822,7 +921,7 @@ export function createUI(root, hooks) {
       ? (near.n
         ? [`같이 함성 · 옆 ${near.n}명`, left > 0 ? `다음 함성까지 ${(left / 1000).toFixed(0)}초` : '옆 사람과 같이', '함성']
         : ['함성', left > 0 ? `다음 함성까지 ${(left / 1000).toFixed(0)}초` : '코인은 전광판 응원에서 들어와요', '함성'])
-      : (PROMPTS[near.kind] || [`${near.id}번 건물 · ${levelOf(near.id).t}`, '붕어빵 포차와는 다른 자리예요', '건물']);
+      : (PROMPTS[near.kind] || [`${near.id}번 건물 · ${levelOf(near.id).t}`, `${PRESS} 분양 정보가 열려요`, '건물']);
     promptText.textContent = p[0];
     promptSub.textContent = p[1];
     actBtn.textContent = p[2];
@@ -909,39 +1008,130 @@ export function createUI(root, hooks) {
   }
 
   // ---------------------------------------------------------------- bake minigame
-  function startBake() {
+  // One session (SESS start .. end) is BAKE_FLIPS rounds of BAKE_ROUND_MS: one flip per round (a round with no flip
+  // burns), the best flip is the result, so the panel closes when the Room's 8 s session can pay. { wait: true } (the
+  // tutorial) parks the needle until the first tap, and the session starts with that tap.
+  const MARK = { gold: '★', good: '●', miss: '✕' };
+  function paintBakeMarks() {
+    if (!baking) return;
+    const marks = Array.from({ length: BAKE_FLIPS }, (_, i) => MARK[baking.flips[i]] || '○').join(' ');
+    bakeMarks.textContent = baking.live ? `${marks} · 가장 잘 구운 판으로 초록 +${BALANCE.bakeGood} · 정중앙 +${BALANCE.bakeGold}` : `${marks} · 세 번 뒤집어요`;
+  }
+  function bakeRound() {
+    baking.held = false;
+    baking.pos = Math.random() * 0.2;
+    baking.dir = 1;
+    baking.speed = 0.42 + Math.random() * 0.12 + baking.flips.length * 0.05;
+    needle.style.opacity = '';
+  }
+  function startBake(o = {}) {
     if (baking || sheet) return false;
     if (near?.kind !== 'cart') { note('붕어빵 포차 앞으로 가까이 가세요', 'err'); return false; }
     const left = cooldownLeft();
     if (left > 0) { note(`붕어빵 틀이 식는 중… ${(left / 1000).toFixed(1)}초`); return false; }
-    baking = { pos: Math.random() * 0.2, dir: 1, speed: 0.42 + Math.random() * 0.12 };
-    hooks.beginBake?.();
+    if (hooks.bakeBusy?.()) { note('방금 구운 붕어빵을 확인하는 중이에요'); return false; }
+    baking = { flips: [], pos: 0.08, dir: 1, speed: 0.42, live: false, held: false, roundAt: 0, doneAt: 0 };
     bakeEl.classList.add('show');
     bakeEl.setAttribute('aria-hidden', 'false');
     hooks.lockInput(true, 'bake');
     renderPrompt();
     sfx.click();
+    if (o.wait) {
+      needle.style.left = `${baking.pos * 100}%`;
+      bakeHint.textContent = coarse ? '버튼을 누르면 바늘이 움직여요' : 'Space · Enter · 클릭으로 시작';
+      bakeBtn.textContent = '굽기 시작';
+      paintBakeMarks();
+    } else beginRounds();
     return true;
   }
-  function stopBake(cancel) {
-    if (!baking) return;
-    const p = baking.pos;
+  function beginRounds() {
+    if (!baking || baking.live) return;
+    baking.live = true;
+    baking.roundAt = performance.now();
+    bakeRound();
+    bakeHint.textContent = BAKE_STOP;
+    bakeBtn.textContent = '지금 뒤집기!';
+    paintBakeMarks();
+    hooks.beginBake?.();
+  }
+  function flipBake(burnt) {
+    if (!baking?.live || baking.held || baking.doneAt) return;
+    baking.held = true;
+    const r = burnt ? 'miss' : bakeFlip(baking.pos);
+    baking.flips.push(r);
+    needle.style.opacity = '0.45';
+    paintBakeMarks();
+    haptic(12);
+    if (r === 'gold') sfx.crit();
+    else if (r === 'good') sfx.hit();
+    else sfx.miss();
+    if (r !== 'miss') hooks.bakeFlip?.(r);
+    if (baking.flips.length >= BAKE_FLIPS) baking.doneAt = performance.now() + 600;
+  }
+  // frame(): needle, burnt rounds, next round, the end.
+  function stepBake(now, dt) {
+    const b = baking;
+    if (!b?.live) return;
+    if (b.doneAt) { if (now >= b.doneAt) finishBakeRounds(); return; }
+    if (now - b.roundAt >= BAKE_ROUND_MS) {
+      if (!b.held) flipBake(true);
+      if (baking?.doneAt) return;
+      b.roundAt += BAKE_ROUND_MS;
+      bakeRound();
+      return;
+    }
+    if (b.held) return;
+    b.pos += b.dir * b.speed * dt;
+    if (b.pos >= 1) { b.pos = 1; b.dir = -1; }
+    if (b.pos <= 0) { b.pos = 0; b.dir = 1; }
+    needle.style.left = `${b.pos * 100}%`;
+  }
+  function closeBake() {
     baking = null;
+    needle.style.opacity = '';
     bakeEl.classList.remove('show');
     bakeEl.setAttribute('aria-hidden', 'true');
     hooks.lockInput(false, 'bake');
     renderPrompt();
     if (awayWant) setTimeout(pumpQueued, 1500);
-    if (cancel) return;
-    let amount = 0;
-    if (p >= 0.47 && p <= 0.53) amount = BALANCE.bakeGold;
-    else if (p >= 0.38 && p <= 0.62) amount = BALANCE.bakeGood;
-    if (!amount) { armCooldown(); sfx.miss(); showResult('MISS', '앗, 붕어빵이 타버렸어요…', true); missionBump('bake'); note('다음 판', 'ok', () => startBake()); return; }
-    const result = amount >= 15 ? 'gold' : 'good';
+  }
+  function finishBakeRounds() {
+    const flips = baking.flips.slice();
+    closeBake();
+    const result = bakeBest(flips);
     missionBump('bake');
-    if (amount >= 15) { sfx.crit(); showResult('PERFECT!', '황금 붕어빵'); }
+    armCooldown();
+    if (result === 'miss') { sfx.miss(); showResult('MISS', '앗, 세 판 모두 타버렸어요…', true); note('다음 판', 'ok', () => startBake()); return; }
+    if (result === 'gold') { sfx.crit(); showResult('PERFECT!', '황금 붕어빵'); }
     else { sfx.hit(); showResult('GOOD!', '바삭한 붕어빵'); }
     hooks.finishBake?.(result);
+  }
+  // The stop button, Space / Enter / E and a tap on the panel: start the rounds (tutorial) or flip this round.
+  // cancel (Escape, a refused session): close without a result.
+  function stopBake(cancel) {
+    if (!baking) return;
+    if (cancel) { closeBake(); return; }
+    if (!baking.live) { beginRounds(); return; }
+    flipBake(false);
+  }
+  // "+6 확인 중" over the cart from the end of the rounds until the PAY (main.js bakeWait / bakePaid).
+  let bakeChip = null, bakeChipTimer = 0;
+  function bakeWait(text) {
+    clearTimeout(bakeChipTimer);
+    bakeChip?.remove();
+    bakeChip = null;
+    if (!text) return;
+    bakeChip = h('span', { class: 'chip gold pulse', role: 'status', text, style: { position: 'fixed', left: '0px', top: '0px', zIndex: 31, pointerEvents: 'none', transform: 'translate(-50%, -100%)', visibility: 'hidden' } });
+    document.body.append(bakeChip);
+    placeBakeChip();
+    bakeChipTimer = setTimeout(() => bakeWait(''), 12000);
+  }
+  function placeBakeChip() {
+    if (!bakeChip) return;
+    const p = hooks.cartScreen?.();
+    const on = !!p && p.visible !== false;
+    bakeChip.style.visibility = on ? '' : 'hidden';
+    if (on) { bakeChip.style.left = `${Math.round(p.x)}px`; bakeChip.style.top = `${Math.round(p.y - 8)}px`; }
   }
 
   // ---------------------------------------------------------------- K-POP rhythm game
@@ -1690,7 +1880,7 @@ export function createUI(root, hooks) {
     if (key === 'stunt') {
       const s = nearestSpot(RINGS);
       hooks.setWaypoint?.({ x: s.x, z: s.z - 4 });
-      note('황금 링 길안내를 시작해요. 노란 기둥 안으로 걸어 들어가면 +8', 'ok');
+      note(`황금 링 길안내를 시작해요. 걸어서도, 택시로도 링을 지나가면 +${PAY.stunt.base}`, 'ok');
       return;
     }
     if (key !== 'cheer') return;
@@ -1706,7 +1896,7 @@ export function createUI(root, hooks) {
     }
     if (!best) { note('길안내할 전광판이 없어요', 'err'); return; }
     hooks.setWaypoint?.(best);
-    note('전광판 길안내를 시작해요. 가까이서 응원하면 받아요', 'ok');
+    note(`전광판 길안내를 시작해요. 켜진 남의 전광판을 눌러 응원하면 +${PAY.cheer.base}, 멀리서도 돼요`, 'ok');
   }
   function openToday() {
     if (quietBlock) return;
@@ -4024,13 +4214,28 @@ export function createUI(root, hooks) {
     bootLabel = String(text || '');
     if (bootGo) bootGo.textContent = bootLabel || '입장하기';
   }
-  function bootReady() {
+  // The enter button comes when the world says the city is built (onReady); after BOOT_FALLBACK_MS it comes anyway, with
+  // "도시를 불러오는 중…" kept on the card, and a player who enters before the city's collision is in waits with input
+  // locked (lockUntilBuilt) instead of walking through the buildings that are about to appear.
+  const BOOT_FALLBACK_MS = 12000;
+  function bootReady(early = false) {
     if (!bootEl || entered || bootEnter?.dataset.ready) return;
     clearInterval(tipTimer);
     if (bootEnter) bootEnter.dataset.ready = '1';
-    if (bootBar) bootBar.style.width = '100%';
-    if (bootMsg) bootMsg.hidden = true;
-    if (bootBar?.parentElement) bootBar.parentElement.hidden = true;
+    const loading = early && !hooks.built?.();
+    if (bootBar && !loading) bootBar.style.width = '100%';
+    if (bootMsg) { bootMsg.hidden = !loading; if (loading) bootMsg.textContent = '도시를 불러오는 중…'; }
+    if (bootBar?.parentElement && !loading) bootBar.parentElement.hidden = true;
+    if (loading) {
+      const t = setInterval(() => {
+        if (!hooks.built?.() && !entered) return;
+        clearInterval(t);
+        if (entered) return;
+        if (bootBar) bootBar.style.width = '100%';
+        if (bootMsg) bootMsg.hidden = true;
+        if (bootBar?.parentElement) bootBar.parentElement.hidden = true;
+      }, 300);
+    }
     let color = hooks.color();
     let species = hooks.species();
     const known = hooks.hasSession?.();
@@ -4056,6 +4261,9 @@ export function createUI(root, hooks) {
       bootEl.classList.add('gone');
       setTimeout(() => bootEl.remove(), 900);
       maybeStarterToast();
+      helpFade();
+      coachStart();
+      lockUntilBuilt();
     };
     go.addEventListener('click', enter);
     nick.addEventListener('keydown', (e) => { if (e.key === 'Enter') enter(); });
@@ -4066,7 +4274,17 @@ export function createUI(root, hooks) {
     bootEnter.hidden = false;
     if (!coarse) setTimeout(() => go.focus(), 60);
   }
-  setTimeout(bootReady, 2500);
+  setTimeout(() => bootReady(true), BOOT_FALLBACK_MS);
+  function lockUntilBuilt() {
+    if (!hooks.built || hooks.built()) return;
+    hooks.lockInput(true);
+    note('도시를 불러오는 중…');
+    const t = setInterval(() => {
+      if (!hooks.built()) return;
+      clearInterval(t);
+      if (!baking && !dance) hooks.lockInput(false);
+    }, 250);
+  }
   if (!window.__ktsLand && !new URLSearchParams(location.search).get('policy')) {
     window.__ktsLand = 1;
     trackEvent('page_landing');
@@ -4787,7 +5005,8 @@ export function createUI(root, hooks) {
       g.fillText(glyph, px, py);
     };
     pin(d.waypoint && insideLoop(d.waypoint.x, d.waypoint.z, 0) ? d.waypoint : null, '#3fe6ff', '📍');
-    if (d.job) pin(d.job, d.job.kind === 'pickup' ? '#39f58a' : '#ffcf5a', d.job.kind === 'pickup' ? '🙋' : '🏁');
+    // Taxi pins in the beams' "go here" cyan (timesSquare3d.js GO_HERE); the glyph says pick-up or drop-off.
+    if (d.job) pin(d.job, '#48d6f0', d.job.kind === 'pickup' ? '🙋' : '🏁');
     const me = d.me;
     if (me) {
       g.save();
@@ -5131,6 +5350,15 @@ export function createUI(root, hooks) {
 
   // ---------------------------------------------------------------- HUD readouts
   const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  let slowOn = false, slowAnim = null;
+  function slowPulse(on) {
+    if (slowOn === on) return;
+    slowOn = on;
+    slowAnim?.cancel();
+    slowAnim = null;
+    jobTitle.style.color = on ? 'var(--danger)' : '';
+    if (on) slowAnim = jobTitle.animate?.([{ opacity: 1 }, { opacity: 0.35 }, { opacity: 1 }], { duration: 600, iterations: Infinity }) || null;
+  }
   function renderHud(hd) {
     renderPending();
     if (!hd) return;
@@ -5142,20 +5370,33 @@ export function createUI(root, hooks) {
         if (riding && !rideLine) rideLine = PASSENGER_LINES[(Math.random() * PASSENGER_LINES.length) | 0];
         if (!riding) rideLine = '';
         jobEl.classList.toggle('talk', riding && !!rideLine);
-        jobTitle.textContent = hd.job.phase === 'pickup' ? '초록 기둥에서 속도를 줄이세요' : '노란 기둥에서 속도를 줄이세요';
+        // The beams are cyan ("go here") for both: named by role, and the arrow keeps the beam's colour.
+        // Within 20 m and above 40 km/h the line turns into a pulsing "slow down"; at the drop-off before the fare gap
+        // has run, it counts the passenger's wait down.
+        const fast = hd.job.dist < 20 && hd.speed > 40;
+        const wait = Math.ceil(hd.job.wait || 0);
+        const title = wait > 0 ? `도착! 손님이 ${wait}초 뒤에 내려요`
+          : fast ? '속도를 줄이세요!'
+            : hd.job.phase === 'pickup' ? '손님 기둥에서 속도를 줄이세요' : '도착 기둥에서 속도를 줄이세요';
+        if (jobTitle.textContent !== title) jobTitle.textContent = title;
+        slowPulse(fast && !wait);
         jobDist.textContent = hd.job.dist >= 1000 ? `${(hd.job.dist / 1000).toFixed(1)}km` : `${Math.round(hd.job.dist)}m`;
         jobArrow.style.transform = `rotate(${(-hd.job.bearing * 180) / Math.PI - 90}deg)`;
-        jobArrow.style.color = hd.job.phase === 'pickup' ? 'var(--ok, #3ddc97)' : 'var(--accent, #ffb020)';
+        jobArrow.style.color = 'var(--info, #48d6f0)';
         jobTime.textContent = hd.job.left != null ? fmtTime(hd.job.left) : '';
         jobTime.classList.toggle('low', hd.job.left != null && hd.job.left < 10);
       } else {
         rideLine = '';
         jobEl.classList.remove('talk');
-        jobTitle.textContent = hd.hive ? `옆 택시에 붙으면 ${Math.round(PAY.hive.gapMs / 1000)}초마다 +${PAY.hive.base}` : '손님 찾는 중…';
+        slowPulse(false);
+        const next = Math.ceil(hd.offerIn || 0);
+        jobTitle.textContent = next > 3 ? `다음 손님까지 ${next}초` : hd.hive ? `옆 택시에 붙으면 ${Math.round(PAY.hive.gapMs / 1000)}초마다 +${PAY.hive.base}` : '손님 찾는 중…';
         jobDist.textContent = '-';
         jobTime.textContent = '';
         jobArrow.style.transform = 'rotate(-90deg)';
       }
+      const label = hd.exiting ? '멈추는 중…' : hd.exitArmed ? '한 번 더 누르기' : '택시 내리기';
+      if (exitLabel && exitLabel !== label) { exitLabel = label; actBtn.textContent = label; }
       if (hd.train && hd.train.riders > 0) {
         trainEl.hidden = false;
         setIconText(trainEl, 'taxi', `현재 택시 기차: ${hd.train.riders}명 탑승 중 (x${hd.train.mult}배) | 지금 내릴까, 한 명 더 태울까?`);
@@ -5189,12 +5430,8 @@ export function createUI(root, hooks) {
   function frame(now) {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
-    if (baking) {
-      baking.pos += baking.dir * baking.speed * dt;
-      if (baking.pos >= 1) { baking.pos = 1; baking.dir = -1; }
-      if (baking.pos <= 0) { baking.pos = 0; baking.dir = 1; }
-      needle.style.left = `${baking.pos * 100}%`;
-    }
+    if (baking) stepBake(now, dt);
+    if (bakeChip) placeBakeChip();
     if (dance) drawDance();
     const left = cooldownLeft();
     promptCool.hidden = !(left > 0 && near);
@@ -5343,7 +5580,7 @@ export function createUI(root, hooks) {
       h('b', { text: '오늘의 드라이버' }),
       row('fare', 3, '택시 타고 손님 3명 내리기 +50'),
       row('cheer', 3, '전광판 응원 3회 +30'),
-      row('stunt', 2, '길 위 황금 링을 걸어 통과 2회 +40'),
+      row('stunt', 2, '길 위 황금 링 통과 2회 +40'),
       h('div', { class: paid.all ? 'ok' : '' }, ...withIcon(paid.all ? 'gift' : 'todo', `3개 완료 시 +${PAY.quest.all}`)),
     );
   }
@@ -5390,7 +5627,7 @@ export function createUI(root, hooks) {
 
   return {
     sfx, note, pop, flyCoins, cooldownLeft, armCooldown, showResult,
-    startBake, stopBake, startDance, endDance, openBillboard, openAd, openPlot, openHub, openCredits, openMap, openSettings, openWalletInfo, openVip, toggleReacts, showProof,
+    startBake, stopBake, bakeWait, startDance, endDance, openBillboard, openAd, openPlot, openHub, openCredits, openMap, openSettings, openWalletInfo, openVip, toggleReacts, showProof,
     mission(kind) { if (kind === 'cheer' || kind === 'bake') missionBump(kind); },
     quest: questBump,
     markDaily,
@@ -5429,21 +5666,28 @@ export function createUI(root, hooks) {
       driving = !!on;
       taxiHud.hidden = !driving;
       dock.hidden = driving;
-      if (driving) toggleReacts(false);
-      if (driving) { closeSheet(); note('운전 시작! 초록 기둥에서 손님을 태우고, 노란 기둥에서 속도를 줄이면 내립니다', 'ok'); }
+      if (driving) { toggleReacts(false); coachDone(); }
+      if (driving) { closeSheet(); note('운전 시작! 손님 기둥에서 손님을 태우고, 도착 기둥에서 속도를 줄이면 내려요', 'ok'); }
       if (boostBtn) boostBtn.hidden = !driving;
+      paintJump();
       renderPrompt();
       if (!driving && awayWant) setTimeout(pumpQueued, 1500);
     },
     job(ev) {
-      if (ev.type === 'offer') { rideLine = ''; jobTitle.textContent = '손님에게 가세요'; note('진행 방향 도로 위에 손님과 초록 기둥이 있어요. 가까이 가서 속도를 줄이세요'); }
+      // The long offer line twice a session; after that the HUD line says it.
+      if (ev.type === 'offer') {
+        rideLine = '';
+        jobTitle.textContent = '손님에게 가세요';
+        if (offerTold < 2) { offerTold++; note('진행 방향 도로 위에 손님 기둥이 있어요. 가까이 가서 시속 40 아래로 줄이세요'); }
+      }
       else if (ev.type === 'board') {
         rideLine = PASSENGER_LINES[(Math.random() * PASSENGER_LINES.length) | 0];
         sfx.pickup();
-        jobTitle.textContent = ev.title || '노란 기둥에서 속도를 줄이세요';
+        jobTitle.textContent = ev.title || '도착 기둥에서 속도를 줄이세요';
         jobEl.classList.add('talk');
-        note(ev.title || '노란 기둥까지 가서 시속 40 아래로 줄이면 손님이 내립니다', 'ok');
+        note(ev.title || '도착 기둥까지 가서 시속 40 아래로 줄이면 손님이 내려요', 'ok');
       }
+      else if (ev.type === 'abandon') { rideLine = ''; jobEl.classList.remove('talk'); hideSponsor(); note('손님이 내렸어요 · 운임 없음', 'err'); }
       else if (ev.type === 'chain') { sfx.pickup(); note(`${ev.riders}명째 탑승 · x${ev.mult}배`, 'ok'); }
       else if (ev.type === 'detach') { sfx.bump(); note('맨 뒤 손님이 도로로 떨어졌어요', 'err'); }
       else if (ev.type === 'fail') { rideLine = ''; jobEl.classList.remove('talk'); sfx.miss(); jobTitle.textContent = '손님 찾는 중'; hideSponsor(); note('시간 초과… 손님이 내렸어요', 'err'); }

@@ -54,8 +54,9 @@ export function createAvatars({ scene, urls, models, first, height = 1.8 }) {
   }
   sys.shadowGeo = new THREE.PlaneGeometry(1.25, 1.25).rotateX(-Math.PI / 2);
   sys.shadowMat = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(shadowC), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4 });
-  // Foot ring: a thin line (4 cm) in the player's colour.
-  sys.ringGeo = new THREE.RingGeometry(0.645, 0.685, 48).rotateX(-Math.PI / 2);
+  // Foot ring: a thin line (6 cm, so its near and far arcs stay at least a pixel wide from the follow camera on a
+  // low-tier phone) in the player's colour.
+  sys.ringGeo = new THREE.RingGeometry(0.63, 0.69, 48).rotateX(-Math.PI / 2);
   const bubbles = new Map();
   sys.bubbleTex = (glyph) => {
     let t = bubbles.get(glyph);
@@ -237,9 +238,14 @@ class Avatar {
     shadow.layers.set(1);
     this.root.add(shadow);
     if (this.local) {
-      this.ringMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(this.color).multiplyScalar(2.2), transparent: true, opacity: 0.8, depthWrite: false, blending: THREE.AdditiveBlending });
+      // The wet-street ground (ts3d/world.js) is drawn with a polygon offset (pavers -1, asphalt -2, road paint -4) that
+      // pulls it a few centimetres toward the camera at the follow camera's low angle, more than this ring's 2 cm of
+      // height above the plaza: without an offset of its own the ring failed the depth test and vanished. -6 keeps it in
+      // front of every ground layer; renderOrder 1 draws it after the dark shadow blob so the blob cannot dim it.
+      this.ringMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(this.color).multiplyScalar(2.2), transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -12 });
       this.ring = new THREE.Mesh(sys.ringGeo, this.ringMat);
       this.ring.position.y = 0.035;
+      this.ring.renderOrder = 1;
       this.ring.layers.set(1);
       this.root.add(this.ring);
     }

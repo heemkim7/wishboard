@@ -27,6 +27,7 @@ import { createAvatars, EMOTES, REACTIONS, AVATAR_COLORS, speciesId } from './ts
 import { seesAvatar, prefetchDelay } from './ts3d/loadplan.js?v=202611211159';
 import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, paintLabel, fontsReady, chars, hashStr } from './ts3d/art.js?v=202611211159';
 import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=202611211159';
+import { taxiExit, EXIT_SLOW, nextOfferDelay, fareWait } from './interact.js?v=202611211159';
 import { RETURN_MS, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, portraitFov, fitDistance, reverseTime, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone } from './camrig.js?v=202611211159';
 
 export { paintBillboard, THEMES, LAYOUT, PLOT_SLOTS, groundHeight, EMOTES, AVATAR_COLORS, taxiTrainMult, applyTaxiHardHit };
@@ -225,7 +226,7 @@ void main(){
 
   // The city streams in from /assets/nyc/manhattan.bin; everything below tolerates it not being there yet.
   let nyc = null, world = null, traffic = null, tsq = null, marks = null;
-  let cityProgress = 0, mgrProgress = 0, pendingPlots = [];
+  let cityProgress = 0, mgrProgress = 0, pendingPlots = [], cityFailed = false;
   const reportProgress = () => opts.onProgress?.(Math.min(0.99, cityProgress * 0.45 + mgrProgress * 0.55));
   loadNYC('/assets/nyc/manhattan.bin', (p) => { cityProgress = p; reportProgress(); }).then((data) => {
     nyc = data;
@@ -248,6 +249,7 @@ void main(){
     maybeReady();
   }).catch((err) => {
     console.error('[city]', err);
+    cityFailed = true; // built() stops waiting: nothing more is coming (onError asks for a reload)
     opts.onError?.(err);
     maybeReady(true);
   });
@@ -379,13 +381,17 @@ void main(){
     if (hit) pickPoint.copy(hit.point);
     return hit ? hit.object.userData.pick : null;
   };
-  canvas.addEventListener('pointerdown', (ev) => {
+  // The touch stick's area (ui.js) lies over the canvas and hands its taps here (tapDown / tapUp), so a board or a plot
+  // under it still opens; these two are the canvas's own pointerdown / pointerup.
+  const onDown = (ev) => {
     // A touch that ends a scripted camera is spent on that: it does not also pick what is under it (see pointerup).
     const cut = !!(cine && !cine.back && !cine.pin);
     if (cut) endCine();
     down = { x: ev.clientX, y: ev.clientY, t: performance.now(), cut }; canvas.style.cursor = 'grabbing';
-  }, { signal });
-  canvas.addEventListener('pointerup', (ev) => {
+  };
+  canvas.addEventListener('pointerdown', onDown, { signal });
+  canvas.addEventListener('pointerup', (ev) => onUp(ev), { signal });
+  const onUp = (ev) => {
     canvas.style.cursor = 'grab';
     if (!down) return;
     const moved = Math.hypot(ev.clientX - down.x, ev.clientY - down.y);
@@ -409,7 +415,7 @@ void main(){
     else if (info.kind === 'plot') opts.onPlot?.(info.plotId);
     else if (info.kind === 'atm' && route === 'waypoint') opts.onInteract?.('atm', null, { clicked: true, near: false, far: true, at: { x: LAYOUT.atm.x, z: LAYOUT.atm.z } });
     else opts.onInteract?.(info.kind, null, { clicked: true, near: near?.kind === info.kind });
-  }, { signal });
+  };
   canvas.addEventListener('pointermove', (ev) => {
     if (down || ev.pointerType !== 'mouse') return;
     const now = performance.now();
@@ -592,7 +598,10 @@ void main(){
     if (p) passenger.position.set(p.x, groundHeight(p.x, p.z), p.z);
   }
   let waypoint = null;
-  const job = { phase: 'none', target: null, dest: null, t0: 0, limit: 0, nextAt: 0, startX: 0, startZ: 0, riders: 0, extra: null, extraAt: 0, extraReach: 0, detachAt: 0 };
+  const job = { phase: 'none', target: null, dest: null, t0: 0, limit: 0, nextAt: 0, startX: 0, startZ: 0, riders: 0, extra: null, extraAt: 0, extraReach: 0, detachAt: 0, wait: 0 };
+  // fareAt: clock time (s) of the last fare sent this session (null = none). SLOW_V: pick-up and drop-off below 40 km/h.
+  let fareAt = null;
+  const SLOW_V = 40 / 3.6;
 
   /** A curbside spot on a real street, minD..maxD meters from `from`. */
   function pickSpot(minD, maxD, from) {
@@ -665,7 +674,9 @@ void main(){
     follow.set(pos.x, eye, pos.z);
     rescaleOrbit(11.5);
     clearRide();
-    job.nextAt = clockT + 0.4;
+    exitArmed = 0;
+    // The next passenger waits for the Room's fare gap (interact.js nextOfferDelay), counted from the last fare sent.
+    job.nextAt = clockT + nextOfferDelay(fareAt == null ? null : clockT - fareAt, { min: 0.4 });
     netState.equip = 'taxi';
     traffic?.setCabYellow(i, myEquip.includes('cab_yellow'));
     opts.onDrive?.(true);
@@ -681,9 +692,13 @@ void main(){
       const [cx, cz] = collide(ex, ez, RADIUS, false);
       if (Math.hypot(cx - ex, cz - ez) < 0.05 || s === 0) { out = [cx, cz]; break; }
     }
+    // Riders still on board get out with the player and pay nothing (askExit has warned once).
+    const left = job.phase === 'ride' ? job.riders || 0 : 0;
     traffic?.setCabYellow(drive.i, false);
     traffic?.releaseTaxi(drive.i, x, z, cy);
     drive = null;
+    exitArmed = 0;
+    if (left > 0) opts.onJob?.({ type: 'abandon', riders: left });
     pos.set(out[0], groundHeight(out[0], out[1]), out[1]);
     yaw = cy;
     me.root.visible = true;
@@ -696,8 +711,21 @@ void main(){
     netState.equip = '';
     opts.onDrive?.(false);
   }
+  // 택시 내리기 (E or the round button): with riders the first press warns and a second one within 3 s gets out;
+  // above walking pace the cab brakes first and the player gets out when it is slow (stepDrive, drive.exiting).
+  let exitArmed = 0;
+  function askExit() {
+    if (!drive || drive.exiting) return;
+    const riders = job.phase === 'ride' ? job.riders || 0 : 0;
+    const now = performance.now();
+    const r = taxiExit({ riders, speed: drive.v, now, armedUntil: exitArmed });
+    exitArmed = r.armedUntil;
+    if (r.act === 'warn') { tell(`손님 ${riders}명이 타고 있어요. 한 번 더 누르면 내려요`, 'err'); return; }
+    if (r.act === 'brake') { drive.exiting = true; return; }
+    exitTaxi();
+  }
   function interact() {
-    if (drive) { exitTaxi(); return; }
+    if (drive) { askExit(); return; }
     if (!near) return;
     if (near.kind === 'taxi') { enterTaxi(near.i); return; }
     if (near.kind === 'stand') {
@@ -846,12 +874,32 @@ void main(){
     scene.add(mesh, beam);
     return { i, x, z, mesh, beam, back: 0 };
   });
+  // A picked coin hides at once (holdCoin) while its MINE waits; PAY removes it for 20 s (removeCoin), a refusal or a
+  // timeout puts it back (holdCoin false). Only a visible coin fires onCoin.
   function removeCoin(i) {
     const c = coins[i];
-    if (!c || !c.mesh.visible) return;
+    if (!c) return;
     c.mesh.visible = false;
     if (c.beam) c.beam.visible = false;
+    c.held = false;
     c.back = performance.now() + 20000;
+  }
+  function holdCoin(i, on) {
+    const c = coins[i];
+    if (!c) return null;
+    if (on) {
+      if (!c.mesh.visible) return null;
+      c.mesh.visible = false;
+      if (c.beam) c.beam.visible = false;
+      c.held = true;
+      c.back = 0;
+      return screenOf(tmp.set(c.x, groundHeight(c.x, c.z) + 1.1, c.z));
+    }
+    if (!c.held) return null;
+    c.held = false;
+    c.mesh.visible = true;
+    if (c.beam) c.beam.visible = true;
+    return null;
   }
   const STUNTS = [
     { x: 16, z: 52 },
@@ -914,8 +962,19 @@ void main(){
     balloon.mesh.scale.set(s, s, 1);
     opts.onBalloon?.(balloon.hp);
   }
+  // One throw per THROW_GAP_MS (a held or mashed button is not 30 throws a second). The balloon floats 58 m up, out of
+  // the usual view: the first throw of the session tilts the camera up to it for a moment (on foot, no other camera).
+  const THROW_GAP_MS = 250;
+  let lastThrow = -1e9, balloonSeen = false;
   function throwPouch() {
     if (!balloon || balloon.hp <= 0) return false;
+    const now = performance.now();
+    if (now - lastThrow < THROW_GAP_MS) return false;
+    lastThrow = now;
+    if (!balloonSeen && !drive && !cine) {
+      balloonSeen = true;
+      startCine(camera.position.clone(), viewLook.clone().lerp(balloon.mesh.position, 0.8), { dur: 600, until: now + 1500 });
+    }
     const from = new THREE.Vector3(pos.x, (pos.y || 0) + 1.5, pos.z);
     const mesh = makePouch(1.8);
     mesh.position.copy(from);
@@ -1177,10 +1236,12 @@ void main(){
   function stepDrive(dt, input, t) {
     const d = drive;
     const party = feverLive();
+    // Fever (party) is unlimited boost, not a faster car: the same boost top speed, without holding the button.
     const boosting = party || input.walk || boostHeld;
     if (boosting && d.v > 8 && t - boostSnd > 1.4) { boostSnd = t; opts.onBoost?.(); }
-    const top = party ? 52 : (boosting ? CAR.boost : CAR.max);
-    if (input.f > 0.1) d.v = Math.min(top, d.v + (d.v < 0 ? CAR.brake : CAR.accel) * input.f * dt);
+    const top = boosting ? CAR.boost : CAR.max;
+    if (d.exiting) d.v -= Math.sign(d.v) * Math.min(Math.abs(d.v), CAR.brake * dt); // 택시 내리기 at speed: brake, then out
+    else if (input.f > 0.1) d.v = Math.min(top, d.v + (d.v < 0 ? CAR.brake : CAR.accel) * input.f * dt);
     else if (input.f < -0.1) d.v = Math.max(-CAR.reverse, d.v - (d.v > 0 ? CAR.brake : CAR.accel * 0.6) * -input.f * dt);
     else d.v -= Math.sign(d.v) * Math.min(Math.abs(d.v), CAR.drag * dt);
     if (d.v > top) d.v = Math.max(top, d.v - CAR.brake * dt);
@@ -1231,6 +1292,7 @@ void main(){
     yaw = d.yaw;
     animSpeed = Math.abs(d.v);
     updateJob(t);
+    if (d.exiting && Math.abs(d.v) <= EXIT_SLOW) exitTaxi();
   }
 
   // `level`: camera at the board's own height (the straight-on photo frame) instead of the low street view.
@@ -1491,6 +1553,7 @@ void main(){
   function clearRide() {
     job.phase = 'none';
     job.riders = 0;
+    job.wait = 0;
     job.extra = null;
     job.target = null;
     job.dest = null;
@@ -1533,7 +1596,7 @@ void main(){
       opts.onJob?.({ type: 'offer' });
     } else if (job.phase === 'pickup') {
       const pd = Math.hypot(d.x - job.target.x, d.z - job.target.z);
-      if (pd < 8 && pd + 10 < job.reach && Math.abs(d.v) < 12) {
+      if (pd < 8 && pd + 10 < job.reach && Math.abs(d.v) < SLOW_V) {
         markers.pickup.set(null);
         showPassenger(null);
         const drop = pickBoardDrop();
@@ -1550,28 +1613,35 @@ void main(){
         job.phase = 'ride';
         markers.drop.set(job.dest);
         syncTrailers();
-        opts.onJob?.({ type: 'board', limit: job.limit, slot: job.slot, riders: 1, mult: 1, title: drop.slot ? `노란 기둥 · ${slotName(drop.slot)} 앞에서 속도를 줄이세요` : '노란 기둥까지 가서 속도를 줄이세요' });
+        opts.onJob?.({ type: 'board', limit: job.limit, slot: job.slot, riders: 1, mult: 1, title: drop.slot ? `도착 기둥 · ${slotName(drop.slot)} 앞에서 속도를 줄이세요` : '도착 기둥까지 가서 속도를 줄이세요' });
       }
     } else if (job.phase === 'ride') {
       offerExtra(d, t);
       if (job.extra) {
         const pd = Math.hypot(d.x - job.extra.x, d.z - job.extra.z);
-        if (pd < 8 && pd + 10 < (job.extraReach || 0) && Math.abs(d.v) < 12) boardExtra(t);
+        if (pd < 8 && pd + 10 < (job.extraReach || 0) && Math.abs(d.v) < SLOW_V) boardExtra(t);
       }
       const left = job.limit - (t - job.t0);
       const dd = job.dest ? Math.hypot(d.x - job.dest.x, d.z - job.dest.z) : 999;
+      const there = dd < 12 && dd + 12 < (job.dropReach || 0);
+      // At the drop-off before the Room's fare gap has run: the passenger waits in the cab (hud job.wait) instead of
+      // getting out into a fare the Room would refuse.
+      job.wait = there ? fareWait(fareAt == null ? null : t - fareAt) : 0;
       if (left <= 0) {
         clearRide();
-        job.nextAt = t + 3;
+        job.nextAt = t + nextOfferDelay(fareAt == null ? null : t - fareAt, { min: 3 });
         opts.onJob?.({ type: 'fail' });
-      } else if (dd < 12 && dd + 12 < (job.dropReach || 0) && Math.abs(d.v) < 12) {
+      } else if (there && !job.wait && Math.abs(d.v) < SLOW_V) {
         const fare = clamp(Math.round(6 + 9 * left / job.limit), 6, 15);
         const riders = job.riders || 1;
         const slot = job.slot;
         const board = job.board;
         clearRide();
-        job.nextAt = t + 2.5;
-        opts.onJob?.({ type: 'done', fare, riders, mult: taxiTrainMult(riders), slot, board, at: screenOf(tmp.set(d.x, 2.4, d.z)) });
+        const ev = { type: 'done', fare, riders, mult: taxiTrainMult(riders), slot, board, at: screenOf(tmp.set(d.x, 2.4, d.z)) };
+        opts.onJob?.(ev);
+        // main.js sets ev.sent when the fare went out; only then does the Room's 40 s gap start again.
+        if (ev.sent !== false) fareAt = t;
+        job.nextAt = t + nextOfferDelay(fareAt == null ? null : t - fareAt);
       }
     }
   }
@@ -2494,6 +2564,11 @@ void main(){
     updateWorld, updateBillboardTexture, applyPlot,
     playEmote, playEmoji: playEmote, playReaction, showReaction, jump, interact, cheerAt, fountainSplash,
     setJoystick(x, y) { joy.x = clamp(Number(x) || 0, -1, 1); joy.y = clamp(Number(y) || 0, -1, 1); },
+    // A touch on the stick's area that may be a tap: the same rules as a tap on the canvas (moved <= 7 px, under 450 ms).
+    tapDown(x, y) { onDown({ clientX: x, clientY: y }); },
+    tapUp(x, y) { onUp({ clientX: x, clientY: y }); },
+    // The city is built and its collision is in: until then the player is not let loose (ui.js enter fallback).
+    built: () => !!(nyc && world) || cityFailed,
     setInputEnabled(v) { inputEnabled = !!v; if (!inputEnabled) { keys.clear(); joy.x = 0; joy.y = 0; } },
     setName(n) { name = chars(n || '네온손님', 16) || '네온손님'; me.setName(name); },
     setColor(c) { if (!COLOR_RE.test(c || '')) return; color = c; me.setColor(c); },
@@ -2571,7 +2646,7 @@ void main(){
     near() { return near; },
     isDriving: () => !!drive,
     exitTaxi,
-    startStars, removeStar, clearStars, removeCoin,
+    startStars, removeStar, clearStars, removeCoin, holdCoin,
     capture() {
       // The picture is taken without my own name tag (the frame loop decides its visibility again on the next frame).
       const tagOn = me.tag.visible;
@@ -2675,8 +2750,12 @@ void main(){
       if (drive && job.phase === 'ride' && job.riders > 0) out.train = { riders: job.riders, mult: taxiTrainMult(job.riders) };
       if (drive && job.phase !== 'none') {
         const aim = job.phase === 'pickup' ? job.target : job.dest;
-        if (aim) out.job = { phase: job.phase, dist: Math.hypot(aim.x - pos.x, aim.z - pos.z), bearing: bearingTo(aim.x, aim.z), left: job.phase === 'ride' ? Math.max(0, job.limit - (clockT - job.t0)) : null, limit: job.limit, riders: job.riders || 0 };
+        if (aim) out.job = { phase: job.phase, dist: Math.hypot(aim.x - pos.x, aim.z - pos.z), bearing: bearingTo(aim.x, aim.z), left: job.phase === 'ride' ? Math.max(0, job.limit - (clockT - job.t0)) : null, limit: job.limit, riders: job.riders || 0, wait: job.wait || 0 };
       }
+      // offerIn: seconds until the next passenger (the fare gap); exitArmed: the 택시 내리기 warning is waiting for a second press.
+      if (drive && job.phase === 'none') out.offerIn = Math.max(0, job.nextAt - clockT);
+      if (drive) out.exitArmed = exitArmed > performance.now();
+      if (drive?.exiting) out.exiting = true;
       if (waypoint) out.waypoint = { dist: Math.hypot(waypoint.x - pos.x, waypoint.z - pos.z), bearing: bearingTo(waypoint.x, waypoint.z) };
       return out;
     },
