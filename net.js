@@ -6,7 +6,7 @@
 // v6: Seoul project (ap-northeast-2). Rooms = 행정동 code + scene; a shared lobby presence channel gives per-dong head counts.
 import { GT_LS, SESSION_LS, isInAppWebView } from './plaza-account.js';
 import { setStarterSlots } from './balance.js';
-import { snapQuery } from './share.js?v=202611210015';
+import { snapQuery, kakaoOf } from './share.js?v=202611210015';
 export const SUPA_URL = 'https://yxddhpacuyaffaoutxjn.supabase.co';
 export const SUPA_KEY = 'sb_publishable_Vd-7c6e2f2s3G1d5Jbx9vw_0UCuHm-B'; // publishable key: public by design
 // v13: QA/test clients (?qa=1) live in a separate namespace and never appear in real players' rooms, lobby counts or chat history
@@ -226,7 +226,9 @@ export class Net {
   async leaveLobby() { if (this.lb) { const c = this.lb; this.lb = null; this.lbKey = null; try { await c.untrack(); await this.sb.removeChannel(c); } catch { } } this.counts = {}; }
   // ---- prayer wall (RLS: public rows readable; writes only via rate-limited security-definer RPCs)
   secret() { let s = localStorage.getItem('maeul_secret'); if (!s) { s = Array.from(crypto.getRandomValues(new Uint8Array(18)), b => b.toString(16).padStart(2, '0')).join(''); localStorage.setItem('maeul_secret', s); } return s; }
-  async loadConfig() { try { const r = await fetch('/rt/config', { cache: 'no-store' }); if (r.ok) { const j = await r.json(); setStarterSlots(j?.starter); this.inviteOn = j?.invite === true; /* 친구 초대 master switch */ if (typeof j?.url === 'string' && j.url.startsWith('https://') && typeof j?.key === 'string' && j.key && !/service_role/i.test(j.key)) return { url: j.url, key: j.key }; } } catch { } return { url: SUPA_URL, key: SUPA_KEY }; }
+  async loadConfig() { try { const r = await fetch('/rt/config', { cache: 'no-store' }); if (r.ok) { const j = await r.json(); setStarterSlots(j?.starter); this.inviteOn = j?.invite === true; /* 친구 초대 master switch */ this.kakao = kakaoOf(j); if (typeof j?.url === 'string' && j.url.startsWith('https://') && typeof j?.key === 'string' && j.key && !/service_role/i.test(j.key)) return { url: j.url, key: j.key }; } } catch { } finally { this.kakaoKey(); this.kakaoSet(this.kakao || ''); } return { url: SUPA_URL, key: SUPA_KEY }; }
+  // The Kakao key loadConfig kept from that one /rt/config answer ('' without one). Waits for it; never a request of its own.
+  kakaoKey() { if (!this.kakaoP) this.kakaoP = new Promise((r) => { this.kakaoSet = r; }); return this.kakaoP; }
   async currentSession() { try { const s = await this.sb?.auth?.getSession(); return s?.data?.session || null; } catch { return null; } }
   async startOAuth(provider) { if (!this.sb?.auth) throw new Error('로그인 준비 중이에요'); const back = new URL(location.href); for (const k of ['autologin', 'handover', 'code']) back.searchParams.delete(k); const redirectTo = back.origin + back.pathname + back.search; const { error } = await this.sb.auth.signInWithOAuth({ provider, options: { redirectTo } }); if (error) throw error; }
   async passwordAuth(kind, email, password) { const auth = this.sb?.auth; if (!auth) throw new Error('로그인 준비 중이에요'); const first = kind === 'up' ? await auth.signUp({ email, password }) : await auth.signInWithPassword({ email, password }); if (first.error) throw first.error; if (first.data?.session) return first.data.session; if (kind === 'up') { const again = await auth.signInWithPassword({ email, password }); if (again.data?.session) return again.data.session; const err = new Error('가입은 기록됐지만 이 창에서 바로 로그인되지 않았어요. 메일 확인이 켜져 있으면 확인 후 다시 로그인해 주세요.'); err.code = 'confirm'; throw err; } throw new Error('로그인에 실패했어요'); }

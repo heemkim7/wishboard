@@ -944,13 +944,13 @@ export class Room extends DurableObject {
     }
   }
   // The holder comes from boardsFor (this room's own rows, a fresh isolate copy, or one read), never from an unchecked world copy.
-  // Holder unknown (the read failed): 'wait'. No holder, own board or not lit: 'dark'. Budget hard: 'cap' before any read.
+  // Holder unknown (the read failed): 'wait'. No holder, own board or not lit: 'dark'. Budget hard: 'wait' before any read.
   async cheer(w, a, m) {
     const p = Math.floor(Number(m.p));
     const slot = String(m.slot || '');
     if (!AD_SLOT.test(slot) || p < 1 || p > 12) return;
     const soon = () => Date.now() - this.gateAt(a.k + '|cheer:' + slot) < PAY.cheer.gapMs - GAP_EARLY;
-    if (this.lvl >= 2) { this.tx(w, { t: 'PAY', kind: 'cheer', amount: 0, why: 'cap' }); return; }
+    if (this.lvl >= 2) { this.tx(w, { t: 'PAY', kind: 'cheer', amount: 0, why: 'wait' }); return; }
     if (soon()) { this.tx(w, { t: 'PAY', kind: 'cheer', amount: 0, why: 'soon' }); return; } // before any board read
     const boards = await this.boardsFor(buildingOf(slot)?.slots || [slot]), board = boards.get(slot);
     const now = Date.now();

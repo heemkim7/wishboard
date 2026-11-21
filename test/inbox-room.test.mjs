@@ -276,9 +276,9 @@ describe('a cheer reaches the board holder', { concurrency: false }, () => {
       open(); await p; state.slow = null;
       assert.equal(JSON.parse(R.sql.db.prepare("select b from brd where slot = 'STREET_7'").get().b).holder_id, N.id);
       assert.equal(ibq(R).at(-1).to, N.id);
-      // Budget hard: 'cap' before the board is read.
+      // Budget hard: 'wait' before the board is read (not 'cap': the hourly limit was not reached).
       room.ctx.storage.sql.exec('delete from brd'); room.lvl = 2; clock.add(13000);
-      const r1 = state.roomReads; assert.deepEqual([(await cheer(room, c, 'STREET_7')).why, state.roomReads], ['cap', r1]);
+      const r1 = state.roomReads; assert.deepEqual([(await cheer(room, c, 'STREET_7')).why, state.roomReads], ['wait', r1]);
     } finally { done(); }
   });
 

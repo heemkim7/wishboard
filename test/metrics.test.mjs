@@ -242,15 +242,9 @@ describe('G2 KakaoTalk share behind a key', () => {
     assert.deepEqual(calls.init, [KEYV]);
     assert.deepEqual(calls.sent, [payload, payload]);
   });
-  it('reads the key from /rt/config once and treats a missing or broken answer as no key', async () => {
-    let n = 0, mode = 'down';
-    const f = async () => { n++; if (mode === 'down') throw new Error('offline'); return { ok: true, json: async () => (mode === 'none' ? { url: 'u', key: 'k' } : { url: 'u', key: 'k', kakao: 'a1b2c3d4e5f60718293a4b5c6d7e8f90' }) }; };
-    assert.equal(await share.kakaoKey(f), ''); // offline: no key, and the next call asks again
-    mode = 'on';
-    assert.equal(await share.kakaoKey(f), 'a1b2c3d4e5f60718293a4b5c6d7e8f90');
-    const before = n;
-    assert.equal(await share.kakaoKey(f), 'a1b2c3d4e5f60718293a4b5c6d7e8f90');
-    assert.equal(n, before); // cached
+  it('reads the key from a /rt/config answer and treats a missing or broken one as no key (net.js keeps it; see polish.test.mjs)', () => {
+    assert.equal(share.kakaoOf({ url: 'u', key: 'k', kakao: 'a1b2c3d4e5f60718293a4b5c6d7e8f90' }), 'a1b2c3d4e5f60718293a4b5c6d7e8f90');
+    for (const j of [null, {}, { kakao: '' }, { kakao: 'short' }, { kakao: 'a b c d e f g h i j k' }, { kakao: 12345678901234567 }]) assert.equal(share.kakaoOf(j), '', JSON.stringify(j));
   });
 });
 

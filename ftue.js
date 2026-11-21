@@ -118,8 +118,9 @@ export function goalLine(goal) {
 
 // ---- 오늘의 소원: decisions the wish screens make, kept here so they can be tested without a DOM.
 // The newcomer card asks for a wish first, but only once the server said there is none and the sheet was not closed this session.
+// Not while the server is saving its budget (busy): the sheet would have no form.
 export const WISH_STEP = '오늘의 소원 한 줄 걸기 (무료)';
-export function wishStep({ known, mine, skipped } = {}) { return known && !mine && !skipped ? WISH_STEP : ''; }
+export function wishStep({ known, mine, skipped, busy } = {}) { return known && !mine && !skipped && !busy ? WISH_STEP : ''; }
 // Right after the arrival intro a newcomer gets the wish sheet once, unless a link brought them somewhere else or a wish is already up.
 export function wishAutoOpen({ newbie, known, mine, deep } = {}) { return !!newbie && !deep && !(known && mine); }
 // Boot card: a friend's wish from the link, else yesterday's winner, else today's count once it is big enough, else nothing.

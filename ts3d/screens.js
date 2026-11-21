@@ -6,7 +6,7 @@ import { THEMES, makeCanvas, paintBillboard, paintTicker, fontsReady, tierOf, bo
 import { askBid } from '../balance.js';
 import { floorOf, live } from '../balance.js';
 import { auctionClosed } from '../balance.js';
-import { nowMs } from '../live.js';
+import { nowMs, kingCovers } from '../live.js';
 
 export const screenTime = { value: 0 };
 
@@ -172,7 +172,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   const kingBudget = quality === 'low' ? 1 : 3;
   const KING_CARD = { chip: '👑 어제의 소원왕', strip: '👑 어제 하트를 가장 많이 받은 소원' };
   let king = null, kingDirty = false, kingGen = 0;
-  function kingFor(b) { return !!king && !b.shared && CLAIM.test(b.slotId) && !String(b.slotId).startsWith('MAIN_') && !airOn(); }
+  function kingFor(b) { return !!king && !b.shared && CLAIM.test(b.slotId) && !String(b.slotId).startsWith('MAIN_') && !airOn() && kingCovers(live(b.row)); } // NINE.overLit
   // b.kingOn: the kingGen whose card this board shows, 0 for none. A board is stale when it differs from kingWant.
   const kingWant = (b) => (kingFor(b) ? kingGen : 0);
   function airRow(b) {

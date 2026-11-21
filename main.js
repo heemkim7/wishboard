@@ -312,6 +312,7 @@ const ui = createUI(document.getElementById('ui'), {
   reportWish: (id) => reportWish(id),
   wishUrl: (id) => location.origin + '/rt/w/' + encodeURIComponent(id),
   inviteOn: () => inviteIsOn(),
+  kakaoKey: () => net.kakaoKey(),
   inviteCode: () => inviteView({ on: inviteIsOn(), code: recall(INV_CODE_KEY) }).code,
   inviteSum: () => state.invite,
   ensureInvite: () => ensureInvite(),
@@ -1638,11 +1639,12 @@ async function finishLink(session, fresh) {
   const mark = user.id + ':' + (guest?.id || '');
   let mergedMark = '';
   try { mergedMark = sessionStorage.getItem('kts_merged') || ''; } catch { mergedMark = ''; }
+  let failed = false;
   if (guest?.id && guest.token && guest.id !== net.id && mergedMark !== mark) {
     try {
       merged = await net.mergeGuest(guest.id, guest.token, name || state.nick);
       try { sessionStorage.setItem('kts_merged', mark); } catch { /* private mode */ }
-    } catch (e) { ui.note(authMessage(e), 'err'); }
+    } catch (e) { failed = true; ui.note(authMessage(e), 'err'); } // not kept: the next boot tries again
   }
   ui.setAccount?.({ ready: true, guest: false, linked: true });
   ui.refreshProfile?.();
@@ -1650,7 +1652,7 @@ async function finishLink(session, fresh) {
   try { await refreshWorld(); } catch { /* boards refresh on the next poll */ }
   if (fresh) trackEvent('auth_login_success', { method: user.app_metadata?.provider || 'email' });
   if (merged?.bonus) ui.note(`계정을 연결했어요. +${merged.bonus}코인`, 'ok');
-  else if (fresh) ui.note('계정을 연결했어요', 'ok');
+  else if (fresh && !failed) ui.note('계정을 연결했어요', 'ok'); // after a failed merge the error toast stands alone
   await rejoin();
   return merged;
 }

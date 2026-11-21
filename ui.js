@@ -5,10 +5,10 @@ import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, LANDMARKS } from './
 import { BALANCE, PAY, askBid, auctionClosed, buildingOf, chainBoost, floorOf, nextChainFace, slotName } from './balance.js';
 import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, tutorialTap, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611210015';
 import { WISH, WISH_ERR, cleanWish, wishRejected, wishShareText } from './wish.js';
-import { botNick, leagueLine, leagueWeek } from './league.js';
+import { botNick, leagueLine, leagueWeek, liveSig } from './league.js';
 import { backFields, returnGap } from './growth.js?v=202611210015';
 import { nineSlot, nowMs } from './live.js';
-import { cardUrl, vipShareLink, composeWishShot, kakaoFeed, kakaoKey, kakaoSend, loadKakao, invited } from './share.js?v=202611210015';
+import { cardUrl, vipShareLink, composeWishShot, kakaoFeed, kakaoSend, loadKakao, invited } from './share.js?v=202611210015';
 import { inviteView } from './invite.js';
 import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611210015';
 import { EMOTES, REACTIONS, AVATAR_COLORS, SPECIES } from './ts3d/avatars.js?v=202611210015';
@@ -620,7 +620,7 @@ export function createUI(root, hooks) {
   // Newcomer card: the first of NEWCOMER_STEPS that returns { text, go } wins. Put a new step in front to take over the card.
   // Order: today's wish (until posted, or the sheet was closed once) → tutorial line (until the first claim) → next goal.
   const NEWCOMER_STEPS = [
-    () => { const text = wishStep({ known: wishView.known, mine: !!wishView.mine, skipped: wishSkipped }); return text ? { text, go: () => openWish({ from: 'card' }) } : null; },
+    () => { const text = wishStep({ known: wishView.known, mine: !!wishView.mine, skipped: wishSkipped, busy: wishView.busy }); return text ? { text, go: () => openWish({ from: 'card' }) } : null; },
     () => (tutorialOn && tutorialLine ? { text: tutorialLine, go: tutorialGo } : null),
     () => ({ text: nextGoal().text.replace(/^다음 목표: /, ''), go: nextGoalGo }),
   ];
@@ -1278,6 +1278,7 @@ export function createUI(root, hooks) {
     if (ok) trackEvent('share_link', { kind, how: 'kakao' });
     return ok ? 'kakao' : '';
   }
+  const kakaoKey = () => Promise.resolve(hooks.kakaoKey?.() || '').catch(() => ''); // the key net.js kept from /rt/config: no request of its own
   function kakaoButton(onTap, { disabled = false } = {}) {
     const b = h('button', { class: 'btn ghost kakao', type: 'button', text: '카카오톡으로 보내기', hidden: true, disabled, onclick: () => onTap(b) });
     kakaoKey().then((k) => { if (k) { b.hidden = false; loadKakao(k).catch(() => {}); } }).catch(() => {});
@@ -2997,9 +2998,14 @@ export function createUI(root, hooks) {
   // 주간 리그: /rt/world's top 10 of this KST week (a cached copy of an older week counts as empty) and my last /rt/league answer.
   function weekRows() { const wk = world.week; return wk && wk.week === leagueWeek() && Array.isArray(wk.top) ? wk.top : []; }
   function myLeague() { const lg = hooks.league?.(); return lg && lg.week === leagueWeek() ? lg : null; }
+  let liveSigNow = '';
   function paintLive() {
+    if (newbieOn) return; // hidden by newcomer mode (#ui.newbie .liveboard): the first tick after graduation paints it
     const rows = weekRows().slice(0, 5);
     const me = myLeague()?.me || null;
+    const sig = liveSig(rows, me);
+    if (sig === liveSigNow) return; // nothing changed: no DOM write
+    liveSigNow = sig;
     const rankButtons = rows.length ? rows.map((r, i) => h('button', { type: 'button', class: 'rank' + (me && me.rank === i + 1 ? ' me' : ''), title: '순위 열기', onclick: () => openRanks() },
       h('span', { class: 'n', text: String(i + 1) }),
       h('b', { text: String(r.nick || '네온손님') }),

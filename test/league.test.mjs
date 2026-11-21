@@ -153,7 +153,7 @@ describe('league rules (league.js)', () => {
   it('writes my line: rank and gap, first place alone, or the fixed unranked copy', () => {
     assert.equal(leagueLine({ rank: 3, spent: 50, next: { rank: 2, gap: 1251 } }), '이번 주 3위 · 1,251코인 더 쓰면 2위');
     assert.equal(leagueLine({ rank: 1, spent: 900, next: null }), '이번 주 1위');
-    assert.equal(leagueLine({ rank: 0, spent: 0, next: { rank: 4, gap: 1 } }), '이번 주 순위는 0에서 시작했어요 · 첫 점령이면 순위에 올라요');
+    assert.equal(leagueLine({ rank: 0, spent: 0, next: { rank: 4, gap: 1 } }), '이번 주 순위는 0에서 시작했어요 · 코인을 쓰면 순위에 올라요');
     assert.equal(leagueLine(null), '');
   });
 });

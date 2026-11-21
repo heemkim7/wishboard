@@ -211,22 +211,14 @@ export function kakaoFeed({ title, text, url, origin = SITE } = {}) {
     buttons: [{ title: '광장에서 보기', link: to }],
   };
 }
-let kakaoCfg = null;
-// The public key from /rt/config, or ''. One request per page load; a failed request is tried again on the next call.
-export function kakaoKey(fetchFn = typeof fetch === 'function' ? fetch : null) {
-  if (!kakaoCfg) {
-    kakaoCfg = Promise.resolve().then(async () => {
-      const r = await fetchFn('/rt/config', { cache: 'no-store' });
-      const j = r.ok ? await r.json() : null;
-      return typeof j?.kakao === 'string' && /^[\w-]{16,80}$/.test(j.kakao) ? j.kakao : '';
-    }).catch(() => { kakaoCfg = null; return ''; });
-  }
-  return kakaoCfg;
-}
+// The public key in a /rt/config answer, or ''. net.js loadConfig keeps it on the Net (net.kakaoKey()); there is no request of its own.
+export function kakaoOf(j) { return typeof j?.kakao === 'string' && /^[\w-]{16,80}$/.test(j.kakao) ? j.kakao : ''; }
+export const KAKAO_LOAD_MS = 3000; // a hanging CDN counts as a failed load after this long
 const kakaoSdk = new WeakMap(); // window -> the load in flight or done
 // Loads the SDK once (script tag with integrity), then Kakao.init(key) once. Resolves the Kakao global, or null.
 // A failed load is remembered for the page's lifetime: no new <script> per tap, the caller goes straight to its fallback.
-export function loadKakao(key, { doc = typeof document === 'undefined' ? null : document, win = typeof window === 'undefined' ? null : window } = {}) {
+// No answer within KAKAO_LOAD_MS is a failed load too, so a hanging CDN cannot hold the share.
+export function loadKakao(key, { doc = typeof document === 'undefined' ? null : document, win = typeof window === 'undefined' ? null : window, ms = KAKAO_LOAD_MS } = {}) {
   if (!key || !doc || !win) return Promise.resolve(null);
   if (!kakaoSdk.get(win)) {
     kakaoSdk.set(win, new Promise((resolve) => {
@@ -244,8 +236,10 @@ export function loadKakao(key, { doc = typeof document === 'undefined' ? null : 
       s.integrity = KAKAO_SDK.integrity;
       s.crossOrigin = 'anonymous';
       s.async = true;
-      s.onload = ready;
-      s.onerror = () => resolve(null);
+      let late = false;
+      const t = setTimeout(() => { late = true; resolve(null); }, ms);
+      s.onload = () => { clearTimeout(t); if (!late) ready(); };
+      s.onerror = () => { clearTimeout(t); resolve(null); };
       doc.head.append(s);
     }));
   }

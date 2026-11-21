@@ -14,7 +14,8 @@ const DAY_MS = 864e5, H21 = 21 * 3600e3;
 // The browser's server offset (main.js sets clock.off once from clockSkew). The Worker never sets it, so nowMs() is Date.now().
 export const clock = { off: 0 };
 export function nowMs() { return Date.now() + clock.off; }
-export const NINE = Object.freeze({ pre: H21 - 600e3, open: H21, king: H21 + 60e3, close: H21 + 600e3 });
+// overLit: the king's minute also covers boards a holder has lit; false keeps it to boards with no live holder (the owner's switch).
+export const NINE = Object.freeze({ pre: H21 - 600e3, open: H21, king: H21 + 60e3, close: H21 + 600e3, overLit: true });
 export function kstMsOfDay(t) { return (((Math.floor(Number(t) || 0) + 9 * 3600e3) % DAY_MS) + DAY_MS) % DAY_MS; }
 /** 'pre' 20:50:00–20:59:59, 'open' 21:00:00–21:09:59, '' otherwise. */
 export function ninePhase(t) { const m = kstMsOfDay(t); return m >= NINE.open && m < NINE.close ? 'open' : m >= NINE.pre && m < NINE.open ? 'pre' : ''; }
@@ -30,6 +31,8 @@ export function nineBanner(t) {
 }
 /** Yesterday's top wish takes the non-main boards 21:00:00–21:00:59, only when there is one. */
 export function kingMinute(t, king) { const m = kstMsOfDay(t); return !!(king && String(king.txt || '')) && m >= NINE.open && m < NINE.king; }
+/** Whether the king card may go on a board in that minute: always while NINE.overLit, else only when no holder has it lit. */
+export function kingCovers(lit, overLit = NINE.overLit) { return !!overLit || !lit; }
 /** Server clock minus client clock from an HTTP Date header (1 s resolution, so +500 ms; sent/got bracket the request).
  *  Under 2 s it is noise and gives 0; more than 12 h is a broken header and gives 0. A round trip over 3 s gives 0 too:
  *  the error can be half of it. */
