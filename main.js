@@ -1,26 +1,26 @@
 // Times Square K-점령전 — app wiring: realtime net (DO), 3D world, UI, wallet, world state, star shower.
-import { Net, CDN, guestToken } from './net.js?v=202611211159';
-import { createTimesSquare, AVATAR_COLORS, taxiTrainMult } from './timesSquare3d.js?v=202611211159';
-import { speciesId } from './ts3d/avatars.js?v=202611211159';
-import { equip, loadProfile, saveColor, saveNick, saveSpecies, setSpecies } from './profile.js?v=202611211159';
-import { starSpot, insideLoop } from './ts3d/layout.js?v=202611211159';
-import { createUI } from './ui.js?v=202611211159';
-import { haptic, startMusic } from './audio.js?v=202611211159';
-import { coinGate, COIN_WAIT_MS, COIN_CAP_MS, isTouchUI } from './interact.js?v=202611211159';
+import { Net, CDN, guestToken } from './net.js?v=202611212346';
+import { createTimesSquare, AVATAR_COLORS, taxiTrainMult } from './timesSquare3d.js?v=202611212346';
+import { speciesId } from './ts3d/avatars.js?v=202611212346';
+import { equip, loadProfile, saveColor, saveNick, saveSpecies, setSpecies } from './profile.js?v=202611212346';
+import { starSpot, insideLoop } from './ts3d/layout.js?v=202611212346';
+import { createUI } from './ui.js?v=202611212346';
+import { haptic, startMusic } from './audio.js?v=202611212346';
+import { coinGate, COIN_WAIT_MS, COIN_CAP_MS, isTouchUI } from './interact.js?v=202611212346';
 import { BALANCE, PAY, chainsOf, live, monopolyOf, slotName, slotOf, takeGrants, cheerCount, countsAsPlay, josa } from './balance.js';
 import { auctionClosed } from './balance.js';
-import { trackEvent } from './analytics.js?v=202611211159';
+import { trackEvent } from './analytics.js?v=202611212346';
 import { adoptHandover, allowedLink, blockedText, handoverHref, isAndroid, isInAppWebView, loginEmail, CHEER_PHRASES, GT_LS, SESSION_LS, slotTier } from './plaza-account.js';
 import { authErrorText, cleanAddress, externalRoutes, oauthErrorText, oauthMessage, oauthReturn, sessionDrift, OAUTH_ACK, OAUTH_CHANNEL } from './plaza-account.js';
 import { invCode, inviteFrom, inviteView } from './invite.js';
-import { saveClip, dropParams } from './share.js?v=202611211159';
-import { ftueDue, crowdFacts, kstDay, lockCelebration, startFtue, wishAutoOpen, wishBootLine, awayRows, inboxUnread, seenAdd, liveKey, liveSeenAdd } from './ftue.js?v=202611211159';
-import { photoVerdicts } from './ftue.js?v=202611211159';
+import { saveClip, dropParams } from './share.js?v=202611212346';
+import { ftueDue, crowdFacts, kstDay, lockCelebration, startFtue, wishAutoOpen, wishBootLine, awayRows, inboxUnread, seenAdd, liveKey, liveSeenAdd } from './ftue.js?v=202611212346';
+import { photoVerdicts } from './ftue.js?v=202611212346';
 import { WISH, cleanWish } from './wish.js';
-import { applyInboxPush, loadInbox, readInbox, liveOnly, handledRead, liveSeeable } from './inbox.js?v=202611211159';
-import { openTribe, pledge, sendCheer } from './tribe.js?v=202611211159';
+import { applyInboxPush, loadInbox, readInbox, liveOnly, handledRead, liveSeeable } from './inbox.js?v=202611212346';
+import { openTribe, pledge, sendCheer } from './tribe.js?v=202611212346';
 import { applyOps, ballNotice, sessionEndPlan, nineBanner, kingMinute, clockSkew, clock, nowMs } from './live.js';
-import { pushRoute, awayRead } from './overlay.js?v=202611211159';
+import { pushRoute, awayRead } from './overlay.js?v=202611212346';
 
 adoptHandover(location.search, localStorage);
 // Back from a full-page sign-in (the fallback when the Google window could not open): read once here, because supabase-js takes

@@ -1,28 +1,28 @@
 // Plaza UI: glass HUD, wallet, news wire, emote dock, prompts, bungeo-ppang timing game, K-POP rhythm game,
 // taxi HUD, city map + minimap, billboard / plot / ATM / settings / credits sheets, onboarding, touch controls, SFX.
-import { paintBillboard, paintNeonSign, THEMES, makeCanvas, chars, fontsReady, tierOf, boardPhoto, photoReady } from './ts3d/art.js?v=202611211159';
-import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, LANDMARKS } from './ts3d/layout.js?v=202611211159';
+import { paintBillboard, paintNeonSign, THEMES, makeCanvas, chars, fontsReady, tierOf, boardPhoto, photoReady } from './ts3d/art.js?v=202611212346';
+import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, LANDMARKS } from './ts3d/layout.js?v=202611212346';
 import { BALANCE, PAY, askBid, auctionClosed, buildingOf, chainBoost, floorOf, nextChainFace, slotName, josa } from './balance.js';
-import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, tutorialTap, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611211159';
+import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, tutorialTap, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611212346';
 import { WISH, WISH_ERR, cleanWish, wishRejected, wishShareText } from './wish.js';
 import { botNick, leagueLine, leagueWeek, liveSig } from './league.js';
-import { backFields, returnGap } from './growth.js?v=202611211159';
+import { backFields, returnGap } from './growth.js?v=202611212346';
 import { nineSlot, nowMs } from './live.js';
-import { cardUrl, vipShareLink, composeWishShot, kakaoFeed, kakaoSend, loadKakao, invited } from './share.js?v=202611211159';
+import { cardUrl, vipShareLink, composeWishShot, kakaoFeed, kakaoSend, loadKakao, invited } from './share.js?v=202611212346';
 import { inviteView } from './invite.js';
-import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611211159';
-import { EMOTES, REACTIONS, AVATAR_COLORS, SPECIES } from './ts3d/avatars.js?v=202611211159';
-import { trackEvent } from './analytics.js?v=202611211159';
+import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611212346';
+import { EMOTES, REACTIONS, AVATAR_COLORS, SPECIES } from './ts3d/avatars.js?v=202611212346';
+import { trackEvent } from './analytics.js?v=202611212346';
 import { CHEER_PHRASES, accountLabel, allowedLink, blockedText, linkedActor } from './plaza-account.js';
-import { policyDoc } from './legal.js?v=202611211159';
-import { subscribePush, resendPush } from './push.js?v=202611211159';
-import { bindSfx, play, setSound, haptic, musicVisible } from './audio.js?v=202611211159';
-import { stickVec, isTouchUI, STICK_W, STICK_H, STICK_THROW, STICK_ENGAGE, bakeFlip, bakeBest, BAKE_FLIPS, BAKE_ROUND_MS } from './interact.js?v=202611211159';
+import { policyDoc } from './legal.js?v=202611212346';
+import { subscribePush, resendPush } from './push.js?v=202611212346';
+import { bindSfx, play, setSound, haptic, musicVisible } from './audio.js?v=202611212346';
+import { stickVec, isTouchUI, STICK_W, STICK_H, STICK_THROW, STICK_ENGAGE, bakeFlip, bakeBest, BAKE_FLIPS, BAKE_ROUND_MS } from './interact.js?v=202611212346';
 import { AD, AD_TEMPLATES, adSums, adBars } from './adreport.js';
-import { qrEncode, paintQr } from './qr.js?v=202611211159';
-import { icon } from './uiicons.js?v=202611211159';
-import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, proofOffers, proofPlan, TOAST } from './overlay.js?v=202611211159';
-import { linesFault, LINES_ERR, airAsk } from './ftue.js?v=202611211159'; // the board-line and takeover checks
+import { qrEncode, paintQr } from './qr.js?v=202611212346';
+import { icon } from './uiicons.js?v=202611212346';
+import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, proofOffers, proofPlan, TOAST } from './overlay.js?v=202611212346';
+import { linesFault, LINES_ERR, airAsk } from './ftue.js?v=202611212346'; // the board-line and takeover checks
 
 const LEVELS = [
   { src: 'icons/lot.jpg', t: '빈 땅' },

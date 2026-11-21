@@ -1,6 +1,6 @@
 async function bearer() {
   try {
-    const { doToken } = await import('./net.js?v=202611211159');
+    const { doToken } = await import('./net.js?v=202611212346');
     const tok = await doToken();
     if (tok) return tok;
   } catch { /* node tests have no session */ }
