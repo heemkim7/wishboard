@@ -11,17 +11,21 @@ import { makeCanvas, paintPuddles, paintGlow } from './art.js?v=202611211159';
 export const FAR_LAYER = 3;
 const SKY_H = 150;
 
+// Wall albedo: one desaturated slate / indigo / charcoal family. Under the night lights (hemisphere 2.8, moon 1.0,
+// see timesSquare3d.js) and the neutral tone map these show as about #071332..#162246 on an unlit wall, and the fog
+// lifts far walls toward #1c1a3a. Each style keeps its own slight hue and value so neighbouring blocks still separate.
 const STYLE_COLORS = [
-  ['#2b3646', '#25303e', '#33404f', '#1f2a37', '#3a4454', '#2c3a3f'],
-  ['#6f6b67', '#7b7773', '#5f6670', '#8a8580', '#676b6f'],
-  ['#6b3f32', '#7a4636', '#5e382e', '#874c3a', '#6f4a3c', '#80513f'],
-  ['#9b8f7d', '#a89c88', '#8c8272', '#b0a48e', '#7f776b'],
-  ['#8a8478', '#7a7468', '#958c7e'],
-  ['#5a5650', '#6a6258', '#4f4c48'],
-  ['#4a4642', '#57514a', '#615a52'],
+  ['#4c566c', '#525c74', '#48526a', '#56607a', '#4e5870', '#505a6e'], // glass towers: blue slate
+  ['#56586a', '#5c5e70', '#525466', '#606274', '#585a6c'], // office stone: charcoal
+  ['#58546c', '#5c5670', '#545068', '#605a72', '#5a566c', '#5e586e'], // old brick: indigo charcoal, never red
+  ['#60667a', '#666c80', '#5c6276', '#6a7084', '#626878'], // limestone: lighter slate
+  ['#545a6a', '#4e5464', '#5a6070'],
+  ['#4a4e5e', '#525666', '#464a5a'],
+  ['#50546a', '#56586c', '#5c5e70'],
 ].map(list => list.map(c => new THREE.Color(c)));
 const FLOOR_H = [3.9, 3.7, 3.1, 3.4, 5.5, 4.6, 3.6];
-const ROOF_COLORS = ['#2a2c31', '#32343a', '#26272b', '#3a3a3e', '#2e3036'].map(c => new THREE.Color(c));
+const ROOF_COLORS = ['#30333e', '#34374a', '#2e3140', '#383a46', '#323544'].map(c => new THREE.Color(c));
+const CAP_COLOR = new THREE.Color('#5a6274');
 
 const hash1 = (n) => { let x = Math.imul(n ^ 0x9e3779b9, 0x85ebca6b); x ^= x >>> 13; x = Math.imul(x, 0xc2b2ae35); x ^= x >>> 16; return (x >>> 0) / 4294967296; };
 function mulberry(seed) {
@@ -121,30 +125,45 @@ if (vWin.z < 0.5) {
   vec2 aa = fw * 1.25 + 1e-4;
   vec2 w2 = smoothstep(m - aa, m + aa, f) * smoothstep(m - aa, m + aa, 1.0 - f);
   float cover = (1.0 - 2.0 * m.x) * (1.0 - 2.0 * m.y);
-  // window outlines fade to their coverage once a window is under ~8 px; the lit state stays per window
-  float shape = clamp(1.0 - (max(fw.x, fw.y) - 0.07) * 9.0, 0.0, 1.0);
-  float detail = clamp(1.0 - (max(fw.x, fw.y) - 0.6) * 2.5, 0.0, 1.0);
+  float px = max(fw.x, fw.y);
+  // window outlines fade to their coverage once a window is under ~8 px
+  float shape = clamp(1.0 - (px - 0.07) * 9.0, 0.0, 1.0);
+  // lit/unlit per window fades to one even dim glow between 4 px and 2 px per window, so the far field is calm
+  float detail = 1.0 - smoothstep(0.25, 0.5, px);
   float win = mix(cover, w2.x * w2.y, shape);
   float street = 1.0 - smoothstep(4.2, 4.5, vFac.y);
   float h = wHash(id + seed * 71.3);
   float h2 = wHash(id.yx * 1.7 + seed * 13.1);
-  float ratio = style < 0.5 ? 0.4 : style < 1.5 ? 0.34 : style < 3.5 ? 0.28 : style < 4.5 ? 0.1 : 0.07;
-  float lit = step(h, ratio);
-  lit = max(lit, step(0.88, wHash(vec2(id.y, seed * 9.7))) * step(style, 1.5) * step(0.25, wHash(id * 0.37 + seed)));
-  lit = mix(ratio, lit, detail);
-  gTint = mix(vec3(1.0, 0.7, 0.42), vec3(0.72, 0.84, 1.0), step(0.58, h2));
+  // lit share: dense styles 0-3 about 10% (8.5% / 8% single windows + 3% of floors fully lit at 85%), sparse 4-6 about 5%
+  float ratio = style < 1.5 ? 0.085 : style < 3.5 ? 0.08 : style < 4.5 ? 0.055 : style < 5.5 ? 0.045 : 0.06;
+  float dense = step(style, 3.5);
+  float fh2 = wHash(vec2(id.y, seed * 9.7));
+  float floorLit = step(0.97, fh2) * dense;
+  float lit = max(step(h, ratio), floorLit * step(0.15, wHash(id * 0.37 + seed)));
+  float share = ratio + (1.0 - ratio) * 0.03 * 0.85 * dense;
+  // one warm tint, rgb(255,200,120), for most windows and a cool one, rgb(170,205,255), for about one in eight
+  // (linear values below); a fully lit floor shares one tint
+  vec3 warm = vec3(1.0, 0.578, 0.188), cool = vec3(0.402, 0.61, 1.0);
+  float coolPick = mix(step(0.875, h2), step(0.85, fract(fh2 * 37.0)), floorLit);
+  vec3 tint = mix(warm, cool, coolPick);
+  // far field: an even dim glow at 40% of the true average (lit dots near the camera also get bloom, the far field
+  // does not), tinted a little cooler than the average so distant towers read plum rather than brown
+  lit = mix(share * 0.4, lit, detail);
+  gTint = mix(mix(warm, cool, 0.25), tint, detail) * 2.1;
   gWin = win * (1.0 - street);
   gLit = lit;
   gGlass = style < 0.5 ? 1.0 : 0.55;
-  vec3 glass = style < 0.5 ? vec3(0.035, 0.05, 0.075) : vec3(0.03, 0.033, 0.04);
+  vec3 glass = style < 0.5 ? vec3(0.026, 0.034, 0.05) : vec3(0.022, 0.024, 0.03);
   diffuseColor.rgb = mix(diffuseColor.rgb, glass, gWin * 0.88);
+  // street-level shop band: same height everywhere (0.25 - 3.4 m), mostly lit, warm
   float bay = fract(vFac.x / 6.4);
   float shop = street * step(0.25, vFac.y) * smoothstep(0.02, 0.08, bay) * (1.0 - smoothstep(0.86, 0.92, bay)) * (1.0 - smoothstep(3.3, 3.5, vFac.y));
-  float shopLit = step(0.3, wHash(vec2(floor(vFac.x / 6.4), seed * 3.1)));
-  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.05), shop * 0.8);
+  float bayHash = wHash(vec2(floor(vFac.x / 6.4), seed * 3.1));
+  float shopLit = step(0.22, bayHash);
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.03), shop * 0.8);
   gWin += shop;
-  gLit = mix(gLit, shopLit * 0.95, street);
-  gTint = mix(gTint, mix(vec3(1.0, 0.8, 0.56), vec3(0.86, 0.92, 1.0), step(0.62, h2)), street);
+  gLit = mix(gLit, shopLit, street);
+  gTint = mix(gTint, mix(vec3(1.0, 0.66, 0.34), vec3(0.92, 0.86, 0.8), step(0.86, bayHash)) * 1.3, street);
 }`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
 roughnessFactor = mix(roughnessFactor, 0.38, clamp(gWin, 0.0, 1.0) * gGlass);`)
@@ -162,32 +181,24 @@ export function createWorld(ctx) {
   const low = quality === 'low';
   const RAD = quality === 'high' ? { full: 560, far: 1500 } : quality === 'medium' ? { full: 440, far: 1050 } : { full: 300, far: 680 };
   const REFL_R = quality === 'high' ? 380 : 260;
-  const aniso = Math.min(low ? 4 : 8, renderer.capabilities.getMaxAnisotropy());
   const B = nyc.buildings, R = nyc.roads, A = nyc.areas;
 
   // ---- materials ------------------------------------------------------------------------------------------
-  const loader = new THREE.TextureLoader(manager);
-  const tex = (name, srgb, rep = 1) => {
-    // low tier: half-size colour and normal maps from assets/textures/512/ (roughness maps are 512 already)
-    const t = loader.load(`/assets/textures/${low && !name.endsWith('_rough') ? '512/' : ''}${name}.jpg`);
-    t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.anisotropy = aniso;
-    if (srgb) t.colorSpace = THREE.SRGBColorSpace;
-    t.repeat.set(rep, rep);
-    return t;
-  };
+  // Ground is flat-shaded and procedural: no photo textures (nothing to download, nothing magnified into blur).
+  // Pavement shows as dark neutral concrete (about #1a1d2b) with large low-contrast joints drawn in the wet-street
+  // shader (ts3d/ground.js); the road is near-black wet asphalt (about #0b0d16) and glossy enough for the reflection
+  // pass on medium/high. Damp darkening (1 - 0.38 * wet) is already folded into those on-screen values.
   const puddleTex = new THREE.CanvasTexture(paintPuddles(makeCanvas(512, 512)));
   puddleTex.wrapS = puddleTex.wrapT = THREE.RepeatWrapping;
   const glowTex = new THREE.CanvasTexture(paintGlow(makeCanvas(128, 128)));
-  const surface = (name, color, o) => patchWet(new THREE.MeshStandardMaterial({
-    map: tex(`${name}_diff`, true), normalMap: tex(`${name}_nor`), roughnessMap: tex(`${name}_rough`),
-    color, roughness: 1, metalness: 0, envMapIntensity: o.env ?? 0.5, normalScale: new THREE.Vector2(o.ns ?? 1, o.ns ?? 1),
+  const surface = (color, roughness, o) => patchWet(new THREE.MeshStandardMaterial({
+    color, roughness, metalness: 0,
     polygonOffset: true, polygonOffsetFactor: o.po ?? 0, polygonOffsetUnits: (o.po ?? 0) * 2,
   }), reflection, puddleTex, o);
   const mats = {
-    land: surface('sidewalk', '#8d9098', { wet: 0.55, puddles: 0.5, reflect: 0.75, ns: 0.9 }),
-    asphalt: surface('asphalt', '#6f747e', { wet: 0.82, puddles: 1, reflect: 1, ns: 1.1, po: -2 }),
-    pavers: surface('plaza', '#9ea3ad', { wet: 0.62, puddles: 0.7, reflect: 0.9, ns: 0.9, po: -1 }),
+    land: surface('#56534f', 0.8, { wet: 0.55, puddles: 0.5, reflect: 0.75, pave: [1.6, 1.6, 0.26, 0] }),
+    asphalt: surface('#4a463f', 0.62, { wet: 0.82, puddles: 1, reflect: 1, po: -2 }),
+    pavers: surface('#5a5651', 0.74, { wet: 0.62, puddles: 0.7, reflect: 0.9, po: -1, pave: [2.0, 1.0, 0.24, 1] }),
     grass: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.96, metalness: 0, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 }),
     pool: patchWet(new THREE.MeshStandardMaterial({ color: '#0b1522', roughness: 0.05, metalness: 0.2, envMapIntensity: 1.2, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6 }), reflection, puddleTex, { wet: 1, puddles: 0, reflect: 1.25 }),
     paint: patchWet(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 }), reflection, puddleTex, { wet: 0.55, puddles: 0.6, reflect: 0.35 }),
@@ -216,22 +227,7 @@ export function createWorld(ctx) {
       if (B.cx[i] >= z.x0 && B.cx[i] <= z.x1 && B.cz[i] >= z.z0 && B.cz[i] <= z.z1) { nyc.skipBuilding[i] = 1; break; }
     }
   }
-  // ponytail: one shop south of the stall. More facades only if this one reads.
-  let dressId = -1;
-  for (let i = 0; i < B.count; i++) {
-    if (B.h[i] < 8 && Math.hypot(B.cx[i] - 10.6, B.cz[i] - 141.6) < 2) { dressId = i; nyc.hideMesh[i] = 1; break; }
-  }
-  const dressMap = loader.load('/icons/facade-test.jpg');
-  dressMap.colorSpace = THREE.SRGBColorSpace;
-  dressMap.anisotropy = aniso;
-  dressMap.wrapS = dressMap.wrapT = THREE.ClampToEdgeWrapping;
-  const dressMat = new THREE.MeshStandardMaterial({ map: dressMap, roughness: 0.78, metalness: 0.02, envMapIntensity: 0.4 });
-  const sideMap = loader.load('/icons/facade-side.jpg');
-  sideMap.colorSpace = THREE.SRGBColorSpace;
-  sideMap.anisotropy = aniso;
-  sideMap.wrapS = sideMap.wrapT = THREE.ClampToEdgeWrapping;
-  const sideMat = new THREE.MeshStandardMaterial({ map: sideMap, roughness: 0.78, metalness: 0.02, envMapIntensity: 0.4 });
-  const dressRoof = new THREE.MeshStandardMaterial({ color: '#2c3036', roughness: 0.92, metalness: 0 });
+  // (The photo-dressed shop south of the stall is gone: it now gets the procedural facade like its neighbours.)
 
   // ---- building geometry ------------------------------------------------------------------------------------------
   const tmpCol = new THREE.Color();
@@ -243,13 +239,17 @@ export function createWorld(ctx) {
     if (top - mh < 0.25 && !pyramid) return;
     const seed = hash1(i + 17);
     const style = B.style[i];
-    let col;
+    // An OSM building:colour only sets how light the wall is (and a 6% hint of its hue); the palette stays the night one.
+    const list = STYLE_COLORS[style] || STYLE_COLORS[1];
+    const col = list[Math.floor(seed * list.length)].clone();
     if (B.color[i]) {
       const c = B.color[i];
-      col = tmpCol.setRGB(((c >> 11) & 31) / 31, ((c >> 5) & 63) / 63, (c & 31) / 31, THREE.SRGBColorSpace).clone();
+      tmpCol.setRGB(((c >> 11) & 31) / 31, ((c >> 5) & 63) / 63, (c & 31) / 31, THREE.SRGBColorSpace);
+      const luma = (k) => 0.2126 * k.r + 0.7152 * k.g + 0.0722 * k.b;
+      const lum = luma(tmpCol);
+      col.lerp(tmpCol.multiplyScalar(luma(col) / Math.max(lum, 1e-3)), 0.06).multiplyScalar(0.82 + 0.36 * Math.sqrt(Math.min(1, lum)));
     } else {
-      const list = STYLE_COLORS[style] || STYLE_COLORS[1];
-      col = list[Math.floor(seed * list.length)].clone().multiplyScalar(0.85 + hash1(i * 7 + 3) * 0.3);
+      col.multiplyScalar(0.85 + hash1(i * 7 + 3) * 0.3);
     }
     const fh = FLOOR_H[style] ?? 3.5;
     let u = Math.floor(seed * 9) * 1.1;
@@ -273,7 +273,7 @@ export function createWorld(ctx) {
       let cx = 0, cz = 0;
       for (let k = 0; k < n; k++) { cx += B.xs[a + k]; cz += B.zs[a + k]; }
       cx = cx / n - ox; cz = cz / n - oz;
-      const capCol = style === 0 ? tmpCol.set('#8f9aa8') : roofCol;
+      const capCol = style === 0 ? CAP_COLOR : roofCol;
       for (let k = 0; k < n; k++) {
         const p = a + k, q = k + 1 < n ? p + 1 : a;
         const x1 = B.xs[p] - ox, z1 = B.zs[p] - oz, x2 = B.xs[q] - ox, z2 = B.zs[q] - oz;
@@ -324,7 +324,9 @@ export function createWorld(ctx) {
   }
   const nodeDeg = (x, z) => { const nd = G.nodeAt(x, z); return nd == null ? 0 : G.nodeAdj[nd].length; };
   const nodeRad = (x, z) => { const nd = G.nodeAt(x, z); return nd == null ? 0 : junctionR[nd]; };
-  const WHITE = new THREE.Color('#e7e7e2'), YELLOW = new THREE.Color('#e6b62c'), CURB = new THREE.Color('#a7a9b0');
+  // Lane paint: off-white rgb(222,225,234) at half strength (#a3a5ac); the centre line is a muted warm grey, not
+  // yellow; the curb is only a shade lighter than the pavement.
+  const WHITE = new THREE.Color('#a3a5ac'), YELLOW = new THREE.Color('#8e8578'), CURB = new THREE.Color('#5c606c');
   const UP = [0, 1, 0];
 
   // UVs come from world coordinates so the textures run seamlessly across tiles.
@@ -413,27 +415,27 @@ export function createWorld(ctx) {
 
   // ---- street furniture kits (shared geometries) -----------------------------------------------------------------------
   const lampKit = new Kit();
-  lampKit.cyl(0.22, 0.28, 0.6, '#1c2420', { y: 0.3, mat: 'metal' });
-  lampKit.cyl(0.08, 0.12, 7.6, '#1c2420', { y: 4.1, mat: 'metal' });
-  lampKit.box(0.12, 0.12, 2.1, '#1c2420', { y: 7.8, z: 1.0, mat: 'metal' });
-  lampKit.box(0.46, 0.2, 0.8, '#22292a', { y: 7.75, z: 2.05, mat: 'metal' });
+  lampKit.cyl(0.22, 0.28, 0.6, '#1c2028', { y: 0.3, mat: 'metal' });
+  lampKit.cyl(0.08, 0.12, 7.6, '#1c2028', { y: 4.1, mat: 'metal' });
+  lampKit.box(0.12, 0.12, 2.1, '#1c2028', { y: 7.8, z: 1.0, mat: 'metal' });
+  lampKit.box(0.46, 0.2, 0.8, '#22262e', { y: 7.75, z: 2.05, mat: 'metal' });
   lampKit.box(0.38, 0.04, 0.68, '#ffd9a0', { y: 7.62, z: 2.05, glow: 3.0 });
   const lampGeos = lampKit.geometries();
   const treeTrunk = new THREE.CylinderGeometry(0.13, 0.2, 3, 6).translate(0, 1.5, 0);
   const treeTop = new THREE.IcosahedronGeometry(1.9, 1).translate(0, 4.3, 0);
   const towerKit = new Kit();
-  towerKit.cyl(2.1, 2.1, 4.2, '#5a3d29', { y: 3.6, seg: 14 });
-  towerKit.cone(2.3, 1.6, '#3d2a1d', { y: 6.5, seg: 14 });
+  towerKit.cyl(2.1, 2.1, 4.2, '#463a34', { y: 3.6, seg: 14 });
+  towerKit.cone(2.3, 1.6, '#2e2826', { y: 6.5, seg: 14 });
   for (const [dx, dz] of [[-1.4, -1.4], [1.4, -1.4], [-1.4, 1.4], [1.4, 1.4]]) towerKit.cyl(0.09, 0.09, 1.6, '#26262a', { x: dx, y: 0.8, z: dz, mat: 'metal', seg: 5 });
   towerKit.box(3.2, 0.12, 3.2, '#26262a', { y: 1.55, mat: 'metal' });
   const towerGeos = towerKit.geometries();
   const subKit = new Kit();
   for (const s of [-1, 1]) {
-    subKit.cyl(0.05, 0.06, 2.2, '#1f4a2c', { x: s * 1.1, y: 1.1, z: -1.6, mat: 'metal', seg: 6 });
-    subKit.sphere(0.2, '#39f58a', { x: s * 1.1, y: 2.35, z: -1.6, glow: 2.2, seg: 10 });
-    subKit.box(0.06, 1.05, 3.4, '#1d3a26', { x: s * 1.2, y: 0.52, z: 0, mat: 'metal' });
+    subKit.cyl(0.05, 0.06, 2.2, '#1e3328', { x: s * 1.1, y: 1.1, z: -1.6, mat: 'metal', seg: 6 });
+    subKit.sphere(0.2, '#46d68a', { x: s * 1.1, y: 2.35, z: -1.6, glow: 2.2, seg: 10 });
+    subKit.box(0.06, 1.05, 3.4, '#1c2c24', { x: s * 1.2, y: 0.52, z: 0, mat: 'metal' });
   }
-  subKit.box(2.4, 1.05, 0.06, '#1d3a26', { y: 0.52, z: 1.7, mat: 'metal' });
+  subKit.box(2.4, 1.05, 0.06, '#1c2c24', { y: 0.52, z: 1.7, mat: 'metal' });
   const subGeos = subKit.geometries();
   const beaconGeo = new THREE.SphereGeometry(0.55, 8, 6);
   const poolGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
@@ -591,7 +593,7 @@ export function createWorld(ctx) {
     const tm = inst(treeTop, mats.leaf, tops, root);
     if (tm) {
       const c = new THREE.Color();
-      topCols.forEach((v, i) => tm.setColorAt(i, c.setRGB(0.07 * v, 0.17 * v, 0.08 * v)));
+      topCols.forEach((v, i) => tm.setColorAt(i, c.setRGB(0.06 * v, 0.12 * v, 0.08 * v)));
       tm.instanceColor.needsUpdate = true;
     }
     for (const [k, geo] of towerGeos) inst(geo, kitMat(k), towers, root);
@@ -608,50 +610,6 @@ export function createWorld(ctx) {
     g.traverse(o => { if (o.isMesh && o.geometry && !o.isInstancedMesh) o.geometry.dispose(); if (o.isInstancedMesh) o.dispose(); });
     g.parent?.remove(g);
   }
-  function addDress(parent, i, ox, oz) {
-    const a = B.off[i], b = B.off[i + 1], n = b - a;
-    const top = B.h[i], mh = B.minh[i];
-    const walls = { front: { pos: [], uv: [], ind: [] }, side: { pos: [], uv: [], ind: [] } };
-    const push = (bag, x, y, z, u, v) => { bag.pos.push(x, y, z); bag.uv.push(u, v); return bag.pos.length / 3 - 1; };
-    let longest = 0;
-    for (let k = 0; k < n; k++) {
-      const p = a + k, q = k + 1 < n ? p + 1 : a;
-      longest = Math.max(longest, Math.hypot(B.xs[q] - B.xs[p], B.zs[q] - B.zs[p]));
-    }
-    for (let k = 0; k < n; k++) {
-      const p = a + k, q = k + 1 < n ? p + 1 : a;
-      const x1 = B.xs[p] - ox, z1 = B.zs[p] - oz, x2 = B.xs[q] - ox, z2 = B.zs[q] - oz;
-      const L = Math.hypot(x2 - x1, z2 - z1);
-      if (L < 0.05) continue;
-      const bag = L > longest * 0.75 ? walls.front : walls.side;
-      const va = push(bag, x1, mh, z1, 0, 0), vb = push(bag, x2, mh, z2, 1, 0);
-      const vc = push(bag, x2, top, z2, 1, 1), vd = push(bag, x1, top, z1, 0, 1);
-      bag.ind.push(va, vc, vb, va, vd, vc);
-    }
-    for (const [bag, mat] of [[walls.front, dressMat], [walls.side, sideMat]]) {
-      if (!bag.ind.length) continue;
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.Float32BufferAttribute(bag.pos, 3));
-      geo.setAttribute('uv', new THREE.Float32BufferAttribute(bag.uv, 2));
-      geo.setIndex(bag.ind);
-      geo.computeVertexNormals();
-      parent.add(new THREE.Mesh(geo, mat));
-    }
-    const tris = triangulate(B.xs, B.zs, a, b);
-    if (!tris.length) return;
-    const rp = [], ri = [];
-    for (let k = 0; k < n; k++) rp.push(B.xs[a + k] - ox, top, B.zs[a + k] - oz);
-    for (const [i0, i1, i2] of tris) {
-      const ax = B.xs[a + i0], az = B.zs[a + i0];
-      const cy = (B.zs[a + i1] - az) * (B.xs[a + i2] - ax) - (B.xs[a + i1] - ax) * (B.zs[a + i2] - az);
-      if (cy > 0) ri.push(i0, i1, i2); else ri.push(i0, i2, i1);
-    }
-    const roof = new THREE.BufferGeometry();
-    roof.setAttribute('position', new THREE.Float32BufferAttribute(rp, 3));
-    roof.setIndex(ri);
-    roof.computeVertexNormals();
-    parent.add(new THREE.Mesh(roof, dressRoof));
-  }
   function buildBase(rec) {
     const t = rec.t;
     const ox = t.tx * TILE, oz = t.tz * TILE;
@@ -659,7 +617,6 @@ export function createWorld(ctx) {
     root.position.set(ox, 0, oz);
     const g = new Geo(true);
     for (const i of t.b) if (!nyc.skipBuilding[i] && !nyc.hideMesh[i] && B.h[i] < SKY_H) addBuilding(g, i, ox, oz);
-    if (dressId >= 0 && t.b.includes(dressId)) addDress(root, dressId, ox, oz);
     if (!g.empty()) put(g.build(), facade, 0, 0, root);
     const roads = buildRoads(t, ox, oz, false);
     if (!roads.asphalt.empty()) put(roads.asphalt.build(), mats.asphalt, GROUND_LAYER, 1, root);
@@ -756,8 +713,7 @@ export function createWorld(ctx) {
       new THREE.Plane(new THREE.Vector3(0, 0, -1), LOOP.z1),
     ];
     for (const m of [mats.land, mats.grass, mats.pavers, mats.pool, mats.river]) m.clippingPlanes = clips;
-    const lm = put(land.build(), mats.land, GROUND_LAYER, 0);
-    lm.material.map.repeat.set(1, 1);
+    put(land.build(), mats.land, GROUND_LAYER, 0);
     put(walls.build(), mats.wall, 0, 0);
     const water = new THREE.Mesh(new THREE.PlaneGeometry(90000, 90000).rotateX(-Math.PI / 2), mats.river);
     water.position.set(0, -0.7, 0);
@@ -767,7 +723,7 @@ export function createWorld(ctx) {
   }
   {
     const grass = new Geo(), plaza = new Geo(), pool = new Geo();
-    const GREEN = { [AREA.PARK]: '#24391f', [AREA.WOOD]: '#1a2c18', [AREA.PITCH]: '#2a4a2c', [AREA.CEMETERY]: '#25351f' };
+    const GREEN = { [AREA.PARK]: '#1f3226', [AREA.WOOD]: '#18281e', [AREA.PITCH]: '#22382a', [AREA.CEMETERY]: '#1f2e22' };
     const pierCol = new THREE.Color('#ffffff');
     for (let i = 0; i < A.count; i++) {
       const kind = A.kind[i];

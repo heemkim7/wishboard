@@ -49,7 +49,7 @@ function setbacks(parts) {
   return tiers;
 }
 
-function makeTex(paint) {
+function makeTex(paint, repeat = 1) {
   const c = document.createElement('canvas');
   c.width = 512;
   c.height = 512;
@@ -57,22 +57,40 @@ function makeTex(paint) {
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(repeat, repeat);
   t.anisotropy = 8;
   return t;
 }
 
-function windowTex(stone, glass, lit, cols, rows) {
+// Night facade in the city's slate family: about one window in ten lit (warm, one in eight cool) and an occasional
+// fully lit floor. The canvas holds twice the windows per side and repeats at half scale, so windows keep their size
+// while the lit pattern repeats only every 2 * cols windows.
+function windowTex(stone, cols, rows, seed) {
   return makeTex((g) => {
     g.fillStyle = stone;
     g.fillRect(0, 0, 512, 512);
-    const bw = 512 / cols, bh = 512 / rows;
-    for (let x = 0; x < cols; x++) for (let y = 0; y < rows; y++) {
-      const on = (x * 3 + y * 5) % 7 !== 1;
-      g.fillStyle = on ? lit : '#12161c';
+    const C = cols * 2, R = rows * 2;
+    const bw = 512 / C, bh = 512 / R;
+    let s = seed;
+    const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+    const litFloor = Array.from({ length: R }, () => rnd() < 0.05);
+    for (let x = 0; x < C; x++) for (let y = 0; y < R; y++) {
+      const r = rnd();
+      const on = litFloor[y] ? r > 0.15 : r < 0.09;
+      g.fillStyle = on ? (rnd() < 0.125 ? '#aacdff' : '#ffc878') : '#0b0e16';
       g.fillRect(x * bw + bw * 0.18, y * bh + bh * 0.16, bw * 0.64, bh * 0.62);
-      if (on) { g.fillStyle = glass; g.fillRect(x * bw + bw * 0.22, y * bh + bh * 0.2, bw * 0.26, bh * 0.24); }
     }
-  });
+  }, 0.5);
+}
+
+// Only the bright texels (lit windows) emit; the stone stays dark. No extra texture: the mask comes from the map.
+function litWindows(mat) {
+  mat.onBeforeCompile = (sh) => {
+    sh.fragmentShader = sh.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+totalEmissiveRadiance *= diffuseColor.rgb * smoothstep( 0.15, 0.5, max( diffuseColor.r, max( diffuseColor.g, diffuseColor.b ) ) );`);
+  };
+  mat.customProgramCacheKey = () => 'kts-icon-windows';
+  return mat;
 }
 
 function signTex(title, sub) {
@@ -185,18 +203,18 @@ function addSign(group, mat, tier, y) {
 }
 
 function mats() {
-  const lime = windowTex('#c4b29a', 'rgba(255,244,220,0.7)', '#ffd7a1', 4, 4);
-  const brick = windowTex('#6e4a3a', 'rgba(255,214,170,0.65)', '#ffcf8a', 4, 4);
-  const glass = windowTex('#163044', 'rgba(190,230,255,0.55)', '#9fd4ff', 6, 8);
-  const canyon = windowTex('#2a3148', 'rgba(255,180,210,0.5)', '#ffd27a', 4, 5);
-  const steel = new THREE.MeshStandardMaterial({ color: 0xd9dde6, roughness: 0.28, metalness: 0.82, emissive: 0x8899aa, emissiveIntensity: 0.18, side: SIDE });
-  const stone = new THREE.MeshStandardMaterial({ color: 0xcbb89a, roughness: 0.78, metalness: 0.05, side: SIDE });
-  const dress = (map, color, emissive, intensity) => new THREE.MeshStandardMaterial({ map, color, emissive, emissiveIntensity: intensity, roughness: 0.62, metalness: 0.08, side: SIDE });
+  const lime = windowTex('#5a5e6c', 4, 4, 1201);
+  const brick = windowTex('#54525e', 4, 4, 3307);
+  const glass = windowTex('#2c3648', 6, 8, 5519);
+  const canyon = windowTex('#464c62', 4, 5, 7741);
+  const steel = new THREE.MeshStandardMaterial({ color: 0x9aa0ac, roughness: 0.28, metalness: 0.82, emissive: 0x8899aa, emissiveIntensity: 0.06, side: SIDE });
+  const stone = new THREE.MeshStandardMaterial({ color: 0x5e6270, roughness: 0.78, metalness: 0.05, side: SIDE });
+  const dress = (map) => litWindows(new THREE.MeshStandardMaterial({ map, color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 1.6, roughness: 0.62, metalness: 0.08, side: SIDE }));
   return {
-    lime: dress(lime, 0xcbb89a, 0xffe2b8, 0.45),
-    brick: dress(brick, 0x8a5a42, 0xffc48a, 0.4),
-    glass: dress(glass, 0x9ec8e8, 0x8ec6ff, 0.55),
-    canyon: dress(canyon, 0xb7c0da, 0xffc48a, 0.5),
+    lime: dress(lime),
+    brick: dress(brick),
+    glass: dress(glass),
+    canyon: dress(canyon),
     steel, stone,
   };
 }

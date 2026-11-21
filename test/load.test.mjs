@@ -65,11 +65,11 @@ describe('first load budget', () => {
     assert.deepEqual(env.sort(), [...ENV_PHOTOS].sort());
   });
 
-  it('gives the low tier the 512 px ground maps and the others the 1024 px ones', () => {
-    const files = (q) => loadBudget({ quality: q }).rows.filter((x) => x.file.startsWith('assets/textures/')).map((x) => x.file);
-    assert.equal(files('low').filter((f) => f.includes('/512/')).length, 6);
-    assert.equal(files('high').some((f) => f.includes('/512/')), false);
-    assert.equal(files('low').length, 9);
+  it('downloads no ground or facade photo textures on any tier (the ground is procedural)', () => {
+    for (const quality of ['low', 'medium', 'high']) {
+      const files = loadBudget({ quality }).rows.map((x) => x.file);
+      assert.deepEqual(files.filter((f) => f.startsWith('assets/textures/') || /^icons\/facade-/.test(f)), [], quality);
+    }
   });
 
   it('bumps the service worker cache with the new assets', () => {
