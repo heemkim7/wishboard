@@ -5,17 +5,24 @@ import { nowMs } from '../live.js';
 export const SANS = '"Pretendard Variable", Pretendard, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
 export const EMOJI = '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
 
+// Direction A palette. Panels stay dark and quiet; the colour of the scene lives in three sign hues plus white.
+const AMBER = '#ffb020', MAGENTA = '#ff4fa3', CYAN = '#48d6f0', WHITE = '#ffffff';
+const PANEL = '#0a0e20', PANEL_DIM = '#070a17', STRIP = '#060914';
+const TEXT2 = '#b9bfdc', MUTED = '#8f96b8', DIM = '#666d92', DANGER = '#ff5d6c', ON_ACCENT = '#1c1300';
+
+// Board themes a player picks: one restrained accent each (top line, label chip, frame light) on the same dark panel.
+// swatch is what the theme button shows: the panel fading into the accent.
 export const THEMES = {
-  plain: { label: '배경 없음', accent: '#ffe7a8', accent2: '#ffffff', swatch: ['#07080f', '#141824', '#07080f'] },
-  cyber_navy: { label: '사이버 네이비', accent: '#3fe6ff', accent2: '#ff3d9a', swatch: ['#050b2a', '#3b1170', '#ff3d9a'] },
-  neon_pink: { label: 'K-POP 핑크', accent: '#ff3d9a', accent2: '#ffd1f4', swatch: ['#16001e', '#7a0a6a', '#ff6fd0'] },
-  gold_luxury: { label: '골드 럭셔리', accent: '#ffcf5a', accent2: '#fff3c4', swatch: ['#0b0702', '#5a3c08', '#ffcf5a'] },
-  matrix_green: { label: '매트릭스', accent: '#39f58a', accent2: '#d4ffe6', swatch: ['#010a05', '#06361b', '#39f58a'] },
-  sunset_red: { label: '선셋 서울', accent: '#ff6a3d', accent2: '#ffe0b0', swatch: ['#1b0230', '#ff3d3d', '#ffb347'] },
-  bday_party: { label: '생일', accent: '#ffcf5a', accent2: '#ff8ad4', swatch: ['#2a1040', '#ff4fa3', '#ffcf5a'], gift: true, title: 'HAPPY BIRTHDAY' },
-  cheer_exam: { label: '합격 기원', accent: '#39f58a', accent2: '#ffcf5a', swatch: ['#042018', '#147a45', '#ffcf5a'], gift: true, title: '합격 · 대박 기원' },
-  love_anniv: { label: '기념일', accent: '#ff3d9a', accent2: '#d9b3ff', swatch: ['#240018', '#a01268', '#ff7ad9'], gift: true, title: '특별한 기념일' },
-  vip_wreath: { label: '경축 화환', accent: '#ff6a6a', accent2: '#ffe08a', swatch: ['#2a080c', '#b4233a', '#ffd36a'], gift: true, title: '축 발전!', sub: '타임스퀘어가 인정한 슈퍼스타' },
+  plain: { label: '배경 없음', accent: '#c9cfe8', accent2: '#ffffff', swatch: ['#0a0e20', '#141a2e', '#c9cfe8'] },
+  cyber_navy: { label: '사이버 네이비', accent: '#48d6f0', accent2: '#ff4fa3', swatch: ['#0a0e20', '#141a2e', '#48d6f0'] },
+  neon_pink: { label: 'K-POP 핑크', accent: '#ff4fa3', accent2: '#ffc2e0', swatch: ['#0a0e20', '#141a2e', '#ff4fa3'] },
+  gold_luxury: { label: '골드 럭셔리', accent: '#ffb020', accent2: '#ffe2a8', swatch: ['#0a0e20', '#141a2e', '#ffb020'] },
+  matrix_green: { label: '매트릭스', accent: '#3ddc97', accent2: '#c8f7e1', swatch: ['#0a0e20', '#141a2e', '#3ddc97'] },
+  sunset_red: { label: '선셋 서울', accent: '#ff7a45', accent2: '#ffd0b0', swatch: ['#0a0e20', '#141a2e', '#ff7a45'] },
+  bday_party: { label: '생일', accent: '#ff4fa3', accent2: '#ffb020', swatch: ['#0a0e20', '#141a2e', '#ff4fa3'], gift: true, title: 'HAPPY BIRTHDAY' },
+  cheer_exam: { label: '합격 기원', accent: '#3ddc97', accent2: '#ffb020', swatch: ['#0a0e20', '#141a2e', '#3ddc97'], gift: true, title: '합격 · 대박 기원' },
+  love_anniv: { label: '기념일', accent: '#ff6fb5', accent2: '#b98cff', swatch: ['#0a0e20', '#141a2e', '#ff6fb5'], gift: true, title: '특별한 기념일' },
+  vip_wreath: { label: '경축 화환', accent: '#ff5d6c', accent2: '#ffb020', swatch: ['#0a0e20', '#141a2e', '#ff5d6c'], gift: true, title: '축 발전!', sub: '타임스퀘어가 인정한 슈퍼스타' },
 };
 
 export function hashStr(s) {
@@ -104,326 +111,204 @@ function glowDot(g, x, y, r, color, a = 1) {
   g.fillStyle = gr;
   g.fillRect(x - r, y - r, r * 2, r * 2);
 }
-function sparkle(g, x, y, s, color) {
-  g.save();
+/** Flat, centred sign type: fitted to maxW, no glow, no stroke. */
+function flatText(g, text, x, y, maxW, size, color, weight = 800, min = size * 0.4, align = 'center') {
+  const s = fit(g, text, maxW, size, weight, SANS, min);
   g.fillStyle = color;
-  g.shadowColor = color;
-  g.shadowBlur = s * 2;
-  g.beginPath();
-  g.moveTo(x, y - s);
-  g.quadraticCurveTo(x, y, x + s, y);
-  g.quadraticCurveTo(x, y, x, y + s);
-  g.quadraticCurveTo(x, y, x - s, y);
-  g.quadraticCurveTo(x, y, x, y - s);
-  g.fill();
-  g.restore();
-}
-
-// Seoul skyline: random blocks, N Seoul Tower on Namsan, Lotte World Tower.
-function seoulSkyline(g, W, base, r, k, fill, lit) {
-  g.save();
-  let x = -10 * k;
-  while (x < W) {
-    const w = (22 + r() * 44) * k, h = (26 + r() * 100) * k;
-    g.fillStyle = fill;
-    g.fillRect(x, base - h, w + 1, h + 2);
-    if (lit) {
-      g.fillStyle = lit;
-      for (let wy = base - h + 7 * k; wy < base - 5 * k; wy += 9 * k) {
-        for (let wx = x + 4 * k; wx < x + w - 5 * k; wx += 8 * k) if (r() < 0.32) g.fillRect(wx, wy, 3 * k, 4 * k);
-      }
-    }
-    x += w + r() * 5 * k;
-  }
-  g.fillStyle = fill;
-  const tx = W * 0.2;
-  g.beginPath();
-  g.ellipse(tx, base + 4 * k, 130 * k, 52 * k, 0, Math.PI, 0);
-  g.fill();
-  const hill = base - 46 * k;
-  g.fillRect(tx - 4 * k, hill - 110 * k, 8 * k, 112 * k);
-  g.beginPath();
-  g.ellipse(tx, hill - 108 * k, 19 * k, 10 * k, 0, 0, Math.PI * 2);
-  g.fill();
-  g.fillRect(tx - 1.5 * k, hill - 170 * k, 3 * k, 62 * k);
-  if (lit) { g.fillStyle = lit; g.fillRect(tx - 15 * k, hill - 110 * k, 30 * k, 3 * k); }
-  g.fillStyle = fill;
-  const lx = W * 0.84;
-  g.beginPath();
-  g.moveTo(lx - 24 * k, base);
-  g.lineTo(lx - 7 * k, base - 236 * k);
-  g.lineTo(lx, base - 258 * k);
-  g.lineTo(lx + 7 * k, base - 236 * k);
-  g.lineTo(lx + 24 * k, base);
-  g.closePath();
-  g.fill();
-  g.restore();
-}
-
-function giftWash(g, W, H, a, b, emoji) {
-  const gr = g.createLinearGradient(0, 0, W, H);
-  gr.addColorStop(0, '#140818');
-  gr.addColorStop(1, '#05020c');
-  g.fillStyle = gr;
-  g.fillRect(0, 0, W, H);
-  g.strokeStyle = a;
-  g.lineWidth = 22;
-  g.strokeRect(28, 28, W - 56, H - 90);
-  g.strokeStyle = b;
-  g.lineWidth = 6;
-  g.strokeRect(48, 48, W - 96, H - 130);
-  g.font = `${Math.round(H * 0.16)}px ${EMOJI}`;
-  g.textAlign = 'right';
+  g.textAlign = align;
   g.textBaseline = 'middle';
-  g.fillText(emoji, W - 70, H * 0.34);
+  g.fillText(text, x, y);
+  return s;
 }
-const ART = {
-  plain(g, W, H) {
-    g.fillStyle = '#07080f';
-    g.fillRect(0, 0, W, H);
-  },
-  cyber_navy(g, W, H, r, k) {
-    let gr = g.createLinearGradient(0, 0, 0, H);
-    gr.addColorStop(0, '#03051a');
-    gr.addColorStop(0.5, '#170f4c');
-    gr.addColorStop(0.68, '#45106e');
-    gr.addColorStop(0.69, '#0b0326');
-    gr.addColorStop(1, '#05010f');
-    g.fillStyle = gr;
-    g.fillRect(0, 0, W, H);
-    for (let i = 0; i < 90; i++) {
-      g.fillStyle = `rgba(255,255,255,${0.15 + r() * 0.6})`;
-      const s = (r() * 2 + 0.6) * k;
-      g.fillRect(r() * W, r() * H * 0.5, s, s);
-    }
-    const hz = H * 0.68, sx = W * 0.68, sr = H * 0.3;
-    glowDot(g, sx, hz - sr * 0.3, sr * 2.1, '#ff3d9a', 0.45);
-    g.save();
-    g.beginPath();
-    g.arc(sx, hz - sr * 0.3, sr, 0, Math.PI * 2);
-    g.clip();
-    gr = g.createLinearGradient(0, hz - sr * 1.3, 0, hz + sr * 0.7);
-    gr.addColorStop(0, '#fff07a');
-    gr.addColorStop(0.5, '#ff8a4d');
-    gr.addColorStop(1, '#ff2d95');
-    g.fillStyle = gr;
-    g.fillRect(sx - sr, hz - sr * 1.4, sr * 2, sr * 2.2);
-    g.globalCompositeOperation = 'destination-out';
-    for (let i = 0; i < 8; i++) g.fillRect(sx - sr, hz - sr * 0.62 + i * sr * 0.13, sr * 2, (1.5 + i * 1.7) * k);
-    g.restore();
-    seoulSkyline(g, W, hz + 2 * k, r, k, '#0a0420', 'rgba(63,230,255,0.85)');
-    g.save();
-    g.strokeStyle = 'rgba(255,61,154,0.85)';
-    g.shadowColor = '#ff3d9a';
-    g.shadowBlur = 10 * k;
-    g.lineWidth = 2.2 * k;
-    for (let i = -18; i <= 18; i++) {
-      g.beginPath();
-      g.moveTo(W / 2 + i * W * 0.018, hz);
-      g.lineTo(W / 2 + i * W * 0.17, H);
-      g.stroke();
-    }
-    for (let j = 1; j < 10; j++) {
-      const t = j / 10, yy = hz + (H - hz) * t * t;
-      g.beginPath();
-      g.moveTo(0, yy);
-      g.lineTo(W, yy);
-      g.stroke();
-    }
-    g.strokeStyle = '#3fe6ff';
-    g.shadowColor = '#3fe6ff';
-    g.lineWidth = 3 * k;
-    g.beginPath();
-    g.moveTo(0, hz);
-    g.lineTo(W, hz);
-    g.stroke();
-    g.restore();
-  },
-  neon_pink(g, W, H, r, k) {
-    let gr = g.createLinearGradient(0, 0, 0, H);
-    gr.addColorStop(0, '#12001c');
-    gr.addColorStop(0.55, '#3d0052');
-    gr.addColorStop(1, '#8a0c6e');
-    g.fillStyle = gr;
-    g.fillRect(0, 0, W, H);
-    g.save();
-    g.globalCompositeOperation = 'lighter';
-    for (let i = 0; i < 7; i++) {
-      const x = W * (0.08 + i * 0.14) + (r() - 0.5) * 40 * k;
-      const spread = (90 + r() * 120) * k;
-      gr = g.createLinearGradient(0, 0, 0, H);
-      const col = i % 3 === 0 ? '#3fe6ff' : i % 3 === 1 ? '#ff6fd0' : '#fff2a8';
-      gr.addColorStop(0, rgba(col, 0.42));
-      gr.addColorStop(1, rgba(col, 0));
-      g.fillStyle = gr;
-      g.beginPath();
-      g.moveTo(x - 6 * k, 0);
-      g.lineTo(x + 6 * k, 0);
-      g.lineTo(x + spread + (r() - 0.5) * 160 * k, H);
-      g.lineTo(x - spread + (r() - 0.5) * 160 * k, H);
-      g.closePath();
-      g.fill();
-    }
-    for (let i = 0; i < 28; i++) {
-      const col = ['#ff3d9a', '#b84dff', '#3fe6ff', '#ffd1f4'][i % 4];
-      glowDot(g, r() * W, r() * H * 0.8, (14 + r() * 46) * k, col, 0.2 + r() * 0.3);
-    }
-    g.restore();
-    const base = H * 0.92;
-    g.fillStyle = '#0d0010';
-    for (let x = -10 * k; x < W + 20 * k; x += (26 + r() * 10) * k) {
-      const hr = (13 + r() * 6) * k;
-      g.beginPath();
-      g.arc(x, base - hr * 0.2, hr, 0, Math.PI * 2);
-      g.fill();
-      g.fillRect(x - hr * 1.2, base, hr * 2.4, H - base);
-      if (r() < 0.55) {
-        const lx = x + (r() - 0.5) * 22 * k, ly = base - (40 + r() * 34) * k;
-        g.strokeStyle = '#2a0a2e';
-        g.lineWidth = 3 * k;
-        g.beginPath();
-        g.moveTo(x + 6 * k, base - 4 * k);
-        g.lineTo(lx, ly);
-        g.stroke();
-        glowDot(g, lx, ly, 14 * k, r() < 0.5 ? '#ff6fd0' : '#3fe6ff', 0.95);
-        g.fillStyle = '#ffffff';
-        g.beginPath();
-        g.arc(lx, ly, 3.4 * k, 0, Math.PI * 2);
-        g.fill();
-        g.fillStyle = '#0d0010';
-      }
-    }
-    for (let i = 0; i < 14; i++) sparkle(g, r() * W, r() * H * 0.7, (4 + r() * 9) * k, '#ffffff');
-  },
-  gold_luxury(g, W, H, r, k) {
-    let gr = g.createRadialGradient(W * 0.5, H * 0.62, 10, W * 0.5, H * 0.62, W * 0.7);
-    gr.addColorStop(0, '#4a3008');
-    gr.addColorStop(0.55, '#1a1004');
-    gr.addColorStop(1, '#070401');
-    g.fillStyle = gr;
-    g.fillRect(0, 0, W, H);
-    g.save();
-    g.translate(W * 0.5, H * 1.02);
-    for (let i = 0; i < 36; i++) {
-      const a0 = Math.PI + (i / 36) * Math.PI, a1 = a0 + Math.PI / 72;
-      g.fillStyle = i % 2 ? 'rgba(255,207,90,0.10)' : 'rgba(255,207,90,0.03)';
-      g.beginPath();
-      g.moveTo(0, 0);
-      g.arc(0, 0, W, a0, a1);
-      g.closePath();
-      g.fill();
-    }
-    g.restore();
-    g.save();
-    g.strokeStyle = '#d9a93a';
-    g.shadowColor = '#ffcf5a';
-    g.shadowBlur = 8 * k;
-    g.lineWidth = 3 * k;
-    g.strokeRect(26 * k, 26 * k, W - 52 * k, H - 52 * k);
-    g.lineWidth = 1.4 * k;
-    g.strokeRect(38 * k, 38 * k, W - 76 * k, H - 76 * k);
-    for (const [cx, cy, sx, sy] of [[38, 38, 1, 1], [W / k - 38, 38, -1, 1], [38, H / k - 38, 1, -1], [W / k - 38, H / k - 38, -1, -1]]) {
-      for (let i = 1; i <= 3; i++) {
-        g.beginPath();
-        g.arc(cx * k, cy * k, i * 16 * k, sx > 0 ? (sy > 0 ? 0 : -Math.PI / 2) : (sy > 0 ? Math.PI / 2 : Math.PI), sx > 0 ? (sy > 0 ? Math.PI / 2 : 0) : (sy > 0 ? Math.PI : Math.PI * 1.5));
-        g.stroke();
-      }
-    }
-    g.restore();
-    for (let i = 0; i < 220; i++) {
-      g.fillStyle = `rgba(255,${200 + r() * 55 | 0},${120 + r() * 80 | 0},${0.2 + r() * 0.7})`;
-      const s = (r() * 2.2 + 0.4) * k;
-      g.fillRect(r() * W, r() * H, s, s);
-    }
-    g.save();
-    g.globalCompositeOperation = 'lighter';
-    gr = g.createLinearGradient(W * 0.2, 0, W * 0.55, H);
-    gr.addColorStop(0, 'rgba(255,240,200,0)');
-    gr.addColorStop(0.5, 'rgba(255,240,200,0.12)');
-    gr.addColorStop(1, 'rgba(255,240,200,0)');
-    g.fillStyle = gr;
-    g.fillRect(0, 0, W, H);
-    g.restore();
-    for (let i = 0; i < 8; i++) sparkle(g, r() * W, r() * H, (4 + r() * 8) * k, '#fff3c4');
-  },
-  matrix_green(g, W, H, r, k) {
-    g.fillStyle = '#010a05';
-    g.fillRect(0, 0, W, H);
-    const glyphs = '가나다라마바사아자차카타파하ㅋㅎ0123456789붕어빵코인';
-    const size = Math.round(20 * k);
+/** The sign family colour nearest to any hex: magenta, cyan or amber, or white for pale and grey inks. */
+function signHue(hex) {
+  const [r, gg, b] = rgbOf(hex);
+  const max = Math.max(r, gg, b), d = max - Math.min(r, gg, b);
+  if (!max || d / max < 0.28) return WHITE;
+  let h = max === r ? ((gg - b) / d) % 6 : max === gg ? (b - r) / d + 2 : (r - gg) / d + 4;
+  h = (h * 60 + 360) % 360;
+  if (h >= 8 && h < 75) return AMBER;
+  if (h >= 75 && h < 255) return CYAN;
+  return MAGENTA;
+}
+/** Pill label. mode 'soft': 16% fill and coloured text; 'solid': colour fill, dark text; 'quiet': navy fill, coloured text
+ *  (over photos). x is the left edge, or the right edge when right. Returns {w, h}. */
+function pill(g, x, y, text, color, size, maxW, mode = 'soft', right = false) {
+  const s = fit(g, text, Math.max(10, maxW - size * 1.24), size, 700, SANS, size * 0.62);
+  const pad = s * 0.62, h = Math.round(s * 1.64);
+  const w = Math.min(maxW, g.measureText(text).width + pad * 2);
+  const x0 = right ? x - w : x;
+  roundRect(g, x0, y, w, h, h / 2);
+  g.fillStyle = mode === 'solid' ? color : mode === 'quiet' ? 'rgba(20,26,46,0.92)' : rgba(color, 0.16);
+  g.fill();
+  g.fillStyle = mode === 'solid' ? ON_ACCENT : color;
+  g.textAlign = 'left';
+  g.textBaseline = 'middle';
+  g.fillText(text, x0 + pad, y + h / 2 + s * 0.04, Math.max(1, w - pad * 2));
+  return { w, h };
+}
+/** A drawn heart (no emoji glyph), centred on (cx, cy), about s wide. */
+function heart(g, cx, cy, s, color) {
+  g.beginPath();
+  g.moveTo(cx, cy + s * 0.4);
+  g.bezierCurveTo(cx - s * 0.62, cy + s * 0.02, cx - s * 0.48, cy - s * 0.5, cx, cy - s * 0.2);
+  g.bezierCurveTo(cx + s * 0.48, cy - s * 0.5, cx + s * 0.62, cy + s * 0.02, cx, cy + s * 0.4);
+  g.closePath();
+  g.fillStyle = color;
+  g.fill();
+}
+/** The board panel: flat navy, a hairline inner border, and (optionally) one thin accent line along the top edge. */
+function boardPanel(g, W, H, k, accent, dim) {
+  g.fillStyle = dim ? PANEL_DIM : PANEL;
+  g.fillRect(0, 0, W, H);
+  const lw = Math.max(1, 2 * k), inset = Math.max(3, 10 * k);
+  g.strokeStyle = dim ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.14)';
+  g.lineWidth = lw;
+  g.strokeRect(inset + lw / 2, inset + lw / 2, W - inset * 2 - lw, H - inset * 2 - lw);
+  if (accent) {
+    g.fillStyle = accent;
+    g.fillRect(0, 0, W, Math.max(2, Math.round(4 * k)));
+  }
+}
+/** The bottom info strip every board shares (screens.js draws its moving strip over exactly this band). */
+function infoStrip(g, W, H, h, k, text, color) {
+  g.fillStyle = STRIP;
+  g.fillRect(0, H - h, W, h);
+  g.fillStyle = 'rgba(255,255,255,0.08)';
+  g.fillRect(0, H - h, W, Math.max(1, Math.round(k)));
+  if (!text) return;
+  fit(g, text, W - 36 * k, Math.max(13, Math.round(22 * k)), 700, SANS, 11);
+  g.fillStyle = color;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText(text, W / 2, H - h / 2 + 1, W - 36 * k);
+}
+/** Footer row inside the panel: nickname in muted grey on the left, drawn heart and count in amber on the right, and an
+ *  optional note (the takeover line) in between. count null: no heart. */
+function footRow(g, W, y, k, nick, count, o = {}) {
+  const size = Math.max(12, Math.round(30 * k));
+  const x0 = 44 * k;
+  let right = W - 44 * k;
+  g.textBaseline = 'middle';
+  const hc = o.dim ? rgba(AMBER, 0.55) : AMBER;
+  if (count != null) {
+    const txt = Math.max(0, Math.floor(Number(count) || 0)).toLocaleString('en-US');
+    g.font = `800 ${size}px ${SANS}`;
+    g.textAlign = 'right';
+    g.fillStyle = hc;
+    g.fillText(txt, right, y);
+    const tw = g.measureText(txt).width;
+    heart(g, right - tw - size * 0.66, y, size * 0.92, hc);
+    right -= tw + size * 1.42;
+  }
+  let left = x0;
+  if (nick) {
     g.font = `700 ${size}px ${SANS}`;
-    g.textAlign = 'center';
-    g.textBaseline = 'top';
-    for (let x = size * 0.6; x < W; x += size * 1.05) {
-      const len = 6 + (r() * 22 | 0), y0 = (r() * 1.2 - 0.3) * H;
-      for (let i = 0; i < len; i++) {
-        const y = y0 + i * size * 1.08;
-        if (y < -size || y > H) continue;
-        const t = i / len;
-        g.fillStyle = i === len - 1 ? '#e8fff1' : `rgba(57,245,138,${0.12 + t * 0.75})`;
-        if (i === len - 1) { g.shadowColor = '#39f58a'; g.shadowBlur = 12 * k; }
-        g.fillText(glyphs[(r() * glyphs.length) | 0], x, y);
-        g.shadowBlur = 0;
-      }
+    g.textAlign = 'left';
+    g.fillStyle = o.dim ? DIM : MUTED;
+    const room = Math.max(1, (right - x0) * (o.note ? 0.5 : 1) - 8 * k);
+    g.fillText(nick, x0, y, room);
+    left = x0 + Math.min(room, g.measureText(nick).width) + 24 * k;
+  }
+  if (o.note && right - left > 40 * k) {
+    fit(g, o.note, right - left, Math.round(size * 0.8), 700, SANS, 11);
+    g.textAlign = 'right';
+    g.fillStyle = TEXT2;
+    g.fillText(o.note, right - 8 * k, y, right - left);
+  }
+}
+/** Two lines for a long main line: the space nearest the middle (within the middle half), else the middle glyph for
+ *  scripts without spaces. Latin text without a space is never cut mid-word. */
+function splitTwo(text) {
+  const gl = wishGlyphs(text);
+  if (gl.length < 4) return [text];
+  const mid = gl.length / 2;
+  let cut = -1, best = Infinity;
+  for (let i = 1; i < gl.length - 1; i++) {
+    if (gl[i] !== ' ' || i < gl.length * 0.25 || i > gl.length * 0.75) continue;
+    const d = Math.abs(i - mid);
+    if (d < best) { best = d; cut = i; }
+  }
+  if (cut < 0 && /[A-Za-z]/.test(text)) return [text];
+  const a = (cut > 0 ? gl.slice(0, cut) : gl.slice(0, Math.ceil(mid))).join('').trim();
+  const b = (cut > 0 ? gl.slice(cut + 1) : gl.slice(Math.ceil(mid))).join('').trim();
+  return a && b ? [a, b] : [text];
+}
+/** The board's text block, left-aligned in [top, bot]: the main line (one or two lines, whichever reads larger) in Pretendard
+ *  800 with the player's emoji in front, then line 2 and line 3 in 700. Everything is fitted and scaled to the room. */
+function textBlock(g, o) {
+  const { k, x0, maxW } = o;
+  const avail = Math.max(8, o.bot - o.top);
+  const ew = (s) => (o.emo ? s * 1.16 : 0);
+  const fitE = (t, cap, min) => {
+    let s = cap;
+    for (;;) {
+      g.font = `800 ${Math.round(s)}px ${SANS}`;
+      if (g.measureText(t).width + ew(s) <= maxW || s <= min) return s;
+      s = Math.max(min, s * 0.92);
     }
-    const gr = g.createRadialGradient(W / 2, H / 2, H * 0.2, W / 2, H / 2, W * 0.7);
-    gr.addColorStop(0, 'rgba(0,0,0,0)');
-    gr.addColorStop(1, 'rgba(0,0,0,0.65)');
-    g.fillStyle = gr;
-    g.fillRect(0, 0, W, H);
-  },
-  sunset_red(g, W, H, r, k) {
-    const hz = H * 0.66;
-    let gr = g.createLinearGradient(0, 0, 0, hz);
-    gr.addColorStop(0, '#16022c');
-    gr.addColorStop(0.45, '#6e0d48');
-    gr.addColorStop(0.8, '#ff3d3d');
-    gr.addColorStop(1, '#ffb347');
-    g.fillStyle = gr;
-    g.fillRect(0, 0, W, hz);
-    const sx = W * 0.56, sr = H * 0.2;
-    glowDot(g, sx, hz - sr * 0.4, sr * 2.6, '#ffcf5a', 0.5);
-    g.save();
-    g.beginPath();
-    g.arc(sx, hz - sr * 0.4, sr, 0, Math.PI * 2);
-    g.clip();
-    g.fillStyle = '#ffe6a0';
-    g.fillRect(sx - sr, hz - sr * 1.5, sr * 2, sr * 2.2);
-    g.globalCompositeOperation = 'destination-out';
-    for (let i = 0; i < 6; i++) g.fillRect(sx - sr, hz - sr * 0.5 + i * sr * 0.16, sr * 2, (2 + i * 2) * k);
-    g.restore();
-    seoulSkyline(g, W, hz + 2 * k, r, k, '#2a0420', 'rgba(255,211,120,0.8)');
-    gr = g.createLinearGradient(0, hz, 0, H);
-    gr.addColorStop(0, '#3a0a2a');
-    gr.addColorStop(1, '#0a0210');
-    g.fillStyle = gr;
-    g.fillRect(0, hz, W, H - hz);
-    for (let i = 0; i < 16; i++) {
-      const y = hz + 8 * k + i * (H - hz) / 17, w = sr * (1.8 - i * 0.09) * (0.7 + r() * 0.5);
-      g.fillStyle = `rgba(255,${170 + (r() * 60 | 0)},90,${0.75 - i * 0.04})`;
-      g.fillRect(sx - w / 2, y, w, 2.4 * k);
+  };
+  let s2 = o.l2 ? fit(g, o.l2, maxW, 62 * k, 700, SANS, 22 * k) : 0;
+  let s3 = o.l3 ? fit(g, o.l3, maxW, 46 * k, 700, SANS, 18 * k) : 0;
+  const LH = 1.14, G2 = 18 * k, G3 = 10 * k;
+  const rest = (s2 ? G2 + s2 * 1.25 : 0) + (s3 ? G3 + s3 * 1.25 : 0);
+  const eff = (n, s) => Math.min(s, Math.max(1, avail - rest) / (n * LH));
+  let main = o.l1 ? [o.l1] : [];
+  let s1 = o.l1 ? fitE(o.l1, 150 * k, 36 * k) : 0;
+  if (o.l1) {
+    const two = splitTwo(o.l1);
+    if (two.length === 2) {
+      const sa = Math.min(fitE(two[0], 120 * k, 36 * k), fit(g, two[1], maxW, 120 * k, 800, SANS, 36 * k));
+      if (eff(2, sa) > eff(1, s1) * 1.12) { main = two; s1 = sa; }
     }
-    g.strokeStyle = 'rgba(20,0,20,0.9)';
-    g.lineWidth = 4 * k;
-    for (let i = 0; i < 5; i++) {
-      const bx = W * (0.08 + i * 0.2);
-      g.beginPath();
-      g.arc(bx + W * 0.1, hz + 26 * k, W * 0.1, Math.PI, 0);
-      g.stroke();
+  }
+  const total = main.length * s1 * LH + rest;
+  const f = total > avail ? avail / total : 1;
+  s1 *= f; s2 *= f; s3 *= f;
+  let y = o.top + (avail - total * f) / 2;
+  g.textAlign = 'left';
+  g.textBaseline = 'middle';
+  main.forEach((t, i) => {
+    const yy = y + s1 * LH / 2;
+    let x = x0;
+    if (i === 0 && o.emo) {
+      g.font = `${Math.round(s1 * 0.9)}px ${EMOJI}`;
+      g.fillStyle = WHITE;
+      g.fillText(o.emo, x, yy);
+      x += ew(s1);
     }
-    g.fillStyle = 'rgba(20,0,20,0.9)';
-    g.fillRect(0, hz + 22 * k, W, 6 * k);
-  },
-  bday_party(g, W, H) { giftWash(g, W, H, '#ff4fa3', '#ffcf5a', '🎂'); },
-  cheer_exam(g, W, H) { giftWash(g, W, H, '#39f58a', '#ffcf5a', '🎉'); },
-  love_anniv(g, W, H) { giftWash(g, W, H, '#ff3d9a', '#b84dff', '💖'); },
-  vip_wreath(g, W, H) { giftWash(g, W, H, '#ff6a6a', '#ffd36a', '💐'); },
-};
+    g.font = `800 ${Math.round(s1)}px ${SANS}`;
+    g.fillStyle = o.c1;
+    g.fillText(t, x, yy, Math.max(1, x0 + maxW - x));
+    y += s1 * LH;
+  });
+  if (s2) {
+    y += G2 * f;
+    g.font = `700 ${Math.round(s2)}px ${SANS}`;
+    g.fillStyle = o.c2;
+    g.fillText(o.l2, x0, y + s2 * 0.625, maxW);
+    y += s2 * 1.25;
+  }
+  if (s3) {
+    y += G3 * f;
+    g.font = `700 ${Math.round(s3)}px ${SANS}`;
+    g.fillStyle = o.c3;
+    g.fillText(o.l3, x0, y + s3 * 0.625, maxW);
+  }
+}
 
-const TIER_TAG = { S: 'S-CLASS · MAIN TOWER', B: 'B-CLASS · SUB TOWER', C: 'C-CLASS · STREET WALL' };
 export function tierOf(slotId) {
   const s = String(slotId || '');
   return s.startsWith('MAIN') ? 'S' : s.startsWith('SUB') ? 'B' : 'C';
+}
+/** The small tier label a held board carries in its chip. */
+function tierName(slotId) {
+  const s = String(slotId || '');
+  if (s.startsWith('TOWER')) return 'ONE TIMES SQUARE';
+  if (s.startsWith('WALL')) return 'TIMES SQUARE';
+  if (s.startsWith('STREET')) return '메인거리';
+  if (s.startsWith('PLOT')) return '건물 전광판';
+  return { S: '메인 타워', B: '코너 타워', C: '거리 전광판' }[tierOf(s)];
 }
 
 // Operator-approved billboard photos, shared by the in-world screens and the editor preview.
@@ -470,303 +355,190 @@ export function paintBillboard(canvas, data = {}, opts = {}) {
   const W = canvas.width, H = canvas.height, k = W / 1024;
   const theme = THEMES[data.bg_theme] ? data.bg_theme : 'cyber_navy';
   const th = THEMES[theme];
-  const r = rng(hashStr(`${data.slot_id}|${theme}`));
   g.save();
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.clearRect(0, 0, W, H);
   const ink = /^#[0-9a-f]{3,8}$/i.test(String(data.text_color || '')) ? data.text_color : '#ffffff';
-  const ticker = opts.ticker ? 44 * k : 0;
-  const statsH = Math.max(28, 42 * k);
+  const ticker = opts.ticker ? Math.round(44 * k) : 0;
+  const statsH = Math.max(28, Math.round(46 * k));
   const body = H - ticker - statsH;
+  const vacant = !data.holder_id;
+  const raw1 = chars(data.line1, 20).trim();
+  // A held board whose light is out: screens.js marks that notice row with unlit (a player's own '불 꺼짐' text stays text).
+  const unlit = !vacant && !opts.photo && data.unlit === true;
+  // House notices speak in amber; a player's board wears its theme accent.
+  const accent = vacant ? AMBER : th.accent;
+  const views = Math.max(0, Math.floor(Number(data.views) || 0));
+  const cheers = Math.max(0, Math.floor(Number(data.cheers) || 0));
+  const pad = 44 * k, cs = Math.max(11, Math.round(26 * k));
 
   if (opts.photo) {
+    // Photo full-bleed, a scrim at the bottom for the footer, and one behind the caption where the owner put it.
     g.fillStyle = '#000';
     g.fillRect(0, 0, W, body);
     cover(g, opts.photo, 0, 0, W, body);
     const lines = [chars(data.line1, 20), chars(data.line2, 24), chars(data.line3, 28)].map(t => String(t || '').trim()).filter((t) => t && !/^To\.\s+/.test(t));
-    if (lines.length) {
-      const weights = [900, 800, 700];
-      const caps = [72 * k, 40 * k, 32 * k];
-      const mins = [26 * k, 18 * k, 15 * k];
-      const sizes = lines.map((t, i) => fit(g, t, W * 0.86, caps[Math.min(i, 2)], weights[Math.min(i, 2)], SANS, mins[Math.min(i, 2)]));
-      const gap = 8 * k;
-      const block = sizes.reduce((a, s) => a + s * 1.2, 0) + gap * (sizes.length - 1);
-      const anchor = Math.min(88, Math.max(12, Number(data.caption_y) || 72)) / 100;
-      let y = Math.max(14 * k, Math.min(body - block - 14 * k, body * anchor - block / 2));
-      g.fillStyle = 'rgba(2,3,14,0.62)';
-      g.fillRect(0, y - 12 * k, W, block + 24 * k);
-      lines.forEach((t, i) => {
-        const s = sizes[i];
-        neon(g, t, W / 2, y + s * 0.55, s, SANS, weights[Math.min(i, 2)], ink, { glow: 0.45, align: 'center' });
-        y += s * 1.2 + gap;
+    const weights = [800, 700, 700];
+    const caps = [72 * k, 40 * k, 32 * k];
+    const mins = [26 * k, 18 * k, 15 * k];
+    const sizes = lines.map((t, i) => fit(g, t, W * 0.86, caps[Math.min(i, 2)], weights[Math.min(i, 2)], SANS, mins[Math.min(i, 2)]));
+    const gap = 8 * k;
+    const block = sizes.reduce((a, s) => a + s * 1.2, 0) + gap * Math.max(0, sizes.length - 1);
+    const anchor = Math.min(88, Math.max(12, Number(data.caption_y) || 72)) / 100;
+    let y = Math.max(14 * k, Math.min(body - block - 14 * k, body * anchor - block / 2));
+    const low = body * 0.6, capTop = y - 70 * k, capBot = y + block + 70 * k;
+    const joined = lines.length > 0 && capBot > low;
+    const s0 = joined ? Math.max(0, Math.min(low, capTop)) : low;
+    let gr = g.createLinearGradient(0, s0, 0, body);
+    gr.addColorStop(0, 'rgba(6,9,20,0)');
+    gr.addColorStop(Math.min(0.9, Math.max(0.1, joined ? (y - s0) / Math.max(1, body - s0) : 0.5)), 'rgba(6,9,20,0.66)');
+    gr.addColorStop(1, 'rgba(6,9,20,0.86)');
+    g.fillStyle = gr;
+    g.fillRect(0, s0, W, body - s0);
+    if (lines.length && !joined) {
+      gr = g.createLinearGradient(0, capTop, 0, capBot);
+      gr.addColorStop(0, 'rgba(6,9,20,0)');
+      gr.addColorStop(0.3, 'rgba(6,9,20,0.7)');
+      gr.addColorStop(0.7, 'rgba(6,9,20,0.7)');
+      gr.addColorStop(1, 'rgba(6,9,20,0)');
+      g.fillStyle = gr;
+      g.fillRect(0, capTop, W, capBot - capTop);
+    }
+    const tones = [ink, mixHex(ink, TEXT2, 0.4), TEXT2];
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    lines.forEach((t, i) => {
+      const s = sizes[i];
+      g.font = `${weights[Math.min(i, 2)]} ${Math.round(s)}px ${SANS}`;
+      g.fillStyle = tones[Math.min(i, 2)];
+      g.fillText(t, W / 2, y + s * 0.6);
+      y += s * 1.2 + gap;
+    });
+  } else {
+    boardPanel(g, W, body, k, unlit ? '' : accent, unlit);
+  }
+
+  // Chips, top-left: state or tier, link, photo review, gift recipient. A streak sits top-right.
+  let chipY = 30 * k;
+  const badge = linkBadge(data.external_url);
+  if (!unlit) {
+    const mode = opts.photo ? 'quiet' : 'soft';
+    const maxC = W * 0.62;
+    const label = vacant
+      ? (auctionClosed(data.slot_id, nowMs()) ? '밤 9시에 10분만 열려요' : '빈 자리 · 지금 걸 수 있어요')
+      : data.holder_id === 'air' ? '전광판 장악' : th.title ? (th.sub ? `${th.title} · ${th.sub}` : th.title) : tierName(data.slot_id);
+    chipY += pill(g, pad, chipY, label, accent, cs, maxC, mode).h + 10 * k;
+    if (badge) chipY += pill(g, pad, chipY, badge.label, badge.color, cs, maxC, 'quiet').h + 10 * k;
+    if (opts.pending && !vacant) chipY += pill(g, pad, chipY, '사진 검수 중', AMBER, cs, maxC, mode).h + 10 * k;
+    const to = /^To\.\s*(.+)/.exec(raw1);
+    if (to) chipY += pill(g, pad, chipY, `To. ${chars(to[1], 12)}`, AMBER, Math.round(cs * 1.08), maxC, 'solid').h + 10 * k;
+    const days = Math.max(0, Math.floor(Number(data.lit_days) || 0));
+    if (!vacant && days > 0) pill(g, W - pad, 30 * k, `연속 ${days}일`, AMBER, cs, W * 0.3, mode, true);
+  }
+
+  if (!opts.photo) {
+    if (unlit) {
+      // The same panel, dimmed, with one small centred line.
+      const msg = [raw1, chars(data.line2, 24).trim()].filter(Boolean).join(' · ');
+      flatText(g, msg, W / 2, body * 0.46, W * 0.8, Math.round(40 * k), MUTED, 700, 14 * k);
+    } else {
+      let l1 = /^To\.\s+/.test(raw1) ? '' : raw1, l2 = chars(data.line2, 24).trim(), l3 = chars(data.line3, 28).trim();
+      if (!l1) { l1 = l2; l2 = l3; l3 = ''; }
+      const emo = vacant ? '' : chars(data.emoji || '🔥', 4) || '🔥';
+      textBlock(g, {
+        k, x0: pad, maxW: W - pad * 2, top: Math.max(chipY + 8 * k, 96 * k), bot: body - 86 * k, l1, l2, l3, emo,
+        c1: vacant ? WHITE : ink, c2: vacant ? TEXT2 : mixHex(ink, TEXT2, 0.5), c3: vacant ? AMBER : MUTED,
       });
     }
-  } else {
-    ART[theme](g, W, H, r, k);
-    const gr = g.createLinearGradient(W * 0.3, 0, W, 0);
-    gr.addColorStop(0, 'rgba(2,3,14,0)');
-    gr.addColorStop(0.22, 'rgba(2,3,14,0.42)');
-    gr.addColorStop(1, 'rgba(2,3,14,0.58)');
-    g.fillStyle = gr;
-    g.fillRect(0, 0, W, body);
-
-    const cx = W * 0.19, cy = body * 0.56, R = body * 0.25;
-    glowDot(g, cx, cy, R * 1.9, th.accent, 0.5);
-    g.beginPath();
-    g.arc(cx, cy, R, 0, Math.PI * 2);
-    g.fillStyle = 'rgba(5,6,22,0.78)';
-    g.fill();
-    g.save();
-    g.lineWidth = 6 * k;
-    g.strokeStyle = th.accent;
-    g.shadowColor = th.accent;
-    g.shadowBlur = 26 * k;
-    g.stroke();
-    g.setLineDash([10 * k, 12 * k]);
-    g.lineWidth = 3 * k;
-    g.strokeStyle = rgba(th.accent2, 0.85);
-    g.beginPath();
-    g.arc(cx, cy, R * 1.17, 0, Math.PI * 2);
-    g.stroke();
-    g.restore();
-    g.font = `${Math.round(R * 1.12)}px ${EMOJI}`;
-    g.textAlign = 'center';
-    g.textBaseline = 'middle';
-    g.fillText(chars(data.emoji || '🔥', 4) || '🔥', cx, cy + R * 0.07);
-
-    const tx = W * 0.385, maxW = W * 0.575;
-    const raw1 = chars(data.line1, 20).trim();
-    const l1 = /^To\.\s+/.test(raw1) ? '' : raw1, l2 = chars(data.line2, 24).trim(), l3 = chars(data.line3, 28).trim();
-    const s1 = l1 ? fit(g, l1, maxW, 146 * k, 900, SANS, 44 * k) : 0;
-    const s2 = l2 ? fit(g, l2, maxW, 75 * k, 800, SANS, 29 * k) : 0;
-    const s3 = l3 ? fit(g, l3, maxW, 57 * k, 700, SANS, 23 * k) : 0;
-    const gap = 20 * k;
-    const total = (s1 ? s1 * 1.02 : 0) + (s2 ? s2 * 1.15 + gap : 0) + (s3 ? s3 * 1.2 + gap : 0);
-    let y = body * 0.56 - total / 2;
-    if (s1) { neon(g, l1, tx, y + s1 * 0.5, s1, SANS, 900, ink, { glow: 1 }); y += s1 * 1.02 + gap; }
-    if (s2) { neon(g, l2, tx, y + s2 * 0.55, s2, SANS, 800, mixHex(ink, th.accent2, 0.35), { glow: 0.55 }); y += s2 * 1.15 + gap; }
-    if (s3) neon(g, l3, tx, y + s3 * 0.55, s3, SANS, 700, th.accent2, { glow: 0.45 });
-    if (th.title) {
-      g.textAlign = 'right';
-      g.textBaseline = 'alphabetic';
-      g.fillStyle = '#fff';
-      g.font = `700 ${Math.round(22 * k)}px ${SANS}`;
-      if (th.sub) g.fillText(th.sub, W - 40 * k, body - 52 * k);
-      g.fillStyle = th.accent;
-      g.font = `900 ${Math.round(34 * k)}px ${SANS}`;
-      g.fillText(th.title, W - 40 * k, body - 16 * k);
-    }
   }
 
-  const vacant = !data.holder_id;
-  const who = !vacant ? `👑 ${chars(data.holder_name || '익명', 14)}` : auctionClosed(data.slot_id, nowMs()) ? '🌙 밤 9시에 10분만 열려요' : '✨ 빈 자리 · 지금 걸 수 있어요';
-  g.font = `800 ${Math.round(34 * k)}px ${SANS}`;
-  const pw = g.measureText(who).width + 40 * k;
-  roundRect(g, 28 * k, 26 * k, pw, 46 * k, 23 * k);
-  g.fillStyle = 'rgba(4,5,18,0.72)';
-  g.fill();
-  g.lineWidth = 2 * k;
-  g.strokeStyle = rgba(th.accent, 0.9);
-  g.stroke();
-  g.fillStyle = vacant ? '#ffe9a8' : '#ffffff';
-  g.textAlign = 'left';
-  g.textBaseline = 'middle';
-  g.fillText(who, 48 * k, 50 * k);
-  const badge = linkBadge(data.external_url);
-  if (badge) {
-    g.font = `800 ${Math.round(22 * k)}px ${SANS}`;
-    const bw = g.measureText(badge.label).width + 36 * k;
-    const by = vacant ? 26 * k : 82 * k;
-    roundRect(g, 28 * k, by, bw, 36 * k, 18 * k);
-    g.fillStyle = 'rgba(4,5,18,0.78)';
-    g.fill();
-    g.strokeStyle = badge.color;
-    g.lineWidth = 2 * k;
-    g.stroke();
-    g.fillStyle = badge.color;
-    g.textAlign = 'left';
-    g.textBaseline = 'middle';
-    g.fillText(badge.label, 46 * k, by + 18 * k);
-  }
-  if (opts.pending && !vacant) {
-    const t = '📷 사진 검수 중';
-    g.font = `800 ${Math.round(22 * k)}px ${SANS}`;
-    roundRect(g, 28 * k, 82 * k, g.measureText(t).width + 34 * k, 38 * k, 19 * k);
-    g.fillStyle = 'rgba(4,5,18,0.72)';
-    g.fill();
-    g.strokeStyle = 'rgba(255,207,90,0.9)';
-    g.stroke();
-    g.fillStyle = '#ffcf5a';
-    g.fillText(t, 45 * k, 101 * k);
-  }
+  footRow(g, W, body - 44 * k, k, vacant ? '' : chars(data.holder_name || '익명', 14), vacant && !cheers ? null : cheers, {
+    dim: unlit,
+    note: data.taken_from ? `${chars(data.taken_from, 14)}님을 밀어내고 점령` : '',
+  });
 
-  const tag = String(data.slot_id).startsWith('TOWER') ? 'ONE TIMES SQUARE' : String(data.slot_id).startsWith('WALL') ? 'TIMES SQUARE' : TIER_TAG[tierOf(data.slot_id)];
-  g.font = `800 ${Math.round(20 * k)}px ${SANS}`;
-  g.textAlign = 'right';
-  g.fillStyle = rgba('#ffffff', 0.86);
-  g.fillText(tag, W - 70 * k, 50 * k);
-  g.fillStyle = '#ff2e4d';
-  g.shadowColor = '#ff2e4d';
-  g.shadowBlur = 12 * k;
-  g.beginPath();
-  g.arc(W - 48 * k, 50 * k, 8 * k, 0, Math.PI * 2);
-  g.fill();
-  g.shadowBlur = 0;
-  const days = Math.max(0, Math.floor(Number(data.lit_days) || 0));
-  if (!vacant && days > 0) {
-    const streak = `연속 ${days}일`;
-    g.font = `800 ${Math.round(22 * k)}px ${SANS}`;
-    g.textAlign = 'right';
-    g.textBaseline = 'middle';
-    const tw = g.measureText(streak).width + 28 * k;
-    const ty = 78 * k;
-    roundRect(g, W - 28 * k - tw, ty, tw, 36 * k, 18 * k);
-    g.fillStyle = 'rgba(4,5,18,0.78)';
-    g.fill();
-    g.strokeStyle = '#ffcf5a';
-    g.lineWidth = 2 * k;
-    g.stroke();
-    g.fillStyle = '#ffcf5a';
-    g.fillText(streak, W - 42 * k, ty + 18 * k);
-  }
-
-  g.strokeStyle = rgba(th.accent, 0.9);
-  g.lineWidth = 4 * k;
-  const b = 18 * k, L = 46 * k;
-  for (const [x, y2, dx, dy] of [[b, b, 1, 1], [W - b, b, -1, 1], [b, body - b, 1, -1], [W - b, body - b, -1, -1]]) {
-    g.beginPath();
-    g.moveTo(x, y2 + dy * L);
-    g.lineTo(x, y2);
-    g.lineTo(x + dx * L, y2);
-    g.stroke();
-  }
-
-  if (data.taken_from) {
-    const stamp = `⚔️ ${chars(data.taken_from, 14)}님을 밀어내고 점령!`;
-    g.font = `800 ${Math.round(26 * k)}px ${SANS}`;
-    g.textAlign = 'right';
-    g.textBaseline = 'alphabetic';
-    g.fillStyle = '#ffcf5a';
-    g.shadowColor = '#ffcf5a';
-    g.shadowBlur = 12 * k;
-    g.fillText(stamp, W - 28 * k, body - 22 * k);
-    g.shadowBlur = 0;
-  }
   if (opts.shield) {
-    const y = body * 0.88;
+    const y = Math.round(body * 0.86);
     const h = body - y;
-    g.fillStyle = 'rgba(40,0,0,0.82)';
+    g.fillStyle = 'rgba(36,8,16,0.94)';
     g.fillRect(0, y, W, h);
-    g.textAlign = 'center';
-    g.textBaseline = 'middle';
-    g.fillStyle = '#ff2a2a';
-    g.shadowColor = '#ff2a2a';
-    g.shadowBlur = 12 * k;
-    const text = String(opts.shield);
-    const size = fit(g, text, W * 0.92, 36 * k, 900, SANS, 18 * k);
-    g.font = `900 ${Math.round(size)}px ${SANS}`;
-    g.fillText(text, W / 2, y + h / 2);
-    g.shadowBlur = 0;
+    g.fillStyle = DANGER;
+    g.fillRect(0, y, W, Math.max(2, Math.round(3 * k)));
+    flatText(g, String(opts.shield), W / 2, y + h / 2 + 1.5 * k, W * 0.9, Math.round(34 * k), DANGER, 800, 16 * k);
   }
 
-  const to = /^To\.\s*(.+)/.exec(chars(data.line1, 20).trim());
-  if (to) {
-    const label = `To. ${chars(to[1], 12)}`;
-    g.font = `900 ${Math.round(28 * k)}px ${SANS}`;
-    const bw = g.measureText(label).width + 36 * k;
-    const by = badge ? 128 * k : 82 * k;
-    roundRect(g, 28 * k, by, bw, 40 * k, 20 * k);
-    g.fillStyle = 'rgba(255,207,90,0.92)';
-    g.fill();
-    g.fillStyle = '#2a1200';
-    g.textAlign = 'left';
-    g.textBaseline = 'middle';
-    g.fillText(label, 46 * k, by + 20 * k);
+  let label = `${cheers}명이 함께 응원 중`;
+  if (unlit) {
+    const price = chars(data.line3, 28).trim();
+    if (price) label = `${price} · ${label}`;
   }
-  const views = Math.max(0, Math.floor(Number(data.views) || 0));
-  const cheers = Math.max(0, Math.floor(Number(data.cheers) || 0));
-  g.fillStyle = '#05060f';
-  g.fillRect(0, H - statsH, W, statsH);
-  g.fillStyle = '#ffcf5a';
-  g.font = `800 ${Math.max(14, Math.round(22 * k))}px ${SANS}`;
-  g.textAlign = 'center';
-  g.textBaseline = 'middle';
-  let label = `🙏 ${cheers}명이 함께 응원 중`;
-  const taxi = ` · 🚕 ${views}`;
+  const taxi = ` · 택시 ${views}`;
+  g.font = `700 ${Math.max(13, Math.round(22 * k))}px ${SANS}`;
   if (views > 0 && g.measureText(label + taxi).width <= W - 36 * k) label += taxi;
-  g.fillText(label, W / 2, H - statsH / 2);
+  infoStrip(g, W, H, statsH, k, label, MUTED);
 
   if (ticker) {
-    g.fillStyle = '#030308';
+    g.fillStyle = STRIP;
     g.fillRect(0, body, W, ticker);
-    g.fillStyle = '#ff2e4d';
-    g.fillRect(0, body, 120 * k, ticker);
-    g.font = `900 ${Math.round(22 * k)}px ${SANS}`;
-    g.fillStyle = '#ffffff';
+    const ph = Math.max(14, ticker - 14 * k), pw = 88 * k;
+    roundRect(g, 16 * k, body + (ticker - ph) / 2, pw, ph, ph / 2);
+    g.fillStyle = MAGENTA;
+    g.fill();
+    g.font = `800 ${Math.max(10, Math.round(20 * k))}px ${SANS}`;
+    g.fillStyle = WHITE;
     g.textAlign = 'center';
-    g.fillText('LIVE', 60 * k, body + ticker / 2);
+    g.textBaseline = 'middle';
+    g.fillText('LIVE', 16 * k + pw / 2, body + ticker / 2 + 1);
     g.textAlign = 'left';
-    g.fillStyle = '#ffcf5a';
-    g.shadowColor = '#ffcf5a';
-    g.shadowBlur = 8 * k;
-    g.font = `800 ${Math.round(22 * k)}px ${SANS}`;
-    g.fillText(chars(opts.ticker, 60), 140 * k, body + ticker / 2 + 1);
-    g.shadowBlur = 0;
+    g.font = `700 ${Math.max(11, Math.round(22 * k))}px ${SANS}`;
+    g.fillText(chars(opts.ticker, 60), 124 * k, body + ticker / 2 + 1, W - 140 * k);
   }
   g.restore();
   return canvas;
 }
 
-/** Seamless LED ticker: text repeats an integer number of times across the canvas width. */
-export function paintTicker(canvas, text, color = '#ffcf5a') {
+/** Seamless LED ticker: text repeats an integer number of times across the canvas width. Flat type, no glow. */
+export function paintTicker(canvas, text, color = AMBER) {
   const g = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
   g.setTransform(1, 0, 0, 1, 0, 0);
-  g.fillStyle = '#020205';
+  g.fillStyle = STRIP;
   g.fillRect(0, 0, W, H);
-  const size = Math.round(H * 0.6);
+  const size = Math.round(H * 0.56);
   g.font = `800 ${size}px ${SANS}`;
   g.textBaseline = 'middle';
   g.textAlign = 'left';
-  const unit = `${text}      ✦      `;
+  const unit = `${text}      ·      `;
   const uw = Math.max(1, g.measureText(unit).width);
   const n = Math.max(1, Math.round(W / uw));
   g.save();
   g.scale(W / (n * uw), 1);
   g.fillStyle = color;
-  g.shadowColor = color;
-  g.shadowBlur = H * 0.22;
   for (let i = 0; i < n; i++) g.fillText(unit, i * uw, H * 0.54);
   g.restore();
-  g.fillStyle = 'rgba(0,0,0,0.35)';
-  for (let y = 0; y < H; y += 4) g.fillRect(0, y, W, 1);
   return canvas;
 }
 
+/** Plot sign: dark panel, one flat tube line in the sign's colour, clean type. color is the owner's choice. */
 export function paintNeonSign(canvas, text, color = '#00ffcc', sub = '') {
   const g = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height, k = H / 128;
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.clearRect(0, 0, W, H);
-  roundRect(g, 4 * k, 4 * k, W - 8 * k, H - 8 * k, 18 * k);
-  g.fillStyle = '#07070d';
+  roundRect(g, 4 * k, 4 * k, W - 8 * k, H - 8 * k, 16 * k);
+  g.fillStyle = PANEL;
   g.fill();
-  g.save();
-  g.lineWidth = 5 * k;
+  g.lineWidth = 3 * k;
   g.strokeStyle = color;
-  g.shadowColor = color;
-  g.shadowBlur = 18 * k;
-  roundRect(g, 12 * k, 12 * k, W - 24 * k, H - 24 * k, 12 * k);
+  roundRect(g, 12 * k, 12 * k, W - 24 * k, H - 24 * k, 10 * k);
   g.stroke();
-  g.restore();
   const t = chars(text || '분양 중', 14);
-  const s = fit(g, t, W - 60 * k, (sub ? 54 : 62) * k, 900, SANS, 18 * k);
-  neon(g, t, W / 2, sub ? H * 0.42 : H * 0.53, s, SANS, 900, color, { align: 'center', glow: 0.9 });
+  flatText(g, t, W / 2, sub ? H * 0.43 : H * 0.53, W - 64 * k, Math.round((sub ? 52 : 60) * k), color, 800, 18 * k);
   if (sub) {
-    g.font = `800 ${Math.round(20 * k)}px ${SANS}`;
+    g.font = `700 ${Math.round(20 * k)}px ${SANS}`;
     g.textAlign = 'center';
-    g.fillStyle = rgba('#ffffff', 0.8);
-    g.fillText(sub, W / 2, H * 0.78);
+    g.fillStyle = 'rgba(242,244,255,0.72)';
+    g.fillText(sub, W / 2, H * 0.76, W - 64 * k);
   }
   return canvas;
 }
@@ -933,252 +705,236 @@ export function paintLabel(canvas, text, color = '#ffffff', bg = null) {
   const W = canvas.width, H = canvas.height;
   g.clearRect(0, 0, W, H);
   if (bg) { g.fillStyle = bg; g.fillRect(0, 0, W, H); }
-  const s = fit(g, text, W * 0.92, H * 0.72, 900, SANS, 10);
-  neon(g, text, W / 2, H * 0.54, s, SANS, 900, color, { align: 'center', glow: 0.8, stroke: false });
+  flatText(g, text, W / 2, H * 0.54, W * 0.92, H * 0.68, color, 800, 10);
   return canvas;
 }
 
-/** Vertical blade sign with marquee bulbs. */
+/** Vertical blade sign: dark panel, flat caps in one sign hue, stacked letters. Any colour snaps to the sign family. */
 export function paintBlade(canvas, text, color) {
   const g = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height, k = W / 128;
-  g.fillStyle = '#0b0710';
+  const hue = signHue(color);
+  g.fillStyle = PANEL;
   g.fillRect(0, 0, W, H);
-  g.fillStyle = color;
-  g.fillRect(0, 0, W, 6 * k);
-  g.fillRect(0, H - 6 * k, W, 6 * k);
-  for (let y = 18 * k; y < H - 12 * k; y += 22 * k) {
-    for (const x of [12 * k, W - 12 * k]) {
-      glowDot(g, x, y, 9 * k, '#ffe7a3', 0.9);
-      g.fillStyle = '#fff8e0';
-      g.beginPath();
-      g.arc(x, y, 3.2 * k, 0, Math.PI * 2);
-      g.fill();
-    }
-  }
-  const letters = Array.from(text);
-  const step = (H - 60 * k) / letters.length;
-  const size = Math.min(84 * k, step * 0.86);
-  letters.forEach((ch, i) => neon(g, ch, W / 2, 30 * k + step * (i + 0.5), Math.round(size), SANS, 900, color, { align: 'center', glow: 0.9 }));
+  g.fillStyle = hue;
+  g.fillRect(0, 0, W, 8 * k);
+  g.fillRect(0, H - 8 * k, W, 8 * k);
+  g.strokeStyle = rgba(hue, 0.35);
+  g.lineWidth = 2 * k;
+  g.strokeRect(12 * k, 20 * k, W - 24 * k, H - 40 * k);
+  const letters = Array.from(String(text || ''));
+  const step = (H - 72 * k) / Math.max(1, letters.length);
+  const size = Math.round(Math.min(80 * k, step * 0.84));
+  g.font = `800 ${size}px ${SANS}`;
+  g.fillStyle = hue;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  letters.forEach((ch, i) => g.fillText(ch, W / 2, 36 * k + step * (i + 0.5), W - 32 * k));
   return canvas;
 }
 
-/** Fictional K-brand ad posters packed in a 4×2 atlas of 512px cells. */
+/** Fictional K-brand ad posters packed in a 4×4 atlas of square cells. One family: flat fills in magenta, cyan, amber,
+ *  white and the panel navy; simple drawn shapes; clean type. No real brand's mark, colours or slogan. */
 export function paintAdAtlas(canvas) {
   const g = canvas.getContext('2d');
   const C = canvas.width / 4;
   const k = C / 512;
   const cells = [];
+  const NAVY = PANEL, DEEP = '#0f1533', SHADE = '#05070f', BRASS = '#c4830c';
+  const box = (x, y, c) => { g.fillStyle = c; g.fillRect(x, y, C, C); };
+  const head = (t, x, y, size, c, w = 0.86) => flatText(g, t, x + C / 2, y, C * w, Math.round(size * k), c, 800);
+  const line = (t, x, y, size, c) => flatText(g, t, x + C / 2, y, C * 0.86, Math.round(size * k), c, 700);
+  const disc = (x, y, r, c) => { g.fillStyle = c; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill(); };
+  const oval = (x, y, rx, ry, c, a0 = 0, a1 = Math.PI * 2) => { g.fillStyle = c; g.beginPath(); g.ellipse(x, y, rx, ry, 0, a0, a1); g.fill(); };
+  const rr = (x, y, w, h, r, c) => { roundRect(g, x, y, w, h, r); g.fillStyle = c; g.fill(); };
+  const plane = (x, y, s, c) => {
+    g.save();
+    g.translate(x, y);
+    g.rotate(-0.22);
+    g.fillStyle = c;
+    g.beginPath(); g.ellipse(0, 0, s, s * 0.15, 0, 0, Math.PI * 2); g.fill();
+    for (const sy of [-1, 1]) {
+      g.beginPath(); g.moveTo(-s * 0.16, 0); g.lineTo(-s * 0.52, sy * s * 0.58); g.lineTo(-s * 0.26, sy * s * 0.58); g.lineTo(s * 0.2, 0); g.fill();
+      g.beginPath(); g.moveTo(-s * 0.8, 0); g.lineTo(-s * 1.0, sy * s * 0.3); g.lineTo(-s * 0.86, sy * s * 0.3); g.lineTo(-s * 0.66, 0); g.fill();
+    }
+    g.restore();
+  };
   const ads = [
-    (x, y) => {
-      let gr = g.createLinearGradient(x, y, x, y + C);
-      gr.addColorStop(0, '#e3001b'); gr.addColorStop(1, '#7a000e');
-      g.fillStyle = gr; g.fillRect(x, y, C, C);
-      for (let i = 0; i < 9; i++) { g.strokeStyle = 'rgba(255,255,255,0.12)'; g.lineWidth = 10 * k; g.beginPath(); g.arc(x + C * 0.5, y + C * 1.3, C * (0.4 + i * 0.12), Math.PI * 1.1, Math.PI * 1.9); g.stroke(); }
-      roundRect(g, x + C * 0.62, y + C * 0.3, C * 0.24, C * 0.5, 20 * k);
-      gr = g.createLinearGradient(x + C * 0.62, 0, x + C * 0.86, 0);
-      gr.addColorStop(0, '#9a0010'); gr.addColorStop(0.35, '#ff6b74'); gr.addColorStop(1, '#8a000e');
-      g.fillStyle = gr; g.fill();
-      g.fillStyle = '#ffffff'; g.font = `900 ${Math.round(40 * k)}px ${SANS}`; g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.save(); g.translate(x + C * 0.74, y + C * 0.55); g.rotate(-Math.PI / 2); g.fillText('SEOUL', 0, 0); g.restore();
-      neon(g, 'SEOUL', x + C * 0.32, y + C * 0.33, Math.round(84 * k), SANS, 900, '#ffffff', { align: 'center', glow: 0.3 });
-      neon(g, 'COLA', x + C * 0.32, y + C * 0.5, Math.round(84 * k), SANS, 900, '#ffffff', { align: 'center', glow: 0.3 });
-      g.font = `800 ${Math.round(30 * k)}px ${SANS}`; g.fillStyle = '#ffe6a0'; g.fillText('Taste the K-Wave', x + C * 0.32, y + C * 0.68);
-      g.font = `700 ${Math.round(26 * k)}px ${SANS}`; g.fillStyle = '#ffffff'; g.fillText('짜릿한 서울의 맛', x + C * 0.5, y + C * 0.9);
+    (x, y) => { // 서울 소다
+      box(x, y, MAGENTA);
+      for (const [u, v, r] of [[0.18, 0.24, 0.06], [0.3, 0.13, 0.035], [0.8, 0.3, 0.05], [0.86, 0.15, 0.03], [0.7, 0.12, 0.022]]) disc(x + C * u, y + C * v, C * r, 'rgba(255,255,255,0.24)');
+      rr(x + C * 0.38, y + C * 0.24, C * 0.24, C * 0.4, C * 0.05, NAVY);
+      g.fillStyle = WHITE; g.fillRect(x + C * 0.38, y + C * 0.38, C * 0.24, C * 0.08);
+      head('서울 소다', x, y + C * 0.76, 92, NAVY);
+      line('SEOUL SODA · 톡 쏘는 밤', x, y + C * 0.9, 30, NAVY);
     },
-    (x, y) => {
-      const gr = g.createLinearGradient(x, y, x, y + C);
-      gr.addColorStop(0, '#0b3d91'); gr.addColorStop(0.6, '#3fa9f5'); gr.addColorStop(1, '#bfe6ff');
-      g.fillStyle = gr; g.fillRect(x, y, C, C);
-      g.fillStyle = '#ffffff';
-      g.save(); g.translate(x + C * 0.55, y + C * 0.42); g.rotate(-0.25);
-      g.beginPath(); g.ellipse(0, 0, C * 0.3, C * 0.045, 0, 0, Math.PI * 2); g.fill();
-      g.beginPath(); g.moveTo(-C * 0.05, 0); g.lineTo(-C * 0.16, -C * 0.17); g.lineTo(-C * 0.08, -C * 0.17); g.lineTo(C * 0.06, 0); g.fill();
-      g.beginPath(); g.moveTo(-C * 0.05, 0); g.lineTo(-C * 0.16, C * 0.17); g.lineTo(-C * 0.08, C * 0.17); g.lineTo(C * 0.06, 0); g.fill();
-      g.beginPath(); g.moveTo(-C * 0.24, 0); g.lineTo(-C * 0.3, -C * 0.09); g.lineTo(-C * 0.26, -C * 0.09); g.lineTo(-C * 0.2, 0); g.fill();
-      g.restore();
-      neon(g, 'HALLYU AIR', x + C * 0.5, y + C * 0.72, Math.round(64 * k), SANS, 900, '#ffffff', { align: 'center', glow: 0.2 });
-      g.font = `800 ${Math.round(30 * k)}px ${SANS}`; g.fillStyle = '#0b2a5e'; g.textAlign = 'center';
-      g.fillText('SEOUL ⇄ NEW YORK  14h', x + C * 0.5, y + C * 0.86);
+    (x, y) => { // HALLYU AIR
+      box(x, y, DEEP);
+      g.strokeStyle = rgba(CYAN, 0.5); g.lineWidth = 3 * k; g.setLineDash([12 * k, 12 * k]);
+      g.beginPath(); g.moveTo(x + C * 0.12, y + C * 0.56); g.quadraticCurveTo(x + C * 0.5, y + C * 0.1, x + C * 0.88, y + C * 0.56); g.stroke();
+      g.setLineDash([]);
+      plane(x + C * 0.5, y + C * 0.33, C * 0.17, CYAN);
+      head('HALLYU AIR', x, y + C * 0.72, 76, WHITE);
+      line('서울 ⇄ 뉴욕 14시간', x, y + C * 0.86, 30, CYAN);
     },
-    (x, y) => {
-      const gr = g.createLinearGradient(x, y, x + C, y + C);
-      gr.addColorStop(0, '#ffd6e8'); gr.addColorStop(1, '#ff8fc0');
-      g.fillStyle = gr; g.fillRect(x, y, C, C);
-      for (let i = 0; i < 3; i++) {
-        const lx = x + C * (0.28 + i * 0.22), h = C * (0.34 + (i % 2) * 0.08);
-        roundRect(g, lx - C * 0.06, y + C * 0.62 - h, C * 0.12, h, 10 * k);
-        g.fillStyle = ['#c2185b', '#ffffff', '#8e24aa'][i]; g.fill();
-        g.fillStyle = '#d4af37'; g.fillRect(lx - C * 0.065, y + C * 0.62 - h * 0.45, C * 0.13, C * 0.04);
+    (x, y) => { // 비빔 뷰티
+      box(x, y, '#f2f4ff');
+      [MAGENTA, NAVY, AMBER].forEach((c, i) => {
+        const bx = x + C * (0.28 + i * 0.22), h = C * (0.34 + (i % 2) * 0.08);
+        rr(bx - C * 0.06, y + C * 0.6 - h, C * 0.12, h, 10 * k, c);
+        g.fillStyle = NAVY; g.fillRect(bx - C * 0.035, y + C * 0.6 - h - C * 0.06, C * 0.07, C * 0.06);
+      });
+      head('GLASS SKIN', x, y + C * 0.75, 70, MAGENTA);
+      line('비빔 뷰티 · K-BEAUTY', x, y + C * 0.88, 28, NAVY);
+    },
+    (x, y) => { // NEON TIGERS
+      box(x, y, DEEP);
+      [MAGENTA, CYAN, AMBER, CYAN, MAGENTA].forEach((c, i) => {
+        const px = x + C * (0.18 + i * 0.16), py = y + C * 0.6;
+        disc(px, py - C * 0.24, C * 0.07, c);
+        g.fillStyle = SHADE;
+        g.beginPath(); g.arc(px, py - C * 0.25, C * 0.04, 0, Math.PI * 2); g.fill();
+        g.beginPath(); g.moveTo(px - C * 0.065, py + C * 0.05); g.lineTo(px - C * 0.045, py - C * 0.19); g.lineTo(px + C * 0.045, py - C * 0.19); g.lineTo(px + C * 0.065, py + C * 0.05); g.fill();
+      });
+      head('NEON TIGERS', x, y + C * 0.79, 72, WHITE);
+      line('WORLD TOUR 2026 · 네온타이거즈', x, y + C * 0.91, 26, AMBER);
+    },
+    (x, y) => { // 떡볶이 타임
+      box(x, y, AMBER);
+      oval(x + C * 0.5, y + C * 0.54, C * 0.36, C * 0.19, NAVY);
+      oval(x + C * 0.5, y + C * 0.52, C * 0.3, C * 0.14, MAGENTA);
+      for (let i = 0; i < 10; i++) {
+        const a = i * 0.95, r = C * (0.04 + (i % 4) * 0.05);
+        g.save(); g.translate(x + C * 0.5 + Math.cos(a) * r * 1.4, y + C * 0.52 + Math.sin(a) * r * 0.5); g.rotate(a);
+        rr(-C * 0.06, -C * 0.02, C * 0.12, C * 0.04, C * 0.02, WHITE); g.restore();
       }
-      neon(g, 'GLASS SKIN', x + C * 0.5, y + C * 0.76, Math.round(60 * k), SANS, 900, '#ffffff', { align: 'center', glow: 0.4 });
-      g.font = `800 ${Math.round(28 * k)}px ${SANS}`; g.fillStyle = '#7a0d45'; g.textAlign = 'center';
-      g.fillText('BIBIM BEAUTY · 비빔 뷰티', x + C * 0.5, y + C * 0.9);
-      g.font = `900 ${Math.round(34 * k)}px ${SANS}`; g.fillText('K-BEAUTY', x + C * 0.5, y + C * 0.12);
+      head('떡볶이 타임', x, y + C * 0.18, 80, NAVY);
+      line('매운맛 챌린지 · TTEOKBOKKI', x, y + C * 0.86, 28, NAVY);
     },
-    (x, y) => {
-      let gr = g.createLinearGradient(x, y, x, y + C);
-      gr.addColorStop(0, '#05010f'); gr.addColorStop(1, '#3a0a5e');
-      g.fillStyle = gr; g.fillRect(x, y, C, C);
-      for (let i = 0; i < 5; i++) {
-        const px = x + C * (0.18 + i * 0.16), py = y + C * 0.62;
-        glowDot(g, px, py - C * 0.2, C * 0.16, ['#ff3d9a', '#3fe6ff', '#ffcf5a', '#b84dff', '#39f58a'][i], 0.45);
-        g.fillStyle = '#05010f';
-        g.beginPath(); g.arc(px, py - C * 0.25, C * 0.045, 0, Math.PI * 2); g.fill();
-        g.beginPath(); g.moveTo(px - C * 0.07, py + C * 0.05); g.lineTo(px - C * 0.05, py - C * 0.19); g.lineTo(px + C * 0.05, py - C * 0.19); g.lineTo(px + C * 0.07, py + C * 0.05); g.fill();
-      }
-      gr = g.createLinearGradient(0, y + C * 0.72, 0, y + C * 0.84);
-      gr.addColorStop(0, '#ffffff'); gr.addColorStop(0.5, '#c0c8ff'); gr.addColorStop(1, '#ffffff');
-      g.font = `900 ${Math.round(70 * k)}px ${SANS}`; g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.shadowColor = '#b84dff'; g.shadowBlur = 20 * k; g.fillStyle = gr;
-      g.fillText('NEON TIGERS', x + C * 0.5, y + C * 0.78); g.shadowBlur = 0;
-      g.font = `800 ${Math.round(28 * k)}px ${SANS}`; g.fillStyle = '#ffcf5a';
-      g.fillText('WORLD TOUR 2026 · MSG', x + C * 0.5, y + C * 0.9);
-      g.fillText('네온타이거즈', x + C * 0.5, y + C * 0.1);
+    (x, y) => { // 달빛 카페
+      box(x, y, DEEP);
+      disc(x + C * 0.7, y + C * 0.26, C * 0.11, AMBER);
+      disc(x + C * 0.65, y + C * 0.22, C * 0.1, DEEP);
+      rr(x + C * 0.2, y + C * 0.34, C * 0.18, C * 0.12, C * 0.03, WHITE);
+      g.strokeStyle = WHITE; g.lineWidth = 5 * k;
+      g.beginPath(); g.arc(x + C * 0.39, y + C * 0.4, C * 0.035, -Math.PI / 2, Math.PI / 2); g.stroke();
+      head('달빛 카페', x, y + C * 0.64, 84, AMBER);
+      line('K-DRAMA · NOW STREAMING', x, y + C * 0.79, 26, CYAN);
     },
-    (x, y) => {
-      g.fillStyle = '#ffb000'; g.fillRect(x, y, C, C);
-      g.fillStyle = '#ff5a00'; g.beginPath(); g.ellipse(x + C * 0.5, y + C * 0.52, C * 0.36, C * 0.2, 0, 0, Math.PI * 2); g.fill();
-      g.fillStyle = '#e8250c'; g.beginPath(); g.ellipse(x + C * 0.5, y + C * 0.5, C * 0.32, C * 0.16, 0, 0, Math.PI * 2); g.fill();
-      for (let i = 0; i < 14; i++) {
-        const a = i * 0.9, rr = C * (0.05 + (i % 4) * 0.06);
-        g.save(); g.translate(x + C * 0.5 + Math.cos(a) * rr * 1.5, y + C * 0.5 + Math.sin(a) * rr * 0.6); g.rotate(a);
-        roundRect(g, -C * 0.07, -C * 0.022, C * 0.14, C * 0.044, C * 0.02); g.fillStyle = '#ff7b5c'; g.fill(); g.restore();
-      }
-      neon(g, '떡볶이 타임', x + C * 0.5, y + C * 0.17, Math.round(70 * k), SANS, 900, '#ffffff', { align: 'center', glow: 0.3 });
-      g.font = `900 ${Math.round(32 * k)}px ${SANS}`; g.fillStyle = '#5a1000'; g.textAlign = 'center';
-      g.fillText('TTEOKBOKKI TIME 🔥 매운맛 챌린지', x + C * 0.5, y + C * 0.85);
-    },
-    (x, y) => {
-      const gr = g.createLinearGradient(x, y, x, y + C);
-      gr.addColorStop(0, '#020a24'); gr.addColorStop(1, '#14306e');
-      g.fillStyle = gr; g.fillRect(x, y, C, C);
-      glowDot(g, x + C * 0.7, y + C * 0.25, C * 0.25, '#fff3c4', 0.5);
-      g.fillStyle = '#fff3c4'; g.beginPath(); g.arc(x + C * 0.7, y + C * 0.25, C * 0.1, 0, Math.PI * 2); g.fill();
-      g.fillStyle = '#020a24'; g.beginPath(); g.arc(x + C * 0.66, y + C * 0.22, C * 0.09, 0, Math.PI * 2); g.fill();
-      g.fillStyle = '#01040f';
-      g.beginPath(); g.arc(x + C * 0.38, y + C * 0.5, C * 0.06, 0, Math.PI * 2); g.fill();
-      g.fillRect(x + C * 0.32, y + C * 0.56, C * 0.12, C * 0.2);
-      g.beginPath(); g.arc(x + C * 0.55, y + C * 0.52, C * 0.055, 0, Math.PI * 2); g.fill();
-      g.fillRect(x + C * 0.5, y + C * 0.575, C * 0.11, C * 0.18);
-      neon(g, '달빛 카페', x + C * 0.5, y + C * 0.83, Math.round(64 * k), SANS, 900, '#ffe7a3', { align: 'center', glow: 0.5 });
-      g.font = `800 ${Math.round(24 * k)}px ${SANS}`; g.fillStyle = '#9fc4ff'; g.textAlign = 'center';
-      g.fillText('K-DRAMA · NOW STREAMING', x + C * 0.5, y + C * 0.94);
-    },
-    (x, y) => {
-      const gr = g.createLinearGradient(x, y, x + C, y);
-      gr.addColorStop(0, '#003b1f'); gr.addColorStop(1, '#00843d');
-      g.fillStyle = gr; g.fillRect(x, y, C, C);
+    (x, y) => { // 짠! CHEERS
+      box(x, y, CYAN);
       for (let i = 0; i < 2; i++) {
-        const bx = x + C * (0.32 + i * 0.32), by = y + C * 0.2;
-        roundRect(g, bx - C * 0.07, by + C * 0.14, C * 0.14, C * 0.42, 12 * k);
-        g.fillStyle = 'rgba(120,255,170,0.75)'; g.fill();
-        g.fillStyle = 'rgba(120,255,170,0.75)'; g.fillRect(bx - C * 0.03, by, C * 0.06, C * 0.16);
-        g.fillStyle = '#ffffff'; g.fillRect(bx - C * 0.07, by + C * 0.32, C * 0.14, C * 0.1);
-        g.fillStyle = '#00843d'; g.font = `900 ${Math.round(22 * k)}px ${SANS}`; g.textAlign = 'center'; g.textBaseline = 'middle';
-        g.fillText('소주', bx, by + C * 0.37);
+        const bx = x + C * (0.36 + i * 0.28), by = y + C * 0.14;
+        g.fillStyle = NAVY; g.fillRect(bx - C * 0.03, by, C * 0.06, C * 0.14);
+        rr(bx - C * 0.07, by + C * 0.12, C * 0.14, C * 0.42, 12 * k, NAVY);
+        g.fillStyle = WHITE; g.fillRect(bx - C * 0.07, by + C * 0.3, C * 0.14, C * 0.1);
+        flatText(g, '소주', bx, by + C * 0.35, C * 0.12, Math.round(22 * k), NAVY, 800);
       }
-      neon(g, '짠! CHEERS', x + C * 0.5, y + C * 0.8, Math.round(64 * k), SANS, 900, '#ffffff', { align: 'center', glow: 0.3 });
-      g.font = `800 ${Math.round(26 * k)}px ${SANS}`; g.fillStyle = '#c6ffd9'; g.fillText('SOJU NIGHT · 한강 감성', x + C * 0.5, y + C * 0.92);
+      head('짠! CHEERS', x, y + C * 0.8, 78, NAVY);
+      line('SOJU NIGHT · 한강 감성', x, y + C * 0.91, 26, NAVY);
     },
-    (x, y) => {
-      const gr = g.createRadialGradient(x + C * 0.5, y + C * 0.45, 10, x + C * 0.5, y + C * 0.45, C * 0.7);
-      gr.addColorStop(0, '#3a2a06'); gr.addColorStop(1, '#0a0702');
-      g.fillStyle = gr; g.fillRect(x, y, C, C);
+    (x, y) => { // 한강은행
+      box(x, y, DEEP);
       for (let s = 0; s < 3; s++) {
         for (let i = 0; i < 5 - s; i++) {
-          const cx = x + C * (0.3 + s * 0.2), cy = y + C * (0.6 - i * 0.065);
-          g.fillStyle = '#b8860b'; g.beginPath(); g.ellipse(cx, cy + 4 * k, C * 0.09, C * 0.03, 0, 0, Math.PI * 2); g.fill();
-          g.fillStyle = '#ffd56a'; g.beginPath(); g.ellipse(cx, cy, C * 0.09, C * 0.03, 0, 0, Math.PI * 2); g.fill();
+          const cx = x + C * (0.3 + s * 0.2), cy = y + C * (0.62 - i * 0.065);
+          oval(cx, cy + 4 * k, C * 0.09, C * 0.03, BRASS);
+          oval(cx, cy, C * 0.09, C * 0.03, AMBER);
         }
       }
-      neon(g, '한강은행', x + C * 0.5, y + C * 0.18, Math.round(70 * k), SANS, 900, '#ffcf5a', { align: 'center', glow: 0.6 });
-      g.font = `800 ${Math.round(28 * k)}px ${SANS}`; g.fillStyle = '#fff3c4'; g.textAlign = 'center';
-      g.fillText('HAN RIVER BANK', x + C * 0.5, y + C * 0.8);
-      g.fillText('코인 모아 전광판 점령!', x + C * 0.5, y + C * 0.9);
+      head('한강은행', x, y + C * 0.18, 84, AMBER);
+      line('HAN RIVER BANK', x, y + C * 0.79, 28, WHITE);
+      line('코인 모아 전광판 점령!', x, y + C * 0.9, 26, TEXT2);
     },
-    (x, y) => {
-      g.fillStyle = '#c8102e'; g.fillRect(x, y, C, C);
-      for (let i = 0; i < 12; i++) { g.fillStyle = i % 2 ? '#a50d26' : '#c8102e'; g.beginPath(); g.moveTo(x + C / 2, y + C * 0.55); g.arc(x + C / 2, y + C * 0.55, C, (i / 12) * Math.PI * 2, ((i + 1) / 12) * Math.PI * 2); g.fill(); }
-      g.fillStyle = '#ffffff'; g.beginPath(); g.moveTo(x + C * 0.3, y + C * 0.35); g.lineTo(x + C * 0.7, y + C * 0.35); g.lineTo(x + C * 0.64, y + C * 0.75); g.lineTo(x + C * 0.36, y + C * 0.75); g.closePath(); g.fill();
-      g.fillStyle = '#ffcf5a'; g.fillRect(x + C * 0.3, y + C * 0.33, C * 0.4, C * 0.05);
-      g.fillStyle = '#c8102e'; g.font = `900 ${Math.round(46 * k)}px ${SANS}`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('辛라면', x + C * 0.5, y + C * 0.55);
-      for (let i = 0; i < 3; i++) { g.strokeStyle = 'rgba(255,255,255,0.7)'; g.lineWidth = 6 * k; g.beginPath(); g.moveTo(x + C * (0.42 + i * 0.08), y + C * 0.3); g.bezierCurveTo(x + C * (0.36 + i * 0.08), y + C * 0.22, x + C * (0.48 + i * 0.08), y + C * 0.18, x + C * (0.42 + i * 0.08), y + C * 0.1); g.stroke(); }
-      neon(g, 'MEGA RAMEN', x + C * 0.5, y + C * 0.86, Math.round(58 * k), SANS, 900, '#ffffff', { align: 'center', glow: 0.3 });
-    },
-    (x, y) => {
-      const gr = g.createLinearGradient(x, y, x + C, y + C);
-      gr.addColorStop(0, '#ffe3ec'); gr.addColorStop(0.5, '#e8d7ff'); gr.addColorStop(1, '#c9f0ff');
-      g.fillStyle = gr; g.fillRect(x, y, C, C);
-      g.fillStyle = '#ff5c8a'; g.beginPath(); g.moveTo(x + C * 0.5, y + C * 0.2); g.quadraticCurveTo(x + C * 0.2, y + C * 0.55, x + C * 0.26, y + C * 0.78); g.lineTo(x + C * 0.74, y + C * 0.78); g.quadraticCurveTo(x + C * 0.8, y + C * 0.55, x + C * 0.5, y + C * 0.2); g.fill();
-      g.fillStyle = '#3b6fd8'; g.fillRect(x + C * 0.38, y + C * 0.24, C * 0.24, C * 0.16);
-      g.fillStyle = '#ffffff'; g.beginPath(); g.moveTo(x + C * 0.42, y + C * 0.24); g.lineTo(x + C * 0.5, y + C * 0.34); g.lineTo(x + C * 0.58, y + C * 0.24); g.fill();
-      g.fillStyle = '#3a1d4a'; g.font = `900 ${Math.round(56 * k)}px ${SANS}`; g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.fillText('한복 스트리트', x + C * 0.5, y + C * 0.87);
-      g.font = `800 ${Math.round(24 * k)}px ${SANS}`; g.fillText('HANBOK STREET · NEW SEASON', x + C * 0.5, y + C * 0.1);
-    },
-    (x, y) => {
-      g.fillStyle = '#05030f'; g.fillRect(x, y, C, C);
-      for (let i = 0; i < 14; i++) { g.strokeStyle = i % 2 ? 'rgba(63,230,255,0.5)' : 'rgba(184,77,255,0.5)'; g.lineWidth = 2 * k; g.beginPath(); g.moveTo(x, y + C * (0.1 + i * 0.065)); g.lineTo(x + C, y + C * (0.05 + i * 0.07)); g.stroke(); }
-      g.fillStyle = '#ffcf5a';
-      g.beginPath(); g.moveTo(x + C * 0.38, y + C * 0.22); g.lineTo(x + C * 0.62, y + C * 0.22); g.quadraticCurveTo(x + C * 0.62, y + C * 0.5, x + C * 0.5, y + C * 0.52); g.quadraticCurveTo(x + C * 0.38, y + C * 0.5, x + C * 0.38, y + C * 0.22); g.fill();
-      g.fillRect(x + C * 0.47, y + C * 0.52, C * 0.06, C * 0.1); g.fillRect(x + C * 0.4, y + C * 0.62, C * 0.2, C * 0.05);
-      neon(g, 'K-ESPORTS', x + C * 0.5, y + C * 0.76, Math.round(64 * k), SANS, 900, '#3fe6ff', { align: 'center', glow: 0.9 });
-      g.font = `800 ${Math.round(26 * k)}px ${SANS}`; g.fillStyle = '#ffffff'; g.textAlign = 'center';
-      g.fillText('월드 결승전 · 오늘 밤 9시', x + C * 0.5, y + C * 0.89);
-    },
-    (x, y) => {
-      g.fillStyle = '#1e3a2a'; g.fillRect(x, y, C, C);
-      g.fillStyle = '#2b2b2b'; g.beginPath(); g.ellipse(x + C * 0.5, y + C * 0.5, C * 0.36, C * 0.2, 0, 0, Math.PI); g.fill();
-      g.fillStyle = '#f2efe6'; g.beginPath(); g.ellipse(x + C * 0.5, y + C * 0.5, C * 0.36, C * 0.12, 0, 0, Math.PI * 2); g.fill();
-      const tops = ['#e8590c', '#2f9e44', '#f08c00', '#c92a2a', '#7950f2', '#ffd43b'];
-      tops.forEach((c, i) => { const a = (i / tops.length) * Math.PI * 2; g.fillStyle = c; g.beginPath(); g.ellipse(x + C * 0.5 + Math.cos(a) * C * 0.2, y + C * 0.5 + Math.sin(a) * C * 0.065, C * 0.08, C * 0.035, 0, 0, Math.PI * 2); g.fill(); });
-      g.fillStyle = '#ffd43b'; g.beginPath(); g.ellipse(x + C * 0.5, y + C * 0.49, C * 0.05, C * 0.03, 0, 0, Math.PI * 2); g.fill();
-      neon(g, '비빔밥 익스프레스', x + C * 0.5, y + C * 0.2, Math.round(50 * k), SANS, 900, '#ffffff', { align: 'center', glow: 0.3 });
-      g.font = `800 ${Math.round(28 * k)}px ${SANS}`; g.fillStyle = '#b2f2bb'; g.textAlign = 'center'; g.fillText('BIBIMBAP EXPRESS · 5분 배달', x + C * 0.5, y + C * 0.84);
-    },
-    (x, y) => {
-      g.fillStyle = '#ffffff'; g.fillRect(x, y, C, C);
-      g.fillStyle = '#00a651'; g.fillRect(x, y + C * 0.62, C, C * 0.1);
-      g.fillStyle = '#0072bc'; g.fillRect(x, y + C * 0.72, C, C * 0.1);
-      g.fillStyle = '#ff6a00'; g.fillRect(x, y + C * 0.82, C, C * 0.06);
-      neon(g, 'SEOUL', x + C * 0.5, y + C * 0.24, Math.round(86 * k), SANS, 900, '#0072bc', { align: 'center', glow: 0, stroke: false, grad: false });
-      neon(g, 'MART 24', x + C * 0.5, y + C * 0.42, Math.round(80 * k), SANS, 900, '#00a651', { align: 'center', glow: 0, stroke: false, grad: false });
-      g.font = `900 ${Math.round(28 * k)}px ${SANS}`; g.fillStyle = '#222'; g.textAlign = 'center'; g.fillText('삼각김밥 1+1 · 바나나우유', x + C * 0.5, y + C * 0.55);
-    },
-    (x, y) => {
-      g.fillStyle = '#0a0014'; g.fillRect(x, y, C, C);
-      for (let i = 0; i < 16; i++) {
-        const hgt = C * (0.12 + Math.abs(Math.sin(i * 1.7)) * 0.38);
-        const gr = g.createLinearGradient(0, y + C * 0.72 - hgt, 0, y + C * 0.72);
-        gr.addColorStop(0, '#ff3d9a'); gr.addColorStop(1, '#3fe6ff');
-        g.fillStyle = gr; g.fillRect(x + C * (0.08 + i * 0.053), y + C * 0.72 - hgt, C * 0.038, hgt);
+    (x, y) => { // 한밤 라면
+      box(x, y, MAGENTA);
+      g.strokeStyle = 'rgba(255,255,255,0.8)'; g.lineWidth = 6 * k; g.lineCap = 'round';
+      for (let i = 0; i < 3; i++) {
+        const sx = x + C * (0.4 + i * 0.1);
+        g.beginPath(); g.moveTo(sx, y + C * 0.36); g.bezierCurveTo(sx - C * 0.05, y + C * 0.28, sx + C * 0.05, y + C * 0.22, sx, y + C * 0.12); g.stroke();
       }
-      neon(g, 'NEON BEATS', x + C * 0.5, y + C * 0.16, Math.round(64 * k), SANS, 900, '#ff7ac0', { align: 'center', glow: 0.9 });
-      g.font = `900 ${Math.round(40 * k)}px ${SANS}`; g.fillStyle = '#ffffff'; g.textAlign = 'center'; g.fillText('104.7 FM', x + C * 0.5, y + C * 0.84);
+      g.lineCap = 'butt';
+      oval(x + C * 0.5, y + C * 0.44, C * 0.3, C * 0.24, NAVY, 0, Math.PI);
+      oval(x + C * 0.5, y + C * 0.44, C * 0.3, C * 0.05, WHITE);
+      oval(x + C * 0.5, y + C * 0.445, C * 0.26, C * 0.035, AMBER);
+      head('한밤 라면', x, y + C * 0.8, 84, WHITE);
+      line('NIGHT RAMEN · 국물 한 그릇', x, y + C * 0.91, 28, NAVY);
     },
-    (x, y) => {
-      g.fillStyle = '#fff9db'; g.fillRect(x, y, C, C);
-      g.strokeStyle = '#222'; g.lineWidth = 6 * k;
-      for (const [px, py, pw, ph] of [[0.06, 0.06, 0.42, 0.4], [0.52, 0.06, 0.42, 0.4], [0.06, 0.5, 0.88, 0.28]]) { g.fillStyle = ['#d0ebff', '#ffe3e3', '#e6fcf5'][Math.round(px * 10) % 3]; g.fillRect(x + C * px, y + C * py, C * pw, C * ph); g.strokeRect(x + C * px, y + C * py, C * pw, C * ph); }
-      g.fillStyle = '#ffffff'; roundRect(g, x + C * 0.12, y + C * 0.12, C * 0.3, C * 0.14, 20 * k); g.fill(); g.stroke();
-      g.fillStyle = '#222'; g.font = `900 ${Math.round(26 * k)}px ${SANS}`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('뉴욕 도착!', x + C * 0.27, y + C * 0.19);
-      g.font = `${Math.round(70 * k)}px ${EMOJI}`; g.fillText('🗽', x + C * 0.73, y + C * 0.27); g.fillText('😎', x + C * 0.3, y + C * 0.37);
-      neon(g, '오늘의 웹툰', x + C * 0.5, y + C * 0.64, Math.round(60 * k), SANS, 900, '#ff3d9a', { align: 'center', glow: 0.2 });
-      g.fillStyle = '#222'; g.font = `800 ${Math.round(26 * k)}px ${SANS}`; g.fillText('PIXEL WEBTOON · 매일 업데이트', x + C * 0.5, y + C * 0.89);
+    (x, y) => { // 한복 스트리트
+      box(x, y, DEEP);
+      g.fillStyle = MAGENTA;
+      g.beginPath(); g.moveTo(x + C * 0.5, y + C * 0.3); g.quadraticCurveTo(x + C * 0.24, y + C * 0.56, x + C * 0.28, y + C * 0.74); g.lineTo(x + C * 0.72, y + C * 0.74); g.quadraticCurveTo(x + C * 0.76, y + C * 0.56, x + C * 0.5, y + C * 0.3); g.fill();
+      g.fillStyle = CYAN; g.fillRect(x + C * 0.38, y + C * 0.2, C * 0.24, C * 0.15);
+      g.fillStyle = WHITE; g.beginPath(); g.moveTo(x + C * 0.42, y + C * 0.2); g.lineTo(x + C * 0.5, y + C * 0.3); g.lineTo(x + C * 0.58, y + C * 0.2); g.fill();
+      head('한복 스트리트', x, y + C * 0.86, 66, WHITE);
+      line('HANBOK STREET · NEW SEASON', x, y + C * 0.1, 24, MAGENTA);
     },
-    (x, y) => {
-      g.fillStyle = '#111111'; g.fillRect(x, y, C, C);
-      roundRect(g, x + C * 0.34, y + C * 0.12, C * 0.32, C * 0.62, 28 * k);
-      const gr = g.createLinearGradient(x + C * 0.34, 0, x + C * 0.66, 0);
-      gr.addColorStop(0, '#c85a00'); gr.addColorStop(0.4, '#ffb000'); gr.addColorStop(1, '#a04400');
-      g.fillStyle = gr; g.fill();
+    (x, y) => { // K-ESPORTS
+      box(x, y, DEEP);
+      g.fillStyle = AMBER;
+      g.beginPath(); g.moveTo(x + C * 0.38, y + C * 0.18); g.lineTo(x + C * 0.62, y + C * 0.18); g.quadraticCurveTo(x + C * 0.62, y + C * 0.46, x + C * 0.5, y + C * 0.48); g.quadraticCurveTo(x + C * 0.38, y + C * 0.46, x + C * 0.38, y + C * 0.18); g.fill();
+      g.fillRect(x + C * 0.47, y + C * 0.48, C * 0.06, C * 0.1); g.fillRect(x + C * 0.4, y + C * 0.58, C * 0.2, C * 0.05);
+      g.strokeStyle = AMBER; g.lineWidth = 6 * k;
+      for (const s of [-1, 1]) { g.beginPath(); g.arc(x + C * (0.5 + s * 0.13), y + C * 0.27, C * 0.05, s > 0 ? -Math.PI / 2 : Math.PI / 2, s > 0 ? Math.PI / 2 : Math.PI * 1.5); g.stroke(); }
+      head('K-ESPORTS', x, y + C * 0.76, 76, CYAN);
+      line('월드 결승전 · 오늘 밤 9시', x, y + C * 0.89, 26, WHITE);
+    },
+    (x, y) => { // 비빔밥 익스프레스
+      box(x, y, AMBER);
+      oval(x + C * 0.5, y + C * 0.5, C * 0.34, C * 0.2, NAVY, 0, Math.PI);
+      oval(x + C * 0.5, y + C * 0.5, C * 0.34, C * 0.11, WHITE);
+      [MAGENTA, CYAN, NAVY, MAGENTA, CYAN, BRASS].forEach((c, i) => {
+        const a = (i / 6) * Math.PI * 2;
+        oval(x + C * 0.5 + Math.cos(a) * C * 0.19, y + C * 0.5 + Math.sin(a) * C * 0.055, C * 0.07, C * 0.03, c);
+      });
+      oval(x + C * 0.5, y + C * 0.49, C * 0.045, C * 0.028, AMBER);
+      head('비빔밥 익스프레스', x, y + C * 0.2, 58, NAVY);
+      line('BIBIMBAP EXPRESS · 5분 배달', x, y + C * 0.86, 26, NAVY);
+    },
+    (x, y) => { // 심야 편의점
+      box(x, y, DEEP);
+      head('24', x, y + C * 0.36, 210, CYAN, 0.6);
+      head('심야 편의점', x, y + C * 0.68, 72, WHITE);
+      line('삼각김밥 1+1 · 바나나우유', x, y + C * 0.83, 26, AMBER);
+    },
+    (x, y) => { // NEON BEATS
+      box(x, y, DEEP);
+      g.fillStyle = MAGENTA;
+      for (let i = 0; i < 16; i++) {
+        const hgt = C * (0.1 + Math.abs(Math.sin(i * 1.7)) * 0.36);
+        g.fillRect(x + C * (0.08 + i * 0.053), y + C * 0.72 - hgt, C * 0.034, hgt);
+      }
+      head('NEON BEATS', x, y + C * 0.16, 72, MAGENTA);
+      head('104.7 FM', x, y + C * 0.85, 46, WHITE);
+    },
+    (x, y) => { // 오늘의 웹툰
+      box(x, y, '#f2f4ff');
+      g.strokeStyle = NAVY; g.lineWidth = 6 * k;
+      for (const [px, py, pw, ph] of [[0.06, 0.06, 0.42, 0.4], [0.52, 0.06, 0.42, 0.4], [0.06, 0.5, 0.88, 0.28]]) g.strokeRect(x + C * px, y + C * py, C * pw, C * ph);
+      rr(x + C * 0.11, y + C * 0.12, C * 0.32, C * 0.14, 20 * k, WHITE);
+      g.lineWidth = 4 * k; g.stroke();
+      flatText(g, '뉴욕 도착!', x + C * 0.27, y + C * 0.19, C * 0.28, Math.round(26 * k), NAVY, 800);
+      disc(x + C * 0.27, y + C * 0.36, C * 0.06, AMBER);
+      g.fillStyle = CYAN;
+      g.beginPath();
+      for (let i = 0; i < 10; i++) {
+        const a = -Math.PI / 2 + i * Math.PI / 5, r = i % 2 ? C * 0.05 : C * 0.12;
+        g.lineTo(x + C * 0.73 + Math.cos(a) * r, y + C * 0.27 + Math.sin(a) * r);
+      }
+      g.closePath(); g.fill();
+      head('오늘의 웹툰', x, y + C * 0.64, 60, MAGENTA);
+      line('PIXEL WEBTOON · 매일 업데이트', x, y + C * 0.89, 26, NAVY);
+    },
+    (x, y) => { // 범 에너지
+      box(x, y, DEEP);
+      roundRect(g, x + C * 0.34, y + C * 0.1, C * 0.32, C * 0.6, 28 * k);
+      g.fillStyle = AMBER; g.fill();
       g.save(); g.clip();
-      g.fillStyle = '#111111';
-      for (let i = 0; i < 6; i++) { g.beginPath(); g.moveTo(x + C * 0.34, y + C * (0.18 + i * 0.1)); g.lineTo(x + C * 0.5, y + C * (0.2 + i * 0.1)); g.lineTo(x + C * 0.34, y + C * (0.24 + i * 0.1)); g.fill(); g.beginPath(); g.moveTo(x + C * 0.66, y + C * (0.22 + i * 0.1)); g.lineTo(x + C * 0.52, y + C * (0.25 + i * 0.1)); g.lineTo(x + C * 0.66, y + C * (0.28 + i * 0.1)); g.fill(); }
+      g.fillStyle = NAVY;
+      for (let i = 0; i < 3; i++) { g.beginPath(); g.moveTo(x + C * 0.34, y + C * (0.24 + i * 0.14)); g.lineTo(x + C * 0.66, y + C * (0.16 + i * 0.14)); g.lineTo(x + C * 0.66, y + C * (0.2 + i * 0.14)); g.lineTo(x + C * 0.34, y + C * (0.28 + i * 0.14)); g.fill(); }
       g.restore();
-      neon(g, 'TIGER', x + C * 0.5, y + C * 0.82, Math.round(70 * k), SANS, 900, '#ffb000', { align: 'center', glow: 0.8 });
-      g.font = `800 ${Math.round(24 * k)}px ${SANS}`; g.fillStyle = '#ffffff'; g.textAlign = 'center'; g.fillText('호랑이 에너지 · ENERGY', x + C * 0.5, y + C * 0.93);
+      head('범 에너지', x, y + C * 0.82, 72, AMBER);
+      line('BEOM ENERGY · 호랑이 기운', x, y + C * 0.93, 24, WHITE);
     },
   ];
   ads.forEach((fn, i) => {
@@ -1197,98 +953,104 @@ export function paintAdAtlas(canvas) {
   return cells;
 }
 
-/** Storefront strip (glowing shop windows and signs), tiles horizontally. */
+/** Storefront strip: one warm lit shop band of even height under flat sign boards, tiles horizontally. */
 export function paintStorefronts(canvas) {
   const g = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height, k = H / 256;
   const r = rng(91);
-  g.fillStyle = '#0c0b10';
+  g.fillStyle = '#0b0e1c';
   g.fillRect(0, 0, W, H);
-  const shops = [['K-MART', '#ff3d9a'], ['CAFE 서울', '#ffcf5a'], ['GIFTS', '#3fe6ff'], ['치킨&맥주', '#ff6a3d'], ['K-POP STORE', '#b84dff'], ['편의점 24', '#39f58a'], ['PHARMACY', '#ffffff'], ['노래방', '#ff3d9a']];
+  const shops = [['K-MART', MAGENTA], ['CAFE 서울', AMBER], ['GIFTS', CYAN], ['치킨&맥주', AMBER], ['K-POP STORE', MAGENTA], ['편의점 24', CYAN], ['PHARMACY', WHITE], ['노래방', MAGENTA]];
   const n = shops.length, sw = W / n;
   shops.forEach(([name, col], i) => {
     const x = i * sw;
-    const gr = g.createLinearGradient(0, 70 * k, 0, H);
-    gr.addColorStop(0, '#fff1d6');
-    gr.addColorStop(1, '#f2b46b');
-    g.fillStyle = gr;
-    g.fillRect(x + 10 * k, 76 * k, sw - 20 * k, H - 86 * k);
-    g.fillStyle = 'rgba(40,20,10,0.5)';
-    for (let j = 0; j < 5; j++) g.fillRect(x + 18 * k + r() * (sw - 60 * k), 110 * k + r() * 100 * k, 18 * k + r() * 30 * k, 40 * k + r() * 60 * k);
-    g.fillStyle = '#16141c';
-    g.fillRect(x + sw / 2 - 2 * k, 76 * k, 4 * k, H - 76 * k);
-    g.fillStyle = '#111018';
-    g.fillRect(x + 4 * k, 8 * k, sw - 8 * k, 60 * k);
-    const s = fit(g, name, sw - 30 * k, 40 * k, 900, SANS, 14 * k);
-    neon(g, name, x + sw / 2, 40 * k, s, SANS, 900, col, { align: 'center', glow: 0.8, stroke: false });
+    g.fillStyle = 'rgb(255,200,120)';
+    g.fillRect(x + 10 * k, 80 * k, sw - 20 * k, H - 90 * k);
+    g.fillStyle = 'rgba(60,34,14,0.32)';
+    for (let j = 0; j < 3; j++) g.fillRect(x + 18 * k + r() * (sw - 60 * k), 150 * k + r() * 40 * k, 20 * k + r() * 24 * k, H - 160 * k);
+    g.fillStyle = '#141a2e';
+    g.fillRect(x + sw / 2 - 2 * k, 80 * k, 4 * k, H - 80 * k);
+    g.fillStyle = PANEL;
+    g.fillRect(x + 4 * k, 8 * k, sw - 8 * k, 62 * k);
+    flatText(g, name, x + sw / 2, 40 * k, sw - 30 * k, 40 * k, col, 800, 14 * k);
   });
   return canvas;
 }
 
-/** Window grid for tower facades: returns [albedo, emissive] canvases. */
+/** Window grid for tower facades: returns [albedo, emissive] canvases. About one window in ten is lit: a warm tint for
+ *  most, a cool one for about one in eight, and now and then a whole lit floor. The wall and panes stay one dark tone. */
 export function paintWindows(kind, seed = 7) {
   const S = 512;
   const a = makeCanvas(S, S), e = makeCanvas(S, S);
   const ga = a.getContext('2d'), ge = e.getContext('2d');
   const r = rng(seed);
   const cols = 12, rows = 20, cw = S / cols, rh = S / rows;
-  ga.fillStyle = kind === 'stone' ? '#3a332e' : '#0d1422';
+  const stone = kind === 'stone';
+  ga.fillStyle = stone ? '#171824' : '#0e1330';
   ga.fillRect(0, 0, S, S);
   ge.fillStyle = '#000000';
   ge.fillRect(0, 0, S, S);
+  const px = stone ? cw * 0.22 : cw * 0.08, py = stone ? rh * 0.2 : rh * 0.12;
   for (let j = 0; j < rows; j++) {
+    const floor = r() < 0.04;
     for (let i = 0; i < cols; i++) {
       const x = i * cw, y = j * rh;
-      const px = kind === 'stone' ? cw * 0.22 : cw * 0.06, py = kind === 'stone' ? rh * 0.2 : rh * 0.1;
-      ga.fillStyle = kind === 'stone' ? '#141820' : (r() < 0.5 ? '#16243a' : '#1b2c46');
+      ga.fillStyle = stone ? '#10121a' : '#121936';
       ga.fillRect(x + px, y + py, cw - px * 2, rh - py * 2);
-      const lit = r();
-      if (lit < 0.3) {
-        const warm = r() < 0.65;
-        const v = 0.45 + r() * 0.55;
-        ge.fillStyle = warm ? `rgba(255,${190 + r() * 40 | 0},${110 + r() * 50 | 0},${v})` : `rgba(${170 + r() * 40 | 0},${210 + r() * 30 | 0},255,${v})`;
-        ge.fillRect(x + px, y + py, cw - px * 2, rh - py * 2);
-        if (r() < 0.5) { ge.fillStyle = 'rgba(0,0,0,0.5)'; ge.fillRect(x + px, y + py + (rh - py * 2) * 0.55, cw - px * 2, (rh - py * 2) * 0.45); }
-      }
+      if (!(floor || r() < 0.075)) continue;
+      const cool = r() < 0.125;
+      const v = 0.78 + r() * 0.22;
+      ge.fillStyle = cool ? `rgba(170,205,255,${v})` : `rgba(255,200,120,${v})`;
+      ge.fillRect(x + px, y + py, cw - px * 2, rh - py * 2);
     }
   }
-  if (kind !== 'stone') {
-    ga.fillStyle = '#2a3446';
+  if (!stone) {
+    ga.fillStyle = '#1a2142';
     for (let i = 0; i <= cols; i++) ga.fillRect(i * cw - 1, 0, 2, S);
     for (let j = 0; j <= rows; j++) ga.fillRect(0, j * rh - 1, S, 2);
   }
   return [a, e];
 }
 
+/** Soft round glow sprite: bright centre, smooth falloff, nothing at the edge. */
 export function paintGlow(canvas, inner = 'rgba(255,255,255,1)') {
   const g = canvas.getContext('2d');
   const W = canvas.width;
   const gr = g.createRadialGradient(W / 2, W / 2, 0, W / 2, W / 2, W / 2);
   gr.addColorStop(0, inner);
-  gr.addColorStop(0.25, 'rgba(255,255,255,0.55)');
-  gr.addColorStop(0.6, 'rgba(255,255,255,0.12)');
+  gr.addColorStop(0.18, 'rgba(255,255,255,0.5)');
+  gr.addColorStop(0.45, 'rgba(255,255,255,0.13)');
+  gr.addColorStop(0.75, 'rgba(255,255,255,0.03)');
   gr.addColorStop(1, 'rgba(255,255,255,0)');
   g.fillStyle = gr;
   g.fillRect(0, 0, W, W);
   return canvas;
 }
 
+/** Beam: a narrow soft core across the width (about a fifth of it reads bright, with a faint halo out to the edges) that
+ *  fades toward the top of the canvas. On a quad about 0.75 m wide the bright core is about 0.15 m. */
 export function paintBeam(canvas) {
   const g = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
+  g.clearRect(0, 0, W, H);
   const gx = g.createLinearGradient(0, 0, W, 0);
-  gx.addColorStop(0, 'rgba(255,255,255,0)');
-  gx.addColorStop(0.5, 'rgba(255,255,255,1)');
-  gx.addColorStop(1, 'rgba(255,255,255,0)');
+  for (let i = 0; i <= 16; i++) {
+    const u = i / 16, d = Math.abs(u - 0.5);
+    const a = 0.72 * Math.exp(-((d / 0.085) ** 2)) + 0.28 * Math.exp(-((d / 0.26) ** 2));
+    gx.addColorStop(u, `rgba(255,255,255,${Math.min(1, a).toFixed(3)})`);
+  }
   g.fillStyle = gx;
   g.fillRect(0, 0, W, H);
   g.globalCompositeOperation = 'destination-in';
   const gy = g.createLinearGradient(0, 0, 0, H);
   gy.addColorStop(0, 'rgba(0,0,0,0)');
-  gy.addColorStop(0.7, 'rgba(0,0,0,0.6)');
+  gy.addColorStop(0.3, 'rgba(0,0,0,0.12)');
+  gy.addColorStop(0.6, 'rgba(0,0,0,0.42)');
+  gy.addColorStop(0.85, 'rgba(0,0,0,0.82)');
   gy.addColorStop(1, 'rgba(0,0,0,1)');
   g.fillStyle = gy;
   g.fillRect(0, 0, W, H);
+  g.globalCompositeOperation = 'source-over';
   return canvas;
 }
 
@@ -1314,43 +1076,49 @@ export function paintPuddles(canvas, seed = 3) {
   return canvas;
 }
 
+/** Manhole cover: a dark disc that sits a step above the near-black asphalt, low-contrast hatch and lettering. */
 export function paintManhole(canvas) {
   const g = canvas.getContext('2d');
   const S = canvas.width, c = S / 2;
   g.clearRect(0, 0, S, S);
-  g.fillStyle = '#26282c';
+  g.fillStyle = '#14161e';
   g.beginPath();
   g.arc(c, c, c - 2, 0, Math.PI * 2);
   g.fill();
-  g.strokeStyle = '#3c3f45';
+  g.strokeStyle = '#20232c';
   g.lineWidth = S * 0.04;
   g.stroke();
   g.save();
   g.beginPath();
   g.arc(c, c, c * 0.84, 0, Math.PI * 2);
   g.clip();
-  g.strokeStyle = '#3a3d43';
+  g.strokeStyle = '#1b1e27';
   g.lineWidth = S * 0.018;
   for (let i = -S; i < S * 2; i += S * 0.07) {
     g.beginPath(); g.moveTo(i, 0); g.lineTo(i + S, S); g.stroke();
     g.beginPath(); g.moveTo(i + S, 0); g.lineTo(i, S); g.stroke();
   }
   g.restore();
-  g.fillStyle = '#4a4d54';
-  g.font = `900 ${Math.round(S * 0.09)}px ${SANS}`;
+  g.fillStyle = '#272b35';
+  g.font = `800 ${Math.round(S * 0.09)}px ${SANS}`;
   g.textAlign = 'center';
   g.textBaseline = 'middle';
   g.fillText('NYC SEWER', c, c);
   return canvas;
 }
 
+// Road paint is off-white at reduced strength; a yellow line becomes a muted warm grey, never bright yellow.
+function roadInk(color) {
+  const [r, gg, b] = rgbOf(color);
+  return r > 150 && gg > 110 && b < 120 ? 'rgba(198,178,134,0.42)' : 'rgba(222,225,234,0.5)';
+}
 /** Road paint: dashed lane lines + edge lines on a transparent strip (u across road, v along). */
 export function paintLanes(canvas, lanes) {
   const g = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
   g.clearRect(0, 0, W, H);
   const line = (u, dashed, color, width) => {
-    g.fillStyle = color;
+    g.fillStyle = roadInk(color);
     const x = u * W - width / 2;
     if (!dashed) { g.fillRect(x, 0, width, H); return; }
     for (let y = 0; y < H; y += H / 4) g.fillRect(x, y + H * 0.02, width, H / 8);
@@ -1358,10 +1126,11 @@ export function paintLanes(canvas, lanes) {
   for (const l of lanes) line(l.u, l.dashed, l.color, l.w || 6);
   const r = rng(5);
   g.globalCompositeOperation = 'destination-out';
-  for (let i = 0; i < 900; i++) {
-    g.fillStyle = `rgba(0,0,0,${r() * 0.6})`;
+  for (let i = 0; i < 360; i++) {
+    g.fillStyle = `rgba(0,0,0,${r() * 0.35})`;
     g.fillRect(r() * W, r() * H, 1 + r() * 3, 1 + r() * 3);
   }
+  g.globalCompositeOperation = 'source-over';
   return canvas;
 }
 
@@ -1369,61 +1138,68 @@ export function paintCrosswalk(canvas) {
   const g = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
   g.clearRect(0, 0, W, H);
-  g.fillStyle = 'rgba(240,240,236,0.92)';
+  g.fillStyle = 'rgba(222,225,234,0.55)';
   const bars = 8;
   for (let i = 0; i < bars; i++) g.fillRect((i + 0.2) * W / bars, 0, W / bars * 0.55, H);
   const r = rng(11);
   g.globalCompositeOperation = 'destination-out';
-  for (let i = 0; i < 1400; i++) {
-    g.fillStyle = `rgba(0,0,0,${r() * 0.7})`;
+  for (let i = 0; i < 520; i++) {
+    g.fillStyle = `rgba(0,0,0,${r() * 0.35})`;
     g.fillRect(r() * W, r() * H, 1 + r() * 4, 1 + r() * 4);
   }
+  g.globalCompositeOperation = 'source-over';
   return canvas;
 }
 
+/** Name tag: a slim dark pill with white 600 text and no outline. The player's own tag carries a small dot in their
+ *  ring colour (color). */
 export function paintNameTag(canvas, name, color = '#3fe6ff', mine = false) {
   const g = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height, k = H / 64;
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.clearRect(0, 0, W, H);
   const text = chars(name || '익명', 12);
-  g.font = `800 ${Math.round(28 * k)}px ${SANS}`;
-  const tw = Math.min(W - 60 * k, g.measureText(text).width);
-  const pw = tw + 52 * k, x = (W - pw) / 2;
-  roundRect(g, x, 8 * k, pw, 46 * k, 23 * k);
-  g.fillStyle = mine ? 'rgba(40,24,4,0.82)' : 'rgba(6,8,22,0.74)';
+  g.font = `600 ${Math.round(24 * k)}px ${SANS}`;
+  const padX = 15 * k, dot = mine ? 5 * k : 0, gap = mine ? 8 * k : 0;
+  const tw = Math.max(1, Math.min(W - 8 * k - padX * 2 - dot * 2 - gap, g.measureText(text).width));
+  const ph = 36 * k, pw = tw + padX * 2 + dot * 2 + gap;
+  const x = (W - pw) / 2, y = (H - ph) / 2;
+  roundRect(g, x, y, pw, ph, ph / 2);
+  g.fillStyle = 'rgba(10,14,28,0.82)';
   g.fill();
-  g.lineWidth = 2.5 * k;
-  g.strokeStyle = mine ? '#ffcf5a' : rgba(color, 0.9);
-  g.stroke();
-  g.fillStyle = color;
-  g.beginPath();
-  g.arc(x + 22 * k, 31 * k, 7 * k, 0, Math.PI * 2);
-  g.fill();
+  if (mine) {
+    g.fillStyle = color;
+    g.beginPath();
+    g.arc(x + padX + dot, H / 2, dot, 0, Math.PI * 2);
+    g.fill();
+  }
   g.fillStyle = '#ffffff';
   g.textAlign = 'left';
   g.textBaseline = 'middle';
-  g.fillText(text, x + 36 * k, 32 * k, tw);
+  g.fillText(text, x + padX + dot * 2 + gap, H / 2 + 1 * k, tw);
   return canvas;
 }
 
+/** Reaction bubble: the same quiet dark surface as the name tag, the emoji (content) inside. */
 export function paintBubble(canvas, glyph) {
   const g = canvas.getContext('2d');
   const S = canvas.width, k = S / 128;
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.clearRect(0, 0, S, S);
-  roundRect(g, 10 * k, 8 * k, 108 * k, 96 * k, 30 * k);
-  g.fillStyle = 'rgba(255,255,255,0.95)';
+  g.fillStyle = 'rgba(10,14,28,0.82)';
+  roundRect(g, 16 * k, 12 * k, 96 * k, 86 * k, 28 * k);
   g.fill();
   g.beginPath();
-  g.moveTo(54 * k, 100 * k);
-  g.lineTo(64 * k, 120 * k);
-  g.lineTo(74 * k, 100 * k);
+  g.moveTo(56 * k, 97 * k);
+  g.lineTo(64 * k, 112 * k);
+  g.lineTo(72 * k, 97 * k);
+  g.closePath();
   g.fill();
-  g.font = `${Math.round(64 * k)}px ${EMOJI}`;
+  g.font = `${Math.round(56 * k)}px ${EMOJI}`;
+  g.fillStyle = '#ffffff';
   g.textAlign = 'center';
   g.textBaseline = 'middle';
-  g.fillText(glyph, 64 * k, 58 * k);
+  g.fillText(glyph, 64 * k, 57 * k);
   return canvas;
 }
 
@@ -1431,61 +1207,104 @@ export function paintPlotBadge(canvas, id, level, color) {
   const g = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height, k = H / 128;
   g.clearRect(0, 0, W, H);
-  roundRect(g, 4 * k, 4 * k, W - 8 * k, H - 8 * k, 16 * k);
-  g.fillStyle = 'rgba(8,8,18,0.88)';
+  roundRect(g, 6 * k, 6 * k, W - 12 * k, H - 12 * k, 18 * k);
+  g.fillStyle = 'rgba(10,14,28,0.88)';
   g.fill();
-  g.lineWidth = 4 * k;
-  g.strokeStyle = color;
+  g.lineWidth = 2 * k;
+  g.strokeStyle = 'rgba(255,255,255,0.14)';
   g.stroke();
   g.fillStyle = color;
-  g.font = `900 ${Math.round(58 * k)}px ${SANS}`;
-  g.textAlign = 'center';
-  g.textBaseline = 'middle';
-  g.fillText(`${id}번 토지`, W / 2, H * 0.4);
-  g.fillStyle = '#ffffff';
-  g.font = `800 ${Math.round(26 * k)}px ${SANS}`;
-  g.fillText(level === 0 ? '분양 중 · FOR SALE' : '분양 완료', W / 2, H * 0.76);
+  g.fillRect(6 * k + 18 * k, 6 * k, W - 48 * k, Math.max(2, 3 * k));
+  flatText(g, `${id}번 토지`, W / 2, H * 0.42, W - 40 * k, Math.round(50 * k), WHITE, 800, 18 * k);
+  flatText(g, level === 0 ? '분양 중 · FOR SALE' : '분양 완료', W / 2, H * 0.74, W - 40 * k, Math.round(24 * k), level === 0 ? color : MUTED, 700, 12 * k);
   return canvas;
 }
 
-/** Round map/world marker icon: emoji in a glowing ring. */
+// Marker glyphs that used to be emoji become drawn shapes: a person waving (pickup), a flag (drop-off), a map pin.
+function markShape(g, glyph, c, u, color) {
+  g.fillStyle = color;
+  g.strokeStyle = color;
+  g.lineCap = 'round';
+  g.lineJoin = 'round';
+  const s = String(glyph || '');
+  if (s === '🙋' || s === '🙋‍♀️' || s === '🙋‍♂️') {
+    g.beginPath(); g.arc(c - 0.1 * u, c - 0.5 * u, 0.26 * u, 0, Math.PI * 2); g.fill();
+    roundRect(g, c - 0.55 * u, c - 0.12 * u, 0.9 * u, 0.95 * u, 0.36 * u); g.fill();
+    g.lineWidth = 0.2 * u;
+    g.beginPath(); g.moveTo(c + 0.22 * u, c + 0.02 * u); g.lineTo(c + 0.62 * u, c - 0.72 * u); g.stroke();
+    return true;
+  }
+  if (s === '🏁' || s === '🚩') {
+    g.lineWidth = 0.16 * u;
+    g.beginPath(); g.moveTo(c - 0.5 * u, c + 0.9 * u); g.lineTo(c - 0.5 * u, c - 0.85 * u); g.stroke();
+    g.beginPath(); g.moveTo(c - 0.42 * u, c - 0.85 * u); g.lineTo(c + 0.72 * u, c - 0.5 * u); g.lineTo(c - 0.42 * u, c - 0.12 * u); g.closePath(); g.fill();
+    return true;
+  }
+  if (s === '📍' || s === '📌') {
+    const cy = c - 0.25 * u, r = 0.56 * u;
+    g.beginPath(); g.arc(c, cy, r, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.moveTo(c - r * 0.82, cy + r * 0.5); g.lineTo(c + r * 0.82, cy + r * 0.5); g.lineTo(c, c + 0.95 * u); g.closePath(); g.fill();
+    g.fillStyle = 'rgba(10,14,28,0.95)';
+    g.beginPath(); g.arc(c, cy, r * 0.38, 0, Math.PI * 2); g.fill();
+    return true;
+  }
+  return false;
+}
+/** Map/world marker icon. Square canvas: a dark disc with a thin ring and a drawn shape (or short text) in the marker
+ *  colour, a faint halo. Wide canvas: a slim pill label with a colour dot. */
 export function paintMarker(canvas, glyph, color) {
   const g = canvas.getContext('2d');
-  const S = canvas.width, c = S / 2;
-  g.clearRect(0, 0, S, S);
-  glowDot(g, c, c, c, color, 0.55);
+  const W = canvas.width, H = canvas.height;
+  g.clearRect(0, 0, W, H);
+  if (W !== H) {
+    const k = H / 96;
+    const text = chars(glyph, 8);
+    g.font = `700 ${Math.round(40 * k)}px ${SANS}`;
+    const dot = 8 * k, padX = 22 * k;
+    const tw = Math.min(W - 16 * k - padX * 2 - dot * 3, g.measureText(text).width);
+    const ph = 62 * k, pw = tw + padX * 2 + dot * 3, x = (W - pw) / 2, y = (H - ph) / 2;
+    roundRect(g, x, y, pw, ph, ph / 2);
+    g.fillStyle = 'rgba(10,14,28,0.85)';
+    g.fill();
+    g.fillStyle = color;
+    g.beginPath(); g.arc(x + padX + dot, H / 2, dot, 0, Math.PI * 2); g.fill();
+    g.fillStyle = WHITE;
+    g.textAlign = 'left';
+    g.textBaseline = 'middle';
+    g.fillText(text, x + padX + dot * 3, H / 2 + 2 * k, Math.max(1, tw));
+    return canvas;
+  }
+  const S = W, c = S / 2;
+  glowDot(g, c, c, c, color, 0.2);
   g.beginPath();
-  g.arc(c, c, c * 0.62, 0, Math.PI * 2);
-  g.fillStyle = 'rgba(6,8,22,0.88)';
+  g.arc(c, c, c * 0.6, 0, Math.PI * 2);
+  g.fillStyle = 'rgba(10,14,28,0.88)';
   g.fill();
-  g.lineWidth = S * 0.05;
+  g.lineWidth = S * 0.03;
   g.strokeStyle = color;
   g.stroke();
-  g.font = `${Math.round(S * 0.5)}px ${EMOJI}`;
-  g.textAlign = 'center';
-  g.textBaseline = 'middle';
-  g.fillText(glyph, c, c * 1.04);
+  if (!markShape(g, glyph, c, S * 0.24, color)) {
+    const s = String(glyph || '');
+    // Any other pictograph becomes a plain dot; short text stays text.
+    if (!s || /\p{Extended_Pictographic}/u.test(s)) {
+      g.fillStyle = color;
+      g.beginPath(); g.arc(c, c, S * 0.1, 0, Math.PI * 2); g.fill();
+    } else flatText(g, chars(s, 3), c, c * 1.04, S * 0.56, Math.round(S * 0.34), color, 800, S * 0.12);
+  }
   return canvas;
 }
 
 export function paintTaxiStand(canvas) {
   const g = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height, k = W / 256;
-  g.fillStyle = '#111114';
+  g.fillStyle = PANEL;
   g.fillRect(0, 0, W, H);
-  g.fillStyle = '#ffc21a';
-  g.fillRect(8 * k, 8 * k, W - 16 * k, H * 0.46);
-  g.fillStyle = '#111114';
-  g.font = `900 ${Math.round(70 * k)}px ${SANS}`;
-  g.textAlign = 'center';
-  g.textBaseline = 'middle';
-  g.fillText('TAXI', W / 2, H * 0.25);
-  g.fillStyle = '#ffc21a';
-  g.font = `900 ${Math.round(40 * k)}px ${SANS}`;
-  g.fillText('택시 승강장', W / 2, H * 0.66);
-  g.font = `700 ${Math.round(22 * k)}px ${SANS}`;
-  g.fillStyle = '#ffffff';
-  g.fillText('E 키로 호출', W / 2, H * 0.86);
+  roundRect(g, 10 * k, 10 * k, W - 20 * k, H * 0.42, 12 * k);
+  g.fillStyle = AMBER;
+  g.fill();
+  flatText(g, 'TAXI', W / 2, 10 * k + H * 0.21, W - 60 * k, Math.round(64 * k), ON_ACCENT, 800);
+  flatText(g, '택시 승강장', W / 2, H * 0.64, W - 40 * k, Math.round(38 * k), WHITE, 800);
+  flatText(g, 'E 키로 호출', W / 2, H * 0.85, W - 40 * k, Math.round(22 * k), MUTED, 700);
   return canvas;
 }
 
@@ -1493,7 +1312,7 @@ export function paintTaxiStand(canvas) {
 export function fontsReady(text = '타임스퀘어 붕어빵 전광판 점령 코인') {
   if (!document.fonts?.load) return Promise.resolve();
   const sample = String(text || '').slice(0, 80) || 'A';
-  return Promise.all([700, 800, 900].map(w => document.fonts.load(`${w} 64px "Pretendard Variable"`, sample))).catch(() => {});
+  return Promise.all([600, 700, 800, 900].map(w => document.fonts.load(`${w} 64px "Pretendard Variable"`, sample))).catch(() => {});
 }
 
 // ---- 오늘의 소원 on idle billboards ---------------------------------------------------------------------------
@@ -1777,91 +1596,40 @@ export function sameWishes(a, b) {
   return true;
 }
 
-/** Wish card on a billboard canvas. data: {id, nick, txt, hearts}. opts.strip: bottom claim cue, opts.dark: owner's light is out.
- *  One calm look for every board: deep plum night, warm ink, so forty of them sit quietly next to the live ads. */
+/** Wish card on a billboard canvas. data: {id, nick, txt, hearts}. opts.chip: label chip text, opts.strip: bottom claim
+ *  cue, opts.dark: owner's light is out. The same calm panel as every board: amber chip, the wish in large white type,
+ *  nickname and a drawn heart below, so forty of them sit quietly next to the live ads. */
 export function paintWish(canvas, data = {}, opts = {}) {
   const g = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height, k = W / 1024;
-  const statsH = Math.max(28, 42 * k);
+  const statsH = Math.max(28, Math.round(46 * k));
   const body = H - statsH;
-  const gold = '#ffcf5a';
+  const pad = 44 * k;
   g.save();
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.clearRect(0, 0, W, H);
-  const bg = g.createLinearGradient(0, 0, 0, body);
-  bg.addColorStop(0, '#0a0814');
-  bg.addColorStop(0.6, '#160d1c');
-  bg.addColorStop(1, '#24131b');
-  g.fillStyle = bg;
-  g.fillRect(0, 0, W, body);
-  glowDot(g, W / 2, body * 0.52, W * 0.42, '#ffb35a', 0.16);
-  const r = rng(hashStr(`wish|${data.id}`));
-  for (let i = 0; i < 26; i++) {
-    g.fillStyle = `rgba(255,236,200,${0.12 + r() * 0.35})`;
-    const s = (r() * 1.6 + 0.6) * k;
-    g.fillRect(r() * W, r() * body * 0.92, s, s);
-  }
-  sparkle(g, W * 0.91, body * 0.24, 9 * k, '#ffe2a8');
-  sparkle(g, W * 0.08, body * 0.8, 7 * k, '#ffe2a8');
-
-  const chip = String(opts.chip || '🌠 오늘의 소원');
-  g.font = `800 ${Math.round(34 * k)}px ${SANS}`;
-  roundRect(g, 28 * k, 26 * k, g.measureText(chip).width + 40 * k, 46 * k, 23 * k);
-  g.fillStyle = 'rgba(4,5,18,0.72)';
-  g.fill();
-  g.lineWidth = 2 * k;
-  g.strokeStyle = rgba(gold, 0.75);
-  g.stroke();
-  g.fillStyle = '#ffe9a8';
-  g.textAlign = 'left';
-  g.textBaseline = 'middle';
-  g.fillText(chip, 48 * k, 50 * k);
-
-  g.strokeStyle = rgba(gold, 0.55);
-  g.lineWidth = 4 * k;
-  const bm = 18 * k, L = 46 * k;
-  for (const [x, y, dx, dy] of [[bm, bm, 1, 1], [W - bm, bm, -1, 1], [bm, body - bm, 1, -1], [W - bm, body - bm, -1, -1]]) {
-    g.beginPath();
-    g.moveTo(x, y + dy * L);
-    g.lineTo(x, y);
-    g.lineTo(x + dx * L, y);
-    g.stroke();
-  }
+  boardPanel(g, W, body, k, AMBER, false);
+  const chip = String(opts.chip || '오늘의 소원');
+  const ch = pill(g, pad, 30 * k, chip, AMBER, Math.max(11, Math.round(26 * k)), W * 0.62, 'soft').h;
 
   const lines = wishLines(data.txt);
-  const top = 92 * k, bottom = body - 96 * k, avail = bottom - top, maxW = W * 0.86;
-  let size = lines.length > 1 ? 112 * k : 150 * k;
-  for (const line of lines) size = Math.min(size, fit(g, line, maxW, size, 900, SANS, 30 * k));
-  size = Math.round(Math.min(size, avail / (lines.length > 1 ? 2.36 : 1.2)));
-  const lh = size * 1.18;
+  const top = Math.max(30 * k + ch + 18 * k, 96 * k), bottom = body - 86 * k, avail = bottom - top, maxW = W - pad * 2;
+  let size = lines.length > 1 ? 120 * k : 150 * k;
+  for (const line of lines) size = Math.min(size, fit(g, line, maxW, size, 800, SANS, 30 * k));
+  size = Math.round(Math.min(size, avail / (lines.length > 1 ? 2.28 : 1.14)));
+  const lh = size * 1.14;
   let y = top + avail / 2 - (lines.length - 1) * lh / 2;
+  g.font = `800 ${size}px ${SANS}`;
+  g.fillStyle = WHITE;
+  g.textAlign = 'left';
+  g.textBaseline = 'middle';
   for (const line of lines) {
-    neon(g, line, W / 2, y, size, SANS, 900, '#fff1d6', { glow: 0.55, align: 'center' });
+    g.fillText(line, pad, y, maxW);
     y += lh;
   }
 
-  const nick = '— ' + (chars(wishClean(data.nick), 16) || '누군가');
-  const heart = '♥ ' + Math.max(0, Math.floor(Number(data.hearts) || 0)).toLocaleString('en-US');
-  const gap = '     ';
-  const ns = fit(g, nick + gap + heart, W * 0.8, 40 * k, 800, SANS, 16 * k);
-  g.font = `800 ${ns}px ${SANS}`;
-  const wn = g.measureText(nick).width, wg = g.measureText(gap).width, wh = g.measureText(heart).width;
-  const x0 = W / 2 - (wn + wg + wh) / 2, ry = body - 58 * k;
-  g.textAlign = 'left';
-  g.textBaseline = 'middle';
-  g.fillStyle = '#ffcf8a';
-  g.fillText(nick, x0, ry);
-  g.fillStyle = '#ff7a9a';
-  g.fillText(heart, x0 + wn + wg, ry);
-
-  g.fillStyle = '#05060f';
-  g.fillRect(0, body, W, statsH);
-  const strip = String(opts.strip || '🌠 하루 한 줄, 누구나 무료');
-  const ss = fit(g, strip, W - 36 * k, Math.max(14, 22 * k), 800, SANS, 11);
-  g.font = `800 ${ss}px ${SANS}`;
-  g.fillStyle = opts.dark ? '#aab3c8' : gold;
-  g.textAlign = 'center';
-  g.fillText(strip, W / 2, H - statsH / 2);
+  footRow(g, W, body - 44 * k, k, chars(wishClean(data.nick), 16) || '누군가', data.hearts);
+  infoStrip(g, W, H, statsH, k, String(opts.strip || '하루 한 줄, 누구나 무료'), opts.dark ? MUTED : AMBER);
   g.restore();
   return canvas;
 }
