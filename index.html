@@ -32,6 +32,7 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
 <script>window.__PLAZA_RT = true;</script>
 <script>
+// The same rule as interact.js isTouchUI (ui.js touch controls, main.js lines): a coarse pointer or more than one touch point.
 document.documentElement.classList.toggle('touch', matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 1);
 function fitVV() {
   const vv = window.visualViewport;
@@ -392,6 +393,14 @@ visualViewport?.addEventListener('scroll', fitVV);
   .act { pointer-events: auto; width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; font-size: 20px; color: var(--text); background: var(--surface-hud); border: 1px solid var(--line); touch-action: manipulation; }
   .act.big { width: 84px; height: 84px; font-size: 15px; font-weight: 800; line-height: 1.1; text-align: center; color: var(--on-accent); background: var(--accent); border-color: transparent; }
   .act.jump { font-size: 28px; font-weight: 700; color: var(--text); background: var(--surface-hud); }
+  /* Floating stick (ui.js joyZone, interact.js STICK_*): the lower-left area takes the touch and sits under the rest of
+     the HUD; the stick is only a picture, resting faint until a thumb drags, then centred where it went down. */
+  #ui > .joyzone { position: absolute; left: 0; bottom: 0; z-index: 0; pointer-events: auto; touch-action: none; }
+  html.touch #ui > .joy { pointer-events: none !important; opacity: .5; transition: opacity .15s; }
+  html.touch #ui > .joy.live { opacity: 1; }
+  .joy.live .knob { transition: none; }
+  .act.jump.honk { font-size: 15px; font-weight: 800; }
+  .coach { position: absolute; left: 50%; top: calc(172px + var(--safe-t)); transform: translateX(-50%); max-width: calc(100vw - 32px); padding: 8px 14px; border-radius: 999px; background: var(--surface-hud); border: 1px solid var(--line); color: var(--text); font: 700 13px/1.35 var(--font); text-align: center; pointer-events: none; z-index: 4; }
 
   /* ---------- bake minigame ---------- */
   .bake, .bake * { pointer-events: none !important; }

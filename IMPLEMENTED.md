@@ -36,7 +36,7 @@
 - 바닥 텍스처: `low`는 색·노멀 맵을 `assets/textures/512/`에서 받는다(거칠기 맵은 원래 512). `medium`·`high`는 1024다.
 - `icons/`: `coin.jpg` 192px, `board.jpg` 256px, `app-icon.jpg` 512px(매니페스트 크기와 같다), `boot.jpg` 1280×720 품질 72, `bokjumeoni.png` 512px 팔레트 PNG. 복주머니 풍선은 첫 프레임부터 떠 있으므로 입장 전에 받는다.
 - `manhattan.bin`(1.67MB)은 스폰 주변 바닥·건물·전광판이 모두 이 데이터로 만들어져서 늦출 수 없다. 부팅 때 받는다.
-- 오디오 `assets/audio/*.ogg`는 저장소에 없다. 입장 때 음악 요청은 404로 끝나고 효과음은 합성음으로 대신한다.
+- 오디오 `assets/audio/*.ogg`는 저장소에 없다. 입장 때 음악 요청은 404로 끝나고 효과음은 합성음으로 대신한다. 실패한 파일은 그 세션에 다시 요청하지 않는다(`audio.js`). 🔊를 끄면 효과음, 음악, 진동이 모두 멈추고, 화면이 뒤로 가면 음악과 합성 배경음이 멈췄다가 돌아오면 다시 난다.
 
 ### 바이트 (`node tools/load-budget.mjs`)
 
@@ -153,7 +153,9 @@
 
 ## 코인
 
-서버가 인정하는 반복 수입은 Room DO가 `PAY`를 보낸 뒤 클라이언트가 잔액에 더한다. 화면이 먼저 코인을 넣거나, `PAY`와 `grant()`를 둘 다 호출하면 두 번 들어간다. `hooks.mine`은 죽은 경로다. 바닥 동전은 `MINE`만 보내고, `PAY` kind `mine`이 와야 동전을 치운다. 거절 `soon`/`cap`이나 3초 안에 `PAY`가 없으면 동전은 그대로 두고, 타임아웃 문구만 낸다.
+서버가 인정하는 반복 수입은 Room DO가 `PAY`를 보낸 뒤 클라이언트가 잔액에 더한다. 화면이 먼저 코인을 넣거나, `PAY`와 `grant()`를 둘 다 호출하면 두 번 들어간다. `hooks.mine`은 죽은 경로다. 바닥 동전은 `MINE`만 보낸다. 보내는 간격은 2.1초 이상이고 답을 기다리는 동안은 보내지 않는다(`interact.js` `coinGate`). 보내면 동전은 바로 숨고 그 자리에 `+1`이 뜬다. 잔액은 `PAY` kind `mine`이 와야 바뀌고, 그때 동전이 20초 뒤 다시 나오는 길로 간다. 거절 `soon`/`cap`이나 3초 안에 `PAY`가 없으면 동전은 말없이 제자리에 돌아온다. `cap`이면 60초 동안 보내지 않고 세션에 한 번 문구를 낸다.
+
+붕어빵 한 판은 뒤집기 세 번이다(`BAKE_FLIPS`, 한 번에 2.6초). 가장 잘 뒤집은 한 번이 그 세션의 결과이고, `SESS` 메시지와 8–40초 창은 그대로다. 판이 끝나면 포차 위에 `+6 확인 중`이 뜨고, `PAY`가 오면 코인이 포차에서 지갑으로 날아간다. 세 번 다 타면 끝을 보내지 않는다. 튜토리얼은 바늘을 세워 둔 채 판을 열고, 첫 탭에 바늘과 세션이 시작된다.
 
 짧은 간격으로 모아 약 30초 또는 20건마다 `coin_batch`로 지갑에 넣는다. `FLUSH_KEY`가 Supabase `app_secrets`와 같아야 통과한다. 조회가 늦으면 8초 뒤 `/rt/flush-wallet`으로 다시 읽는다.
 
@@ -175,7 +177,7 @@
 | 하이파이브 | 2 | 15초, 시간당 12회 |
 | 바닥 동전 | 1 | 2초 간격, 시간당 30 |
 | 복주머니 | 20 | 풍선이 0이 되면. 간격 25초, 시간당 4, 하루 8. 터질 때 줍는 동전 메시를 만들지 않는다 |
-| 택시 | 기본 20 × 승객 배수 1 / 2.2 / 3.8 / 6 / 10 | 하차 간격 40초, 시간당 15회. 손님 태우기는 20초·15m·한 판 4명까지, 거절은 조용하다. 요금은 서버가 받은 인원만. 태우기 전송이 성공해야 "하차 완료"다. 시간당 횟수는 아래 |
+| 택시 | 기본 20 × 승객 배수 1 / 2.2 / 3.8 / 6 / 10 | 하차 간격 40초, 시간당 15회. 손님 태우기는 20초·15m·한 판 4명까지, 거절은 조용하다. 요금은 서버가 받은 인원만. "하차 완료"는 그 요금의 `PAY`가 와야 뜬다. 다음 손님은 마지막 요금 뒤 40초에서 15초를 뺀 만큼 기다렸다 나오고(`다음 손님까지 N초`), 그 전에 도착하면 손님이 남은 시간만큼 차 안에서 기다린다. 시간당 횟수는 아래 |
 | 추첨 | 맞춤 25, 아니면 0 | 5분 버킷, 번호 1~15, 그 버킷의 첫 요금만 티켓. `복권` `잭팟`이라는 말을 쓰지 않는다 |
 
 하루·계정 한 번:
@@ -246,6 +248,7 @@
 휴대폰 배치(`index.html`의 `html.touch`):
 
 - 왼쪽 열(`.hud-l`)은 너비를 묶는다. 세로 화면은 `min(56vw, 100vw - 188px)`, 낮은 가로 화면은 `min(240px, 40vw)`이고 넘치면 스크롤한다. 터치 화면에서 왼쪽 열 카드는 늘 어두운 판 위에 있다.
+- 조이스틱은 떠 있는 스틱이다(`interact.js` `STICK_*`). 왼쪽 아래 너비 45% × 높이 55% 안의 터치가 10px 넘게 움직이면 그 자리가 스틱 중심이 되고 56px까지 민다. 이 영역은 다른 HUD 밑에 있고, 움직이지 않은 터치는 화면 탭으로 넘겨서(`tapDown`/`tapUp`) 그 밑의 전광판·분양이 열린다. 마우스는 이 영역을 쓰지 않는다. 터치 기기 판단은 `html.touch`와 같은 `isTouchUI`(coarse 포인터 또는 터치 지점 2개 이상)다. 처음 시점을 끌어 볼 때까지 입장 4초 뒤 `화면을 끌어 둘러보기 · 두 손가락으로 확대`가 15초 뜬다(`kts_coach`).
 - 길안내 알약은 세로 화면에서 위가 아니라 아래 `142px + 안전 영역`에, 너비 `100vw - 240px` 안에 둔다. 굽기·댄스 판이 열려 있으면 숨긴다.
 
 ## 같이 보기
@@ -396,7 +399,7 @@
 한 모듈은 한 주소로만 부른다. 브라우저도 Worker 번들러도 `x.js`와 `x.js?v=1`을 다른 모듈로 본다. `tools/stamp.mjs`가 고치고 `test/cachebust.test.mjs`가 막는다.
 
 - 브라우저 전용 모듈은 모두 `./x.js?v=<빌드 id>`로, 빌드 id 하나로 부른다. 기준은 `index.html`의 `main.js?v=` 값이고 지금은 `202611211159`다. `index.html`의 `<script src>`도 같다.
-- Worker도 번들하는 모듈(`worker.js`에서 정적 import로 닿는 것)은 어디서든 쿼리 없이 부른다. 지금은 `adreport.js`, `balance.js`, `cardpng.js`, `dark.js`, `invite.js`, `league.js`, `live.js`, `plaza-account.js`, `ts3d/walkers.js`, `wish.js`다(`tools/stamp.mjs` `workerModules`가 `worker.js`의 import에서 찾는다). 이 모듈들 안의 import도 쿼리가 없다. `qr.js`, `growth.js`, `inbox.js`, `share.js`, `ts3d/loadplan.js`는 브라우저 전용이라 `?v=`로 부른다.
+- Worker도 번들하는 모듈(`worker.js`에서 정적 import로 닿는 것)은 어디서든 쿼리 없이 부른다. 지금은 `adreport.js`, `balance.js`, `cardpng.js`, `dark.js`, `invite.js`, `league.js`, `live.js`, `plaza-account.js`, `ts3d/walkers.js`, `wish.js`다(`tools/stamp.mjs` `workerModules`가 `worker.js`의 import에서 찾는다). 이 모듈들 안의 import도 쿼리가 없다. `qr.js`, `growth.js`, `inbox.js`, `share.js`, `ts3d/loadplan.js`, `interact.js`는 브라우저 전용이라 `?v=`로 부른다.
 - `sw.js`(`?v=8`, 손으로 관리)와 `vendor/`는 이 규칙 밖이다. `index.html`이 `/sw.js?v=8`을 등록한다.
 - HTML 페이지(`index.html`, `admin.html`) 안의 인라인 모듈 스크립트의 import도 같은 규칙으로 `tools/stamp.mjs`가 고친다(`admin.html`의 `./growth.js?v=`).
 - import를 더하거나 바꾸거나 브라우저 모듈을 고쳐 내보낼 때는 `node tools/stamp.mjs`를 돌린다. 모든 import를 지금 KST 시각으로 만든 새 빌드 id로 고쳐 쓰고, Worker 번들 모듈은 쿼리를 뗀다. `node tools/stamp.mjs --check`는 아무것도 바꾸지 않고 어긋난 파일이 있으면 1로 끝난다.

@@ -344,7 +344,8 @@ export function startFtue(ctx) {
       if (here) return;
       here = true;
       ui.setNextLine?.(touch ? '여기서 붕어빵을 구워 보세요' : '여기서 E를 눌러 붕어빵을 구우세요');
-      ui.startBake?.();
+      // The panel opens with the needle parked; it starts moving (and the session starts) on the player's first tap.
+      ui.startBake?.({ wait: true });
     },
     onBakePay() {
       // ui.nextGoal() knows whether this player may still take a starter slot; without it, trust the boards.
