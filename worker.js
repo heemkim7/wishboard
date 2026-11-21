@@ -11,6 +11,7 @@ import { CHEER_PHRASES, EVENT_NAMES, allowedLink, blockedText, parseGuestHandove
 import { renderCardPng } from './cardpng.js';
 import { WISH, WISH_ERR, cleanWish, cleanNick, wishFault, wishNickFault, ipNet, rankWishes, prizeFor, boardMix, wishShareText } from './wish.js';
 import { ghostPacket } from './ts3d/walkers.js';
+import { DARK, quietShift, darkNext, darkHours, darkText, litOf } from './dark.js';
 // v16 cost pass: ping 25s (client) / STALE 75s, idle scan alarm 60s, meter report 60s, compact pos ('p'/'P'), nearby fanout, event ring + world cache, HMAC guest tokens.
 const CAP = 50, MEM = 0.125, LEAN = 0.8, HARD = 0.95, STALE = 75000, SCAN = 5000, IDLE_SCAN = 60000, REP = 60000;
 const NEAR_R = 1600, FAR_MS = 3000, HIST_N = 10, PRAY_TTL = 15;
@@ -131,6 +132,48 @@ export class Meter extends DurableObject {
     const g = q.exec('select at from psg where uid = ? and k = ?', u, kind).toArray()[0]; if (g && now - Number(g.at) < gap) return [];
     q.exec('insert into psg(uid, k, at) values(?, ?, ?) on conflict(uid, k) do update set at = excluded.at', u, kind, now); if (Math.random() < 0.02) q.exec('delete from psg where at < ?', now - 864e5);
     return subs.map(r => ({ endpoint: String(r.e), p256dh: String(r.p), auth: String(r.a) })); }
+  // 불 꺼지기 전 (instance 'dark', table dk): one row per board held by a person, its clock in ms and which notice went (pre: 6 hours before, out: at
+  // dark; a row goes once out is sent). One DO alarm at the earliest pending notice, no polling. Tribe-held, empty and already dark boards have no row.
+  dkInit() { if (this.dki) return; this.dki = 1; const q = this.ctx.storage.sql; q.exec('create table if not exists dk(slot text primary key, uid text not null, lit integer not null, pre integer not null default 0, out integer not null default 0)');
+    q.exec('create table if not exists dkx(k text primary key, v integer not null)'); } // dkx 'hold': until when a hard-budget retry holds the alarm
+  dkPut(q, slot, uid, lit, now) { q.exec('insert into dk(slot, uid, lit, pre, out) values(?, ?, ?, ?, 0) on conflict(slot) do update set uid = excluded.uid, lit = excluded.lit, pre = excluded.pre, out = 0', slot, uid, lit, lit - DARK.preMs <= now ? 1 : 0); } // a 6-hour mark already passed is not sent
+  // A board clock the Worker learned. A new holder or clock replaces the row (takeover, relight); the same holder and clock keep its flags (edit).
+  async dkSet(slot, uid, lit, now = Date.now()) { this.dkInit(); const q = this.ctx.storage.sql, s = String(slot || ''), u = String(uid || ''), t = Math.floor(Number(lit)) || 0; if (!s) return { ok: false };
+    const cur = q.exec('select uid, lit from dk where slot = ?', s).toArray()[0]; if (cur && u && cur.uid === u && Math.abs(Number(cur.lit) - t) < 1000) return { ok: true };
+    if (!u || u.startsWith('tribe:') || t <= now) q.exec('delete from dk where slot = ?', s); else this.dkPut(q, s, u, t, now);
+    await this.dkArm(now); return { ok: true }; }
+  // Backfill from a world read, [{ slot, uid, lit }]: only slots the registry has no row for, and only boards still lit.
+  async dkSeed(list, now = Date.now()) { this.dkInit(); const q = this.ctx.storage.sql; let n = 0;
+    for (const b of Array.isArray(list) ? list.slice(0, 100) : []) { const s = String(b?.slot || ''), u = String(b?.uid || ''), t = Math.floor(Number(b?.lit)) || 0;
+      if (!s || !u || u.startsWith('tribe:') || t <= now || q.exec('select slot from dk where slot = ?', s).toArray()[0]) continue; this.dkPut(q, s, u, t, now); n++; }
+    if (n) await this.dkArm(now); return { ok: true, n }; }
+  dkMove(from, to) { this.dkInit(); const f = String(from || ''), t = String(to || ''); if (!f || !t || f === t) return { ok: false }; this.ctx.storage.sql.exec('update dk set uid = ? where uid = ?', t, f); return { ok: true }; }
+  async dkForget(uid) { this.dkInit(); this.ctx.storage.sql.exec('delete from dk where uid = ?', String(uid || '')); await this.dkArm(); return { ok: true }; }
+  // The alarm goes to the earliest pending notice, or is removed when there is none. While a hard-budget retry holds it (dkx 'hold') it is never
+  // brought earlier than that. -> the time set, 0 for none.
+  async dkArm(now = Date.now()) { const q = this.ctx.storage.sql; let at = Infinity; for (const r of q.exec('select lit, pre, out from dk').toArray()) { const n = darkNext(r); if (n && n.at < at) at = n.at; }
+    if (at === Infinity) { await this.ctx.storage.deleteAlarm(); return 0; } const hold = Number(q.exec("select v from dkx where k = 'hold'").toArray()[0]?.v) || 0;
+    const t = Math.max(at, now + 1000, hold > now ? hold : 0); await this.ctx.storage.setAlarm(t); return t; }
+  // Only the 'dark' instance ever sets an alarm; any other Meter instance has no dk table and returns here at once. One pass handles at most
+  // DARK.passMax due rows, earliest first (subrequests per invocation); the rest follow 1 s later. The alarm and its push gap checks count in the daily
+  // budget ('day'); at the hard level nothing is sent or marked and the alarm is held for DARK.retryMs.
+  async alarm() { const q = this.ctx.storage.sql; let rows; try { rows = q.exec('select slot, uid, lit, pre, out from dk').toArray(); } catch { return; } this.dkInit();
+    const now = Date.now(), due = rows.map(r => ({ r, n: darkNext(r) })).filter(x => x.n && x.n.at <= now).sort((x, y) => x.n.at - y.n.at).slice(0, DARK.passMax).map(x => x.r);
+    if (due.length) { let lvl = 0; try { lvl = Number((await this.env.METER.get(this.env.METER.idFromName('day')).add(1 + due.length))?.lvl) || 0; } catch { /* unknown: send */ }
+      if (lvl >= 2) { q.exec("insert into dkx(k, v) values('hold', ?) on conflict(k) do update set v = excluded.v", now + DARK.retryMs); await this.ctx.storage.setAlarm(now + DARK.retryMs); return; }
+      q.exec("delete from dkx where k = 'hold'"); try { await this.dkFire(due, now); } catch { /* each flag is written before its send */ } }
+    await this.dkArm(Date.now()); }
+  // Each due row is checked against the board (one Supabase read for all): relit, taken or cleared without the registry hearing it -> the row takes the
+  // board's state and nothing goes now. After that read nothing awaits until every flag is written, and each write first checks the row is still the
+  // one this pass read (a claim may have replaced it meanwhile). Flags go before the sends: each notice at most once per (slot, lit_until).
+  async dkFire(due, now) { const q = this.ctx.storage.sql, send = []; let live = null; try { live = await darkBoards(due.map(r => String(r.slot))); } catch { live = null; } // null: Supabase cannot say, the registry stands
+    for (const r of due) { const s = String(r.slot), u = String(r.uid), lit = Number(r.lit), b = live && (live.get(s) || { uid: '', lit: 0 });
+      const cur = q.exec('select uid, lit from dk where slot = ?', s).toArray()[0]; if (!cur || cur.uid !== u || Number(cur.lit) !== lit) continue; // replaced while the read was out
+      if (b && (b.uid !== u || Math.abs(b.lit - lit) >= 1000)) { if (!b.uid || b.uid.startsWith('tribe:') || b.lit <= now) q.exec('delete from dk where slot = ?', s); else this.dkPut(q, s, b.uid, b.lit, now); continue; }
+      if (darkNext(r).stage === 'pre' && now < lit) { q.exec('update dk set pre = 1 where slot = ?', s); send.push({ u, s, stage: 'pre', h: darkHours(lit, now) }); continue; }
+      q.exec('update dk set pre = 1 where slot = ?', s); if (quietShift(lit) > now) continue; // a 6-hour notice held past dark is dropped; the dark one waits for 08:00
+      q.exec('delete from dk where slot = ?', s); send.push({ u, s, stage: 'out', h: 6 }); }
+    await darkSend(this.env, send); }
   // Account registry (instance 'acct'). An account sits in one room at a time. A room asks here only when the account is not already seated with it,
   // so there is no request per message. Moving closes the account's sockets in the old room, settles its pending coins and carries its once/daily
   // gates over (copies merge by max), so opening more topics or sockets never multiplies a limit.
@@ -1133,7 +1176,7 @@ function pushText(row) {
   const name = clip(row?.from_name, 12);
   if (row?.kind === 'taken') return `${name}님이 ${slot}을 가져갔어요`;
   if (row?.kind === 'cheer') return CHEER_PHRASES[Math.floor(Number(row.phrase)) - 1] || '';
-  if (row?.kind === 'dark') return `${slot} 불이 곧 꺼져요`;
+  if (row?.kind === 'dark') return row.stage ? darkText(row.stage, row.slot_id, row.h) : `${slot} 불이 곧 꺼져요`; // stage: the registry's notices; none: the (paid-plan) cron
   if (row?.kind === 'gift') return `${name}님이 전광판을 선물했어요`;
   if (row?.kind === 'tribe') return '이번 주 소속 결과가 나왔어요';
   if (row?.kind === 'ball') return '21시 볼 드랍이 곧 시작돼요';
@@ -1144,7 +1187,7 @@ function pushText(row) {
 // Where a notification click lands (same origin, validated ids only); '' leaves it to the service worker's default '/'.
 function pushUrl(row) {
   const slot = String(row?.slot_id || ''), wid = String(row?.wid || '');
-  if (row?.kind === 'taken' && SLOT_RE.test(slot)) return '/?focus=' + slot;
+  if ((row?.kind === 'taken' || row?.kind === 'dark') && SLOT_RE.test(slot)) return '/?focus=' + slot;
   if ((row?.kind === 'wish' || row?.kind === 'wishwin') && WISH_ID.test(wid)) return '/?wish=' + wid;
   return '';
 }
@@ -1322,7 +1365,7 @@ function queueTaken(env, ctx, victim, fromName, slotId) {
 }
 // Immediate web push without the cron. Subscriptions live in the Meter instance 'push' (filled by /rt/push), because Supabase push_subs cannot be read
 // per actor with the publishable key. One notice per (actor, kind) per PUSH_GAP; everything runs in waitUntil and never touches the triggering response.
-const PUSH_GAP = { taken: 60000, wish: 600000, wishwin: 60000 }, WISH_PUSH_AT = [1, 3, 5, 10, 20, 30, 50, 100];
+const PUSH_GAP = { taken: 60000, wish: 600000, wishwin: 60000, dark: 1 }, WISH_PUSH_AT = [1, 3, 5, 10, 20, 30, 50, 100]; // dark: no gap, each notice is once per (slot, lit_until) already
 const pushM = env => env.METER.get(env.METER.idFromName('push'));
 function pushNow(env, ctx, actorId, note) {
   if (!env?.VAPID_PRIV || !actorId || !PUSH_GAP[note?.kind]) return Promise.resolve();
@@ -1331,6 +1374,24 @@ function pushNow(env, ctx, actorId, note) {
   try { ctx?.waitUntil?.(job); } catch { /* the request already answered */ }
   return job;
 }
+// 불 꺼지기 전: the Meter instance 'dark' hears every board clock the Worker learns (claim, takeover, starter, tribe, edit, review approval, relight,
+// takedown) and sends its own notices from its alarm. A row without a clock leaves the registry as it is.
+const darkM = env => env.METER.get(env.METER.idFromName('dark'));
+let DSEED = 0; // last world backfill handed to the registry: once per isolate per hour
+function darkNote(env, ctx, row) { const slot = String(row?.slot_id || ''), lit = litOf(row); if (!SLOT_RE.test(slot) || (row.holder_id && !lit)) return;
+  const job = Promise.resolve().then(() => darkM(env).dkSet(slot, String(row.holder_id || ''), lit, Date.now())).catch(() => { });
+  try { ctx?.waitUntil?.(job); } catch { /* the board already changed */ } }
+function darkSeed(env, ctx, world) { const now = Date.now(); if (now - DSEED < 3600e3 || !Array.isArray(world?.billboards)) return; DSEED = now;
+  const list = world.billboards.filter(b => b?.holder_id && SLOT_RE.test(String(b.slot_id || ''))).map(b => ({ slot: String(b.slot_id), uid: String(b.holder_id), lit: litOf(b) })).filter(b => b.lit > now);
+  if (list.length) { try { ctx?.waitUntil?.(Promise.resolve().then(() => darkM(env).dkSeed(list, now)).catch(() => { })); } catch { /* next hour */ } } }
+// slot -> { uid, lit } as Supabase has it now, or null when it cannot say.
+async function darkBoards(slots) { const ok = slots.filter(s => SLOT_RE.test(s)); if (!ok.length) return new Map();
+  const r = await fetch(SUPA + '/rest/v1/billboards?select=slot_id,holder_id,lit_until,expires_at&slot_id=in.(' + ok.join(',') + ')', { headers: { apikey: ANON, accept: 'application/json' } });
+  const rows = r.ok ? await r.json() : null; return Array.isArray(rows) ? new Map(rows.map(b => [String(b.slot_id), { uid: String(b.holder_id || ''), lit: litOf(b) }])) : null; }
+// One alarm pass's notices [{ u, s, stage, h }]: an immediate push each (url opens the slot) and one inbox_batch with a dark row each (phrase 1 = 6 hours
+// before, 2 = dark).
+async function darkSend(env, list) { if (!list.length) return; await Promise.all([...list.map(x => pushNow(env, null, x.u, { kind: 'dark', slot_id: x.s, stage: x.stage, h: x.h })),
+  supabaseRpc('inbox_batch', { p_key: env.FLUSH_KEY || '', p_items: list.map(x => ({ kind: 'dark', slot_id: x.s, to: x.u, phrase: x.stage === 'out' ? 2 : 1 })) }).catch(() => null)]); }
 // Event properties: at most 6 short keys, numbers or strings up to 40 characters.
 function evProps(p) { const o = {}; let n = 0; if (p && typeof p === 'object') for (const [k, v] of Object.entries(p)) { if (n >= 6) break; if (!/^[a-z_]{1,16}$/.test(k)) continue;
     if (typeof v === 'number' && Number.isFinite(v)) o[k] = v; else if (typeof v === 'string') o[k] = clip(v, 40); else continue; n++; } return n ? JSON.stringify(o) : ''; }
@@ -1531,7 +1592,7 @@ async function plaza(req, env, ctx, u) {
     if (req.method !== 'GET') return J({ err: 'get' }, 405);
     const mem = PC.get('world'); if (mem && Date.now() - mem.at < PRAY_TTL * 1000) return new Response(mem.b, { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
     const key = new Request(WORLD_CACHE), c = caches.default; let r = await c.match(key);
-    if (!r) { const got = await readWorld(env); if (got.err || !got.body) return J({ err: got.err || 'upstream' }, 502);
+    if (!r) { const got = await readWorld(env); if (got.err || !got.body) return J({ err: got.err || 'upstream' }, 502); darkSeed(env, ctx, got.world);
       r = new Response(got.body, { headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=' + PRAY_TTL } }); ctx.waitUntil(c.put(key, r.clone())); }
     const body = await r.text(); if (PC.size > 500) PC.clear(); PC.set('world', { at: Date.now(), b: body });
     return new Response(body, { headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
@@ -1678,6 +1739,7 @@ async function plaza(req, env, ctx, u) {
     row.photo_status = null;
   }
   if (claim) {
+    darkNote(env, ctx, row); // any mode: a takeover replaces the old holder's row, an edit with the same holder and clock keeps it
     try { await acct(env).wish(kstDay()); } catch { }
     if (mode === 'claim' || mode === 'starter' || mode === 'tribe') {
       try { await env.METER.get(env.METER.idFromName('ev')).touch(isoWeek(), actor.id); } catch { }
@@ -1888,7 +1950,7 @@ async function relightBoard(req, env, ctx) {
     const rows = s.ok ? await s.json() : [];
     const row = Array.isArray(rows) ? rows[0] : null;
     const topic = PLAZA_TOPICS.includes(b.topic) ? b.topic : 'chapel:square';
-    if (row) await announce(env, ctx, squareTopics(topic), actor.id, row);
+    if (row) { darkNote(env, ctx, row); await announce(env, ctx, squareTopics(topic), actor.id, row); }
   } catch { /* the caller still has lit_until */ }
   return J({ ok: true, lit_until: data.lit_until, lit_days: data.lit_days, scored: data.scored === true });
 }
@@ -2029,6 +2091,7 @@ async function photos(req, env, ctx, u) {
     if (data.billboard) {
       const take = data.prev_holder_id && data.prev_holder_id !== data.actor_id ? { victim: data.prev_holder_id, attacker: data.billboard.holder_name || '', slot: data.billboard.slot_id, name: slotName(data.billboard.slot_id), price: Number(data.reclaim_bid) || 0, line1: data.prev_line1, line2: data.prev_line2, line3: data.prev_line3, emoji: data.prev_emoji, theme: data.prev_theme, color: data.prev_color } : null;
       if (take) queueTaken(env, ctx, take.victim, take.attacker, take.slot);
+      darkNote(env, ctx, data.billboard);
       try { await invalidateWorld(env, ctx); } catch { }
       const msg = { t: 'WORLD_UPDATE', kind: 'BILLBOARD', data: data.billboard, sync: [data.prev_holder_id, data.landlord_id].filter((uid) => uid && uid !== data.actor_id), take, mono: data.monopoly_name || '' };
       for (const topic of PLAZA_TOPICS) {
@@ -2046,6 +2109,7 @@ async function photos(req, env, ctx, u) {
     const rpc = await supabaseRpc('takedown_billboard', { p_key: env.FLUSH_KEY || '', p_slot_id: slot });
     const data = rpc.data || {};
     if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || data.message || '내리지 못했습니다.' }, rpc.ok ? 400 : 502);
+    if (data.billboard) darkNote(env, ctx, data.billboard); // takedown blanks the lines only: holder and clock stay, so does the row
     if (data.billboard) await announce(env, ctx, PLAZA_TOPICS, '', data.billboard);
     return J({ ok: true, billboard: data.billboard || null });
   }
@@ -2138,7 +2202,7 @@ async function accountApi(req, env, ctx, u) {
   // Pushes to the user: id reach the guest's browsers, and the guest's board shots stay the holder's own (card page, share-page title).
   // The guest's wish, hearts, reports and unpaid prizes become the user's (wMove), so mine, the one-wish-a-day rule and the prize follow the person.
   ctx.waitUntil(Promise.resolve().then(() => Promise.all([pushM(env).psMove(guestId, actor.id), snapM(env).snapMove(guestId, actor.id).then(() => { SNX.clear(); SNC.clear(); }),
-    wishM(env).wMove(guestId, actor.id).then(() => { WISHC.at = 0; WONE.clear(); WAU.clear(); })])).catch(() => { }));
+    wishM(env).wMove(guestId, actor.id).then(() => { WISHC.at = 0; WONE.clear(); WAU.clear(); }), darkM(env).dkMove(guestId, actor.id)])).catch(() => { }));
   return J({ ok: true, actor_id: actor.id, coins: data.coins, bonus: data.bonus || 0, linked: true, nickname: data.nickname || '' });
 }
 // Account withdrawal, outside Supabase: push subscriptions and gaps, wishes (hidden and emptied), hearts given, reports filed, and the uploader link of
@@ -2147,7 +2211,7 @@ async function forgetActor(env, uid) {
   let ids = [uid]; try { ids = ids.concat(await env.METER.get(env.METER.idFromName('ev')).evGuests(uid)); } catch { /* the user's own rows still go */ }
   const dropSubs = async (id) => { const r = await pushM(env).psForget(id); // the Supabase copies of the endpoints this instance knew (older ones only Supabase knows stay)
     await Promise.all((r?.e || []).map(e => supabaseRpc('push_unsubscribe', { p_key: env.FLUSH_KEY || '', p_actor_id: id, p_endpoint: e }).catch(() => null))); };
-  await Promise.all(ids.map(id => Promise.all([dropSubs(id), wishM(env).wForget(id), snapM(env).snapForget(id)].map(p => p.catch(() => null)))));
+  await Promise.all(ids.map(id => Promise.all([dropSubs(id), wishM(env).wForget(id), snapM(env).snapForget(id), darkM(env).dkForget(id)].map(p => p.catch(() => null)))));
   WISHC.at = 0; WONE.clear(); WAU.clear(); SNX.clear(); SNC.clear(); PC.delete('world');
   try { await caches.default.delete(new Request(WORLD_CACHE)); } catch { }
 }

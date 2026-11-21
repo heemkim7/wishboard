@@ -22,7 +22,7 @@ const COPY = {
     const who = m.from_name || '누군가';
     return phrase ? `${who}님: ${phrase}` : `${who}님이 응원했어요`;
   },
-  dark: (m) => `${slotName(m.slot_id)} 불이 곧 꺼져요`,
+  dark: (m) => Number(m.phrase) === 2 ? `${slotName(m.slot_id)} 불이 꺼졌어요` : `${slotName(m.slot_id)} 불이 곧 꺼져요`, // phrase 2: the at-dark notice
   reply: (m) => {
     const phrase = CHEER_PHRASES[Math.floor(Number(m.phrase)) - 1] || '';
     const who = m.from_name || '주인';
