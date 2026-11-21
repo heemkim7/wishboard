@@ -1539,6 +1539,39 @@ BEGIN
 END;
 $$;
 
+-- The last step of a withdrawal: delete the login itself (the auth.users row; identities, sessions and refresh tokens go by cascade).
+-- Supabase Auth has no route for a user to delete itself, so the Worker calls this after withdraw_account. It refuses while a wallet row
+-- still exists, so it can finish a withdrawal but never delete a live account. The function must be owned by a role that may delete
+-- from auth.users (postgres, the SQL editor's default). migrations/2026-11-22-forget-login.sql adds it to production and checks that.
+CREATE OR REPLACE FUNCTION public.forget_login(p_key TEXT, p_actor_id TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_n INT := 0;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  IF p_actor_id IS NULL OR p_actor_id !~ '^user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'id');
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.wallets WHERE actor_id = p_actor_id) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'wallet');
+  END IF;
+  DELETE FROM auth.users WHERE id = substr(p_actor_id, 6)::uuid;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN jsonb_build_object('ok', true, 'deleted', v_n);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.forget_login(TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.forget_login(TEXT, TEXT) TO anon, authenticated, service_role;
+
 -- One report per account, slot, and KST day. A repeat still counts as received.
 CREATE OR REPLACE FUNCTION public.file_report(p_key TEXT, p_actor_id TEXT, p_slot_id TEXT, p_reason TEXT)
 RETURNS JSONB

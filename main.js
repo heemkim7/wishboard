@@ -242,6 +242,8 @@ const ui = createUI(document.getElementById('ui'), {
   oauth: (provider) => startOAuth(provider), // synchronous up to window.open: call it straight from the click
   passwordAuth: (kind, id, password) => passwordSign(kind, id, password),
   withdraw: () => withdrawAccount(),
+  forgetKnown: () => net.forget === true, // what the boot config said about the login being deleted on withdrawal
+  forgetLogin: () => net.forgetLogin(), // asked again when the withdrawal sheet opens
   signOut: () => signOutAccount(),
   handoverFired: () => handoverFired(),
   mine: (amount, source = 'cart') => grant(amount, source),
@@ -2077,12 +2079,14 @@ async function becomeGuest({ adopt = false, push = true } = {}) {
   }
   return !!g?.sub;
 }
+// The Worker says whether the login itself was deleted (login: 'deleted') or is still there for the operator to remove ('kept').
 async function withdrawAccount() {
-  await actorOp(async () => {
-    await net.withdrawAccount();
+  const res = await actorOp(async () => {
+    const data = await net.withdrawAccount();
     await becomeGuest({ push: false });
+    return data;
   });
-  ui.note('탈퇴했고, 내 전광판과 토지 소유를 비웠어요', 'ok');
+  ui.note(res?.login === 'kept' ? '탈퇴했어요. 로그인 정보는 운영자가 확인한 뒤 지웁니다.' : '탈퇴했고, 내 전광판과 토지 소유를 비웠어요', 'ok');
 }
 // 로그아웃: this device only. Coins, boards and plots stay with the account; signing in again brings them back.
 async function signOutAccount() {
