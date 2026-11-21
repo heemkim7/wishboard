@@ -85,10 +85,10 @@ function paintBootLive(data, here) {
   // Small counts read as an empty plaza, so each one shows only from its threshold (ftue.js PUBLIC_MIN).
   const { visitors, wishes, crowd } = crowdFacts({ visitors: data.today?.visitors, wishes: data.today?.wishes, crowd: here?.live });
   king.textContent = live(main)
-    ? `👑 지금 메인 타워의 소원: ${main.holder_name || '익명'} — "${main.line1 || '소원 대기'}"`
+    ? `지금 메인 타워의 소원: ${main.holder_name || '익명'} — "${main.line1 || '소원 대기'}"`
     : main?.holder_id
-      ? `👑 메인 타워 정상은 불이 꺼져 있어요 — ${main.holder_name || '이전 주인'}`
-      : '👑 메인 타워 정상이 비어 있어요 — 첫 소원을 걸 자리';
+      ? `메인 타워 정상은 불이 꺼져 있어요 — ${main.holder_name || '이전 주인'}`
+      : '메인 타워 정상이 비어 있어요 — 첫 소원을 걸 자리';
   stat.textContent = [
     open ? `지금 걸 수 있는 빈 자리 ${open}곳` : '지금은 빈 자리가 없어요',
     visitors ? `오늘 다녀간 사람 ${visitors.toLocaleString('ko-KR')}명` : '',
@@ -335,7 +335,7 @@ const ui = createUI(document.getElementById('ui'), {
     focusedSlot = FOCUS;
     if (GIFT) {
       world?.giftPop?.(FOCUS);
-      ui.note('🎉 당신을 위해 준비된 타임스퀘어 스페셜 전광판입니다!', 'ok');
+      ui.note('당신을 위해 준비된 타임스퀘어 스페셜 전광판입니다!', 'ok');
     }
     setTimeout(() => { ui.job({ type: 'focus', slot: FOCUS, board: pose.board || {}, fare: 0 }); introDone(); }, GIFT ? 700 : 2500);
   },
@@ -403,7 +403,7 @@ world = createTimesSquare(document.getElementById('view'), {
         ui.note(mates ? `같이 함성을 질렀어요 · 옆 ${mates}명` : '함성을 질렀어요', 'ok');
       }
     }
-    else if (kind === 'stand') ui.note(info?.ok ? '🚕 택시를 불렀어요! 바로 앞에 정차한 택시 옆에서 E를 누르세요' : '지금은 빈 택시가 없어요. 잠시 후 다시 불러 주세요', info?.ok ? 'ok' : 'err');
+    else if (kind === 'stand') ui.note(info?.ok ? '택시를 불렀어요! 바로 앞에 정차한 택시 옆에서 E를 누르세요' : '지금은 빈 택시가 없어요. 잠시 후 다시 불러 주세요', info?.ok ? 'ok' : 'err');
     else if (kind === 'ring') ui.note('황금 링 안으로 걸어 들어가면 코인이 들어와요');
     else if (kind === 'fountain') drawFortune();
     else if (kind === 'lounge') setLounge(true);
@@ -443,10 +443,10 @@ world = createTimesSquare(document.getElementById('view'), {
     if (ev.type !== 'done' || !ev.slot || !ev.sent) return;
     fareStreak += 1;
     trackEvent('taxi_dropoff', { streak: fareStreak });
-    ui.note(`🚕 하차 완료 · ${ev.riders || 1}명 · 연속 ${fareStreak}명`, 'ok');
+    ui.note(`하차 완료 · ${ev.riders || 1}명 · 연속 ${fareStreak}명`, 'ok');
   },
   onFever(ev) {
-    if (ev?.phase === 'count') ui.note('🔮 크리스탈볼이 내려옵니다', 'ok');
+    if (ev?.phase === 'count') ui.note('크리스탈볼이 내려옵니다', 'ok');
     if (ev?.phase === 'party') {
       if (!net.sendFever()) {
         feverUntil = 0;
@@ -532,7 +532,7 @@ function setLounge(on) {
   loungeTold = false;
   world.startLounge();
   ui.lounge(true, 0);
-  ui.note('☕ 전광판 관람을 켰어요. 8초마다 다른 전광판, 20초마다 +2. 움직이면 끝나요.', 'ok');
+  ui.note('전광판 관람을 켰어요. 8초마다 다른 전광판, 20초마다 +2. 움직이면 끝나요.', 'ok');
   clearInterval(loungeTimer);
   loungeTimer = setInterval(() => {
     if (!loungeOn) return;
@@ -847,7 +847,7 @@ async function takeover(payload) {
   settle(res);
   world?.beginAir?.({ nick: res.nick || state.nick, line: res.line || line, until: res.until });
   if (pay === 'coins') leagueSoon();
-  ui.note('📣 60초 동안 모든 전광판을 장악했어요', 'ok');
+  ui.note('60초 동안 모든 전광판을 장악했어요', 'ok');
   return res;
 }
 
@@ -908,7 +908,7 @@ let chainReady = false, chainSeen = new Set();
 function noteChains() {
   const list = chainsOf(state.billboards);
   if (!chainReady) { chainSeen = new Set(list.map((c) => c.id)); chainReady = true; return; }
-  for (const c of list) if (!chainSeen.has(c.id)) ui.note(`⚡ ${c.name}님이 ${c.building}을 완전 점령했습니다. 그 건물 응원은 +${BALANCE.cheerGroup}`, 'ok');
+  for (const c of list) if (!chainSeen.has(c.id)) ui.note(`${c.name}님이 ${c.building}을 완전 점령했습니다. 그 건물 응원은 +${BALANCE.cheerGroup}`, 'ok');
   chainSeen = new Set(list.map((c) => c.id));
 }
 function applyPlaza(remote) {
@@ -1469,10 +1469,10 @@ net.on('take', (m) => {
   if (!m || m.victim !== net.id) return;
   ui.revenge({ slot: m.slot, slotName: m.name || slotName(m.slot), attacker: m.attacker, price: m.price, line1: m.line1, line2: m.line2, line3: m.line3, emoji: m.emoji, theme: m.theme, color: m.color });
 });
-net.on('mono', (m) => { if (m?.name) ui.note(`👑 ${m.name}님이 메인 타워 3칸을 모두 독점하여 타임스퀘어를 지배했습니다!`, 'ok'); });
+net.on('mono', (m) => { if (m?.name) ui.note(`${m.name}님이 메인 타워 3칸을 모두 독점하여 타임스퀘어를 지배했습니다!`, 'ok'); });
 net.on('rev', (m) => {
   const until = Number(m?.until) || 0;
-  if (until > Date.now()) { revengeUntil = until; ui.setRevenge?.(until); ui.note('🔥 2분 동안 택시 운임이 2배로 들어옵니다', 'ok'); }
+  if (until > Date.now()) { revengeUntil = until; ui.setRevenge?.(until); ui.note('2분 동안 택시 운임이 2배로 들어옵니다', 'ok'); }
   else ui.note('복수 운임은 전광판을 빼앗긴 뒤 10분 안에만 켜져요', 'err');
 });
 net.on('fever', (m) => {
@@ -1486,7 +1486,7 @@ net.on('fever', (m) => {
   const until = Number(m?.until) || 0;
   if (until > Date.now()) {
     feverUntil = until;
-    ui.note('✨ 60초 동안 코인 2배 · 택시 부스트 무제한', 'ok');
+    ui.note('60초 동안 코인 2배 · 택시 부스트 무제한', 'ok');
   } else {
     feverUntil = 0;
     world?.rejectFever?.();
@@ -1528,7 +1528,7 @@ net.on('ad', (m) => {
   else state.billboards.push({ slot_id: m.slot, views: m.views, clicks: m.clicks });
   world.updateBillboardTexture(m.slot, { views: m.views, clicks: m.clicks }, false);
   ui.setWorld(state);
-  if (m.kind === 'views' && row?.holder_id && row.holder_id === net.id && m.by !== net.id) ui.note('🚕 방금 다른 유저의 택시가 내 전광판 앞에 손님을 내려줬습니다! (누적 노출 +1)', 'ok');
+  if (m.kind === 'views' && row?.holder_id && row.holder_id === net.id && m.by !== net.id) ui.note('방금 다른 유저의 택시가 내 전광판 앞에 손님을 내려줬습니다! (누적 노출 +1)', 'ok');
 });
 // Wallet and world arrive over the socket: WALLET_SYNC after every settle (the Room DO settles pending coins within 30 s on its own)
 // and WORLD_UPDATE on every board or plot change. HTTP only fills the gaps: once when the socket (re)connects, and every 60 s while it is down.
