@@ -14,6 +14,17 @@ export function lockCelebration(ms) {
   return n === 5000 ? 5000 : 0;
 }
 
+// Why three board lines cannot go up, or '' when they can: 'long' (a line over 16), 'empty' (all three blank: a board needs
+// at least one line, so the free slot is never spent on a blank board), 'blocked' (a word the plaza does not show).
+export const LINES_ERR = { long: '줄마다 16자까지예요', empty: '한 줄은 적어 주세요', blocked: '쓸 수 없는 문구가 있어요' };
+export function linesFault(a, b, c) {
+  const rows = [a, b, c].map((s) => String(s ?? ''));
+  if (rows.some((s) => [...s].length > 16)) return 'long';
+  if (!rows.some((s) => s.trim())) return 'empty';
+  if (rows.some((s) => blockedText(s))) return 'blocked';
+  return '';
+}
+
 export function claimWizard(slot) {
   const state = { step: 1, slot: String(slot || ''), lines: ['', '', ''], emoji: '✨', theme: 'cyber_navy' };
   return {
@@ -21,12 +32,14 @@ export function claimWizard(slot) {
     get slot() { return state.slot; },
     get free() { return BALANCE.starterSlots.includes(state.slot); }, // live: the server list can arrive while the wizard is open
     get mode() { return this.free ? 'starter' : 'claim'; },
+    // The lines as last kept: step 2 fills its boxes from here, so 이전 and 다음 never lose what was typed.
+    get lines() { return state.lines.slice(); },
     choose(id) { state.slot = String(id || ''); state.step = 1; },
+    // A draft kept as typed (going back from step 2); it is checked again before step 3.
+    keep(a, b, c) { state.lines = [a, b, c].map((s) => String(s ?? '')); },
     linesOk(a, b, c) {
-      const rows = [a, b, c].map((s) => String(s || ''));
-      if (rows.some((s) => [...s].length > 16)) return false;
-      if (rows.some((s) => blockedText(s))) return false;
-      state.lines = rows;
+      if (linesFault(a, b, c)) return false;
+      state.lines = [a, b, c].map((s) => String(s ?? ''));
       return true;
     },
     next() { if (state.step < 3) state.step += 1; return state.step; },
@@ -34,6 +47,52 @@ export function claimWizard(slot) {
       return { slot_id: state.slot, bid: this.free ? 0 : undefined, mode: this.mode, line1: state.lines[0], line2: state.lines[1], line3: state.lines[2], emoji: state.emoji, bg_theme: state.theme };
     },
   };
+}
+
+// The 60-second takeover's second step (the price is the one main.js and the Worker take: 5000 coins or one VIP ticket).
+// ok: what it costs and what is left after it; not ok: the line shown under the card instead.
+export const AIR_PRICE = 5000;
+export function airAsk({ line, pay, have, tickets } = {}) {
+  const text = String(line ?? '').trim();
+  const coins = Math.max(0, Math.floor(Number(have) || 0));
+  const t = Math.max(0, Math.floor(Number(tickets) || 0));
+  const n = (v) => v.toLocaleString('ko-KR');
+  if (!text) return { ok: false, err: '한 줄을 적어 주세요' };
+  if (blockedText(text)) return { ok: false, err: '그 문구는 올릴 수 없어요' };
+  if (pay === 'ticket') {
+    if (t < 1) return { ok: false, err: 'VIP 티켓이 없어요' };
+    return { ok: true, text, cost: 'VIP 티켓 1장', after: `남는 티켓 ${n(t - 1)}장` };
+  }
+  if (coins < AIR_PRICE) return { ok: false, err: `${n(AIR_PRICE)}코인이 필요해요. 지금 ${n(coins)}코인` };
+  return { ok: true, text, cost: `${n(AIR_PRICE)}코인`, after: `쓴 뒤 잔액 ${n(coins - AIR_PRICE)}코인` };
+}
+
+// Photo ads sent for review, remembered on this device as { slot, id, who, at }, so the result is told even when the review
+// came while the player was away. rows: the plaza's billboards; me: my actor id (only a guest:/user: id decides anything).
+// Returns the entries still waiting and the results to tell once: 'on' (approved, on air), 'off' (refused, the fee came back),
+// 'lost' (the board left me before the review; the photo went down with it). Entries older than 14 days are dropped quietly.
+export const PHOTO_WAIT_MS = 14 * 864e5;
+export function photoVerdicts(wait, rows, me, now = Date.now()) {
+  const boards = Array.isArray(rows) ? rows : [];
+  const known = /^(guest|user):/.test(String(me || ''));
+  const keep = [], told = [];
+  for (const w of Array.isArray(wait) ? wait : []) {
+    if (!w || typeof w !== 'object' || !w.slot || !w.id) continue;
+    if (!(now - (Number(w.at) || 0) <= PHOTO_WAIT_MS)) continue;
+    const row = boards.find((b) => b?.slot_id === w.slot);
+    if (!known || !row) { keep.push(w); continue; }
+    const tell = (kind) => told.push({ slot: w.slot, id: w.id, kind });
+    const mine = !!row.holder_id && (row.holder_id === me || row.holder_id === w.who);
+    if (!mine) {
+      // Sent as someone else (signed out since): this browser cannot tell what happened, so it keeps waiting.
+      if (!w.who || w.who === me) tell('lost'); else keep.push(w);
+      continue;
+    }
+    if (row.photo_id === w.id && row.photo_status === 'pending') keep.push(w);
+    else if (row.photo_id === w.id && row.photo_status === 'approved') tell('on');
+    else tell('off');
+  }
+  return { wait: keep, told };
 }
 
 // KST calendar day, YYYY-MM-DD. The daily missions and the tutorial both count days this way.
@@ -121,8 +180,9 @@ export function goalLine(goal) {
 // Not while the server is saving its budget (busy): the sheet would have no form.
 export const WISH_STEP = '오늘의 소원 한 줄 걸기 (무료)';
 export function wishStep({ known, mine, skipped, busy } = {}) { return known && !mine && !skipped && !busy ? WISH_STEP : ''; }
-// Right after the arrival intro a newcomer gets the wish sheet once, unless a link brought them somewhere else or a wish is already up.
-export function wishAutoOpen({ newbie, known, mine, deep } = {}) { return !!newbie && !deep && !(known && mine); }
+// Right after the arrival intro a newcomer gets the wish sheet once, unless a link brought them somewhere else, a wish is already up,
+// or the sheet was closed without a wish this session (kts_wish_skip): a skipped sheet does not come back on the next entry.
+export function wishAutoOpen({ newbie, known, mine, deep, skipped } = {}) { return !!newbie && !deep && !skipped && !(known && mine); }
 // Boot card: a friend's wish from the link, else yesterday's winner, else today's count once it is big enough, else nothing.
 // The heart label only when a heart can follow: a wish from today (day unknown counts as today) and no ?focus= taking over.
 export function wishBootLine({ deep, king, count, day, focus } = {}) {
