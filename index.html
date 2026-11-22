@@ -342,16 +342,26 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .linkbtn { position: relative; color: var(--info); font-weight: 700; text-decoration: underline; }
 
   /* ---------- news ---------- */
-  .news { position: absolute; top: calc(68px + var(--safe-t)); left: 50%; height: 46px; width: min(440px, calc(100vw - 780px)); min-width: 0; transform: translate(-50%, calc(-100% - 30px)); transition: transform .55s cubic-bezier(.16,1,.3,1), opacity .3s; opacity: 0; display: flex; align-items: stretch; overflow: hidden; pointer-events: none; }
-  .news.show { transform: translate(-50%, 0); opacity: 1; }
+  /* The news line (속보) and the draw line (.stay-ticket) share one slot: while a news line shows (4.4 s, longer while a
+     long line crawls) the draw line steps out of the slot and comes back after it. Where the slot is, per screen, is in
+     the blocks "Desktop top-centre column" and "Touch bottom lane" below. */
+  .news { position: absolute; top: calc(68px + var(--safe-t)); left: calc(378px + var(--safe-l)); right: calc(222px + var(--safe-r)); width: auto; max-width: 440px; height: 40px; margin: 0 auto; min-width: 0; transform: translateY(-8px); transition: transform .35s cubic-bezier(.16,1,.3,1), opacity .25s ease; opacity: 0; display: flex; align-items: stretch; overflow: hidden; pointer-events: none; }
+  .news.show { transform: none; opacity: 1; }
   #ui > .news.show.go { pointer-events: auto; cursor: pointer; }
   .news .kick { flex: none; display: grid; place-items: center; padding: 0 14px; font: 800 12px/1.1 var(--font); letter-spacing: .04em; color: var(--bg); background: var(--live); text-align: center; }
   .news .kick b { display: block; font-size: 15px; letter-spacing: 0; }
   /* Centred in the fixed-height bar, so the two lines never run past its bottom edge. */
-  .news .body { padding: 0 16px; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
-  .news .body small { display: block; font-size: 12px; font-weight: 700; line-height: 1.2; color: var(--live); letter-spacing: .04em; }
+  .news .body { --pad: 16px; padding: 0 var(--pad); min-width: 0; flex: 1; display: flex; flex-direction: column; justify-content: center; overflow: hidden; }
+  .news .body small { display: block; font-size: 12px; font-weight: 700; line-height: 1.2; color: var(--live); letter-spacing: .04em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .news .body strong { display: block; margin-top: 3px; font-size: 15px; font-weight: 500; line-height: 1.2; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .news .body em { font-style: normal; font-weight: 700; color: var(--text); }
+  /* A line longer than the bar crawls once from its start to its end (ui.js pumpNews sets --crawl and --crawl-s and holds
+     the line until it has been read), instead of ending in "…". Reduced motion keeps the "…". */
+  .news.crawl .body { -webkit-mask-image: linear-gradient(90deg, transparent, #000 var(--pad), #000 calc(100% - var(--pad)), transparent); mask-image: linear-gradient(90deg, transparent, #000 var(--pad), #000 calc(100% - var(--pad)), transparent); }
+  .news.crawl .body strong { width: max-content; overflow: visible; text-overflow: clip; animation: newsCrawl var(--crawl-s, 3s) linear 1s both; }
+  @keyframes newsCrawl { from { transform: none; } to { transform: translateX(var(--crawl, 0px)); } }
+  /* The draw line leaves the slot while a news line is in it (see .news above). */
+  #ui:has(> .news.show) > .stay-ticket { opacity: 0; visibility: hidden; transform: translateY(8px); pointer-events: none; transition: opacity .2s ease, transform .35s cubic-bezier(.16,1,.3,1), visibility 0s linear .35s; }
 
   /* ---------- prompt / dock ---------- */
   .prompt { position: absolute; left: 50%; bottom: calc(118px + var(--safe-b)); transform: translate(-50%, 12px) scale(.96); opacity: 0; transition: all .25s cubic-bezier(.2,1.2,.4,1); pointer-events: none !important; }
@@ -488,7 +498,8 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html.touch .rank .mini::after { inset: -6px -3px; }
   html.touch .sheet .more .emo-row button::after { inset: -7px -2px; }
   html.touch .sheet .more .swatch::after { inset: -9px -4px; }
-  html.touch .stay-ticket::after { inset: -8px 0; }
+  /* The draw line has the prompt 6px above it and the screen edge 8px below: it grows only into those. */
+  html.touch .stay-ticket::after { inset: -3px 0 -8px; }
   html.touch .reacts button::after { inset: -2px; }
   html.touch .wallet .chip::after, html.touch .wallet .protect::after, html.touch .nextgoal:not(.task)::after { inset: -6px 0 -3px; }
   html.touch .wallet .sub-fixed .chip::after { inset: -14px 0 -3px; }
@@ -498,29 +509,6 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html.touch .sheet .more .emo-row { padding: 7px 0; margin: -7px 0; }
   /* Mission rows are buttons that look like notes: a full 44px row on touch. */
   html.touch .sheet button.note { padding: 13px 0; margin-top: 0; }
-  /* Desktop news bar placement, on the same columns as the ticker (see the .stay-ticket breakpoints): the left column ends at
-     354px, the tool row is the top row (14px … 60px), the minimap column starts 198px from the right. The bar never lies on the
-     identity card or the tool row, and never where the ticker is:
-     >= 820px   the row under the top bar (68px), centred between the left column and the minimap (378px … right 222px);
-                the ticker is in the top row (>= 1090px) or one row further down (134px);
-     641-819px  no room in that row: its own row under the right-hand column and the ticker (424px), right-aligned like the ticker;
-     <= 640px   along the bottom edge, above the ticker. */
-  @media (min-width: 820px) {
-    html:not(.touch) .news { top: calc(68px + var(--safe-t)); left: calc(50% + 78px); width: min(440px, calc(100vw - 600px)); }
-    /* The waypoint pill (88px … 126px, centred) is in the same row: while a news line shows (4.4 s) the pill steps down under
-       it from 1090px (the ticker is in the top row there) and fades out below that (the ticker has the row under it). */
-    html:not(.touch) .waypill { transition: top .3s ease, opacity .3s ease; }
-    html:not(.touch) #ui:has(> .news.show) .waypill { opacity: 0; pointer-events: none !important; }
-  }
-  @media (min-width: 1090px) {
-    html:not(.touch) #ui:has(> .news.show) .waypill { top: calc(122px + var(--safe-t)); opacity: 1; pointer-events: auto !important; }
-  }
-  @media (min-width: 641px) and (max-width: 819px) {
-    html:not(.touch) .news { --news-w: min(320px, calc(100vw - 380px)); top: calc(424px + var(--safe-t)); left: calc(100% - 14px - var(--safe-r) - var(--news-w) / 2); width: var(--news-w); }
-  }
-  @media (max-width: 640px) {
-    html:not(.touch) .news { top: auto; bottom: calc(50px + var(--safe-b)); left: 50%; width: min(440px, calc(100vw - 20px)); }
-  }
   @keyframes toastIn { from { opacity: 0; transform: translateY(10px) scale(.96); } }
   @keyframes toastOut { to { opacity: 0; transform: translateY(-6px); } }
   .coin-fly { position: fixed; left: 0; top: 0; width: 26px; height: 26px; margin: -13px 0 0 -13px; border-radius: 50%; z-index: 30; pointer-events: none;
@@ -770,7 +758,6 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   #boot { top: var(--app-top, 0px); height: var(--app-h, 100dvh); bottom: auto; }
 
   @media (max-width: 900px) {
-    .news { top: calc(68px + var(--safe-t)); width: min(280px, calc(100vw - 520px)); height: 46px; }
     .grid2 { grid-template-columns: 1fr; }
     .help { display: none; }
     .help:not(.fade) { display: grid; max-width: min(280px, calc(100vw - 24px)); font-size: 12px; }
@@ -778,7 +765,6 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   @media (max-width: 640px) {
     .hud-l { width: auto; max-width: calc(100vw - 200px); min-width: 220px; gap: 8px; top: calc(10px + var(--safe-t)); left: calc(10px + var(--safe-l)); }
     .bar { gap: 6px; }
-    .news { top: calc(68px + var(--safe-t)); width: min(220px, calc(100vw - 360px)); height: 40px; }
     .acts { flex-direction: row; align-items: flex-end; }
     .profile { padding: 8px 10px; gap: 10px; }
     .avatar { width: 34px; height: 34px; font-size: 17px; border-radius: 10px; }
@@ -807,7 +793,6 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     .gauge .lbl.side { top: 30px; letter-spacing: 0; }
     .taxihud { top: calc(166px + var(--safe-t)); bottom: auto; min-width: 0; width: calc(100% - 20px); padding: 8px 12px; gap: 4px 12px; }
     .taxihud .spd b { font-size: 28px; }
-    .waypill { top: calc(124px + var(--safe-t)); }
     .bigmap { height: 62vh; }
     .bake { bottom: calc(160px + var(--safe-b)); }
     .toasts { bottom: calc(236px + var(--safe-b)); }
@@ -825,12 +810,6 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   /* Touch: one icon capsule at the top right, controls in two bands so they don't stack on each other. */
   html.touch .liveboard { width: auto; max-width: 46vw; padding: 6px 8px; gap: 2px; }
   html.touch .liveboard .empty { display: none; }
-  html.touch .news { display: flex; top: auto; bottom: calc(42px + var(--safe-b)); width: min(168px, calc(100vw - 210px)); height: 34px; z-index: 4; }
-  html.touch .news .body { padding: 0 8px; }
-  html.touch .news .body small { font-size: 12px; }
-  html.touch .news .body strong { font-size: 12px; margin-top: 1px; }
-  html.touch .news .kick { padding: 0 6px; }
-  html.touch .news .kick b { font-size: 12px; }
   html.touch .dock { left: auto; right: calc(76px + var(--safe-r)); bottom: calc(18px + var(--safe-b)); transform: none; padding: 0; background: none; border: 0; box-shadow: none; }
   html.touch .dock .stay-lounge-btn .l { display: none; }
   html.touch .dock .stay-lounge-btn .e { font-size: 20px; }
@@ -838,15 +817,11 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html.touch .reacts .emote { width: 36px; height: 36px; border-radius: 10px; }
   html.touch .reacts .emote .e { font-size: 17px; }
   html.touch .reacts button { position: relative; width: 36px; height: 36px; font-size: 17px; }
-  html.touch .prompt { bottom: calc(78px + var(--safe-b)); }
   html.touch .guestwarn .btn { position: relative; height: 28px; padding: 0 8px; font-size: 12px; }
   html.touch .wallet .sub { flex-wrap: wrap; min-height: 24px; overflow: visible; }
   /* The next goal wraps to a second line inside the wallet instead of being cut mid-word. */
   html.touch .nextgoal { flex: 1 0 100%; width: 100%; white-space: normal; overflow: visible; }
   html.touch .fever, html.touch button.nine { padding: 4px 8px; font-size: 12px; }
-  html.touch .prompt { width: min(168px, calc(100vw - 220px)); z-index: 4; }
-  html.touch .prompt button { max-width: 100%; padding: 6px 8px; font-size: 12px; gap: 6px; }
-  html.touch .prompt .sub { display: block; font-size: 12px; }
   html.touch .modal { padding: calc(10px + var(--safe-t)) calc(10px + var(--safe-r)) calc(10px + var(--safe-b)) calc(10px + var(--safe-l)); place-items: start center; }
   html.touch .sheet { max-height: min(76vh, calc(var(--app-h, 100dvh) - 20px - var(--safe-t) - var(--safe-b))); border-radius: 20px; }
   html.touch .avatar { width: 30px; height: 30px; font-size: 15px; border-radius: 10px; }
@@ -862,12 +837,10 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html.touch .minimap:hover { transform: none; }
   html.touch .minimap .tag, html.touch .minimap .zoom { display: none; }
   html.touch .locpill { max-width: 96px; margin-top: 4px; padding: 4px 7px; font-size: 12px; }
-  html.touch .waypill { top: calc(96px + var(--safe-t)); max-width: calc(100% - 24px); }
   html.touch .taxihud { top: calc(156px + var(--safe-t)); bottom: auto; left: 8px; right: 8px; width: auto; min-width: 0; transform: none; padding: 8px 10px; }
   html.touch .taxihud .spd b { font-size: 20px; }
   html.touch .taxihud .job b { font-size: 15px; }
   html.touch .taxihud .keys { display: block; font-size: 12px; line-height: 1.35; }
-  html.touch #ui:has(.taxihud:not([hidden])) .news { display: none; }
   html.touch .liveboard .livehead:not(.feedhead) { display: flex; }
   html.touch .tool-fold { display: inline-flex; }
   html.touch .tools .tool-more { display: none; }
@@ -910,6 +883,14 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html.touch .hud-r .stay-balloon { width: 52px; height: 52px; min-width: 52px; border-radius: 50%; padding: 0; background: var(--surface-hud); color: var(--text); border: 1px solid var(--line); box-shadow: none; font-size: 17px; }
   /* The one amber control on the touch HUD: the context action (탭 / 합성 / 굽기). */
   html.touch .act.big { color: var(--on-accent); background: var(--accent); border-color: transparent; }
+  /* The pouch on touch: the round button shows its icon, and the count (ui.js paintBalloon: 1 … 999, then 999+; 준비 or
+     the wait in seconds while there is none) is a badge on its top-right edge, so no number runs out of the circle (a
+     3-digit count used to run 20px past it). The badge is muted while the button is disabled. The phone rules below fix
+     the button to the screen; elsewhere it stays in the right-hand column, positioned for the badge. */
+  html.touch .hud-r .stay-balloon { position: relative; }
+  html.touch .hud-r .stay-balloon svg.ico { width: 22px; height: 22px; }
+  html.touch .hud-r .stay-balloon .bn { position: absolute; top: -6px; right: -8px; min-width: 22px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--on-accent); font: 800 11px/18px var(--font); letter-spacing: -.02em; text-align: center; white-space: nowrap; box-shadow: 0 0 0 2px var(--bg); pointer-events: none; }
+  html.touch .hud-r .stay-balloon:disabled .bn { background: var(--surface-2); color: var(--text-2); }
   html.touch .dock { left: auto; right: calc(12px + var(--safe-r)); bottom: calc(168px + var(--safe-b)); transform: none; padding: 0; gap: 10px; flex-direction: column; align-items: center; background: none; border: 0; box-shadow: none; }
   html.touch .emote.more { width: 52px; height: 52px; border-radius: 50%; }
   html.touch .emote .e { font-size: 20px; }
@@ -919,17 +900,15 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html.touch .reacts button { position: relative; width: 36px; height: 36px; font-size: 17px; }
   /* The open panel is up to 42vh tall and reaches the pouch balloon (fixed, z-index 7) in its right column: the panel is on top. */
   html.touch .reacts { z-index: 8; }
-  html.touch .prompt { bottom: calc(78px + var(--safe-b)); }
-  html.touch .toasts { bottom: calc(228px + var(--safe-b)); }
+  html.touch .toasts { bottom: calc(228px + var(--safe-b)); left: calc(72px + var(--safe-l)); right: calc(72px + var(--safe-r)); transform: none; }
   body.has-sponsor .toasts { bottom: calc(360px + var(--safe-b)); }
   html.touch body.has-sponsor .toasts { bottom: calc(400px + var(--safe-b)); }
   html.touch .bake, html.touch .rhythm { bottom: calc(174px + var(--safe-b)); }
   @media (orientation: landscape) and (max-height: 520px) {
     html.touch .stay-quest { display: none; }
-    /* The left column is at most min(240px, 40vw) wide and starts 10-14px in, so everything in the middle starts
-       26px past that width: 12px clear of the identity card (a centred ticker lay 50px over it at 667px). On the right
-       the ticker stops 208px in, clear of the folded tool row (at most 5 x 36px + 8px, 8px from the edge). */
-    html.touch .stay-ticket { display: block; top: calc(6px + var(--safe-t)); left: calc(min(240px, 40vw) + 26px + var(--safe-l)); right: calc(208px + var(--safe-r)); width: auto; max-width: 260px; transform: none; height: 28px; line-height: 26px; font-size: 12px; }
+    /* The left column is at most min(240px, 40vw) wide and starts 10-14px in, so everything in the middle that shares its
+       height (the taxi HUD, the look-around hint, the toasts) starts 26px past that width: 12px clear of the identity
+       card. The draw line is no longer up here: it is in the bottom lane (see "Touch bottom lane"). */
     html.touch .hud-l { max-width: min(240px, 40vw); max-height: calc(100dvh - 12px); overflow: auto; }
     /* The pouch balloon: fixed beside the dock (the dock is 52px wide, 12px from the right, from 140px up), like the
        portrait rule. As a static child of the right column it only got a `bottom` that did nothing and sat under the dock. */
@@ -937,13 +916,8 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     /* Driving: the taxi HUD (from 156px down) stays between the left column and the right-hand buttons (boost, 택시
        내리기 and 빵! are 52px wide, 12px from the right), so the horn is not on the timer. */
     html.touch .taxihud { left: calc(min(240px, 40vw) + 26px + var(--safe-l)); right: calc(76px + var(--safe-r)); gap: 4px 10px; }
-    html.touch .coach { left: calc(min(240px, 40vw) + 26px + var(--safe-l)); right: calc(140px + var(--safe-r)); bottom: calc(150px + var(--safe-b)); }
+    html.touch .coach { left: calc(min(240px, 40vw) + 26px + var(--safe-l)); right: calc(140px + var(--safe-r)); bottom: calc(154px + var(--safe-b)); }
     html.touch .minimap { width: 56px; height: 56px; }
-    html.touch .news { display: flex; top: auto; bottom: calc(76px + var(--safe-b)); width: min(280px, 46vw); height: 32px; }
-    html.touch .waypill { top: auto; bottom: calc(96px + var(--safe-b)); }
-    /* A news line (bottom 76px, 32px tall) lay 12px on the waypoint pill: while it shows, the pill steps up over it. */
-    html.touch .waypill { transition: bottom .3s ease; }
-    html.touch #ui:has(> .news.show) .waypill { bottom: calc(116px + var(--safe-b)); }
     html.touch .joy { width: 88px; height: 88px; }
     /* The edge column from 36px up is the context action and jump (to 150px when both show). On a 320-390px tall screen
        the tools, the map and the location pill leave no room above that, so the dock (멍때리기, 리액션) is its own column
@@ -953,12 +927,10 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     html.touch .dock { left: auto; right: calc(76px + var(--safe-r)); bottom: calc(36px + var(--safe-b)); width: auto; justify-content: flex-end; }
     html.touch .locpill { display: none; }
     html.touch #ui:has(.bake.show) .dock, html.touch #ui:has(.rhythm.show) .dock { visibility: hidden; }
-    html.touch .prompt button { max-width: calc(100vw - 280px); }
     html.touch .act, html.touch .act.big { width: 52px; height: 52px; }
     /* Driving shows three buttons in the edge column (boost, 택시 내리기, 빵!): 6px apart they end at 204px up, clear of the
        map (56px tall from 56px down) on a 320px tall screen. */
     html.touch .acts { gap: 6px; }
-    html.touch .prompt { bottom: calc(96px + var(--safe-b)); }
     html.touch .reacts { bottom: calc(100px + var(--safe-b)); grid-template-columns: repeat(8, 36px); }
     html.touch .bake, html.touch .rhythm { bottom: calc(96px + var(--safe-b)); width: min(560px, calc(100% - 230px)); }
     #boot h1 { font-size: 28px; margin: 6px 0; }
@@ -980,7 +952,6 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   }
   @media (orientation: portrait) {
     html.touch .stay-quest { display: none; }
-    html.touch .stay-ticket { display: block; top: auto; bottom: calc(6px + var(--safe-b)); left: calc(118px + var(--safe-l)); right: calc(70px + var(--safe-r)); width: auto; max-width: none; transform: none; height: 28px; line-height: 26px; font-size: 12px; z-index: 6; }
     html.touch .nextgoal { font-size: 12px; }
     html.touch .hud-l { width: auto; max-width: calc(100vw - 188px); }
     html.touch .minimap { width: 58px; height: 58px; }
@@ -1030,10 +1001,21 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .stay-quest b { display: block; margin-bottom: 4px; font-weight: 800; color: var(--text); }
   .stay-quest .ok { color: var(--ok); }
   #ui > .stay-ticket, #ui > .stay-balloon, #ui > .stay-focus { pointer-events: auto; }
-  .stay-ticket, .stay-balloon, .stay-lounge { position: absolute; left: 50%; transform: translateX(-50%); z-index: 6; width: min(520px, calc(100% - 300px)); max-width: calc(100% - 24px); }
+  .stay-balloon, .stay-lounge { position: absolute; left: 50%; transform: translateX(-50%); z-index: 6; width: min(520px, calc(100% - 300px)); max-width: calc(100% - 24px); }
   .stay-draw { position: absolute; z-index: 8; left: 50%; top: 42%; transform: translate(-50%, -50%); width: min(480px, calc(100% - 32px)); padding: 18px 16px; border-radius: 14px; text-align: center; font: 800 20px/1.35 var(--font); color: var(--on-accent); background: var(--accent); box-shadow: var(--shadow-pop); pointer-events: none; }
-  /* A block, not a flex box: the ellipsis only works on a block, and a centred flex line spilled out at both ends. */
-  .stay-ticket { top: calc(14px + var(--safe-t)); left: 50%; transform: translateX(-50%); height: 46px; width: min(440px, calc(100vw - 780px)); max-width: calc(100vw - 780px); display: block; padding: 0 14px; border-radius: 14px; font: 700 12px/44px var(--font); color: var(--text-2); background: var(--surface-hud); border: 1px solid var(--line); text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; pointer-events: auto; }
+  /* A block, not a flex box: the ellipsis only works on a block, and a centred flex line spilled out at both ends.
+     The draw line is the news line's slot (see .news): the same box, the same place. ui.js paintTickets writes it in
+     parts, and the line drops parts as its text area (a size container) gets narrower, so the time is never cut. At 12px
+     the icon and 다음 추첨까지 mm:ss are 118px, · 1/15, 맞으면 25코인 111px, the middle part at most 144px:
+       380px and wider   다음 추첨까지 mm:ss · 택시 하차가 이번 5분의 1장 · 1/15, 맞으면 25코인
+       236-379px         다음 추첨까지 mm:ss · 1/15, 맞으면 25코인
+       118-235px         다음 추첨까지 mm:ss (a phone upright: 144px at 360, 174px at 390)
+       under 118px       추첨까지 mm:ss
+     The ellipsis stays only as the last resort (a fallback font). */
+  .stay-ticket { position: absolute; z-index: 6; top: calc(68px + var(--safe-t)); left: calc(378px + var(--safe-l)); right: calc(222px + var(--safe-r)); width: auto; max-width: 440px; height: 40px; margin: 0 auto; transform: none; display: block; padding: 0 14px; border-radius: 14px; font: 700 12px/38px var(--font); color: var(--text-2); background: var(--surface-hud); border: 1px solid var(--line); text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; pointer-events: auto; container: ticket / inline-size; transition: opacity .25s ease, transform .35s cubic-bezier(.16,1,.3,1), visibility 0s; }
+  @container ticket (max-width: 379px) { .stay-ticket .tail { display: none; } }
+  @container ticket (max-width: 235px) { .stay-ticket .odds { display: none; } }
+  @container ticket (max-width: 117px) { .stay-ticket .hk { display: none; } }
   /* A neutral HUD pill (not the primary action): only the packet icon is amber. */
   .hud-r .stay-balloon { position: static; left: auto; right: auto; top: auto; bottom: auto; transform: none; width: 100%; max-width: 184px; margin-top: 8px; pointer-events: auto; padding: 8px 10px; border-radius: 999px; display: flex; align-items: center; justify-content: center; gap: 6px; font: 700 12px/1.3 var(--font); color: var(--text); background: var(--surface-hud); border: 1px solid var(--line); text-align: center; font-variant-numeric: tabular-nums; }
   .hud-r .stay-balloon svg.ico { color: var(--accent); }
@@ -1041,32 +1023,77 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .stay-lounge { top: calc(176px + var(--safe-t)); padding: 12px 14px; border-radius: 14px; text-align: center; font: 700 13px/1.4 var(--font); color: var(--text); background: var(--surface-hud); border: 1px solid var(--line); pointer-events: none; }
   .stay-focus { position: absolute; left: 50%; bottom: calc(310px + var(--safe-b)); transform: translateX(-50%); z-index: 9; padding: 12px 22px; border-radius: 999px; border: 1px solid var(--line); font: 700 15px/1 var(--font); color: var(--text); background: var(--surface-hud); pointer-events: auto; }
   @media (max-width: 900px) {
-    .stay-ticket, .stay-balloon, .stay-lounge { width: min(520px, calc(100% - 24px)); }
-    .stay-ticket { top: calc(14px + var(--safe-t)); width: min(280px, calc(100vw - 520px)); max-width: calc(100vw - 520px); }
+    .stay-balloon, .stay-lounge { width: min(520px, calc(100% - 24px)); }
     .stay-balloon { position: static; left: auto; right: auto; bottom: auto; top: auto; transform: none; width: 100%; max-width: 184px; }
     .stay-lounge { top: calc(310px + var(--safe-t)); }
   }
-  /* Desktop ticker placement. The left column ends at 14 + 340 = 354px; the tool row is at most 11 × 40px + 10px = 450px
-     wide, 14px from the right (464px); the minimap column is 184px wide. With a 12px gap on each side the ticker sits:
-     ≥ 1090px in the top row between the identity card and the tools (366px … right 476px, at least 248px wide);
-     820–1089px in its own row under the news bar and the waypoint pill (top 134px), between the left column and the minimap (366px … right 210px);
-     641–819px under the right-hand column (top 384px, below the minimap, location pill and balloon), right-aligned;
-     ≤ 640px along the bottom edge (the dock moves to the right-hand column there). */
-  @media (min-width: 1090px) {
-    html:not(.touch) .stay-ticket { left: calc(366px + var(--safe-l)); right: calc(476px + var(--safe-r)); width: auto; max-width: 440px; margin: 0 auto; transform: none; }
-  }
-  @media (min-width: 820px) and (max-width: 1089px) {
-    html:not(.touch) .stay-ticket { top: calc(134px + var(--safe-t)); left: calc(366px + var(--safe-l)); right: calc(210px + var(--safe-r)); width: auto; max-width: 440px; margin: 0 auto; transform: none; height: 32px; line-height: 30px; }
-  }
+  /* Desktop top-centre column (html:not(.touch)). One slot holds the draw line or, while one shows, the news line (the
+     .stay-ticket and .news base rules carry the first range); the waypoint pill is centred under it, as wide as its text
+     and never wider than the slot. Everything is on one axis. The left column ends at 14 + 340 = 354px; the tool row is the
+     top row (14 … 60px); the minimap column (map, location pill, pouch pill) is 184px wide, 14px from the right, and ends
+     about 353px down.
+     >= 820px   under the top row, between the left column and the minimap column, 24px clear of both: 378px … right
+                222px, at most 440px wide (centre 50% + 78px). The slot is 68 … 108px, the pill from 116px.
+     641-819px  that band is under 220px wide: under the minimap column, right-aligned, min(320px, 100vw - 380px) wide.
+                The slot is 384 … 424px, the pill from 432px.
+     <= 640px   along the bottom edge (the dock is the right-hand column there): the slot 10 … 50px up, the pill from
+                58px up, under the controls card (102px up).
+     Before, the ticker (top row from 1090px), the news bar (50% + 78px) and the pill (50%) had three centres, and from
+     641-819px the pill lay on the left column. */
+  html:not(.touch) .waypill { top: calc(116px + var(--safe-t)); left: calc(378px + var(--safe-l)); right: calc(222px + var(--safe-r)); width: fit-content; max-width: 440px; margin: 0 auto; transform: none; }
   @media (min-width: 641px) and (max-width: 819px) {
-    html:not(.touch) .stay-ticket { top: calc(384px + var(--safe-t)); left: auto; right: calc(14px + var(--safe-r)); width: min(320px, calc(100vw - 380px)); max-width: none; transform: none; height: 32px; line-height: 30px; }
+    html:not(.touch) .stay-ticket, html:not(.touch) .news { top: calc(384px + var(--safe-t)); left: auto; right: calc(14px + var(--safe-r)); width: min(320px, calc(100vw - 380px)); max-width: none; margin: 0; }
+    html:not(.touch) .waypill { top: calc(432px + var(--safe-t)); left: calc(100% - 14px - var(--safe-r) - min(320px, calc(100vw - 380px))); right: calc(14px + var(--safe-r)); }
   }
   @media (max-width: 640px) {
-    html:not(.touch) .stay-ticket { top: auto; bottom: calc(10px + var(--safe-b)); left: calc(10px + var(--safe-l)); right: calc(10px + var(--safe-r)); width: auto; max-width: none; transform: none; height: 32px; line-height: 30px; }
+    html:not(.touch) .stay-ticket, html:not(.touch) .news { top: auto; bottom: calc(10px + var(--safe-b)); left: calc(10px + var(--safe-l)); right: calc(10px + var(--safe-r)); }
+    html:not(.touch) .waypill { top: auto; bottom: calc(58px + var(--safe-b)); left: calc(10px + var(--safe-l)); right: calc(10px + var(--safe-r)); }
   }
-  /* Touch landscape taller than a phone: the same gap rule against the folded tool row (at most 5 × 36px + 8px, 8px from the right). */
-  @media (orientation: landscape) and (min-height: 521px) {
-    html.touch .stay-ticket { left: calc(366px + var(--safe-l)); right: calc(208px + var(--safe-r)); width: auto; max-width: 440px; margin: 0 auto; transform: none; }
+  /* Touch bottom lane. The draw line (or a news line in its place), the context prompt and the waypoint pill are one stack
+     between the resting stick and the right-hand buttons, all centred in the lane and as wide as it (at most 440px; the
+     pill as wide as its text). The stick is 104px wide, 10px in (88px on a phone on its side); the edge column is 52px
+     wide, 12px from the right (on a phone on its side the dock is a second column 64px further in). Clear of both:
+       upright and tablets       122px … right 72px (196px at 390, 166px at 360, 236px at 430)
+       on its side, 568-640px    106px … right 140px (322px at 568)
+       on its side, from 641px   the toasts' and the look-around hint's column, right of the left column:
+                                 min(240px, 40vw) + 26px … right 140px (261px at 667, 438px at 844), so the stack, the
+                                 hint and the toasts are on one centre
+     From the bottom: the slot 8 … 40px; the prompt from 46px (one to four 12px lines, 46-77px tall, so it ends by 123px);
+     the waypoint pill from 142px, above the stick and the jump button (108px on a phone on its side, where the prompt is
+     one to three lines; the look-around hint is 8px above it there, from 154px). The news line has no kicker line here:
+     속보 LIVE, then one line that crawls when it is longer.
+     Before, the three were 168px, 168px and 202px wide on two centres, 6px apart, the news line's second line was cut at
+     the bottom edge and the draw line ended in "…". */
+  html.touch .waypill { top: auto; bottom: calc(142px + var(--safe-b)); left: calc(122px + var(--safe-l)); right: calc(72px + var(--safe-r)); width: fit-content; max-width: none; margin: 0 auto; transform: none; }
+  html.touch .stay-ticket, html.touch .news { top: auto; bottom: calc(8px + var(--safe-b)); left: calc(122px + var(--safe-l)); right: calc(72px + var(--safe-r)); width: auto; max-width: 440px; height: 32px; margin: 0 auto; z-index: 4; }
+  html.touch .stay-ticket { padding: 0 10px; line-height: 30px; font-size: 12px; }
+  html.touch .news .kick { padding: 0 7px; font-size: 10px; }
+  html.touch .news .kick b { font-size: 12px; }
+  html.touch .news .body { --pad: 10px; }
+  html.touch .news .body small { display: none; }
+  html.touch .news .body strong { margin-top: 0; font-size: 12px; line-height: 30px; }
+  html.touch .prompt { top: auto; bottom: calc(46px + var(--safe-b)); left: calc(122px + var(--safe-l)); right: calc(72px + var(--safe-r)); width: auto; max-width: 440px; margin: 0 auto; transform: translateY(8px) scale(.96); z-index: 4; }
+  html.touch .prompt.show { transform: none; }
+  html.touch .prompt button { width: 100%; max-width: 100%; padding: 6px 10px 6px 6px; font-size: 12px; gap: 8px; text-align: left; word-break: keep-all; overflow-wrap: anywhere; }
+  html.touch .prompt .sub { display: block; font-size: 12px; }
+  /* Under 360px the lane is 126-165px: the pill (136px with its usual padding) gets tighter so it stays inside it. */
+  @media (max-width: 359px) { html.touch .waypill { padding: 0 10px; gap: 6px; } }
+  @media (orientation: landscape) and (max-height: 520px) {
+    html.touch .waypill, html.touch .stay-ticket, html.touch .news, html.touch .prompt { left: calc(106px + var(--safe-l)); right: calc(140px + var(--safe-r)); }
+    html.touch .waypill { bottom: calc(108px + var(--safe-b)); }
+  }
+  @media (orientation: landscape) and (max-height: 520px) and (min-width: 641px) {
+    html.touch .waypill, html.touch .stay-ticket, html.touch .news, html.touch .prompt { left: calc(min(240px, 40vw) + 26px + var(--safe-l)); }
+  }
+  /* Touch toasts (the star line, 별똥별 60초 · 누르면 …, among them) stay clear of the right-hand buttons: upright and on
+     tablets they are centred 72px in on each side (the dock and the pouch are 52px wide, 12px from the right). On a phone
+     on its side they take the look-around hint's column, right of the left column (min(240px, 40vw) + 26px) and 12px left
+     of the dock column (140px), just above that hint (192px up). Before, a long one ran 12px from both edges, over
+     멍때리기, and on a phone on its side over the left column. Words are not split across lines. The upright place is
+     the html.touch .toasts rule above (228px up). */
+  html.touch .toast { max-width: 100%; word-break: keep-all; overflow-wrap: anywhere; }
+  @media (orientation: landscape) and (max-height: 520px) {
+    html.touch .toasts { left: calc(min(240px, 40vw) + 26px + var(--safe-l)); right: calc(140px + var(--safe-r)); bottom: calc(192px + var(--safe-b)); }
   }
   /* Desktop at short heights: the 오늘의 드라이버 panel would run under the emote dock, so it goes, and the left column stops above the dock (18px + 88px from the bottom, plus a gap). */
   @media (max-height: 640px) {
@@ -1191,8 +1218,6 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   }
   @media (orientation: portrait) {
     html.touch .hud-l { min-width: 0; max-width: min(56vw, calc(100vw - 188px)); }
-    /* The pill moves below the prompt, between the joystick and the right-hand buttons, clear of the left column and the tools. */
-    html.touch .waypill { top: auto; bottom: calc(142px + var(--safe-b)); max-width: calc(100vw - 240px); }
   }
   /* Slot chooser in the billboard sheet: full-width secondary rows, the chosen one tinted (not filled), then the one primary 다음. */
   .btn.pick { display: flex; width: 100%; height: auto; min-height: 44px; padding: 10px 14px; justify-content: flex-start; text-align: left; white-space: normal; line-height: 1.3; }
