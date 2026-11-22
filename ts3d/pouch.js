@@ -7,7 +7,7 @@
 // make(size) gives a Group the size of the old sprite of that size (the pouch is POUCH_H of it tall, centred).
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { makeCanvas } from './art.js?v=202611221803';
+import { makeCanvas } from './art.js?v=202611222045';
 
 // [radius, height] from the bottom pole to the top pole of a pouch 1 tall; the neck (where the cord sits) is at NECK_Y.
 export const POUCH_PROFILE = Object.freeze([

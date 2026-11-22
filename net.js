@@ -6,8 +6,8 @@
 // v6: Seoul project (ap-northeast-2). Rooms = 행정동 code + scene; a shared lobby presence channel gives per-dong head counts.
 import { GT_LS, SESSION_LS, isInAppWebView, returnUrl } from './plaza-account.js';
 import { setStarterSlots } from './balance.js';
-import { snapQuery, kakaoOf } from './share.js?v=202611221803';
-import { confirmState, mailReturn, otpDigits, signUpOutcome, unconfirmed } from './mailcode.js?v=202611221803';
+import { snapQuery, kakaoOf } from './share.js?v=202611222045';
+import { confirmState, mailReturn, otpDigits, signUpOutcome, unconfirmed } from './mailcode.js?v=202611222045';
 export const SUPA_URL = 'https://yxddhpacuyaffaoutxjn.supabase.co';
 export const SUPA_KEY = 'sb_publishable_Vd-7c6e2f2s3G1d5Jbx9vw_0UCuHm-B'; // publishable key: public by design
 // v13: QA/test clients (?qa=1) live in a separate namespace and never appear in real players' rooms, lobby counts or chat history
@@ -42,7 +42,7 @@ export async function doToken(sb, fresh) { try { const c = (window.G?.net?.sb ||
 // { err:'human', site } makes this page run the check once (human.js, loaded only then) and ask again with the token (ts). Renewals and handovers
 // never need it. HUMAN.site is the key /rt/config gave (loadConfig); run / say are replaced in tests. HUMAN.until: after the day cap (429 day)
 // this page makes no new guest for 10 minutes, so a reconnect loop neither repeats the request nor the card.
-export const HUMAN = { site: '', until: 0, run: (site) => import('./human.js?v=202611221803').then((m) => m.humanToken(site)).catch(() => ''), say: (code) => import('./human.js?v=202611221803').then((m) => m.humanSay(code)).catch(() => { }) };
+export const HUMAN = { site: '', until: 0, run: (site) => import('./human.js?v=202611222045').then((m) => m.humanToken(site)).catch(() => ''), say: (code) => import('./human.js?v=202611222045').then((m) => m.humanSay(code)).catch(() => { }) };
 let MINT = null; // the one human-checked mint in flight: token requests that arrive meanwhile wait for it instead of starting their own check
 const guestPost = async (body) => { const r = await fetch('/rt/guest', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); return { r, d: await r.json().catch(() => null) }; };
 function humanMint(body, site) {

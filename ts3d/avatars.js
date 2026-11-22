@@ -6,9 +6,9 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { makeCanvas, paintNameTag, paintBubble, paintRingFx, TAG_THEMES, RING_FX, RING_FX_SIZE } from './art.js?v=202611221803';
-import { MODEL_URL, modelFor } from './loadplan.js?v=202611221803';
-import { GESTURES, REACTIONS, gestureWeight, pulses, ease } from './gestures.js?v=202611221803';
+import { makeCanvas, paintNameTag, paintBubble, paintRingFx, TAG_THEMES, RING_FX, RING_FX_SIZE } from './art.js?v=202611222045';
+import { MODEL_URL, modelFor } from './loadplan.js?v=202611222045';
+import { GESTURES, REACTIONS, gestureWeight, pulses, ease } from './gestures.js?v=202611222045';
 
 const LOOPS = new Set(['Idle', 'Walking', 'Running', 'Dance', 'Sitting', 'Standing']);
 export const EMOTES = {
