@@ -406,7 +406,9 @@ visualViewport?.addEventListener('scroll', fitVV);
   /* Touch (the only place it is shown): at top 172px it lay over the left column (identity, task, wallet). It sits in the
      lower middle instead: above the resting stick (ends 140px up) and the waypoint pill (ends 180px up), under the toasts
      (from 228px), and it stops 76px from the right edge, where the dock and the action buttons are. */
-  html.touch .coach { top: auto; bottom: calc(190px + var(--safe-b)); left: calc(16px + var(--safe-l)); right: calc(76px + var(--safe-r)); width: fit-content; max-width: none; margin: 0 auto; transform: none; padding: 8px 12px; font-size: 12px; }
+  html.touch .coach { top: auto; bottom: calc(190px + var(--safe-b)); left: calc(16px + var(--safe-l)); right: calc(76px + var(--safe-r)); width: fit-content; max-width: none; margin: 0 auto; transform: none; padding: 8px 12px; font-size: 12px; white-space: nowrap; }
+  /* Under 374px the one line is set a little smaller so it still fits between the left edge and the right-hand buttons. */
+  @media (max-width: 373px) { html.touch .coach { padding: 7px 10px; font-size: 11px; letter-spacing: -.01em; } }
 
   /* ---------- bake minigame ---------- */
   .bake, .bake * { pointer-events: none !important; }
@@ -495,6 +497,13 @@ visualViewport?.addEventListener('scroll', fitVV);
      <= 640px   along the bottom edge, above the ticker. */
   @media (min-width: 820px) {
     html:not(.touch) .news { top: calc(68px + var(--safe-t)); left: calc(50% + 78px); width: min(440px, calc(100vw - 600px)); }
+    /* The waypoint pill (88px … 126px, centred) is in the same row: while a news line shows (4.4 s) the pill steps down under
+       it from 1090px (the ticker is in the top row there) and fades out below that (the ticker has the row under it). */
+    html:not(.touch) .waypill { transition: top .3s ease, opacity .3s ease; }
+    html:not(.touch) #ui:has(> .news.show) .waypill { opacity: 0; pointer-events: none !important; }
+  }
+  @media (min-width: 1090px) {
+    html:not(.touch) #ui:has(> .news.show) .waypill { top: calc(122px + var(--safe-t)); opacity: 1; pointer-events: auto !important; }
   }
   @media (min-width: 641px) and (max-width: 819px) {
     html:not(.touch) .news { --news-w: min(320px, calc(100vw - 380px)); top: calc(424px + var(--safe-t)); left: calc(100% - 14px - var(--safe-r) - var(--news-w) / 2); width: var(--news-w); }
@@ -877,17 +886,31 @@ visualViewport?.addEventListener('scroll', fitVV);
     html.touch .hud-l { max-width: min(240px, 40vw); max-height: calc(100dvh - 12px); overflow: auto; }
     /* The pouch balloon: fixed beside the dock (the dock is 52px wide, 12px from the right, from 140px up), like the
        portrait rule. As a static child of the right column it only got a `bottom` that did nothing and sat under the dock. */
-    html.touch .hud-r .stay-balloon { position: fixed; right: calc(76px + var(--safe-r)); bottom: calc(140px + var(--safe-b)); top: auto; left: auto; margin: 0; z-index: 7; }
+    html.touch .hud-r .stay-balloon { position: fixed; right: calc(76px + var(--safe-r)); bottom: calc(160px + var(--safe-b)); top: auto; left: auto; margin: 0; z-index: 7; }
     /* Driving: the taxi HUD (from 156px down) stays between the left column and the right-hand buttons (boost, 택시
        내리기 and 빵! are 52px wide, 12px from the right), so the horn is not on the timer. */
     html.touch .taxihud { left: calc(min(240px, 40vw) + 26px + var(--safe-l)); right: calc(76px + var(--safe-r)); gap: 4px 10px; }
-    html.touch .coach { left: calc(min(240px, 40vw) + 26px + var(--safe-l)); bottom: calc(150px + var(--safe-b)); }
+    html.touch .coach { left: calc(min(240px, 40vw) + 26px + var(--safe-l)); right: calc(140px + var(--safe-r)); bottom: calc(150px + var(--safe-b)); }
     html.touch .minimap { width: 56px; height: 56px; }
     html.touch .news { display: flex; top: auto; bottom: calc(76px + var(--safe-b)); width: min(280px, 46vw); height: 32px; }
     html.touch .waypill { top: auto; bottom: calc(96px + var(--safe-b)); }
+    /* A news line (bottom 76px, 32px tall) lay 12px on the waypoint pill: while it shows, the pill steps up over it. */
+    html.touch .waypill { transition: bottom .3s ease; }
+    html.touch #ui:has(> .news.show) .waypill { bottom: calc(116px + var(--safe-b)); }
     html.touch .joy { width: 88px; height: 88px; }
-    html.touch .dock { left: auto; right: calc(12px + var(--safe-r)); bottom: calc(140px + var(--safe-b)); width: auto; justify-content: flex-end; }
+    /* The edge column from 36px up is the context action and jump (to 150px when both show). On a 320-390px tall screen
+       the tools, the map and the location pill leave no room above that, so the dock (멍때리기, 리액션) is its own column
+       just left of it, from the same 36px; the pouch balloon sits on top of the dock column and the location pill (the
+       map says where you are) steps aside. The dock used to stand above the action buttons and lay 10px on them, 6px on
+       the map and over the pill. During the bakery and the dance the dock steps aside for their panels. */
+    html.touch .dock { left: auto; right: calc(76px + var(--safe-r)); bottom: calc(36px + var(--safe-b)); width: auto; justify-content: flex-end; }
+    html.touch .locpill { display: none; }
+    html.touch #ui:has(.bake.show) .dock, html.touch #ui:has(.rhythm.show) .dock { visibility: hidden; }
+    html.touch .prompt button { max-width: calc(100vw - 280px); }
     html.touch .act, html.touch .act.big { width: 52px; height: 52px; }
+    /* Driving shows three buttons in the edge column (boost, 택시 내리기, 빵!): 6px apart they end at 204px up, clear of the
+       map (56px tall from 56px down) on a 320px tall screen. */
+    html.touch .acts { gap: 6px; }
     html.touch .prompt { bottom: calc(96px + var(--safe-b)); }
     html.touch .reacts { bottom: calc(100px + var(--safe-b)); grid-template-columns: repeat(8, 36px); }
     html.touch .bake, html.touch .rhythm { bottom: calc(96px + var(--safe-b)); width: min(560px, calc(100% - 230px)); }
@@ -897,6 +920,16 @@ visualViewport?.addEventListener('scroll', fitVV);
     #boot .wrap { padding: 14px 18px; }
     #boot .bootlive { margin-top: 8px; padding: 8px 12px; }
     #boot .enter { margin-top: 12px; gap: 8px; }
+  }
+  /* 568-640px wide on its side: the taxi HUD between the left column and the buttons was 239px wide (the job line and the
+     key line wrapped). While driving only the identity card stays in the left column and the HUD takes the row under it,
+     clear of the stick (bottom left) and the map column; the key line (the stick teaches it) and the waypoint pill (the
+     HUD's arrow points the way) step aside. */
+  @media (orientation: landscape) and (max-height: 520px) and (max-width: 640px) {
+    html.touch #ui:has(.taxihud:not([hidden])) .hud-l > :not(.ident) { display: none; }
+    html.touch #ui:has(.taxihud:not([hidden])) .waypill { display: none; }
+    html.touch .taxihud { top: calc(70px + var(--safe-t)); left: calc(10px + var(--safe-l)); right: calc(110px + var(--safe-r)); }
+    html.touch .taxihud .keys { display: none; }
   }
   @media (orientation: portrait) {
     html.touch .stay-quest { display: none; }

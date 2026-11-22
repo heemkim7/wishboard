@@ -769,6 +769,9 @@ void main(){
   }
   function interact() {
     if (drive) { askExit(); return; }
+    // The board in front is looked up four times a second: right after a teleport (or a step) E can come before that look,
+    // so an empty answer is checked once more here instead of doing nothing.
+    if (!near) { boardAt = performance.now(); boardNear = nearBoard(); near = boardNear; }
     if (!near) return;
     if (near.kind === 'taxi') { enterTaxi(near.i); return; }
     if (near.kind === 'stand') {
@@ -2789,6 +2792,7 @@ void main(){
       camWant.set(pos.x + Math.sin(back) * 8.2, pos.y + eye + 1.4, pos.z + Math.cos(back) * 8.2);
       controls.target.copy(follow);
       camera.position.copy(camWant);
+      boardAt = 0; // the next frame looks for the board in front of the new spot at once
       if (world) world.warm(pos.x, pos.z, low ? 200 : 260);
       if (traffic && Math.hypot(dx, dz) > 300) traffic.warm(pos.x, pos.z);
     },

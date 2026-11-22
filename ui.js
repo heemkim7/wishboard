@@ -16,7 +16,8 @@ import { trackEvent } from './analytics.js?v=202611212346';
 import { CHEER_PHRASES, accountLabel, allowedLink, blockedText, linkedActor } from './plaza-account.js';
 import { policyDoc } from './legal.js?v=202611212346';
 import { subscribePush, resendPush } from './push.js?v=202611212346';
-import { bindSfx, play, setSound, haptic, musicVisible } from './audio.js?v=202611212346';
+import { bindSfx, bindMusic, duckMusic, play, setSound, haptic, musicVisible } from './audio.js?v=202611212346';
+import { createBgm } from './bgm.js?v=202611212346';
 import { stickVec, isTouchUI, STICK_W, STICK_H, STICK_THROW, STICK_ENGAGE, bakeFlip, bakeBest, BAKE_FLIPS, BAKE_ROUND_MS } from './interact.js?v=202611212346';
 import { AD, AD_TEMPLATES, adSums, adBars } from './adreport.js';
 import { qrEncode, paintQr } from './qr.js?v=202611212346';
@@ -220,6 +221,9 @@ export function createUI(root, hooks) {
     siren: () => tone([{ f: 740, d: 0.16, type: 'sawtooth', g: 0.06 }, { f: 460, d: 0.16, type: 'sawtooth', g: 0.06, at: 0.18 }, { f: 740, d: 0.16, type: 'sawtooth', g: 0.05, at: 0.36 }, { f: 460, d: 0.22, type: 'sawtooth', g: 0.05, at: 0.54 }]),
   };
   bindSfx(sfx);
+  // The tracks have no files: bgm.js plays them on this context, under the effects (audio.js hands them over).
+  const bgm = createBgm(() => (soundOn ? ac() : null), () => audio.master);
+  bindMusic(bgm);
   setSound(soundOn); // music and vibration follow the 🔊 setting too (audio.js)
   // In the background the synth ambience and the music stop; they come back with the page (if the sound is on).
   document.addEventListener('visibilitychange', () => {
@@ -243,7 +247,8 @@ export function createUI(root, hooks) {
     const play = () => { const c = chords[i++ % chords.length]; oscs.forEach((o, k) => o.frequency.setTargetAtTime(c[k] / 2, ctx.currentTime, 0.12)); };
     play();
     const timer = setInterval(play, 3200);
-    lofi = { stop() { clearInterval(timer); oscs.forEach((o) => { try { o.stop(); } catch { /* already stopped */ } }); g.disconnect(); lofi = null; } };
+    duckMusic(true); // the lounge chords replace the track while they play
+    lofi = { stop() { clearInterval(timer); oscs.forEach((o) => { try { o.stop(); } catch { /* already stopped */ } }); g.disconnect(); lofi = null; duckMusic(false); } };
   }
   function lofiStop() { lofi?.stop(); }
   let city = null;
@@ -283,7 +288,7 @@ export function createUI(root, hooks) {
     const notes = [523, 659, 784, 659, 880, 784];
     let k = 0;
     const timer = setInterval(() => {
-      if (!city) return;
+      if (!city || bgm.playing) return; // the bell is for a quiet square; the track has its own
       bell.frequency.setTargetAtTime(notes[k++ % notes.length], ctx.currentTime, 0.04);
       bellg.gain.setValueAtTime(0.0001, ctx.currentTime);
       bellg.gain.exponentialRampToValueAtTime(0.035, ctx.currentTime + 0.06);
@@ -673,7 +678,7 @@ export function createUI(root, hooks) {
     window.addEventListener('pointerdown', (ev) => { if (ev.pointerType !== 'mouse') joyZone.style.pointerEvents = ''; }, { passive: true, capture: true });
   }
   // One-time coach line for touch: how to look around, until the first drag on the city (kts_coach).
-  const coachEl = h('div', { class: 'coach', role: 'status', hidden: true, text: '화면을 끌어 둘러보기 · 두 손가락으로 확대' });
+  const coachEl = h('div', { class: 'coach', role: 'status', hidden: true, text: '끌어서 둘러보기 · 두 손가락으로 확대' });
   if (coarse) root.append(coachEl);
   let coachTimer = 0;
   function coachDone() {
@@ -1194,6 +1199,7 @@ export function createUI(root, hooks) {
     danceBus = null;
     if (!bus) return;
     try { bus.gain.setValueAtTime(0, audio.ctx?.currentTime || 0); bus.disconnect(); } catch { /* already stopped */ }
+    duckMusic(false);
   }
   function startDance() {
     if (sheet || baking || driving) return false;
@@ -1214,7 +1220,7 @@ export function createUI(root, hooks) {
     const delay = 0.25;
     const ctx = soundOn ? ac() : null;
     const dest = ctx ? ctx.createGain() : null;
-    if (dest) { dest.connect(audio.master); danceBus = dest; }
+    if (dest) { dest.connect(audio.master); danceBus = dest; duckMusic(true); }
     if (ctx && dest) {
       const t0 = ctx.currentTime + delay;
       const chords = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];

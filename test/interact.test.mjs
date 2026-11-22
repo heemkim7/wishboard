@@ -251,7 +251,7 @@ describe('audio follows the sound setting and remembers missing files', () => {
       assert.equal(audio.audioFailed('assets/audio/sfx/click.ogg'), true);
       assert.equal(audio.play('click'), false); // ui.js tone() plays the synth when play() says false
       assert.equal(made.length, 1);
-      // music: once failed it stays off
+      // music: once failed it is not requested again (the synth in bgm.js plays it)
       audio.startMusic('plaza');
       await new Promise((r) => setTimeout(r, 0));
       made.length = 0;
