@@ -2257,6 +2257,15 @@ export function createUI(root, hooks) {
   // Wish text and nicknames are other people's words: they reach the DOM only through `text:` (textContent).
   const WISH_FOOT = '매일 0시에 새로 시작해요. 여러 사람에게서 하트 5개 이상 받은 1~3위는 다음 날 300·200·100코인.';
   const WISH_CHIPS = ['올해는 꼭 합격', '우리 가족 건강하게', '월급 오르게 해 주세요'];
+  // 계절 소원 테마 (seasons.js, main.js applySeason): null on a day with no theme. A theme adds one header line on top of the sheet
+  // and swaps the three example chips; the form, the rules and the rest of the sheet are the same.
+  let season = null;
+  const chipsNow = () => season?.chips || WISH_CHIPS;
+  function setSeason(next) {
+    const was = season?.key || '';
+    season = next && next.key && Array.isArray(next.chips) ? next : null;
+    if ((season?.key || '') !== was) wishRepaint?.();
+  }
   const quote = (t) => `“${String(t ?? '')}”`;
   function setWish(next) {
     const n = next || {};
@@ -2330,7 +2339,8 @@ export function createUI(root, hooks) {
       const listBox = h('div', { class: 'wish-list' });
       const yBox = h('div', { class: 'wish-y', hidden: true });
       const invBox = h('p', { class: 'note wish-inv-n', hidden: true }); // 초대한 친구 n명 · 받은 코인 m, only once n > 0
-      host.append(focusBox, mineBox, invBox, h('div', { class: 'wish-tabs', role: 'group', 'aria-label': '소원 목록' }, tabTop, tabNew), leftEl, listBox, yBox, h('p', { class: 'note wish-foot', text: WISH_FOOT }));
+      const seasonEl = h('p', { class: 'wish-season', hidden: true });
+      host.append(seasonEl, focusBox, mineBox, invBox, h('div', { class: 'wish-tabs', role: 'group', 'aria-label': '소원 목록' }, tabTop, tabNew), leftEl, listBox, yBox, h('p', { class: 'note wish-foot', text: WISH_FOOT }));
 
       const isOwn = (w) => !!(w?.mine || (wishView.mine && w?.id === wishView.mine.id));
       // The view = the last server state plus the hearts still in flight (never written into wishView, so a failed one
@@ -2345,7 +2355,13 @@ export function createUI(root, hooks) {
         const i = wishView.top.findIndex((x) => x.id === m?.id);
         return i < 0 ? 0 : Math.floor(Number(wishView.top[i].rank)) || i + 1;
       };
-      function paint() { paintFocus(); paintMine(); paintList(); paintYesterday(); const t = inviteView({ on: !!hooks.inviteOn?.(), sum: hooks.inviteSum?.() }).box; invBox.textContent = t; invBox.hidden = !t; }
+      function paintSeason() {
+        seasonEl.hidden = !season;
+        if (!season) return;
+        seasonEl.textContent = `${season.emoji} ${season.header}`;
+        seasonEl.style.setProperty('--season', season.accent);
+      }
+      function paint() { paintSeason(); paintFocus(); paintMine(); paintList(); paintYesterday(); const t = inviteView({ on: !!hooks.inviteOn?.(), sum: hooks.inviteSum?.() }).box; invBox.textContent = t; invBox.hidden = !t; }
       async function sendHeart(id) {
         if (pending.has(id)) return false;
         pending.add(id);
@@ -2437,7 +2453,7 @@ export function createUI(root, hooks) {
         if (sig === 'wait') { fill(mineBox, h('p', { class: 'note', text: '내 소원을 확인하는 중…' })); return; }
         if (sig === 'busy') { fill(mineBox, h('p', { class: 'note wish-busy', text: WISH_ERR.busy })); return; } // the server is saving its budget: no form
         if (!m || editing) {
-          input = h('input', { class: 'input wish-in', maxLength: 64, placeholder: '예: 올해는 꼭 합격', 'aria-label': '오늘의 소원 한 줄', autocomplete: 'off', enterkeyhint: 'done' });
+          input = h('input', { class: 'input wish-in', maxLength: 64, placeholder: `예: ${chipsNow()[0]}`, 'aria-label': '오늘의 소원 한 줄', autocomplete: 'off', enterkeyhint: 'done' });
           if (editing && m) input.value = m.txt;
           counter = h('span', { class: 'wish-n tnum', 'aria-hidden': 'true' });
           errEl = h('p', { class: 'note err wish-err', hidden: true, role: 'alert' });
@@ -2457,7 +2473,7 @@ export function createUI(root, hooks) {
           fill(mineBox,
             h('h3', { text: editing ? '내 소원 고쳐 쓰기' : '내 소원 한 줄' }),
             h('div', { class: 'wish-field' }, input, counter),
-            h('div', { class: 'chips wish-chips' }, ...WISH_CHIPS.map((t) => h('button', { type: 'button', text: t, onclick: () => { input.value = t; sync(false); showErr(''); input.focus(); } }))),
+            h('div', { class: 'chips wish-chips' }, ...chipsNow().map((t) => h('button', { type: 'button', text: t, onclick: () => { input.value = t; sync(false); showErr(''); input.focus(); } }))),
             errEl,
             sendBtn,
             editing ? h('button', { class: 'btn ghost wish-edit', type: 'button', text: '그대로 두기', onclick: () => { editing = false; paintMine(true); } }) : null,
@@ -6202,6 +6218,7 @@ export function createUI(root, hooks) {
     },
     setOperator,
     setWish,
+    setSeason,
     openWish,
     openAway,
     // 🔔 받은 소식 shows only while something is unread.

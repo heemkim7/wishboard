@@ -1607,8 +1607,30 @@ export function sameWishes(a, b) {
   return true;
 }
 
+/** 계절 소원 테마 (seasons.js SEASONS[key]) on a wish card: a two-colour top line, an accent hairline over the panel border and the
+ *  season's emoji in the top-right corner. The wish itself stays white 800 type on the same navy panel, so a card is as readable
+ *  as on any other day; only the chip, the strip text and these three marks change colour. */
+function seasonTrim(g, W, body, k, sn, pad) {
+  const top = Math.max(3, Math.round(8 * k));
+  const grad = g.createLinearGradient(0, 0, W, 0);
+  grad.addColorStop(0, sn.accent);
+  grad.addColorStop(1, sn.accent2 || sn.accent);
+  g.fillStyle = grad;
+  g.fillRect(0, 0, W, top);
+  const lw = Math.max(1, 2 * k), inset = Math.max(3, 10 * k);
+  g.strokeStyle = rgba(sn.accent, 0.55);
+  g.lineWidth = lw;
+  g.strokeRect(inset + lw / 2, inset + lw / 2, W - inset * 2 - lw, body - inset * 2 - lw);
+  const size = Math.max(14, Math.round(64 * k));
+  g.font = `${size}px ${EMOJI}`;
+  g.textAlign = 'right';
+  g.textBaseline = 'middle';
+  g.fillStyle = WHITE; // colour emoji ignore it; a text-only fallback glyph stays legible
+  g.fillText(sn.emoji, W - pad, 30 * k + size * 0.62);
+}
 /** Wish card on a billboard canvas. data: {id, nick, txt, hearts}. opts.chip: label chip text, opts.strip: bottom claim
- *  cue, opts.dark: owner's light is out, opts.wide: a main-tower board (a line spans 35–70% of the width). The same calm panel as every board: amber chip, the wish in large white type,
+ *  cue, opts.dark: owner's light is out, opts.wide: a main-tower board (a line spans 35–70% of the width), opts.season:
+ *  a seasons.js SEASONS entry (chip, strip text and marks take its accent). The same calm panel as every board: amber chip, the wish in large white type,
  *  nickname and a drawn heart below, so forty of them sit quietly next to the live ads. */
 export function paintWish(canvas, data = {}, opts = {}) {
   const g = canvas.getContext('2d');
@@ -1619,9 +1641,12 @@ export function paintWish(canvas, data = {}, opts = {}) {
   g.save();
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.clearRect(0, 0, W, H);
-  boardPanel(g, W, body, k, AMBER, false);
-  const chip = String(opts.chip || '오늘의 소원');
-  const ch = pill(g, pad, 30 * k, chip, AMBER, Math.max(11, Math.round(26 * k)), W * 0.62, 'soft').h;
+  const sn = opts.season && opts.season.accent && opts.season.emoji ? opts.season : null;
+  const hue = sn ? sn.accent : AMBER;
+  boardPanel(g, W, body, k, hue, false);
+  if (sn) seasonTrim(g, W, body, k, sn, pad);
+  const chip = String(opts.chip || (sn ? `${sn.emoji} ${sn.chip} 소원` : '오늘의 소원'));
+  const ch = pill(g, pad, 30 * k, chip, hue, Math.max(11, Math.round(26 * k)), W * 0.62, 'soft').h;
 
   const lines = wishLines(data.txt);
   const top = Math.max(30 * k + ch + 18 * k, 96 * k), bottom = body - 86 * k, avail = bottom - top, maxW = W - pad * 2;
@@ -1642,7 +1667,7 @@ export function paintWish(canvas, data = {}, opts = {}) {
   }
 
   footRow(g, W, body - 44 * k, k, chars(wishClean(data.nick), 16) || '누군가', data.hearts);
-  infoStrip(g, W, H, statsH, k, String(opts.strip || '하루 한 줄, 누구나 무료'), opts.dark ? MUTED : AMBER);
+  infoStrip(g, W, H, statsH, k, String(opts.strip || '하루 한 줄, 누구나 무료'), opts.dark ? MUTED : hue);
   g.restore();
   return canvas;
 }

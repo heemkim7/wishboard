@@ -94,7 +94,7 @@
   <div class="msg" id="wishMsg"></div>
   <div class="hits" id="wishes"></div>
   <h2>📅 운영 달력</h2>
-  <p class="sub">오늘(한국 시간)과 겹치는 한 줄이 광장에 나갑니다. 문구는 80자까지이고, 주제는 다섯 가지 중 하나입니다. 12월 31일 카운트다운도 이 폼으로만 넣습니다.</p>
+  <p class="sub">오늘(한국 시간)과 겹치는 한 줄이 광장에 나갑니다. 문구는 80자까지입니다. 12월 31일 카운트다운도 이 폼으로만 넣습니다. 주제는 그 날짜 구간의 소원 시트 문구와 전광판 소원 카드의 색을 정합니다. 달력에 없는 날은 날짜표(수능 전 5일~다음 날(2026년은 11/14~20), 설날·추석 연휴, 12/20~25, 12/31~1/2, 2/14, 11/11, 5/5)를 따르고, 여기에 저장한 주제가 날짜표를 이깁니다. none은 그 구간의 계절 꾸밈을 끕니다(문구는 그대로 나갑니다).</p>
   <div class="bar">
     <input id="opsId" type="text" placeholder="id (newyear-eve)" autocomplete="off" />
     <input id="opsStart" type="date" />
@@ -105,6 +105,10 @@
       <option value="seollal">seollal</option>
       <option value="valentine">valentine</option>
       <option value="csat">csat</option>
+      <option value="chuseok">chuseok</option>
+      <option value="pepero">pepero</option>
+      <option value="children">children</option>
+      <option value="none">none</option>
     </select>
   </div>
   <div class="bar">
@@ -365,7 +369,7 @@ $('opsSave').onclick = async () => {
   try {
     const r = await api('/rt/admin/ops', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok || d.ok === false) throw new Error(d.error || '저장하지 못했어요');
+    if (!r.ok || d.ok === false) throw new Error(d.error === 'theme' ? '이 테마는 데이터베이스가 아직 받지 않아요. migrations/2026-11-22-themes.sql을 먼저 실행하세요.' : d.error || '저장하지 못했어요');
     opsNote('운영 일정을 저장했어요.');
   } catch (e) { opsNote(e.message, true); }
   $('opsSave').disabled = false;
