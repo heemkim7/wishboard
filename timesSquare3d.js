@@ -1583,6 +1583,61 @@ void main(){
     opts.onFocus?.(true);
     return true;
   }
+  // ---- 선물 전광판 15-second show (gift.js records it) ---------------------------------------------------------------
+  // From high above the street the camera glides down toward the board, settles on a street-level view of it and holds while
+  // fireworks go off around the face and a crew of local-only avatars (never sent to anyone) cheers in front. Input does not
+  // end it (pinned); stop() or the end puts everything back. -> { stop } or null (driving, or the board is not on the map).
+  const crew = [], afterRender = new Set();
+  const CREW_MOVES = ['Hooray', 'CheerJump', 'Clap', 'Groove', 'Wave', 'BigHeart', 'Party', 'FistPump'];
+  function crewStep(dt, t) {
+    const now = performance.now();
+    for (const c of crew) {
+      if (now >= c.next) { c.av.emote(CREW_MOVES[c.k++ % CREW_MOVES.length]); c.next = now + 1700 + Math.random() * 900; }
+      c.av.setMotion(0); c.av.update(dt, t); c.av.tag.visible = false;
+    }
+  }
+  function crewClear() { for (const c of crew.splice(0)) { try { c.av.dispose(); } catch { /* gone already */ } } }
+  function giftShow(slotId, o = {}) {
+    if (drive) return null;
+    const hold = slotPose(slotId, 15, true, false);
+    if (!hold) return null;
+    const ms = Math.max(4000, Number(o.ms) || 15000), look = hold.look.clone();
+    const f = new THREE.Vector3().subVectors(hold.cam, look); f.y = 0; if (f.lengthSq() < 1e-4) f.set(0, 0, 1); f.normalize();
+    const side = new THREE.Vector3(f.z, 0, -f.x);
+    if (nyc) nyc.ensureSolid(look.x, look.z, 90);
+    // The start high above the street and the middle of the glide must see the face: the first candidate whose line to it is clear.
+    const sees = (p) => !nyc || nyc.rayBlock(p.x, p.y, p.z, look.x, look.y, look.z) >= 0.97;
+    const at3 = (d, up, lat, base = look) => { const p = base.clone().addScaledVector(f, d).addScaledVector(side, lat); p.y = base.y + up; return p; };
+    const high = [[85, 55, 30], [85, 55, -30], [70, 48, 0], [55, 40, 22], [55, 40, -22], [45, 32, 0], [35, 26, 0]].map(([d, u, l]) => at3(d, u, l)).find(sees) || at3(0, 30, 0, hold.cam);
+    const mid = [[36, 14, -9], [36, 14, 9], [26, 10, 0]].map(([d, u, l]) => at3(d, u, l)).find(sees) || at3(0, 8, 0, hold.cam);
+    const timers = [];
+    const at = (t, fn) => timers.push(setTimeout(fn, t));
+    // Cut to the high view, then two glides and the hold.
+    startCine(high, look, { dur: 1, pin: true }); cineFrom.copy(high); cineL0.copy(look); camera.position.copy(high); camera.lookAt(look); viewLook.set(look.x, look.y, look.z);
+    me.root.visible = false; hidMe = true; opts.onFocus?.(true);
+    at(60, () => { startCine(mid, look, { dur: Math.round(ms * 0.36), pin: true }); cine.arc = 6; });
+    at(Math.round(ms * 0.38), () => startCine(hold.cam, look, { dur: Math.round(ms * 0.24), pin: true, fov: hold.fov }));
+    // The crew: six avatars a few metres in front of the face, looking at it, cheering in turn.
+    if (o.crew !== false) {
+      crewClear();
+      const base = new THREE.Vector3(look.x + f.x * 4.5, 0, look.z + f.z * 4.5); // between the face and the held camera (15 m out), in its lower frame
+      for (let i = 0; i < 6; i++) {
+        const u = (i - 2.5) * 1.5, back = (i % 2) * 1.4;
+        const x = base.x + side.x * u + f.x * back, z = base.z + side.z * u + f.z * back;
+        const av = avatars.create({ id: 'crew' + i, name: '', color: STARTER_COLORS[(i * 3 + 1) % STARTER_COLORS.length], species: (i % 3) + 1 });
+        av.root.position.set(x, groundHeight(x, z), z);
+        av.holder.rotation.y = Math.atan2(look.x - x, look.z - z);
+        av.want?.();
+        crew.push({ av, k: i, next: performance.now() + 2400 + i * 260 });
+      }
+    }
+    const color = o.color || '#ff3d9a', alt = o.alt || ['#ffcf5a', '#3fe6ff', '#39f58a', '#b84dff'];
+    for (const [t, c] of [[0.36, color], [0.5, alt[0]], [0.62, alt[1]], [0.72, color], [0.82, alt[2]], [0.9, alt[3]]]) at(Math.round(ms * t), () => boardFireworks(slotId, c, { cheer: true, alt }));
+    let done = false;
+    const stop = () => { if (done) return; done = true; for (const t of timers) clearTimeout(t); crewClear(); endCine(); };
+    at(ms, () => { stop(); o.onDone?.(); });
+    return { stop };
+  }
   const LOUNGE_IDS = ['MAIN_TOP', 'MAIN_MID', 'MAIN_BOT', 'SUB_1A', 'SUB_2A', 'SUB_3A', 'SUB_4A'];
   /** 멍때리기: the camera glides from the board it is on to the next one. The avatar stays where it is. */
   function tourNext() {
@@ -2126,9 +2181,11 @@ void main(){
     elapsed += dt;
     if (beaconSlot && !beaconGroup) placeBeacon();
     step(dt, elapsed, performance.now());
+    if (crew.length) crewStep(dt, elapsed);
     if (ctxLost) return; // the world (and presence) keeps stepping; nothing can be drawn until the context is back
     reflection.update(scene, camera);
     composer.render();
+    for (const f of afterRender) { try { f(); } catch { /* a recorder's frame */ } } // the drawing buffer is still this frame's here
     adapt(dt);
   }
   function start() { if (running) return; running = true; clock.getDelta(); raf = requestAnimationFrame(frame); }
@@ -2775,6 +2832,13 @@ void main(){
     adSeen: () => (adScreens.sampled() ? adScreens.seen() : null),
     // Shows that wish (must be in the current list) on up to 4 nearest idle boards now, for one card duration; true if shown.
     pinWish(id) { return boards.pinWish(id); },
+    // 선물 전광판 (gift.js): /rt/world's live gifts on the street and lot screens; show one alone on a screen for ms (-> its slot);
+    // which screen shows a gift now; the 15-second show; a hook after every drawn frame (the recorder), -> its remover.
+    setGifts(list) { boards.setGifts(list); },
+    pinGift(g, ms) { return boards.pinGift(g, ms); },
+    giftSlot(id) { return boards.giftSlot(id); },
+    giftShow,
+    onFrame(fn) { afterRender.add(fn); return () => afterRender.delete(fn); },
     // 밤 9시 소원왕: {nick, txt, hearts} puts yesterday's top wish on every claimable board but the main tower; null ends it.
     setKing(k) { boards.setKing(k); },
     showGhost,

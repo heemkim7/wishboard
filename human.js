@@ -9,7 +9,7 @@
 // is asked by the player, or once per link). One widget at a time per page: a second action waits for the first to finish.
 export const TS_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'; // straight from Cloudflare: never proxied or cached
 export const HUMAN_ACTION = 'guest'; // worker.js checks the token's action
-export const HUMAN_ACTIONS = Object.freeze(['guest', 'link', 'bonus', 'code']); // worker.js: HUMAN_ACTION, and humanGate's for the rewards
+export const HUMAN_ACTIONS = Object.freeze(['guest', 'link', 'bonus', 'code', 'gift', 'gmsg', 'gvid']); // worker.js: HUMAN_ACTION, and humanGate's for the rewards; giftsrv.js: a new gift board, a 롤링페이퍼 line, a video upload
 export const HUMAN_TEXT = Object.freeze({
   tap: '사람인지 잠깐 확인할게요. 아래 상자를 눌러 주세요.',
   human: '사람인지 확인하지 못했어요. 네트워크를 확인하고 다시 시도해 주세요.',

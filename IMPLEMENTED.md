@@ -438,7 +438,8 @@
 
 ## 서버
 
-- `GET /rt/health` `/rt/config` `/rt/gate` `/rt/world` `/rt/here` `/rt/wallet` `/rt/profile` `/rt/inbox` `/rt/sponsor` `/rt/push/key` `/rt/wishes` `/rt/grp` `/rt/league` `/rt/ad-report` `/rt/invite` `/rt/card/<slot>` `/rt/w/<id>` `/rt/s/<id>` `/rt/snap/<id>`
+- `GET /rt/health` `/rt/config` `/rt/gate` `/rt/world` `/rt/here` `/rt/wallet` `/rt/profile` `/rt/inbox` `/rt/sponsor` `/rt/push/key` `/rt/wishes` `/rt/grp` `/rt/league` `/rt/ad-report` `/rt/invite` `/rt/card/<slot>` `/rt/w/<id>` `/rt/s/<id>` `/rt/snap/<id>`, 선물 전광판 `/rt/gift/<id>` `/rt/gift/<id>/video` `/rt/gift/<id>/card.jpg` `/g/<id>`
+- `POST` 선물 전광판: `/rt/gift` `/rt/gift/<id>/paper|seen|interest|report|delete|video|card`, 관리자 `/rt/admin/gift/hide|notify` (`선물 전광판`)
 - `POST /rt/guest` `/rt/claim-billboard` `/rt/buy-plot` `/rt/sell-coins` `/rt/spend` `/rt/flush-wallet` `/rt/billboard-photo` `/rt/share-bonus` `/rt/redeem-code` `/rt/link-reward` `/rt/relight` `/rt/event` `/rt/auth/merge` `/rt/auth/withdraw` `/rt/report` `/rt/tribe` `/rt/tribe/pledge` `/rt/inbox/read` `/rt/push` `/rt/profile` `/rt/equip` `/rt/grp` `/rt/snap` `/rt/wish` `/rt/wish/heart` `/rt/wish/report` `/rt/invite` `/rt/admin/wish`. `DELETE /rt/push`.
 - `GET /rt/config`는 `{ url, key, starter }`다. `starter`는 무료 첫 칸 목록(`전광판`), `KAKAO_JS_KEY`가 `[\w-]{16,80}` 모양일 때만 `kakao`(`카카오톡 공유(키 필요)`), `INVITE_ON`이 `1`일 때만 `invite: true`(`친구 초대`), `TURNSTILE_SITE`와 `TURNSTILE_SECRET`이 둘 다 있을 때만 `turnstile`(사이트 키, `봇 막기`)이 더 붙는다. Supabase를 기다리지 않는다. GET이 아니면 405.
 - 웹소켓 `/rt/ws`. 위치 `v2: {t:'P', k, a:[x,y,...]}`. 같은 층, `NEAR_R` 1600 안을 우선하고 먼 피어는 `FAR_MS`. `net.js` 데드레커닝 1.15초.
@@ -562,7 +563,7 @@
 한 모듈은 한 주소로만 부른다. 브라우저도 Worker 번들러도 `x.js`와 `x.js?v=1`을 다른 모듈로 본다. `tools/stamp.mjs`가 고치고 `test/cachebust.test.mjs`가 막는다.
 
 - 브라우저 전용 모듈은 모두 `./x.js?v=<빌드 id>`로, 빌드 id 하나로 부른다. 기준은 `index.html`의 `main.js?v=` 값이고 지금은 `202611221326`다. `index.html`의 `<script src>`도 같다.
-- Worker도 번들하는 모듈(`worker.js`에서 정적 import로 닿는 것)은 어디서든 쿼리 없이 부른다. 지금은 `adreport.js`, `balance.js`, `cardpng.js`, `dark.js`, `invite.js`, `league.js`, `live.js`, `plaza-account.js`, `ts3d/walkers.js`, `wish.js`다(`tools/stamp.mjs` `workerModules`가 `worker.js`의 import에서 찾는다). 이 모듈들 안의 import도 쿼리가 없다. `qr.js`, `growth.js`, `inbox.js`, `share.js`, `ts3d/loadplan.js`, `interact.js`, `bgm.js`(배경음악 합성), `ts3d/bowtie.js`(전광판 배치), `errlog.js`, `install.js`, `recap.js`, `adspage.js`, `admin-ops.js`, `admin-ads.js`, `mailcode.js`(이메일 확인 코드)는 브라우저 전용이라 `?v=`로 부른다. 5차에 더한 Worker 번들 모듈은 `ops.js`, `opsrules.js`, `adsrv.js`, `adsale.js`다(쿼리 없음). `ads.html`도 `tools/stamp.mjs`가 고친다.
+- Worker도 번들하는 모듈(`worker.js`에서 정적 import로 닿는 것)은 어디서든 쿼리 없이 부른다. 지금은 `adreport.js`, `balance.js`, `cardpng.js`, `dark.js`, `invite.js`, `league.js`, `live.js`, `plaza-account.js`, `ts3d/walkers.js`, `wish.js`다(`tools/stamp.mjs` `workerModules`가 `worker.js`의 import에서 찾는다). 이 모듈들 안의 import도 쿼리가 없다. `qr.js`, `growth.js`, `inbox.js`, `share.js`, `ts3d/loadplan.js`, `interact.js`, `bgm.js`(배경음악 합성), `ts3d/bowtie.js`(전광판 배치), `errlog.js`, `install.js`, `recap.js`, `adspage.js`, `admin-ops.js`, `admin-ads.js`, `mailcode.js`(이메일 확인 코드)는 브라우저 전용이라 `?v=`로 부른다. 5차에 더한 Worker 번들 모듈은 `ops.js`, `opsrules.js`, `adsrv.js`, `adsale.js`다(쿼리 없음). `ads.html`도 `tools/stamp.mjs`가 고친다. 선물 전광판의 `giftrules.js`, `giftsrv.js`(서버 전용, `.assetsignore`)도 쿼리 없이, `gift.js`, `giftpage.js`, `giftart.js`, `giftfilm.js`, `admin-gift.js`는 `?v=`로 부른다. `gift.html`의 `<script src>`와 `<link rel="modulepreload">`도 `tools/stamp.mjs`가 고친다(그 페이지는 `/g/<id>`에서도 쓰이므로 경로가 `/`로 시작한다).
 - `sw.js`(`?v=10`, 손으로 관리)와 `vendor/`는 이 규칙 밖이다. `index.html`이 `/sw.js?v=10`을 등록한다. `assets/`의 파일을 같은 이름으로 바꿀 때는 이 숫자를 올려야 다시 온 사람도 새 파일을 받는다.
 - HTML 페이지(`index.html`, `admin.html`) 안의 인라인 모듈 스크립트의 import도 같은 규칙으로 `tools/stamp.mjs`가 고친다(`admin.html`의 `./growth.js?v=`).
 - import를 더하거나 바꾸거나 브라우저 모듈을 고쳐 내보낼 때는 `node tools/stamp.mjs`를 돌린다. 모든 import를 지금 KST 시각으로 만든 새 빌드 id로 고쳐 쓰고, Worker 번들 모듈은 쿼리를 뗀다. `node tools/stamp.mjs --check`는 아무것도 바꾸지 않고 어긋난 파일이 있으면 1로 끝난다.
@@ -634,6 +635,20 @@
 - 운영 달력(`admin.html` 📅)의 그날 테마가 표보다 이긴다. `none`은 그 기간의 계절 모습을 끈다(문구 줄은 남는다). 클라이언트는 이미 받는 `/rt/world`의 `ops.theme`를 읽는다(추가 요청 없음). 화면 전광판은 테마가 바뀔 때 지금 보이는 소원 카드만 다시 그린다(`screens.setSeason`).
 - `?season=<키>`(또는 `none`)는 이 브라우저에서만 모습을 미리 보는 주소다. 아무것도 보내거나 저장하지 않는다.
 - 마이그레이션 `migrations/2026-11-22-themes.sql`이 `ops_events.theme` CHECK와 `upsert_ops_event`를 아홉 값으로 넓힌다. **운영에는 아직 적용되지 않았다.** 그 전에는 표와 예전 다섯 테마는 다 되고, 운영 달력에서 `chuseok`·`pepero`·`children`·`none`을 저장하면 `{ok:false,error:'theme'}`이고 관리자 화면이 그 파일을 먼저 돌리라고 말한다.
+
+## 선물 전광판 (2026-11-23, 첫 90일 무료 시즌)
+
+자세한 것(데이터, 경로, 한도, R2 켜기, 측정, 개인정보)은 `docs/gift-board.md`다. 결제는 없다.
+
+- **만들기**: `/gift`(`gift.html` + `giftpage.js`, 3D·실시간 방·Supabase 없이 열리는 가벼운 페이지) 또는 광장 HUD 🌠 옆의 🎁(같은 페이지를 광장 위 틀로 연다, `gift.js`). 받는 사람 이름 12자, 무슨 날 다섯(생일·기념일·합격·응원·그냥), 한마디 40자(선택), 언제(오늘 "지금"=10분 단위 내림, 또는 오늘~30일 뒤 9·12·15·18시), 보내는 사람 12자(선택), 색 6가지(선택, 기본은 날마다). 사진은 받지 않는다. 거름은 소원과 같다(`wish.js` `wishFault`·`wishNickFault`). 입력하는 동안 광장 화면 모습(`giftart.js` `paintGift`)이 바로 그려진다. 손님 토큰이면 되고(없으면 이때 만든다), Turnstile이 켜져 있으면 `gift` 확인. 계정당 KST 하루 3, 네트워크당 10.
+- **걸리는 곳**: 거리 칸 50과 분양 앞 18(`GIFT_SCREENS`)에 6시간. 메인 타워·코너 큰 화면·광고 화면에는 걸지 않는다. 겹치는 보드가 가장 적은 화면(보타이 안 `STREET_31`부터), 한 화면 동시 4개, 나눠 쓰면 9초씩 벽시계로 돈다. 다 차면 409 `full`과 가장 가까운 빈 시간. 광장에서는 누가 켜 둔 칸을 덮지 않고 그 선물을 빈 화면으로 옮긴다. 소원 카드와 밤 9시 소원왕 카드보다 선물이 이기고, 60초 장악은 선물도 덮는다. 가까운 칸의 아래 띠는 `선물` 배지와 `선물 전광판 · To. 이름 · …`(`ts3d/screens.js` `setGifts`·`pinGift`·`giftSlot`, `/rt/world`의 `gifts`).
+- **주인 화면** `/g/<id>`(이 기기에서 만든 id이고 토큰이 주인일 때): 창과 화면 이름, 그려진 15초 미리보기(워터마크), 링크 보내기, 가격표(E1: 무료 기본 선택, 크게 걸기 3,900원 · 축하 영상 세트 7,900원 추천 · 9시 주인공 14,900원, 유료를 고르면 "결제는 준비 중이에요 · 열리면 알려 드릴까요?"와 따로 체크하는 광고성 정보 수신 동의, 체크해야 `열리면 알림 받기`가 켜지고 웹 푸시를 켠다. 이메일은 받지 않는다), 🎬 광장에서 진짜 영상 만들기, 열어 본 사람·메시지·이어 걸린 보드 수, 받는 사람 화면 미리 보기, 지우기(두 번 누름).
+- **받는 사람 페이지** `/g/<id>`: Worker가 `gift.html`에 미리보기 메타(제목 `🎂 이름님을 위한 선물 전광판`, 그림은 주인 기기가 그려 올린 1200×630 카드, 없으면 `/og.jpg`)와 공개 JSON을 넣어 준다. `noindex`. 그날 전: D-n 카운트다운, 문구를 가린 미리보기, 롤링페이퍼(잠금, `친구 메시지 N개 · 날짜에 열려요`). 그날부터: 영상이 먼저 재생되고(저장된 영상이 있고 이 브라우저가 그 형식을 틀 수 있으면 그것, 아니면 `giftfilm.js`의 그려진 영상), 끝나면(또는 `영상 건너뛰기`) `영상 저장`, 걸려 있는 동안 `직접 가서 보기`(`/?gb=<id>`: 그 보드를 1분 혼자 올리고 그 앞으로 가서 카메라와 폭죽), `나도 누군가에게 걸어 주기`(`/gift?ref=<id>`). 롤링페이퍼는 창이 끝날 때까지 받는다(보드 30, 쓴 사람 3, 네트워크 하루 10, 토큰 필요, Turnstile `gmsg`). 신고는 보드·줄마다 네트워크 3곳이면 가려진다.
+- **15초 영상**: 광장에서 `?gb=<id>&rec=1`(주인만) → `#view`를 9:16 기둥으로, HUD를 숨기고 `world.giftShow`(높은 곳에서 내려와 정면에서 멈춤, 폭죽, 이 기기에만 있는 캐릭터 6마리의 환호) → 매 프레임 720×1280에 문구·워터마크를 얹어 `MediaRecorder`(MP4 우선, 아니면 WebM) 15.2초. 결과 시트에서 저장(공유 시트에 파일)과, Worker에 R2 바인딩 `MEDIA`가 있으면 받는 사람 페이지에 올리기(Turnstile `gvid`, 8MB, MP4·WebM만, 보드당 3번). 없으면 501 `nostore`이고 기기에만 남는다. 탭을 숨기면 녹화를 멈춘다.
+- **저장**: Meter 인스턴스 `'gift'`의 SQLite(마이그레이션 없음). 보드·줄·카드·영상은 그날이 끝나고 7일 뒤 지운다(새 보드를 만들 때와 관리자 목록을 열 때 정리, R2도 같이). 탈퇴는 그 계정의 보드(그 위의 모든 줄)·쓴 줄·영상·알림 신청을 지우고, 계정 연결은 손님의 보드·줄·알림 신청을 옮긴다(`giftForget`, `giftMove`).
+- **측정**: 하루 합계(만든 보드, ref로 만든 보드, 보드별 처음 본 기기·그날 본 기기·그날 다시 온 기기, 메시지, 영상, 재생·끝까지 봄·저장·직접 가서 봄·나도 걸기, 가격표 본 보드·단별 고름·알림 신청). 유료 관심은 계정이나 보드와 잇지 않은 합계다. 비컨은 isolate에 모았다가 25개·30초마다 DO 한 번. 관리자 `🎁 선물 전광판`: 30일 표와 K, 잠금 갈래(E3)별 보드당 방문자·메시지, 하루 목록과 가리기·되살리기, 결제 오픈 알림(`(광고)`를 붙여, 21:00~08:00 KST에는 409 `quiet`, 한 계정 한 번, 10명씩).
+- **스위치**: `GIFT_E3=1`이면 보드 반은 메시지를 바로 보인다(E3). R2는 `docs/gift-board.md`의 명령으로 주인이 켠다.
+- **예산**: 쓰기는 hard에서 DO 호출 없이 503, 비컨은 버린다. 보드 읽기는 isolate마다 20초(hard 10분), `/rt/world`의 선물은 isolate마다 2분(없으면 5분)에 DO 한 번. 받는 사람 페이지는 방과 3D를 부르지 않는다.
 
 ## 없는 것
 
