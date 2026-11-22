@@ -260,6 +260,10 @@ export class Meter extends DurableObject {
     this._prof.set(id, row);
     return { av: row.av, equip: row.equip.slice() };
   }
+  // speciesHeal's two steps: is `av` still the choice held for uid (a newer save replaced or dropped it)? And, once the database keeps av,
+  // drop the held copy only if it is still av.
+  heldIs(uid, av) { try { const h = this.ctx.storage.sql.exec('select av from held where uid = ?', String(uid || '')).toArray()[0]; return !!h && speciesOf(h.av) === speciesOf(av); } catch { return false; } }
+  heldDrop(uid, av) { try { this.ctx.storage.sql.exec('delete from held where uid = ? and av = ?', String(uid || ''), speciesOf(av)); } catch { /* no held table */ } return true; }
   gatePut(rows) { this.acInit(); const q = this.ctx.storage.sql; for (const [uid, k, d, v] of rows || []) agPut(q, uid, k, d, v); return { ok: 1 }; }
   // Boot screen "today": distinct accounts that connected to the plaza and successful billboard claims, per KST day.
   visit(uid, day) { this.acInit(); const q = this.ctx.storage.sql; if (q.exec('insert or ignore into vis(d, uid) values(?, ?)', day, uid).rowsWritten) this.tally(day, 'v');
@@ -363,10 +367,16 @@ export class Meter extends DurableObject {
   // same e-mail), is not held back. iat has whole seconds, so a token from the very second of the withdrawal counts as after it.
   goneSince(h, iat) { const s = Math.floor(Number(iat)); if (!(s > 0)) return false; const t = (s + 1) * 1000; this.stInit(); const q = this.ctx.storage.sql;
     return this.goneList(h).some(k => Number(q.exec('select at from gone where h = ?', k).toArray()[0]?.at) >= t); }
-  // For the link the reward was paid on (see takeBack), in one call. No mark: a real first link, the guest's whole starter is counted as gone with it
-  // (even when nothing moved yet, so coins that reach its row later are its earnings). A mark: a later link, part = how much of `moved` is starter.
+  // For the link the reward was paid on (see takeBack), in one call. No mark: a real first link; only the starter it really moved is counted (up to
+  // cap): a guest still empty at its first link (no row yet, or spent) is not settled, so the 140 it is given later cannot be moved whole into
+  // another account by its next link. A mark: a later link, part = how much of `moved` is starter. Both count the same way; only part differs.
   stFirst(guest, moved, cap, h) { this.stInit(); const gone = this.goneList(h).some(k => !!this.ctx.storage.sql.exec('select 1 from gone where h = ?', k).toArray()[0]); // any one mark is enough
-    if (gone) return { gone: true, part: this.stTake(guest, moved, cap) }; this.stTake(guest, cap, cap); return { gone: false, part: 0 }; }
+    const part = this.stTake(guest, moved, cap); return gone ? { gone: true, part } : { gone: false, part: 0 }; }
+  // Redeem codes (instance 'acct'): one row per account and code, for good. Check and take in one call; codeGive hands it back when the grant failed.
+  codeInit() { if (this.cdOk) return; this.cdOk = 1; this.ctx.storage.sql.exec('create table if not exists vcu(k text primary key, at integer not null)'); }
+  codeTake(key) { this.codeInit(); const k = String(key || '').slice(0, 160); if (!k) return false; const q = this.ctx.storage.sql;
+    if (q.exec('select 1 from vcu where k = ?', k).toArray()[0]) return false; q.exec('insert into vcu(k, at) values(?, ?)', k, Date.now()); return true; }
+  codeGive(key) { this.codeInit(); this.ctx.storage.sql.exec('delete from vcu where k = ?', String(key || '').slice(0, 160)); return true; }
   // Leases (instance 'acct', see sendHold / linkHold), each running out by itself. shl: one coin send (or pledge) at a time per account, -> its
   // `until`, the token sellDone needs, or false while a send or a link of that account is under way. lkl: account links that are moving coins;
   // several may run at once (n), -> the lease's `at`, the token linkDone needs, or false while a send of that account is under way.
@@ -840,6 +850,9 @@ export class Room extends DurableObject {
       const spec = kind === 'shot' ? [5, 0, 1] : fixed[kind];
       const n = agGet(q, a.k, kind, day);
       if (n >= (spec[2] || 1)) return false;
+      // An account is not a new visitor: its arrival coins came with its first guest. Its hello is recorded (the free first board waits for it,
+      // hasHello) and answered with 0, so the client stops asking; nothing is paid. An anonymous sign-in (a.an) is a guest and is paid.
+      if (kind === 'hello' && String(a.k).startsWith('user:') && !a.an) { agPut(q, a.k, kind, day, n + 1); this.tx(w, { t: 'PAY', kind, amount: 0 }); return true; }
       const paid = this.grantFinal(a, spec[0], nick, kind, 'bonus');
       if (paid < 1) return false;
       agPut(q, a.k, kind, day, n + 1);
@@ -1571,15 +1584,19 @@ function speciesOf(id) {
 // or seen keeping a 4..10. Only paces speciesHeal: correctness never depends on it.
 let SPC_OLD = 0;
 // A choice the account registry holds (Meter.profilePut `held`) goes into the database once the database can keep it: at most one try
-// per 10 minutes per isolate while it still clamps, in the request's waitUntil. Kept: the registry drops its copy (one tallied DO call).
+// per 10 minutes per isolate while it still clamps, in the request's waitUntil. The save never replaces a newer choice: right before it the
+// registry is asked again whether av is still the held choice (a POST /rt/profile on any isolate replaces or drops it first), and after it the
+// held copy is dropped only if it is still av (two tallied DO calls, only on a heal). What is left is the moment between that check and the save.
 function speciesHeal(env, ctx, actorId, av, equip) {
   if (SPC_OLD && !stale(SPC_OLD, 600000)) return;
   SPC_OLD = Date.now();
-  const job = supabaseRpc('save_species', { p_key: env.FLUSH_KEY || '', p_actor_id: actorId, p_species: av }).then(async (r) => {
+  const job = (async () => {
+    if ((await acct(env).heldIs(actorId, av)) !== true) return; // a newer choice was saved meanwhile
+    const r = await supabaseRpc('save_species', { p_key: env.FLUSH_KEY || '', p_actor_id: actorId, p_species: av });
     if (!r.ok || !r.data || r.data.ok === false || speciesOf(r.data.species) !== av) return;
     SPC_OLD = 0;
-    await acct(env).profilePut(actorId, av, equip, av);
-  }).catch(() => null);
+    await acct(env).heldDrop(actorId, av);
+  })().catch(() => null);
   try { ctx?.waitUntil?.(job); } catch { /* the next read tries again */ }
 }
 function levelOf(rep) {
@@ -1613,18 +1630,24 @@ async function publishProfile(env, actorId, chose) {
   } catch { /* the next entry reads the five-minute cache */ }
   return prof;
 }
+// After migrations/2026-11-22-coins.sql a function that makes the actor's wallet on its way answers { ok: false, error: 'login' } when the database
+// made none (a withdrawn account's token, whose login is gone): a plain refusal (401 gone), never a 502.
+const loginGone = (rpc) => !!rpc?.ok && rpc.data?.ok === false && rpc.data.error === 'login';
 async function profileApi(req, env, u, ctx) {
   const actor = await resolveActor(env, tokenOf(req));
   if (!actor) return J({ err: 'auth' }, 401);
   if (u.pathname === '/rt/profile' && req.method === 'GET') {
     const rpc = await supabaseRpc('profile_read', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id });
+    if (loginGone(rpc)) return J({ ok: false, err: 'gone', error: GONE_ERR }, 401); // a withdrawn account's token: no wallet, no profile (migrations/2026-11-22-coins.sql)
     if (!rpc.ok || !rpc.data || rpc.data.ok === false || rpc.data.species == null) return J({ err: 'profile' }, 502);
     const prof = normProf(rpc.data);
     // A database answer of 1 may be a choice of 4..10 the database clamped (before migrations/2026-11-22-species.sql): the account registry
     // answers it (one tallied DO call, only for an answer of 1). At the hard budget level, or when that call fails, the answer carries
-    // species_sure: false and the client keeps its own choice of 4..10 (main.js pullProfile).
+    // species_sure: false and the client keeps its own choice of 4..10 (main.js pullProfile). sp: the species this device has (profile.js
+    // loadProfile); a device on 1..3 has no clamped choice of its own to recover, so the registry is asked only without a hint or for one of 4..10.
+    const hint = Number(u.searchParams.get('sp')), low = Number.isInteger(hint) && hint >= 1 && hint <= 3; // no hint (or a bad one): asked as before
     let sure = true;
-    if (prof.av === 1) {
+    if (prof.av === 1 && !low) {
       sure = false;
       if (!(await budgetHard(env))) {
         try {
@@ -1647,6 +1670,7 @@ async function profileApi(req, env, u, ctx) {
     if (b.species != null) {
       const species = speciesOf(b.species);
       const rpc = await supabaseRpc('save_species', { p_key: env.FLUSH_KEY, p_actor_id: actor.id, p_species: species });
+      if (loginGone(rpc)) return J({ ok: false, err: 'gone', error: GONE_ERR }, 401);
       if (!rpc.ok || rpc.data?.ok === false) return J({ ok: false, error: rpc.data?.error || 'profile' }, rpc.ok ? 400 : 502);
       if (species > 3) SPC_OLD = speciesOf(rpc.data?.species) === species ? 0 : Date.now();
       const prof = await publishProfile(env, actor.id, species);
@@ -1656,6 +1680,7 @@ async function profileApi(req, env, u, ctx) {
       const nick = clip(b.nickname, 16);
       if (!nick || rejectedCopy(nick) || botNick(nick)) return J({ ok: false, error: '그 이름은 쓸 수 없어요' }, 400);
       const rpc = await supabaseRpc('set_nickname', { p_key: env.FLUSH_KEY, p_actor_id: actor.id, p_nickname: nick });
+      if (loginGone(rpc)) return J({ ok: false, err: 'gone', error: GONE_ERR }, 401);
       if (!rpc.ok || rpc.data?.ok === false) return J({ ok: false, error: '이름을 저장하지 못했어요' }, rpc.ok ? 400 : 502);
       out.nickname = rpc.data?.nickname || nick;
       try { ctx?.waitUntil?.(Promise.resolve().then(() => lgM(env).lgNick(isoWeek(), actor.id, out.nickname)).then(lgDrop).catch(() => null)); } catch { /* the week's list shows the new name at the next spend */ }
@@ -1665,6 +1690,7 @@ async function profileApi(req, env, u, ctx) {
       const color = String(b.color).trim().toLowerCase();
       if (!/^#[0-9a-f]{6}$/.test(color)) return J({ ok: false, error: '색을 고르지 못했어요' }, 400);
       const rpc = await supabaseRpc('set_ring_color', { p_key: env.FLUSH_KEY, p_actor_id: actor.id, p_color: color });
+      if (loginGone(rpc)) return J({ ok: false, err: 'gone', error: GONE_ERR }, 401);
       if (!rpc.ok || rpc.data?.ok === false) return J({ ok: false, error: '색을 저장하지 못했어요' }, rpc.ok ? 400 : 502);
       out.color = rpc.data?.color || color;
     }
@@ -1722,6 +1748,7 @@ function playerErr(code, fallback) {
     auth: '입장한 뒤에 할 수 있어요.',
     relight: '불을 켜지 못했어요.',
     tribe: '이미 소속이 있거나, 소속에 들어간 뒤에만 할 수 있어요.',
+    login: '탈퇴한 계정이에요. 다시 로그인해 주세요.', // GONE_ERR: the database made no wallet (a withdrawn account's token)
   };
   const text = String(code || '');
   return map[text] || text || fallback;
@@ -1873,24 +1900,29 @@ async function settle(env, topic, actorId) {
   return { ok: true, pending: data.pending || 0, flushed: data.flushed || 0 };
 }
 // Share bonus: once a KST day per account and per address. The record is in the 'acct' instance (promoTake, the address as ipHash, never raw) and
-// PROMO is this isolate's copy, checked first. Budget hard, or that call failing: the isolate copy alone, as before. Redeem codes stay in PROMO.
-const PROMO = new Map();
+// PROMO is this isolate's copy, checked first (it only refuses sooner, it never lets a claim through). Budget hard, or that call failing: refused
+// ("잠시 뒤에 다시", code busy), because this isolate's copy alone would let every other isolate pay the 300 again. Redeem codes: one use per
+// account and code for good, recorded in 'acct' (codeTake, the pair hashed); closed the same way when it cannot be asked.
+// Open product question, left as it is: the share bonus is 300 a day and any actor (guests too) can claim it.
+const PROMO = new Map(), PROMO_BUSY = '지금은 광장이 붐벼요. 잠시 뒤에 다시 해 주세요.';
 async function promo(req, env, u) {
   if (req.method !== 'POST') return J({ err: 'post' }, 405);
   const actor = await resolveActor(env, tokenOf(req));
   if (!actor) return J({ err: 'auth' }, 401);
   const day = kstDay();
   const ip = req.headers.get('cf-connecting-ip') || 'x';
+  const busy = () => J({ ok: false, code: 'busy', error: PROMO_BUSY }, 503);
   if (u.pathname === '/rt/share-bonus') {
     const ak = 's:' + actor.id + ':' + day, ik = 'i:' + ip + ':' + day;
     const had = () => J({ ok: false, error: '오늘은 이미 공유 보너스를 받았어요.' }, 400);
     if (PROMO.get(ak) || PROMO.get(ik)) return had();
-    let keys = null; // what was taken in the acct instance, given back if the grant fails
-    if (!(await budgetHard(env))) { try { const ks = ['s:' + actor.id, 'i:' + await ipHash(env, req)]; const hit = await acct(env).promoTake(ks, day);
-        if (hit !== true) { if (Array.isArray(hit)) { if (hit.includes(ks[0])) PROMO.set(ak, 1); if (hit.includes(ks[1])) PROMO.set(ik, 1); } return had(); } keys = ks; } catch { keys = null; } }
+    if (await budgetHard(env)) return busy();
+    const keys = ['s:' + actor.id, 'i:' + await ipHash(env, req)]; // taken in the acct instance, given back if the grant fails
+    let hit; try { hit = await acct(env).promoTake(keys, day); } catch { return busy(); }
+    if (hit !== true) { if (Array.isArray(hit)) { if (hit.includes(keys[0])) PROMO.set(ak, 1); if (hit.includes(keys[1])) PROMO.set(ik, 1); } return had(); }
     const rpc = await supabaseRpc('grant_coins', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_amount: 300 }).catch(() => ({ ok: false, data: {} }));
     const data = rpc.data || {};
-    if (!rpc.ok || data.ok === false) { if (keys) { try { await acct(env).promoGive(keys, day); } catch { /* today's bonus is lost for this account, never doubled */ } }
+    if (!rpc.ok || data.ok === false) { try { await acct(env).promoGive(keys, day); } catch { /* today's bonus is lost for this account, never doubled */ }
       return J({ ok: false, error: data.error || '코인을 넣지 못했습니다.' }, rpc.ok ? 400 : 502); }
     PROMO.set(ak, 1); PROMO.set(ik, 1);
     return J({ ok: true, coins: data.coins, amount: 300 });
@@ -1900,11 +1932,16 @@ async function promo(req, env, u) {
   if (!/^[A-Za-z0-9]{8,32}$/.test(code)) return J({ ok: false, error: '8자리 코드를 입력하세요.' }, 400);
   const codes = String(env.VIP_CODES || '').split(/[\s,]+/).filter((s) => s.length >= 8);
   if (!codes.includes(code)) return J({ ok: false, error: '코드가 맞지 않아요.' }, 400);
-  const key = 'v:' + actor.id + ':' + code;
-  if (PROMO.get(key)) return J({ ok: false, error: '이미 사용한 코드예요.' }, 400);
-  const rpc = await supabaseRpc('grant_coins', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_amount: 10000 });
+  const key = 'v:' + actor.id + ':' + code, used = () => J({ ok: false, error: '이미 사용한 코드예요.' }, 400);
+  if (PROMO.get(key)) return used();
+  if (await budgetHard(env)) return busy();
+  const dig = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key))); let ck = 'v:'; for (const x of dig.slice(0, 16)) ck += x.toString(16).padStart(2, '0'); // the code never sits in 'acct' raw
+  let fresh; try { fresh = await acct(env).codeTake(ck); } catch { return busy(); }
+  if (fresh !== true) { PROMO.set(key, 1); return used(); }
+  const rpc = await supabaseRpc('grant_coins', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_amount: 10000 }).catch(() => ({ ok: false, data: {} }));
   const data = rpc.data || {};
-  if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || '코인을 넣지 못했습니다.' }, rpc.ok ? 400 : 502);
+  if (!rpc.ok || data.ok === false) { try { await acct(env).codeGive(ck); } catch { /* the code stays used for this account, never paid twice */ }
+    return J({ ok: false, error: data.error || '코인을 넣지 못했습니다.' }, rpc.ok ? 400 : 502); }
   PROMO.set(key, 1);
   return J({ ok: true, coins: data.coins, amount: 10000 });
 }
@@ -2165,8 +2202,12 @@ function tribeSettle(env, ctx, now = Date.now()) {
 // transferable: sell_coins_to_advertiser and pledge_tribe only refuse an amount larger than the balance (row lock, coins >= 0), so before this a
 // new guest, or a brand-new account, could hand its gift coins to a board holder or a tribe. A guest (any actor that is not a signed-in account,
 // and an anonymous sign-in) sends and pledges nothing at all; the refusal says that linking an account opens it. A signed-in account keeps
-// SEND_FLOOR (440 = the starting 100 + the hello bonus 40 + the link reward 300: every gift a new account gets, so a fresh ID account has
-// nothing to hand on): the Worker reads its settled balance and refuses an amount that would leave less.
+// SEND_FLOOR: the most gift coins one account can hold, so a fresh ID account has nothing to hand on. 580 = its own row's starting 100 (a row a
+// profile read, a species save or a room flush made before the first link; since migrations/2026-11-22-coins.sql such a row starts at 0) + the
+// hello 40 a room paid to the account id itself (rooms no longer pay it to user: ids) + its first guest's 100 + that guest's hello 40 + the link
+// reward 300. One number in both database states, so the rule stays simple. The Worker reads the settled balance and refuses an amount that would
+// leave less. The floor guards sends and pledges only: a guest's (or an account's) gift coins still reach somebody else through claim_billboard,
+// whose bid pays half to the plot landlord. That path is left as it is.
 // Read and spend are two steps, so one account spends through here one at a time: SENDING within this isolate (an entry older than SEND_HOLD is
 // dead) and a lease in the 'acct' instance across isolates. The balance is read once before the lease, so a refusal costs no Durable Object call,
 // and once more under it. The lease call also refuses a token issued before the account withdrew (goneSince). Closed when it cannot be checked:
@@ -2174,10 +2215,10 @@ function tribeSettle(env, ctx, now = Date.now()) {
 // LINKING / linkHold: a link that is about to move coins holds the account's sends until its take-back is done (see takeBack), and is itself
 // refused while a send is under way. Several links of one account may run together.
 const SENDING = new Map(), LINKING = new Map(), SEND_HOLD = 15000, SEND_BUSY = '앞선 코인 보내기가 끝난 뒤에 다시 해 주세요.';
-const SEND_FLOOR = 440; // ARRIVAL (STARTER_COINS 100 + PAY.hello 40) + LINK_REWARD 300, the same BACK_MAX the link take-back uses (declared further down)
+const SEND_FLOOR = 580; // 2 x ARRIVAL (STARTER_COINS 100 + PAY.hello 40: the account's own row and its first guest) + LINK_REWARD 300 (declared further down)
 const COIN_HARD = '지금은 광장이 붐벼요. 잠시 뒤에 다시 해 주세요.', GONE_ERR = '탈퇴한 계정이에요. 다시 로그인해 주세요.';
-const SEND_TEXT = { guest: '손님은 코인을 보낼 수 없어요. 계정을 연결하면 보낼 수 있어요.', floor: '처음 받은 440코인(시작 100 + 첫 방문 40 + 연결 보상 300)은 보낼 수 없어요. 그보다 더 모은 만큼만 보낼 수 있어요.', down: '판매를 처리하지 못했습니다.' };
-const PLEDGE_TEXT = { guest: '손님은 모금할 수 없어요. 계정을 연결하면 모금할 수 있어요.', floor: '처음 받은 440코인(시작 100 + 첫 방문 40 + 연결 보상 300)은 모금할 수 없어요. 그보다 더 모은 만큼만 모금할 수 있어요.', down: '모금하지 못했어요.' };
+const SEND_TEXT = { guest: '손님은 코인을 보낼 수 없어요. 계정을 연결하면 보낼 수 있어요.', floor: '선물로 받은 코인 580개까지는 보낼 수 없어요. 그보다 더 모은 만큼만 보낼 수 있어요.', down: '판매를 처리하지 못했습니다.' };
+const PLEDGE_TEXT = { guest: '손님은 모금할 수 없어요. 계정을 연결하면 모금할 수 있어요.', floor: '선물로 받은 코인 580개까지는 모금할 수 없어요. 그보다 더 모은 만큼만 모금할 수 있어요.', down: '모금하지 못했어요.' };
 const guestLike = (actor) => !String(actor?.id || '').startsWith('user:') || !!actor?.anon;
 const sendingHere = (uid, now = Date.now()) => { const t = SENDING.get(uid) || 0; return now >= t && now - t < SEND_HOLD; };
 const linkingHere = (uid, now = Date.now()) => { const l = LINKING.get(uid); return !!l && l.n > 0 && now >= l.at && now - l.at < SEND_HOLD; };
@@ -2861,13 +2902,14 @@ async function fileReport(req, env) {
 // After migrations/2026-11-22-coins.sql the database guards the link itself, in the merge's own transaction (its answer carries guard: 2, and no
 // `moved`): the first link pays +300 and keeps everything; every later link leaves out the guest's ARRIVAL coins it has not moved before; an
 // account that withdrew (its marks are in the database now) gets no second +300. The Worker then only checks the withdrawals that were marked in
-// 'acct' before the migration, on the link the database paid the reward on (stFirst, one call).
+// 'acct' before the migration, on the link the database paid the reward on (stFirst, one call); at budget hard, where it cannot, a link whose
+// reward is still to be paid waits (503) like every link before the migration.
 // Before that migration (an answer with a numeric `moved` and no guard) the Worker does it after the call, as follows. bonus > 0 only for the
 // call that made the account's first link (everything moves, as before), moved = what this very call moved (0 for a replay and for the loser of two
 // calls at once). On every later link the first ARRIVAL coins a guest ever moves are taken back out of the account and what it earned on top
 // stays. Meter.stTake counts them per guest, so coins that reach an already linked guest later (a late room flush) are its earnings. An answer
-// without a numeric `moved` leaves the link as it was. A first link counts the guest's whole arrival coins as gone even when nothing moved yet
-// (stFirst). An account that withdrew is remembered (goneKeys, Meter.goneSet: by its id and by its e-mail): its wallet row and link_bonus are
+// without a numeric `moved` leaves the link as it was. A first link counts as moved only the arrival coins it really moved (stFirst, as the
+// database does): a guest that was empty then is not settled, so the 140 it gets later are held back from its next link. An account that withdrew is remembered (goneKeys, Meter.goneSet: by its id and by its e-mail): its wallet row and link_bonus are
 // deleted, and its login too once forget_login is installed, so the database pays the link reward again on its next link, or on the first link of
 // a new id made with the same e-mail, but that link is not a first one. The reward and the guest's arrival coins are both taken back, and only
 // what the guest earned stays. Coins the account spends between the move and the take-back cannot be taken back; that gap is what the migration
@@ -2994,8 +3036,8 @@ async function accountApi(req, env, ctx, u) {
   const G = await guestVerify(env, b?.guest_token, 180 * 86400);
   if (!G || G.s !== sub) return J({ err: 'guest' }, 401);
   // Budget hard: the Worker's own guard cannot ask 'acct' (no withdrawal mark read, no arrival-coin count), so a link is made only where the
-  // database guards it by itself (mergeProbe: merge_guest_account answers guard 2). Otherwise it waits: 503, and the client tries again on its
-  // next boot. A refusal here moves nothing.
+  // database guards it by itself (mergeProbe: merge_guest_account answers guard 2), and only for an account whose reward is already paid (below).
+  // Otherwise it waits: 503, and the client tries again on its next boot. A refusal here moves nothing.
   const hard = await budgetHard(env);
   if (hard && !(await mergeProbe(env))) return J({ ok: false, err: 'busy', error: LINK_HARD }, 503);
   // Read ahead, together: does the link move a board (merge_guest_account does not say; a replay moves nothing and tells no room; unreadable:
@@ -3003,7 +3045,10 @@ async function accountApi(req, env, ctx, u) {
   // held until the take-back is done; unreadable: assume yes). A replay, nothing to move and the reward long paid, holds nothing; with the database
   // guarding the link (MERGE_C), a link whose reward is long paid holds nothing either (no take-back can follow it).
   const [held, ahead] = await Promise.all([(async () => { try { const s = await fetch(SUPA + '/rest/v1/billboards?select=slot_id&holder_id=eq.' + encodeURIComponent(guestId) + '&limit=1', { headers: { apikey: ANON, accept: 'application/json' } }); const rows = s.ok ? await s.json() : null; return Array.isArray(rows) ? rows.length > 0 : true; } catch { return true; } })(), linkAhead(guestId, actor.id)]);
-  const free = ahead && ahead.paid && (ahead.g === 0 || MERGE_C.yes) ? null : await linkHold(env, actor);
+  // At hard the database guards the coins, but a link that pays the reward must still be checked against the withdrawals marked in 'acct'
+  // before the migration (stFirst), which cannot be asked now: such a link waits too (the reward still to be paid, or unreadable).
+  if (hard && !ahead?.paid) return J({ ok: false, err: 'busy', error: LINK_HARD }, 503);
+  const free =ahead && ahead.paid && (ahead.g === 0 || MERGE_C.yes) ? null : await linkHold(env, actor);
   if (free === false) return J({ ok: false, err: 'rate', error: '계정을 연결하지 못했어요. 잠시 뒤 다시 해 주세요.' }, 429, { 'retry-after': '60' }); // one of this account's sends is under way
   if (free === 'gone') return J({ ok: false, err: 'gone', error: GONE_ERR }, 401); // a token from before this account withdrew
   // The RPC and the starter guard are one piece of work, handed to waitUntil before it is awaited: a client that goes away after the coins moved
@@ -3014,7 +3059,7 @@ async function accountApi(req, env, ctx, u) {
     const data = rpc.data || {}; mergeSeen(data); if (!rpc.ok || data.ok === false) return { rpc, data, back: 0, again: false };
     const bonus = Math.max(0, Math.floor(Number(data.bonus)) || 0);
     if (data.guard === 2) { // the database did the move and its take-back in one step; only an 'acct' mark from before the migration is left to check
-      if (!bonus || hard) return { rpc, data, back: 0, again: data.again === true };
+      if (!bonus) return { rpc, data, back: 0, again: data.again === true }; // (at hard a rewarded link was refused above; one that slipped past the read ahead is still checked)
       let again = false, part = 0;
       try { const f = await acct(env).stFirst(guestId, Math.max(0, Math.floor(Number(data.moved_in)) || 0), ARRIVAL, await goneKeys(env, actor)); again = f?.gone === true; part = again ? Number(f.part) || 0 : 0; } catch { /* as if no mark */ }
       return { rpc, data, again, back: again ? await takeBack(env, actor.id, part + bonus).catch(() => 0) : 0 };

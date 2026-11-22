@@ -43,6 +43,7 @@ describe('phase 0 contracts', () => {
     assert.match(bots, /chapelqa:square/);
     assert.match(bots, /localhost:8787/);
     assert.equal(bots.includes('wishboard.workers.dev'), false);
+    assert.equal(bots.includes('/rt/sell-coins'), false); // the bots are guests, and guests cannot send coins: --trade skips sends
     assert.match(screens, /function defaultData/);
     assert.match(screens, /holder_id: null/);
   });

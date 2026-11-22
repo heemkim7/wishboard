@@ -1488,20 +1488,36 @@ CREATE TRIGGER wallets_gone_mark AFTER DELETE ON public.wallets FOR EACH ROW EXE
 -- No wallet row for a signed-in id with no login. After forget_login deleted a login, its access token still works for up to an hour,
 -- and every wallet INSERT (profile_read, coin_batch, claim_billboard, a link, ...) would have made a fresh 100-coin wallet for it.
 -- Such an INSERT is skipped (the row is not made), so a coin flush for it adds nothing and a function that then finds no wallet
--- refuses as it does for any missing wallet. A database without auth.users (a test database) checks nothing.
+-- refuses as it does for any missing wallet (the functions that make a wallet on their way end with {ok: false, error: 'login'}).
+-- A database without auth.users (a test database) checks no login.
+-- A new user: row made anywhere but merge_guest_account starts at 0, not the column's 100: before, an account whose row a profile read,
+-- a species save or a room flush made before its first link kept those 100 on top of its first guest's coins and the +300. An
+-- anonymous sign-in (it cannot link) keeps the 100. A refund that lands on a user: row deleted by a withdrawal (review_slot_claim,
+-- refund_tribe_week make the row with the amount) loses up to 100 the same way; that row has no login after forget_login anyway.
 CREATE OR REPLACE FUNCTION public.wallets_need_login()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
+DECLARE
+  v_anon BOOLEAN := false;
 BEGIN
-  IF NEW.actor_id LIKE 'user:%' AND to_regclass('auth.users') IS NOT NULL THEN
-    IF NEW.actor_id !~ '^user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
-      RETURN NULL;
+  IF NEW.actor_id LIKE 'user:%' THEN
+    IF to_regclass('auth.users') IS NOT NULL THEN
+      IF NEW.actor_id !~ '^user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+        RETURN NULL;
+      END IF;
+      SELECT COALESCE((to_jsonb(u) ->> 'is_anonymous')::boolean, false) INTO v_anon FROM auth.users u WHERE u.id = substr(NEW.actor_id, 6)::uuid;
+      IF NOT FOUND THEN
+        RETURN NULL;
+      END IF;
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM auth.users WHERE id = substr(NEW.actor_id, 6)::uuid) THEN
-      RETURN NULL;
+    -- A new account row made anywhere but merge_guest_account (which makes its own with 0) starts without the 100 every new wallet gets:
+    -- an account's starting coins come with its first guest. An anonymous sign-in cannot link, so it keeps them. A row that is already
+    -- there is left alone (the INSERT goes to its ON CONFLICT, and EXCLUDED must stay what the function sent).
+    IF NOT COALESCE(v_anon, false) AND NOT EXISTS (SELECT 1 FROM public.wallets WHERE actor_id = NEW.actor_id) THEN
+      NEW.coins := GREATEST(0, NEW.coins - 100);
     END IF;
   END IF;
   RETURN NEW;
@@ -1582,9 +1598,10 @@ BEGIN
   END IF;
 
   IF NOT v_user.link_bonus AND NOT v_again THEN
-    -- The account's first link: everything moves and +300 once. This guest's arrival coins are spoken for with it.
+    -- The account's first link: everything moves and +300 once. Only what it really moved of this guest's arrival coins counts as moved:
+    -- coins that reach the guest later (its row made only now, a late flush) are held back from its next link like any guest's.
     v_bonus := 300;
-    v_taken := 140;
+    v_taken := GREATEST(v_taken, LEAST(140, v_moved));
   ELSE
     -- A later link, or the first one of an account that withdrew before: the arrival coins not moved yet stay out.
     v_back := LEAST(v_moved, GREATEST(0, 140 - v_taken));
@@ -2153,6 +2170,9 @@ BEGIN
     RAISE EXCEPTION 'Unauthorized worker key';
   END IF;
   INSERT INTO public.wallets (actor_id) VALUES (p_actor_id) ON CONFLICT (actor_id) DO NOTHING;
+  IF NOT EXISTS (SELECT 1 FROM public.wallets WHERE actor_id = p_actor_id) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'login');
+  END IF;
   INSERT INTO public.profiles (actor_id) VALUES (p_actor_id) ON CONFLICT (actor_id) DO NOTHING;
   SELECT reputation, species, ring_color, ring_set, attend_streak, attend_last, starter_slot
   INTO v_rep, v_species, v_color, v_set, v_streak, v_last, v_starter
@@ -2204,6 +2224,9 @@ BEGIN
   END IF;
   v_species := CASE WHEN p_species BETWEEN 1 AND 10 THEN p_species ELSE 1 END;
   INSERT INTO public.wallets (actor_id) VALUES (p_actor_id) ON CONFLICT (actor_id) DO NOTHING;
+  IF NOT EXISTS (SELECT 1 FROM public.wallets WHERE actor_id = p_actor_id) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'login');
+  END IF;
   INSERT INTO public.profiles (actor_id, species) VALUES (p_actor_id, v_species)
   ON CONFLICT (actor_id) DO UPDATE SET species = EXCLUDED.species;
   RETURN jsonb_build_object('ok', true, 'species', v_species);
@@ -2230,6 +2253,9 @@ BEGIN
   END IF;
   INSERT INTO public.wallets (actor_id, nickname) VALUES (p_actor_id, v_name)
   ON CONFLICT (actor_id) DO UPDATE SET nickname = EXCLUDED.nickname, updated_at = now();
+  IF NOT EXISTS (SELECT 1 FROM public.wallets WHERE actor_id = p_actor_id) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'login');
+  END IF;
   UPDATE public.billboards SET holder_name = v_name WHERE holder_id = p_actor_id;
   UPDATE public.plots SET owner_name = v_name WHERE owner_id = p_actor_id;
   RETURN jsonb_build_object('ok', true, 'nickname', v_name);
@@ -2255,6 +2281,9 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'error', 'color');
   END IF;
   INSERT INTO public.wallets (actor_id) VALUES (p_actor_id) ON CONFLICT (actor_id) DO NOTHING;
+  IF NOT EXISTS (SELECT 1 FROM public.wallets WHERE actor_id = p_actor_id) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'login');
+  END IF;
   INSERT INTO public.profiles (actor_id, ring_color, ring_set) VALUES (p_actor_id, v_color, true)
   ON CONFLICT (actor_id) DO UPDATE SET ring_color = EXCLUDED.ring_color, ring_set = true;
   RETURN jsonb_build_object('ok', true, 'color', v_color);
@@ -2294,6 +2323,9 @@ BEGIN
     RAISE EXCEPTION 'Unauthorized worker key';
   END IF;
   INSERT INTO public.wallets (actor_id) VALUES (p_actor_id) ON CONFLICT (actor_id) DO NOTHING;
+  IF NOT EXISTS (SELECT 1 FROM public.wallets WHERE actor_id = p_actor_id) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'login');
+  END IF;
   INSERT INTO public.profiles (actor_id) VALUES (p_actor_id) ON CONFLICT (actor_id) DO NOTHING;
   SELECT attend_last, attend_streak INTO v_last, v_streak FROM public.profiles WHERE actor_id = p_actor_id FOR UPDATE;
   IF v_last = v_today THEN
@@ -2829,6 +2861,9 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'error', 'tag');
   END IF;
   INSERT INTO public.wallets (actor_id) VALUES (p_actor_id) ON CONFLICT (actor_id) DO NOTHING;
+  IF NOT EXISTS (SELECT 1 FROM public.wallets WHERE actor_id = p_actor_id) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'login');
+  END IF;
   INSERT INTO public.tribes (id, tag, name, created_by) VALUES (p_id, p_tag, p_tag, p_actor_id);
   INSERT INTO public.tribe_members (tribe_id, actor_id, role) VALUES (p_id, p_actor_id, 'owner');
   INSERT INTO public.profiles (actor_id, tribe_id) VALUES (p_actor_id, p_id)
@@ -2862,6 +2897,9 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'error', 'id');
   END IF;
   INSERT INTO public.wallets (actor_id) VALUES (p_actor_id) ON CONFLICT (actor_id) DO NOTHING;
+  IF NOT EXISTS (SELECT 1 FROM public.wallets WHERE actor_id = p_actor_id) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'login');
+  END IF;
   INSERT INTO public.tribe_members (tribe_id, actor_id, role) VALUES (p_id, p_actor_id, 'member');
   INSERT INTO public.profiles (actor_id, tribe_id) VALUES (p_actor_id, p_id)
   ON CONFLICT (actor_id) DO UPDATE SET tribe_id = EXCLUDED.tribe_id;

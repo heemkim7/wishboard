@@ -11,6 +11,9 @@
 --   3. 탈퇴로 로그인 정보가 지워져도 그 토큰은 길게는 1시간 통한다. 그동안 프로필을 읽으면 100코인 지갑이 새로 생겼다.
 --   4. 게스트마다 도착하자마자 받는 40코인(hello)은 시작 100코인처럼 번 코인이 아닌데, 연결할 때 같이 옮겨져
 --      게스트를 여러 개 만들어 한 계정에 모으면 그만큼 쌓였다.
+--   5. 계정(user:) 지갑도 연결 전에 프로필 읽기 등으로 먼저 만들어지면 시작 100코인을 따로 받았다. 그 위에 첫 연결이 게스트의
+--      140과 보상 300을 더했다. 또 첫 연결은 게스트가 아직 빈 지갑이어도 그 게스트의 도착 코인 140을 다 옮긴 것으로 적어서,
+--      그 게스트가 나중에 받은 140을 다른 계정이 통째로 가져갈 수 있었다.
 --
 -- 무엇을 (1부, 한 덩어리. 하나라도 실패하면 1부 전체가 되돌아가고 이유가 마지막 표에 나온다):
 --   - 표 public.gone_logins(탈퇴 표시: 계정 id와 로그인 이메일의 소금 친 해시. 원래 값은 적지 않는다),
@@ -18,12 +21,18 @@
 --   - app_secrets에 GONE_SALT(처음 한 번 무작위로 만든다. 이미 있으면 그대로). Worker 키와 상관이 없어서 GUEST_KEY를 바꿔도
 --     탈퇴 표시는 그대로 읽힌다. 이 값은 바꾸지 않는다(바꾸면 지금까지의 표시가 읽히지 않는다).
 --   - 함수 public.gone_hash, 트리거 함수 public.wallets_gone_mark(user: 지갑 줄이 지워질 때 표시를 남긴다),
---     public.wallets_need_login(로그인 정보가 없는 user: id에는 지갑 줄을 만들지 않는다).
+--     public.wallets_need_login(로그인 정보가 없는 user: id에는 지갑 줄을 만들지 않는다. 그리고 계정 연결 밖에서 새로 만드는
+--     user: 지갑 줄은 시작 100코인 없이 0에서 시작한다. 계정의 시작 코인은 첫 게스트에게서 온다. 익명 로그인은 연결을 못 하니 100 그대로).
+--     줄이 이미 있으면 건드리지 않는다. 탈퇴로 지워진 user: 줄에 환불이 새 줄을 만들 때도 그 환불에서 100까지 빠진다(드문 경우).
 --   - merge_guest_account를 통째로 바꾼다. 옮기기와 도로 빼기가 한 번에 된다. 첫 연결은 전처럼 다 옮기고 +300.
 --     그 뒤의 연결은 그 게스트의 도착 코인 140(시작 100 + hello 40) 가운데 아직 안 옮긴 만큼을 빼고 옮긴다.
+--     첫 연결도 그 게스트의 도착 코인은 실제로 옮긴 만큼만(최대 140) 옮긴 것으로 적는다.
 --     탈퇴했던 계정(id나 이메일 표시가 있음)은 +300을 다시 받지 않는다. 응답에 guard: 2와 again이 붙고 moved는 없다.
 --   - sell_coins_to_advertiser에서 한 줄만 바꾼다: 'IF v_seller.coins < p_amount THEN' → 'IF NOT FOUND OR v_seller.coins < p_amount THEN'.
 --     지갑 줄이 없을 때(위 트리거가 줄을 만들지 않은 경우) 받는 사람에게 코인이 생기지 않게 한다. 그 줄이 정확히 한 번 있을 때만 바꾼다.
+--   - 가는 길에 지갑 줄을 만드는 함수 일곱 개(profile_read, save_species, set_nickname, set_ring_color, touch_attend, create_tribe,
+--     join_tribe)에 각각 한 덩어리를 더한다: 지갑 줄을 만드는 줄 바로 뒤에서 줄이 없으면(위 트리거가 만들지 않은 경우)
+--     {ok: false, error: 'login'}으로 끝낸다. 전에는 profiles의 외래 키 오류로 실패했다. 그 줄이 정확히 한 번 있을 때만 바꾼다.
 --   다른 함수와 표는 건드리지 않는다. withdraw_account와 forget_login도 그대로다.
 --
 -- 2부 (주석, 따로 실행): 메일 확인을 켜 두었을 때 가입하고 확인하지 않은 옛 계정을 확인 처리한다. 지금은 메일 확인이 꺼져 있어서
@@ -38,6 +47,7 @@
 --   - 이 파일 전에 Durable Object에만 남은 탈퇴 표시는 Worker가 계속 읽는다(첫 연결 때 한 번). 그 표시는 GUEST_KEY로 만든 것이라
 --     GUEST_KEY를 바꾸면 그 옛 표시만 읽히지 않는다. 이 파일 뒤의 탈퇴는 DB에 남으므로 상관없다.
 --   - 이 파일 전에 연결한 게스트에게 나중에 들어온 코인(늦은 정산)은 DB에 기록이 없어 다음 연결에서 처음 140까지 빠질 수 있다.
+--   - 이미 있는 지갑 줄은 그대로다(벌써 100으로 만들어진 user: 줄도). Worker의 보내기·모금 하한은 두 상태 모두 580이다.
 --
 -- 함수의 주인: auth.users를 읽을 수 있는 역할(postgres)이어야 한다. 1부는 시작할 때 이것을 확인하고, 읽지 못하면 아무것도 바꾸지 않는다
 --   (트리거가 모든 계정의 지갑 줄을 막는 일이 없게).
@@ -57,7 +67,11 @@ DO $p1$
 DECLARE
   old_s CONSTANT TEXT := 'IF v_seller.coins < p_amount THEN';
   new_s CONSTANT TEXT := 'IF NOT FOUND OR v_seller.coins < p_amount THEN';
-  d TEXT; n INT; blocked BOOLEAN;
+  -- The wallet-making line of the seven functions (set_nickname has its own), and what goes right after it.
+  w_line CONSTANT TEXT := 'INSERT INTO public.wallets (actor_id) VALUES (p_actor_id) ON CONFLICT (actor_id) DO NOTHING;';
+  w_nick CONSTANT TEXT := 'ON CONFLICT (actor_id) DO UPDATE SET nickname = EXCLUDED.nickname, updated_at = now();';
+  w_guard CONSTANT TEXT := E'\n  IF NOT EXISTS (SELECT 1 FROM public.wallets WHERE actor_id = p_actor_id) THEN\n    RETURN jsonb_build_object(''ok'', false, ''error'', ''login'');\n  END IF;';
+  d TEXT; n INT; blocked BOOLEAN; f TEXT; ln TEXT;
 BEGIN
   BEGIN
     -- The trigger functions read auth.users as their owner (whoever runs this file). If that role cannot see its rows, the login check
@@ -136,6 +150,21 @@ $f$;
       EXECUTE replace(d, old_s, new_s);
     END IF;
 
+    -- The seven functions that make the actor's wallet row on their way: with the next trigger that row can be left out, and then they
+    -- failed on the profiles (or tribe_members) foreign key. Right after the wallet line they now end with {ok: false, error: 'login'}.
+    FOREACH f IN ARRAY ARRAY['profile_read(text,text)', 'save_species(text,text,integer)', 'set_nickname(text,text,text)', 'set_ring_color(text,text,text)',
+                             'touch_attend(text,text)', 'create_tribe(text,text,text,text)', 'join_tribe(text,text,text)'] LOOP
+      d := pg_get_functiondef(('public.' || f)::regprocedure);
+      IF position(w_guard IN d) = 0 THEN
+        ln := CASE WHEN f LIKE 'set_nickname(%' THEN w_nick ELSE w_line END;
+        n := (length(d) - length(replace(d, ln, ''))) / length(ln);
+        IF n <> 1 THEN
+          RAISE EXCEPTION '중단: 운영 DB의 %에서 지갑을 만드는 줄을 %번 찾았습니다(1번이어야 함). 1부는 바뀌지 않았습니다.', split_part(f, '(', 1), n;
+        END IF;
+        EXECUTE replace(d, ln, ln || w_guard);
+      END IF;
+    END LOOP;
+
     EXECUTE $f$
 CREATE OR REPLACE FUNCTION public.wallets_need_login()
 RETURNS TRIGGER
@@ -143,13 +172,24 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
+DECLARE
+  v_anon BOOLEAN := false;
 BEGIN
-  IF NEW.actor_id LIKE 'user:%' AND to_regclass('auth.users') IS NOT NULL THEN
-    IF NEW.actor_id !~ '^user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
-      RETURN NULL;
+  IF NEW.actor_id LIKE 'user:%' THEN
+    IF to_regclass('auth.users') IS NOT NULL THEN
+      IF NEW.actor_id !~ '^user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+        RETURN NULL;
+      END IF;
+      SELECT COALESCE((to_jsonb(u) ->> 'is_anonymous')::boolean, false) INTO v_anon FROM auth.users u WHERE u.id = substr(NEW.actor_id, 6)::uuid;
+      IF NOT FOUND THEN
+        RETURN NULL;
+      END IF;
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM auth.users WHERE id = substr(NEW.actor_id, 6)::uuid) THEN
-      RETURN NULL;
+    -- A new account row made anywhere but merge_guest_account (which makes its own with 0) starts without the 100 every new wallet gets:
+    -- an account's starting coins come with its first guest. An anonymous sign-in cannot link, so it keeps them. A row that is already
+    -- there is left alone (the INSERT goes to its ON CONFLICT, and EXCLUDED must stay what the function sent).
+    IF NOT COALESCE(v_anon, false) AND NOT EXISTS (SELECT 1 FROM public.wallets WHERE actor_id = NEW.actor_id) THEN
+      NEW.coins := GREATEST(0, NEW.coins - 100);
     END IF;
   END IF;
   RETURN NEW;
@@ -224,9 +264,10 @@ BEGIN
   END IF;
 
   IF NOT v_user.link_bonus AND NOT v_again THEN
-    -- The account's first link: everything moves and +300 once. This guest's arrival coins are spoken for with it.
+    -- The account's first link: everything moves and +300 once. Only what it really moved of this guest's arrival coins counts as moved:
+    -- coins that reach the guest later (its row made only now, a late flush) are held back from its next link like any guest's.
     v_bonus := 300;
-    v_taken := 140;
+    v_taken := GREATEST(v_taken, LEAST(140, v_moved));
   ELSE
     -- A later link, or the first one of an account that withdrew before: the arrival coins not moved yet stay out.
     v_back := LEAST(v_moved, GREATEST(0, 140 - v_taken));
@@ -304,21 +345,27 @@ $try$;
 -- 결과: 한 줄. applied가 true면 1부가 다 들어가 있다. note 끝에 2부 대상 수가 나온다.
 -- ============================================================================
 SELECT
-  (m.ok AND s.ok AND g.oid IS NOT NULL AND t.n = 2 AND COALESCE(y.v, '') = 'ok' AND salt.ok AND tb.n = 2) AS applied,
+  (m.ok AND s.ok AND g.oid IS NOT NULL AND t.n = 2 AND COALESCE(y.v, '') = 'ok' AND salt.ok AND tb.n = 2 AND w.ok AND pf.n = 7) AS applied,
   CASE
     WHEN p1.v IS NOT NULL THEN '안 바뀜: ' || p1.v
     WHEN NOT m.ok THEN '안 바뀜: merge_guest_account가 새 모양이 아닙니다. 이 파일 전체를 다시 실행하세요'
     WHEN NOT s.ok THEN '안 바뀜: sell_coins_to_advertiser에 지갑 없음 검사가 없습니다'
+    WHEN NOT w.ok THEN '안 바뀜: wallets_need_login이 새 모양이 아닙니다. 이 파일 전체를 다시 실행하세요'
+    WHEN pf.n <> 7 THEN '덜 들어감: 지갑을 만드는 함수 일곱 개 가운데 ' || (7 - pf.n) || '개에 지갑 없음 검사가 없습니다. 이 파일 전체를 다시 실행하세요'
     WHEN g.oid IS NULL OR t.n <> 2 OR tb.n <> 2 OR NOT salt.ok THEN '덜 들어감: 표, 트리거, gone_hash, GONE_SALT 가운데 빠진 것이 있습니다. 이 파일 전체를 다시 실행하세요'
     WHEN COALESCE(y.v, '') <> 'ok' THEN '함수는 있지만 시험 호출이 예상과 다릅니다: ' || COALESCE(y.v, '부르지 않음')
-    ELSE '적용됨. 연결과 도로 빼기가 한 번에 되고, 탈퇴 표시는 DB에, 로그인 없는 계정에는 지갑이 생기지 않습니다'
+    ELSE '적용됨. 연결과 도로 빼기가 한 번에 되고, 탈퇴 표시는 DB에, 로그인 없는 계정에는 지갑이 생기지 않고, 연결 밖에서 생기는 계정 지갑은 0에서 시작합니다'
   END || ' · 메일 확인이 안 끝난 옛 가입 ' || COALESCE(u.v, '?') || '개(2부 참고, 따로 실행)' AS note
-FROM (SELECT position('''guard'', 2' IN pg_get_functiondef('public.merge_guest_account(text,text,text,text)'::regprocedure)) > 0 AS ok) m
+FROM (SELECT position('''guard'', 2' IN d) > 0 AND position('LEAST(140, v_moved)' IN d) > 0 AS ok FROM (SELECT pg_get_functiondef('public.merge_guest_account(text,text,text,text)'::regprocedure) AS d) x) m
 CROSS JOIN (SELECT position('IF NOT FOUND OR v_seller.coins < p_amount THEN' IN pg_get_functiondef('public.sell_coins_to_advertiser(text,text,text,text,integer)'::regprocedure)) > 0 AS ok) s
 CROSS JOIN (SELECT to_regprocedure('public.gone_hash(text,text)') AS oid) g
 CROSS JOIN (SELECT count(*)::int AS n FROM pg_trigger WHERE tgrelid = 'public.wallets'::regclass AND tgname IN ('wallets_gone_mark', 'wallets_need_login') AND NOT tgisinternal) t
 CROSS JOIN (SELECT count(*)::int AS n FROM pg_class WHERE oid IN (to_regclass('public.gone_logins'), to_regclass('public.starter_taken')) AND relrowsecurity) tb
 CROSS JOIN (SELECT EXISTS (SELECT 1 FROM public.app_secrets WHERE key_name = 'GONE_SALT' AND length(key_value) >= 32) AS ok) salt
+CROSS JOIN (SELECT COALESCE(position('NEW.coins := GREATEST(0, NEW.coins - 100);' IN pg_get_functiondef(to_regprocedure('public.wallets_need_login()'))) > 0, false) AS ok) w
+CROSS JOIN (SELECT count(DISTINCT proname)::int AS n FROM pg_proc WHERE pronamespace = 'public'::regnamespace
+  AND proname IN ('profile_read', 'save_species', 'set_nickname', 'set_ring_color', 'touch_attend', 'create_tribe', 'join_tribe')
+  AND position('IF NOT EXISTS (SELECT 1 FROM public.wallets WHERE actor_id = p_actor_id) THEN' IN prosrc) > 0) pf
 LEFT JOIN kts_coins p1 ON p1.k = 'p1'
 LEFT JOIN kts_coins y ON y.k = 'try'
 LEFT JOIN kts_coins u ON u.k = 'unconfirmed';

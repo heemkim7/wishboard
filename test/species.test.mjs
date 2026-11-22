@@ -190,7 +190,7 @@ async function scene(migrated) {
   const roomAv = async (id, topic = 'chapel:square') => (await env.room(topic).do.loadProf(id))?.av;
   const forget = (id) => { env.meter('acct').do._prof?.delete(id); }; // the five-minute copy runs out
   const hard = async () => { env.meter('day').sql.db.prepare('insert into d values(?, ?) on conflict(day) do update set n = excluded.n').run(utcDay(), 96000); t += 61000; await call('/rt/wishes'); };
-  return { state, db, env, clock: { add: (ms) => { t += ms; } }, guest, profile, pick, held, roomAv, forget, hard, done: () => { Date.now = origNow; globalThis.fetch = origFetch; } };
+  return { state, db, env, call, clock: { add: (ms) => { t += ms; } }, guest, profile, pick, held, roomAv, forget, hard, done: () => { Date.now = origNow; globalThis.fetch = origFetch; } };
 }
 
 describe('before the migration: save_species stores 1 for 4..10', { concurrency: false }, () => {
@@ -255,6 +255,40 @@ describe('before the migration: save_species stores 1 for 4..10', { concurrency:
       assert.equal(p.species, 1); assert.equal(p.species_sure, false);
       assert.equal(profileSpecies(p, 5), 5);
       assert.equal(profileSpecies(p, 1), 1);
+    } finally { s.done(); }
+  });
+
+  it('the device sends its species (?sp=): on 1..3 a database answer of 1 asks no registry; no hint, a bad one or 4..10 asks as before', async () => {
+    const s = await scene(false);
+    try {
+      const g = await s.guest(); await s.pick(g, 1);
+      const log = spyDo(s.env), read = async (q) => (await s.call('/rt/profile' + q, { headers: { authorization: 'Bearer ' + g.token } })).json();
+      for (const q of ['?sp=1', '?sp=2', '?sp=3']) { const p = await read(q); assert.equal(p.species, 1, q); assert.equal('species_sure' in p, false, q); }
+      assert.deepEqual(log, [], 'a device on the mouse, cat or bear costs no Durable Object call');
+      for (const q of ['', '?sp=7', '?sp=10', '?sp=abc', '?sp=0']) { log.length = 0; assert.equal((await read(q)).species, 1, q); assert.deepEqual(log, ['acct.profilePut'], q); }
+      // A fox picked on another device while this one is on the cat: the database's 1 stands here (that device keeps its fox).
+      await s.pick(g, 7); log.length = 0; assert.equal((await read('?sp=2')).species, 1); assert.deepEqual(log, []);
+      assert.equal((await read('?sp=7')).species, 7);
+      const { readFileSync: rf } = await import('node:fs'), main = rf(new URL('../main.js', import.meta.url), 'utf8'), prof = rf(new URL('../profile.js', import.meta.url), 'utf8');
+      assert.match(main, /const p = await loadProfile\(state\.species\);/); assert.match(prof, /fetch\('\/rt\/profile' \+ sp,/);
+    } finally { s.done(); }
+  });
+
+  it('the heal never overwrites a newer choice: a pick that lands before its save keeps its species', async () => {
+    const s = await scene(false);
+    try {
+      const g = await s.guest(); await s.pick(g, 6); assert.equal(s.held(g.id), 6);
+      s.state.migrated = true; s.clock.add(600001);
+      // Between the profile read and the heal's save, the player picks the cat on another isolate (save_species 2, the registry drops the 6).
+      const M = s.env.meter('acct').do, real = s.env.METER.get;
+      s.env.METER.get = (n) => (n === 'acct' ? new Proxy(real(n), { get: (t, k) => (k === 'heldIs' ? async (...a) => { s.db.species.set(g.id, 2); M.profilePut(g.id, 2, [], 2); return t[k](...a); } : t[k]) }) : real(n));
+      s.state.rpcs.length = 0; assert.equal((await s.profile(g)).species, 6); // this answer was read before the pick
+      s.env.METER.get = real;
+      assert.deepEqual(s.state.rpcs, ['profile_read'], 'no save_species 6 after the newer pick');
+      assert.equal(s.db.species.get(g.id), 2); assert.equal(s.held(g.id), null); assert.equal((await s.profile(g)).species, 2);
+      // heldDrop takes only the value it was given.
+      M.profilePut(g.id, 1, [], 9); assert.equal(s.held(g.id), 9); M.heldDrop(g.id, 6); assert.equal(s.held(g.id), 9); M.heldDrop(g.id, 9); assert.equal(s.held(g.id), null);
+      assert.equal(M.heldIs(g.id, 9), false);
     } finally { s.done(); }
   });
 
