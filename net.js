@@ -91,7 +91,7 @@ class DOChan {
 }
 export function rtPatch(sb, net) { if (!DO_MODE || !sb || sb.__do) return sb; const chans = new Set(), base = { POS: Net.POS_MS, FAR: Net.FAR_MS };
   const rt = { net, sb, ev(ch, g) { if (g.ok && ch.downSent) { ch.downSent = false; if (net) net.gateDown = false; } if (net && ch.topic === net.topic) { if (g.ok) net.emit('gate', { ok: true, live: g.live, cap: g.cap }); else { net.pos = g.pos; net.emit('gate', g); } } },
-    cfg(m) { Net.POS_MS = m.lean ? base.POS * 2 : base.POS; Net.FAR_MS = m.lean ? base.FAR * 2 : base.FAR; },
+    cfg(m) { Net.POS_MS = m.lean ? base.POS * 2 : base.POS; Net.FAR_MS = m.lean ? base.FAR * 2 : base.FAR; Net.LEAN = !!m.lean; }, // LEAN: the DO send rule's gap and keepalive (Net.tick)
     down(ch) { if (net && (ch.topic === net.topic || !net.ch)) { net.gateDown = true; net.setStatus('offline'); net.emit('gate', { down: true }); } } };
   sb.channel = (t, c) => { const ch = new DOChan(rt, t, c); chans.add(ch); return ch; };
   sb.removeChannel = async ch => { ch?.close?.(); chans.delete(ch); return 'ok'; };
@@ -101,6 +101,7 @@ export function rtPatch(sb, net) { if (!DO_MODE || !sb || sb.__do) return sb; co
 
 export class Net {
   static GRID_ON = 30; static GRID_OFF = 20; /* grid cells only pay off in a crowd; below that one room channel = fewer joins */ static POS_MS = 1000; static FAR_MS = 2000; static NEAR = 1400; // 2Hz with a peer near, 1Hz otherwise (edge/far); 0 when idle/seated
+  static GAP = 120; static KEEP = 3000; static LEAN_GAP = 250; static LEAN_KEEP = 4000; static LEAN = false; // DO send rule (tick): min gap between turns, keepalive while moving
   constructor() { this.sb = null; this.ch = null; this.room = null; this.id = Net.cid(); this.peers = new Map(); this.status = 'offline'; this.h = {}; this.me = null; this.lastSend = 0; this.lastPres = 0; Net.active = this; }
   // v13: ONE stable presence key per user/device (persisted) → the same person can never appear as two peers (join/leave flapping after 혼자 모드 ↔ 함께)
   static cid() { try { let c = localStorage.getItem('maeul_cid'); if (!c) { c = Math.random().toString(36).slice(2, 10); localStorage.setItem('maeul_cid', c); } return c; } catch { return Math.random().toString(36).slice(2, 10); } }
@@ -192,8 +193,12 @@ export class Net {
     const st = this.state(), L = this.lastSt, moved = !L || st.x !== L.x || st.y !== L.y || st.face !== L.face || st.anim !== L.anim || st.fl !== L.fl;
     this.gridOn = this.peers.size >= Net.GRID_ON || (this.gridOn && this.peers.size > Net.GRID_OFF); if (this.gridOn) this.updateCells(st); else if (this.cells?.size) { for (const c of this.cells.values()) { try { this.sb.removeChannel(c.ch); } catch { } } this.cells.clear(); this._cc = null; };
     let due; if (DO_MODE) { // send on direction/target/anim/floor change (+3s keepalive while moving, +final stop); receivers interpolate
-      const dx = L ? Math.sign(st.x - L.x) : 0, dy = L ? Math.sign(st.y - L.y) : 0, dir = dx + ',' + dy + ',' + st.face + ',' + st.anim + ',' + st.fl;
-      due = moved && ((dir !== this.lastDir && now - this.lastSend > 120) || now - this.lastSend > 3000); if (due) this.lastDir = dir; }
+      // The axis signs are of the move since the last send. Over a short window a small component rounds to 0 (a run 1-4 degrees off a street, which
+      // runs along an axis), and 0 / +1 / 0 read as turns sent every 120 ms: a 0 keeps the sign last sent, a reversal still counts.
+      // Budget lean (cfg): 250 ms gap and 4 s keepalive. Receivers draw 1.15 s back and dead-reckon at most 3.2 s past a packet, so 4 s stays smooth.
+      const gap = Net.LEAN ? Net.LEAN_GAP : Net.GAP, keep = Net.LEAN ? Net.LEAN_KEEP : Net.KEEP;
+      const dx = (L ? Math.sign(st.x - L.x) : 0) || this.lastDx || 0, dy = (L ? Math.sign(st.y - L.y) : 0) || this.lastDy || 0, dir = dx + ',' + dy + ',' + st.face + ',' + st.anim + ',' + st.fl;
+      due = moved && ((dir !== this.lastDir && now - this.lastSend > gap) || now - this.lastSend > keep); if (due) { this.lastDir = dir; this.lastDx = dx; this.lastDy = dy; } }
     else due = moved && now - this.lastSend > (this.nearPeer(st) ? Net.POS_MS : Net.FAR_MS);
     if (due) { this.lastSend = now; this.lastSt = st; this.sent = (this.sent || 0) + 1;
       const own = this.cells.get(this.cellKey(st)); (own?.ok ? own.ch : this.ch).send({ type: 'broadcast', event: 'pos', payload: st }); }

@@ -232,12 +232,10 @@ describe('a cheer reaches the board holder', { concurrency: false }, () => {
       R.ctx.alarm = null;
       const b = sock(room, 'guest:b');
       assert.equal((await cheer(room, b, 'PLOT_12')).amount, 4);
-      assert.equal(R.ctx.alarm, clock.now() + 5000, 'pending coins arm the fast alarm (SCAN)');
+      assert.equal(R.ctx.alarm, clock.now() + 30000, 'pending coins arm the alarm for when they are due (FLUSH_MS), not the 5 s scan');
       room.socks().delete(b); // the last person leaves right after the cheer
       // Hibernation: a new instance over the same storage, nothing in memory.
       const woke = new IsoRoom(R.ctx, env);
-      clock.to(R.ctx.alarm); R.ctx.alarm = null; await woke.alarm();
-      assert.equal(R.ctx.alarm, clock.now() + 30000, 'coins still pending: re-armed for FLUSH_MS');
       assert.equal(state.batches.length, 0);
       clock.to(R.ctx.alarm); R.ctx.alarm = null; await woke.alarm();
       assert.deepEqual(sent(state).map((x) => [x.to, x.slot_id]), [[A.id, 'PLOT_12']]);
