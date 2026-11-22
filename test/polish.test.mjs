@@ -127,7 +127,7 @@ describe('6. the liveboard repaints only when what it shows changed', () => {
 
 describe('7. the unranked league line', () => {
   it('says coins spent put you on the list', () => {
-    assert.equal(leagueLine({ rank: 0, spent: 0, next: { rank: 1, gap: 1 } }), '이번 주 순위는 0에서 시작했어요 · 코인을 쓰면 순위에 올라요');
+    assert.equal(leagueLine({ rank: 0, spent: 0, next: { rank: 1, gap: 1 } }), '이번 주 순위는 0에서 시작했어요 · 포인트를 쓰면 순위에 올라요');
   });
 });
 

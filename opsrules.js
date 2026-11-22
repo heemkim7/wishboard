@@ -5,7 +5,7 @@
 export const ERR = { msg: 300, src: 120, frames: 5, stack: 800, page: 60, perLoad: 5, leanRate: 0.2 };
 export const SUP = { min: 10, max: 1000, email: 120, nick: 16 };
 // 분류: the id travels, the label is shown. 'ads' links to the ad page.
-export const SUPPORT_KINDS = [['bug', '버그'], ['account', '계정·코인'], ['report', '신고'], ['ads', '광고·제휴'], ['etc', '기타']];
+export const SUPPORT_KINDS = [['bug', '버그'], ['account', '계정·포인트'], ['report', '신고'], ['ads', '광고·제휴'], ['etc', '기타']];
 export const SUPPORT_TEXT = {
   kind: '분류를 골라 주세요.',
   short: '내용을 10자 이상 적어 주세요.',

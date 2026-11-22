@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { it } from 'node:test';
-import { applyBall, applyOps, ballNotice, drawSpan, nextBallUntil } from '../live.js';
+import { applyBall, applyOps, ballNotice, nextBallUntil } from '../live.js';
 
 it('describes the 21:00 window without touching coins', () => {
   const open = { t: 'BALL', open: true, until: Date.parse('2026-11-15T12:10:00Z') };
@@ -13,11 +13,6 @@ it('describes the 21:00 window without touching coins', () => {
   assert.equal(ballNotice(false, open).includes('21:10'), true);
   assert.equal(ballNotice(true, { t: 'BALL', open: false }).includes('밤 9시'), true);
   assert.equal(ballNotice(true, open), '');
-  assert.deepEqual(drawSpan(0, 100), [99]);
-  assert.deepEqual(drawSpan(100, 100), []);
-  assert.deepEqual(drawSpan(100, 101), [100]);
-  assert.equal(drawSpan(90, 110).length, 12);
-  assert.equal(drawSpan(90, 110)[0], 98);
 });
 
 it('adds the two KST crons beside the hourly return cron', () => {

@@ -206,11 +206,11 @@ describe('1. a hidden tab gives its seat back', { concurrency: false }, () => {
     ctx.alarm = null; const sets = ctx.sets; await room.alarm();
     assert.equal(ctx.sets, sets, 'nobody there: no new alarm');
   });
-  it('main.js pays no 관람 coin while the tab is hidden', () => {
+  it('main.js asks no 관람 points while the tab is hidden (nor after today\'s are used up)', () => {
     const src = read('main.js'), a = src.indexOf('loungeTimer = setInterval(() => {'), b = src.indexOf('}, PAY.lounge.gapMs);', a);
     assert.ok(a > 0 && b > a);
     const body = src.slice(a, b);
-    assert.match(body, /if \(!loungeOn \|\| document\.hidden\) return;/);
+    assert.match(body, /if \(!loungeOn \|\| document\.hidden \|\| loungeFull\) return;/);
     assert.ok(body.indexOf('document.hidden') < body.indexOf("payBonus('lounge'"), 'checked before the BONUS is sent');
   });
 });

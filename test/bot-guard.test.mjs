@@ -247,10 +247,13 @@ describe('per-account limits (ACT_RL), the snapshot read and the event drop', { 
       const ws = await call('/rt/ws?topic=chapel:square', { headers: { Upgrade: 'websocket', 'Sec-WebSocket-Protocol': 'masil2, at.' + g.token } });
       assert.equal(ws.status, 429); assert.equal(ws.headers.get('retry-after'), '60');
       const NO = { ok: false, code: 'rate', error: '요청이 너무 잦아요. 1분 뒤에 다시 해 주세요.' };
-      for (const path of ['/rt/claim-billboard', '/rt/buy-plot', '/rt/spend', '/rt/flush-wallet', '/rt/sell-coins', '/rt/report', '/rt/inbox/read', '/rt/profile', '/rt/equip', '/rt/push']) {
+      for (const path of ['/rt/claim-billboard', '/rt/buy-plot', '/rt/spend', '/rt/flush-wallet', '/rt/report', '/rt/inbox/read', '/rt/profile', '/rt/equip', '/rt/push']) {
         const r = await post(path, { topic: 'chapel:square', ids: [1], slot: 'STREET_1', reason: 'ad', s: { endpoint: 'https://fcm.googleapis.com/x', keys: { p256dh: 'aaaaaaaaaa', auth: 'bbbbbbbbbb' } } }, g.token);
         assert.equal(r.status, 429, path); assert.deepEqual(await r.json(), NO, path);
       }
+      // Points are not transferable: /rt/sell-coins is closed before any limit, token check or call (worker.js NO_SEND).
+      const sell = await post('/rt/sell-coins', { topic: 'chapel:square', slot_id: 'STREET_1', amount: 10 }, g.token);
+      assert.equal(sell.status, 410); assert.equal((await sell.json()).code, 'off');
       const grp = await post('/rt/grp', { c: 'ABC234' }, g.token); assert.equal(grp.status, 429);
       const snap = await call('/rt/snap', { method: 'POST', headers: { authorization: 'Bearer ' + g.token, 'content-type': 'image/jpeg' }, body: new Uint8Array(1000) }); assert.equal(snap.status, 429);
       assert.deepEqual(log, [], 'no DO call for any refused one');
@@ -355,9 +358,9 @@ describe('client: a new guest behind the human check (net.js guestToken)', { con
       for (const [cfg, want] of [[{ url: 'https://x.supabase.co', key: 'k', turnstile: SITE }, SITE], [{ url: 'https://x.supabase.co', key: 'k' }, ''], [{ turnstile: 'bad key' }, '']]) {
         globalThis.fetch = async () => json(cfg); await n.loadConfig(); assert.equal(net.HUMAN.site, want);
       }
-      globalThis.fetch = async () => json({ ok: false, code: 'account', error: '계정을 연결하면 공유 보너스 300코인을 받을 수 있어요.' }, 403);
+      globalThis.fetch = async () => json({ ok: false, code: 'account', error: '계정을 연결하면 공유 보너스 300포인트를 받을 수 있어요.' }, 403);
       localStorage.setItem(GT_LS, JSON.stringify(TOKEN));
-      await assert.rejects(n.shareBonus(), (e) => e.code === 'account' && e.message === '계정을 연결하면 공유 보너스 300코인을 받을 수 있어요.');
+      await assert.rejects(n.shareBonus(), (e) => e.code === 'account' && e.message === '계정을 연결하면 공유 보너스 300포인트를 받을 수 있어요.');
     } finally { globalThis.fetch = origFetch; reset(); }
   });
 });
@@ -405,7 +408,7 @@ describe('client: human.js (Turnstile widget, the card)', () => {
 describe('client: the share bonus is for accounts', () => {
   const ui = read('ui.js'), vip = ui.slice(ui.indexOf('function openVip()'), ui.indexOf("const redeem = h('button'"));
   it('a guest sees the account wording, a button to the account sheet and a plain share; the bonus is never asked for a guest', () => {
-    assert.match(ui, /const SHARE_ACCOUNT = '계정을 연결하면 공유 보너스 300코인을 받을 수 있어요';/);
+    assert.match(ui, /const SHARE_ACCOUNT = '계정을 연결하면 공유 보너스 300포인트를 받을 수 있어요';/);
     assert.match(vip, /const shareGuest = accountView\.ready && accountView\.guest && !accountView\.linked;/);
     assert.match(vip, /text: '계정 연결하고 받기', onclick: \(\) => openLogin\(\)/);
     assert.match(vip, /shareGuest \? '링크만 공유하기' : '링크 복사하고 \+300'/);

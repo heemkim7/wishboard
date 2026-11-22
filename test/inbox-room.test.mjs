@@ -223,6 +223,36 @@ describe('a cheer reaches the board holder', { concurrency: false }, () => {
     } finally { done(); }
   });
 
+  // 응원 포인트 for cheering are capped per KST day (PAY.cheer.perDay); the cheer itself still lands after that: the holder's inbox, the count and
+  // the cheer quest go on, only the points stop (answer why 'full'). More than PAY.cheer.perHour cheers in a clock hour are refused ('cap').
+  it('pays a flat 4 for each cheer up to PAY.cheer.perDay a day; after that the cheer lands and pays nothing', async () => {
+    const { clock, state, done } = setup();
+    try {
+      const { PAY } = await import('../balance.js');
+      const env = makeEnv(IsoRoom), { guest, post } = harness(env), A = await guest();
+      const room = env.room(SQ).do, a = sock(room, A.id), fan = sock(room, 'guest:fan');
+      clock.to(Date.parse('2027-12-01T15:30:00Z')); // 00:30 KST: the whole KST day ahead
+      for (const s of ['STREET_1', 'STREET_2', 'STREET_3']) assert.equal((await post('/rt/claim-billboard', CLAIM(s), A.token)).status, 200);
+      const slots = ['STREET_1', 'STREET_2', 'STREET_3'];
+      const pays = [];
+      for (let i = 0; pays.length < PAY.cheer.perDay + 2; i++) {
+        clock.add(i % PAY.cheer.perHour === PAY.cheer.perHour - 1 ? 36e5 : PAY.cheer.gapMs); // a new clock hour before the hour cap
+        pays.push(await cheer(room, fan, slots[i % 3]));
+      }
+      assert.deepEqual(pays.slice(0, PAY.cheer.perDay).map((p) => p.amount), Array(PAY.cheer.perDay).fill(PAY.cheer.base));
+      assert.deepEqual(pays.slice(PAY.cheer.perDay), [{ t: 'PAY', kind: 'cheer', amount: 0, why: 'full' }, { t: 'PAY', kind: 'cheer', amount: 0, why: 'full' }]);
+      assert.equal(inboxOf(a).length, PAY.cheer.perDay + 2, 'every cheer reached the holder');
+      assert.equal(room.ctx.storage.sql.exec("select v from ag where uid = 'guest:fan' and k = 'qc'").one().v, PAY.cheer.perDay + 2, 'the cheer quest counts them all');
+      // the hour cap still refuses the cheer itself
+      const hour = [];
+      clock.add(36e5);
+      for (let i = 0; i < PAY.cheer.perHour + 1; i++) { clock.add(PAY.cheer.gapMs); hour.push(await cheer(room, fan, slots[i % 3])); }
+      assert.deepEqual(hour.at(-1), { t: 'PAY', kind: 'cheer', amount: 0, why: 'cap' });
+      await room.flush();
+      assert.equal(state.coins.filter((x) => x.actor_id === 'guest:fan').reduce((s, x) => s + x.delta, 0), PAY.cheer.base * PAY.cheer.perDay, 'a day of cheering is at most perDay pays');
+    } finally { done(); }
+  });
+
   it('queued rows survive hibernation and leave once; a failed inbox_batch keeps them; the alarm is armed and released as before', async () => {
     const { clock, state, done } = setup();
     try {

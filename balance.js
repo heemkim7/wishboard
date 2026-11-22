@@ -1,4 +1,5 @@
-// Coin amounts and trigger sizes. Map coordinates stay in ts3d/layout.js.
+// 응원 포인트 amounts and trigger sizes. Map coordinates stay in ts3d/layout.js. The points are still called coins inside the code, the database
+// (wallets.coins, coin_ledger, coin_batch) and the RPC names; only what a person reads says 응원 포인트.
 // Claimable screens: 5 main, 8 corners, 50 main-street faces, 18 plot fronts (81).
 // Free first slots: the database owns the list (public.starter_slots()), /rt/config carries it. Until it arrives, these four.
 export const STARTER_DEFAULT = Object.freeze(['STREET_8', 'STREET_9', 'STREET_10', 'STREET_11']);
@@ -12,19 +13,12 @@ export const BALANCE = {
   taxiStandR: 12,
   taxiStandCabR: 18,
   starR: 2.4,
-  coinR: 1.8,
   cheerNear: 8,
   cheerGroup: 8,
-  cheerSolo: 2,
   floors: { S: 3000, B: 500, C: 100 },
   get starterSlots() { return STARTER || STARTER_DEFAULT; }, // every offer of a free slot reads this one getter
   starterBid: 30,
   firstCoins: 40,
-  bakeGold: 15,
-  bakeGood: 5,
-  starCoin: 6,
-  danceShow: 2,
-  missionEarn: 30,
   missionReward: 15,
   attend: [10, 12, 15, 20, 30],
   shareShot: 5,
@@ -181,31 +175,33 @@ export function askBid(board, boards, actorId, draft = '', now = Date.now()) {
   if (!self && !tagged) min = Math.ceil(min * 1.5);
   return min;
 }
+// 응원 포인트 earned by repetition (docs/non-game-plan-2026-11-22.md 4-3). WISH BOARD is not a game: no controlled play pays (bake, dance,
+// taxi fares, stars, rings, high fives, ground coins, the pouch, the lottery are gone from this table), so the hour window, the play-time
+// curve and the fever multiplier that only existed for them are gone too. What repeats is watching and cheering: a flat amount, a gap, a
+// cap per clock hour on the action and a cap per KST day on the points. The Room DO (worker.js) is the one that pays.
+// cheer: a lit board of someone else, 12 s per board; the action stops at perHour, the points at perDay (the cheer still lands after that).
+// lounge: 관람 on the red stairs, one pay per gapMs while the tab is visible; nothing after perDay.
 export const PAY = Object.freeze({
-  bake: { miss: 0, good: 6, gold: 16, minS: 8, maxS: 40, perHour: 40, nearM: 12 },
-  dance: { minS: 25, maxS: 40, perHour: 6, nearM: 8 },
-  cheer: { base: 4, gapMs: 12000, perHour: 30 },
-  lounge: { base: 2, gapMs: 20000, perHour: 30 },
-  star: { base: 6, perHour: 8 },
-  stunt: { base: 8, gapMs: 20000, perHour: 8 },
-  hive: { base: 2, gapMs: 15000, perHour: 12 },
-  pouch: { base: 20, cap: 30, gapMs: 25000, perHour: 4, perDay: 8 },
-  fare: { base: 20, gapMs: 40000, perHour: 15, pickGapMs: 20000, pickMoveM: 15, pickMax: 4 },
-  lottery: { hit: 25, sides: 15 },
+  cheer: Object.freeze({ base: 4, gapMs: 12000, perHour: 30, perDay: 30 }), // BALANCE.cheerGroup (8) when one side holds the whole building
+  lounge: Object.freeze({ base: 2, gapMs: 20000, perHour: 30, perDay: 30 }),
   attend: 30,
   mission: 15,
   hello: 40,
-  quest: { fare: 50, cheer: 30, stunt: 40, all: 100 },
-  hourCap: 1200,
-  ballHourCap: 1600,
-  playFullS: 3600,
-  stall: { x: 21, z: 118 },
-  stage: { x: 0, z: 366 },
+  quest: Object.freeze({ cheer: 30 }),
 });
-
-export function curveOf(playSeconds) {
-  return Number(playSeconds) < PAY.playFullS ? 1 : 0.3;
-}
+// The plaza's play, without points: only how often a thing may fire again. A ring dims for ring.gapMs after it is passed, a high five
+// between cabs waits hive.gapMs, a taxi passenger is picked up at most pick.max at a time (pick.gapMs and pick.moveM apart), and a drop-off is
+// counted toward the board's report (worker.js fare: a tally, never a fare) at most once per drop.gapMs. stage.nearM: the dance circle.
+export const PLAY = Object.freeze({
+  ring: Object.freeze({ gapMs: 20000 }),
+  hive: Object.freeze({ gapMs: 15000 }),
+  pick: Object.freeze({ gapMs: 20000, moveM: 15, max: 4 }),
+  drop: Object.freeze({ gapMs: 15000 }),
+  stage: Object.freeze({ nearM: 8 }),
+});
+// The kinds a client may still send as BONUS (worker.js Room bonus): attendance, missions, the first visit, the share photo and 관람.
+// Anything else (stunt, hive, star, pouch from a page that loaded before this change) is answered { amount: 0, why: 'off' } and pays nothing.
+export const BONUS_KINDS = Object.freeze(['attend', 'mission', 'hello', 'shot', 'lounge']);
 export function ballOpen(now = Date.now()) {
   const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(now));
   const g = (t) => Number(parts.find((p) => p.type === t).value);
@@ -214,14 +210,6 @@ export function ballOpen(now = Date.now()) {
 }
 export function auctionClosed(slotId, now = Date.now()) {
   return String(slotId || '').startsWith('MAIN_') && !ballOpen(now);
-}
-export function feverBall(fever, ball) {
-  return Math.min(2, (fever ? 2 : 1) * (ball ? 2 : 1));
-}
-export function scaledPay(base, state = {}) {
-  const scaled = Math.floor(Number(base) * curveOf(state.playSeconds || 0) * feverBall(!!state.fever, !!state.ball));
-  const cap = state.ball ? PAY.ballHourCap : PAY.hourCap;
-  return Math.max(0, Math.min(scaled, cap - (Number(state.earnedInWindow) || 0)));
 }
 // Pending coins leave in order as the confirmed balance rises. A short server credit shrinks the front grant.
 export const STICKER_GLYPHS = Object.freeze(['🔥부럽다!', '👑성지순례', '💖하트폭탄', '👀내자리찜']);
@@ -236,8 +224,10 @@ export function stickerNext(list, glyph, op) {
   if (op === 'add' && STICKER_GLYPHS.includes(glyph) && cur.length < 8) return cur.concat(glyph);
   return cur;
 }
-const PLAY_EARN = new Set(['bake', 'dance', 'lounge', 'fare', 'cheer', 'stunt', 'hive', 'star', 'pouch', 'mine']);
-export function countsAsPlay(kind) { return PLAY_EARN.has(kind); }
+// Points from watching and cheering (not attendance, the first visit, missions, shares, links or invites): the newcomer mode graduates on
+// GRAD_EARN of them a day (ftue.js), and analytics counts the first one.
+const ACTIVITY = new Set(['cheer', 'lounge', 'click']);
+export function countsAsActivity(kind) { return ACTIVITY.has(kind); }
 export function cheerCount(prev, next) {
   const a = Math.max(0, Math.floor(Number(prev)) || 0);
   const b = Math.max(0, Math.floor(Number(next)) || 0);
@@ -270,29 +260,6 @@ export function claimSplit({ mode = 'claim', bid = 0, prevBid = 0, plot = false,
   if (!(plot && landlordId && landlordId !== buyerId && landlordId !== prevId)) landlord = 0;
   return { charge: B, refund, landlord, burn: B - refund - landlord };
 }
-export function fareRaw(riders, revenge, fever, ball) {
-  const table = [1, 2.2, 3.8, 6, 10];
-  const n = Math.min(5, Math.max(1, Math.floor(Number(riders)) || 1));
-  return Math.round(PAY.fare.base * table[n - 1] * (revenge ? 2 : 1) * feverBall(!!fever, !!ball));
-}
-export function farePay(riders, state = {}) {
-  const curved = Math.floor(fareRaw(riders, state.revenge, state.fever, state.ball) * curveOf(state.playSeconds || 0));
-  const cap = state.ball ? PAY.ballHourCap : PAY.hourCap;
-  return Math.max(0, Math.min(curved, cap - (Number(state.earnedInWindow) || 0)));
-}
-export function bakeBase(result) {
-  if (result === 'gold') return PAY.bake.gold;
-  if (result === 'good') return PAY.bake.good;
-  return 0;
-}
-export function danceBase(score) {
-  const n = Math.max(0, Math.min(100, Math.floor(Number(score) || 0)));
-  if (n >= 90) return 12;
-  if (n >= 75) return 8;
-  if (n >= 55) return 4;
-  return 2;
-}
-
 // 꾸미기 상점: cosmetics bought with game coins only, never cash. The database holds the price that is charged (cosmetics.price,
 // migrations/2026-11-22-shop.sql seeds these same numbers) and buy_cosmetic reads it; this table is what the shop sheet shows (labels,
 // order, the price before the migration) and what test/shop.test.mjs holds the seed to. hat_ribbon, cab_yellow and frame_streak still come

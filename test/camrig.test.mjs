@@ -359,9 +359,9 @@ describe('small rules', () => {
     assert.ok(cap.indexOf('me.tag.visible = false;') < cap.indexOf('composer.render()'));
     assert.match(cap, /finally \{ me\.tag\.visible = tagOn; \}/);
   });
-  it('rings are quiet while the reward gap runs, and a lost context is handled', () => {
+  it('rings are quiet while their gap runs (no points: PLAY.ring), and a lost context is handled', () => {
     const w = read('timesSquare3d.js');
-    assert.match(w, /const ringWait = now - stuntAt < PAY\.stunt\.gapMs \+ 250;/);
+    assert.match(w, /const ringWait = now - stuntAt < PLAY\.ring\.gapMs \+ 250;/);
     assert.match(w, /if \(ringWait\) continue;/);
     assert.match(w, /addEventListener\('webglcontextlost', \(e\) => \{\n\s+e\.preventDefault\(\);/);
     assert.match(w, /tell\('화면을 다시 불러오는 중…'\)/);

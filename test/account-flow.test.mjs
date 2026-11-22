@@ -691,7 +691,7 @@ describe('account: nickname, sign-out, settings, handover, withdrawal', () => {
     const set = between(ui, '  function openSettings() {', '  function openWithdraw() {');
     assert.match(set, /text: '계정 연결 · 로그인 \(\+300\)', onclick: \(\) => openLogin\(\)/);
     assert.match(set, /accountLabel\(hooks\.email\?\.\(\)\)/);
-    assert.match(set, /코인·전광판·토지는 계정에 그대로 남고/);
+    assert.match(set, /응원 포인트·전광판·토지는 계정에 그대로 남고/);
     assert.match(set, /await hooks\.signOut\?\.\(\);/);
     assert.ok(set.indexOf("text: '로그아웃'") < set.indexOf('[회원 탈퇴 및 데이터 초기화]'));
     assert.match(html, /\.modal\.front \{ z-index: 60; \}/); // the sheet opens over the boot card (z-index 50)
@@ -702,7 +702,7 @@ describe('account: nickname, sign-out, settings, handover, withdrawal', () => {
   it('withdrawal is its own step: the list, 되돌릴 수 없어요, 취소 as the big button, and the typed word', () => {
     const w = between(ui, '  function openWithdraw() {', '\n  // ---------------------------------------------------------------- HUD readouts');
     assert.match(w, /되돌릴 수 없어요/);
-    for (const item of ['계정 자체', '코인', '전광판과 토지', '소원', '알림 구독']) assert.ok(w.includes(item), item);
+    for (const item of ['계정 자체', '응원 포인트', '전광판과 토지', '소원', '알림 구독']) assert.ok(w.includes(item), item);
     assert.match(w, /class: 'btn gold cta', type: 'button', text: '취소', onclick: \(\) => openSettings\(\)/);
     assert.match(w, /text: '탈퇴하기', disabled: true/);
     assert.match(w, /if \(!typed\(\)\) return;/);

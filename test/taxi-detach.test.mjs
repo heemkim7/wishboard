@@ -54,5 +54,6 @@ assert.ok(heldAt > 0 && snapAt > heldAt);
 assert.match(src, /applyTaxiHardHit\(/);
 assert.match(src, /while \(trailers\.length > n\) scene\.remove\(trailers\.pop\(\)\)/);
 
+// A taxi train is play: the Worker pays no fare for it (no train multiplier on the server any more).
 const worker = await readFile(new URL('../worker.js', import.meta.url), 'utf8');
-assert.match(worker, /trainMult\(uid, riders\) \{[\s\S]*?const table = \[1, 2\.2, 3\.8, 6, 10\]/);
+assert.equal(/trainMult|fareMult|farePay/.test(worker), false);

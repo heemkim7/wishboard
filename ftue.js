@@ -63,8 +63,8 @@ export function airAsk({ line, pay, have, tickets } = {}) {
     if (t < 1) return { ok: false, err: 'VIP 티켓이 없어요' };
     return { ok: true, text, cost: 'VIP 티켓 1장', after: `남는 티켓 ${n(t - 1)}장` };
   }
-  if (coins < AIR_PRICE) return { ok: false, err: `${n(AIR_PRICE)}코인이 필요해요. 지금 ${n(coins)}코인` };
-  return { ok: true, text, cost: `${n(AIR_PRICE)}코인`, after: `쓴 뒤 잔액 ${n(coins - AIR_PRICE)}코인` };
+  if (coins < AIR_PRICE) return { ok: false, err: `${n(AIR_PRICE)}포인트가 필요해요. 지금 ${n(coins)}포인트` };
+  return { ok: true, text, cost: `${n(AIR_PRICE)}포인트`, after: `쓴 뒤 잔액 ${n(coins - AIR_PRICE)}포인트` };
 }
 
 // Photo ads sent for review, remembered on this device as { slot, id, who, at }, so the result is told even when the review
@@ -109,7 +109,8 @@ export function ftueDue(flag, before, day) {
   return !((before.earn | 0) || (before.bake | 0) || (before.play | 0));
 }
 
-// Newcomer mode: no board held and no kts_grad flag. It ends on the first claim, 30 play coins today, or the tap.
+// Newcomer mode: no board held and no kts_grad flag. It ends on the first claim, 30 points from cheering and watching today (balance.js
+// countsAsActivity; play pays none), or the tap.
 export const GRAD_EARN = 30;
 export function newcomer({ grad, held } = {}) { return !grad && !(held > 0); }
 // Boards unknown is not "no boards": decide only once the plaza and the real actor id are in.
@@ -168,9 +169,9 @@ export function peopleTag(n) {
 }
 
 export function goalLine(goal) {
-  if (!goal?.name) return '코인을 모아 전광판에 이름을 걸어 보세요';
+  if (!goal?.name) return '응원 포인트를 모아 전광판에 이름을 걸어 보세요';
   const left = Math.max(0, Math.floor(Number(goal.left) || 0));
-  return left ? `${goal.name}까지 ${left.toLocaleString('ko-KR')}코인 더 모으면 걸 수 있어요` : `${goal.name}에 이름을 걸 수 있어요`;
+  return left ? `${goal.name}까지 ${left.toLocaleString('ko-KR')}포인트 더 모으면 걸 수 있어요` : `${goal.name}에 이름을 걸 수 있어요`;
 }
 
 // ---- 오늘의 소원: decisions the wish screens make, kept here so they can be tested without a DOM.
@@ -335,7 +336,7 @@ export function awayRows({ newbie, inbox, seen, copy, wish, wishSeen, prizeDay, 
     const rank = Math.floor(Number(won.rank));
     const prize = Math.max(0, Math.floor(Number(won.prize) || 0));
     const at = Date.parse(day + 'T00:00:00+09:00');
-    rows.push({ kind: 'prize', id: 0, slot: '', text: prize ? `어제 소원이 ${rank}위였어요. +${prize}코인` : `어제 소원이 ${rank}위였어요`, label: mine?.id ? '내 소원 보기' : '오늘 소원 걸기', at: Number.isFinite(at) ? at : now - 1 });
+    rows.push({ kind: 'prize', id: 0, slot: '', text: prize ? `어제 소원이 ${rank}위였어요. +${prize} 포인트` : `어제 소원이 ${rank}위였어요`, label: mine?.id ? '내 소원 보기' : '오늘 소원 걸기', at: Number.isFinite(at) ? at : now - 1 });
     nextPrize = day;
   }
   const inv = inviteNews(invite, invSeen);

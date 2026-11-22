@@ -303,10 +303,10 @@ describe('which boards rotate', () => {
     assert.equal(wishRotates('MAIN_S', undefined, false, false), false);
   });
   it('keeps the claim cue in the bottom strip', () => {
-    assert.equal(wishStrip('STREET_1', undefined, false), '빈 자리 · 200코인부터');
-    assert.equal(wishStrip('SUB_1A', { holder_id: null }, false), '빈 자리 · 800코인부터');
+    assert.equal(wishStrip('STREET_1', undefined, false), '빈 자리 · 200포인트부터');
+    assert.equal(wishStrip('SUB_1A', { holder_id: null }, false), '빈 자리 · 800포인트부터');
     assert.equal(wishStrip('SUB_1A', { holder_id: 'u1', lit_until: past }, false), '불 꺼짐 · 주인이 다시 켤 수 있어요');
-    assert.equal(wishStrip('MAIN_UP', undefined, false), '밤 9시에 10분만 열려요 · 4,000코인부터');
+    assert.equal(wishStrip('MAIN_UP', undefined, false), '밤 9시에 10분만 열려요 · 4,000포인트부터');
   });
 });
 

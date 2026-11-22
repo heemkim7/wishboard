@@ -2,14 +2,14 @@
 import { errlogCtx } from './errlog.js?v=202611222045'; // first: its error listeners are on before any other module runs
 import { Net, CDN, guestToken } from './net.js?v=202611222045';
 import { humanCall } from './net.js?v=202611222045'; // the coin rewards' human check while Turnstile is on (docs/bot-protection.md)
-import { createTimesSquare, STARTER_COLORS, taxiTrainMult } from './timesSquare3d.js?v=202611222045';
+import { createTimesSquare, STARTER_COLORS } from './timesSquare3d.js?v=202611222045';
 import { speciesId } from './ts3d/avatars.js?v=202611222045';
 import { equip, unequip, loadShop, loadProfile, profileSpecies, saveColor, saveNick, saveSpecies, setSpecies } from './profile.js?v=202611222045';
 import { starSpot, insideLoop } from './ts3d/layout.js?v=202611222045';
 import { createUI } from './ui.js?v=202611222045';
 import { haptic, startMusic } from './audio.js?v=202611222045';
-import { coinGate, COIN_WAIT_MS, COIN_CAP_MS, isTouchUI } from './interact.js?v=202611222045';
-import { BALANCE, PAY, chainsOf, live, monopolyOf, slotName, slotOf, takeGrants, cheerCount, countsAsPlay, josa, slotOpen, SLOT_SOON } from './balance.js';
+import { isTouchUI } from './interact.js?v=202611222045';
+import { BALANCE, PAY, chainsOf, live, monopolyOf, slotName, slotOf, takeGrants, cheerCount, countsAsActivity, josa, slotOpen, SLOT_SOON } from './balance.js';
 import { auctionClosed, EQUIP_MAX, OWNED_MAX } from './balance.js';
 import { trackEvent } from './analytics.js?v=202611222045';
 import { adoptHandover, allowedLink, blockedText, handoverHref, isAndroid, isInAppWebView, loginEmail, CHEER_PHRASES, GT_LS, SESSION_LS, slotTier } from './plaza-account.js';
@@ -22,8 +22,8 @@ import { photoVerdicts } from './ftue.js?v=202611222045';
 import { WISH, cleanWish } from './wish.js';
 import { seasonFor, seasonPreview } from './seasons.js';
 import { applyInboxPush, loadInbox, readInbox, liveOnly, handledRead, liveSeeable } from './inbox.js?v=202611222045';
-import { openTribe, pledge, sendCheer } from './tribe.js?v=202611222045';
-import { applyOps, ballNotice, sessionEndPlan, nineBanner, kingMinute, clockSkew, clock, nowMs } from './live.js';
+import { openTribe, sendCheer } from './tribe.js?v=202611222045';
+import { applyOps, ballNotice, nineBanner, kingMinute, clockSkew, clock, nowMs } from './live.js';
 import { pushRoute, awayRead } from './overlay.js?v=202611222045';
 import { isMailbox, mailArrival, mailBack, mailErrorText, retryAfterS, MAIL_ERR } from './mailcode.js?v=202611222045';
 
@@ -270,14 +270,10 @@ const ui = createUI(document.getElementById('ui'), {
   forgetLogin: () => net.forgetLogin(), // asked again when the withdrawal sheet opens
   signOut: () => signOutAccount(),
   handoverFired: () => handoverFired(),
-  mine: (amount, source = 'cart') => grant(amount, source),
-  beginBake: () => beginBake(),
-  finishBake: (result) => finishBake(result),
-  // A good flip pops a fish from the stall (visual only; the coins come with the session's PAY).
-  bakeFlip: (result) => world?.bake?.(result === 'gold' ? BALANCE.bakeGold : BALANCE.bakeGood),
-  bakeBusy: () => bakeEnding,
-  cartScreen: () => world?.screenOf?.('cart') || null,
-  baked: () => noteBakePay(),
+  // 붕어빵 pays nothing (WISH BOARD is not a game): the round ends on the page, and the tutorial moves on from there.
+  finishBake: () => noteBakePay(),
+  // A good flip pops a fish from the stall.
+  bakeFlip: (result) => world?.bake?.(result === 'gold'),
   claim: (payload) => claim(payload),
   relight: (slot) => relight(slot),
   adReport: (slot) => net.adReport(slot),
@@ -286,7 +282,6 @@ const ui = createUI(document.getElementById('ui'), {
   washSticker: (slot) => washSticker(slot),
   takeover: (payload) => takeover(payload),
   stickerList: (slot) => world?.stickerList?.(slot) || [],
-  revenge: () => { if (!net.sendRevenge()) ui.note('광장에 연결된 뒤에 복수 운임을 켤 수 있어요', 'err'); },
   submitPhoto: (payload) => submitPhoto(payload),
   capture: () => world?.capture() || null,
   saveClip: (opts) => saveClip(document.getElementById('view'), opts),
@@ -297,7 +292,6 @@ const ui = createUI(document.getElementById('ui'), {
   focusedSlot: () => focusedSlot,
   pinWish: (id) => world?.pinWish?.(id),
   buy: (payload) => buy(payload),
-  sell: (payload) => sellCoins(payload),
   rename(name) {
     state.nick = chars(name, 16) || state.nick;
     keep(NICK_KEY, state.nick);
@@ -341,11 +335,9 @@ const ui = createUI(document.getElementById('ui'), {
   report: (slot, reason) => reportBoard(slot, reason),
   joinCode: (code) => joinCode(code),
   weekCodes: () => weekCodes(),
-  pledge: (slot, amount) => pledgeSlot(slot, amount),
   replyCheer: (slot, phraseId, to) => replyCheer(slot, phraseId, to),
   bonus: (kind, amount) => payBonus(kind, amount),
   claimQuest: (key) => !!(net.status === 'online' && net.ch?.raw?.({ t: 'QUEST', key })),
-  tickets: (n) => giveTicket(n),
   toggleLounge: () => setLounge(!loungeOn),
   watchPortrait: (on) => world?.setWatchPortrait?.(!!on),
   throwPouch: () => world?.throwPouch(),
@@ -420,8 +412,8 @@ const ui = createUI(document.getElementById('ui'), {
   },
   mapData: () => world?.mapData(),
   onLand: (x, z) => world?.onLand(x, z) ?? true,
-  danceStart: () => { world?.setDancing(true); beginDance(); },
-  danceEnd: (score) => { world?.setDancing(false); return score == null ? false : finishDance(score); },
+  danceStart: () => world?.setDancing(true),
+  danceEnd: () => world?.setDancing(false), // the dance pays nothing: the score stays on the page
   settings: () => ({ ...gfx }),
   setGlow(v) { gfx.glow = v; world?.setGlow(v); saveGfx(); },
   setExposure(v) { gfx.exposure = v; world?.setExposure(v); saveGfx(); },
@@ -504,14 +496,13 @@ world = createTimesSquare(document.getElementById('view'), {
       }
     }
     else if (kind === 'stand') ui.note(info?.ok ? `택시를 불렀어요! 바로 앞에 정차한 택시 옆에서 ${TOUCH ? '탑승 버튼을 누르세요' : 'E를 누르세요'}` : '지금은 빈 택시가 없어요. 잠시 후 다시 불러 주세요', info?.ok ? 'ok' : 'err');
-    else if (kind === 'ring') ui.note('황금 링을 지나가면 코인이 들어와요 · 걸어서도, 택시로도 돼요');
+    else if (kind === 'ring') ui.note('황금 링을 지나가 보세요 · 걸어서도, 택시로도 돼요');
     else if (kind === 'fountain') drawFortune();
     else if (kind === 'lounge') setLounge(true);
     else if (kind === 'adscreen') ui.adCard?.({ ...(world?.adInfo?.(id) || {}), id }, openAdLink);
   },
   onProximity: (near) => { ui.setNear(near); if (near?.kind === 'cart') ftueApi?.onArrive?.(); },
   onStarTouch: (i) => takeStar(i),
-  onCoin: (i) => takeCoin(i),
   onHonk: () => ui.sfx.honk(),
   onHorn: () => ui.sfx.honk(),
   onBump: () => { ui.sfx.bump(); haptic(20); },
@@ -519,49 +510,33 @@ world = createTimesSquare(document.getElementById('view'), {
   onJump: () => ui.sfx.whoosh(),
   // Getting in starts the engine (it had no sound); getting out is a door whoosh. Music follows the sound setting (audio.js).
   onDrive: (on) => { if (on) ui.sfx.engine(); else ui.sfx.whoosh(); ui.setDriving(on); startMusic(on ? 'drive' : (ballShown ? 'night' : 'plaza')); },
-  onStunt: () => {
-    const now = Date.now();
-    if (now - stuntAt < PAY.stunt.gapMs) { ui.note(`황금 링은 ${Math.ceil((PAY.stunt.gapMs - (now - stuntAt)) / 1000)}초 뒤에 다시 받아요`); return; }
-    if (!payBonus('stunt', PAY.stunt.base)) { ui.note('광장에 연결되면 황금 링 코인이 들어와요', 'err'); return; }
-    stuntAt = now;
-  },
-  onHive: () => { if (!payBonus('hive', PAY.hive.base)) ui.note('광장에 연결되면 하이파이브 코인이 들어와요', 'err'); },
+  // The rings, a high five between cabs and the pouch are play without points: only the feedback.
+  onStunt: () => { ui.sfx.star(); ui.note('✨ 황금 링 통과', 'ok'); },
+  onHive: () => { ui.sfx.hit(); ui.note('🙌 하이파이브!', 'ok'); },
   onBalloon: (hp, wait) => {
     ui.balloon(hp, wait);
-    // A tick per hit (the 100 hits stay; only the feedback is new), a longer one when it bursts.
+    // A tick per hit (the 100 hits stay), a longer one when it bursts.
     if (hp > 0 && hp < 1000) haptic(8);
-    if (hp !== 0) return;
-    haptic(40);
-    if (payBonus('pouch', PAY.pouch.base)) return;
-    ui.note('광장 서버에 연결되면 코인이 기록됩니다', 'err');
+    if (hp === 0) haptic(40);
   },
   onWish: (line) => ui.note(`🧧 ${line}`, 'ok'),
   onLoungeEnd: () => setLounge(false),
   onFocus: (on) => { if (!on) focusedSlot = ''; ui.focusLock(on); if (!on) armFtue(); },
   onWaypoint: (wp) => ui.setWaypoint(wp),
+  // Taxi rides pay nothing. A pick-up and a drop-off in front of a board still go to the room (PICK, FARE): the drop-off counts toward that board's
+  // report (택시 손님). ev.sent = false tells the world that no fare went out, so the next passenger does not wait for a fare gap.
   onJob(ev) {
-    if (ev.type === 'board' || ev.type === 'chain') { try { net.ch?.raw?.({ t: 'PICK' }); } catch { /* the fare still asks */ } }
-    if (ev.type === 'done') ev.sent = payFare(ev.slot || '', ev.riders || 1);
+    if (ev.type === 'board' || ev.type === 'chain') { try { net.ch?.raw?.({ t: 'PICK' }); } catch { /* solo: nothing to count */ } }
+    const dropped = ev.type === 'done' && /^(MAIN_|SUB_|STREET_|PLOT_)/.test(String(ev.slot || ''));
+    if (ev.type === 'done') { if (dropped) net.sendDrop?.(ev.slot); ev.sent = false; }
     if (ev.type === 'board' || ev.type === 'chain' || ev.type === 'done') haptic(25);
     ui.job(ev);
     if (ev.type === 'board') trackEvent('taxi_pickup');
     if (ev.type === 'fail' || ev.type === 'abandon') { fareStreak = 0; return; }
-    if (ev.type !== 'done' || !ev.slot || !ev.sent) return;
+    if (!dropped) return;
     fareStreak += 1;
     trackEvent('taxi_dropoff', { streak: fareStreak });
-    // "하차 완료" waits for the Room's PAY (net.on('pay') kind fare), so a refused fare never reads as done.
-    fareSent = { riders: ev.riders || 1, streak: fareStreak };
-  },
-  onFever(ev) {
-    if (ev?.phase === 'count') ui.note('크리스탈볼이 내려옵니다', 'ok');
-    if (ev?.phase === 'party') {
-      if (!net.sendFever()) {
-        feverUntil = 0;
-        world?.rejectFever?.();
-        ui.note('부스트는 풀렸고, 2배 코인은 광장에 연결된 뒤에 적용돼요', 'ok');
-      }
-    }
-    if (ev?.done) ui.note('크리스탈볼이 지붕으로 돌아갔어요');
+    ui.note(`하차 완료 · ${ev.riders || 1}명 · 연속 ${fareStreak}명`, 'ok');
   },
 });
 window.G.world = world;
@@ -594,36 +569,14 @@ function noteBakePay() {
   ftueApi?.onBakePay();
 }
 
-// ---- wallet & economy ----------------------------------------------------------------
-// The Room DO credits 1–15 coins per mine, at most one mine per 2 s per player. The first visit
-// pays 40 once through the hello bonus. The client shows a grant as pending until the balance rises.
+// ---- wallet & 응원 포인트 -----------------------------------------------------------------
+// The points are coins in the code and the database. The Room DO pays them (PAY) for attendance, missions, the first visit, cheers, 관람, link
+// visits and the share photo; no play pays (balance.js PAY). The client shows a grant as pending until the balance rises.
 const pendingSum = () => state.grants.reduce((a, g) => a + g.n, 0);
-function coinMult() { return Date.now() < feverUntil ? 2 : 1; }
-function grant(amount, source, wait = true) {
-  const n = Math.floor(Number(amount));
-  if (!Number.isInteger(n) || n < 1 || n > 15) return false;
-  if (wait && ui.cooldownLeft() > 0) return false;
-  if (!net.sendMine(n, state.nick)) return false;
-  const shown = n * coinMult();
-  state.grants.push({ n: shown, at: Date.now() });
-  state.pending = pendingSum();
-  state.earned = (state.earned || 0) + shown;
-  if (wait) ui.armCooldown();
-  ui.setWallet(state, { defer: true });
-  ui.flyCoins(shown, world.screenOf(source === 'cart' ? 'cart' : 'me'));
-  if (source === 'cart') world.bake(n);
-  return true;
-}
 
-const tickets = [];
-let loungeOn = false, loungeSum = 0, loungeTimer = 0, loungeTold = false, stuntAt = 0, fareStreak = 0, revengeUntil = 0, feverUntil = 0;
-let fareSent = null; // the last fare sent and not yet answered: { riders, streak }
+let loungeOn = false, loungeSum = 0, loungeTimer = 0, loungeTold = false, loungeFull = false, fareStreak = 0;
 // The device test html.touch uses (interact.js isTouchUI), for per-device lines.
 const TOUCH = isTouchUI({ coarse: matchMedia('(pointer: coarse)').matches, points: navigator.maxTouchPoints });
-let drawSeen = Math.floor(Date.now() / 300000);
-function giveTicket() {
-  ui.tickets(0, 300000 - (Date.now() % 300000));
-}
 function payBonus(kind, amount) {
   const n = Math.floor(Number(amount));
   if (!Number.isInteger(n) || n < 1) return false;
@@ -646,25 +599,16 @@ function setLounge(on) {
   loungeSum = 0;
   loungeTold = false;
   ui.lounge(true, 0);
-  ui.note('전광판 관람을 켰어요. 캐릭터는 제자리에 있고 카메라만 8초마다 다음 전광판으로 가요. 20초마다 +2 · 움직이면 돌아와요.', 'ok');
+  ui.note(loungeFull ? '전광판 관람을 켰어요. 캐릭터는 제자리에 있고 카메라만 8초마다 다음 전광판으로 가요. 오늘 관람 포인트는 다 받았어요 · 움직이면 돌아와요.'
+    : `전광판 관람을 켰어요. 캐릭터는 제자리에 있고 카메라만 8초마다 다음 전광판으로 가요. ${Math.round(PAY.lounge.gapMs / 1000)}초마다 응원 포인트 +${PAY.lounge.base} · 움직이면 돌아와요.`, 'ok');
   clearInterval(loungeTimer);
   loungeTimer = setInterval(() => {
-    // Nothing is watched in a hidden tab: no 관람 coin then (a background tab used to earn its 30 an hour). After 5 min hidden net.js
-    // also closes the socket (park), so the room has no seat that could be paid.
-    if (!loungeOn || document.hidden) return;
-    if (!payBonus('lounge', PAY.lounge.base) && !loungeTold) { loungeTold = true; ui.note('광장에 연결되어야 관람 코인이 들어와요', 'err'); }
+    // Nothing is watched in a hidden tab: no 관람 points then. After 5 min hidden net.js also closes the socket (park), so the room has no seat
+    // that could be paid. After today's PAY.lounge.perDay (the room answers why 'full') nothing is asked again this visit.
+    if (!loungeOn || document.hidden || loungeFull) return;
+    if (!payBonus('lounge', PAY.lounge.base) && !loungeTold) { loungeTold = true; ui.note('광장에 연결되어야 관람 포인트가 들어와요', 'err'); }
   }, PAY.lounge.gapMs);
 }
-function tickDraw() {
-  const left = 300000 - (Date.now() % 300000);
-  ui.tickets(tickets.length, left);
-  const bucket = Math.floor(Date.now() / 300000);
-  if (bucket === drawSeen) return;
-  drawSeen = bucket;
-  tickets.length = 0;
-  ui.tickets(0, 300000);
-}
-setInterval(tickDraw, 1000);
 // 밤 9시 (live.js): the countdown banner 20:50–21:10 and yesterday's wish king on the boards 21:00–21:01, from this clock
 // plus clock.off (nowMs). No server call; the banner never opens a sheet by itself.
 let kingShown = false;
@@ -676,23 +620,17 @@ function tickNine() {
 }
 setInterval(tickNine, 1000);
 
-// The Room's PAY goes into the wallet here, and only here (with the hello/attend grants above). from: where the coins
-// fly from ('me', 'cart'); quiet: no flight, the wallet only bumps (a ground coin already showed its "+1").
-function creditNow(n, play = false, from = 'me', quiet = false) {
+// The Room's PAY goes into the wallet here, and only here. activity: points from watching and cheering (balance.js countsAsActivity), the
+// newcomer mode's daily count.
+function creditNow(n, activity = false) {
   const amount = Math.floor(Number(n));
   if (!Number.isInteger(amount) || amount < 1) return 0;
   state.grants.push({ n: amount, at: Date.now() });
   state.pending = pendingSum();
-  if (play) state.earned = (state.earned || 0) + amount;
-  ui.setWallet(state, { bump: quiet });
-  if (!quiet) ui.flyCoins?.(Math.min(amount, 40), world?.screenOf?.(from));
+  if (activity) state.earned = (state.earned || 0) + amount;
+  ui.setWallet(state);
+  ui.flyCoins?.(Math.min(amount, 40), world?.screenOf?.('me'));
   return amount;
-}
-
-function payFare(slot, riders = 1) {
-  if (!/^(MAIN_|SUB_|STREET_|PLOT_)/.test(String(slot || ''))) { ui.note('전광판 앞에서 내려야 운임이 들어와요', 'err'); return false; }
-  if (!net.sendFare(25, state.nick, slot, riders)) { ui.note('광장 서버에 연결되면 운임이 코인으로 기록됩니다', 'err'); return false; }
-  return true;
 }
 
 function adClick(slot, url) {
@@ -700,7 +638,7 @@ function adClick(slot, url) {
   const go = () => {
     trackEvent('outlink_click', { slot: String(slot || '') });
     window.open(url, '_blank', 'noopener');
-    if (!net.sendAdClick(state.nick, slot)) { ui.note('링크는 열렸고, 보너스 코인은 광장 연결 후 기록됩니다', 'err'); return; }
+    if (!net.sendAdClick(state.nick, slot)) { ui.note('링크는 열렸고, 방문 포인트는 광장 연결 후 기록됩니다', 'err'); return; }
   };
   // In-app browsers (KakaoTalk, Instagram, ...) often open the link over the game in the same view. Save where the avatar
   // stands first, and ask with one tappable line; the tap is the gesture that opens it.
@@ -721,7 +659,7 @@ const FORTUNES = [
   '🥠 가장 밝은 화면이 네 이름을 연습 중이에요.',
   '🥠 보낸 마음이 전광판보다 먼저 도착해요.',
   '🥠 월요일이 한 박자 늦습니다.',
-  '🥠 추첨 번호표가 주머니에서 따뜻해요.',
+  '🥠 오늘 보낸 응원이 누군가의 하루를 밝혀요.',
   '🥠 택시가 초록불에 걸리는 날이에요.',
 ];
 function drawFortune() {
@@ -789,13 +727,6 @@ async function createTribe(tag) {
   if (!made.tag) throw new Error('태그를 적어 주세요');
   return net.authed('/rt/tribe', { tag: made.tag });
 }
-async function pledgeSlot(slot, amount) {
-  const body = pledge(slot, amount);
-  if (!body) return null;
-  const res = await net.authed('/rt/tribe/pledge', { ...body, topic: net.topic || '' });
-  refreshWallet();
-  return res;
-}
 function replyCheer(slot, phraseId, to) {
   const p = Math.floor(Number(phraseId));
   if (p < 1 || p > 12 || !to) {
@@ -837,7 +768,7 @@ function applyWallet(coins, vip) {
   if (state.walletKnown && coins > state.confirmed) state.grants = takeGrants(state.grants, coins - state.confirmed);
   const now = Date.now();
   const kept = state.grants.filter(g => now - g.at < BALANCE.grantKeepMs);
-  if (kept.length < state.grants.length) ui.note('서버에 기록되지 않은 코인이 지갑에서 빠졌어요. 연결 표시가 초록색일 때 번 코인은 그대로 남아요', 'err');
+  if (kept.length < state.grants.length) ui.note('서버에 기록되지 않은 포인트가 지갑에서 빠졌어요. 연결 표시가 초록색일 때 받은 포인트는 그대로 남아요', 'err');
   state.grants = kept;
   state.confirmed = coins;
   if (vip != null) state.vipTickets = vip;
@@ -945,7 +876,7 @@ async function claim(payload) {
     settle(res);
     if (payload?.mode !== 'tribe') leagueSoon();
     ui.setNextLine('검수 대기');
-    ui.note('S급은 확인 후 켜집니다. 거절되면 낸 코인이 그대로 돌아와요.', 'ok');
+    ui.note('S급은 확인 후 켜집니다. 거절되면 낸 포인트가 그대로 돌아와요.', 'ok');
     return res;
   }
   if (res?.data) {
@@ -971,14 +902,13 @@ async function claim(payload) {
     if (mode !== 'edit') celebrateClaim(res.data.slot_id || payload?.slot_id, mode === 'starter' || mode === 'claim');
     if (mode === 'starter' || mode === 'claim') ui.noteClaim?.(); // the week's record (recap.js) and the home-screen card (install.js)
     ui.promptLink?.('own');
-    if (res.fever != null) world?.setFever?.(res.fever);
   }
   return res;
 }
 
 async function buySticker(slot, glyph) {
   const have = state.confirmed + state.pending;
-  if (have < 30) throw new Error('스티커는 30코인이에요');
+  if (have < 30) throw new Error('스티커는 30포인트예요');
   if ((world?.stickerList?.(slot) || []).length >= 8) throw new Error('이 전광판 스티커가 가득 찼어요');
   const res = await net._plazaPost('/rt/spend', { kind: 'sticker', slot_id: slot, glyph, pay: 'coins' });
   settle(res);
@@ -1004,7 +934,7 @@ async function takeover(payload) {
   if (!line) throw new Error('한 줄을 적어 주세요');
   if (blockedText(line) || blockedText(state.nick)) throw new Error('그 문구는 올릴 수 없어요');
   const pay = payload?.pay === 'ticket' ? 'ticket' : 'coins';
-  if (pay === 'coins' && state.confirmed + state.pending < 5000) throw new Error('5000코인이 필요해요');
+  if (pay === 'coins' && state.confirmed + state.pending < 5000) throw new Error('5000포인트가 필요해요');
   if (pay === 'ticket' && !(state.vipTickets >= 1)) throw new Error('VIP 티켓이 없어요');
   const res = await net._plazaPost('/rt/spend', { kind: 'air', line, pay });
   settle(res);
@@ -1109,7 +1039,7 @@ let chainReady = false, chainSeen = new Set();
 function noteChains() {
   const list = chainsOf(state.billboards);
   if (!chainReady) { chainSeen = new Set(list.map((c) => c.id)); chainReady = true; return; }
-  for (const c of list) if (!chainSeen.has(c.id)) ui.note(`${c.name}님이 ${josa(c.building, '을', '를')} 완전 점령했습니다. 그 건물 응원은 +${BALANCE.cheerGroup}`, 'ok');
+  for (const c of list) if (!chainSeen.has(c.id)) ui.note(`${c.name}님이 ${josa(c.building, '을', '를')} 완전 점령했습니다. 그 건물 응원은 +${BALANCE.cheerGroup} 포인트`, 'ok');
   chainSeen = new Set(list.map((c) => c.id));
 }
 function applyPlaza(remote) {
@@ -1286,6 +1216,7 @@ async function postWish(text) {
   if (!res?.ok || !res.wish) return res || { ok: false, error: '소원을 걸지 못했어요. 잠시 뒤 다시 해 주세요.' };
   if (inv) { try { localStorage.removeItem(INV_FROM_KEY); } catch { /* private mode */ } if (res.fresh) watchInviteGift(); }
   if (res.fresh) ensureInvite(); // my own link carries my code from the first share on
+  ui.mission?.('wish'); // today's 오늘의 소원 mission (ui.js MISSION_NEED)
   const mine = wishRow({ ...res.wish, mine: true });
   if (mine) {
     state.wish.known = true;
@@ -1324,7 +1255,7 @@ function inviteGiftShown(s) {
   try { localStorage.removeItem(INV_WAIT_KEY); } catch { /* private mode */ }
   if (recall(INV_GOT_KEY)) return true;
   keep(INV_GOT_KEY, '1');
-  ui.note(`초대 선물 ${gift}코인을 받았어요`, 'ok');
+  ui.note(`초대 선물 +${gift} 응원 포인트를 받았어요`, 'ok');
   trackEvent('invite_reward', { side: 'invitee', amount: gift });
   refreshWallet().catch(() => {});
   return true;
@@ -1354,6 +1285,7 @@ async function heartWish(id) {
     state.wish.left = Math.max(0, Math.floor(Number(res.left)) || 0);
     if (!state.wish.given.includes(id)) state.wish.given.push(id);
     paintWish();
+    ui.mission?.('heart'); // today's heart mission (ui.js MISSION_NEED)
   }
   return res;
 }
@@ -1450,57 +1382,14 @@ function startShower(seed, announce) {
   world.startStars(starsFor(key));
   if (announce) {
     ui.news('STAR');
-    // Star beams are the amber of coin rewards; the guide is the cyan waypoint, so the line names neither colour.
-    headline(`🌠 별똥별 10개 · ${Math.round(STAR_LIFE / 1000)}초 · 별똥별 빛기둥에 서면 +${BALANCE.starCoin}`);
+    // The guide is the cyan waypoint, so the line names no colour. Stars are play: no points.
+    headline(`🌠 별똥별 10개 · ${Math.round(STAR_LIFE / 1000)}초 · 별똥별 빛기둥에 서 보세요`);
     ui.note(`별똥별 ${Math.round(STAR_LIFE / 1000)}초 · 누르면 가장 가까운 별똥별로 길안내`, 'ok', guideStar);
   }
 }
 
-// Ground coins: the world fires onCoin every frame the player stands on a visible coin. One MINE at a time and at most
-// one per COIN_GAP_MS (interact.js coinGate). The coin hides at once with a "+1" and a tick; PAY puts the coin in the
-// wallet and starts its 20 s respawn; a refusal or no answer in COIN_WAIT_MS puts it back without a word.
-const coin = { at: 0, wait: false, i: -1, block: 0, timer: 0, offlineAt: 0 };
-function coinBack() {
-  clearTimeout(coin.timer);
-  if (coin.i >= 0) world?.holdCoin?.(coin.i, false);
-  coin.i = -1;
-  coin.wait = false;
-}
-function takeCoin(i) {
-  const now = Date.now();
-  if (!coinGate(coin, now)) return;
-  if (!net.sendMine(1, state.nick)) {
-    // Offline: say it once in a while, not every frame.
-    if (now - coin.offlineAt > 8000) { coin.offlineAt = now; ui.note('광장에 연결되면 동전을 주울 수 있어요', 'err'); }
-    coin.at = now;
-    return;
-  }
-  coin.at = now;
-  coin.wait = true;
-  coin.i = i;
-  const at = world?.holdCoin?.(i, true);
-  if (at?.visible !== false) ui.pop?.(1, false, at || undefined);
-  ui.sfx.tick();
-  haptic(10);
-  clearTimeout(coin.timer);
-  coin.timer = setTimeout(coinBack, COIN_WAIT_MS);
-}
-
-async function sellCoins({ slot_id, amount }) {
-  const n = Math.floor(Number(amount));
-  if (!Number.isInteger(n) || n < 10) return null;
-  const res = await net.sellCoins({ slot_id, amount: n, nickname: state.nick });
-  if (res?.remaining_coins != null) {
-    settledAt = Date.now(); // a WALLET_SYNC balance in the next seconds may be older than this answer (walletPush)
-    state.confirmed = Number(res.remaining_coins) || 0;
-    state.grants = [];
-    state.pending = 0;
-    ui.setWallet(state, { bump: true });
-  } else await refreshWallet();
-  return res;
-}
-
-// Stars do not wait for the shared 2.2 s cooldown (bake, cheer, fortune): only an open sheet or game holds them.
+// Stars do not wait for the shared 2.2 s cooldown (bake, cheer, fortune): only an open sheet or game holds them. A star pays nothing: it bursts
+// here and goes for everybody in the room (the 'take' broadcast).
 function takeStar(i) {
   if (!shower || shower.taken.has(i)) return;
   const told = performance.now() - (takeStar.at || 0) > 1200;
@@ -1508,7 +1397,6 @@ function takeStar(i) {
     if (told) { takeStar.at = performance.now(); ui.note('별똥별은 지금 동작을 끝내고 주워요'); }
     return;
   }
-  if (!payBonus('star', BALANCE.starCoin)) { if (told) { takeStar.at = performance.now(); ui.note('별똥별을 주우려면 광장 서버에 연결되어 있어야 해요', 'err'); } return; }
   shower.taken.add(i);
   haptic(15);
   ui.sfx.star();
@@ -1535,73 +1423,43 @@ function bindTake() {
 // ---- network events -----------------------------------------------------------------------
 net.on('wallet', (m) => walletPush(m));
 const capTold = new Set();
+// What the room pays (and refuses). why: 'off' a play that pays nothing now (a ground coin, a session, a stunt from an old message): quiet;
+// 'full' today's points for that kind are used up (the cheer itself still landed): one line a visit; 'cap' / 'day' this hour's cheers, or the
+// link visits of the day; 'soon' too early; 'dark' / 'wait' a cheer that cannot land.
 net.on('pay', (m) => {
-  if (m?.why === 'pouchday') {
-    if (!capTold.has('pouchday')) { capTold.add('pouchday'); ui.note(`오늘 복주머니는 ${PAY.pouch.perDay}번까지예요`, 'err'); }
+  if (m?.why === 'off') return;
+  if (m?.why === 'full') {
+    if (m.kind === 'lounge') loungeFull = true;
+    if (m.kind === 'cheer') ui.quest?.('cheer'); // the cheer landed: it still counts toward today's cheer mission and quest
+    if (!capTold.has('full:' + m.kind)) { capTold.add('full:' + m.kind); ui.note(m.kind === 'cheer' ? '오늘 받을 수 있는 응원 포인트는 다 받았어요. 응원은 그대로 전해져요' : '오늘 받을 수 있는 관람 포인트는 다 받았어요', 'err'); }
     return;
   }
-  if (m?.kind === 'mine' && m?.why) {
-    // Refused: the coin comes back quietly. After the hour cap, no MINE for COIN_CAP_MS (one notice a session).
-    coinBack();
-    if (m.why === 'cap') {
-      coin.block = Date.now() + COIN_CAP_MS;
-      if (!capTold.has('mine')) { capTold.add('mine'); ui.note('이번 시간에 받을 수 있는 코인을 다 받았어요', 'err'); }
-    }
-    return;
-  }
-  if (m?.kind === 'fare' && m?.why) fareSent = null;
-  if (m?.why === 'nopick') { ui.note('손님을 태운 뒤에 운임이 들어와요. 손님 기둥에서 속도를 줄이세요', 'err'); return; }
-  if (m?.why === 'place') { ui.note('전광판 앞에서 내려야 운임이 들어와요', 'err'); return; }
   if (m?.why === 'dark') { ui.note('켜져 있는 다른 사람 전광판에만 응원할 수 있어요', 'err'); return; }
   if (m?.why === 'wait') { ui.note('잠시 뒤 다시 응원해 주세요', 'err'); return; }
   if (m?.why === 'soon') {
     const wait = {
-      fare: `운임은 ${Math.round(PAY.fare.gapMs / 1000)}초에 한 번 들어와요`,
-      lounge: `관람 코인은 ${Math.round(PAY.lounge.gapMs / 1000)}초마다 들어와요`,
-      stunt: `황금 링은 ${Math.round(PAY.stunt.gapMs / 1000)}초 뒤에 다시 받아요`,
-      hive: `하이파이브는 ${Math.round(PAY.hive.gapMs / 1000)}초마다 들어와요`,
-      pouch: `복주머니는 ${Math.round(PAY.pouch.gapMs / 1000)}초 뒤에 다시 터져요`,
-      cheer: `같은 전광판 응원은 ${Math.round(PAY.cheer.gapMs / 1000)}초 뒤에 다시 받아요`,
+      lounge: `관람 포인트는 ${Math.round(PAY.lounge.gapMs / 1000)}초마다 들어와요`,
+      cheer: `같은 전광판 응원은 ${Math.round(PAY.cheer.gapMs / 1000)}초 뒤에 다시 할 수 있어요`,
     }[m.kind] || '조금 뒤에 다시 받을 수 있어요';
     ui.note(wait, 'err');
     return;
   }
   if (m?.why === 'cap' || m?.why === 'day') {
     const key = m.why + ':' + String(m.why === 'day' ? (m.key || m.kind || '') : (m.kind || ''));
-    if (!capTold.has(key)) { capTold.add(key); ui.note(m.why === 'day' ? '링크 보너스는 칸마다 하루에 한 번, 하루 5칸까지예요' : '이번 시간에 받을 수 있는 코인을 다 받았어요', 'err'); }
+    if (!capTold.has(key)) { capTold.add(key); ui.note(m.why === 'day' ? '링크 방문 포인트는 칸마다 하루에 한 번, 하루 5칸까지예요' : m.kind === 'cheer' ? `응원은 한 시간에 ${PAY.cheer.perHour}번까지예요` : '이번 시간에 받을 수 있는 포인트는 다 받았어요', 'err'); }
     return;
   }
-  if (m?.kind === 'bake') { bakeEnded(); ui.bakeWait?.(''); }
-  const got = creditNow(m?.amount, countsAsPlay(m?.kind), m?.kind === 'bake' ? 'cart' : 'me', m?.kind === 'mine');
-  if (m?.kind === 'bake') { noteBakePay(); if (got) ui.note(`붕어빵 +${got}`, 'ok'); }
-  if (m?.kind === 'dance' && got) ui.note(`댄스 +${got}`, 'ok');
+  const got = creditNow(m?.amount, countsAsActivity(m?.kind));
   if (m?.kind === 'lounge' && got) { loungeSum += got; ui.lounge(true, loungeSum); }
-  if (m?.kind === 'shot' && got) { ui.noteShot?.(); ui.note(`공유 +${got}`, 'ok'); }
-  if (m?.kind === 'fare' && got) {
-    ui.quest?.('fare'); ui.noteFare?.(got); ui.noteLot?.(m.lot); if (m.gauge != null) world?.setFever?.(m.gauge);
-    const f = fareSent;
-    fareSent = null;
-    ui.note(f ? `하차 완료 · ${f.riders}명 · 연속 ${f.streak}명 · 운임 +${got}` : `운임 +${got}`, 'ok');
-  }
-  if (m?.kind === 'cheer' && got) { ui.quest?.('cheer'); ui.note(`응원 +${got}`, 'ok'); }
-  if (m?.kind === 'stunt' && got) { ui.quest?.('stunt'); ui.note(`황금 링 +${got}`, 'ok'); }
-  if (m?.kind === 'hive' && got) ui.note(`하이파이브 +${got}`, 'ok');
-  if (m?.kind === 'star' && got) ui.note(`별똥별 +${got}`, 'ok');
-  if (m?.kind === 'pouch' && got) ui.note(`복주머니 +${got}`, 'ok');
-  if (m?.kind === 'mine') {
-    // Paid: the coin already showed its "+1"; it now leaves for its 20 s respawn and the wallet bumps.
-    clearTimeout(coin.timer);
-    if (coin.i >= 0) world?.removeCoin?.(coin.i);
-    coin.i = -1;
-    coin.wait = false;
-  }
-  if (m?.kind === 'click' && got) ui.note(`링크 +${got}`, 'ok');
-  if (m?.kind === 'quest' && got) { ui.markQuest?.(m.key); ui.note(m.key === 'all' ? `오늘 미션을 모두 끝냈어요 +${got}` : `미션 완료 +${got}`, 'ok'); }
+  if (m?.kind === 'shot' && got) { ui.noteShot?.(); ui.note(`공유 +${got} 포인트`, 'ok'); }
+  if (m?.kind === 'cheer' && got) { ui.quest?.('cheer'); ui.note(`응원 +${got} 포인트`, 'ok'); }
+  if (m?.kind === 'click' && got) ui.note(`링크 방문 +${got} 포인트`, 'ok');
+  if (m?.kind === 'quest' && got) { ui.markQuest?.(m.key); ui.note(`오늘의 응원 미션 완료 +${got} 포인트`, 'ok'); }
   if (m?.kind === 'mission' && got) ui.markDaily?.(got);
-  if (m?.kind === 'hello') { keep('kts_hello', '1'); if (got) ui.note(`첫 놀이 +${got}`, 'ok'); }
+  if (m?.kind === 'hello') { keep('kts_hello', '1'); if (got) ui.note(`첫 방문 +${got} 포인트`, 'ok'); }
   if (m?.kind === 'attend') {
     ui.noteAttend?.(m?.key);
-    if (got) ui.note(`출석 +${got}`, 'ok');
+    if (got) ui.note(`출석 +${got} 포인트`, 'ok');
     const streak = Math.floor(Number(m?.key));
     if (streak > 0 && streak % 7 === 0) {
       pullProfile();
@@ -1609,98 +1467,6 @@ net.on('pay', (m) => {
     }
   }
 });
-let bakeId = '', bakeT = 0, bakeOnline = false, danceId = '', danceT = 0, danceOnline = false, sessKind = '', sessFailed = false;
-const BAKE_MISS = '붕어빵 코인이 기록되지 않았어요. 포차 앞에서 조금 더 구워 주세요';
-const DANCE_MISS = '댄스로 번 코인이 기록되지 않았어요. 무대에서 한 곡을 끝까지 춰 주세요';
-net.on('sess', (m) => {
-  if (m?.ok && m.id) {
-    if (sessKind === 'dance') danceId = m.id;
-    else bakeId = m.id;
-    return;
-  }
-  if (m && m.ok === false && sessKind === 'bake' && bakeEnding) { bakeEnded(); ui.bakeWait?.(''); }
-  if (m && m.ok === false && !sessFailed) {
-    sessFailed = true;
-    ui.note(m.why === 'cap' ? '이번 시간에 받을 수 있는 코인을 다 받았어요' : m.why === 'place' ? (sessKind === 'dance' ? '무대 원 안에서 시작해야 댄스 코인이 기록돼요' : '포차 앞에서 시작해야 붕어빵 코인이 기록돼요') : m.why === 'time' ? '시간이 맞지 않아 코인이 기록되지 않았어요' : (sessKind === 'dance' ? DANCE_MISS : BAKE_MISS), 'err');
-    if (sessKind === 'dance') ui.endDance?.(true);
-    else ui.stopBake?.(true);
-  }
-});
-function placeNow() {
-  const st = world?.netState?.();
-  if (!st || !net.ch || net.status !== 'online') return;
-  net.me = st;
-  const pkt = typeof net.state === 'function' ? net.state() : st;
-  net.ch.send({ type: 'broadcast', event: 'pos', payload: pkt });
-}
-function sessStart(kind) {
-  const st = world?.netState?.();
-  placeNow();
-  return !!net.sendSess?.('start', { kind, a: st ? [st.x, st.y] : undefined });
-}
-function beginBake() {
-  bakeId = '';
-  sessFailed = false;
-  bakeT = Date.now();
-  sessKind = 'bake';
-  bakeOnline = sessStart('bake');
-  setTimeout(() => { if (!bakeId && !sessFailed && sessKind === 'bake') sessStart('bake'); }, 600);
-}
-// From the end of the bake rounds until the PAY (or its refusal, or BAKE_PAY_MS): "+6 확인 중" over the cart, and no new
-// bake (its SESS start would replace the id this end still needs).
-let bakeEnding = false, bakeEndTimer = 0;
-const BAKE_PAY_MS = 6000;
-function bakeEnded() {
-  clearTimeout(bakeEndTimer);
-  bakeEnding = false;
-}
-function finishBake(result) {
-  if (!bakeOnline) { ui.note('광장에 연결되어야 붕어빵 코인이 들어와요', 'err'); return false; }
-  const started = bakeT || Date.now();
-  bakeEnding = true;
-  ui.bakeWait?.(`+${result === 'gold' ? BALANCE.bakeGold : BALANCE.bakeGood} 확인 중`);
-  const give = () => { bakeEnded(); ui.bakeWait?.(''); };
-  const tryEnd = (since) => {
-    const plan = sessionEndPlan(bakeId, sessFailed, Date.now() - since, 4000);
-    if (plan === 'wait') { setTimeout(() => tryEnd(since), 200); return; }
-    if (plan === 'note') { sessFailed = true; give(); ui.note(BAKE_MISS, 'err'); return; }
-    if (plan !== 'send') { give(); return; }
-    const id = bakeId;
-    // The rounds take about 8 s (interact.js BAKE_FLIPS x BAKE_ROUND_MS), so this wait is short; the Room still needs 8 s.
-    const rest = Math.max(0, 8600 - (Date.now() - started));
-    setTimeout(() => {
-      net.sendSess('end', { id, result });
-      // No PAY or refusal in time: the chip goes; a late PAY still credits the wallet.
-      bakeEndTimer = setTimeout(give, BAKE_PAY_MS);
-    }, rest);
-  };
-  tryEnd(Date.now());
-  return true;
-}
-function beginDance() {
-  danceId = '';
-  sessFailed = false;
-  danceT = Date.now();
-  sessKind = 'dance';
-  danceOnline = sessStart('dance');
-  setTimeout(() => { if (!danceId && !sessFailed && sessKind === 'dance') sessStart('dance'); }, 600);
-}
-function finishDance(score) {
-  if (!danceOnline) { ui.note('광장에 연결되어야 댄스로 번 코인이 들어와요', 'err'); return false; }
-  const started = danceT || Date.now();
-  const n = Math.max(0, Math.min(100, Math.floor(Number(score) || 0)));
-  const tryEnd = (since) => {
-    const plan = sessionEndPlan(danceId, sessFailed, Date.now() - since, 4000);
-    if (plan === 'wait') { setTimeout(() => tryEnd(since), 200); return; }
-    if (plan === 'note') { sessFailed = true; ui.note(DANCE_MISS, 'err'); return; }
-    if (plan !== 'send') return;
-    const id = danceId;
-    const rest = Math.max(0, 25600 - (Date.now() - started));
-    setTimeout(() => net.sendSess('end', { id, kind: 'dance', result: String(n) }), rest);
-  };
-  tryEnd(Date.now());
-  return true;
-}
 net.on('inbox', (m) => {
   if (m?.kind === 'reply_ack') {
     const phrase = CHEER_PHRASES[Math.floor(Number(m.phrase)) - 1] || '답례';
@@ -1720,7 +1486,6 @@ net.on('inbox', (m) => {
 });
 let ballShown = false;
 net.on('ball', (m) => {
-  ui.setBall?.(!!m?.open, m?.until);
   const line = ballNotice(ballShown, m);
   if (line) ui.setNextLine(line);
   if (m?.open) {
@@ -1746,12 +1511,6 @@ net.on('wish', (m) => {
   paintWish();
   if (fresh && !self) ui.news('WISH', { nick: row.nick });
 });
-net.on('draw', (m) => {
-  creditNow(m?.amount);
-  ui.showDraw?.(m?.win, !!m?.hit, Math.floor(Number(m?.amount)) || 0, m?.lot);
-  tickets.length = 0;
-  ui.tickets?.(0, 300000);
-});
 net.on('profile', (m) => applyServerProfile(m));
 net.on('welcome', (m) => {
   if (!m?.name) return;
@@ -1772,30 +1531,6 @@ net.on('take', (m) => {
   ui.taken({ slot: m.slot, attacker: m.attacker, price: m.price, line1: m.line1, line2: m.line2, line3: m.line3, emoji: m.emoji });
 });
 net.on('mono', (m) => { if (m?.name) ui.note(`${m.name}님이 메인 타워 3칸을 모두 독점하여 타임스퀘어를 지배했습니다!`, 'ok'); });
-net.on('rev', (m) => {
-  const until = Number(m?.until) || 0;
-  if (until > Date.now()) { revengeUntil = until; ui.setRevenge?.(until); ui.note('2분 동안 택시 운임이 2배로 들어옵니다', 'ok'); }
-  else ui.note('복수 운임은 전광판을 빼앗긴 뒤 10분 안에만 켜져요', 'err');
-});
-net.on('fever', (m) => {
-  if (m?.sync) {
-    world?.setFever?.(m.gauge, m.until);
-    const until = Number(m.until) || 0;
-    if (until > Date.now()) feverUntil = until;
-    ui.setRevenge?.(Number(m.revenge) || 0);
-    return;
-  }
-  const until = Number(m?.until) || 0;
-  if (until > Date.now()) {
-    feverUntil = until;
-    ui.note('60초 동안 코인 2배 · 택시 부스트 무제한', 'ok');
-  } else {
-    feverUntil = 0;
-    world?.rejectFever?.();
-    ui.note('2배 코인은 점령과 택시 하차가 20번 쌓인 뒤에 켜져요', 'err');
-  }
-});
-net.on('lot', (m) => ui.noteLot?.(m?.n));
 net.on('air', (m) => { if (m?.line && m?.until) world?.beginAir?.({ nick: m.nick, line: m.line, until: m.until }); });
 net.on('stk', (m) => world?.applyStk?.(m));
 net.on('cheer', (m) => {
@@ -1848,7 +1583,7 @@ net.on('status', (s) => {
   if (s === 'online' && netWas !== 'online') { upNew = true; resync(); movedTold = false; }
   netWas = s;
   if (queuePos) return;
-  if (s === 'online') { ui.setStatus('실시간 연결됨', 'ok'); if (upNew) { upNew = false; bindTake(); try { net.ch?.raw?.({ t: 'DRAW_CHECK' }); } catch { /* the next connect asks again */ } } }
+  if (s === 'online') { ui.setStatus('실시간 연결됨', 'ok'); if (upNew) { upNew = false; bindTake(); } }
   else if (s === 'connecting') ui.setStatus('광장 연결 중', 'warn');
   else if (net.ch?.moved) {
     // This account joined from another window, so the room closed this one (net.js keeps it closed until the tab is used again).
@@ -1962,9 +1697,9 @@ async function finishLink(session, fresh, echo = false) {
   try { await refreshWallet(); } catch { /* balance paints on the next sync */ }
   try { await refreshWorld(); } catch { /* boards refresh on the next poll */ }
   if (fresh && !echo) trackEvent('auth_login_success', { method: user.app_metadata?.provider || 'email' });
-  if (merged?.bonus) ui.note(`계정을 연결했어요. +${merged.bonus}코인`, 'ok');
+  if (merged?.bonus) ui.note(`계정을 연결했어요. +${merged.bonus} 포인트`, 'ok');
   // again: the server's answer on the one link after a withdrawal (no reward, and the guest's start coins stayed out). Said that once.
-  else if (merged?.again) ui.note('계정을 연결했어요. 예전에 탈퇴한 계정이라 연결 보상 300코인은 다시 주지 않아요', 'ok');
+  else if (merged?.again) ui.note('계정을 연결했어요. 예전에 탈퇴한 계정이라 연결 보상 300포인트는 다시 주지 않아요', 'ok');
   else if (fresh && !failed) ui.note('계정을 연결했어요', 'ok'); // after a failed merge the error toast stands alone
   if (merged?.held > 0 && !echo) claimLinkReward(user, merged.held); // not waited for: the link is done, the reward follows
   await rejoin();
@@ -1979,10 +1714,10 @@ function claimLinkReward(user, held) {
     try {
       const r = await humanCall('link', (ts) => net.linkReward(ts));
       if (sessionUser !== user) return;
-      if (r?.amount > 0) { ui.note(`연결 보상 +${r.amount}코인`, 'ok'); try { await refreshWallet(); } catch { /* paints on the next sync */ } }
+      if (r?.amount > 0) { ui.note(`연결 보상 +${r.amount} 포인트`, 'ok'); try { await refreshWallet(); } catch { /* paints on the next sync */ } }
     } catch (e) {
       if (sessionUser !== user) return;
-      ui.note(e?.code === 'human' ? e.message : `연결 보상 ${held}코인을 지금은 넣지 못했어요. 잠시 뒤에 눌러서 다시 받아 주세요.`, 'err', () => claimLinkReward(user, held));
+      ui.note(e?.code === 'human' ? e.message : `연결 보상 ${held}포인트를 지금은 넣지 못했어요. 잠시 뒤에 눌러서 다시 받아 주세요.`, 'err', () => claimLinkReward(user, held));
     }
   })().finally(() => { rewardRun = null; });
 }
@@ -2278,7 +2013,7 @@ async function signOutAccount() {
     catch (e) { console.warn('[auth] sign-out', e?.message || e); throw new Error('로그아웃하지 못했어요. 연결을 확인하고 다시 해 주세요.'); }
     return becomeGuest();
   });
-  ui.note(ok ? '로그아웃했어요. 코인과 전광판은 계정에 남아 있어요' : '로그아웃했어요. 새로고침하면 새 손님으로 이어져요', ok ? 'ok' : 'err');
+  ui.note(ok ? '로그아웃했어요. 응원 포인트와 전광판은 계정에 남아 있어요' : '로그아웃했어요. 새로고침하면 새 손님으로 이어져요', ok ? 'ok' : 'err');
 }
 // In-app browser: after the player was sent to the system browser, that browser adopts this guest and links it to an account, which
 // moves the coins and boards away. When this page is looked at again, the wallet is read again and, if it was emptied, the player is told.
@@ -2562,7 +2297,7 @@ setInterval(() => {
   if (shower && performance.now() - shower.started > STAR_LIFE) { world.clearStars(); shower = null; crownSig = ''; paintCrown(); }
   else if (shower && Date.now() >= welcomeUntil) {
     const left = Math.max(0, Math.ceil((STAR_LIFE - (performance.now() - shower.started)) / 1000));
-    world.setTicker(`🌠 별똥별 ${10 - shower.taken.size}개 남음 · ${left}초 · 별똥별 빛기둥에 서면 +${BALANCE.starCoin}`);
+    world.setTicker(`🌠 별똥별 ${10 - shower.taken.size}개 남음 · ${left}초 · 별똥별 빛기둥에 서 보세요`);
   } else paintCrown();
   ui.setPeople(1 + (net.peers?.size || 0), net.shard || 1);
 }, 1000);

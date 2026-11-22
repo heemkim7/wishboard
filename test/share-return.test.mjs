@@ -145,7 +145,7 @@ describe('다녀간 사이 rows', () => {
   it('shows yesterday\'s prize once a day', () => {
     const first = awayRows(args);
     const prize = first.rows.find((r) => r.kind === 'prize');
-    assert.equal(prize.text, '어제 소원이 2위였어요. +200코인');
+    assert.equal(prize.text, '어제 소원이 2위였어요. +200 포인트');
     assert.equal(first.prizeDay, DAY);
     assert.equal(awayRows({ ...args, prizeDay: DAY }).rows.some((r) => r.kind === 'prize'), false);
     assert.equal(awayRows({ ...args, wish: { mine: null, yesterday: wish.yesterday } }).rows.find((r) => r.kind === 'prize').label, '오늘 소원 걸기');
@@ -297,7 +297,7 @@ describe('wish UI review fixes', () => {
       ui: { setNextLine: (t) => calls.push(['line', t]), tutorial: (ev) => calls.push(['tut', ev]), nextGoal: () => ({ free: false, name: '메인거리', left: 20 }) },
       world: { setWaypoint: () => {}, boardView: () => ({ holder_id: 'x' }), slotCard: () => null },
     }).onBakePay();
-    assert.deepEqual(calls.slice(-2), [['line', '메인거리까지 20코인 더 모으면 걸 수 있어요'], ['tut', 'walkDone']]);
+    assert.deepEqual(calls.slice(-2), [['line', '메인거리까지 20포인트 더 모으면 걸 수 있어요'], ['tut', 'walkDone']]);
     const walk = [];
     startFtue({
       ui: { setNextLine: () => {}, tutorial: (ev) => walk.push(ev) },

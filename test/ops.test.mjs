@@ -123,7 +123,7 @@ describe('opsrules: what a report and an inquiry may carry', () => {
     assert.equal(R.supportFault({ ...ok, email: 'player@example.com' }), 'agree');
     assert.equal(R.supportFault({ ...ok, email: 'player@example.com', agree: true }), '');
     for (const [id] of R.SUPPORT_KINDS) assert.equal(R.supportFault({ ...ok, kind: id }), '');
-    assert.deepEqual(R.SUPPORT_KINDS.map(([, l]) => l), ['버그', '계정·코인', '신고', '광고·제휴', '기타']);
+    assert.deepEqual(R.SUPPORT_KINDS.map(([, l]) => l), ['버그', '계정·포인트', '신고', '광고·제휴', '기타']);
   });
   it('operatorOf: known fields only, one line each, capped; bad or empty input is nothing', () => {
     const op = R.operatorOf(JSON.stringify({ name: '  테스트상점\n', ceo: '가나다', biz: '000-00-00000', mail: '제0000-가상-0000호', addr: '가상시 '.repeat(50), email: 'ops@example.test', phone: '000-0000-0000', secret: 'x' }));

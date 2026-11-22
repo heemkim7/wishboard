@@ -1,23 +1,29 @@
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { PAY, curveOf, ballOpen, auctionClosed, feverBall, scaledPay, claimSplit, fareRaw, farePay, bakeBase, danceBase, BALANCE, takeGrants, stickerNext, chainBoost, cheerCount, countsAsPlay, askBid } from '../balance.js';
+import { PAY, PLAY, BONUS_KINDS, ballOpen, auctionClosed, claimSplit, BALANCE, takeGrants, stickerNext, chainBoost, cheerCount, countsAsActivity, askBid } from '../balance.js';
+import * as BAL from '../balance.js';
 import { taxiTrainMult } from '../taxiTrain.js';
 
 describe('economy numbers', () => {
-  it('matches the one balance table', () => {
-    assert.equal(BALANCE.starCoin, 6);
-    assert.equal(bakeBase('miss'), 0);
-    assert.equal(bakeBase('good'), 6);
-    assert.equal(bakeBase('gold'), 16);
-    assert.equal(danceBase(90), 12);
-    assert.equal(danceBase(75), 8);
-    assert.equal(danceBase(55), 4);
-    assert.equal(danceBase(10), 2);
-    assert.equal(PAY.cheer.base, 4);
-    assert.equal(PAY.lounge.base, 2);
+  // The non-game change (docs/non-game-plan-2026-11-22.md 4-3, 4-5): no controlled play pays 응원 포인트. The table that pays holds watching and
+  // cheering (flat, a gap, an hour cap on the action, a day cap on the points), attendance, missions, the first visit and the cheer quest.
+  it('matches the one balance table: what pays, and nothing for play', () => {
+    assert.deepEqual(Object.keys(PAY).sort(), ['attend', 'cheer', 'hello', 'lounge', 'mission', 'quest']);
+    assert.deepEqual({ ...PAY.cheer }, { base: 4, gapMs: 12000, perHour: 30, perDay: 30 });
+    assert.deepEqual({ ...PAY.lounge }, { base: 2, gapMs: 20000, perHour: 30, perDay: 30 });
+    assert.equal(BALANCE.cheerGroup, 8);
     assert.equal(PAY.hello, 40);
-    assert.deepEqual([1, 2, 3, 4, 5].map(taxiTrainMult), [1, 2.2, 3.8, 6, 10]);
+    assert.equal(PAY.mission, 15);
+    assert.equal(PAY.attend, 30);
+    assert.deepEqual({ ...PAY.quest }, { cheer: 30 });
+    for (const k of ['bake', 'dance', 'fare', 'star', 'stunt', 'hive', 'pouch', 'lottery', 'mine', 'hourCap', 'ballHourCap', 'playFullS']) assert.equal(k in PAY, false, k);
+    for (const f of ['curveOf', 'feverBall', 'scaledPay', 'fareRaw', 'farePay', 'bakeBase', 'danceBase', 'countsAsPlay']) assert.equal(f in BAL, false, f);
+    for (const k of ['starCoin', 'bakeGold', 'bakeGood', 'danceShow', 'missionEarn', 'coinR']) assert.equal(k in BALANCE, false, k);
+    assert.deepEqual([...BONUS_KINDS], ['attend', 'mission', 'hello', 'shot', 'lounge']);
+    // the play keeps only its pacing, with no amounts
+    assert.deepEqual(JSON.parse(JSON.stringify(PLAY)), { ring: { gapMs: 20000 }, hive: { gapMs: 15000 }, pick: { gapMs: 20000, moveM: 15, max: 4 }, drop: { gapMs: 15000 }, stage: { nearM: 8 } });
+    assert.deepEqual([1, 2, 3, 4, 5].map(taxiTrainMult), [1, 2.2, 3.8, 6, 10]); // the taxi train's look; no fare uses it
   });
 
   it('splits a plot takeover without minting', () => {
@@ -31,15 +37,7 @@ describe('economy numbers', () => {
     assert.equal(vacant.burn, 50);
   });
 
-  it('applies fever once, then the curve and the window', () => {
-    assert.equal(feverBall(true, true), 2);
-    assert.equal(curveOf(3599), 1);
-    assert.equal(curveOf(3600), 0.3);
-    assert.equal(fareRaw(1, false, false, false), 20);
-    assert.equal(fareRaw(1, true, true, true), 80);
-    assert.equal(farePay(1, { revenge: true, fever: true, ball: true, playSeconds: 0, earnedInWindow: 0 }), 80);
-    assert.equal(farePay(1, { playSeconds: 0, earnedInWindow: 1190 }), 10);
-    assert.equal(scaledPay(16, { fever: true, ball: true, playSeconds: 3600, earnedInWindow: 0 }), Math.floor(16 * 0.3 * 2));
+  it('opens the main tower 21:00-21:10 KST (claims only; no pay multiplier any more)', () => {
     assert.equal(ballOpen(Date.parse('2026-11-15T03:00:00Z')), false);
     assert.equal(ballOpen(Date.parse('2026-11-15T12:00:00Z')), true);
     assert.equal(ballOpen(Date.parse('2026-11-15T12:10:00Z')), false);
@@ -67,12 +65,9 @@ describe('economy numbers', () => {
     assert.equal(chainBoost([{ ...row('SUB_1A'), holder_id: 'b' }, row('SUB_1B')], 'SUB_1A', now), false);
   });
 
-  it('counts taxi and bake toward the play mission, not attendance', () => {
-    assert.equal(countsAsPlay('fare'), true);
-    assert.equal(countsAsPlay('bake'), true);
-    assert.equal(countsAsPlay('attend'), false);
-    assert.equal(countsAsPlay('hello'), false);
-    assert.equal(countsAsPlay('quest'), false);
+  it('counts cheering, watching and link visits as the day\'s activity, never play, attendance or one-off bonuses', () => {
+    for (const k of ['cheer', 'lounge', 'click']) assert.equal(countsAsActivity(k), true, k);
+    for (const k of ['fare', 'bake', 'dance', 'mine', 'star', 'stunt', 'hive', 'pouch', 'attend', 'hello', 'quest', 'mission', 'shot']) assert.equal(countsAsActivity(k), false, k);
   });
 
   it('lets the holder edit at the current bid', () => {

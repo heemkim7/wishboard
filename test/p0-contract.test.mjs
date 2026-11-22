@@ -23,9 +23,9 @@ describe('phase 0 contracts', () => {
     assert.match(world, /function tourNext\(\)/);
     assert.match(world, /teleport\(x, z\)/);
     const load = ui.slice(ui.indexOf('function loadDay'), ui.indexOf('function payDue'));
-    assert.match(load, /fare:/);
-    assert.match(load, /stunt:/);
-    assert.match(load, /qPaid:/);
+    // the day's counters are the participation missions now (no taxi or ring counters: play pays nothing)
+    for (const k of ['cheer:', 'wish:', 'heart:', 'qPaid:']) assert.ok(load.includes(k), k);
+    for (const k of ['fare:', 'stunt:', 'bake:']) assert.equal(load.includes(k), false, k);
   });
 
   it('keeps honesty, bots, boot counts, and the socket resync', () => {
@@ -56,8 +56,8 @@ describe('phase 0 contracts', () => {
     const wrangler = read('wrangler.jsonc');
     const account = read('plaza-account.js');
     assert.match(worker, /AD_PAY = 15, AD_DAY = 5/);
-    assert.match(worker, /attend: \[30, 0, 1\], mission: \[15, 0, 3\]/);
-    assert.match(worker, /pouch: \[30, 25000\]/);
+    assert.match(worker, /const spec = \{ mission: \[PAY\.mission, 3\], hello: \[PAY\.hello, 1\], shot: \[BALANCE\.shareShot, 1\] \}\[kind\];/);
+    assert.match(worker, /if \(!BONUS_KINDS\.includes\(kind\)\) \{ if \(kind\) this\.tx\(w, \{ t: 'PAY', kind: kind\.slice\(0, 12\), amount: 0, why: 'off' \}\); return false; \}/); // the pouch and the other plays pay nothing
     assert.match(worker, /pathname === '\/rt\/handover'/);
     assert.match(worker, /GUEST_RL/);
     assert.match(wrangler, /"name": "GUEST_RL"/);

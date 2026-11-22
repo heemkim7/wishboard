@@ -3,51 +3,35 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import {
-  coinGate, COIN_GAP_MS, COIN_WAIT_MS, COIN_CAP_MS,
   taxiExit, EXIT_SLOW, EXIT_CONFIRM_MS, nextOfferDelay, fareWait, FARE_GAP_S, OFFER_MIN_S, OFFER_RIDE_S,
   stickZone, stickVec, isTouchUI, STICK_W, STICK_H, STICK_THROW, STICK_ENGAGE,
   bakeFlip, bakeBest, BAKE_FLIPS, BAKE_ROUND_MS,
 } from '../interact.js';
-import { PAY } from '../balance.js';
+import { PLAY } from '../balance.js';
 
 const read = (f) => readFileSync(new URL('../' + f, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const between = (src, a, b) => { const i = src.indexOf(a); assert.ok(i >= 0, a); const j = src.indexOf(b, i + a.length); assert.ok(j > i, b); return src.slice(i, j); };
 
-describe('ground coins: the MINE send gate', () => {
-  it('waits COIN_GAP_MS between sends, sends nothing while one waits, and holds after the hour cap', () => {
-    assert.equal(coinGate({ at: 0, wait: false }, 1000), true);
-    assert.equal(coinGate({ at: 1000, wait: false }, 1000 + COIN_GAP_MS - 1), false);
-    assert.equal(coinGate({ at: 1000, wait: false }, 1000 + COIN_GAP_MS), true);
-    assert.equal(coinGate({ at: 0, wait: true }, 1e9), false);
-    assert.equal(coinGate({ at: 0, block: 5000 }, 4999), false);
-    assert.equal(coinGate({ at: 0, block: 5000 }, 5000), true);
-  });
-  it('never sends faster than the Room accepts (2 s less its 400 ms grace) and gives up on a PAY after 3 s', () => {
-    assert.ok(COIN_GAP_MS >= 2000 - 400);
-    assert.equal(COIN_GAP_MS, 2100);
-    assert.equal(COIN_WAIT_MS, 3000);
-    assert.ok(COIN_CAP_MS >= 60000);
-  });
-  it('main.js: one MINE through the gate, the coin hides at once, the wallet moves only on PAY', () => {
+// The non-game change: picking up ground coins paid 응원 포인트 for play, so the coins are gone from the world, the page and the rules.
+describe('ground coins are gone', () => {
+  it('no MINE gate, no coin pick-up and no coin meshes', () => {
+    assert.doesNotMatch(read('interact.js'), /coinGate|COIN_GAP_MS|COIN_WAIT_MS|COIN_CAP_MS/);
     const main = read('main.js');
-    const take = between(main, 'function takeCoin(i) {', '\n}\n');
-    assert.match(take, /if \(!coinGate\(coin, now\)\) return;/);
-    assert.match(take, /net\.sendMine\(1, state\.nick\)/);
-    assert.match(take, /world\?\.holdCoin\?\.\(i, true\)/);
-    assert.equal(/creditNow|setWallet|state\.grants|state\.pending/.test(take), false);
-    // A refusal puts the coin back without a toast; PAY starts its respawn and credits through creditNow only.
-    const refuse = between(main, "if (m?.kind === 'mine' && m?.why) {", '\n  }\n');
-    assert.match(refuse, /coinBack\(\);/);
-    assert.equal(/'soon'/.test(refuse), false);
-    assert.match(main, /if \(m\?\.kind === 'mine'\) \{[\s\S]*?world\?\.removeCoin\?\.\(coin\.i\)/);
-    assert.match(main, /setTimeout\(coinBack, COIN_WAIT_MS\)/);
-  });
-  it('the world hides a picked coin until it is paid or put back, and only a visible coin fires onCoin', () => {
+    assert.doesNotMatch(main, /takeCoin|coinBack|sendMine|onCoin|removeCoin|holdCoin/);
+    assert.doesNotMatch(read('net.js'), /sendMine|t: 'MINE'/);
     const w = read('timesSquare3d.js');
-    const hold = between(w, 'function holdCoin(i, on) {', '\n  }\n');
-    assert.match(hold, /c\.back = 0;/);
-    assert.match(w, /if \(!c\.mesh\.visible\) \{\n\s+if \(c\.back && now >= c\.back\)/);
-    assert.match(w, /startStars, removeStar, clearStars, removeCoin, holdCoin,/);
+    assert.doesNotMatch(w, /COIN_HOME|holdCoin|removeCoin|updateCoins|onCoin/);
+    assert.match(w, /startStars, removeStar, clearStars,\n/);
+  });
+  it('the world still exits a taxi slowly, boosts at one top speed, and keeps a fast ride waiting only when a fare gap runs', () => {
+    const w = read('timesSquare3d.js');
+    assert.match(w, /if \(d\.exiting && Math\.abs\(d\.v\) <= EXIT_SLOW\) exitTaxi\(\);/);
+    assert.match(w, /const top = boosting \? CAR\.boost : CAR\.max;/);
+    assert.match(w, /const boosting = input\.walk \|\| boostHeld;/); // the fever's unlimited boost is gone with the fever
+    assert.equal(/party \? 52/.test(w), false);
+    assert.match(w, /if \(left > 0\) opts\.onJob\?\.\(\{ type: 'abandon', riders: left \}\);/);
+    assert.match(w, /job\.wait = there \? fareWait\(/);
+    assert.match(w, /else if \(there && !job\.wait && Math\.abs\(d\.v\) < SLOW_V\)/);
   });
 });
 
@@ -66,8 +50,11 @@ describe('taxi: leaving, offers and the fare gap', () => {
     assert.equal(taxiExit({ riders: 0, speed: -6 }).act, 'brake');
     assert.equal(EXIT_SLOW, 3);
   });
-  it('holds the next passenger until a ride can end after the Room\'s 40 s fare gap', () => {
-    assert.equal(FARE_GAP_S * 1000, PAY.fare.gapMs);
+  // No fare is paid, so main.js reports every drop-off as ev.sent = false and the world never starts a gap: since stays null, the next
+  // passenger comes OFFER_MIN_S after the last job and nobody waits at the drop-off. The pacing rules stay for a gap if one is ever set.
+  it('with no fare gap the next passenger comes at once; with one, a ride waits for it', () => {
+    assert.equal(FARE_GAP_S, 40);
+    assert.ok(PLAY.drop.gapMs <= PLAY.pick.gapMs);
     assert.equal(nextOfferDelay(null), OFFER_MIN_S);
     assert.equal(nextOfferDelay(0), FARE_GAP_S - OFFER_RIDE_S);
     assert.equal(nextOfferDelay(10), FARE_GAP_S - OFFER_RIDE_S - 10);
@@ -89,14 +76,15 @@ describe('taxi: leaving, offers and the fare gap', () => {
     assert.match(w, /job\.wait = there \? fareWait\(/);
     assert.match(w, /else if \(there && !job\.wait && Math\.abs\(d\.v\) < SLOW_V\)/);
   });
-  it('"하차 완료" only on PAY; the fare and PICK messages keep their shape', () => {
+  it('"하차 완료" on the drop-off itself, never a fare: PICK and the drop-off (FARE, a board view) keep their shape', () => {
     const main = read('main.js');
     const job = between(main, '  onJob(ev) {', '\n  },\n');
-    assert.equal(/note\([^\n]*하차 완료/.test(job), false);
     assert.match(job, /net\.ch\?\.raw\?\.\(\{ t: 'PICK' \}\)/);
-    assert.match(job, /ev\.sent = payFare\(ev\.slot \|\| '', ev\.riders \|\| 1\)/);
-    assert.match(main, /net\.sendFare\(25, state\.nick, slot, riders\)/);
-    assert.match(main, /ui\.note\(f \? `하차 완료 · \$\{f\.riders\}명/);
+    assert.match(job, /if \(ev\.type === 'done'\) \{ if \(dropped\) net\.sendDrop\?\.\(ev\.slot\); ev\.sent = false; \}/);
+    assert.match(job, /ui\.note\(`하차 완료 · \$\{ev\.riders \|\| 1\}명 · 연속 \$\{fareStreak\}명`, 'ok'\);/);
+    assert.doesNotMatch(main, /payFare|sendFare|운임 \+/);
+    assert.match(read('net.js'), /sendDrop\(slot\) \{ if \(!this\.ch\?\.raw \|\| this\.status !== 'online'\) return false; return this\.ch\.raw\(\{ t: 'FARE', slot: String\(slot \|\| ''\)\.slice\(0, 16\) \}\); \}/);
+    assert.equal(/운임/.test(read('ui.js')), false);
   });
   it('names the pillars by role in the HUD, the toasts and the world, with cyan arrows and pins', () => {
     for (const f of ['ui.js', 'main.js', 'timesSquare3d.js']) assert.equal(/초록 기둥|노란 기둥|노란 빛기둥/.test(read(f)), false, f);
@@ -165,29 +153,27 @@ describe('bake: three flips in one session', () => {
     assert.equal(bakeBest(['miss', 'miss', 'miss']), 'miss');
     assert.equal(bakeBest(), 'miss');
   });
-  it('the rounds last about the Room\'s 8 s session, so the PAY lands as the game ends', () => {
+  it('a bake is three rounds of about 8 s', () => {
     const total = BAKE_FLIPS * BAKE_ROUND_MS;
     assert.equal(BAKE_FLIPS, 3);
-    assert.ok(total >= PAY.bake.minS * 1000 - 1000 && total <= PAY.bake.minS * 1000, String(total));
-    assert.ok(total < PAY.bake.maxS * 1000);
+    assert.ok(total >= 7000 && total <= 8000, String(total));
   });
-  it('the SESS messages keep their shape and the 8.6 s end; the chip waits for PAY; no coins before PAY', () => {
+  // The bake and the dance pay nothing: no session goes to the room, the page never waits for a PAY, and a finished bake only moves the tutorial.
+  it('no SESS and no coins: a finished bake moves the tutorial on, the dance only animates', () => {
     const main = read('main.js');
-    assert.match(main, /return !!net\.sendSess\?\.\('start', \{ kind, a: st \? \[st\.x, st\.y\] : undefined \}\);/);
-    assert.match(main, /const rest = Math\.max\(0, 8600 - \(Date\.now\(\) - started\)\);/);
-    assert.match(main, /net\.sendSess\('end', \{ id, result \}\);/);
-    const fin = between(main, 'function finishBake(result) {', '\n}\n');
-    assert.equal(/creditNow|setWallet|flyCoins/.test(fin), false);
-    assert.match(main, /creditNow\(m\?\.amount, countsAsPlay\(m\?\.kind\), m\?\.kind === 'bake' \? 'cart' : 'me'/);
+    assert.doesNotMatch(main, /sendSess|bakeWait|bakeEnding|BAKE_MISS|DANCE_MISS|beginBake|finishDance/);
+    assert.match(main, /  finishBake: \(\) => noteBakePay\(\),/);
+    assert.match(main, /  danceStart: \(\) => world\?\.setDancing\(true\),/);
+    assert.match(main, /  danceEnd: \(\) => world\?\.setDancing\(false\),/);
+    assert.doesNotMatch(read('net.js'), /sendSess|t: 'SESS'/);
+    assert.match(main, /const got = creditNow\(m\?\.amount, countsAsActivity\(m\?\.kind\)\);/);
   });
   it('the tutorial opens the panel with the needle parked until the first tap', () => {
     assert.match(read('ftue.js'), /ui\.startBake\?\.\(\{ wait: true \}\);/);
     const ui = read('ui.js');
     assert.match(ui, /if \(!baking\.live\) \{ beginRounds\(\); return; \}/);
-    // the session starts with the rounds, not when the panel opens
-    const start = between(ui, 'function startBake(o = {}) {', '\n  }\n');
-    assert.equal(/hooks\.beginBake/.test(start), false);
-    assert.match(between(ui, 'function beginRounds() {', '\n  }\n'), /hooks\.beginBake\?\.\(\);/);
+    // nothing goes to the room when the rounds start (no session)
+    assert.equal(/hooks\.beginBake|hooks\.bakeBusy|bakeChip/.test(ui), false);
   });
 });
 

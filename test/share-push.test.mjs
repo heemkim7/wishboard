@@ -477,7 +477,7 @@ describe('immediate push', () => {
       await get('/rt/wishes');
       assert.deepEqual(state.paid.map((p) => [p.p_actor_id, p.p_amount]), [[w.id, 300]]);
       assert.equal(state.pushes.length, 1);
-      assert.deepEqual(await decrypt(state.pushes[0].body, s), { body: '어제 소원이 1위였어요. +300코인이 들어왔어요', url: '/?wish=' + wish.id });
+      assert.deepEqual(await decrypt(state.pushes[0].body, s), { body: '어제 소원이 1위였어요. +300 응원 포인트가 들어왔어요', url: '/?wish=' + wish.id });
     } finally { done(); }
   });
 

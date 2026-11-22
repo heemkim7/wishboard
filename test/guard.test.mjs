@@ -1,4 +1,4 @@
-// Package guard: the Worker's own DO calls in the daily budget, the level on the wish / share / push routes, the contact filter, the taxi fare cap.
+// Package guard: the Worker's own DO calls in the daily budget, the level on the wish / share / push routes, the contact filter, no points for play.
 import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, it } from 'node:test';
@@ -15,7 +15,7 @@ globalThis.WebSocketRequestResponsePair = class { constructor(req, res) { this.r
 const { Room, Meter } = await import('../worker.js');
 const worker = (await import('../worker.js')).default;
 const { WISH_ERR, cleanWish, wishFault, wishNickFault, wishDay } = await import('../wish.js');
-const { PAY } = await import('../balance.js');
+const { PAY, PLAY } = await import('../balance.js');
 const toNetUnits = (m) => Math.round(m * 20 + 1500); // net.js toNetUnits (net.js needs a browser to load)
 
 // Same harness as wish.test.mjs: real DOs on in-memory SQLite behind a stub that copies arguments and results like the runtime does.
@@ -245,28 +245,79 @@ describe('contact filter (wish.js)', () => {
   });
 });
 
-describe('taxi fare cap (Room)', () => {
-  it('pays PAY.fare.perHour fares in a clock hour, refuses the next one with cap, and pays again the next hour', async () => {
+// The non-game change (docs/non-game-plan-2026-11-22.md 4-5): controlled play pays no 응원 포인트. Every message a page sends for a play (taxi
+// fares, ground coins, bake and dance sessions, stars, rings, high fives, the pouch, the fever, the revenge fare, the 5-minute draw) leaves no
+// coin row in the room; 관람 and cheers pay flat with their caps.
+describe('no points for play (Room)', () => {
+  const coinRows = (room) => { room.tapDb(); return room.ctx.storage.sql.exec('select uid, delta from coin').toArray(); };
+  const pays = (ws) => ws.sent.map((s) => JSON.parse(s)).filter((m) => m.t === 'PAY');
+  const seat = (env, k) => {
+    const room = env.room('chapel:square').do, ws = { sent: [], send(s) { this.sent.push(String(s)); }, close() {}, serializeAttachment() {}, deserializeAttachment() { return null; } };
+    room.socks().set(ws, { k, q: true, v2: true, fl: 0, lob: false, t: Date.now(), ls: Date.now(), m: { x: 0, y: 0, fl: 0 } });
+    return { room, ws };
+  };
+  it('a taxi drop-off is a board view, never a fare: no PAY, no coins, at most one view per PLAY.drop.gapMs', async () => {
     const { clock, done } = setup();
     try {
-      const hour = Math.ceil(clock.now() / 36e5) * 36e5; clock.add(hour - clock.now());
-      const env = makeEnv(), room = env.room('chapel:square').do, ws = { sent: [], send(s) { this.sent.push(String(s)); }, close() {}, serializeAttachment() {}, deserializeAttachment() { return null; } };
-      room.socks().set(ws, { k: 'guest:driver', q: true, v2: true, fl: 0, lob: false, t: Date.now(), ls: Date.now(), m: { x: 0, y: 0, fl: 0 } });
+      const env = makeEnv(), { room, ws } = seat(env, 'guest:driver');
       let x = 0;
-      const ride = async () => {
-        clock.add(40000); x += 20;
+      const ride = async (gap) => {
+        clock.add(gap); x += 20;
         await room.webSocketMessage(ws, JSON.stringify({ t: 'p', a: [toNetUnits(x), toNetUnits(0), 0, 'idle', 0, 0, 0] }));
         await room.webSocketMessage(ws, JSON.stringify({ t: 'PICK' }));
         await room.webSocketMessage(ws, JSON.stringify({ t: 'FARE', amount: 25, nick: '기사', slot: 'STREET_1', riders: 1 }));
-        return ws.sent.map((s) => JSON.parse(s)).filter((m) => m.t === 'PAY' && m.kind === 'fare').at(-1);
       };
-      assert.equal(PAY.fare.perHour, 15);
-      for (let i = 0; i < PAY.fare.perHour; i++) { const p = await ride(); assert.ok(p.amount > 0, 'fare ' + (i + 1)); }
-      assert.ok(Date.now() - hour < 36e5);
-      assert.deepEqual(await ride(), { t: 'PAY', kind: 'fare', amount: 0, why: 'cap' });
-      clock.add(hour + 36e5 - Date.now());
-      assert.ok((await ride()).amount > 0, 'the next hour pays again');
+      const views = () => Number(room.ctx.storage.sql.exec("select views from adstat where slot = 'STREET_1'").toArray()[0]?.views) || 0;
+      for (let i = 0; i < 20; i++) await ride(PLAY.pick.gapMs);
+      assert.deepEqual(pays(ws), [], 'nothing is answered');
+      assert.deepEqual(coinRows(room), [], 'no coins');
+      assert.equal(views(), 20, 'every drop-off PLAY.pick.gapMs apart counts toward the board report');
+      await ride(1000); // too soon to pick up again: no passenger, no view
+      assert.equal(views(), 20);
+      await room.webSocketMessage(ws, JSON.stringify({ t: 'FARE', slot: 'STREET_1' })); // a drop-off without a pick-up
+      assert.equal(views(), 20);
+      assert.equal(PLAY.drop.gapMs <= PLAY.pick.gapMs, true);
+    } finally { done(); }
+  });
+  it('ground coins, sessions, stars, rings, high fives, the pouch, the fever, the revenge fare and the draw pay nothing', async () => {
+    const { clock, done } = setup();
+    try {
+      const env = makeEnv(), { room, ws } = seat(env, 'guest:player');
+      const send = async (m) => { clock.add(30000); await room.webSocketMessage(ws, JSON.stringify(m)); };
+      await send({ t: 'MINE', amount: 1, nick: 'n' });
+      await send({ t: 'SESS', op: 'start', kind: 'bake', a: [toNetUnits(21), toNetUnits(118)] });
+      const id = JSON.parse(ws.sent.at(-1)).id;
+      await send({ t: 'SESS', op: 'end', id, result: 'gold' });
+      await send({ t: 'SESS', op: 'start', kind: 'dance' });
+      await send({ t: 'SESS', op: 'end', id, kind: 'dance', result: '100' });
+      for (const kind of ['stunt', 'hive', 'star', 'pouch', 'draw', 'fare']) await send({ t: 'BONUS', kind, amount: 20, nick: 'n' });
+      for (const t of ['FEVER', 'REV', 'DRAW_CHECK']) await send({ t });
+      for (const key of ['fare', 'stunt', 'all']) await send({ t: 'QUEST', key });
       await room._fq;
+      assert.deepEqual(coinRows(room), [], 'no coins for any play');
+      const out = ws.sent.map((s) => JSON.parse(s));
+      assert.equal(out.some((m) => m.t === 'FEVER' || m.t === 'REV' || m.t === 'DRAW'), false, 'the fever, revenge and draw are gone: no answer');
+      for (const m of pays(ws)) assert.deepEqual({ amount: m.amount, why: m.why }, { amount: 0, why: 'off' }, JSON.stringify(m));
+      assert.deepEqual(pays(ws).map((m) => m.kind), ['mine', 'bake', 'dance', 'stunt', 'hive', 'star', 'pouch', 'draw', 'fare']);
+      assert.deepEqual(out.filter((m) => m.t === 'SESS'), [{ t: 'SESS', id: 'off', ok: true }, { t: 'SESS', id: 'off', ok: true }], 'an older page can still open and close its round');
+    } finally { done(); }
+  });
+  it('관람 pays PAY.lounge.base per gap, at most PAY.lounge.perDay a KST day, then answers full', async () => {
+    const { clock, done } = setup();
+    try {
+      const day = Math.ceil((clock.now() + 9 * 36e5) / 864e5) * 864e5 - 9 * 36e5; clock.add(day - clock.now() + 60000); // just after KST midnight
+      const env = makeEnv(), { room, ws } = seat(env, 'guest:watcher');
+      const watch = async (gap) => { clock.add(gap); await room.webSocketMessage(ws, JSON.stringify({ t: 'BONUS', kind: 'lounge', amount: 2, nick: 'n' })); return pays(ws).at(-1); };
+      assert.deepEqual(await watch(PAY.lounge.gapMs), { t: 'PAY', kind: 'lounge', amount: PAY.lounge.base });
+      assert.deepEqual(await watch(1000), { t: 'PAY', kind: 'lounge', amount: 0, why: 'soon' });
+      // an hour of 관람 is perHour pays; spread over the day it stops at perDay
+      let paid = 1;
+      for (let i = 0; i < 200 && paid < PAY.lounge.perDay; i++) { const p = await watch(i % PAY.lounge.perHour === 0 ? 36e5 : PAY.lounge.gapMs); if (p.amount > 0) paid++; }
+      assert.equal(paid, PAY.lounge.perDay);
+      assert.deepEqual(await watch(36e5), { t: 'PAY', kind: 'lounge', amount: 0, why: 'full' });
+      await room._fq;
+      const total = coinRows(room).reduce((s, r) => s + Number(r.delta), 0);
+      assert.ok(total <= PAY.lounge.base * PAY.lounge.perDay, `${total} at most a day's 관람`);
     } finally { done(); }
   });
 });

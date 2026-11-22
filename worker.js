@@ -5,8 +5,8 @@
 // Meter DO: daily (UTC) estimate of billed DO requests -> lean mode at 80%, solo (down) at 95% of the Free 100k/day.
 // Supabase keeps auth, DB and RPCs only. No timers in DOs (hibernation-friendly); alarms only while someone waits.
 import { DurableObject } from 'cloudflare:workers';
-import { BALANCE, slotName, josa, SLOT_IDS, PAY, scaledPay, bakeBase, danceBase, farePay, ballOpen, auctionClosed, stickerNext, chainBoost, buildingOf, cheerCount, STARTER_DEFAULT, starterList, EQUIP_MAX, OWNED_MAX, shopItem } from './balance.js';
-import { nextBallUntil, drawSpan } from './live.js';
+import { BALANCE, slotName, josa, SLOT_IDS, PAY, PLAY, BONUS_KINDS, ballOpen, auctionClosed, stickerNext, chainBoost, buildingOf, cheerCount, STARTER_DEFAULT, starterList, EQUIP_MAX, OWNED_MAX, shopItem } from './balance.js';
+import { nextBallUntil } from './live.js';
 import { CHEER_PHRASES, EVENT_NAMES, allowedLink, blockedText, parseGuestHandover, statsFromCounts } from './plaza-account.js';
 import { renderCardPng } from './cardpng.js';
 import { WISH, WISH_ERR, cleanWish, cleanNick, wishFault, wishNickFault, ipNet, rankWishes, prizeFor, boardMix, wishShareText, wishDay as kstDay } from './wish.js';
@@ -130,7 +130,7 @@ export async function resolveActor(env, token) {
 }
 const FLUSH_N = 20, FLUSH_MS = 30000;
 const TRIBE_FLUSH_N = 20; // Room flushTribeScores: add_tribe_score fetches per pass
-const MINE_GAP = 2000, MINE_CAP = 15, GAP_EARLY = 400;
+const MINE_GAP = 2000, GAP_EARLY = 400;
 const AD_PAY = 15, AD_DAY = 5; // link visit: once per account per board per KST day, AD_DAY boards a day
 const MOVE_N = 8, MOVE_MS = 30000; // room moves per account: 8 in a row (a full queue bumps through square-2..8), then one per 30 s
 const RELAY = ['take', 'react', 'jump'], RELAY_N = 30, RELAY_MS = 10000; // client broadcasts the game uses, numbers only; 30 per 10 s per socket
@@ -429,15 +429,6 @@ export class Meter extends DurableObject {
     for (const r of q.exec('select day, j from daily where day >= ? and day < ? order by day desc', dayShift(today, 1 - n), today).toArray()) out.push({ day: String(r.day), ...JSON.parse(r.j) });
     for (const d of out) { d.ret = {}; for (const off of EV_RET) d.ret[off] = dayShift(d.day, off) < today ? Number(q.exec('select n from ret where d0 = ? and off = ?', d.day, off).toArray()[0]?.n) || 0 : null; }
     return out; }
-  draw(bucket) {
-    this.ctx.storage.sql.exec('create table if not exists lot(bucket integer primary key, win integer)');
-    const hit = this.ctx.storage.sql.exec('select win from lot where bucket = ?', bucket).toArray()[0];
-    if (hit) return Number(hit.win);
-    const win = (crypto.getRandomValues(new Uint8Array(1))[0] % 15) + 1;
-    this.ctx.storage.sql.exec('insert into lot(bucket, win) values(?, ?) on conflict(bucket) do nothing', bucket, win);
-    const row = this.ctx.storage.sql.exec('select win from lot where bucket = ?', bucket).one();
-    return Number(row.win);
-  }
   touch(week, uid) {
     this.ctx.storage.sql.exec('create table if not exists touch(week text, uid text, primary key(week, uid))');
     this.ctx.storage.sql.exec('insert or ignore into touch(week, uid) values(?, ?)', String(week || ''), String(uid || '').slice(0, 80));
@@ -492,17 +483,14 @@ export class Meter extends DurableObject {
   lrOwed(uid, h) { return this.lrRow(uid, h).n; }
   lrTake(uid, h) { const { q, id, n, gone } = this.lrRow(uid, h); if (n > 0 || gone) q.exec('update lrw set n = 0 where u = ?', id); return n; }
   lrGive(uid, n) { return this.lrOwe(uid, n); }
-  // Leases (instance 'acct', see sendHold / linkHold), each running out by itself. shl: one coin send (or pledge) at a time per account, -> its
-  // `until`, the token sellDone needs, or false while a send or a link of that account is under way. lkl: account links that are moving coins;
-  // several may run at once (n), -> the lease's `at`, the token linkDone needs, or false while a send of that account is under way.
-  // h / iat (optional): the account's withdrawal marks and its token's iat; both answer 'gone' for a token issued before a withdrawal (goneSince).
-  shInit() { if (this.shOk) return; this.shOk = 1; const q = this.ctx.storage.sql; q.exec('create table if not exists shl(uid text primary key, until integer not null)'); q.exec('create table if not exists lkl(uid text primary key, until integer not null, n integer not null, at integer not null)'); }
-  shNow(uid) { this.shInit(); const q = this.ctx.storage.sql, now = Date.now(), id = String(uid || '').slice(0, 80); q.exec('delete from shl where until <= ?', now); q.exec('delete from lkl where until <= ?', now);
-    return { q, now, id, send: id ? q.exec('select until from shl where uid = ?', id).toArray()[0] : null, link: id ? q.exec('select until, n, at from lkl where uid = ?', id).toArray()[0] : null }; }
-  sellTake(uid, ms, h, iat) { const { q, now, id, send, link } = this.shNow(uid); if (!id || send || link) return false; if (this.goneSince(h, iat)) return 'gone';
-    const until = now + Math.min(60000, Math.max(1000, Math.floor(Number(ms)) || 0)); q.exec('insert into shl(uid, until) values(?, ?)', id, until); return until; }
-  sellDone(uid, until) { this.shInit(); this.ctx.storage.sql.exec('delete from shl where uid = ? and until = ?', String(uid || '').slice(0, 80), Math.floor(Number(until)) || 0); return true; }
-  linkTake(uid, ms, h, iat) { const { q, now, id, send, link } = this.shNow(uid); if (!id || send) return false; if (this.goneSince(h, iat)) return 'gone'; const until = now + Math.min(60000, Math.max(1000, Math.floor(Number(ms)) || 0));
+  // Leases (instance 'acct', see linkHold), each running out by itself. lkl: account links that are moving coins; several may run at once (n),
+  // -> the lease's `at`, the token linkDone needs. h / iat (optional): the account's withdrawal marks and its token's iat; both answer 'gone' for
+  // a token issued before a withdrawal (goneSince). The coin-send lease (table shl) went with the sends themselves: points are not
+  // transferable (worker.js NO_SEND); a table left from before is never read.
+  shInit() { if (this.shOk) return; this.shOk = 1; this.ctx.storage.sql.exec('create table if not exists lkl(uid text primary key, until integer not null, n integer not null, at integer not null)'); }
+  shNow(uid) { this.shInit(); const q = this.ctx.storage.sql, now = Date.now(), id = String(uid || '').slice(0, 80); q.exec('delete from lkl where until <= ?', now);
+    return { q, now, id, link: id ? q.exec('select until, n, at from lkl where uid = ?', id).toArray()[0] : null }; }
+  linkTake(uid, ms, h, iat) { const { q, now, id, link } = this.shNow(uid); if (!id) return false; if (this.goneSince(h, iat)) return 'gone'; const until = now + Math.min(60000, Math.max(1000, Math.floor(Number(ms)) || 0));
     if (link) { q.exec('update lkl set n = n + 1, until = max(until, ?) where uid = ?', until, id); return Number(link.at); }
     q.exec('insert into lkl(uid, until, n, at) values(?, ?, 1, ?)', id, until, now); return now; }
   linkDone(uid, at) { this.shInit(); const q = this.ctx.storage.sql, id = String(uid || '').slice(0, 80); q.exec('update lkl set n = n - 1 where uid = ? and at = ?', id, Math.floor(Number(at)) || 0); q.exec('delete from lkl where uid = ? and n <= 0', id); return true; }
@@ -886,7 +874,6 @@ export class Room extends DurableObject {
     if (u.pathname === '/wish') return this.httpWish(req);
     if (u.pathname === '/stk') return this.httpSticker(req);
     if (u.pathname === '/chr') return this.httpCheer(req);
-    if (u.pathname === '/fever') return this.httpFever(req);
     const topic = u.searchParams.get('topic') || '', k = req.headers.get('x-uid') || ''; if (topic) this.topicName = topic; if (!k) return new Response('auth', { status: 401 });
     // Budget hard: the page is told 'down' (it waits for the reset, net.js hardDown) instead of a 503 it would retry every 30 s. The level is the
     // last report's; one from an earlier UTC day is stale (the day budget has reset), so this connect goes in and the next report sets it again.
@@ -911,7 +898,7 @@ export class Room extends DurableObject {
     if (!this.fban) this.fban = new Map(); if (this.fban.size >= 500) this.fban.clear(); this.fban.set(a.k, now + FLOOD_BAN);
     try { w.close(4008, 'flood'); } catch { } this.gone(w); return true; }
   admit(w, a) { a.q = true; a.fl = 0; if (a.m) a.m.fl = 0; this.save(w, a); const st = {}; for (const b of this.socks().values()) if (b.q && b.m) { b.fl = 0; b.m.fl = 0; st[b.k] = b.m; }
-    const o = { t: 'ok', s: st, cap: a.lob ? 0 : CAP, live: this.adm(), lean: this.lvl >= 1 }; if (a.prof) { o.av = a.prof.av; o.equip = a.prof.equip; } try { const fg = this.gateAt('fg|' + a.k), fv = this.gateAt('fv|' + a.k), rv = this.gateAt('rev|' + a.k); if (fg) o.fg = fg; if (fv > Date.now()) o.fv = fv; if (rv > Date.now()) o.rv = rv; const lot = agGet(this.ctx.storage.sql, a.k, 'lot:' + Math.floor(Date.now() / 300000), ''); if (lot >= 1 && lot <= 15) o.lot = lot; } catch { /* the gauge follows the next fare */ } const ghosts = this.ghostJoin(); if (a.v2 && this.hist) o.h = ghosts.length ? this.hist.concat(ghosts) : this.hist; else if (ghosts.length) o.h = ghosts; if (this.airShow && this.airShow.until > Date.now()) o.air = this.airShow; o.stk = this.stkAll(); o.chr = this.chrAll(); o.ball = this.ballFrame(); this.tx(w, o); }
+    const o = { t: 'ok', s: st, cap: a.lob ? 0 : CAP, live: this.adm(), lean: this.lvl >= 1 }; if (a.prof) { o.av = a.prof.av; o.equip = a.prof.equip; } const ghosts = this.ghostJoin(); if (a.v2 && this.hist) o.h = ghosts.length ? this.hist.concat(ghosts) : this.hist; else if (ghosts.length) o.h = ghosts; if (this.airShow && this.airShow.until > Date.now()) o.air = this.airShow; o.stk = this.stkAll(); o.chr = this.chrAll(); o.ball = this.ballFrame(); this.tx(w, o); }
   waitMsgs() { const ws = this.waiters(), live = this.adm(); ws.forEach(([w], i) => this.tx(w, { t: 'wait', pos: i + 1, live, cap: CAP })); }
   promote() { let n = this.adm(); for (const [w, a] of this.waiters()) { if (n >= CAP) break; this.admit(w, a); n++; } this.waitMsgs(); }
   // One room per account (see Meter 'acct'). Returns the cooldown floor for this account's sockets here: 0, or the time it last moved in from another room,
@@ -956,12 +943,12 @@ export class Room extends DurableObject {
     if (next !== prev) agSet(q, 'room', 'ball', day, next);
   }
   // An empty room (or one the stale scan empties) reports once, at the end (settle), with everything the alarm did; a room with sockets as before.
-  async alarm() { this.alarmAt = Date.now(); this.tapDb(); this.conns++; /* the alarm is a billed request too */ this.scan(true); if (this.socks().size) this.meter(true); await this.drawDue(); if (this.tapN && Date.now() - (this.tapAt || 0) >= FLUSH_MS - 1000) await this.flush(); if (this.adDirty && Date.now() - (this.adFlushAt || 0) > 30000) await this.flushAds(); if (!this.tapN && Date.now() - (this.ibAt || 0) > 30000 && this.ibWait()) await this.flushInbox(); try { await this.flushTribeScores(); } catch { /* scores retry on the next alarm */ }
+  async alarm() { this.alarmAt = Date.now(); this.tapDb(); this.conns++; /* the alarm is a billed request too */ this.scan(true); if (this.socks().size) this.meter(true); if (this.tapN && Date.now() - (this.tapAt || 0) >= FLUSH_MS - 1000) await this.flush(); if (this.adDirty && Date.now() - (this.adFlushAt || 0) > 30000) await this.flushAds(); if (!this.tapN && Date.now() - (this.ibAt || 0) > 30000 && this.ibWait()) await this.flushInbox(); try { await this.flushTribeScores(); } catch { /* scores retry on the next alarm */ }
     if (this.socks().size) { try { this.noteBall(); } catch { /* the next scan retries the ball */ } }
     if (this.waiters().length || this.tapN) await this.ctx.storage.setAlarm(Date.now() + (this.waiters().length ? SCAN : FLUSH_MS)); else if (this.socks().size) await this.ctx.storage.setAlarm(Date.now() + IDLE_SCAN);
     this.alarmAt = 0; this.settle(); } // what the alarm did after its report rides on a socket, or goes out now from an empty room
-  // Bungeo-ppang coins: 2s per actor, ≤15 per mine, summed in DO SQLite (survives hibernation) with tapN in memory.
-  // alarm()/arm() still key off tapN: flush on FLUSH_N accepted mines or the FLUSH_MS alarm.
+  // Pending 응원 포인트 (the code says coins): summed per account in DO SQLite `coin` (survives hibernation) with tapN in memory.
+  // alarm()/arm() still key off tapN: flush on FLUSH_N accepted grants or the FLUSH_MS alarm.
   tapDb() { if (this._tdb) return; const q = this.ctx.storage.sql;
     q.exec("create table if not exists coin(uid text primary key, nick text, delta integer not null, n integer not null, at integer not null, reason text not null default 'mine')");
     try { q.exec("alter table coin add column reason text not null default 'mine'"); } catch { /* column already exists */ }
@@ -984,21 +971,6 @@ export class Room extends DurableObject {
     const rows = old.map(k => [k.slice(0, -6), 'hello', '', 1]); for (const r of rows) agPut(q, ...r);
     try { this.acct().gatePut(rows).then(() => { for (const k of old) q.exec('delete from gate where k = ?', k); }).catch(() => { }); } catch { } }
   syncPending() { const q = this.ctx.storage.sql; this.tapN = Number(q.exec('select coalesce(sum(n),0) s from coin').one().s) || 0; const age = q.exec('select min(at) a from coin').one().a; if (age) this.tapAt = Number(age); }
-  addMine(a, amount, nick) { if (!a?.k || this.lvl >= 2) return 0; this.tapDb(); const now = Date.now();
-    if (amount !== 1) return 0;
-    if (now - (a.sf || 0) < MINE_GAP) return -1; // just moved in from another room: the gap counts from the move
-    const q = this.ctx.storage.sql;
-    // sidewalk coins: 12 per 2s, then the server table. Client amounts other than 1 are refused. -1 = wait, 0 = no pay.
-    const key = a.k + '#c';
-    const prev = q.exec('select at from rate where uid = ?', key).toArray()[0];
-    const raw = prev ? Number(prev.at) : 0;
-    let start = Math.floor(raw / 100), n = raw % 100;
-    if (!start || now - start >= 2000) { start = now; n = 0; }
-    if (n >= 12) return -1;
-    q.exec('insert into rate(uid, at) values(?, ?) on conflict(uid) do update set at = excluded.at', key, start * 100 + n + 1);
-    const gained = this.repeatPay(a, 1, nick, 'mine', 0, 30);
-    if (gained > 0 && Math.random() < 0.02) { q.exec('delete from rate where at < ?', now - 86400000); q.exec("delete from gate where at > 1e12 and at < ? and k not like '%|hello'", now - 86400000); q.exec("delete from ag where d <> '' and d < ?", dayShift(kstDay(now), -2)); }
-    return gained > 0 ? gained : 0; }
   credit(a, amount, nick, cap, kind) { if (!a?.k || this.lvl >= 2) return false; this.tapDb(); const now = Date.now();
     const creditN = Math.min(cap, Math.floor(Number(amount))); if (!Number.isInteger(creditN) || creditN < 1) return false;
     const q = this.ctx.storage.sql; const key = a.k + '|' + kind;
@@ -1010,48 +982,55 @@ export class Room extends DurableObject {
   // FLUSH_N pending grants settle at once. After a failed settle (Supabase down, a key mismatch) the next try is the alarm's, FLUSH_MS later: a retry on
   // every grant re-sent every pending row each time (one coin_batch and a delete plus a re-insert per pending account per grant).
   flushSoon() { if (this.tapN >= FLUSH_N && Date.now() - (this.flushBad || 0) >= FLUSH_MS) this.flush(); else this.arm(); }
-  // Repeat income uses the server table. attend, mission and hello do not take fever.
-  // Daily gates stay attend: [30, 0, 1], mission: [15, 0, 3]. Pouch keeps pouch: [30, 25000] as its cap and gap.
+  // What a client may still claim over BONUS (balance.js BONUS_KINDS): attendance, missions (3 a day, 15 each), the first visit (guests),
+  // the share photo (once a day) and 관람. A kind that used to pay for play (stunt, hive, star, pouch, sent by a page loaded before the
+  // non-game change) is answered amount 0, why 'off': nothing is paid and nothing is counted.
   bonus(w, a, kind, amount, nick) {
-    if (kind === 'draw' || kind === 'quest') return false;
-    const fixed = { attend: [30, 0, 1], mission: [15, 0, 3], hello: [PAY.hello, -1], pouch: [30, 25000] };
-    if (!a?.k || this.lvl >= 2) return false;
+    if (!a?.k) return false;
+    if (!BONUS_KINDS.includes(kind)) { if (kind) this.tx(w, { t: 'PAY', kind: kind.slice(0, 12), amount: 0, why: 'off' }); return false; }
+    if (this.lvl >= 2) return false;
     this.tapDb();
     const now = Date.now(), q = this.ctx.storage.sql;
     if (kind === 'attend') return this.attendPay(w, a, nick, now, q);
-    if (kind === 'mission' || kind === 'hello' || kind === 'shot') {
-      const day = kind === 'hello' ? '' : kstDay(now);
-      const spec = kind === 'shot' ? [5, 0, 1] : fixed[kind];
-      const n = agGet(q, a.k, kind, day);
-      if (n >= (spec[2] || 1)) return false;
-      // An account is not a new visitor: its arrival coins came with its first guest. Its hello is recorded (the free first board waits for it,
-      // hasHello) and answered with 0, so the client stops asking; nothing is paid. An anonymous sign-in (a.an) is a guest and is paid.
-      if (kind === 'hello' && String(a.k).startsWith('user:') && !a.an) { agPut(q, a.k, kind, day, n + 1); this.tx(w, { t: 'PAY', kind, amount: 0 }); return true; }
-      const paid = this.grantFinal(a, spec[0], nick, kind, 'bonus');
-      if (paid < 1) return false;
-      agPut(q, a.k, kind, day, n + 1);
-      this.tx(w, { t: 'PAY', kind, amount: paid });
-      return true;
-    }
-    const row = { lounge: PAY.lounge, stunt: PAY.stunt, hive: PAY.hive, star: PAY.star, pouch: PAY.pouch }[kind];
-    if (!row) return false;
-    if (kind === 'pouch' && agGet(q, a.k, 'pouch', kstDay(now)) >= PAY.pouch.perDay) { this.tx(w, { t: 'PAY', kind: 'pouch', amount: 0, why: 'pouchday' }); return false; }
-    const gap = kind === 'pouch' ? fixed.pouch[1] : (row.gapMs || 0);
-    if (gap > 0) {
-      const key = a.k + '|' + kind;
-      if (now - Math.max(this.gateAt(key), a.sf || 0) < gap - GAP_EARLY) { this.tx(w, { t: 'PAY', kind, amount: 0, why: 'soon' }); return false; }
-      this.gateSet(key, now);
-    }
-    const playAdd = { lounge: 10, star: 10, stunt: 15, hive: 15, pouch: 25 }[kind] || 0;
-    const eachCap = kind === 'pouch' ? fixed.pouch[0] : 0;
-    const paid = this.repeatPay(a, row.base, nick, kind, playAdd, row.perHour || 0, eachCap);
-    if (paid > 0 && kind === 'pouch') agPut(q, a.k, 'pouch', kstDay(now), agGet(q, a.k, 'pouch', kstDay(now)) + 1);
-    if (paid > 0 && kind === 'stunt') agPut(q, a.k, 'qs', kstDay(now), agGet(q, a.k, 'qs', kstDay(now)) + 1);
-    if (paid > 0) this.tx(w, { t: 'PAY', kind, amount: paid });
-    else this.tx(w, { t: 'PAY', kind, amount: 0, why: 'cap' });
-    return paid > 0;
+    if (kind === 'lounge') return this.lounge(w, a, nick, now, q);
+    const day = kind === 'hello' ? '' : kstDay(now);
+    const spec = { mission: [PAY.mission, 3], hello: [PAY.hello, 1], shot: [BALANCE.shareShot, 1] }[kind];
+    const n = agGet(q, a.k, kind, day);
+    if (n >= spec[1]) return false;
+    // An account is not a new visitor: its arrival coins came with its first guest. Its hello is recorded (the free first board waits for it,
+    // hasHello) and answered with 0, so the client stops asking; nothing is paid. An anonymous sign-in (a.an) is a guest and is paid.
+    if (kind === 'hello' && String(a.k).startsWith('user:') && !a.an) { agPut(q, a.k, kind, day, n + 1); this.tx(w, { t: 'PAY', kind, amount: 0 }); return true; }
+    const paid = this.grantFinal(a, spec[0], nick, kind, 'bonus');
+    if (paid < 1) return false;
+    agPut(q, a.k, kind, day, n + 1);
+    this.tx(w, { t: 'PAY', kind, amount: paid });
+    return true;
   }
-  // touch_attend owns the ladder. A failed RPC does not spend today's ag count, and fever does not multiply the amount.
+  // 관람: PAY.lounge.base per gapMs (counted from the last pay or the move into this room), at most perHour a clock hour and perDay a KST day.
+  // Refused: 'soon' (too early), 'cap' (this hour's), 'full' (today's points are used up; the page stops asking for this visit).
+  lounge(w, a, nick, now, q) {
+    const spec = PAY.lounge, key = a.k + '|lounge';
+    if (now - Math.max(this.gateAt(key), a.sf || 0) < spec.gapMs - GAP_EARLY) { this.tx(w, { t: 'PAY', kind: 'lounge', amount: 0, why: 'soon' }); return false; }
+    const hb = String(Math.floor(now / 3600000)), hn = agGet(q, a.k, 'hr:lounge', hb);
+    if (hn >= spec.perHour) { this.tx(w, { t: 'PAY', kind: 'lounge', amount: 0, why: 'cap' }); return false; }
+    const paid = this.dayPay(a, 'lounge', spec.base, spec.perDay, nick, now);
+    if (paid < 1) { this.tx(w, { t: 'PAY', kind: 'lounge', amount: 0, why: 'full' }); return false; }
+    this.gateSet(key, now);
+    agPut(q, a.k, 'hr:lounge', hb, hn + 1);
+    this.tx(w, { t: 'PAY', kind: 'lounge', amount: paid });
+    return true;
+  }
+  // One flat pay of `base` while today's count of `kind` (ag 'dp:<kind>') is under perDay. -> the amount paid, or 0.
+  dayPay(a, kind, base, perDay, nick, now = Date.now()) {
+    if (!a?.k || this.lvl >= 2) return 0;
+    this.tapDb();
+    const q = this.ctx.storage.sql, day = kstDay(now), k = 'dp:' + kind, n = agGet(q, a.k, k, day);
+    if (n >= perDay) return 0;
+    const paid = this.grantFinal(a, base, nick, kind, 'mine');
+    if (paid > 0) agPut(q, a.k, k, day, n + 1);
+    return paid;
+  }
+  // touch_attend owns the ladder. A failed RPC does not spend today's ag count.
   async attendPay(w, a, nick, now, q) {
     const day = kstDay(now);
     const n = agGet(q, a.k, 'attend', day);
@@ -1065,138 +1044,72 @@ export class Room extends DurableObject {
     } catch { return false; }
     if (!data || data.ok !== true) return false;
     const amount = Math.floor(Number(data.amount));
-    if (!Number.isInteger(amount) || amount < 1 || amount > 30) return false;
+    if (!Number.isInteger(amount) || amount < 1 || amount > PAY.attend) return false;
     agPut(q, a.k, 'attend', day, n + 1);
     const paid = this.grantFinal(a, amount, nick, 'attend', 'bonus');
     if (paid > 0) this.tx(w, { t: 'PAY', kind: 'attend', amount: paid, key: String(data.streak ?? '') });
     return paid > 0;
   }
-  payState(a) {
-    const q = this.ctx.storage.sql, now = Date.now(), day = kstDay(now);
-    let start = agGet(q, a.k, 'eht', ''), sum = agGet(q, a.k, 'ehs', '');
-    if (!start || now / 1000 - start >= 3600) { start = Math.floor(now / 1000); sum = 0; agSet(q, a.k, 'eht', '', start); agSet(q, a.k, 'ehs', '', 0); }
-    return { playSeconds: agGet(q, a.k, 'play', day), earnedInWindow: sum, fever: this.feverScale(a.k) > 1, ball: ballOpen(now), windowStart: start };
-  }
-  notePlay(a, add, amount) {
-    const q = this.ctx.storage.sql, day = kstDay();
-    if (add) agPut(q, a.k, 'play', day, agGet(q, a.k, 'play', day) + add);
-    agSet(q, a.k, 'ehs', '', agGet(q, a.k, 'ehs', '') + amount);
-  }
+  // Every grant goes into `coin` here. Now and then (2%) it also drops rate rows and gates a day old and ag rows two KST days old.
   grantFinal(a, amount, nick, kind, reason = 'mine') {
     if (amount < 1) return 0;
     const now = Date.now(), name = clip(nick, 16), q = this.ctx.storage.sql;
     if (!this.tapN) this.tapAt = now;
     q.exec('insert into coin(uid, nick, delta, n, at, reason) values(?, ?, ?, 1, ?, ?) on conflict(uid) do update set delta = delta + excluded.delta, n = n + excluded.n, nick = excluded.nick, at = min(coin.at, excluded.at), reason = excluded.reason', a.k, name, amount, now, reason || 'mine');
     this.tapN++;
+    if (Math.random() < 0.02) { q.exec('delete from rate where at < ?', now - 86400000); q.exec("delete from gate where at > 1e12 and at < ? and k not like '%|hello'", now - 86400000); q.exec("delete from ag where d <> '' and d < ?", dayShift(kstDay(now), -2)); }
     this.flushSoon();
     return amount;
-  }
-  repeatPay(a, base, nick, kind, playAdd, perHour, eachCap = 0) {
-    if (!a?.k || this.lvl >= 2) return 0;
-    this.tapDb();
-    const q = this.ctx.storage.sql, now = Date.now(), bucket = String(Math.floor(now / 3600000));
-    const used = agGet(q, a.k, 'hr:' + kind, bucket);
-    if (perHour && used >= perHour) return 0;
-    const state = this.payState(a);
-    let amount = scaledPay(base, state);
-    if (eachCap) amount = Math.min(eachCap, amount);
-    if (amount < 1) return 0;
-    agPut(q, a.k, 'hr:' + kind, bucket, used + 1);
-    this.notePlay(a, playAdd, amount);
-    return this.grantFinal(a, amount, nick, kind, 'mine');
   }
   metersOf(a) {
     const x = (Number(a.m?.x) - 1500) / 20, z = (Number(a.m?.y) - 1500) / 20;
     return { x, z };
   }
-  near(a, point, radius) {
-    const p = this.metersOf(a);
-    return Math.hypot(p.x - point.x, p.z - point.z) <= radius;
-  }
+  // 붕어빵 and the dance pay nothing now. A page loaded before the change still opens a session: it gets an id it can end, and the end is
+  // answered amount 0, why 'off' (that page then closes the round quietly). Nothing is stored.
   sess(w, a, m) {
-    this.tapDb();
-    const q = this.ctx.storage.sql;
-    if (m.op === 'start' && (m.kind === 'bake' || m.kind === 'dance')) {
-      const hx = Number(m.a?.[0]), hy = Number(m.a?.[1]);
-      if (Number.isFinite(hx) && Number.isFinite(hy) && Math.abs(hx) < 100000 && Math.abs(hy) < 100000) a.m = Object.assign(a.m || {}, { x: Math.round(hx), y: Math.round(hy) });
-      const point = m.kind === 'bake' ? PAY.stall : PAY.stage;
-      const radius = m.kind === 'bake' ? PAY.bake.nearM : PAY.dance.nearM;
-      if (!this.near(a, point, radius)) { this.tx(w, { t: 'SESS', ok: false, why: 'place' }); return; }
-      const id = crypto.randomUUID();
-      const p = this.metersOf(a);
-      q.exec('insert into sess(id, uid, kind, t0, x, z) values(?, ?, ?, ?, ?, ?)', id, a.k, m.kind, Date.now(), Math.round(p.x), Math.round(p.z));
-      this.tx(w, { t: 'SESS', id, ok: true });
-      return;
-    }
-    if (m.op !== 'end' || typeof m.id !== 'string') { this.tx(w, { t: 'SESS', ok: false }); return; }
-    const row = q.exec('select id, uid, kind, t0 from sess where id = ?', m.id).toArray()[0];
-    q.exec('delete from sess where id = ?', String(m.id || ''));
-    if (!row || row.uid !== a.k) { this.tx(w, { t: 'SESS', ok: false }); return; }
-    const dt = Date.now() - Number(row.t0);
-    const spec = row.kind === 'bake' ? PAY.bake : PAY.dance;
-    if (dt < spec.minS * 1000 - GAP_EARLY || dt > spec.maxS * 1000) { this.tx(w, { t: 'SESS', ok: false, why: 'time' }); return; }
-    const base = row.kind === 'bake' ? bakeBase(m.result) : danceBase(m.result);
-    const amount = this.repeatPay(a, base, '', row.kind, row.kind === 'bake' ? 8 : 25, spec.perHour);
-    if (amount > 0) this.tx(w, { t: 'PAY', kind: row.kind, amount });
-    else this.tx(w, { t: 'SESS', ok: false, why: 'cap' });
+    if (m.op === 'start') { this.tx(w, { t: 'SESS', id: 'off', ok: true }); return; }
+    this.tx(w, { t: 'PAY', kind: m.kind === 'dance' ? 'dance' : 'bake', amount: 0, why: 'off' });
   }
   pick(a) {
     this.tapDb();
-    const q = this.ctx.storage.sql, now = Date.now(), p = this.metersOf(a);
+    const q = this.ctx.storage.sql, now = Date.now(), p = this.metersOf(a), P = PLAY.pick;
     const prevAt = agGet(q, a.k, 'pickAt', ''), prevX = agGet(q, a.k, 'pickX', ''), prevZ = agGet(q, a.k, 'pickZ', ''), n = agGet(q, a.k, 'pickN', '');
-    if (n >= PAY.fare.pickMax) return;
-    if (prevAt && now - prevAt < PAY.fare.pickGapMs - GAP_EARLY) return;
-    if (prevAt && Math.hypot(p.x - prevX, p.z - prevZ) < PAY.fare.pickMoveM) return;
+    if (n >= P.max) return;
+    if (prevAt && now - prevAt < P.gapMs - GAP_EARLY) return;
+    if (prevAt && Math.hypot(p.x - prevX, p.z - prevZ) < P.moveM) return;
     agSet(q, a.k, 'pickAt', '', now); agSet(q, a.k, 'pickX', '', Math.round(p.x)); agSet(q, a.k, 'pickZ', '', Math.round(p.z)); agSet(q, a.k, 'pickN', '', n + 1);
   }
+  // A taxi drop-off in front of a board: no fare (taxi rides pay nothing), only the board's report counts it (bumpAd views), when a passenger was
+  // picked up since the last drop and the last counted drop is PLAY.drop.gapMs old. Nothing is sent back: the page says 하차 완료 by itself. A
+  // page loaded before the change waits for a fare PAY that never comes; it only misses its 하차 완료 line.
   fare(w, a, m) {
-    if (!AD_SLOT.test(String(m.slot || ''))) { this.tx(w, { t: 'PAY', kind: 'fare', amount: 0, why: 'place' }); return; }
+    if (!AD_SLOT.test(String(m.slot || ''))) return;
     this.tapDb();
     const q = this.ctx.storage.sql, now = Date.now(), n = agGet(q, a.k, 'pickN', '');
-    if (n < 1) { this.tx(w, { t: 'PAY', kind: 'fare', amount: 0, why: 'nopick' }); return; }
-    if (now - agGet(q, a.k, 'fareAt', '') < PAY.fare.gapMs - GAP_EARLY) { this.tx(w, { t: 'PAY', kind: 'fare', amount: 0, why: 'soon' }); return; }
-    const riders = n;
-    agSet(q, a.k, 'pickN', '', 0); agSet(q, a.k, 'fareAt', '', now);
-    const hb = String(Math.floor(now / 3600000)), hn = agGet(q, a.k, 'hr:fare', hb); // PAY.fare.perHour paid fares per clock hour, the repeatPay bucket
-    if (hn >= PAY.fare.perHour) { this.tx(w, { t: 'PAY', kind: 'fare', amount: 0, why: 'cap' }); return; }
-    const state = this.payState(a);
-    state.revenge = this.fareMult(a.k) > 1;
-    const amount = farePay(riders, state);
-    if (amount < 1) { this.tx(w, { t: 'PAY', kind: 'fare', amount: 0, why: 'cap' }); return; }
-    agPut(q, a.k, 'hr:fare', hb, hn + 1);
-    this.notePlay(a, 40, amount);
-    this.grantFinal(a, amount, '', 'fare', 'fare');
-    const gauge = this.bumpFeverCount(a.k);
+    if (n < 1) return;
+    agSet(q, a.k, 'pickN', '', 0);
+    if (now - agGet(q, a.k, 'fareAt', '') < PLAY.drop.gapMs - GAP_EARLY) return;
+    agSet(q, a.k, 'fareAt', '', now);
     this.bumpAd(m.slot, 'views', a.k);
-    const day = kstDay(now);
-    agPut(q, a.k, 'qf', day, agGet(q, a.k, 'qf', day) + 1);
-    const bucket = Math.floor(now / 300000);
-    let ticket = agGet(q, a.k, 'lot:' + bucket, '');
-    if (!ticket) {
-      ticket = (crypto.getRandomValues(new Uint8Array(1))[0] % 15) + 1;
-      agPut(q, a.k, 'lot:' + bucket, '', ticket);
-    }
-    this.tx(w, { t: 'PAY', kind: 'fare', amount, gauge, lot: ticket });
   }
+  // 오늘의 전광판 응원: three cheers that landed today (ag 'qc', counted in cheer) pay PAY.quest.cheer once a KST day. The taxi and ring quests
+  // are gone (play pays nothing); their keys are ignored.
   quest(w, a, m) {
-    const key = m.key;
-    if (key !== 'fare' && key !== 'cheer' && key !== 'stunt') return;
+    if (m.key !== 'cheer') return;
     this.tapDb();
-    const q = this.ctx.storage.sql, day = kstDay(), map = { fare: ['qf', 3, PAY.quest.fare], cheer: ['qc', 3, PAY.quest.cheer], stunt: ['qs', 2, PAY.quest.stunt] };
-    const [agk, need, prize] = map[key];
-    if (agGet(q, a.k, agk + 'd', day)) return;
-    if (agGet(q, a.k, agk, day) < need) return;
-    agPut(q, a.k, agk + 'd', day, 1);
-    this.grantFinal(a, prize, '', 'quest', 'bonus');
-    this.tx(w, { t: 'PAY', kind: 'quest', amount: prize, key });
-    if (['qf', 'qc', 'qs'].every((k) => agGet(q, a.k, k + 'd', day)) && !agGet(q, a.k, 'qall', day)) {
-      agPut(q, a.k, 'qall', day, 1);
-      this.grantFinal(a, PAY.quest.all, '', 'quest', 'bonus');
-      this.tx(w, { t: 'PAY', kind: 'quest', amount: PAY.quest.all, key: 'all' });
-    }
+    const q = this.ctx.storage.sql, day = kstDay();
+    if (agGet(q, a.k, 'qcd', day)) return;
+    if (agGet(q, a.k, 'qc', day) < 3) return;
+    agPut(q, a.k, 'qcd', day, 1);
+    this.grantFinal(a, PAY.quest.cheer, '', 'quest', 'bonus');
+    this.tx(w, { t: 'PAY', kind: 'quest', amount: PAY.quest.cheer, key: 'cheer' });
   }
   // The holder comes from boardsFor (this room's own rows, a fresh isolate copy, or one read), never from an unchecked world copy.
-  // Holder unknown (the read failed): 'wait'. No holder, own board or not lit: 'dark'. Budget hard: 'wait' before any read.
+  // Holder unknown (the read failed): 'wait'. No holder, own board or not lit: 'dark'. Budget hard: 'wait' before any read. More than
+  // PAY.cheer.perHour cheers this clock hour: 'cap' (the cheer is refused). A cheer that lands pays PAY.cheer.base (BALANCE.cheerGroup for a
+  // building one side holds whole) while today's PAY.cheer.perDay paid cheers are not used up; after that it still lands (inbox, count, tribe
+  // score, the quest) and is answered amount 0, why 'full'.
   async cheer(w, a, m) {
     const p = Math.floor(Number(m.p));
     const slot = String(m.slot || '');
@@ -1211,13 +1124,14 @@ export class Room extends DurableObject {
     if (!board.holder_id || board.holder_id === a.k || !(until > now)) { this.tx(w, { t: 'PAY', kind: 'cheer', amount: 0, why: 'dark' }); return; }
     this.tapDb();
     if (soon()) { this.tx(w, { t: 'PAY', kind: 'cheer', amount: 0, why: 'soon' }); return; } // again: another cheer may have landed during the read
+    const q = this.ctx.storage.sql, day = kstDay(now), hb = String(Math.floor(now / 3600000)), hn = agGet(q, a.k, 'hr:cheer', hb);
+    if (hn >= PAY.cheer.perHour) { this.tx(w, { t: 'PAY', kind: 'cheer', amount: 0, why: 'cap' }); return; }
     this.gateSet(a.k + '|cheer:' + slot, now);
+    agPut(q, a.k, 'hr:cheer', hb, hn + 1);
     const base = chainBoost([...boards.values()], slot, now) ? BALANCE.cheerGroup : PAY.cheer.base;
-    const amount = this.repeatPay(a, base, '', 'cheer', 12, PAY.cheer.perHour);
-    if (amount < 1) { this.tx(w, { t: 'PAY', kind: 'cheer', amount: 0, why: 'cap' }); return; }
-    const q = this.ctx.storage.sql, day = kstDay();
+    const amount = this.dayPay(a, 'cheer', base, PAY.cheer.perDay, '', now);
     agPut(q, a.k, 'qc', day, agGet(q, a.k, 'qc', day) + 1);
-    this.tx(w, { t: 'PAY', kind: 'cheer', amount });
+    this.tx(w, amount > 0 ? { t: 'PAY', kind: 'cheer', amount } : { t: 'PAY', kind: 'cheer', amount: 0, why: 'full' });
     this.adTally(slot, 'h', a.k);
     this.shareCheer(slot, p);
     const holder = String(board.holder_id);
@@ -1337,98 +1251,9 @@ export class Room extends DurableObject {
       } catch { /* the day's points stay until the next flush */ }
     }
   }
-  async drawDue() {
-    try {
-      const bucket = Math.floor(Date.now() / 300000);
-      const closed = drawSpan(this.gateAt('lotSeen'), bucket);
-      if (!closed.length) return;
-      const lotto = this.env.METER?.get?.(this.env.METER.idFromName('lotto'));
-      if (!lotto?.draw) return;
-      for (const b of closed) {
-        this.conns++; // a DO call, counted toward the daily budget
-        const win = await lotto.draw(b);
-        this.drawWin = { b, win };
-        const who = new Set();
-        for (const [w, a] of this.socks()) {
-          if (!a?.q || who.has(a.k)) continue;
-          who.add(a.k);
-          this.payDraw(w, a, b, win);
-        }
-        this.rememberDraw(b, win);
-      }
-      this.gateSet('lotSeen', bucket);
-    } catch { /* the raffle must not stop the alarm */ }
-  }
-  payDraw(w, a, bucket, win) {
-    if (!a?.k) return;
-    this.tapDb();
-    const q = this.ctx.storage.sql, paid = 'lotd:' + bucket;
-    if (agGet(q, a.k, paid, '')) return;
-    const ticket = agGet(q, a.k, 'lot:' + bucket, '');
-    agPut(q, a.k, paid, '', 1);
-    if (ticket < 1) return;
-    const hit = ticket >= 1 && ticket === Number(win);
-    const amount = hit ? PAY.lottery.hit : 0;
-    if (amount > 0) this.grantFinal(a, amount, '', 'lottery', 'lottery');
-    if (w) this.tx(w, { t: 'DRAW', bucket, win: Number(win), hit, amount, lot: ticket });
-  }
-  // The last bucket's number is asked of 'lotto' (and recorded in Supabase) once per bucket per room instance, not once per DRAW_CHECK: a bucket's
-  // number never changes once drawn, and every socket of a full room asks on each connect.
-  async drawCheck(w, a) {
-    const bucket = Math.floor(Date.now() / 300000) - 1;
-    let win = this.drawWin?.b === bucket ? this.drawWin.win : 0;
-    if (!win) {
-      try {
-        const lotto = this.env.METER.get(this.env.METER.idFromName('lotto'));
-        if (!lotto?.draw) return;
-        this.conns++; // a DO call, counted toward the daily budget
-        win = await lotto.draw(bucket);
-      } catch { return; }
-      if (!win) return;
-      this.drawWin = { b: bucket, win };
-      this.rememberDraw(bucket, win);
-    }
-    this.payDraw(w, a, bucket, win);
-  }
-  rememberDraw(bucket, win) {
-    const key = this.env?.FLUSH_KEY;
-    if (typeof key !== 'string' || !key || key === 'flush-test-key') return;
-    const job = supabaseRpc('record_lottery_draw', { p_key: key, p_bucket: Number(bucket), p_winning: Number(win) }).catch(() => {});
-    try { this.ctx.waitUntil?.(job); } catch { /* Meter is the authority */ }
-  }
   hasHello(uid) { this.tapDb(); return agGet(this.ctx.storage.sql, String(uid || ''), 'hello', '') >= 1; }
   gateAt(key) { this.tapDb(); const row = this.ctx.storage.sql.exec('select at from gate where k = ?', key).toArray()[0]; return row ? Number(row.at) : 0; }
   gateSet(key, at) { this.tapDb(); this.ctx.storage.sql.exec('insert into gate(k, at) values(?, ?) on conflict(k) do update set at = excluded.at', key, at); }
-  fareMult(uid) { return this.gateAt('rev|' + uid) > Date.now() ? 2 : 1; }
-  feverScale(uid) { return this.gateAt('fv|' + uid) > Date.now() ? 2 : 1; }
-  trainMult(uid, riders) {
-    const table = [1, 2.2, 3.8, 6, 10];
-    const n = Math.min(5, Math.max(1, Math.floor(Number(riders)) || 1));
-    return table[n - 1] * this.fareMult(uid) * this.feverScale(uid);
-  }
-  bumpFeverCount(uid) {
-    if (this.gateAt('fv|' + uid) > Date.now()) return this.gateAt('fg|' + uid);
-    const next = Math.min(20, (this.gateAt('fg|' + uid) || 0) + 1);
-    this.gateSet('fg|' + uid, next);
-    return next;
-  }
-  startFever(uid) {
-    const until = this.gateAt('fv|' + uid);
-    if (until > Date.now()) return until;
-    if ((this.gateAt('fg|' + uid) || 0) < 20) return 0;
-    const next = Date.now() + 60000;
-    this.gateSet('fv|' + uid, next);
-    this.gateSet('fg|' + uid, 0);
-    return next;
-  }
-  markDisp(uid) { if (uid) this.gateSet('disp|' + String(uid).slice(0, 80), Date.now()); }
-  startRevenge(uid) {
-    const at = this.gateAt('disp|' + uid);
-    if (!at || Date.now() - at > 10 * 60 * 1000) return 0;
-    const until = Date.now() + 120000;
-    this.gateSet('rev|' + uid, until);
-    return until;
-  }
   bumpAd(slot, kind, by) { if (!AD_SLOT.test(String(slot || ''))) return; this.tapDb(); const q = this.ctx.storage.sql;
     q.exec('insert into adstat(slot, views, clicks, dirty) values(?, 0, 0, 0) on conflict(slot) do nothing', slot);
     if (kind === 'clicks') q.exec('update adstat set clicks = clicks + 1, dirty = 1 where slot = ?', slot);
@@ -1455,7 +1280,7 @@ export class Room extends DurableObject {
   // Link visit pays once per account per board per KST day, AD_DAY boards a day.
   adClick(w, a, nick, slot) { if (!a?.k || !AD_SLOT.test(slot)) return false; this.tapDb(); const q = this.ctx.storage.sql, day = kstDay(), n = agGet(q, a.k, 'adn', day);
     if (n >= AD_DAY || agGet(q, a.k, 'ad:' + slot, day)) { if (w) this.tx(w, { t: 'PAY', kind: 'click', amount: 0, why: 'day', key: slot }); return false; }
-    const pay = AD_PAY * this.feverScale(a.k); if (!this.credit(a, pay, nick, pay, 'click')) return false;
+    const pay = AD_PAY; if (!this.credit(a, pay, nick, pay, 'click')) return false;
     agPut(q, a.k, 'adn', day, n + 1); agPut(q, a.k, 'ad:' + slot, day, 1); this.bumpAd(slot, 'clicks', a.k);
     if (w) this.tx(w, { t: 'PAY', kind: 'click', amount: pay });
     return true; }
@@ -1501,7 +1326,7 @@ export class Room extends DurableObject {
     } catch (e) {
       for (const row of kept) q.exec('insert into coin(uid, nick, delta, n, at, reason) values(?, ?, ?, ?, ?, ?) on conflict(uid) do update set delta = delta + excluded.delta, n = n + excluded.n, nick = excluded.nick, at = min(coin.at, excluded.at), reason = excluded.reason', row.uid, row.nick, row.delta, row.n, row.at, row.reason || 'mine');
       this.syncPending(); this.flushErr = String(e).slice(0, 80); this.flushBad = Date.now(); try { this.arm(); } catch { }
-      return { ok: false, error: '미정산 코인을 반영하지 못했습니다. 잠시 후 다시 시도해 주세요.', pending: true };
+      return { ok: false, error: '아직 정산되지 않은 포인트를 반영하지 못했어요. 잠시 뒤 다시 해 주세요.', pending: true };
     } }
   // inbox_batch writes the queued rows (ibq, oldest first, IBQ_N per call) and trims each account to 50. Sent rows leave ibq; a failure or a missing RPC
   // keeps them for the next flush. Rows older than IBQ_DAYS or past the newest IBQ_MAX are dropped first. One send at a time.
@@ -1527,7 +1352,7 @@ export class Room extends DurableObject {
   async httpFlush(req) { const uid = String(req.headers.get('x-uid') || ''); if (!uid) return J({ ok: false, error: 'auth' }, 401);
     try { this.tapDb(); const row = this.ctx.storage.sql.exec('select delta from coin where uid = ?', uid).toArray()[0]; if (!row?.delta) return J({ ok: true, pending: 0, flushed: 0 });
       const r = await this.flush(uid); return J(r.ok ? { ok: true, pending: 0, flushed: r.flushed || 0 } : r, r.ok ? 200 : 409);
-    } catch { return J({ ok: false, error: '미정산 코인을 반영하지 못했습니다. 잠시 후 다시 시도해 주세요.', pending: true }, 409); } }
+    } catch { return J({ ok: false, error: '아직 정산되지 않은 포인트를 반영하지 못했어요. 잠시 뒤 다시 해 주세요.', pending: true }, 409); } }
   // Clients no longer poll /rt/world or /rt/wallet while connected, so this push carries everything a claim changes: the row, the top-20 ranks,
   // and a WALLET_SYNC for third parties whose balance moved (m.sync). A message without kind tells clients to refetch the world (bulk change).
   async httpWorld(req) { let m = null; try { m = await req.json(); } catch { return J({ err: 'json' }, 400); }
@@ -1538,7 +1363,6 @@ export class Room extends DurableObject {
     for (const id of Array.isArray(m.sync) ? m.sync : []) this.walletSync(String(id));
     const take = m.take;
     if (take && take.victim) {
-      this.markDisp(take.victim);
       this.bc({ t: 'TAKE', victim: String(take.victim).slice(0, 80), attacker: clip(take.attacker, 16), slot: String(take.slot || '').slice(0, 16), name: clip(take.name, 24), price: Math.floor(Number(take.price) || 0), line1: clip(take.line1, 16), line2: clip(take.line2, 16), line3: clip(take.line3, 16), emoji: clip(take.emoji, 4), theme: clip(take.theme, 32), color: clip(take.color, 9) });
       const note = { t: 'INBOX', kind: 'taken', slot_id: String(take.slot || '').slice(0, 16), from_name: clip(take.attacker, 12) };
       for (const [sock, peer] of this.socks()) if (peer.q && peer.k === String(take.victim)) this.tx(sock, note);
@@ -1602,7 +1426,6 @@ export class Room extends DurableObject {
       for (const name of names) if (name !== mine && name !== names[0]) send(name, { op: 'set', slot, n, p: phrase });
     });
   }
-  httpFever(req) { const uid = String(req.headers.get('x-uid') || '').slice(0, 80); if (!uid) return J({ err: 'auth' }, 401); return J({ ok: true, gauge: this.bumpFeverCount(uid) }); }
   async loadProf(uid) { // every connect: one registry call (two when it has to fill the copy), counted toward the daily budget like the seat calls
     try {
       this.conns++;
@@ -1665,7 +1488,9 @@ export class Room extends DurableObject {
     if (this.flood(w, a, a.ls)) return;
     let m; try { m = JSON.parse(msg); } catch { return; }
     if (m.t === 'p' && a.q && Array.isArray(m.a) && m.a.length <= 8) this.relayPos(w, a, posOf(m.a));
-    else if (m.t === 'MINE' && a.q) { const gained = this.addMine(a, m.amount, m.nick); this.tx(w, gained > 0 ? { t: 'PAY', kind: 'mine', amount: gained } : { t: 'PAY', kind: 'mine', amount: 0, why: gained < 0 ? 'soon' : 'cap' }); }
+    // Ground coins, the 5-minute draw (DRAW_CHECK), the fever (FEVER) and the revenge fare (REV) are gone. A page loaded before that change may
+    // still send them: MINE is answered amount 0, why 'off' (that page puts its coin back quietly); the other three get no answer.
+    else if (m.t === 'MINE' && a.q) this.tx(w, { t: 'PAY', kind: 'mine', amount: 0, why: 'off' });
     else if (m.t === 'BONUS' && a.q) await this.bonus(w, a, String(m.kind || ''), m.amount, m.nick);
     else if (m.t === 'SESS' && a.q) this.sess(w, a, m);
     else if (m.t === 'PICK' && a.q) this.pick(a);
@@ -1673,9 +1498,6 @@ export class Room extends DurableObject {
     else if (m.t === 'QUEST' && a.q) this.quest(w, a, m);
     else if (m.t === 'CHEER' && a.q) await this.cheer(w, a, m);
     else if (m.t === 'REPLY' && a.q) await this.replyCheer(w, a, m);
-    else if (m.t === 'DRAW_CHECK' && a.q) await this.drawCheck(w, a);
-    else if (m.t === 'FEVER' && a.q) { this.tx(w, { t: 'FEVER', until: this.startFever(a.k) }); }
-    else if (m.t === 'REV' && a.q) { const until = this.startRevenge(a.k); this.tx(w, { t: 'REV', until: until || 0 }); }
     else if (m.t === 'ADCLICK' && a.q) this.adClick(w, a, m.nick, String(m.slot || ''));
     else if (m.t === 'E' && a.q) { const e = m.e; if (Number.isInteger(e) && e >= 1 && e <= 4 && burst(a, 'xe', RELAY_N)) { this.bc({ t: 'E', k: a.k, e }, w); this.pushEv({ t: 'E', k: a.k, e }); } }
     else if (m.t === 'b' && a.q) { const e = String(m.e || ''), p = m.p && typeof m.p === 'object' ? m.p : {}, now = Date.now();
@@ -1757,8 +1579,8 @@ function pushText(row) {
   if (row?.kind === 'tribe') return '이번 주 소속 결과가 나왔어요';
   if (row?.kind === 'ball') return '21시 볼 드랍이 곧 시작돼요';
   if (row?.kind === 'wish') { const n = Math.floor(Number(row.n)) || 0; return n <= 1 ? '내 소원에 첫 하트가 왔어요' : `내 소원이 하트 ${n}개를 받았어요`; }
-  if (row?.kind === 'wishwin') return `어제 소원이 ${Math.max(1, Math.floor(Number(row.rank)) || 1)}위였어요. +${Math.max(0, Math.floor(Number(row.prize)) || 0)}코인이 들어왔어요`;
-  if (row?.kind === 'invite') return `초대한 친구가 소원을 걸었어요. +${Math.max(0, Math.floor(Number(row.amount)) || 0)}코인이 들어왔어요`;
+  if (row?.kind === 'wishwin') return `어제 소원이 ${Math.max(1, Math.floor(Number(row.rank)) || 1)}위였어요. +${Math.max(0, Math.floor(Number(row.prize)) || 0)} 응원 포인트가 들어왔어요`;
+  if (row?.kind === 'invite') return `초대한 친구가 소원을 걸었어요. +${Math.max(0, Math.floor(Number(row.amount)) || 0)} 응원 포인트가 들어왔어요`;
   if (row?.kind === 'giftopen') return /^\(광고\) /.test(String(row.text || '')) ? clip(row.text, 90) : ''; // 선물 전광판 "열리면 알림": advertising, labelled (giftsrv.js)
   return '';
 }
@@ -1929,7 +1751,7 @@ async function profileApi(req, env, u, ctx) {
 const fnMissing = (r) => !!r && !r.ok && (r.status === 404 || /PGRST202|Could not find the function/i.test(JSON.stringify(r.data ?? '')));
 const SHOP_KIND_RE = /^(hat|cab|frame|tag|ring|emote)$/;
 const SHOP_SOON = '꾸미기 상점은 곧 열려요.';
-const SHOP_ERR = { owned: '이미 가진 꾸미기예요.', coins: '코인이 부족해요.', item: '지금은 팔지 않는 꾸미기예요.', price: '가격이 바뀌었어요. 다시 확인해 주세요.', down: '지금은 살 수 없어요. 잠시 뒤에 다시 해 주세요.' };
+const SHOP_ERR = { owned: '이미 가진 꾸미기예요.', coins: '응원 포인트가 부족해요.', item: '지금은 팔지 않는 꾸미기예요.', price: '가격이 바뀌었어요. 다시 확인해 주세요.', down: '지금은 살 수 없어요. 잠시 뒤에 다시 해 주세요.' };
 let SHOP_C = { at: 0, ttl: 0, open: false, items: [], p: null };
 const COSM_MOVED = new Map(); // guest id -> when this isolate last asked move_cosmetics for it (the link route)
 const shopClosed = () => { SHOP_C = { at: Date.now(), ttl: 120000, open: false, items: [], p: null }; };
@@ -1985,7 +1807,7 @@ async function shopApi(req, env, ctx, u) {
   }
   if (d.ok === false) {
     const code = SHOP_ERR[d.error] ? String(d.error) : 'down';
-    const need = code === 'coins' && Number(d.price) > 0 ? ` ${Number(d.price).toLocaleString('en-US')}코인이 필요해요.` : '';
+    const need = code === 'coins' && Number(d.price) > 0 ? ` ${Number(d.price).toLocaleString('en-US')}포인트가 필요해요.` : '';
     return J({ ok: false, code, error: SHOP_ERR[code] + need }, code === 'down' ? 502 : 400);
   }
   try { await publishProfile(env, actor.id); } catch { /* the next entry reads the database */ }
@@ -2020,6 +1842,13 @@ import { SLOT_RE, soonError } from './balance.js'; // the claimable ids (81), ke
 const AD_SLOT = SLOT_RE;
 const REPORT_REASONS = ['abuse', 'ad', 'impersonation', 'other'];
 function clip(s, n) { return Array.from(String(s ?? '').replace(/[\u0000-\u001f]/g, '')).slice(0, n).join(''); }
+// The database still words some refusals in coins, one of them as a promise that play pays (claim_billboard: '코인이 부족합니다. 붕어빵을 더
+// 구워보세요!'). A player reads 응원 포인트 and is never told to play for them, so a database line on its way to a player passes through here
+// (no migration: the functions stay as they are).
+function pointWords(s) {
+  return String(s ?? '').replace(/코인이 부족합니다\.?\s*붕어빵을 더 구워보세요!?/g, '응원 포인트가 부족해요.')
+    .replace(/코인이/g, '포인트가').replace(/코인을/g, '포인트를').replace(/코인은/g, '포인트는').replace(/코인과/g, '포인트와').replace(/코인으로/g, '포인트로').replace(/코인/g, '포인트');
+}
 function playerErr(code, fallback) {
   const map = {
     holder: '이 칸의 주인만 할 수 있어요. 다른 계정으로 점령했다면 그 계정으로 들어오세요.',
@@ -2035,7 +1864,7 @@ function playerErr(code, fallback) {
     login: '탈퇴한 계정이에요. 다시 로그인해 주세요.', // GONE_ERR: the database made no wallet (a withdrawn account's token)
   };
   const text = String(code || '');
-  return map[text] || text || fallback;
+  return pointWords(map[text] || text || fallback);
 }
 function tokenOf(req) { const a = req.headers.get('authorization') || ''; return a.startsWith('Bearer ') ? a.slice(7).trim() : ''; }
 function hexColor(s, d) { const t = String(s || '').trim(); return /^#[0-9a-fA-F]{3,8}$/.test(t) ? t : d; }
@@ -2254,7 +2083,7 @@ export function starterSlots(env) {
 async function settle(env, topic, actorId) {
   const res = await env.ROOM.get(env.ROOM.idFromName(topic)).fetch(new Request('https://room.internal/flush', { method: 'POST', headers: { 'x-uid': actorId } }));
   let data = {}; try { data = await res.json(); } catch { data = { ok: false }; }
-  if (!res.ok || data.ok === false) return { ok: false, error: data.error || '미정산 코인을 반영하지 못했습니다. 잠시 후 다시 시도해 주세요.', pending: true };
+  if (!res.ok || data.ok === false) return { ok: false, error: data.error || '아직 정산되지 않은 포인트를 반영하지 못했어요. 잠시 뒤 다시 해 주세요.', pending: true };
   return { ok: true, pending: data.pending || 0, flushed: data.flushed || 0 };
 }
 // Share bonus: accounts only (owner decision 2026-11-22, "로그인했을 때만"). A guest or an anonymous sign-in (guestLike) is refused first, before
@@ -2266,7 +2095,7 @@ async function settle(env, topic, actorId) {
 // Turnstile on (humanSite): the share bonus and a code need a fresh human check (humanGate, actions 'bonus' and 'code'), after the checks that
 // cost nothing and before the record is asked. /rt/link-reward pays the link reward holdReward kept back, once, with a check of its own ('link').
 const PROMO = new Map(), PROMO_BUSY = '지금은 광장이 붐벼요. 잠시 뒤에 다시 해 주세요.';
-const SHARE_ACCOUNT = '계정을 연결하면 공유 보너스 300코인을 받을 수 있어요.'; // not exported: workerd takes every named export of the main module as an entrypoint and refuses to start on a string
+const SHARE_ACCOUNT = '계정을 연결하면 공유 보너스 300포인트를 받을 수 있어요.'; // not exported: workerd takes every named export of the main module as an entrypoint and refuses to start on a string
 async function promo(req, env, u) {
   if (req.method !== 'POST') return J({ err: 'post' }, 405);
   const actor = await resolveActor(env, tokenOf(req));
@@ -2284,7 +2113,7 @@ async function promo(req, env, u) {
     const rpc = await supabaseRpc('grant_coins', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_amount: n }).catch(() => ({ ok: false, data: {} }));
     const data = rpc.data || {};
     if (!rpc.ok || data.ok === false) { try { await acct(env).lrGive(actor.id, n); } catch { console.warn('link reward: not paid and not kept', n); }
-      return J({ ok: false, error: data.error || '코인을 넣지 못했습니다.' }, rpc.ok ? 400 : 502); }
+      return J({ ok: false, error: pointWords(data.error || '포인트를 넣지 못했어요.') }, rpc.ok ? 400 : 502); }
     return J({ ok: true, coins: data.coins, amount: n });
   }
   if (u.pathname === '/rt/share-bonus') {
@@ -2300,7 +2129,7 @@ async function promo(req, env, u) {
     const rpc = await supabaseRpc('grant_coins', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_amount: 300 }).catch(() => ({ ok: false, data: {} }));
     const data = rpc.data || {};
     if (!rpc.ok || data.ok === false) { try { await acct(env).promoGive(keys, day); } catch { /* today's bonus is lost for this account, never doubled */ }
-      return J({ ok: false, error: data.error || '코인을 넣지 못했습니다.' }, rpc.ok ? 400 : 502); }
+      return J({ ok: false, error: pointWords(data.error || '포인트를 넣지 못했어요.') }, rpc.ok ? 400 : 502); }
     PROMO.set(ak, 1); PROMO.set(ik, 1);
     return J({ ok: true, coins: data.coins, amount: 300 });
   }
@@ -2319,7 +2148,7 @@ async function promo(req, env, u) {
   const rpc = await supabaseRpc('grant_coins', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_amount: 10000 }).catch(() => ({ ok: false, data: {} }));
   const data = rpc.data || {};
   if (!rpc.ok || data.ok === false) { try { await acct(env).codeGive(ck); } catch { /* the code stays used for this account, never paid twice */ }
-    return J({ ok: false, error: data.error || '코인을 넣지 못했습니다.' }, rpc.ok ? 400 : 502); }
+    return J({ ok: false, error: pointWords(data.error || '포인트를 넣지 못했어요.') }, rpc.ok ? 400 : 502); }
   PROMO.set(key, 1);
   return J({ ok: true, coins: data.coins, amount: 10000 });
 }
@@ -2590,77 +2419,27 @@ function tribeSettle(env, ctx, now = Date.now()) {
   try { ctx?.waitUntil?.(job); } catch { /* the next request retries */ }
   return job;
 }
-// The send floor. The coins everybody is given (a wallet row starts with STARTER_COINS, and a first link pays its reward of 300) are not
-// transferable: sell_coins_to_advertiser and pledge_tribe only refuse an amount larger than the balance (row lock, coins >= 0), so before this a
-// new guest, or a brand-new account, could hand its gift coins to a board holder or a tribe. A guest (any actor that is not a signed-in account,
-// and an anonymous sign-in) sends and pledges nothing at all; the refusal says that linking an account opens it. A signed-in account keeps
-// SEND_FLOOR: the most gift coins one account can hold, so a fresh ID account has nothing to hand on. 580 = its own row's starting 100 (a row a
-// profile read, a species save or a room flush made before the first link; since migrations/2026-11-22-coins.sql such a row starts at 0) + the
-// hello 40 a room paid to the account id itself (rooms no longer pay it to user: ids) + its first guest's 100 + that guest's hello 40 + the link
-// reward 300. One number in both database states, so the rule stays simple. The Worker reads the settled balance and refuses an amount that would
-// leave less. The floor guards sends and pledges only: a guest's (or an account's) gift coins still reach somebody else through claim_billboard,
-// whose bid pays half to the plot landlord. That path is left as it is.
-// Read and spend are two steps, so one account spends through here one at a time: SENDING within this isolate (an entry older than SEND_HOLD is
-// dead) and a lease in the 'acct' instance across isolates. The balance is read once before the lease, so a refusal costs no Durable Object call,
-// and once more under it. The lease call also refuses a token issued before the account withdrew (goneSince). Closed when it cannot be checked:
-// at daily budget level hard (no 'acct' call) and when the lease call fails, a send waits ("잠시 뒤에 다시") instead of going through unguarded.
-// LINKING / linkHold: a link that is about to move coins holds the account's sends until its take-back is done (see takeBack), and is itself
-// refused while a send is under way. Several links of one account may run together.
-const SENDING = new Map(), LINKING = new Map(), SEND_HOLD = 15000, SEND_BUSY = '앞선 코인 보내기가 끝난 뒤에 다시 해 주세요.';
-const SEND_FLOOR = 580; // 2 x ARRIVAL (STARTER_COINS 100 + PAY.hello 40: the account's own row and its first guest) + LINK_REWARD 300 (declared further down)
-const COIN_HARD = '지금은 광장이 붐벼요. 잠시 뒤에 다시 해 주세요.', GONE_ERR = '탈퇴한 계정이에요. 다시 로그인해 주세요.';
-const SEND_TEXT = { guest: '손님은 코인을 보낼 수 없어요. 계정을 연결하면 보낼 수 있어요.', floor: '선물로 받은 코인 580개까지는 보낼 수 없어요. 그보다 더 모은 만큼만 보낼 수 있어요.', down: '판매를 처리하지 못했습니다.' };
-const PLEDGE_TEXT = { guest: '손님은 모금할 수 없어요. 계정을 연결하면 모금할 수 있어요.', floor: '선물로 받은 코인 580개까지는 모금할 수 없어요. 그보다 더 모은 만큼만 모금할 수 있어요.', down: '모금하지 못했어요.' };
+// 응원 포인트 are not transferable (docs/non-game-plan-2026-11-22.md 4-3: points are never sold, never sent to someone else, never turned into
+// cash or prizes). `광고주에게 코인 보내기` (/rt/sell-coins, sell_coins_to_advertiser) and 소속 모금 (/rt/tribe/pledge, pledge_tribe) are closed: both
+// answer 410 with code 'off' before any token check, Durable Object call or database call. Balances stay where they are; the database functions
+// stay in place, unused. A tribe's coins pledged before this still pay for its tribe claims, and what is left of last week's pledges still goes
+// back to the people who pledged it (tribeSettle, refund_tribe_week).
+const NO_SEND = { ok: false, code: 'off', error: '응원 포인트는 다른 사람에게 보낼 수 없어요.' };
+const NO_POOL = { ok: false, code: 'off', error: '소속 모금은 닫혔어요. 응원 포인트는 모아서 보낼 수 없어요.' };
+// LINKING / linkHold: a link that is about to move coins takes a lease in the 'acct' instance until its take-back is done (see takeBack). Several
+// links of one account may run together.
+const LINKING = new Map(), SEND_HOLD = 15000;
+const GONE_ERR = '탈퇴한 계정이에요. 다시 로그인해 주세요.';
 const guestLike = (actor) => !String(actor?.id || '').startsWith('user:') || !!actor?.anon;
-const sendingHere = (uid, now = Date.now()) => { const t = SENDING.get(uid) || 0; return now >= t && now - t < SEND_HOLD; };
 const linkingHere = (uid, now = Date.now()) => { const l = LINKING.get(uid); return !!l && l.n > 0 && now >= l.at && now - l.at < SEND_HOLD; };
-// -> a release function; false while another send or a link of this account is on its way; 'gone' for a token issued before the account
-// withdrew; null when the lease could not be asked (the caller refuses: closed).
-async function sendHold(env, actor) {
-  const uid = actor.id, now = Date.now(); if (sendingHere(uid, now) || linkingHere(uid, now)) return false;
-  if (SENDING.size >= 5000) SENDING.clear(); SENDING.set(uid, now);
-  const drop = () => { if (SENDING.get(uid) === now) SENDING.delete(uid); };
-  let t; try { t = await acct(env).sellTake(uid, SEND_HOLD, await goneKeys(env, actor), actor.iat || 0); } catch { drop(); return null; }
-  if (t === false || t === 'gone') { drop(); return t; }
-  const lease = Number(t) || 0;
-  return async () => { drop(); if (lease) { try { await acct(env).sellDone(uid, lease); } catch { /* the lease runs out by itself */ } } };
-}
-// -> a release function, false while a send of this account is on its way, or 'gone' (see sendHold). Budget hard, or the call failing: this
-// isolate only (a link at hard reaches here only when the database guards it by itself, see accountApi).
+// -> a release function, false when the lease is refused, or 'gone' for a token issued before the account withdrew. Budget hard, or the call
+// failing: this isolate only (a link at hard reaches here only when the database guards it by itself, see accountApi).
 async function linkHold(env, actor) {
-  const uid = actor.id, now = Date.now(); if (sendingHere(uid, now)) return false;
+  const uid = actor.id, now = Date.now();
   if (LINKING.size >= 5000) LINKING.clear(); const old = LINKING.get(uid), me = linkingHere(uid, now) ? old : { n: 0, at: now }; me.n++; me.at = now; LINKING.set(uid, me); let lease = 0;
   const drop = () => { if (LINKING.get(uid) === me && --me.n <= 0) LINKING.delete(uid); };
   try { if (!(await budgetHard(env))) { const t = await acct(env).linkTake(uid, SEND_HOLD, await goneKeys(env, actor), actor.iat || 0); if (t === false || t === 'gone') { drop(); return t; } lease = Number(t) || 0; } } catch { lease = 0; }
   return async () => { drop(); if (lease) { try { await acct(env).linkDone(uid, lease); } catch { /* the lease runs out by itself */ } } };
-}
-// A wallet's settled coins: a number, 0 for no row (the 100 the wallet route shows for it is display only), null when it cannot be read.
-async function coinsOf(uid) {
-  try { const s = await fetch(SUPA + '/rest/v1/wallets?select=coins&actor_id=eq.' + encodeURIComponent(uid), { headers: { apikey: ANON, accept: 'application/json' } }); const rows = s.ok ? await s.json() : null;
-    if (!Array.isArray(rows)) return null; const n = rows.length ? Number(rows[0]?.coins) : 0; return Number.isFinite(n) ? n : null; } catch { return null; }
-}
-// What refuses a send or a pledge before anything else is asked (the routes call it before they settle the room's pending coins too): a guest,
-// and budget hard. -> the refusal as a Response, or null.
-async function floorGate(env, actor, text) {
-  if (guestLike(actor)) return J({ ok: false, code: 'starter', error: text.guest }, 400);
-  if (await budgetHard(env)) return J({ ok: false, code: 'busy', error: COIN_HARD }, 503);
-  return null;
-}
-// One send or pledge of `amount` through the floor: run() is the database call. text: the lines for this route (SEND_TEXT, PLEDGE_TEXT).
-// -> run()'s result, or the refusal as a Response: 400 starter (a guest, or under the floor), 429 busy (one at a time), 503 busy (budget hard,
-// or the lease could not be asked), 401 gone, 502 when the balance cannot be read.
-async function floored(env, actor, amount, text, run) {
-  const gate = await floorGate(env, actor, text); if (gate) return gate;
-  const busy = () => J({ ok: false, code: 'busy', error: SEND_BUSY }, 429);
-  const under = async () => { const have = await coinsOf(actor.id); return have === null ? J({ ok: false, error: text.down }, 502) : have - amount < SEND_FLOOR ? J({ ok: false, code: 'starter', error: text.floor }, 400) : null; };
-  if (sendingHere(actor.id) || linkingHere(actor.id)) return busy();
-  { const no = await under(); if (no) return no; } // refused before any Durable Object call
-  const free = await sendHold(env, actor);
-  if (free === false) return busy();
-  if (free === 'gone') return J({ ok: false, code: 'gone', error: GONE_ERR }, 401);
-  if (!free) return J({ ok: false, code: 'busy', error: COIN_HARD }, 503);
-  try { const no = await under(); if (no) return no; // the balance as it is while nothing else of this account can spend through here
-    return await run(); } finally { await free(); }
 }
 async function plaza(req, env, ctx, u) {
   if (u.pathname === '/rt/world') {
@@ -2683,6 +2462,7 @@ async function plaza(req, env, ctx, u) {
     if (!row) return J({ ok: true, actor_id: actor.id, nickname: '네온손님', coins: 100, vip_tickets: 0, linked: actor.id.startsWith('user:'), exists: false });
     const coins = Number(row.coins); return J({ ok: true, actor_id: row.actor_id, nickname: row.nickname, coins: Number.isFinite(coins) ? coins : 0, vip_tickets: Number(row.vip_tickets) || 0, linked: row.linked === true || actor.id.startsWith('user:'), exists: true });
   }
+  if (u.pathname === '/rt/sell-coins') return J(NO_SEND, 410); // closed: points are not transferable (NO_SEND), before any check or call
   if (req.method !== 'POST') return J({ err: 'post' }, 405);
   const actor = await resolveActor(env, tokenOf(req)); if (!actor) return J({ err: 'auth' }, 401);
   if (!(await actOk(env, 'plaza', actor.id))) return actNo(); // every write below asks the room to settle first: a loop of them is bounded per account
@@ -2692,7 +2472,6 @@ async function plaza(req, env, ctx, u) {
   // An edit with the same bid costs nothing, so edits (a raise of one's own bid too) are spaced per account before any Durable Object call; a claim or
   // takeover is never slowed. A refusal above this line does not count; one after settle does.
   if (u.pathname === '/rt/claim-billboard' && b.mode === 'edit' && gapHit('edit:' + actor.id)) return J({ ok: false, error: GAP_ERR }, 429);
-  if (u.pathname === '/rt/sell-coins') { const no = await floorGate(env, actor, SEND_TEXT); if (no) return no; } // a guest, or budget hard: before the room is asked
   const settled = await settle(env, topic, actor.id);
   if (!settled.ok) return J({ ok: false, error: settled.error, pending: true }, 409);
   const nick = clip(b.nickname || b.nick || '', 16) || '네온손님';
@@ -2727,7 +2506,7 @@ async function plaza(req, env, ctx, u) {
       const paidSt = spentSt.data || {};
       if (!spentSt.ok || paidSt.ok === false) {
         await pushSticker(env, topic, { op: 'pop', slot }).catch(() => {});
-        return J({ ok: false, error: paidSt.error || '코인을 쓰지 못했어요.' }, spentSt.ok ? 400 : 502);
+        return J({ ok: false, error: pointWords(paidSt.error || '포인트를 쓰지 못했어요.') }, spentSt.ok ? 400 : 502);
       }
       leagueAdd(env, ctx, actor.id, nick, 30);
       return J({ ok: true, kind: 'sticker', glyph, slot_id: slot, list: added.list || [], remaining_coins: paidSt.remaining_coins ?? null, vip_tickets: paidSt.vip_tickets ?? null });
@@ -2741,7 +2520,7 @@ async function plaza(req, env, ctx, u) {
     const spent = await supabaseRpc('spend_plaza', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_coins: coins, p_tickets: tickets });
     const paid = spent.data || {};
     const missing = /schema cache|Could not find the function/i.test(String(paid.message || paid.error || spent.data || ''));
-    if (!spent.ok || paid.ok === false) return J({ ok: false, error: paid.error || (missing ? '코인 사용이 아직 준비 중이에요.' : '코인을 쓰지 못했어요.') }, spent.ok ? 400 : 502);
+    if (!spent.ok || paid.ok === false) return J({ ok: false, error: pointWords(paid.error || (missing ? '포인트 사용이 아직 준비 중이에요.' : '포인트를 쓰지 못했어요.')) }, spent.ok ? 400 : 502);
     if (kind === 'air') {
       leagueAdd(env, ctx, actor.id, nick, coins);
       const until = Date.now() + 60000;
@@ -2755,25 +2534,7 @@ async function plaza(req, env, ctx, u) {
     return J({ ok: false, error: '그 금액은 쓸 수 없어요.' }, 400);
   }
   const claim = u.pathname === '/rt/claim-billboard';
-  const sell = u.pathname === '/rt/sell-coins';
   let rpc, mode = 'claim', sip = null;
-  if (sell) {
-    const slot = String(b.slot_id || '');
-    const amount = Math.floor(Number(b.amount));
-    if (!SLOT_RE.test(slot)) return J({ ok: false, error: '전광판 슬롯이 올바르지 않습니다.' }, 400);
-    if (![10, 20, 50].includes(amount)) return J({ ok: false, error: '10, 20, 50코인만 팔 수 있어요.' }, 400);
-    // A guest sends nothing; an account sends only what it holds above SEND_FLOOR (see floored), read after settle so coins a room still held are
-    // in the row, one send at a time and never while one of its links is moving coins (the same lease).
-    rpc = await floored(env, actor, amount, SEND_TEXT, () => supabaseRpc('sell_coins_to_advertiser', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_nickname: nick, p_slot_id: slot, p_amount: amount }));
-    if (rpc instanceof Response) return rpc;
-    const data = rpc.data || {};
-    // The function's own refusals (HTTP 200, ok:false) are lines written for the player. Anything else is a database or gateway message: logged, not shown.
-    if (!rpc.ok) { console.warn('sell_coins_to_advertiser', rpc.status, String(data.message || data.error || '').slice(0, 200)); return J({ ok: false, error: '판매를 처리하지 못했습니다.' }, 502); }
-    if (data.ok === false) return J({ ok: false, error: String(data.error || '') || '판매를 처리하지 못했습니다.' }, 400);
-    try { await env.ROOM.get(env.ROOM.idFromName(topic)).fetch(new Request('https://room.internal/sync', { method: 'POST', headers: { 'x-uid': actor.id } })); } catch { }
-    if (data.buyer_id) ctx.waitUntil(nudge(env, String(data.buyer_id))); // the board holder's balance rose too
-    return J({ ok: true, remaining_coins: data.remaining_coins ?? null, buyer_name: data.buyer_name || '', slot_id: slot, amount });
-  }
   if (claim) {
     const slot = String(b.slot_id || ''); if (!SLOT_RE.test(slot)) return J({ ok: false, error: '전광판 슬롯이 올바르지 않습니다.' }, 400);
     mode = ['claim', 'edit', 'starter', 'tribe'].includes(b.mode) ? b.mode : 'claim';
@@ -2813,7 +2574,7 @@ async function plaza(req, env, ctx, u) {
   }
   const data = rpc.data || {};
   // A board on the map whose row the database does not have yet (STREET_31..50 before migrations/2026-11-22-boards.sql): '곧 열려요'.
-  const claimErr = data.error === 'tribe' ? '소속에 들어간 뒤에 소속 코인으로 걸 수 있어요' : data.error === 'starter' ? '무료 칸은 계정당 한 번이고, 비어 있는 거리 칸만 돼요' : (claim && soonError(String(b.slot_id || ''), data.error)) || playerErr(data.error, data.message || '요청을 처리하지 못했습니다.');
+  const claimErr = data.error === 'tribe' ? '소속에 들어간 뒤에 소속 포인트로 걸 수 있어요' : data.error === 'starter' ? '무료 칸은 계정당 한 번이고, 비어 있는 거리 칸만 돼요' : (claim && soonError(String(b.slot_id || ''), data.error)) || playerErr(data.error, data.message || '요청을 처리하지 못했습니다.');
   if (!rpc.ok || data.ok === false) {
     if (sip) { try { await acct(env).sipGive(sip.h, sip.d); } catch { } }
     return J({ ok: false, error: claimErr }, rpc.ok ? 400 : 502);
@@ -2849,7 +2610,6 @@ async function plaza(req, env, ctx, u) {
   }
   let fresh = null; try { fresh = await invalidateWorld(env, ctx); } catch { }
   let broadcast = false;
-  let feverGauge = 0;
   try {
     const buyer = claim && mode === 'tribe' ? String(row.holder_id || actor.id) : actor.id;
     const take = claim && data.prev_holder_id && data.prev_holder_id !== buyer ? { victim: data.prev_holder_id, attacker: nick, slot: row.slot_id, name: slotName(row.slot_id), price: Number(data.reclaim_bid) || 0, line1: data.prev_line1, line2: data.prev_line2, line3: data.prev_line3, emoji: data.prev_emoji, theme: data.prev_theme, color: data.prev_color } : null;
@@ -2866,16 +2626,8 @@ async function plaza(req, env, ctx, u) {
       } catch { /* that room misses this row; its cheers read the board again after BRD_TTL */ }
     }
     await env.ROOM.get(env.ROOM.idFromName(topic)).fetch(new Request('https://room.internal/sync', { method: 'POST', headers: { 'x-uid': actor.id } }));
-    if (claim) {
-      try {
-        const fr = await env.ROOM.get(env.ROOM.idFromName(topic)).fetch(new Request('https://room.internal/fever', { method: 'POST', headers: { 'x-uid': actor.id } }));
-        const body = await fr.json();
-        const n = Math.floor(Number(body?.gauge));
-        if (Number.isInteger(n) && n > 0) feverGauge = n;
-      } catch { /* the gauge follows the next fare */ }
-    }
   } catch { broadcast = false; }
-  return J({ ok: true, kind, data: row, remaining_coins: data.remaining_coins ?? null, broadcast, ...(feverGauge ? { fever: feverGauge } : {}) });
+  return J({ ok: true, kind, data: row, remaining_coins: data.remaining_coins ?? null, broadcast });
 }
 // Photo billboards (operator-approved). The holder uploads a browser re-encoded JPEG (≤300 KB, EXIF already gone);
 // Supabase keeps the bytes in billboard_photos (no public read) and charges the tier fee in the same RPC.
@@ -2965,30 +2717,12 @@ function tribeId() {
   return s;
 }
 async function tribeApi(req, env, u, ctx) {
+  if (u.pathname === '/rt/tribe/pledge') return J(NO_POOL, 410); // closed: no pooling of points (NO_SEND), before any check or call
   if (req.method !== 'POST') return J({ err: 'post' }, 405);
   const actor = await resolveActor(env, tokenOf(req));
   if (!actor) return J({ err: 'auth' }, 401);
   const b = await readJson(req);
   if (!b) return J({ err: 'json' }, 400);
-  if (u.pathname === '/rt/tribe/pledge') {
-    const amount = Math.floor(Number(b.amount));
-    const slot = String(b.slot || '');
-    if (amount !== 10 && amount !== 20 && amount !== 50) return J({ ok: false, error: 'amount' }, 400);
-    if (!SLOT_RE.test(slot)) return J({ ok: false, error: 'slot' }, 400);
-    { const no = await floorGate(env, actor, PLEDGE_TEXT); if (no) return no; } // a guest, or budget hard: before the room is asked
-    if (PLAZA_TOPICS.includes(b.topic)) {
-      const settled = await settle(env, b.topic, actor.id);
-      if (!settled.ok) return J({ ok: false, error: settled.error, pending: true }, 409);
-    }
-    // A pledge moves coins to a tribe like a send moves them to a board holder: the same floor and the same hold (see floored).
-    const rpc = await floored(env, actor, amount, PLEDGE_TEXT, () => supabaseRpc('pledge_tribe', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_slot_id: slot, p_amount: amount, p_week: isoWeek() }));
-    if (rpc instanceof Response) return rpc;
-    const data = rpc.data || {};
-    if (!rpc.ok) { console.warn('pledge_tribe', rpc.status, String(data.message || data.error || '').slice(0, 200)); return J({ ok: false, error: '모금하지 못했어요.' }, 502); } // a database message is logged, not shown
-    const pledgeErr = data.error === 'tribe' ? '소속에 들어간 뒤에 모금할 수 있어요' : data.error === 'amount' ? '10, 20, 50코인만 모을 수 있어요' : data.error === 'week' ? '이번 주 모금을 열지 못했어요' : (String(data.error || '') || '모금하지 못했어요.');
-    if (data.ok === false) return J({ ok: false, error: pledgeErr }, 400);
-    return J({ ok: true, tribe_id: data.tribe_id, amount: data.amount });
-  }
   if (b.look) {
     await tribeSettle(env, ctx); // last week's refund (and Sunday night's roof) before the sheet reads the tribe's coins
     const rpc = await supabaseRpc('my_tribe', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id });
