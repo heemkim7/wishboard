@@ -625,7 +625,8 @@ describe('Google sign-in keeps the game tab', () => {
     assert.match(boot, /finishLink\(session, ARRIVED\.code\)/);
     assert.doesNotMatch(boot, /startOAuth|oauthUrl|signInWithOAuth|window\.open/);
     assert.match(boot, /if \(resume\) ui\.openLogin\?\.\(\{ resume: true \}\);/);
-    assert.match(boot, /if \(ARRIVED\.failed\) ui\.note\(oauthErrorText\(ARRIVED\), 'err'\);/);
+    // The confirmation link of an older sign-up mail says its own line instead (mailcode.js mailArrival).
+    assert.match(boot, /if \(ARRIVED\.failed && !mailSaid\) ui\.note\(oauthErrorText\(ARRIVED\), 'err'\);/);
     assert.match(boot, /cleanAddress\(location\.href\)/);
     assert.match(ui, /구글 로그인으로 이어서 연결합니다/);
     assert.match(ui, /resume \? '구글로 계속' : 'Google로 계속'/);
@@ -634,8 +635,10 @@ describe('Google sign-in keeps the game tab', () => {
     const login = between(ui, '  function openLogin(', '  function handoverMoved(');
     assert.match(login, /google\.disabled = !!loginView\.wait;/);
     assert.match(login, /'구글 창에서 계속하세요…'/);
-    // Every message of this sheet is inline; the one toast is for an id sign-in that failed after the player closed the sheet.
-    assert.equal((login.match(/\bnote\(/g) || []).length, 1); assert.match(login, /if \(sheet !== me\) note\(text, 'err'\);/);
+    // Every message of this sheet is inline. The toasts are for results that arrive after the player closed the sheet: an id sign-in that
+    // failed, and the code step (away(): a tap reopens the sheet on the code).
+    assert.equal((login.match(/\bnote\(/g) || []).length, 2); assert.match(login, /if \(sheet !== me\) note\(text, 'err'\);/);
+    assert.match(login, /const away = \(text, kind = 'err'\) => \{ if \(sheet !== me\) note\(text, kind, \(\) => openLogin\(\)\); \};/);
     assert.match(login, /h\('form', \{ class: 'login-form'/);
     assert.match(login, /autocomplete: 'username', autocapitalize: 'off'/);
     assert.match(login, /enterkeyhint: 'next'/);
