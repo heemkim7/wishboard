@@ -337,7 +337,7 @@ describe('the Worker: /rt/ads/*', { concurrency: false }, () => {
       assert.ok(html.includes(cells(start, 0, 2, 0, 2, 1, 0, 1)), 'guests only');
       assert.ok(html.includes(cells(end, 0, 1, 0, 1, 1, 0, 1)));
       for (const secret of ['owner@shop.co.kr', '꽃집 하루<', '010-1234-5678', 'guest:', id]) assert.equal(html.includes(secret), false, secret);
-      assert.equal((await H.get('/rt/ads/report/' + bk.tok.slice(0, 31) + '0')).status, 404);
+      assert.equal((await H.get('/rt/ads/report/' + bk.tok.slice(0, 31) + (bk.tok.endsWith('0') ? '1' : '0'))).status, 404); // a different last digit
       assert.equal((await H.get('/rt/ads/report/' + bk.id)).status, 404);
       assert.equal((await H.get('/rt/ads/report/../admin/ads')).status, 404);
       // cancel: off the plaza at once
