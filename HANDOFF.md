@@ -46,7 +46,7 @@
 | 중 | 광고 판매 켜기 | 사업자 등록·통신판매업, `OPERATOR_INFO`, `ADS_PRICES`, `ADS_ON=1`, 약관의 광고 조항 법무 검토. |
 | 중 | 외부 가동 감시 | `/rt/health`를 1~5분마다(`"db":"ok"` 키워드). |
 | 중 | 유료 코인 충전 | 하지 않았다. 하려면 체크리스트 C(등급분류, 사행성·추첨 정리, 청소년 결제, 환불, PG)를 먼저. |
-| 중 | 봇 막기: Turnstile 켜기 | 코드는 있다(배포 전, `docs/bot-protection.md`). Cloudflare 대시보드에서 위젯을 만들고 `npx wrangler secret put TURNSTILE_SECRET`, `npx wrangler secret put TURNSTILE_SITE`. 둘 다 넣어야 켜진다. 같이 정할 것: Supabase 가입 CAPTCHA(로그인 시트 코드 먼저), VIP 코드를 계정만 받게 할지, 사용자 도메인 + WAF 속도 제한. |
+| 중 | 봇 막기: 남은 결정 | **Turnstile은 2026-11-22 저녁에 켰다**(주인이 "니가 해줘"; Cloudflare 대시보드 Turnstile 위젯 `WISH BOARD`, Managed, 허용 주소 `studio.wishboard.workers.dev`·`localhost`; 키 두 개를 클립보드에서 바로 `wrangler secret put`). 실서비스에서 확인: 토큰 없는 새 손님 403 `human`, 브라우저에서 토큰이 화면 표시 없이 약 3초에 나오고 `/rt/guest`가 200. 끄기: `npx wrangler secret delete TURNSTILE_SECRET`. 이메일 인증은 SMTP가 없어 꺼 둔다(주인 결정). 남은 결정: VIP 코드를 계정만 받게 할지, 사용자 도메인 + WAF 규칙. |
 | 중 | 공유 보너스 | 주인 결정대로 계정만 받는다(코드, 배포 전). 하루 300, 하한 580에 들어가지 않아 새 계정이 첫날 300을 보낼 수 있다. |
 | 중 | 보내기 하한 580 | 너무 높은지(보내기는 '광고주에게 코인 보내기'와 소속 모금뿐). |
 | 하 | 카카오톡 공유 | **하지 않기로 함**(2026-11-22 저녁). 카카오디벨로퍼스 운영정책 제3조가 '게임 애플리케이션, 웹'을 이용 제한 카테고리로 둔다(앱 만들기 분류에도 게임이 없다). 앱을 만들지 않았다. 휴대폰의 `공유하기`(시스템 공유 창, `navigator.share`)로 카카오톡에 보낼 수 있고 미리보기는 `og:` 태그가 만든다. `KAKAO_JS_KEY` 코드는 그대로 두되 넣지 않는다. |
