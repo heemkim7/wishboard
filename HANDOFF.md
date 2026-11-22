@@ -7,7 +7,7 @@
 | 무엇 | 상태 |
 | --- | --- |
 | 실서비스 | https://studio.wishboard.workers.dev, Worker `studio` 버전 `256d7ee8-5737-4bf4-a839-8d56ad47d604`(2026-11-22 11:11 KST 배포, 4차 작업, 커밋 `9018ab5`, 빌드 id `202611221059`). 배포 뒤 공개 파일 122개가 커밋과 같았고 숨길 경로는 모두 404, `/rt/world` 81칸, 새 손님의 코인 보내기는 `손님은 코인을 보낼 수 없어요…`로 거절(새 서버 코드 확인). |
-| 로컬 브랜치 | `commercial-build`, 빌드 id `202611221059`. 4차 작업 커밋은 이 PC에만 있다(푸시 안 함). GitHub `heemkim7/wishboard`의 `commercial-build`는 3차 작업 끝(`aef1e9f`)까지다. `main`은 한참 뒤(`59d054a`)이고 합치지 않았다. |
+| Git | `commercial-build`, 빌드 id `202611221059`. GitHub `heemkim7/wishboard`에 푸시함(2026-11-22, `aef1e9f..38ab22d`, 주인이 "푸시해 줘"). `main`은 한참 뒤(`59d054a`)이고 합치지 않았다. |
 | 되돌리기 | `npx wrangler rollback b9c3aa62-1528-42f0-bb30-946ce052a782`(3차 작업 빌드). 운영 DB는 새 마이그레이션이 적용된 채로 남는데, 3차 Worker도 새 DB에서 동작한다(배포 전 몇 분 동안 실제로 그 조합으로 돌았고 `/rt/world`·`/rt/config`가 정상이었다. 새 칸 20개는 옛 코드가 무시한다). 되돌린 뒤 `/rt/config`에 `invite: true`가 있는지 본다. |
 | Worker 시크릿 | `ADMIN_KEY` `FLUSH_KEY` `GUEST_KEY` `INVITE_ON`(=1, 친구 초대 켬) `VAPID_PRIV`. 값은 `.dev.vars`에만 있다. |
 | 운영 DB 마이그레이션 | **모두 적용됨**(2026-11-22, 주인이 "SQL 실행 후 배포"): `2026-11-21-mid.sql` 1~4부, `2026-11-22-forget-login.sql`, `2026-11-22-species.sql`, `2026-11-22-boards.sql`, `2026-11-22-coins.sql` 1부. 결과 줄은 모두 `applied = true`, 뒤 확인 조회: 종 CHECK 1~10, 거리 칸 50, 바닥가 31번 150·50번 250·51번 0, 무료 첫 칸 20, `tribe_roofs` 있음, 코인 트리거 2개, 새 표(`gone_logins` `starter_taken` `tribe_roofs`) RLS 켬, 로그인 수 2 그대로. **안 함**: 코인 2부(옛 미확인 가입 확인 처리, 대상 1개, 주인 결정). |
@@ -33,7 +33,6 @@
 | 중 | 공유 보너스 | 하루 300, 손님도 받음. 하한 580에 들어가지 않아 새 계정이 첫날 300을 보낼 수 있다. 줄이거나 계정만 받게 할지. |
 | 중 | 보내기 하한 580 | 너무 높은지(보내기는 '광고주에게 코인 보내기'와 소속 모금뿐). |
 | 중 | 코인 마이그레이션 2부 | 이메일 확인이 켜져 있던 동안의 미확인 옛 가입 1개를 확인 처리할지. |
-| 중 | 푸시 | `git push origin commercial-build`. |
 | 하 | 카카오톡 공유 | 보류. 다시 하면 `KAKAO_JS_KEY`를 Worker 시크릿으로. |
 | 하 | `tools/acorn-ui.mjs` `paren-check.mjs` `snippet.js` | 11-20 밤에 생긴 `ui.js` 문법 검사용 임시 스크립트(추적 안 됨). 지울지. |
 
