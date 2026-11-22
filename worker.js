@@ -404,6 +404,18 @@ export class Meter extends DurableObject {
   codeTake(key) { this.codeInit(); const k = String(key || '').slice(0, 160); if (!k) return false; const q = this.ctx.storage.sql;
     if (q.exec('select 1 from vcu where k = ?', k).toArray()[0]) return false; q.exec('insert into vcu(k, at) values(?, ?)', k, Date.now()); return true; }
   codeGive(key) { this.codeInit(); this.ctx.storage.sql.exec('delete from vcu where k = ?', String(key || '').slice(0, 160)); return true; }
+  // Held link rewards (instance 'acct', bot protection, worker.js holdReward): coins the database paid with a link while Turnstile was on, taken
+  // back until the account claims them with a human check. lrw: account id -> n coins waiting, at (when the last were kept). The database pays
+  // the reward once per account; this only keeps what it paid. lrTake hands over the whole amount in one call (two claims at once cannot both get
+  // it), or 0, and nothing for an account that withdrew after the coins were kept (h: its goneKeys marks); lrGive puts back a grant that failed.
+  lrInit() { if (this.lrOk) return; this.lrOk = 1; this.stInit(); this.ctx.storage.sql.exec('create table if not exists lrw(u text primary key, n integer not null, at integer not null)'); }
+  lrRow(uid, h) { this.lrInit(); const q = this.ctx.storage.sql, id = String(uid || '').slice(0, 80), row = id ? q.exec('select n, at from lrw where u = ?', id).toArray()[0] : null; const n = Math.floor(Number(row?.n)) || 0;
+    const gone = n > 0 && this.goneList(h).some(k => Number(q.exec('select at from gone where h = ?', k).toArray()[0]?.at) >= Number(row.at)); return { q, id, n: gone ? 0 : n, gone }; }
+  lrOwe(uid, n) { this.lrInit(); const id = String(uid || '').slice(0, 80), c = Math.floor(Number(n)); if (!id || !(c > 0)) return 0;
+    this.ctx.storage.sql.exec('insert into lrw(u, n, at) values(?, ?, ?) on conflict(u) do update set n = n + excluded.n, at = excluded.at', id, Math.min(c, 100000), Date.now()); return this.lrRow(id).n; }
+  lrOwed(uid, h) { return this.lrRow(uid, h).n; }
+  lrTake(uid, h) { const { q, id, n, gone } = this.lrRow(uid, h); if (n > 0 || gone) q.exec('update lrw set n = 0 where u = ?', id); return n; }
+  lrGive(uid, n) { return this.lrOwe(uid, n); }
   // Leases (instance 'acct', see sendHold / linkHold), each running out by itself. shl: one coin send (or pledge) at a time per account, -> its
   // `until`, the token sellDone needs, or false while a send or a link of that account is under way. lkl: account links that are moving coins;
   // several may run at once (n), -> the lease's `at`, the token linkDone needs, or false while a send of that account is under way.
@@ -1971,19 +1983,31 @@ const guestDay = (env) => { const v = env?.GUEST_DAY; if (v === undefined || v =
 const OPEN_AT = new Map(); // network -> { at, n }: mints let in while siteverify could not answer, per minute in this isolate
 function openMint(net, now = Date.now()) { const hit = OPEN_AT.get(net); if (!hit || now - hit.at >= 60000 || now < hit.at) { if (OPEN_AT.size >= 5000) OPEN_AT.clear(); OPEN_AT.set(net, { at: now, n: 1 }); return true; } return ++hit.n <= GUEST_OPEN_MIN; }
 // -> 'yes' (a person), 'no' (refused: no token, a bad, spent or expired one, another action), 'open' (siteverify could not judge it for us).
-export async function humanCheck(env, token, ip) {
+// action: what the page asked the token for ('guest' for a new guest; the coin rewards have their own, see humanGate).
+export async function humanCheck(env, token, ip, action = HUMAN_ACTION) {
   const t = typeof token === 'string' ? token.trim() : '';
   if (!t || t.length > 2048) return 'no';
   let r; try { r = await fetch(HUMAN_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ secret: String(env.TURNSTILE_SECRET || '').trim(), response: t, ...(ip ? { remoteip: ip } : {}) }), signal: AbortSignal.timeout(HUMAN_MS) }); }
   catch { console.warn('turnstile siteverify unreachable'); return 'open'; }
   let d = null; try { d = await r.json(); } catch { d = null; }
-  if (d?.success === true) return !d.action || d.action === HUMAN_ACTION ? 'yes' : 'no';
+  if (d?.success === true) return !d.action || d.action === action ? 'yes' : 'no';
   const codes = Array.isArray(d?.['error-codes']) ? d['error-codes'].map(String) : [];
   if (codes.some((c) => HUMAN_BAD.has(c))) return 'no'; // the visitor's token, whatever the status: never let in on these
   if (!r.ok || !d || codes.some((c) => HUMAN_OURS.has(c))) { console.warn('turnstile siteverify ' + r.status + ' ' + codes.join(',')); return 'open'; }
   return 'no';
 }
 const HUMAN_BAD = new Set(['missing-input-response', 'invalid-input-response', 'timeout-or-duplicate', 'bad-request']), HUMAN_OURS = new Set(['internal-error', 'missing-input-secret', 'invalid-input-secret']);
+// The coin rewards a scripted account could farm (docs/bot-protection.md): the link reward held back by holdReward (action 'link'), the share
+// bonus ('bonus') and a VIP code ('code') need a fresh check of their own action while Turnstile is on; off, nothing is asked. -> null to go on,
+// or the answer: 403 { code:'human', site } with no token or one Cloudflare refused (the page gets a token and asks once more, as for a new
+// guest), 503 busy when siteverify cannot judge it: never paid unverified, the reward is still there to be had later.
+async function humanGate(env, req, b, action) {
+  const site = humanSite(env); if (!site) return null;
+  const no = () => J({ ok: false, err: 'human', code: 'human', site, error: HUMAN_ERR.human }, 403);
+  if (!(typeof b?.ts === 'string' && b.ts.trim())) return no();
+  const judged = await humanCheck(env, b.ts, req.headers.get('cf-connecting-ip') || '', action);
+  return judged === 'yes' ? null : judged === 'open' ? J({ ok: false, code: 'busy', error: PROMO_BUSY }, 503) : no();
+}
 async function guestMint(req, env, b) {
   const raw = req.headers.get('cf-connecting-ip') || '', net = ipNet(raw), site = humanSite(env), no = () => J({ err: 'human', code: 'human', site, error: HUMAN_ERR.human }, 403);
   if (site && !(typeof b?.ts === 'string' && b.ts.trim())) return no();
@@ -2116,6 +2140,8 @@ async function settle(env, topic, actorId) {
 // checked first (it only refuses sooner, it never lets a claim through). Budget hard, or that call failing: refused ("잠시 뒤에 다시", code busy),
 // because this isolate's copy alone would let every other isolate pay the 300 again. Redeem codes: one use per account and code for good, recorded
 // in 'acct' (codeTake, the pair hashed); closed the same way when it cannot be asked.
+// Turnstile on (humanSite): the share bonus and a code need a fresh human check (humanGate, actions 'bonus' and 'code'), after the checks that
+// cost nothing and before the record is asked. /rt/link-reward pays the link reward holdReward kept back, once, with a check of its own ('link').
 const PROMO = new Map(), PROMO_BUSY = '지금은 광장이 붐벼요. 잠시 뒤에 다시 해 주세요.';
 const SHARE_ACCOUNT = '계정을 연결하면 공유 보너스 300코인을 받을 수 있어요.'; // not exported: workerd takes every named export of the main module as an entrypoint and refuses to start on a string
 async function promo(req, env, u) {
@@ -2125,11 +2151,25 @@ async function promo(req, env, u) {
   const day = kstDay();
   const ip = ipNet(req.headers.get('cf-connecting-ip') || '');
   const busy = () => J({ ok: false, code: 'busy', error: PROMO_BUSY }, 503);
+  if (u.pathname === '/rt/link-reward') { // the held link reward (holdReward): the whole amount once, then { amount: 0 } (nothing is waiting)
+    if (guestLike(actor)) return J({ ok: false, code: 'account', error: '로그인한 계정만 연결 보상을 받을 수 있어요.' }, 403);
+    if (!(await actOk(env, 'misc', actor.id))) return actNo();
+    const gate = await humanGate(env, req, await readJson(req), 'link'); if (gate) return gate;
+    if (await budgetHard(env)) return busy();
+    let n; try { n = Math.floor(Number(await acct(env).lrTake(actor.id, await goneKeys(env, actor)))) || 0; } catch { return busy(); }
+    if (!(n > 0)) return J({ ok: true, amount: 0 });
+    const rpc = await supabaseRpc('grant_coins', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_amount: n }).catch(() => ({ ok: false, data: {} }));
+    const data = rpc.data || {};
+    if (!rpc.ok || data.ok === false) { try { await acct(env).lrGive(actor.id, n); } catch { console.warn('link reward: not paid and not kept', n); }
+      return J({ ok: false, error: data.error || '코인을 넣지 못했습니다.' }, rpc.ok ? 400 : 502); }
+    return J({ ok: true, coins: data.coins, amount: n });
+  }
   if (u.pathname === '/rt/share-bonus') {
     if (guestLike(actor)) return J({ ok: false, code: 'account', error: SHARE_ACCOUNT }, 403);
     const ak = 's:' + actor.id + ':' + day, ik = 'i:' + ip + ':' + day;
     const had = () => J({ ok: false, error: '오늘은 이미 공유 보너스를 받았어요.' }, 400);
     if (PROMO.get(ak) || PROMO.get(ik)) return had();
+    const gate = humanSite(env) ? await humanGate(env, req, await readJson(req), 'bonus') : null; if (gate) return gate;
     if (await budgetHard(env)) return busy();
     const keys = ['s:' + actor.id, 'i:' + await ipHash(env, req)]; // taken in the acct instance, given back if the grant fails
     let hit; try { hit = await acct(env).promoTake(keys, day); } catch { return busy(); }
@@ -2144,6 +2184,7 @@ async function promo(req, env, u) {
   const b = await readJson(req);
   const code = String(b?.code || '').trim();
   if (!/^[A-Za-z0-9]{8,32}$/.test(code)) return J({ ok: false, error: '8자리 코드를 입력하세요.' }, 400);
+  const gate = await humanGate(env, req, b, 'code'); if (gate) return gate; // before the code is compared: no guessing without a check
   const codes = String(env.VIP_CODES || '').split(/[\s,]+/).filter((s) => s.length >= 8);
   if (!codes.includes(code)) return J({ ok: false, error: '코드가 맞지 않아요.' }, 400);
   const key = 'v:' + actor.id + ':' + code, used = () => J({ ok: false, error: '이미 사용한 코드예요.' }, 400);
@@ -3302,9 +3343,9 @@ async function accountApi(req, env, ctx, u) {
     if (!hard) { try { if (bonus) { const f = await acct(env).stFirst(guestId, moved, ARRIVAL, await goneKeys(env, actor)); again = f?.gone === true; part = again ? Number(f.part) || 0 : 0; }
         else part = Number(await acct(env).stTake(guestId, moved, ARRIVAL)) || 0; } catch { /* as if no mark */ } }
     return { rpc, data, again, back: await takeBack(env, actor.id, part + (again ? bonus : 0)).catch(() => 0) };
-  })().finally(() => (typeof free === 'function' ? free() : null));
+  })().then((r) => holdReward(env, actor, r, hard)).finally(() => (typeof free === 'function' ? free() : null)); // the reward is held before the sends go free
   ctx.waitUntil(work.catch(() => { }));
-  const { rpc, data, back, again } = await work;
+  const { rpc, data, back, again, held: kept } = await work; // kept: reward coins waiting for a human check (holdReward); `held` above is the boards
   if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || '계정을 연결하지 못했습니다.' }, rpc.ok ? 400 : 502);
   let coins = data.coins; if (back > 0 && Number.isFinite(Number(coins))) coins = Math.max(0, Number(coins) - back);
   try { await invalidateWorld(env, ctx); } catch { }
@@ -3324,7 +3365,24 @@ async function accountApi(req, env, ctx, u) {
     ctx.waitUntil(supabaseRpc('move_cosmetics', { p_key: env.FLUSH_KEY || '', p_from: guestId, p_to: actor.id }).catch(() => null)); }
   await adSoon(ctx, () => adM(env).adMove(guestId, actor.id)); // the moved boards keep their report; waited for (up to 0.8 s) so a report right after the link finds it
   // again: an account that withdrew before; no reward is announced, and the client says once that the start coins do not come back.
-  return J({ ok: true, actor_id: actor.id, coins, bonus: again ? 0 : data.bonus || 0, linked: true, nickname: data.nickname || '', ...(again ? { again: true } : {}) });
+  // held: Turnstile is on and that many reward coins wait for the account's human check (holdReward); the page claims them at /rt/link-reward.
+  return J({ ok: true, actor_id: actor.id, coins, bonus: again || kept ? 0 : data.bonus || 0, linked: true, nickname: data.nickname || '', ...(kept ? { held: kept } : {}), ...(again ? { again: true } : {}) });
+}
+// Bot protection (docs/bot-protection.md): with Turnstile on (humanSite) the link reward is paid only after a human check of its own, and the link
+// itself never waits on one: everything the guest had moves as before. The reward the database has just paid with the link is taken back at once
+// (takeBack, while this account's sends are still held) and kept in 'acct' (lrOwe) until the account claims it, once, with a token (POST
+// /rt/link-reward, action 'link'). Only what really came out is kept; a take-back that fails leaves the reward paid, as before. 'acct' failing to
+// keep it: the coins are handed back rather than lost. A link that pays nothing (a replay on the next boot, a later guest) says how much is still
+// waiting (lrOwed, one call; not at budget hard), so a claim that failed is offered again, on any device. Off: nothing here runs.
+async function holdReward(env, actor, r, hard) {
+  if (!humanSite(env) || !r?.rpc?.ok || r.data?.ok === false || r.again) return r;
+  const bonus = Math.max(0, Math.floor(Number(r.data?.bonus)) || 0);
+  if (!bonus) { if (hard) return r; try { const n = Math.floor(Number(await acct(env).lrOwed(actor.id, await goneKeys(env, actor)))) || 0; return n > 0 ? { ...r, held: n } : r; } catch { return r; } }
+  const took = await takeBack(env, actor.id, bonus).catch(() => 0);
+  if (!(took > 0)) return r;
+  try { await acct(env).lrOwe(actor.id, took); return { ...r, back: r.back + took, held: took }; }
+  catch { const g = await supabaseRpc('grant_coins', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_amount: took }).catch(() => null);
+    if (g?.ok && g.data?.ok !== false) return r; console.warn('link reward: not kept and not handed back', took); return { ...r, back: r.back + took }; }
 }
 // Account withdrawal, outside Supabase: push subscriptions and gaps, wishes (hidden and emptied), hearts given, reports filed, and the uploader link of
 // snapshot contexts, for the user and for every guest linked to it (the 'ev' alias). Then this isolate's copies that could still show the wish.
@@ -3559,7 +3617,7 @@ export default {
     if (u.pathname === '/rt/sponsor' && req.method === 'GET') return J({ url: extUrl(env.SPONSOR_INQUIRY_URL) || '' });
     if (u.pathname.startsWith('/rt/ads/') || u.pathname === '/rt/admin/ads' || u.pathname.startsWith('/rt/admin/ads/')) return adsApi(req, env, ctx, u, { adminOk, lvlNow, resolveActor, tokenOf, ipHash: wishIp, // 광고 판매 (adsrv.js; networks: IPv6 by /64)
       dropWorld: async () => { PC.delete('world'); try { await caches.default.delete(new Request(WORLD_CACHE)); } catch { } } });
-    if (u.pathname === '/rt/share-bonus' || u.pathname === '/rt/redeem-code') return promo(req, env, u);
+    if (u.pathname === '/rt/share-bonus' || u.pathname === '/rt/redeem-code' || u.pathname === '/rt/link-reward') return promo(req, env, u);
     if (u.pathname === '/rt/report') return fileReport(req, env);
     if (u.pathname.startsWith('/rt/card/')) return cardPage(req, env, u);
     if (u.pathname === '/rt/relight') return relightBoard(req, env, ctx);

@@ -42,7 +42,28 @@ export async function doToken(sb, fresh) { try { const c = (window.G?.net?.sb ||
 // { err:'human', site } makes this page run the check once (human.js, loaded only then) and ask again with the token (ts). Renewals and handovers
 // never need it. HUMAN.site is the key /rt/config gave (loadConfig); run / say are replaced in tests. HUMAN.until: after the day cap (429 day)
 // this page makes no new guest for 10 minutes, so a reconnect loop neither repeats the request nor the card.
-export const HUMAN = { site: '', until: 0, run: (site) => import('./human.js?v=202611222045').then((m) => m.humanToken(site)).catch(() => ''), say: (code) => import('./human.js?v=202611222045').then((m) => m.humanSay(code)).catch(() => { }) };
+export const HUMAN = { site: '', until: 0, run: (site) => import('./human.js?v=202611222045').then((m) => m.humanToken(site)).catch(() => ''), say: (code) => import('./human.js?v=202611222045').then((m) => m.humanSay(code)).catch(() => { }),
+  token: (site, action) => import('./human.js?v=202611222045').then((m) => m.humanToken(site, { action })).catch(() => '') }; // token: the coin rewards' check (humanCall)
+// The coin rewards a scripted account could farm (docs/bot-protection.md): the held link reward (action 'link'), the share bonus ('bonus'), a VIP
+// code ('code'). While /rt/config names a site key (HUMAN.site) the call gets a fresh token of its own action first and sends it as ts, as a new
+// guest does; a 403 human (a spent token, or the switch turned on after this page loaded: the answer names the key) gets one more token and one
+// more try, without a word. Off: no human.js, no Cloudflare script, no extra request, the call as before. -> the call's answer. Throws the call's
+// own error, or (code 'human') HUMAN_FAIL[action] when no token got through.
+export const HUMAN_FAIL = Object.freeze({
+  link: '사람인지 확인하지 못해 연결 보상 300코인을 아직 넣지 못했어요. 눌러서 다시 받아 주세요.',
+  bonus: '사람인지 확인하지 못해 공유 보너스를 넣지 못했어요. 잠시 뒤에 다시 해 주세요.',
+  code: '사람인지 확인하지 못해 코드를 쓰지 못했어요. 잠시 뒤에 다시 해 주세요.',
+});
+export async function humanCall(action, call) {
+  const no = () => Object.assign(new Error(HUMAN_FAIL[action] || HUMAN_FAIL.bonus), { code: 'human' });
+  let site = HUMAN.site;
+  for (let tries = 0; ; tries++) {
+    const ts = site ? await HUMAN.token(site, action) : '';
+    if (site && !ts) throw no();
+    try { return await call(ts); }
+    catch (e) { if (e?.code !== 'human') throw e; site = (typeof e.site === 'string' && e.site) || site; if (tries || !site) throw no(); }
+  }
+}
 let MINT = null; // the one human-checked mint in flight: token requests that arrive meanwhile wait for it instead of starting their own check
 const guestPost = async (body) => { const r = await fetch('/rt/guest', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); return { r, d: await r.json().catch(() => null) }; };
 function humanMint(body, site) {
@@ -329,8 +350,10 @@ export class Net {
   async flushWallet() { return this._plazaPost('/rt/flush-wallet', {}); }
   // ctx { slot } or { wish } tells the server what the picture shows. Resolves to { url (the JPEG), page (the preview page to share) }.
   async publishShot(blob, ctx) { const tok = await doToken(this.sb); if (!tok) throw new Error('auth'); const r = await fetch('/rt/snap' + snapQuery(ctx), { method: 'POST', headers: { authorization: 'Bearer ' + tok, 'content-type': 'image/jpeg' }, body: blob }); const data = await r.json().catch(() => ({})); if (!r.ok || !data.url) throw new Error(data.err || 'snap'); return { url: String(data.url), page: typeof data.page === 'string' ? data.page : '' }; }
-  async shareBonus() { return this.authed('/rt/share-bonus', {}); }
-  async redeemCode(code) { return this.authed('/rt/redeem-code', { code }); }
+  // ts: a Turnstile token (main.js humanCall), only while the Worker has the human check on.
+  async shareBonus(ts) { return this.authed('/rt/share-bonus', ts ? { ts } : {}); }
+  async redeemCode(code, ts) { return this.authed('/rt/redeem-code', ts ? { code, ts } : { code }); }
+  async linkReward(ts) { return this.authed('/rt/link-reward', ts ? { ts } : {}); } // the link reward held for a human check (merge answer `held`)
   // 오늘의 소원. None of these throw: GET gives the body or null, POSTs give the body even on 4xx/5xx so the sheet can show `error`.
   // anon: no token at all (the deep link before entering), so no guest is made just to read one wish.
   // 8 s cap: a hung GET must not leave the wish sheet waiting forever (null = could not load).
@@ -346,7 +369,7 @@ export class Net {
   // The holder's own board report (GET /rt/ad-report). Throws with the server's Korean error; 8 s cap.
   async adReport(slot) { const tok = await doToken(this.sb); if (!tok) throw new Error('입장한 뒤에 볼 수 있어요'); const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined; let r; try { r = await fetch('/rt/ad-report?slot=' + encodeURIComponent(String(slot || '')), { cache: 'no-store', headers: { authorization: 'Bearer ' + tok }, signal }); } catch { throw new Error('리포트를 불러오지 못했어요. 잠시 뒤 다시 해 주세요.'); } const data = await r.json().catch(() => ({})); if (!r.ok || data.ok !== true) throw new Error(data.error && data.error !== 'rate' ? data.error : '리포트를 불러오지 못했어요. 잠시 뒤 다시 해 주세요.'); return data; }
   async sponsorUrl() { const r = await fetch('/rt/sponsor', { cache: 'no-store' }); const d = await r.json().catch(() => ({})); return d.url || ''; }
-  async authed(path, payload) { const tok = await doToken(this.sb); if (!tok) throw new Error('입장한 뒤에 사용할 수 있어요'); const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + tok }, body: JSON.stringify(payload || {}) }); const data = await r.json().catch(() => ({})); if (!r.ok || data.ok === false) throw Object.assign(new Error(data.error || data.err || '요청을 처리하지 못했습니다.'), { code: data.code || '' }); return data; } // code: e.g. 'account' (the share bonus is for accounts)
+  async authed(path, payload) { const tok = await doToken(this.sb); if (!tok) throw new Error('입장한 뒤에 사용할 수 있어요'); const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + tok }, body: JSON.stringify(payload || {}) }); const data = await r.json().catch(() => ({})); if (!r.ok || data.ok === false) throw Object.assign(new Error(data.error || data.err || '요청을 처리하지 못했습니다.'), { code: data.code || '', site: typeof data.site === 'string' ? data.site : '' }); return data; } // code: e.g. 'account' (the share bonus is for accounts), 'human' (with site: the Turnstile key)
   async submitBillboardPhoto(payload) { return this._plazaPost('/rt/billboard-photo', payload); }
   async _plazaPost(path, payload) { const tok = await doToken(this.sb); if (!tok) throw new Error('auth'); const body = { ...(payload || {}) }; if (!body.topic) body.topic = this.topic || (NS + 'square'); if (!body.nickname && !body.nick) body.nickname = this.me?.name || ''; const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + tok }, body: JSON.stringify(body) }); const data = await r.json().catch(() => ({})); if (!r.ok || data.ok === false) throw Object.assign(new Error(data.error || data.err || '요청을 처리하지 못했습니다.'), { code: data.code || '', data }); return data; }
   async prayers(dong) { if (DO_MODE) return this.world(); if (!this.sb) throw new Error('offline'); const [pub, mine] = await Promise.all([
