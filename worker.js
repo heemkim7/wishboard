@@ -811,9 +811,12 @@ export class Room extends DurableObject {
     for (const [w, a] of [...this.socks()]) if (a.k === uid) { this.tx(w, { t: 'moved' }); try { w.close(4003, 'moved'); } catch { } this.gone(w); }
     if (q.exec('select 1 from coin where uid = ?', uid).toArray().length) { try { await this.flush(uid); } catch { } }
     return agAll(q, uid); }
-  // alarm: fast (5s) while someone waits or taps are pending, otherwise a slow 60s stale scan while any socket is connected
-  async arm() { const fast = this.waiters().length || this.tapN, any = this.socks().size; if (!fast && !any) return; const want = Date.now() + (fast ? SCAN : IDLE_SCAN), cur = await this.ctx.storage.getAlarm();
-    if (!cur || (fast && cur > want)) await this.ctx.storage.setAlarm(want); }
+  // alarm: fast (5s) while someone waits, at the flush time while taps are pending, otherwise a slow 60s stale scan while any socket is connected
+  // Pending coins: the alarm goes to when they are due (FLUSH_MS after the oldest, the alarm's own flush rule; FLUSH_MS after a failed flush), never
+  // sooner. Each grant used to pull it to SCAN, so an earning room woke and reported to the Meter every 5 s for a flush due every 30 s.
+  async arm() { const w = this.waiters().length, any = this.socks().size; if (!w && !this.tapN && !any) return; const now = Date.now();
+    const want = w ? now + SCAN : this.tapN ? Math.max(now + 1000, (this.tapAt || now) + FLUSH_MS, (this.flushBad || 0) + FLUSH_MS) : now + IDLE_SCAN, cur = await this.ctx.storage.getAlarm();
+    if (!cur || ((w || this.tapN) && cur > want)) await this.ctx.storage.setAlarm(want); }
   ballFrame(now = Date.now()) {
     const open = ballOpen(now);
     return { t: 'BALL', open, until: nextBallUntil(now, open) };
@@ -834,7 +837,7 @@ export class Room extends DurableObject {
     }
     if (next !== prev) agSet(q, 'room', 'ball', day, next);
   }
-  async alarm() { this.tapDb(); this.scan(true); this.meter(true); await this.drawDue(); if (this.tapN && Date.now() - (this.tapAt || 0) >= FLUSH_MS - 1000) await this.flush(); if (this.adDirty && Date.now() - (this.adFlushAt || 0) > 30000) await this.flushAds(); if (!this.tapN && Date.now() - (this.ibAt || 0) > 30000 && this.ibWait()) await this.flushInbox(); try { await this.flushTribeScores(); } catch { /* scores retry on the next alarm */ }
+  async alarm() { this.tapDb(); this.conns++; /* the alarm is a billed request too */ this.scan(true); this.meter(true); await this.drawDue(); if (this.tapN && Date.now() - (this.tapAt || 0) >= FLUSH_MS - 1000) await this.flush(); if (this.adDirty && Date.now() - (this.adFlushAt || 0) > 30000) await this.flushAds(); if (!this.tapN && Date.now() - (this.ibAt || 0) > 30000 && this.ibWait()) await this.flushInbox(); try { await this.flushTribeScores(); } catch { /* scores retry on the next alarm */ }
     if (this.socks().size) { try { this.noteBall(); } catch { /* the next scan retries the ball */ } }
     if (this.waiters().length || this.tapN) await this.ctx.storage.setAlarm(Date.now() + (this.waiters().length ? SCAN : FLUSH_MS)); else if (this.socks().size) await this.ctx.storage.setAlarm(Date.now() + IDLE_SCAN); }
   // Bungeo-ppang coins: 2s per actor, ≤15 per mine, summed in DO SQLite (survives hibernation) with tapN in memory.
@@ -883,7 +886,10 @@ export class Room extends DurableObject {
     this.gateSet(key, now);
     const name = clip(nick, 16); if (!this.tapN) this.tapAt = now;
     q.exec("insert into coin(uid, nick, delta, n, at, reason) values(?, ?, ?, 1, ?, 'bonus') on conflict(uid) do update set delta = delta + excluded.delta, n = n + excluded.n, nick = excluded.nick, at = min(coin.at, excluded.at), reason = excluded.reason", a.k, name, creditN, now);
-    this.tapN++; if (this.tapN >= FLUSH_N) this.flush(); else this.arm(); return true; }
+    this.tapN++; this.flushSoon(); return true; }
+  // FLUSH_N pending grants settle at once. After a failed settle (Supabase down, a key mismatch) the next try is the alarm's, FLUSH_MS later: a retry on
+  // every grant re-sent every pending row each time (one coin_batch and a delete plus a re-insert per pending account per grant).
+  flushSoon() { if (this.tapN >= FLUSH_N && Date.now() - (this.flushBad || 0) >= FLUSH_MS) this.flush(); else this.arm(); }
   // Repeat income uses the server table. attend, mission and hello do not take fever.
   // Daily gates stay attend: [30, 0, 1], mission: [15, 0, 3]. Pouch keeps pouch: [30, 25000] as its cap and gap.
   bonus(w, a, kind, amount, nick) {
@@ -962,7 +968,7 @@ export class Room extends DurableObject {
     if (!this.tapN) this.tapAt = now;
     q.exec('insert into coin(uid, nick, delta, n, at, reason) values(?, ?, ?, 1, ?, ?) on conflict(uid) do update set delta = delta + excluded.delta, n = n + excluded.n, nick = excluded.nick, at = min(coin.at, excluded.at), reason = excluded.reason', a.k, name, amount, now, reason || 'mine');
     this.tapN++;
-    if (this.tapN >= FLUSH_N) this.flush(); else this.arm();
+    this.flushSoon();
     return amount;
   }
   repeatPay(a, base, nick, kind, playAdd, perHour, eachCap = 0) {
@@ -1101,6 +1107,7 @@ export class Room extends DurableObject {
     for (const [sock, peer] of this.socks()) if (peer.q && peer.k === holder) this.tx(sock, note);
     this.noteTribe(a.k, 1);
     try {
+      this.conns++; // a DO call, counted toward the daily budget
       const job = this.env.METER.get(this.env.METER.idFromName('ev'))?.touch?.(isoWeek(now), a.k);
       if (job && typeof job.then === 'function') job.catch(() => {});
     } catch { /* north-star touch is best-effort */ }
@@ -1218,7 +1225,9 @@ export class Room extends DurableObject {
       const lotto = this.env.METER?.get?.(this.env.METER.idFromName('lotto'));
       if (!lotto?.draw) return;
       for (const b of closed) {
+        this.conns++; // a DO call, counted toward the daily budget
         const win = await lotto.draw(b);
+        this.drawWin = { b, win };
         const who = new Set();
         for (const [w, a] of this.socks()) {
           if (!a?.q || who.has(a.k)) continue;
@@ -1243,16 +1252,23 @@ export class Room extends DurableObject {
     if (amount > 0) this.grantFinal(a, amount, '', 'lottery', 'lottery');
     if (w) this.tx(w, { t: 'DRAW', bucket, win: Number(win), hit, amount, lot: ticket });
   }
+  // The last bucket's number is asked of 'lotto' (and recorded in Supabase) once per bucket per room instance, not once per DRAW_CHECK: a bucket's
+  // number never changes once drawn, and every socket of a full room asks on each connect.
   async drawCheck(w, a) {
     const bucket = Math.floor(Date.now() / 300000) - 1;
-    let win = 0;
-    try {
-      const lotto = this.env.METER.get(this.env.METER.idFromName('lotto'));
-      if (!lotto?.draw) return;
-      win = await lotto.draw(bucket);
-    } catch { return; }
+    let win = this.drawWin?.b === bucket ? this.drawWin.win : 0;
+    if (!win) {
+      try {
+        const lotto = this.env.METER.get(this.env.METER.idFromName('lotto'));
+        if (!lotto?.draw) return;
+        this.conns++; // a DO call, counted toward the daily budget
+        win = await lotto.draw(bucket);
+      } catch { return; }
+      if (!win) return;
+      this.drawWin = { b: bucket, win };
+      this.rememberDraw(bucket, win);
+    }
     this.payDraw(w, a, bucket, win);
-    this.rememberDraw(bucket, win);
   }
   rememberDraw(bucket, win) {
     const key = this.env?.FLUSH_KEY;
@@ -1356,12 +1372,12 @@ export class Room extends DurableObject {
       if (!r.ok || !out || out.ok === false) throw new Error('flush ' + r.status);
       await this.flushInbox();
       try { await this.flushTribeScores(); } catch { /* coins are already settled */ }
-      this.syncPending(); this.flushes = (this.flushes || 0) + 1; this.flushErr = null;
+      this.syncPending(); this.flushes = (this.flushes || 0) + 1; this.flushErr = null; this.flushBad = 0;
       for (const row of kept) this.walletSync(row.uid);
       if (this.tapN) this.arm(); return { ok: true, flushed: kept.length, pending: 0 };
     } catch (e) {
       for (const row of kept) q.exec('insert into coin(uid, nick, delta, n, at, reason) values(?, ?, ?, ?, ?, ?) on conflict(uid) do update set delta = delta + excluded.delta, n = n + excluded.n, nick = excluded.nick, at = min(coin.at, excluded.at), reason = excluded.reason', row.uid, row.nick, row.delta, row.n, row.at, row.reason || 'mine');
-      this.syncPending(); this.flushErr = String(e).slice(0, 80); try { this.arm(); } catch { }
+      this.syncPending(); this.flushErr = String(e).slice(0, 80); this.flushBad = Date.now(); try { this.arm(); } catch { }
       return { ok: false, error: '미정산 코인을 반영하지 못했습니다. 잠시 후 다시 시도해 주세요.', pending: true };
     } }
   // inbox_batch writes the queued rows (ibq, oldest first, IBQ_N per call) and trims each account to 50. Sent rows leave ibq; a failure or a missing RPC
@@ -1446,7 +1462,7 @@ export class Room extends DurableObject {
   shareCheer(slot, phrase) {
     const names = squareTopics(this.topicName || 'chapel:square');
     const mine = this.topicName || names[0];
-    const send = (name, body) => this.env.ROOM.get(this.env.ROOM.idFromName(name)).fetch(new Request('https://room.internal/chr', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })).then((r) => r.json()).catch(() => null);
+    const send = (name, body) => { this.conns++; return this.env.ROOM.get(this.env.ROOM.idFromName(name)).fetch(new Request('https://room.internal/chr', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })).then((r) => r.json()).catch(() => null); }; // conns: one DO call per shard
     if (mine === names[0]) {
       const n = this.chrAdd(slot);
       this.announceCheer(slot, n, phrase);
@@ -1462,8 +1478,9 @@ export class Room extends DurableObject {
     });
   }
   httpFever(req) { const uid = String(req.headers.get('x-uid') || '').slice(0, 80); if (!uid) return J({ err: 'auth' }, 401); return J({ ok: true, gauge: this.bumpFeverCount(uid) }); }
-  async loadProf(uid) {
+  async loadProf(uid) { // every connect: one registry call (two when it has to fill the copy), counted toward the daily budget like the seat calls
     try {
+      this.conns++;
       const hit = await this.acct().profileOf(uid);
       if (hit && Number.isInteger(hit.av) && hit.av >= 1 && hit.av <= SPECIES_MAX) return { av: speciesOf(hit.av), equip: equipList(hit.equip) };
     } catch { /* a meter without the cache still lets the socket open */ }
@@ -1473,7 +1490,7 @@ export class Room extends DurableObject {
       const rpc = await supabaseRpc('profile_read', { p_key: key, p_actor_id: uid });
       if (!rpc.ok || !rpc.data || rpc.data.ok === false || rpc.data.species == null) return null;
       const prof = normProf(rpc.data);
-      try { prof.av = speciesOf((await this.acct().profilePut(uid, prof.av, prof.equip))?.av); } catch { /* this socket keeps the copy */ }
+      try { this.conns++; prof.av = speciesOf((await this.acct().profilePut(uid, prof.av, prof.equip))?.av); } catch { /* this socket keeps the copy */ }
       return prof;
     } catch { return null; }
   }

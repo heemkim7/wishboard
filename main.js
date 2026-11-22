@@ -1809,11 +1809,14 @@ function resync() {
   refreshWallet();
   refreshWorld();
 }
-let movedTold = false;
+// net.js also says 'status' on every presence sync (someone joined, left or changed clothes) with the status unchanged, so a full room
+// would resync and ask for the draw once per player per presence change. Only a step into 'online' (a new or reopened socket) does that.
+let movedTold = false, netWas = '', upNew = false;
 net.on('status', (s) => {
-  if (s === 'online') { resync(); movedTold = false; }
+  if (s === 'online' && netWas !== 'online') { upNew = true; resync(); movedTold = false; }
+  netWas = s;
   if (queuePos) return;
-  if (s === 'online') { ui.setStatus('실시간 연결됨', 'ok'); bindTake(); try { net.ch?.raw?.({ t: 'DRAW_CHECK' }); } catch { /* the next connect asks again */ } }
+  if (s === 'online') { ui.setStatus('실시간 연결됨', 'ok'); if (upNew) { upNew = false; bindTake(); try { net.ch?.raw?.({ t: 'DRAW_CHECK' }); } catch { /* the next connect asks again */ } } }
   else if (s === 'connecting') ui.setStatus('광장 연결 중', 'warn');
   else if (net.ch?.moved) {
     // This account joined from another window, so the room closed this one (net.js keeps it closed until the tab is used again).
