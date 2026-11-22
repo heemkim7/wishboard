@@ -13,7 +13,7 @@
 | 운영 DB 마이그레이션 | **모두 적용됨**(2026-11-22, 주인이 "SQL 실행 후 배포"): `2026-11-21-mid.sql` 1~4부, `2026-11-22-forget-login.sql`, `2026-11-22-species.sql`, `2026-11-22-boards.sql`, `2026-11-22-coins.sql` 1부. 결과 줄은 모두 `applied = true`, 뒤 확인 조회: 종 CHECK 1~10, 거리 칸 50, 바닥가 31번 150·50번 250·51번 0, 무료 첫 칸 20, `tribe_roofs` 있음, 코인 트리거 2개, 새 표(`gone_logins` `starter_taken` `tribe_roofs`) RLS 켬, 로그인 수 2 그대로. **안 함**: 코인 2부(옛 미확인 가입 확인 처리, 대상 1개, 주인 결정), `2026-11-22-themes.sql`(운영 달력의 새 계절 키). 꾸미기 상점 `2026-11-22-shop.sql`은 2026-11-22 오후에 적용했다(주인이 "상점 SQL 실행", `applied = true`, 실서비스 상점 열림). |
 | Supabase 인증 설정 | Site URL `https://studio.wishboard.workers.dev`, Redirect URLs에 실서비스와 `http://localhost:8790/**`, 이메일 확인 끔, 구글 로그인 켬. |
 | 시험 계정 | 없다. 필요하면 로컬에서 아이디로 가입하고, 끝나면 탈퇴로 지운다. 4차 작업 중 로컬 확인으로 운영에 손님 지갑 몇 개(`브로드웨이곰22` 등)가 생겼다. |
-| 테스트 | `node --test test/*.test.mjs tools/account.test.mjs` → 1,174개, 1,167 통과, 실패 0, 건너뜀 7(jsQR 1, 마이그레이션 상태별 6). PGlite는 `%TEMP%\kts-pglite`에 깔려 있어 SQL 묶음이 실제로 돈다. |
+| 테스트 | `node --test test/*.test.mjs tools/account.test.mjs` → 1,195개, 1,188 통과, 실패 0, 건너뜀 7(jsQR 1, 마이그레이션 상태별 6). PGlite는 `%TEMP%\kts-pglite`에 깔려 있어 SQL 묶음이 실제로 돈다. |
 
 ## 4차 작업에서 한 것 (2026-11-22)
 
@@ -46,7 +46,8 @@
 | 중 | 광고 판매 켜기 | 사업자 등록·통신판매업, `OPERATOR_INFO`, `ADS_PRICES`, `ADS_ON=1`, 약관의 광고 조항 법무 검토. |
 | 중 | 외부 가동 감시 | `/rt/health`를 1~5분마다(`"db":"ok"` 키워드). |
 | 중 | 유료 코인 충전 | 하지 않았다. 하려면 체크리스트 C(등급분류, 사행성·추첨 정리, 청소년 결제, 환불, PG)를 먼저. |
-| 중 | 공유 보너스 | 하루 300, 손님도 받음. 하한 580에 들어가지 않아 새 계정이 첫날 300을 보낼 수 있다. 줄이거나 계정만 받게 할지. |
+| 중 | 봇 막기: Turnstile 켜기 | 코드는 있다(배포 전, `docs/bot-protection.md`). Cloudflare 대시보드에서 위젯을 만들고 `npx wrangler secret put TURNSTILE_SECRET`, `npx wrangler secret put TURNSTILE_SITE`. 둘 다 넣어야 켜진다. 같이 정할 것: Supabase 가입 CAPTCHA(로그인 시트 코드 먼저), VIP 코드를 계정만 받게 할지, 사용자 도메인 + WAF 속도 제한. |
+| 중 | 공유 보너스 | 주인 결정대로 계정만 받는다(코드, 배포 전). 하루 300, 하한 580에 들어가지 않아 새 계정이 첫날 300을 보낼 수 있다. |
 | 중 | 보내기 하한 580 | 너무 높은지(보내기는 '광고주에게 코인 보내기'와 소속 모금뿐). |
 | 중 | 코인 마이그레이션 2부 | 이메일 확인이 켜져 있던 동안의 미확인 옛 가입 1개를 확인 처리할지. |
 | 하 | 카카오톡 공유 | 보류. 다시 하면 `KAKAO_JS_KEY`를 Worker 시크릿으로. |

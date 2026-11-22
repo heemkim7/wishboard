@@ -244,7 +244,10 @@ const STEPS = {
         else { t.skip(`renew ${nick}`, 'saved token no longer valid, minting a new guest; ' + r.brief); st.retired.push(saved); } }
       if (!g) {
         let r = null;
-        for (let k = 0; k < 3; k++) { r = await c.api(null, 'POST', '/rt/guest', {}); if (r.status !== 429) break; const wait = Math.max(5, Number(r.headers.get('retry-after')) || 60); c.log(`NOTE  guests      GUEST_RL (10 new guests per minute per IP): waiting ${wait} s`); await c.sleep(wait * 1000 + 1000); }
+        for (let k = 0; k < 3; k++) { r = await c.api(null, 'POST', '/rt/guest', {}); if (r.status !== 429 || r.json?.err === 'day') break; const wait = Math.max(5, Number(r.headers.get('retry-after')) || 60); c.log(`NOTE  guests      GUEST_RL (10 new guests per minute per IP): waiting ${wait} s`); await c.sleep(wait * 1000 + 1000); }
+        // Bot protection (docs/bot-protection.md): a script cannot pass Turnstile, and the day count per network does not reopen within the run.
+        if (r.status === 403 && r.json?.err === 'human') throw new StepStop('Turnstile is on (TURNSTILE_SITE + TURNSTILE_SECRET): new guests need a browser; run with a state file whose guests are still valid, or switch it off for the run');
+        if (r.status === 429 && r.json?.err === 'day') throw new StepStop('this network made GUEST_DAY new guests today: reuse the state file, or try tomorrow');
         if (!t.expect(`mint ${nick} (POST /rt/guest)`, r, 200, (j) => String(j.token || '').startsWith('g1.') && SUB_RE.test(j.sub || '') && j.exp * 1000 > c.now(), (j) => mask(j.sub))) throw new StepStop('could not mint ' + nick);
         g = { nick, token: r.json.token, sub: r.json.sub, exp: r.json.exp }; how = 'minted';
       }

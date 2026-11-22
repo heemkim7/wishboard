@@ -934,13 +934,27 @@ describe('send floor: holds that run out, quiet errors, the share bonus', { conc
     } finally { console.warn = warn; s.done(); }
   });
 
+  it('share bonus: accounts only; a guest or an anonymous sign-in is refused with code account before any DO call or RPC', async () => {
+    const s = await scene(db);
+    try {
+      const g = await s.guest(), anon = await s.user(true), log = spyDo(s.env), rpcs = s.state.rpcs.length;
+      for (const who of [g, anon]) {
+        const res = await s.post('/rt/share-bonus', {}, who.token, '7.7.6.1');
+        assert.equal(res.status, 403); assert.deepEqual(await res.json(), { ok: false, code: 'account', error: '계정을 연결하면 공유 보너스 300코인을 받을 수 있어요.' });
+      }
+      assert.deepEqual(log, []); assert.equal(s.state.rpcs.length, rpcs); assert.equal(await s.coins(g.id), 140);
+      // The refusal takes nothing: the same network's account still gets today's bonus.
+      const u = await s.linked(), ok = await s.post('/rt/share-bonus', {}, u.token, '7.7.6.1'); assert.equal(ok.status, 200); assert.equal(await s.coins(u.id), 740);
+    } finally { s.done(); }
+  });
+
   it('share bonus: once a day per account and per address, remembered in the acct instance, the address hashed', async () => {
     const s = await scene(db);
     try {
-      const a = await s.guest(), b = await s.guest(), c = await s.guest(), M = s.env.meter('acct').do, log = spyDo(s.env);
+      const a = await s.linked(), b = await s.linked(), c = await s.linked(), M = s.env.meter('acct').do, log = spyDo(s.env);
       const claim = async (who, ip) => { const res = await s.post('/rt/share-bonus', {}, who.token, ip); return { status: res.status, body: await res.json() }; };
       const grants = () => s.state.rpcs.filter((x) => x.startsWith('grant_coins ')).length;
-      const first = await claim(a, '7.7.7.1'); assert.equal(first.status, 200); assert.equal(first.body.amount, 300); assert.equal(await s.coins(a.id), 440);
+      const first = await claim(a, '7.7.7.1'); assert.equal(first.status, 200); assert.equal(first.body.amount, 300); assert.equal(await s.coins(a.id), 740);
       assert.deepEqual(s.acctCalls(log, /^promo/), ['acct.promoTake']);
       const rows = s.env.meter('acct').sql.db.prepare('select k, d from prm order by k').all();
       assert.equal(rows.length, 2); assert.equal(rows[1].k, 's:' + a.id); assert.match(rows[0].k, /^i:[0-9a-f]{16}$/); assert.equal(JSON.stringify(rows).includes('7.7.7.1'), false);
@@ -953,26 +967,30 @@ describe('send floor: holds that run out, quiet errors, the share bonus', { conc
       // A grant that fails gives the day back, so the claim can be made again.
       s.state.fail = (name) => (name === 'grant_coins' ? json({ message: 'upstream' }, 500) : null);
       const bad = await claim(c, '7.7.7.3'); assert.equal(bad.status, 502);
-      s.state.fail = null; const again = await claim(c, '7.7.7.3'); assert.equal(again.status, 200); assert.equal(await s.coins(c.id), 440);
+      s.state.fail = null; const again = await claim(c, '7.7.7.3'); assert.equal(again.status, 200); assert.equal(await s.coins(c.id), 740);
       assert.equal((await claim(c, '7.7.7.3')).status, 400);
       // The next day everything is open again and yesterday's rows are gone.
       s.clock.add(864e5); assert.equal((await claim(a, '7.7.7.1')).status, 200);
       assert.equal(s.env.meter('acct').sql.db.prepare('select count(*) n from prm where d = ?').get(day).n, 0);
+      // The address key is the network: another address in the same IPv6 /64 is the same address (one phone cannot walk through its /64).
+      const v6 = await claim(b, '2001:db8:1:2::10'); assert.equal(v6.status, 200);
+      const same = await claim(c, '2001:db8:1:2:ffff::99'); assert.equal(same.status, 400); assert.equal(same.body.error, '오늘은 이미 공유 보너스를 받았어요.');
+      assert.equal((await claim(c, '2001:db8:1:3::10')).status, 200); // the next /64 is another network
     } finally { s.done(); }
   });
 
   it('share bonus where the record cannot be asked (budget level hard, or the acct call failing): refused, nothing paid', async () => {
     const s = await scene(db);
     try {
-      const a = await s.guest(), b = await s.guest(), grants = () => s.state.rpcs.filter((x) => x.startsWith('grant_coins ')).length;
+      const a = await s.linked(), b = await s.linked(), grants = () => s.state.rpcs.filter((x) => x.startsWith('grant_coins ')).length;
       const real = s.env.METER.get; s.env.METER.get = (n) => (n === 'acct' ? new Proxy(real(n), { get: (t, k) => (k === 'promoTake' ? async () => { throw new Error('do down'); } : t[k]) }) : real(n));
       const down = await s.post('/rt/share-bonus', {}, a.token, '8.8.8.1'); assert.equal(down.status, 503); assert.deepEqual(await down.json(), HARD);
-      s.env.METER.get = real; assert.equal(grants(), 0); assert.equal(await s.coins(a.id), 140);
+      s.env.METER.get = real; assert.equal(grants(), 0); assert.equal(await s.coins(a.id), 440);
       await s.hard();
       const log = spyDo(s.env);
       for (const [who, ip] of [[a, '8.8.8.1'], [a, '8.8.8.2'], [b, '8.8.8.1']]) { const r = await s.post('/rt/share-bonus', {}, who.token, ip); assert.equal(r.status, 503); assert.deepEqual(await r.json(), HARD); }
       assert.deepEqual(s.acctCalls(log, /^promo/), []); assert.equal(grants(), 0);
-      await s.calm(); assert.equal((await s.post('/rt/share-bonus', {}, a.token, '8.8.8.1')).status, 200); assert.equal(await s.coins(a.id), 440);
+      await s.calm(); assert.equal((await s.post('/rt/share-bonus', {}, a.token, '8.8.8.1')).status, 200); assert.equal(await s.coins(a.id), 740);
     } finally { s.done(); }
   });
 
