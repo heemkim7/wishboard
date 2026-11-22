@@ -60,6 +60,16 @@ export function installDue({ mode, done, visits, act, playMs, busy, newbie } = {
   return meaningful({ wish: act?.wish, claim: act?.claim, playMs });
 }
 
+// Too little room for the card on a touch screen (media queries; ui.js waits while one matches, as it does for a sheet, so
+// the 25 s do not run and the offer is not spent unseen). The card is a piece of the floating stack (index.html), which
+// starts 190px up, above the bottom-centre controls; with a toast above it, it must still end under the HUD at the top
+// (about 154px down, the location pill). The iOS card with its three steps is about 165px tall at 390px wide and 210px at
+// 320px, the other one about 96-120px: they need about 600px and 540px of height. A phone on its side never has that.
+export const INSTALL_CRAMPED_Q = Object.freeze({
+  ios: '(orientation: landscape) and (max-height: 520px), (max-height: 599px)',
+  prompt: '(orientation: landscape) and (max-height: 520px), (max-height: 539px)',
+});
+
 // The words on the card.
 export const INSTALL_COPY = Object.freeze({
   title: '홈 화면에 추가하면 바로 들어올 수 있어요',

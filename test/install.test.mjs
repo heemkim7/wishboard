@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { A2HS_KEY, VISITS_KEY, MIN_VISITS, MIN_PLAY_MS, bumpVisits, isStandalone, isIosSafari, installMode, meaningful, installDue, INSTALL_COPY } from '../install.js';
+import { A2HS_KEY, VISITS_KEY, MIN_VISITS, MIN_PLAY_MS, bumpVisits, isStandalone, isIosSafari, installMode, meaningful, installDue, INSTALL_COPY, INSTALL_CRAMPED_Q } from '../install.js';
 
 const read = (f) => readFileSync(new URL('../' + f, import.meta.url), 'utf8');
 const ev = { prompt() {}, userChoice: Promise.resolve({ outcome: 'dismissed' }) };
@@ -129,6 +129,22 @@ describe('wiring (ui.js, index.html)', () => {
     assert.match(open, /trackEvent\('install_prompt'/);
     assert.match(block, /installDue\(\{ mode, done: recall\(A2HS_KEY, 0\), visits: recall\(VISITS_KEY, null\)/);
     assert.match(block, /a2hs\.free < 3/, 'quiet for a few ticks before it appears');
+  });
+  it('a touch screen too short for the card (or a phone on its side) makes it wait like a sheet does, per mode', () => {
+    // the card sits in the floating stack from 190px up with a two-line toast above it (8 + 58px), under the HUD at the top
+    // (about 154px down): the iOS card is about 165px tall at 375-390px wide, the other one 96-120px
+    const need = (card) => 190 + card + 8 + 58 + 154;
+    assert.ok(need(165) <= 600 && need(165) > 540);
+    assert.ok(need(120) <= 540);
+    assert.deepEqual(INSTALL_CRAMPED_Q, {
+      ios: '(orientation: landscape) and (max-height: 520px), (max-height: 599px)',
+      prompt: '(orientation: landscape) and (max-height: 520px), (max-height: 539px)',
+    });
+    assert.match(block, /const homeCramped = \{ ios: matchMedia\(INSTALL_CRAMPED_Q\.ios\), prompt: matchMedia\(INSTALL_CRAMPED_Q\.prompt\) \};/);
+    assert.match(block, /const homeNoRoom = \(mode\) => coarse && !!mode && homeCramped\[mode === 'ios' \? 'ios' : 'prompt'\]\.matches;/);
+    const pump = block.slice(block.indexOf('function pumpHome('));
+    assert.match(pump, /const mode = a2hs\.el \? a2hs\.mode : installNow\(\);\s*const busy = homeBusy\(\) \|\| homeNoRoom\(mode\);/);
+    assert.match(block, /a2hs\.mode = mode;/);
   });
   it('"추가" uses the captured event once; the iOS card has steps and no native prompt', () => {
     const open = block.slice(block.indexOf('function openHome('), block.indexOf('function pumpHome('));
