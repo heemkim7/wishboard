@@ -62,22 +62,23 @@ describe('개인정보처리방침과 이용약관', () => {
   it('says what a Google sign-in stores, that GA is on from the start, and how to turn it off', () => {
     assert.doesNotMatch(legal, /실명은 수집하지 않습니다/);
     assert.match(privacy, /구글로 로그인하면 구글이 알려 주는 이메일, 프로필 이름, 프로필 사진 주소가 로그인 정보\(Supabase Auth\)에 함께 저장됩니다/);
-    assert.match(privacy, /게임에는 직접 정한 닉네임만 보입니다/);
+    assert.match(privacy, /광장에는 직접 정한 닉네임만 보입니다/);
     assert.match(privacy, /따로 묻지 않고 처음부터 켜져 있습니다/); assert.match(privacy, /설정의 ‘방문 통계 보내지 않기’를 켜면 그 브라우저에서는 Google 애널리틱스를 불러오지 않고/); assert.match(privacy, /Global Privacy Control/);
   });
-  it('the terms say that a withdrawal deletes the login too, the send floor, and the id password', () => {
+  it('the terms say that a withdrawal deletes the login too, that points cannot be sent, and the id password', () => {
     const quit = between(terms, "{ h: '탈퇴', p: '", "' },");
     assert.match(quit, /로그인 정보\(계정, 연결된 소셜 로그인, 로그인 세션\)도 지웁니다/);
     assert.doesNotMatch(quit, /지갑 연결과 전광판·토지 소유만 지우고/);
-    assert.match(quit, /탈퇴한 뒤 같은 이메일로 다시 가입해도 연결 보상 300코인은 다시 주지 않습니다/); // true before the coins migration too (the account's own row may still start at 100 then)
+    assert.match(quit, /탈퇴한 뒤 같은 이메일로 다시 가입해도 계정 연결 보상은 다시 주지 않습니다/); // no amount: the non-game points may change it (2026-11-23)
     assert.doesNotMatch(quit, /시작 코인/);
-    assert.match(terms, /계정만 할 수 있고, 선물로 받은 코인 580개까지는 보내거나 모금할 수 없습니다\. 그보다 더 모은 만큼만 보낼 수 있습니다\./);
+    assert.match(terms, /응원 포인트는 다른 사람에게 보내거나 넘길 수 없고/); // 2026-11-23: nothing is sent, so there is no send floor to state
+    assert.doesNotMatch(terms, /580|보내거나 모금할 수 없습니다/);
     assert.match(terms, /아이디로 만든 계정은 비밀번호를 잊으면 되찾을 수 없습니다/);
     assert.equal(/Google/.test(terms), false);
   });
-  it('both carry the 2026-11-22 date', async () => {
+  it('both carry the 2026-11-23 date', async () => {
     const { policyDoc } = await import('../legal.js');
-    for (const kind of ['privacy', 'terms']) { const last = policyDoc(kind).sections.at(-1); assert.equal(last.h, '시행일'); assert.match(last.p, /2026년 11월 22일/); assert.match(last.p, /2026-11-22/); }
+    for (const kind of ['privacy', 'terms']) { const last = policyDoc(kind).sections.at(-1); assert.equal(last.h, '시행일'); assert.match(last.p, /2026년 11월 23일/); assert.match(last.p, /2026-11-23/); }
   });
 });
 

@@ -7,10 +7,10 @@
 <link rel="icon" href="./icons/app-icon.jpg?v=4" type="image/jpeg" />
 <link rel="apple-touch-icon" href="./icons/app-icon.jpg?v=4" />
 <link rel="manifest" href="./manifest.webmanifest" />
-<meta name="description" content="내 소원 한 줄을 뉴욕 타임스퀘어 전광판에 거는 무료 웹 게임. 붕어빵을 구워 코인을 모으고 전광판과 건물을 차지하세요. 설치 없이 바로 플레이." />
+<meta name="description" content="뉴욕 타임스퀘어를 본뜬 3D 가상 광장의 전광판에 생일 축하·응원·소원을 거는 무료 웹 서비스. 설치 없이 친구에게 선물 전광판을 걸어 주세요." />
 <link rel="canonical" href="https://studio.wishboard.workers.dev/" />
 <meta property="og:title" content="WISH BOARD : 모두의 전광판" />
-<meta property="og:description" content="붕어빵 구워 뉴욕 타임스퀘어 전광판과 건물을 차지하세요!" />
+<meta property="og:description" content="생일 축하·응원·소원을 가상 타임스퀘어 전광판에 걸어 보세요!" />
 <meta property="og:type" content="website" />
 <meta property="og:url" content="https://studio.wishboard.workers.dev/" />
 <meta property="og:site_name" content="WISH BOARD" />
@@ -20,15 +20,15 @@
 <meta property="og:image:type" content="image/jpeg" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
-<meta property="og:image:alt" content="WISH BOARD : 모두의 전광판 — 뉴욕 타임스퀘어를 차지하세요" />
+<meta property="og:image:alt" content="WISH BOARD : 모두의 전광판 — 가상 타임스퀘어에 거는 생일·응원 전광판" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="WISH BOARD : 모두의 전광판" />
-<meta name="twitter:description" content="붕어빵 구워 뉴욕 타임스퀘어 전광판과 건물을 차지하세요!" />
+<meta name="twitter:description" content="생일 축하·응원·소원을 가상 타임스퀘어 전광판에 걸어 보세요!" />
 <meta name="twitter:image" content="https://studio.wishboard.workers.dev/og.jpg?v=2" />
-<meta name="twitter:image:alt" content="WISH BOARD : 모두의 전광판 — 뉴욕 타임스퀘어를 차지하세요" />
+<meta name="twitter:image:alt" content="WISH BOARD : 모두의 전광판 — 가상 타임스퀘어에 거는 생일·응원 전광판" />
 <title>WISH BOARD : 모두의 전광판</title>
 <script type="application/ld+json">
-{"@context":"https://schema.org","@type":"WebApplication","name":"WISH BOARD : 모두의 전광판","url":"https://studio.wishboard.workers.dev/","description":"내 소원 한 줄을 뉴욕 타임스퀘어 전광판에 거는 무료 웹 게임.","applicationCategory":"GameApplication","operatingSystem":"Any","browserRequirements":"Requires JavaScript and WebGL","inLanguage":"ko","image":"https://studio.wishboard.workers.dev/og.jpg?v=2","offers":{"@type":"Offer","price":"0","priceCurrency":"KRW"}}
+{"@context":"https://schema.org","@type":"WebApplication","name":"WISH BOARD : 모두의 전광판","url":"https://studio.wishboard.workers.dev/","description":"뉴욕 타임스퀘어를 본뜬 3D 가상 광장의 전광판에 생일 축하·응원·소원을 거는 무료 웹 서비스.","applicationCategory":"LifestyleApplication","operatingSystem":"Any","browserRequirements":"Requires JavaScript and WebGL","inLanguage":"ko","image":"https://studio.wishboard.workers.dev/og.jpg?v=2","offers":{"@type":"Offer","price":"0","priceCurrency":"KRW"}}
 </script>
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm" crossorigin />
@@ -1428,7 +1428,7 @@ const CLARITY_ID = '';
     <img class="bootmark" src="./icons/app-icon.jpg?v=4" alt="" width="84" height="84" />
     <div class="badge">NEW YORK WISH SQUARE</div>
     <h1>모두의 전광판</h1>
-    <div class="tag">내 소원을 타임스퀘어에 거세요.<br>자랑하고, 응원하고, 명당은 빼앗으세요.</div>
+    <div class="tag">생일·응원·소원을 가상 타임스퀘어에 거세요.<br>축하하고, 응원하고, 함께 명당을 밝혀요.</div>
     <div class="bootlive" id="bootLive"><div id="bootSeason" hidden></div><div id="bootWish" hidden></div><div id="bootKing">👑 지금 메인 타워의 소원: 확인 중…</div><div id="bootStat">빈 자리와 오늘 다녀간 사람을 세는 중…</div></div>
     <div class="prog" aria-hidden="true"><i id="bootBar"></i></div>
     <div class="msg" id="bootMsg">타임스퀘어로 이동하는 중…</div>

@@ -18,7 +18,7 @@
 <body>
 <main>
   <p id="msg" role="status">로그인을 마무리하는 중…</p>
-  <p id="more" hidden><a href="/">게임으로 돌아가기</a></p>
+  <p id="more" hidden><a href="/">광장으로 돌아가기</a></p>
 </main>
 <script>
 // The second window of the Google sign-in (main.js opens it, Supabase sends it back here with ?code= or ?error=).
@@ -49,14 +49,14 @@
     if (ended) return;
     ended = true;
     if (acked) {
-      say(code ? '로그인이 끝났어요.' : '게임 창으로 돌아갑니다.', false);
+      say(code ? '로그인이 끝났어요.' : '광장 창으로 돌아갑니다.', false);
       try { window.close(); } catch (e) { /* not ours to close */ }
       // Still here: this browser did not let the window close itself.
-      setTimeout(function () { say(code ? '로그인이 끝났어요. 이 창을 닫고 게임으로 돌아가세요' : '이 창을 닫고 게임으로 돌아가세요', false); }, 400);
+      setTimeout(function () { say(code ? '로그인이 끝났어요. 이 창을 닫고 광장으로 돌아가세요' : '이 창을 닫고 광장으로 돌아가세요', false); }, 400);
       return;
     }
     if (code) { location.replace('/?code=' + encodeURIComponent(code)); return; }
-    say(error === 'access_denied' ? '로그인을 취소했어요.' : '로그인을 마치지 못했어요. 게임에서 다시 시도해 주세요.', true);
+    say(error === 'access_denied' ? '로그인을 취소했어요.' : '로그인을 마치지 못했어요. 광장에서 다시 시도해 주세요.', true);
   }
   // The game tab can be slow to wake behind this window: say it a few times, then decide at about 1.5 s.
   var started = Date.now(), tries = 0;

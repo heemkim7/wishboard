@@ -57,7 +57,7 @@ export const AD_THEMES = ['cyber_navy', 'neon_pink', 'gold_luxury', 'matrix_gree
 export const AD_EMOJI = ['📢', '🎉', '🎂', '💖', '⭐', '☕', '🛍️', '🎵', '🔥', '🍀', '🏆', '✨'];
 export const AD_STATUS = ['new', 'quoted', 'paid', 'scheduled', 'done', 'rejected'];
 export const AD_STATUS_NAME = { new: '새 문의', quoted: '견적 보냄', paid: '입금 확인', scheduled: '일정 잡음', done: '끝남', rejected: '거절' };
-export const AD_COUNTED = '게임이 센 수'; // every number on the /ads page and in a report is labelled this way, never as guaranteed exposure
+export const AD_COUNTED = '광장이 센 수'; // every number on the /ads page and in a report is labelled this way, never as guaranteed exposure
 
 const glyphs = (s) => Array.from(String(s ?? ''));
 const CTRL = new RegExp('[' + String.fromCharCode(0) + '-' + String.fromCharCode(31) + String.fromCharCode(127, 0x2028, 0x2029) + ']', 'g'); // control characters and line / paragraph separators

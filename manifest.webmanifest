@@ -2,7 +2,7 @@
   "id": "/",
   "name": "WISH BOARD : 모두의 전광판",
   "short_name": "WISH BOARD",
-  "description": "붕어빵 구워 뉴욕 타임스퀘어 전광판과 건물을 차지하세요!",
+  "description": "생일 축하·응원·소원을 가상 타임스퀘어 전광판에 걸어 보세요!",
   "lang": "ko",
   "start_url": "/",
   "scope": "/",
@@ -10,7 +10,7 @@
   "orientation": "any",
   "background_color": "#080c20",
   "theme_color": "#12182c",
-  "categories": ["games", "entertainment", "social"],
+  "categories": ["social", "lifestyle", "entertainment"],
   "icons": [
     { "src": "/icons/app-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "/icons/app-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },

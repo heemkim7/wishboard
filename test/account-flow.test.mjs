@@ -76,7 +76,7 @@ describe('oauth.html: the second window of the Google sign-in', () => {
     assert.equal(p.location.replaced, null);
     assert.equal(p.intervals.size, 0);
     p.run(); // still open: the browser refused to close it
-    assert.equal(p.els.msg.textContent, '로그인이 끝났어요. 이 창을 닫고 게임으로 돌아가세요');
+    assert.equal(p.els.msg.textContent, '로그인이 끝났어요. 이 창을 닫고 광장으로 돌아가세요');
     assert.equal(p.els.more.hidden, true);
   });
 
@@ -124,7 +124,7 @@ describe('oauth.html: the second window of the Google sign-in', () => {
     const none = page({});
     assert.deepEqual(oauthMessage(none.chan.sent[0]), { error: 'no_code', errorCode: '', description: '' });
     none.tick(15);
-    assert.equal(none.els.msg.textContent, '로그인을 마치지 못했어요. 게임에서 다시 시도해 주세요.');
+    assert.equal(none.els.msg.textContent, '로그인을 마치지 못했어요. 광장에서 다시 시도해 주세요.');
   });
 
   it('does not throw when the opener is gone or closed', () => {
@@ -354,7 +354,7 @@ describe('a provider error is said with a fixed line', () => {
     }
     assert.ok(FIXED.has(oauthErrorText(oauthReturn('', '#error=server_error&error_description=' + encodeURIComponent(lure)))));
     // The window itself only ever says one of its two own lines.
-    assert.match(OAUTH_JS, /say\(error === 'access_denied' \? '로그인을 취소했어요\.' : '로그인을 마치지 못했어요\. 게임에서 다시 시도해 주세요\.', true\);/);
+    assert.match(OAUTH_JS, /say\(error === 'access_denied' \? '로그인을 취소했어요\.' : '로그인을 마치지 못했어요\. 광장에서 다시 시도해 주세요\.', true\);/);
     assert.doesNotMatch(OAUTH_JS, /say\([^)]*description/);
     assert.doesNotMatch(read('plaza-account.js'), /로그인하지 못했어요 \(/);
   });
