@@ -200,7 +200,7 @@ describe('a cheer reaches the board holder', { concurrency: false }, () => {
       const room = env.room(SQ).do, a = sock(room, A.id), b = sock(room, B.id), c = sock(room, 'guest:c');
       await post('/rt/claim-billboard', CLAIM('STREET_14'), A.token);
       assert.equal((await cheer(room, c, 'STREET_14')).amount, 4); assert.equal(inboxOf(a).length, 1);
-      clock.add(61000); await post('/rt/claim-billboard', CLAIM('STREET_14'), B.token); // B takes it over
+      clock.add(72 * 36e5 + 61000); assert.equal((await post('/rt/claim-billboard', CLAIM('STREET_14'), B.token)).status, 200); // A's 72 h ran out, B lights it (no takeovers)
       assert.equal((await cheer(room, c, 'STREET_14')).amount, 4); assert.equal(inboxOf(a).length, 1); assert.equal(inboxOf(b).length, 1);
       const reads = state.roomReads;
       await room.fetch(new Request('https://room.internal/world', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"t":"WORLD_UPDATE"}' }));
@@ -211,13 +211,13 @@ describe('a cheer reaches the board holder', { concurrency: false }, () => {
     } finally { done(); }
   });
 
-  it('the chain bonus reads the whole building from the same sources', async () => {
+  it('the chain bonus reads the whole building from the same sources (a corner lit before the prime screens, which nobody can claim now)', async () => {
     const { state, done } = setup();
     try {
       const env = makeEnv(IsoRoom), { guest, post } = harness(env), A = await guest();
       const room = env.room(SQ).do, c = sock(room, 'guest:c'), d = sock(room, 'guest:d');
-      state.boards = [lit('SUB_1B', A.id)]; // the other half of corner 1, held before this room started
-      await post('/rt/claim-billboard', CLAIM('SUB_1A'), A.token);
+      state.boards = [lit('SUB_1B', A.id), lit('SUB_1A', A.id)]; // both halves of corner 1, held before this room started
+      assert.equal((await post('/rt/claim-billboard', CLAIM('SUB_1A'), A.token)).status, 400); // a prime screen: never with points
       assert.equal((await cheer(room, c, 'SUB_1A')).amount, 8); // both halves lit by A: a chain
       assert.equal((await cheer(room, d, 'SUB_1B')).amount, 8);
     } finally { done(); }

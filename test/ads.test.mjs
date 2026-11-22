@@ -59,6 +59,9 @@ function fakeNet(state) {
   return async (url, opt = {}) => {
     const u = String(url); state.calls.push(u);
     if (u.includes('/.well-known/jwks.json')) return json({ keys: state.jwks || [] });
+    // The claim's no-takeover read (worker.js boardFresh, the only billboards read that selects current_bid): free unless state.pre says otherwise.
+    // These tests are about the report tenure, so a new holder here is one whose predecessor's time ran out.
+    if (u.includes('/rest/v1/billboards') && u.includes('current_bid')) return json(state.pre || []);
     if (u.includes('/rest/v1/billboards')) { state.boardReads = (state.boardReads || 0) + 1; const m = /slot_id=eq\.(\w+)/.exec(u); return json((state.boards || []).filter((x) => !m || x.slot_id === m[1])); }
     if (u.includes('/rest/v1/') && !u.includes('/rpc/')) return json([]);
     if (u.includes('/rpc/my_tribe')) { const a = JSON.parse(opt.body).p_actor_id; return json({ ok: true, tribe_id: state.tribes?.[a] || null }); }
@@ -166,7 +169,7 @@ describe('board report', { concurrency: false }, () => {
       const room = env.room(SQ).do, c = sock(room, 'guest:c2'), d = sock(room, 'guest:d2');
       await cheer(room, c, 'STREET_9'); await room.flushAds();
       assert.equal((await report('STREET_9', A.token)).body.total.cheers, 1);
-      // Counted for A but still in the room when B takes the board.
+      // Counted for A but still in the room when B lights the board after A's time ran out (no takeovers: the claim's own read sees it free).
       clock.add(13000); await cheer(room, c, 'STREET_9'); await cheer(room, d, 'STREET_9');
       clock.add(61000);
       state.boards = [board('STREET_9', B.id)]; state.victim = A.id;
@@ -178,13 +181,15 @@ describe('board report', { concurrency: false }, () => {
       assert.equal((await report('STREET_9', A.token)).status, 403);
       clock.add(61000); await cheer(room, c, 'STREET_9'); await room.flushAds();
       assert.deepEqual((await report('STREET_9', B.token)).body.total, { views: 0, clicks: 0, cheers: 1, people: 1 });
-      // A takes it back: A's old numbers do not come back either.
+      // A lights it again after B's time: A's old numbers do not come back either.
       clock.add(61000); state.boards = [board('STREET_9', A.id)]; state.victim = B.id;
       await post('/rt/claim-billboard', CLAIM('STREET_9'), A.token);
       assert.deepEqual((await report('STREET_9', A.token)).body.total, { views: 0, clicks: 0, cheers: 0, people: 0 });
-      // An edit by the holder keeps the tenure.
+      // An edit by the holder (its board lit) keeps the tenure.
       clock.add(61000); await cheer(room, d, 'STREET_9'); await room.flushAds();
-      await post('/rt/claim-billboard', { ...CLAIM('STREET_9'), mode: 'edit', bid: 0 }, A.token);
+      state.pre = [{ ...board('STREET_9', A.id), current_bid: 228 }];
+      assert.equal((await post('/rt/claim-billboard', { ...CLAIM('STREET_9'), mode: 'edit', bid: 0 }, A.token)).status, 200);
+      state.pre = null;
       assert.equal((await report('STREET_9', A.token)).body.total.cheers, 1);
     } finally { done(); }
   });
@@ -211,7 +216,7 @@ describe('board report', { concurrency: false }, () => {
     } finally { done(); }
   });
 
-  it('a takeover inside a busy minute: the previous holder\'s events in that minute stay out of the new report', async () => {
+  it('a new holder inside a busy minute: the previous holder\'s events in that minute stay out of the new report', async () => {
     const { clock, state, done } = setup();
     try {
       const env = makeEnv(), { guest, post, report } = harness(env), A = await guest(), B = await guest();
@@ -220,7 +225,7 @@ describe('board report', { concurrency: false }, () => {
       clock.add(120000 - (clock.now() % 60000)); clock.add(5000); // 5 s into a minute
       const room = env.room(SQ).do;
       for (let i = 0; i < 5; i++) await cheer(room, sock(room, 'guest:m' + i), 'STREET_9');
-      clock.add(40000); // the takeover, 45 s into the same minute
+      clock.add(40000); // the new claim, 45 s into the same minute
       state.boards = [board('STREET_9', B.id)]; state.victim = A.id;
       await post('/rt/claim-billboard', CLAIM('STREET_9'), B.token);
       await room.flushAds();

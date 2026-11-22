@@ -12,6 +12,7 @@ worker.js
 ops.js
 adsrv.js
 giftsrv.js
+teamsrv.js
 wrangler.jsonc
 cf_release.py
 schema.sql

@@ -160,20 +160,14 @@ describe('account link and withdrawal limits', { concurrency: false }, () => {
 });
 
 describe('memos in front of Durable Object reads', { concurrency: false }, () => {
-  it('GET /rt/league with a token: one lg call per account per 10 s, fresh right after my own spend', async () => {
-    const { clock, done } = setup();
+  it('GET /rt/league (the retired spend league): an empty week for anyone, no lg call at all, and a claim adds nothing to it', async () => {
+    const { done } = setup();
     try {
-      const env = makeEnv(), { guest, post, get } = harness(env), a = await guest(), b = await guest();
-      const calls = spyDo(env), lgTop = () => calls.filter((c) => c === 'meter:lg.lgTop').length;
-      const r1 = await (await get('/rt/league', a.token)).json(); assert.equal(r1.ok, true); assert.equal(r1.me.rank, 0);
-      for (let i = 0; i < 5; i++) assert.deepEqual(await (await get('/rt/league', a.token)).json(), r1);
-      assert.equal(lgTop(), 1);
-      await get('/rt/league', b.token); assert.equal(lgTop(), 2); // per account
-      clock.add(10001); await get('/rt/league', a.token); assert.equal(lgTop(), 3);
-      // My own spend clears it: the read 1.5 s later (leagueSoon) shows the new rank.
+      const env = makeEnv(), { guest, post, get } = harness(env), a = await guest();
+      const calls = spyDo(env), lg = () => calls.filter((c) => c.startsWith('meter:lg.')).length;
+      for (let i = 0; i < 3; i++) { const r = await (await get('/rt/league', a.token)).json(); assert.equal(r.ok, true); assert.deepEqual(r.top, []); assert.equal(r.me, null); }
       assert.equal((await post('/rt/claim-billboard', CLAIM('STREET_5', 300), a.token)).status, 200);
-      clock.add(1500); const r2 = await (await get('/rt/league', a.token)).json();
-      assert.equal(lgTop(), 4); assert.deepEqual([r2.me.rank, r2.me.spent], [1, 300]);
+      assert.equal(lg(), 0);
     } finally { done(); }
   });
 
@@ -221,7 +215,8 @@ describe('board edits are spaced per account', { concurrency: false }, () => {
         assert.equal(no.status, 429); assert.deepEqual(await no.json(), { ok: false, error: '조금만 천천히요. 3초 뒤에 다시 해 주세요.' }); }
       assert.deepEqual(calls, []); assert.equal(state.calls.length, f0); assert.equal(state.claims.length, c0);
       assert.equal((await post('/rt/claim-billboard', CLAIM('STREET_7'), a.token)).status, 200); // a claim inside the gap
-      assert.equal((await post('/rt/claim-billboard', { ...CLAIM('STREET_8'), mode: 'edit' }, b.token)).status, 200); // another account
+      assert.equal((await post('/rt/claim-billboard', CLAIM('STREET_8'), b.token)).status, 200);
+      assert.equal((await post('/rt/claim-billboard', { ...CLAIM('STREET_8'), mode: 'edit' }, b.token)).status, 200); // another account's edit
       clock.add(3000); assert.equal((await post('/rt/claim-billboard', edit, a.token)).status, 200);
     } finally { done(); }
   });

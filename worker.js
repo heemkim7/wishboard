@@ -5,7 +5,7 @@
 // Meter DO: daily (UTC) estimate of billed DO requests -> lean mode at 80%, solo (down) at 95% of the Free 100k/day.
 // Supabase keeps auth, DB and RPCs only. No timers in DOs (hibernation-friendly); alarms only while someone waits.
 import { DurableObject } from 'cloudflare:workers';
-import { BALANCE, slotName, josa, SLOT_IDS, PAY, PLAY, BONUS_KINDS, ballOpen, auctionClosed, stickerNext, chainBoost, buildingOf, cheerCount, STARTER_DEFAULT, starterList, EQUIP_MAX, OWNED_MAX, shopItem } from './balance.js';
+import { BALANCE, slotName, josa, SLOT_IDS, PAY, PLAY, BONUS_KINDS, ballOpen, floorOf, stickerNext, chainBoost, buildingOf, cheerCount, STARTER_DEFAULT, starterList, EQUIP_MAX, OWNED_MAX, shopItem } from './balance.js';
 import { nextBallUntil } from './live.js';
 import { CHEER_PHRASES, EVENT_NAMES, allowedLink, blockedText, parseGuestHandover, statsFromCounts } from './plaza-account.js';
 import { renderCardPng } from './cardpng.js';
@@ -19,6 +19,8 @@ import { OPS_THEME_KEYS } from './seasons.js';
 import * as ops from './ops.js'; // 운영 장치: error reports, 문의하기, operator details, maintenance, /rt/health extras
 import { adsApi, adsDb, adsWorld } from './adsrv.js';
 import { giftApi, giftDb, giftPath, giftPage, giftWorld, giftMove, giftForget } from './giftsrv.js'; // 선물 전광판 (docs/gift-board.md)
+import { teamApi, teamDb, teamPath, teamWorld, teamMove, teamForget } from './teamsrv.js'; // 응원 팀과 명당 (docs/prime-screens.md)
+import { isPrime, BOARD_ERR, PLOT_HOLD_MS } from './primerules.js';
 // v16 cost pass: ping 25s (client) / STALE 75s, idle scan alarm 60s, meter report 60s, compact pos ('p'/'P'), nearby fanout, event ring + world cache, HMAC guest tokens.
 const CAP = 50, MEM = 0.125, LEAN = 0.8, HARD = 0.95, STALE = 75000, SCAN = 5000, IDLE_SCAN = 60000, REP = 60000;
 const NEAR_R = 1600, FAR_MS = 3000, HIST_N = 10, PRAY_TTL = 15;
@@ -228,6 +230,22 @@ export class Meter extends DurableObject {
   giftMove(from, to) { return giftDb.move(this.giftI(), from, to); }
   giftForget(uid) { return giftDb.forget(this.giftI(), uid); }
   giftAdmin(op, arg, now) { return giftDb.admin(this.giftI(), op, arg, now); }
+  // 응원 팀과 명당 (teamsrv.js): instance 'team' keeps the teams, their members, one support per account and day, the day counters,
+  // anniversaries, achievements and each day's frozen plan for the prime screens.
+  teamI() { if (!this.teamOk) { this.teamOk = 1; teamDb.tables(this.ctx.storage.sql); } return this.ctx.storage.sql; }
+  teamCreate(o) { return teamDb.create(this.teamI(), o); }
+  teamJoin(o) { return teamDb.join(this.teamI(), o); }
+  teamLeave(o) { return teamDb.leave(this.teamI(), o); }
+  teamCheer(o) { return teamDb.cheer(this.teamI(), o); }
+  teamAnn(o) { return teamDb.annSet(this.teamI(), o); }
+  teamMe(uid, now) { return teamDb.me(this.teamI(), uid, now); }
+  teamPage(id, now) { return teamDb.page(this.teamI(), id, now); }
+  teamRanks(now, find) { return teamDb.ranks(this.teamI(), now, find); }
+  teamPrime(now) { return teamDb.prime(this.teamI(), now); }
+  teamBring(uid, tribe, now) { return teamDb.bring(this.teamI(), uid, tribe, now); }
+  teamMove(from, to) { return teamDb.move(this.teamI(), from, to); }
+  teamForget(uid) { return teamDb.forget(this.teamI(), uid); }
+  teamAdmin(op, arg, now) { return teamDb.admin(this.teamI(), op, arg, now); }
   snapFor(k, r, u) { this.snapInit(); if (!u) return null; const x = this.ctx.storage.sql.exec('select x.id from snx x join snap s on s.id = x.id where x.k = ? and x.r = ? and x.u = ? order by x.at desc limit 1', String(k), String(r), String(u)).toArray()[0]; return x ? String(x.id) : null; }
   // Immediate push (instance 'push', new tables). pss: up to 3 subscriptions per actor, keyed by endpoint (a browser belongs to its latest subscriber).
   // psg: last notice per (actor, kind), the minimum gap. Endpoints and actor ids never leave the Worker.
@@ -1139,7 +1157,7 @@ export class Room extends DurableObject {
     this.ibPut({ kind: 'cheer', slot_id: slot, phrase: p, from_name: fromName, from: a.k, to: holder });
     const note = { t: 'INBOX', kind: 'cheer', slot_id: slot, phrase: p, from_name: fromName, from: a.k };
     for (const [sock, peer] of this.socks()) if (peer.q && peer.k === holder) this.tx(sock, note);
-    this.noteTribe(a.k, 1);
+    // 소속 scores (bit 1 per cheer) are no longer kept: 응원 팀 count people who support their team (teamsrv.js), not cheers.
     try {
       this.conns++; // a DO call, counted toward the daily budget
       const job = this.env.METER.get(this.env.METER.idFromName('ev'))?.touch?.(isoWeek(now), a.k);
@@ -1951,6 +1969,14 @@ const HUMAN_BAD = new Set(['missing-input-response', 'invalid-input-response', '
 // guest), 503 busy when siteverify cannot judge it: never paid unverified, the reward is still there to be had later.
 // What giftsrv.js gets from here (the env it is handed is the tallied one, so its DO calls count in the daily budget).
 const giftKit = () => ({ adminOk, lvlNow, resolveActor, tokenOf, ipHash: wishIp, humanGate, actOk, pushNow });
+// What teamsrv.js gets from here (the tallied env too). supa: the project URL and its publishable key (teamsrv.js reads an account's creation
+// time from Supabase Auth with the caller's own token). myTribe: the old 소속 of an account, { id, tag, role } or null.
+async function oldTribe(env, uid) {
+  if (!env.FLUSH_KEY) return null;
+  const rpc = await supabaseRpc('my_tribe', { p_key: env.FLUSH_KEY, p_actor_id: uid }); const d = rpc.data || {};
+  return rpc.ok && d.tribe_id ? { id: String(d.tribe_id), tag: String(d.tag || ''), role: String(d.role || 'member') } : null;
+}
+const teamKit = () => ({ adminOk, lvlNow, resolveActor, tokenOf, ipHash: wishIp, actOk, supa: { url: SUPA, key: ANON }, myTribe: oldTribe });
 async function humanGate(env, req, b, action) {
   const site = humanSite(env); if (!site) return null;
   const no = () => J({ ok: false, err: 'human', code: 'human', site, error: HUMAN_ERR.human }, 403);
@@ -2018,14 +2044,14 @@ function evProps(p) { const o = {}; let n = 0; if (p && typeof p === 'object') f
 // today = { visitors, wishes } for the boot screen comes from the account registry: one DO call per cache refill (15 s), never per request.
 async function readWorld(env) {
   const h = { apikey: ANON, accept: 'application/json' };
-  const [bs, ps, rs, tally, live, wish, league, ads, gifts] = await Promise.all([
+  const [bs, ps, rs, tally, live, wish, prime, ads, gifts] = await Promise.all([
     fetch(SUPA + '/rest/v1/billboards?select=*&slot_id=in.(' + SLOT_IDS.join(',') + ')&order=slot_id.asc', { headers: h }),
     fetch(SUPA + '/rest/v1/plots?select=*&order=plot_id.asc', { headers: h }),
     fetch(SUPA + '/rest/v1/wallets?select=actor_id, nickname, spent, linked&spent=gt.0&order=spent.desc&limit=60', { headers: h }), // 60: room for the 네온봇N rows filtered out below
     Promise.resolve().then(() => acct(env).tallyOf(kstDay())).catch(() => null),
     supabaseRpc('plaza_live', { p_key: env.FLUSH_KEY || '' }).catch(() => null),
     lvlNow(env).then(l => l >= 2 ? (WWLAST.day === kstDay() ? WWLAST.v : null) : wishM(env).wWorld(kstDay()).then(v => { WWLAST = { day: kstDay(), v }; return v; })).catch(() => null), // budget hard: the last copy, no wish-DO call
-    Promise.resolve().then(() => leagueWorld(env)).catch(() => null),
+    Promise.resolve().then(() => teamWorld(env, { lvlNow })).catch(() => null), // 명당 (teamsrv.js): the day's plan, today's leading teams, one 'team' DO call per isolate a minute at most
     Promise.resolve().then(() => adsWorld(env, { lvlNow })).catch(() => null), // the ad screens' bookings (adsrv.js): one 'ads' DO call per isolate per minute at most
     Promise.resolve().then(() => giftWorld(env, { lvlNow })).catch(() => null), // 선물 전광판 on the plaza now (giftsrv.js): one 'gift' DO call per isolate per 2 minutes at most (5 while none is up)
   ]);
@@ -2035,11 +2061,13 @@ async function readWorld(env) {
   const world = { billboards, plots, ranks: Array.isArray(ranks) ? ranks.filter(r => !botNick(r?.nickname)).slice(0, 20) : [], today: { visitors: Number(tally?.visitors) || 0, wishes: Number(tally?.wishes) || 0 } };
   const row = live?.ok && live.data && typeof live.data === 'object' ? live.data : null;
   if (row?.ops?.id) world.ops = { id: String(row.ops.id), theme: String(row.ops.theme || ''), title: String(row.ops.title || ''), copy: String(row.ops.copy || '') };
-  if (row && typeof row.roof === 'string') world.roof = row.roof;
+  // The roof above the main tower names the latest 9 pm team (teamsrv.js); the old weekly 소속 roof (plaza_live) is no longer shown.
+  world.roof = typeof prime?.roof === 'string' ? clip(prime.roof, 16) : '';
+  if (prime?.plan) world.prime = prime.plan; // left out while the day has no plan yet or the team store is down: the screens keep their notices
+  if (prime?.top?.length) world.teams = prime.top.map(t => ({ id: String(t.id), name: clip(t.name, 16), n: Math.max(0, Math.floor(Number(t.n)) || 0) })); // today's leading teams (HUD, 20:50 banner)
   const ww = wishWorld(wish); if (ww.count || ww.board.length || ww.king) world.wish = ww; // left out while empty or failing: clients read a missing key as { board: [], king: null, count: 0 }
   if (ads) world.ads = ads; // { on, list }: left out while ADS_ON is off and nothing is booked
   if (gifts?.length) world.gifts = gifts; // [{ id, to, from, occ, msg, th, scr, a, b, n }]: left out while none is up
-  if (league?.top?.length) world.league = { week: league.week, top: league.top.map(r => ({ nick: clip(r.nick, 16), spent: Math.max(0, Math.floor(Number(r.spent)) || 0) })) }; // also left out while empty
   return { body: JSON.stringify(world), world, ranked: Array.isArray(ranks) };
 }
 function wishWorld(v) {
@@ -2342,36 +2370,16 @@ const lgM = env => env.METER.get(env.METER.idFromName('lg'));
 const LGW = { at: 0, w: '', v: null }; // /rt/world's league part, 60 s per isolate; this isolate's spends clear it
 const LGC = { at: 0, w: '', v: null }; // the anonymous /rt/league answer, 10 s per isolate
 const LGA = new Map(); let LGG = 0; // a signed-in /rt/league answer per week and account, 10 s per isolate, at most 500; LGG: bumped when it is cleared
-const lgDrop = () => { LGW.at = 0; LGC.at = 0; LGA.clear(); LGG++; }; // after a spend, link or withdrawal in this isolate: the next read is fresh
+const lgDrop = () => { LGW.at = 0; LGC.at = 0; LGA.clear(); LGG++; }; // after a link, a withdrawal or a new name in this isolate: the next read is fresh
 // The nick a spend may write on the public list: '' (keep the stored one) when it is banned or the bots' shape. Sticker and photo routes never check it.
 const BOT_NAME_ERR = '그 이름은 쓸 수 없어요. 프로필에서 이름을 바꿔 주세요.'; // claims, plots, air: the name comes from the profile
-const leagueNick = (nick) => { const n = clip(nick, 16); return !n || rejectedCopy(n) || botNick(n) ? '' : n; };
-function leagueRun(env, ctx, run) {
-  const t = Date.now(), job = Promise.resolve().then(() => run(lgM(env), t)).then(lgDrop).catch(() => null);
-  try { ctx?.waitUntil?.(job); } catch { /* the spend stands; this week's tally misses it */ }
-}
-// A spend with no board behind it (plot, sticker, air, photo fee, an S-tier bid held for review). key: remember it for a later refund (lgBack).
-function leagueAdd(env, ctx, uid, nick, delta, key = '') {
-  const id = String(uid || ''), d = Math.trunc(Number(delta) || 0); if (d <= 0 || !/^(guest|user):/.test(id)) return;
-  leagueRun(env, ctx, (M, t) => M.lgAdd(isoWeek(t), id, leagueNick(nick), d, t, leagueCut(t), key));
-}
-// At the hard budget level the isolate's last copy is all there is (no DO call).
-async function leagueWorld(env) {
-  const w = isoWeek(), hard = (await lvlNow(env)) >= 2;
-  if (!hard && (LGW.w !== w || !LGW.v || Date.now() - LGW.at > 60000)) { const v = await lgM(env).lgWorld(w); LGW.at = Date.now(); LGW.w = w; LGW.v = v; }
-  return { week: w, top: LGW.w === w && Array.isArray(LGW.v) ? LGW.v : [] };
-}
+// The weekly spend league is retired (2026-11-23, docs/prime-screens.md): ranking people by the points they spent is a game's league. 응원 순위
+// (teamsrv.js /rt/teams) ranks teams by distinct supporters, participation and goals reached. GET /rt/league answers an empty week without a DO
+// call, so a page opened before the change shows "아직 비어 있어요"; the 'lg' rows stay for the account flows (lgMove, lgForget, lgNick).
 async function leagueApi(req, env) {
   if (req.method !== 'GET') return J({ err: 'get' }, 405);
-  if (!(await rateOk(env.EVENT_RL, req))) return J({ ok: false, err: 'rate' }, 429);
-  const tok = tokenOf(req), actor = tok ? await resolveActor(env, tok) : null, now = Date.now(), w = isoWeek(now);
-  if ((await lvlNow(env)) >= 2) return LGC.w === w && LGC.v ? J({ ok: true, week: w, ends: weekEnds(now), top: LGC.v.top }) : J({ ok: false, err: 'busy' }, 503); // hard budget: the anonymous copy, no DO call
-  try { let v;
-    if (actor) { const k = w + '|' + actor.id, hit = LGA.get(k); if (hit && now - hit.at < 10000) v = hit.v; // a token is no way past the memo: one lg-DO call per account per 10 s
-      else { const g = LGG; v = await lgM(env).lgTop(w, actor.id); if (g === LGG) { if (LGA.size >= 500) LGA.clear(); LGA.set(k, { at: now, v }); } } } // a spend that landed meanwhile: not kept
-    else { if (LGC.w !== w || !LGC.v || now - LGC.at > 10000) { LGC.v = await lgM(env).lgTop(w, ''); LGC.at = now; LGC.w = w; } v = LGC.v; }
-    return J({ ok: true, week: w, ends: weekEnds(now), top: v.top, ...(actor ? { me: v.me } : {}) });
-  } catch { return J({ ok: false, err: 'league' }, 502); }
+  const now = Date.now();
+  return J({ ok: true, off: true, week: isoWeek(now), ends: weekEnds(now), top: [], me: null });
 }
 // 주간 돌아보기 카드 (recap.js): GET /rt/recap = the caller's own row of LAST week's league (the weeks are kept 5), numbers only. The browser asks at most once
 // a week, and only when it knows the player was active last week. A token is required (the row is the caller's). The answer is final but for refunds, so it is
@@ -2400,8 +2408,9 @@ function tribeSettle(env, ctx, now = Date.now()) {
   const prev = isoWeek(now - 7 * 864e5), week = isoWeek(now), dow = kstDow(now), night = dow === 0 && new Date(now + 9 * 36e5).getUTCHours() >= 21;
   const jobs = [];
   if (TSET.refund !== prev) jobs.push(['refund', 'refund_tribe_week', prev]);
-  if (dow !== 0 && TSET.roof !== prev && now >= TSET.rest) jobs.push(['roof', 'award_tribe_roof', prev]);
-  if (night && TSET.sun !== week) jobs.push(['sun', 'award_tribe_roof', week]);
+  // The weekly 소속 roof (award_tribe_roof, tribe scores) is no longer awarded: the roof above the main tower names the latest 9 pm team
+  // (teamsrv.js). The old branches below stay for the refund, which still returns last week's pledges to the people who made them.
+  void week; void night; void dow;
   if (!jobs.length || now - TSET.at < (TSET.fails >= 3 ? 3600000 : 60000)) return Promise.resolve();
   TSET.at = now;
   const job = (async () => { const M = lgM(env); if ((await lvlNow(env)) >= 2) return;
@@ -2472,6 +2481,11 @@ async function plaza(req, env, ctx, u) {
   // An edit with the same bid costs nothing, so edits (a raise of one's own bid too) are spaced per account before any Durable Object call; a claim or
   // takeover is never slowed. A refusal above this line does not count; one after settle does.
   if (u.pathname === '/rt/claim-billboard' && b.mode === 'edit' && gapHit('edit:' + actor.id)) return J({ ok: false, error: GAP_ERR }, 429);
+  // Closed paths answer before the room is asked to settle (no DO call): 60 s over every board (air, it covered other people's boards and the
+  // prime screens for points), the 소속 claim (pooled points) and a prime screen with points. Old pages that still send them get these.
+  if (u.pathname === '/rt/spend' && b.kind === 'air') return J({ ok: false, code: 'off', error: BOARD_ERR.air }, 410);
+  if (u.pathname === '/rt/claim-billboard' && b.mode === 'tribe') return J({ ok: false, code: 'off', error: BOARD_ERR.tribe }, 410);
+  if (u.pathname === '/rt/claim-billboard' && b.mode !== 'edit' && isPrime(b.slot_id)) return J({ ok: false, code: 'prime', error: BOARD_ERR.prime }, 400);
   const settled = await settle(env, topic, actor.id);
   if (!settled.ok) return J({ ok: false, error: settled.error, pending: true }, 409);
   const nick = clip(b.nickname || b.nick || '', 16) || '네온손님';
@@ -2483,10 +2497,7 @@ async function plaza(req, env, ctx, u) {
   }
   if (u.pathname === '/rt/spend') {
     const kind = String(b.kind || '');
-    const pay = String(b.pay || 'coins');
     const glyph = String(b.glyph || '');
-    const line = clip(b.line || '', 24);
-    let coins = 0, tickets = 0;
     if (kind === 'wash') {
       const slot = String(b.slot_id || '');
       if (!SLOT_RE.test(slot)) return J({ ok: false, error: '전광판 슬롯이 올바르지 않습니다.' }, 400);
@@ -2508,28 +2519,7 @@ async function plaza(req, env, ctx, u) {
         await pushSticker(env, topic, { op: 'pop', slot }).catch(() => {});
         return J({ ok: false, error: pointWords(paidSt.error || '포인트를 쓰지 못했어요.') }, spentSt.ok ? 400 : 502);
       }
-      leagueAdd(env, ctx, actor.id, nick, 30);
       return J({ ok: true, kind: 'sticker', glyph, slot_id: slot, list: added.list || [], remaining_coins: paidSt.remaining_coins ?? null, vip_tickets: paidSt.vip_tickets ?? null });
-    } else if (kind === 'air') {
-      if (!line) return J({ ok: false, error: '전광판에 올릴 한 줄을 적어 주세요.' }, 400);
-      if (rejectedCopy(nick, line)) return J({ ok: false, error: 'blocked' }, 400);
-      if (botNick(nick)) return J({ ok: false, error: BOT_NAME_ERR }, 400);
-      if (pay === 'ticket') tickets = 1;
-      else coins = 5000;
-    } else return J({ ok: false, error: '그 금액은 쓸 수 없어요.' }, 400);
-    const spent = await supabaseRpc('spend_plaza', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_coins: coins, p_tickets: tickets });
-    const paid = spent.data || {};
-    const missing = /schema cache|Could not find the function/i.test(String(paid.message || paid.error || spent.data || ''));
-    if (!spent.ok || paid.ok === false) return J({ ok: false, error: pointWords(paid.error || (missing ? '포인트 사용이 아직 준비 중이에요.' : '포인트를 쓰지 못했어요.')) }, spent.ok ? 400 : 502);
-    if (kind === 'air') {
-      leagueAdd(env, ctx, actor.id, nick, coins);
-      const until = Date.now() + 60000;
-      try {
-        for (const name of squareTopics(topic)) {
-          await env.ROOM.get(env.ROOM.idFromName(name)).fetch(new Request('https://room.internal/air', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ nick, line, until }) }));
-        }
-      } catch { /* the buyer still applies the response locally */ }
-      return J({ ok: true, kind: 'air', remaining_coins: paid.remaining_coins ?? null, vip_tickets: paid.vip_tickets ?? null, until, nick, line });
     }
     return J({ ok: false, error: '그 금액은 쓸 수 없어요.' }, 400);
   }
@@ -2538,6 +2528,10 @@ async function plaza(req, env, ctx, u) {
   if (claim) {
     const slot = String(b.slot_id || ''); if (!SLOT_RE.test(slot)) return J({ ok: false, error: '전광판 슬롯이 올바르지 않습니다.' }, 400);
     mode = ['claim', 'edit', 'starter', 'tribe'].includes(b.mode) ? b.mode : 'claim';
+    // No takeovers (docs/prime-screens.md, legal.js 명당과 전광판): a prime screen is never lit with points; an ordinary board is lit only while
+    // nobody has it lit, at its fixed price for 72 h; the 소속 claim (pooled points) is closed. Old pages that still send a bid or a takeover get these.
+    if (mode === 'tribe') return J({ ok: false, code: 'off', error: BOARD_ERR.tribe }, 410);
+    if (isPrime(slot) && mode !== 'edit') return J({ ok: false, code: 'prime', error: BOARD_ERR.prime }, 400);
     if (mode === 'starter') {
       if (b.bid !== 0) return J({ ok: false, error: 'starter' }, 400);
       const sc = await starterSlots(env); // without a list from the database, claim_billboard is the only judge
@@ -2549,10 +2543,18 @@ async function plaza(req, env, ctx, u) {
         held = !!(Array.isArray(rows) && rows[0]?.holder_id);
       } catch { held = true; }
       if (held) return J({ ok: false, error: '이 칸에는 주인이 있어요. 불이 꺼진 칸은 그 사람이 다시 켤 수 있어요' }, 400);
-    } else if (mode === 'edit') {
-      if (!Number.isInteger(b.bid) || b.bid < 0 || b.bid > 1000000000) return J({ ok: false, error: '입찰 금액이 올바르지 않습니다.' }, 400);
-    } else if (!Number.isInteger(b.bid) || b.bid < 1 || b.bid > 1000000000) return J({ ok: false, error: '입찰 금액이 올바르지 않습니다.' }, 400);
-    if ((mode === 'claim' || mode === 'starter' || mode === 'tribe') && auctionClosed(slot, Date.now())) return J({ ok: false, error: '메인 타워는 밤 9시부터 10분 동안만 점령할 수 있어요' }, 400);
+    } else {
+      // The board as it is now, from the database (never the isolate copy): a lit board of someone else is refused, mine is edited, a free one
+      // costs its floor price. The price and an edit's bid are set here, whatever the page sent (no outbidding, no raise).
+      const cur = await boardFresh(slot);
+      if (!cur) return J({ ok: false, code: 'busy', error: '전광판 상태를 확인하지 못했어요. 잠시 뒤 다시 해 주세요.' }, 503);
+      const lit = !!cur.holder_id && litOf(cur) > Date.now(), mine = String(cur.holder_id || '') === actor.id;
+      if (mode === 'claim' && lit && !mine) return J({ ok: false, code: 'held', error: BOARD_ERR.held, until: cur.lit_until || cur.expires_at || null }, 409);
+      if (mode === 'claim' && lit && mine) return J({ ok: false, code: 'mine', error: BOARD_ERR.mine }, 400);
+      if (mode === 'edit' && !(lit && mine)) return J({ ok: false, code: 'edit', error: lit ? BOARD_ERR.held : '불이 꺼진 전광판은 불 켜기로 다시 켜요.' }, 400);
+      b.bid = mode === 'edit' ? Math.max(0, Math.floor(Number(cur.current_bid) || 0)) : floorOf(slot);
+      if (mode !== 'edit' && !(b.bid >= 1)) return J({ ok: false, error: '전광판 슬롯이 올바르지 않습니다.' }, 400);
+    }
     if (mode === 'starter' && !String(actor.id).startsWith('user:')) {
       let hello = false;
       try { hello = await env.ROOM.get(env.ROOM.idFromName(topic)).hasHello(actor.id); } catch { hello = false; }
@@ -2570,6 +2572,11 @@ async function plaza(req, env, ctx, u) {
     if (!Number.isInteger(b.plot_id) || b.plot_id < 1 || b.plot_id > 18) return J({ ok: false, error: '토지 번호가 올바르지 않습니다.' }, 400);
     if (rejectedCopy(nick, b.sign_text)) return J({ ok: false, error: 'blocked' }, 400);
     if (botNick(nick)) return J({ ok: false, error: BOT_NAME_ERR }, 400);
+    // The same rule for plots: someone else's building stays theirs for PLOT_HOLD_MS after its last purchase or upgrade (the database's own rule,
+    // 7 idle days, is the weaker one), so nobody takes a plot that is in use.
+    const plot = await plotFresh(b.plot_id);
+    if (!plot) return J({ ok: false, code: 'busy', error: '토지 상태를 확인하지 못했어요. 잠시 뒤 다시 해 주세요.' }, 503);
+    if (plot.owner_id && String(plot.owner_id) !== actor.id && Number(plot.level) > 0 && Date.parse(String(plot.updated_at || '')) > Date.now() - PLOT_HOLD_MS) return J({ ok: false, code: 'held', error: BOARD_ERR.plot }, 409);
     rpc = await supabaseRpc('buy_or_upgrade_plot', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_nickname: nick, p_plot_id: b.plot_id, p_sign_text: clip(b.sign_text, 14), p_theme_color: hexColor(b.theme_color, '#00ffcc') });
   }
   const data = rpc.data || {};
@@ -2580,18 +2587,12 @@ async function plaza(req, env, ctx, u) {
     return J({ ok: false, error: claimErr }, rpc.ok ? 400 : 502);
   }
   if (claim && data.review_id) {
-    if (mode === 'claim') leagueAdd(env, ctx, actor.id, nick, b.bid, 'r:' + data.review_id); // an S-tier bid is charged now and held for review; a rejection refunds it
     try { await env.ROOM.get(env.ROOM.idFromName(topic)).fetch(new Request('https://room.internal/sync', { method: 'POST', headers: { 'x-uid': actor.id } })); } catch { }
     return J({ ok: true, review_id: data.review_id, remaining_coins: data.remaining_coins ?? null });
   }
   const kind = claim ? 'BILLBOARD' : 'PLOT'; const row = claim ? data.billboard : data.plot;
   if (!row || typeof row !== 'object') return J({ ok: false, error: 'empty' }, 502);
-  // The week's tally, one DO call: the 80% the RPC hands back to the board's previous holder comes off the week that bid was tallied in, then a claim
-  // adds its bid, an edit only its raise past the recorded bid (a tribe claim charges the tribe, a free one nothing). A plot adds its old price
-  // (the RPC doubles it).
-  if (claim) { const holder = mode === 'tribe' ? String(row.holder_id || '') : actor.id, sl = String(row.slot_id || b.slot_id || ''), prev = String(data.prev_holder_id || ''), back = Math.floor(Number(data.refund) || 0);
-    leagueRun(env, ctx, (M, t) => M.lgBoard(sl, isoWeek(t), t, leagueCut(t), holder, leagueNick(nick), mode, b.bid, prev, back)); }
-  else leagueAdd(env, ctx, actor.id, nick, Math.floor(Number(row.price) / 2));
+  // The weekly spend league is gone (응원 순위 counts people, teamsrv.js): nothing is tallied for a spend any more.
   if (claim && mode !== 'edit' && row.photo_id) {
     try { await supabaseRpc('clear_billboard_photo', { p_key: env.FLUSH_KEY || '', p_slot_id: row.slot_id }); } catch { /* the screen still drops the photo below */ }
     row.photo_id = null;
@@ -2604,16 +2605,13 @@ async function plaza(req, env, ctx, u) {
     if (mode === 'claim' || mode === 'starter' || mode === 'tribe') {
       try { await env.METER.get(env.METER.idFromName('ev')).touch(isoWeek(), actor.id); } catch { }
     }
-    if (mode === 'claim' || mode === 'tribe') {
-      try { ctx.waitUntil(noteTribe(env, topic, actor.id, 4)); } catch { /* the room keeps the day's score */ }
-    }
   }
   let fresh = null; try { fresh = await invalidateWorld(env, ctx); } catch { }
   let broadcast = false;
   try {
-    const buyer = claim && mode === 'tribe' ? String(row.holder_id || actor.id) : actor.id;
-    const take = claim && data.prev_holder_id && data.prev_holder_id !== buyer ? { victim: data.prev_holder_id, attacker: nick, slot: row.slot_id, name: slotName(row.slot_id), price: Number(data.reclaim_bid) || 0, line1: data.prev_line1, line2: data.prev_line2, line3: data.prev_line3, emoji: data.prev_emoji, theme: data.prev_theme, color: data.prev_color } : null;
-    if (take) queueTaken(env, ctx, take.victim, nick, row.slot_id);
+    // No takeovers: a claim lands only on a free board or one whose 72 h ran out (checked above), so nobody is told "taken" (no TAKE message,
+    // no 'taken' inbox row or push). The previous holder of a run-out board still gets its WALLET_SYNC below (a pending-photo refund).
+    const take = null;
     // A claim also moves other wallets: the plot owner's 50% share of a plot-front board, and a pending-photo refund to the previous holder.
     const owner = claim && row.plot_id != null ? fresh?.world.plots.find(p => p.plot_id === row.plot_id)?.owner_id : null;
     const sync = claim ? [data.prev_holder_id, owner].filter(id => id && id !== actor.id) : [];
@@ -2697,66 +2695,13 @@ function adminOk(env, req) {
   let d = 0; for (let i = 0; i < want.length; i++) d |= want.charCodeAt(i) ^ got.charCodeAt(i);
   return d === 0;
 }
-async function noteTribe(env, topic, uid, bit) {
-  if (!env?.ROOM || !uid || !PLAZA_TOPICS.includes(topic)) return;
-  const n = Math.floor(Number(bit));
-  if (n !== 1 && n !== 2 && n !== 4) return;
-  try {
-    await env.ROOM.get(env.ROOM.idFromName(topic)).fetch(new Request('https://room.internal/score', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-uid': String(uid) },
-      body: JSON.stringify({ bit: n }),
-    }));
-  } catch { /* the score waits for the next visit */ }
-}
-function tribeId() {
-  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  const bytes = crypto.getRandomValues(new Uint8Array(8));
-  let s = '';
-  for (let i = 0; i < 8; i++) s += alphabet[bytes[i] % 36];
-  return s;
-}
-async function tribeApi(req, env, u, ctx) {
+// 소속 (Supabase tribes) is replaced by 응원 팀 (teamsrv.js). /rt/tribe is what pages opened before the change still call: the answer says so and
+// points at a reload, before any token check, DO or database call. 소속 모금 (/rt/tribe/pledge) stays closed. An account's old 소속 is brought over
+// into a team once, the first time it opens the 응원 팀 sheet (teamsrv.js teamBring, my_tribe). Tribe scores are no longer sent to the rooms.
+const TRIBE_MOVED = { ok: false, code: 'moved', error: '소속은 응원 팀으로 바뀌었어요. 새로고침하면 응원 팀이 열려요.' };
+async function tribeApi(req, env, u) {
   if (u.pathname === '/rt/tribe/pledge') return J(NO_POOL, 410); // closed: no pooling of points (NO_SEND), before any check or call
-  if (req.method !== 'POST') return J({ err: 'post' }, 405);
-  const actor = await resolveActor(env, tokenOf(req));
-  if (!actor) return J({ err: 'auth' }, 401);
-  const b = await readJson(req);
-  if (!b) return J({ err: 'json' }, 400);
-  if (b.look) {
-    await tribeSettle(env, ctx); // last week's refund (and Sunday night's roof) before the sheet reads the tribe's coins
-    const rpc = await supabaseRpc('my_tribe', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id });
-    const data = rpc.data || {};
-    if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || '소속을 불러오지 못했어요' }, rpc.ok ? 400 : 502);
-    let pending = 0;
-    try {
-      const room = await acct(env).roomOf(actor.id);
-      if (room) {
-        const got = await env.ROOM.get(env.ROOM.idFromName(room)).fetch(new Request('https://room.internal/score', { method: 'POST', headers: { 'x-uid': actor.id, 'content-type': 'application/json' }, body: JSON.stringify({ look: true }) }));
-        const body = await got.json();
-        pending = Math.max(0, Math.floor(Number(body?.pending) || 0));
-      }
-    } catch { /* the saved week score still shows */ }
-    return J({ ok: true, tribe_id: data.tribe_id || null, tag: data.tag || '', role: data.role || '', coins: Number(data.coins) || 0, points: (Number(data.points) || 0) + pending, members: Array.isArray(data.members) ? data.members : [] });
-  }
-  if (typeof b.tag === 'string' && b.tag.trim()) {
-    const tag = b.tag.replace(/^#/, '').slice(0, 16);
-    if (!/^[0-9A-Za-z가-힣_]{1,16}$/.test(tag) || blockedText(tag)) return J({ ok: false, error: 'tag' }, 400);
-    let last = { ok: false, error: 'id' };
-    for (let i = 0; i < 4; i++) {
-      const rpc = await supabaseRpc('create_tribe', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_id: tribeId(), p_tag: tag });
-      last = rpc.data || {};
-      if (rpc.ok && last.ok !== false) return J({ tribe_id: last.tribe_id, tag: last.tag });
-      if (last.error !== 'id') break;
-    }
-    return J({ ok: false, error: playerErr(last.error, '소속을 만들지 못했어요') }, 400);
-  }
-  const id = String(b.id || '');
-  if (!/^[a-z0-9]{8}$/.test(id)) return J({ ok: false, error: 'id' }, 400);
-  const rpc = await supabaseRpc('join_tribe', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_id: id });
-  const data = rpc.data || {};
-  if (!rpc.ok || data.ok === false) return J({ ok: false, error: playerErr(data.error, data.message || '가입하지 못했어요.') }, rpc.ok ? 400 : 502);
-  return J({ tribe_id: data.tribe_id, tag: data.tag });
+  return J(TRIBE_MOVED, 410);
 }
 async function relightBoard(req, env, ctx) {
   if (req.method !== 'POST') return J({ err: 'post' }, 405);
@@ -2766,6 +2711,7 @@ async function relightBoard(req, env, ctx) {
   if (!b) return J({ err: 'json' }, 400);
   const slot = String(b.slot || b.slot_id || '');
   if (!SLOT_RE.test(slot)) return J({ ok: false, error: 'slot' }, 400);
+  if (isPrime(slot)) return J({ ok: false, code: 'prime', error: BOARD_ERR.relight }, 400); // a board lit there before the change runs out
   if (gapHit('relight:' + actor.id)) return J({ ok: false, error: GAP_ERR }, 429); // a same-day relight is free: spaced per account before the RPC and any DO call
   const rpc = await supabaseRpc('relight_billboard', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_slot_id: slot });
   const data = rpc.data || {};
@@ -2775,10 +2721,6 @@ async function relightBoard(req, env, ctx) {
   const moved = data.scored === true || Math.abs(Date.parse(String(data.lit_until || '')) - (Date.now() + LIT_MS)) < 120000;
   if (!moved) return J({ ok: true, lit_until: data.lit_until, lit_days: data.lit_days, scored: false });
   try { await env.METER.get(env.METER.idFromName('ev')).touch(isoWeek(), actor.id); } catch { /* the light already moved */ }
-  if (data.scored === true) {
-    const lightTopic = PLAZA_TOPICS.includes(b.topic) ? b.topic : 'chapel:square';
-    try { ctx.waitUntil(noteTribe(env, lightTopic, actor.id, 2)); } catch { /* the room keeps the day's score */ }
-  }
   try {
     const s = await fetch(SUPA + '/rest/v1/billboards?select=*&slot_id=eq.' + encodeURIComponent(slot), { headers: { apikey: ANON, accept: 'application/json' } });
     const rows = s.ok ? await s.json() : [];
@@ -2862,7 +2804,6 @@ async function photos(req, env, ctx, u) {
     const data = rpc.data || {}, msg = String(data.message || '');
     if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || (/schema cache|Could not find the function/i.test(msg) ? '사진 전광판이 아직 준비 중이에요. 잠시 후 다시 시도해 주세요.' : '사진을 올리지 못했어요. 잠시 후 다시 시도해 주세요.') }, rpc.ok ? 400 : 502);
     const row = data.billboard; if (!row || typeof row !== 'object') return J({ ok: false, error: 'empty' }, 502);
-    leagueAdd(env, ctx, actor.id, b.nickname || b.nick || '', Math.floor(Number(data.fee) || 0), 'p:' + id);
     await announce(env, ctx, [topic], actor.id, row);
     return J({ ok: true, kind: 'BILLBOARD', data: row, remaining_coins: data.remaining_coins ?? null, fee: data.fee ?? null });
   }
@@ -2882,7 +2823,6 @@ async function photos(req, env, ctx, u) {
     const data = rpc.data || {};
     if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || data.message || '검수를 처리하지 못했습니다.' }, rpc.ok ? 400 : 502);
     PHOTO_C.delete(id);
-    if (data.photo?.actor_id && Number(data.photo.refunded) > 0) { const who = String(data.photo.actor_id), back = Math.floor(Number(data.photo.refunded)); leagueRun(env, ctx, (M) => M.lgBack('p:' + id, who, back)); } // a rejected pending photo's fee came back, off the week it was paid in
     if (data.billboard) await announce(env, ctx, PLAZA_TOPICS.includes(b.topic) ? [b.topic] : PLAZA_TOPICS, data.photo?.actor_id || '', data.billboard);
     return J({ ok: true, billboard: data.billboard || null, photo: data.photo || null });
   }
@@ -2934,10 +2874,7 @@ async function photos(req, env, ctx, u) {
     const rpc = await supabaseRpc('review_slot_claim', { p_key: env.FLUSH_KEY || '', p_id: id, p_approve: b?.approve === true });
     const data = rpc.data || {};
     if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || data.message || '검수를 처리하지 못했습니다.' }, rpc.ok ? 400 : 502);
-    // A rejected S-tier bid goes back to its payer; an approved one hands 80% of the old bid back to the board's previous holder.
-    // Both come off the week the bid was tallied in (the review record, the slot record).
-    if (data.rejected && data.actor_id) { const who = String(data.actor_id), back = Math.floor(Number(data.refund) || 0); leagueRun(env, ctx, (M) => M.lgBack('r:' + id, who, back)); }
-    else if (data.billboard) { const sl = String(data.billboard.slot_id || ''), prev = String(data.prev_holder_id || ''), back = Math.floor(Number(data.refund) || 0); leagueRun(env, ctx, (M) => M.lgApprove(id, sl, prev, back)); }
+    // A rejected S-tier bid goes back to its payer (the RPC does it); no new S-tier review can be made since the main tower is a prime screen.
     if (b?.approve === true && data.billboard) {
       const payer = String(data.actor_id || '');
       const member = String(data.member || '');
@@ -3215,7 +3152,7 @@ async function accountApi(req, env, ctx, u) {
   // Pushes to the user: id reach the guest's browsers, and the guest's board shots stay the holder's own (card page, share-page title).
   // The guest's wish, hearts, reports and unpaid prizes become the user's (wMove), so mine, the one-wish-a-day rule and the prize follow the person.
   ctx.waitUntil(Promise.resolve().then(() => Promise.all([pushM(env).psMove(guestId, actor.id), snapM(env).snapMove(guestId, actor.id).then(() => { SNX.clear(); SNC.clear(); }),
-    wishM(env).wMove(guestId, actor.id).then(() => { WISHC.at = 0; WONE.clear(); WAU.clear(); }), darkM(env).dkMove(guestId, actor.id), lgM(env).lgMove(guestId, actor.id).then(lgDrop), invM(env).ivMove(guestId, actor.id), giftMove(env, guestId, actor.id)])).catch(() => { })); // the invite code, counts and pending rewards too; 선물 전광판 boards
+    wishM(env).wMove(guestId, actor.id).then(() => { WISHC.at = 0; WONE.clear(); WAU.clear(); }), darkM(env).dkMove(guestId, actor.id), lgM(env).lgMove(guestId, actor.id).then(lgDrop), invM(env).ivMove(guestId, actor.id), giftMove(env, guestId, actor.id), teamMove(env, guestId, actor.id)])).catch(() => { })); // the invite code, counts and pending rewards too; 선물 전광판 boards; 응원 팀 membership and supports
   // The guest's cosmetics (bought or from attendance) go with it (move_cosmetics, migrations/2026-11-22-shop.sql; before it the call is a 404).
   // Once per guest per isolate in 10 minutes: a replay of the same link asks nothing extra (the move is idempotent anyway).
   if (!(COSM_MOVED.get(guestId) > Date.now() - 600000)) { if (COSM_MOVED.size >= 2000) COSM_MOVED.clear(); COSM_MOVED.set(guestId, Date.now());
@@ -3250,6 +3187,7 @@ async function forgetActor(env, uid) {
   await Promise.all(ids.map(id => Promise.all([dropSubs(id), wishM(env).wForget(id), snapM(env).snapForget(id), darkM(env).dkForget(id), lgM(env).lgForget(id), invM(env).ivForget(id)].map(p => p.catch(() => null)))));
   await Promise.all(ids.map(id => adM(env).adForget(id).catch(() => null))); // the board reports of their tenures go too
   await Promise.all(ids.map(id => giftForget(env, id))); // 선물 전광판 they made: boards, lines, videos
+  await Promise.all(ids.map(id => teamForget(env, id))); // 응원 팀: membership (a team it owned passes to its next member), supports, joins
   WISHC.at = 0; WONE.clear(); WAU.clear(); SNX.clear(); SNC.clear(); PC.delete('world'); lgDrop();
   try { await caches.default.delete(new Request(WORLD_CACHE)); } catch { }
 }
@@ -3368,6 +3306,15 @@ async function snapCtx(env, id) { const hit = memoHit(SNC, id); if (hit) return 
 async function wishAuthor(env, wid) { const hit = memoHit(WAU, wid); if (hit) return hit.v; if (await lvlNow(env) >= 2) return ''; /* hard: no wish-DO call, the page uses /og.jpg */ let a = ''; try { a = String(await wishM(env).wAuthor(wid) || ''); } catch { return ''; } return memo(WAU, wid, a); }
 // The holder and first line of a board: the isolate's world copy while it is under a minute old, else one row from Supabase.
 // fresh: skip the isolate copy (an upload whose cached holder is someone else re-reads, the copy may predate the claim).
+// One board / one plot as it is now in the database, for the no-takeover checks: null when it cannot be read (the claim then waits).
+async function boardFresh(slot) {
+  try { const s = await fetch(SUPA + '/rest/v1/billboards?select=slot_id,holder_id,holder_name,current_bid,lit_until,expires_at&slot_id=eq.' + encodeURIComponent(slot), { headers: { apikey: ANON, accept: 'application/json' } });
+    if (!s.ok) return null; const rows = await s.json(); return Array.isArray(rows) ? rows[0] || { slot_id: slot, holder_id: null } : null; } catch { return null; }
+}
+async function plotFresh(id) {
+  try { const s = await fetch(SUPA + '/rest/v1/plots?select=plot_id,owner_id,level,updated_at&plot_id=eq.' + encodeURIComponent(String(id)), { headers: { apikey: ANON, accept: 'application/json' } });
+    if (!s.ok) return null; const rows = await s.json(); return Array.isArray(rows) ? rows[0] || { plot_id: id, owner_id: null } : null; } catch { return null; }
+}
 async function snapBoard(slot, fresh = false) {
   const mem = PC.get('world'); if (!fresh && mem && Date.now() - mem.at < 60000) return cachedBoard(slot);
   try { const s = await fetch(SUPA + '/rest/v1/billboards?select=slot_id,holder_id,holder_name,line1&slot_id=eq.' + encodeURIComponent(slot), { headers: { apikey: ANON, accept: 'application/json' } });
@@ -3476,13 +3423,14 @@ export default {
     if (u.pathname.startsWith('/rt/ads/') || u.pathname === '/rt/admin/ads' || u.pathname.startsWith('/rt/admin/ads/')) return adsApi(req, env, ctx, u, { adminOk, lvlNow, resolveActor, tokenOf, ipHash: wishIp, // 광고 판매 (adsrv.js; networks: IPv6 by /64)
       dropWorld: async () => { PC.delete('world'); try { await caches.default.delete(new Request(WORLD_CACHE)); } catch { } } });
     if (giftPath(u.pathname)) return giftApi(req, env, ctx, u, giftKit(env, req)); // 선물 전광판 (giftsrv.js; networks: IPv6 by /64)
+    if (teamPath(u.pathname)) return teamApi(req, env, ctx, u, teamKit()); // 응원 팀과 명당 (teamsrv.js; networks: IPv6 by /64)
     if (u.pathname.startsWith('/g/')) return giftPage(req, env, ctx, u, giftKit(env, req)); // its recipient page: no room, no 3D
     if (u.pathname === '/rt/share-bonus' || u.pathname === '/rt/redeem-code' || u.pathname === '/rt/link-reward') return promo(req, env, u);
     if (u.pathname === '/rt/report') return fileReport(req, env);
     if (u.pathname.startsWith('/rt/card/')) return cardPage(req, env, u);
     if (u.pathname === '/rt/relight') return relightBoard(req, env, ctx);
     if (u.pathname === '/rt/ad-report') return adReportApi(req, env, u);
-    if (u.pathname === '/rt/tribe' || u.pathname === '/rt/tribe/pledge') return tribeApi(req, env, u, ctx);
+    if (u.pathname === '/rt/tribe' || u.pathname === '/rt/tribe/pledge') return tribeApi(req, env, u);
     if (u.pathname === '/rt/league') return leagueApi(req, env);
     if (u.pathname === '/rt/recap') return recapApi(req, env);
     if (u.pathname === '/rt/world' || u.pathname === '/rt/wallet' || u.pathname === '/rt/claim-billboard' || u.pathname === '/rt/buy-plot' || u.pathname === '/rt/sell-coins' || u.pathname === '/rt/flush-wallet' || u.pathname === '/rt/spend') return plaza(req, env, ctx, u);
