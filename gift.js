@@ -5,9 +5,9 @@
 // MediaRecorder (MP4 where it can, WebM otherwise) and uploaded to the board when the Worker has the R2 store (else kept on the device).
 // main.js calls mountGift once and gift.apply(remote.gifts) with every world; ui.js is not touched (the button is put next to 🌠).
 import { GIFT_ID, OCCASIONS, windowText } from './giftrules.js';
-import { GIFT_SANS, fitSize } from './giftart.js?v=202611222045';
-import { recordCanvas, canRecord, saveBlob, fileName } from './giftfilm.js?v=202611222045';
-import { doToken } from './net.js?v=202611222045';
+import { GIFT_SANS, fitSize } from './giftart.js?v=202611231200';
+import { recordCanvas, canRecord, saveBlob, fileName } from './giftfilm.js?v=202611231200';
+import { doToken } from './net.js?v=202611231200';
 
 const CSS = `
 #kts-gift-frame{position:fixed;inset:0;z-index:2147482000;background:rgba(4,4,14,.72);display:flex;align-items:stretch;justify-content:center}
@@ -185,7 +185,7 @@ export function mountGift({ world, ui, whenBuilt, introDone }) {
     const send = async (ts) => { try { const r = await fetch('/rt/gift/' + id + '/video', { method: 'POST', headers: { authorization: 'Bearer ' + tok, 'content-type': blob.type || 'application/octet-stream', ...(ts ? { 'x-ts': ts } : {}) }, body: blob }); return { s: r.status, d: await r.json().catch(() => ({})) }; } catch { return { s: 0, d: { ok: false } }; } };
     let { s, d } = await send('');
     if (s === 403 && d?.code === 'human' && d.site) {
-      let ts = ''; try { ts = await (await import('./human.js?v=202611222045')).humanToken(String(d.site), { action: 'gvid' }); } catch { ts = ''; }
+      let ts = ''; try { ts = await (await import('./human.js?v=202611231200')).humanToken(String(d.site), { action: 'gvid' }); } catch { ts = ''; }
       if (ts) ({ s, d } = await send(ts));
     }
     return d || { ok: false };

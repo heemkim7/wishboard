@@ -1,32 +1,32 @@
 // Times Square K-점령전 — app wiring: realtime net (DO), 3D world, UI, wallet, world state, star shower.
-import { errlogCtx } from './errlog.js?v=202611222045'; // first: its error listeners are on before any other module runs
-import { Net, CDN, guestToken } from './net.js?v=202611222045';
-import { humanCall } from './net.js?v=202611222045'; // the coin rewards' human check while Turnstile is on (docs/bot-protection.md)
-import { createTimesSquare, STARTER_COLORS } from './timesSquare3d.js?v=202611222045';
-import { speciesId } from './ts3d/avatars.js?v=202611222045';
-import { equip, unequip, loadShop, loadProfile, profileSpecies, saveColor, saveNick, saveSpecies, setSpecies } from './profile.js?v=202611222045';
-import { starSpot, insideLoop } from './ts3d/layout.js?v=202611222045';
-import { createUI } from './ui.js?v=202611222045';
-import { haptic, startMusic } from './audio.js?v=202611222045';
-import { isTouchUI } from './interact.js?v=202611222045';
+import { errlogCtx } from './errlog.js?v=202611231200'; // first: its error listeners are on before any other module runs
+import { Net, CDN, guestToken } from './net.js?v=202611231200';
+import { humanCall } from './net.js?v=202611231200'; // the coin rewards' human check while Turnstile is on (docs/bot-protection.md)
+import { createTimesSquare, STARTER_COLORS } from './timesSquare3d.js?v=202611231200';
+import { speciesId } from './ts3d/avatars.js?v=202611231200';
+import { equip, unequip, loadShop, loadProfile, profileSpecies, saveColor, saveNick, saveSpecies, setSpecies } from './profile.js?v=202611231200';
+import { starSpot, insideLoop } from './ts3d/layout.js?v=202611231200';
+import { createUI } from './ui.js?v=202611231200';
+import { haptic, startMusic } from './audio.js?v=202611231200';
+import { isTouchUI } from './interact.js?v=202611231200';
 import { BALANCE, PAY, chainsOf, live, slotName, slotOf, takeGrants, cheerCount, countsAsActivity, josa, slotOpen, SLOT_SOON } from './balance.js';
 import { auctionClosed, EQUIP_MAX, OWNED_MAX } from './balance.js';
 import { primeAt, WHY_CHIP } from './primerules.js';
-import { trackEvent } from './analytics.js?v=202611222045';
+import { trackEvent } from './analytics.js?v=202611231200';
 import { adoptHandover, allowedLink, blockedText, handoverHref, isAndroid, isInAppWebView, loginEmail, CHEER_PHRASES, GT_LS, SESSION_LS, slotTier } from './plaza-account.js';
 import { authErrorText, cleanAddress, externalRoutes, oauthErrorText, oauthMessage, oauthReturn, sessionDrift, OAUTH_ACK, OAUTH_CHANNEL } from './plaza-account.js';
 import { invCode, inviteFrom, inviteView } from './invite.js';
-import { saveClip, dropParams } from './share.js?v=202611222045';
-import { mountGift } from './gift.js?v=202611222045';
-import { ftueDue, crowdFacts, kstDay, lockCelebration, startFtue, wishAutoOpen, wishBootLine, awayRows, inboxUnread, seenAdd, liveKey, liveSeenAdd } from './ftue.js?v=202611222045';
-import { photoVerdicts } from './ftue.js?v=202611222045';
+import { saveClip, dropParams } from './share.js?v=202611231200';
+import { mountGift } from './gift.js?v=202611231200';
+import { ftueDue, crowdFacts, kstDay, lockCelebration, startFtue, wishAutoOpen, wishBootLine, awayRows, inboxUnread, seenAdd, liveKey, liveSeenAdd } from './ftue.js?v=202611231200';
+import { photoVerdicts } from './ftue.js?v=202611231200';
 import { WISH, cleanWish } from './wish.js';
 import { seasonFor, seasonPreview } from './seasons.js';
-import { applyInboxPush, loadInbox, readInbox, liveOnly, handledRead, liveSeeable } from './inbox.js?v=202611222045';
-import { sendCheer } from './tribe.js?v=202611222045';
+import { applyInboxPush, loadInbox, readInbox, liveOnly, handledRead, liveSeeable } from './inbox.js?v=202611231200';
+import { sendCheer } from './tribe.js?v=202611231200';
 import { applyOps, ballNotice, nineBanner, kingMinute, clockSkew, clock, nowMs } from './live.js';
-import { pushRoute, awayRead } from './overlay.js?v=202611222045';
-import { isMailbox, mailArrival, mailBack, mailErrorText, retryAfterS, MAIL_ERR } from './mailcode.js?v=202611222045';
+import { pushRoute, awayRead } from './overlay.js?v=202611231200';
+import { isMailbox, mailArrival, mailBack, mailErrorText, retryAfterS, MAIL_ERR } from './mailcode.js?v=202611231200';
 
 adoptHandover(location.search, localStorage);
 // Back from a full-page sign-in (the fallback when the Google window could not open): read once here, because supabase-js takes
@@ -54,7 +54,7 @@ const SPECIES_KEY = 'kts_species';
 const GFX_KEY = 'kts_gfx';
 const POS_KEY = 'kts_pos';
 const STAR_LIFE = 60000;
-const NICKS = ['뉴욕붕어빵', '네온후드', '브로드웨이곰', '타임스퀘어냥', '옐로캡러버', '빨간계단요정', '전광판헌터', '맨해튼호떡'];
+const NICKS = ['뉴욕붕어빵', '네온후드', '브로드웨이곰', '타임스퀘어냥', '옐로캡러버', '빨간계단요정', '전광판산책러', '맨해튼호떡'];
 const FOCUS = (() => {
   const f = new URLSearchParams(location.search).get('focus') || '';
   return slotOf(f) ? f : '';
@@ -110,7 +110,7 @@ function paintBootLive(data, here) {
     ? `지금 메인 타워: ${chars(onTower.name, 16)} 응원 팀 · ${WHY_CHIP[onTower.why] || '응원 팀 명당'}`
     : lead?.name
       ? `오늘 가장 많이 응원받는 팀: ${chars(lead.name, 16)} · ${Math.max(0, Math.floor(Number(lead.n) || 0)).toLocaleString('ko-KR')}명`
-      : '메인 타워는 응원 팀 명당 — 하루 서로 다른 30명이 응원하면 다음 날 명당에 이름이 걸려요';
+      : '명당은 응원 팀 자리 — 하루 서로 다른 30명이 응원하면 다음 날 명당에 팀 이름이 걸려요';
   stat.textContent = [
     open ? `지금 걸 수 있는 빈 자리 ${open}곳` : '지금은 빈 자리가 없어요',
     visitors ? `오늘 다녀간 사람 ${visitors.toLocaleString('ko-KR')}명` : '',

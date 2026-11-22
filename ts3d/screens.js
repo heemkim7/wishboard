@@ -1,15 +1,15 @@
 // LED billboard screens: shader-animated materials, curved screens with bezels and
 // scrolling news tickers, and the slot registry (MAIN_*, SUB_1A..4B, STREET_1..50, PLOT_1..18).
 import * as THREE from 'three';
-import { Kit, arcSlab } from './kit.js?v=202611222045';
-import { THEMES, makeCanvas, paintBillboard, paintTicker, fontsReady, tierOf, boardPhoto, photoReady, SANS, roundRect, chars, paintWish, wishOrd, wishRotates, wishStrip, cleanWishes, sameWishes, rowUntil, wishPlan, wishRelist, wishFontTargets, wishPinPlan, freshWish, wishSettled, WISH_CYCLE, WISH_CYCLE_LOW, WISH_BUDGET, WISH_BUDGET_LOW, WISH_NOW, WISH_DROPS, frameTone, paintPrime } from './art.js?v=202611222045';
+import { Kit, arcSlab } from './kit.js?v=202611231200';
+import { THEMES, makeCanvas, paintBillboard, paintTicker, fontsReady, tierOf, boardPhoto, photoReady, SANS, roundRect, chars, paintWish, wishOrd, wishRotates, wishStrip, cleanWishes, sameWishes, rowUntil, wishPlan, wishRelist, wishFontTargets, wishPinPlan, freshWish, wishSettled, WISH_CYCLE, WISH_CYCLE_LOW, WISH_BUDGET, WISH_BUDGET_LOW, WISH_NOW, WISH_DROPS, frameTone, paintPrime } from './art.js?v=202611231200';
 import { floorOf, live, SLOT_RE, isLateSlot } from '../balance.js';
 import { nowMs, kingCovers } from '../live.js';
 import { isPrime, primeAt, primeCard, primeKey, primeNotice } from '../primerules.js';
 import { ADS, adView, adWorld, linkHost } from '../adsale.js';
 import { SEASONS } from '../seasons.js';
 import { GIFT_ID, OCCASIONS, GIFT_THEMES, placeGifts, turnOf, giftScreen } from '../giftrules.js';
-import { paintGift } from '../giftart.js?v=202611222045';
+import { paintGift } from '../giftart.js?v=202611231200';
 
 export const screenTime = { value: 0 };
 // Highest linear luminance a screen pixel may reach (see screenMaterial): just under the default bloom threshold.

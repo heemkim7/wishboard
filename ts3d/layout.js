@@ -2,7 +2,7 @@
 // +X runs crosstown toward the East River (see tools/build-nyc.mjs). Streets and buildings come from
 // OpenStreetMap through ts3d/nycmeta.js + /assets/nyc/manhattan.bin; this file pins the hand-placed
 // game features onto that map.
-import { NYC_META, LANDMARKS as MAP_LANDMARKS } from './nycmeta.js?v=202611222045';
+import { NYC_META, LANDMARKS as MAP_LANDMARKS } from './nycmeta.js?v=202611231200';
 
 // Walkable Times Square. The real canyon stays: TKTS, the bowtie, the stall, One Times Square.
 // X is the requested width. Z is longer so those landmarks are not cut off.

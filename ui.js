@@ -1,36 +1,36 @@
 // Plaza UI: glass HUD, wallet, news wire, emote dock, prompts, bungeo-ppang timing game, K-POP rhythm game,
 // taxi HUD, city map + minimap, billboard / plot / ATM / settings / credits sheets, onboarding, touch controls, SFX.
-import { paintBillboard, paintNeonSign, THEMES, makeCanvas, chars, fontsReady, tierOf, boardPhoto, photoReady, paintNameTag, paintRingFx, paintFrameSwatch } from './ts3d/art.js?v=202611222045';
-import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, LANDMARKS } from './ts3d/layout.js?v=202611222045';
+import { paintBillboard, paintNeonSign, THEMES, makeCanvas, chars, fontsReady, tierOf, boardPhoto, photoReady, paintNameTag, paintRingFx, paintFrameSwatch } from './ts3d/art.js?v=202611231200';
+import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, LANDMARKS } from './ts3d/layout.js?v=202611231200';
 import { BALANCE, PAY, chainBoost, floorOf, slotName, josa, STREET_N, SLOT_SOON, slotOpen, SHOP_KINDS, shopTiles, shopItem, isPrimeSlot } from './balance.js';
-import { createTeamUI } from './teamui.js?v=202611222045';
-import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, tutorialTap, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611222045';
+import { createTeamUI } from './teamui.js?v=202611231200';
+import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, tutorialTap, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611231200';
 import { WISH, WISH_ERR, cleanWish, wishRejected, wishShareText } from './wish.js';
 import { botNick } from './league.js';
-import { backFields, returnGap } from './growth.js?v=202611222045';
-import { A2HS_KEY, VISITS_KEY, bumpVisits, isStandalone, isIosSafari, installMode, installDue, INSTALL_COPY, INSTALL_CRAMPED_Q } from './install.js?v=202611222045';
-import { RECAP_KEY, RECAP_SHOWN_KEY, noteDay, noteHeld, noteHearts, noteClaim as recapClaim, recapDue, recapLines, recapShareText, weekOf } from './recap.js?v=202611222045';
+import { backFields, returnGap } from './growth.js?v=202611231200';
+import { A2HS_KEY, VISITS_KEY, bumpVisits, isStandalone, isIosSafari, installMode, installDue, INSTALL_COPY, INSTALL_CRAMPED_Q } from './install.js?v=202611231200';
+import { RECAP_KEY, RECAP_SHOWN_KEY, noteDay, noteHeld, noteHearts, noteClaim as recapClaim, recapDue, recapLines, recapShareText, weekOf } from './recap.js?v=202611231200';
 import { nowMs } from './live.js';
-import { cardUrl, vipShareLink, composeWishShot, kakaoFeed, kakaoSend, loadKakao, invited } from './share.js?v=202611222045';
+import { cardUrl, vipShareLink, composeWishShot, kakaoFeed, kakaoSend, loadKakao, invited } from './share.js?v=202611231200';
 import { inviteView } from './invite.js';
-import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611222045';
-import { EMOTES, REACTIONS, AVATAR_COLORS, AVATAR_COLOR_NAMES, SPECIES } from './ts3d/avatars.js?v=202611222045';
-import { trackEvent, statsOff, statsGpc, setStatsOff } from './analytics.js?v=202611222045';
+import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611231200';
+import { EMOTES, REACTIONS, AVATAR_COLORS, AVATAR_COLOR_NAMES, SPECIES } from './ts3d/avatars.js?v=202611231200';
+import { trackEvent, statsOff, statsGpc, setStatsOff } from './analytics.js?v=202611231200';
 import { CHEER_PHRASES, SITE, accountLabel, allowedLink, blockedText, linkedActor } from './plaza-account.js';
-import { codeStart, codeStep, codeView, otpField } from './mailcode.js?v=202611222045';
-import { policyDoc } from './legal.js?v=202611222045';
-import { setOperator, operatorInfo } from './legal.js?v=202611222045';
+import { codeStart, codeStep, codeView, otpField } from './mailcode.js?v=202611231200';
+import { policyDoc } from './legal.js?v=202611231200';
+import { setOperator, operatorInfo } from './legal.js?v=202611231200';
 import { SUPPORT_KINDS, SUPPORT_TEXT, SUPPORT_CONSENT, SUP, supportFault, textLen, maintOf, maintLines, operatorLine } from './opsrules.js';
-import { subscribePush, resendPush } from './push.js?v=202611222045';
-import { bindSfx, bindMusic, duckMusic, play, setSound, haptic, musicVisible } from './audio.js?v=202611222045';
-import { createBgm } from './bgm.js?v=202611222045';
-import { stickVec, isTouchUI, STICK_W, STICK_H, STICK_THROW, STICK_ENGAGE, bakeFlip, bakeBest, BAKE_FLIPS, BAKE_ROUND_MS, COMPACT_HUD_Q } from './interact.js?v=202611222045';
+import { subscribePush, resendPush } from './push.js?v=202611231200';
+import { bindSfx, bindMusic, duckMusic, play, setSound, haptic, musicVisible } from './audio.js?v=202611231200';
+import { createBgm } from './bgm.js?v=202611231200';
+import { stickVec, isTouchUI, STICK_W, STICK_H, STICK_THROW, STICK_ENGAGE, bakeFlip, bakeBest, BAKE_FLIPS, BAKE_ROUND_MS, COMPACT_HUD_Q } from './interact.js?v=202611231200';
 import { AD, AD_TEMPLATES, adSums, adBars } from './adreport.js';
 import { adScreenName, linkHost } from './adsale.js';
-import { qrEncode, paintQr } from './qr.js?v=202611222045';
-import { icon } from './uiicons.js?v=202611222045';
-import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, proofOffers, proofPlan, TOAST } from './overlay.js?v=202611222045';
-import { linesFault, LINES_ERR } from './ftue.js?v=202611222045'; // the board-line checks
+import { qrEncode, paintQr } from './qr.js?v=202611231200';
+import { icon } from './uiicons.js?v=202611231200';
+import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, proofOffers, proofPlan, TOAST } from './overlay.js?v=202611231200';
+import { linesFault, LINES_ERR } from './ftue.js?v=202611231200'; // the board-line checks
 
 const LEVELS = [
   { src: 'icons/lot.jpg', t: '빈 땅' },
@@ -944,7 +944,7 @@ export function createUI(root, hooks) {
     stage: ['댄스 시작', `${PRESS} 시작 · 점수도 보상도 없는 리듬 놀이예요`, '댄스!'],
     taxi: ['정차한 택시 탑승', '지나가는 택시는 타지 않아요', '탑승'],
     stand: ['택시 호출', '오면 그 자리에서 탑승', '호출'],
-    fountain: ['포춘쿠키 뽑기', '빨간 계단 앞 분수', '뽑기'],
+    fountain: ['포춘쿠키 열기', '빨간 계단 앞 분수', '열기'],
     ring: ['황금 링 통과', '걸어서도, 택시로도 링을 지나가 보세요', '통과'],
     lounge: ['빨간 계단에서 멍때리기', `켜 두면 ${Math.round(PAY.lounge.gapMs / 1000)}초마다 응원 포인트 +${PAY.lounge.base}`, '관람'],
     adscreen: ['광고 화면', `${PRESS} 광고 정보가 열려요`, '광고'],
@@ -4800,7 +4800,7 @@ export function createUI(root, hooks) {
   function openVip() {
     trackEvent('vip_modal_open');
     promptLink('vip');
-    openSheet(['crown', 'VIP 패스트트랙'], 'SPONSOR', (host) => {
+    openSheet(['crown', '공유와 스폰서 코드'], 'SPONSOR', (host) => {
       const code = h('input', { class: 'input', maxLength: 32, placeholder: '8자리 스폰서 코드', 'aria-label': '스폰서 코드' });
       // The share bonus is for accounts (POST /rt/share-bonus answers a guest 403 code 'account'). A guest sees that, a button to the account
       // sheet, and a plain share button that asks for no bonus.
@@ -4862,7 +4862,7 @@ export function createUI(root, hooks) {
           h('div', { class: 'vipcard' }, h('h4', null, ...withIcon('gift', '친구에게 링크 공유하고 +300')),
             h('p', { text: shareGuest ? `${SHARE_ACCOUNT} 하루 한 번, 오늘 내 소원이나 내 전광판 링크를 보내면 바로 들어옵니다.` : '계정 전용, 하루 한 번. 오늘 내 소원이나 내 전광판 링크를 보내면 포인트가 바로 들어옵니다.' }),
             shareLink, share, shareBox),
-          h('div', { class: 'vipcard' }, h('h4', null, ...withIcon('key', 'VIP 스폰서 코드')), h('p', { text: '코드가 맞으면 응원 포인트 10,000이 들어와요. 메인 타워는 3,000부터 걸 수 있어요.' }), code, redeem),
+          h('div', { class: 'vipcard' }, h('h4', null, ...withIcon('key', 'VIP 스폰서 코드')), h('p', { text: '코드가 맞으면 응원 포인트 10,000이 들어와요. 명당(메인 타워와 큰 화면)은 응원 팀 사람 수로만 정해서 포인트로는 걸 수 없어요.' }), code, redeem),
           h('div', { class: 'vipcard' }, h('h4', null, ...withIcon('briefcase', '스폰서 안내')), h('p', { text: '현금 결제는 없어요. 안내 페이지만 엽니다.' }), ask, askNote),
           h('p', { class: 'note', text: '응원 포인트는 돈으로 팔지 않아요. 출석·응원·초대 코드로만 모아요.' }),
         ),
@@ -5603,7 +5603,8 @@ export function createUI(root, hooks) {
           h('li', { text: '내 전광판과 토지 (건물은 빈 땅으로 돌아가요), 올린 사진' }),
           h('li', { text: '내 소원, 내가 준 하트와 신고' }),
           h('li', { text: '알림 구독' }),
-          h('li', { text: '주간 리그 기록, 전광판 리포트, 초대 코드' }),
+          h('li', { text: '응원 팀 가입과 응원 기록, 내가 건 선물 전광판과 롤링페이퍼' }),
+          h('li', { text: '전광판 리포트, 초대 코드' }),
         ),
         loginNote,
         h('p', { class: 'note', text: '다른 사람의 데이터는 지우지 않아요. 이 기기는 새 손님으로 이어집니다.' }),

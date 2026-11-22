@@ -1594,7 +1594,7 @@ function pushText(row) {
   if (row?.kind === 'cheer') return CHEER_PHRASES[Math.floor(Number(row.phrase)) - 1] || '';
   if (row?.kind === 'dark') return row.stage ? darkText(row.stage, row.slot_id, row.h) : `${slot} 불이 곧 꺼져요`; // stage: the registry's notices; none: the (paid-plan) cron
   if (row?.kind === 'gift') return `${name}님이 전광판을 선물했어요`;
-  if (row?.kind === 'tribe') return '이번 주 소속 결과가 나왔어요';
+  if (row?.kind === 'tribe') return '지난 소속 결과가 나왔어요';
   if (row?.kind === 'ball') return '21시 볼 드랍이 곧 시작돼요';
   if (row?.kind === 'wish') { const n = Math.floor(Number(row.n)) || 0; return n <= 1 ? '내 소원에 첫 하트가 왔어요' : `내 소원이 하트 ${n}개를 받았어요`; }
   if (row?.kind === 'wishwin') return `어제 소원이 ${Math.max(1, Math.floor(Number(row.rank)) || 1)}위였어요. +${Math.max(0, Math.floor(Number(row.prize)) || 0)} 응원 포인트가 들어왔어요`;
