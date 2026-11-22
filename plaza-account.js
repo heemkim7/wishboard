@@ -118,7 +118,7 @@ export const OAUTH_CHANNEL = 'kts-oauth';
 export const OAUTH_MSG = 'kts-oauth';
 export const OAUTH_ACK = 'kts-oauth-ack';
 const AUTH_PARAMS = ['code', 'error', 'error_code', 'error_description'];
-const ONCE_PARAMS = ['autologin', 'handover', ...AUTH_PARAMS];
+const ONCE_PARAMS = ['autologin', 'handover', 'mail', ...AUTH_PARAMS]; // mail=1: back from the confirmation link of a sign-up mail (mailcode.js)
 const hashParams = (hash) => new URLSearchParams(String(hash || '').replace(/^#/, ''));
 
 // What oauth.html sent: { code } or { error, errorCode, description }, or null for anything else (wrong shape, odd characters).

@@ -7,6 +7,7 @@
 import { GT_LS, SESSION_LS, isInAppWebView, returnUrl } from './plaza-account.js';
 import { setStarterSlots } from './balance.js';
 import { snapQuery, kakaoOf } from './share.js?v=202611221803';
+import { confirmState, mailReturn, otpDigits, signUpOutcome, unconfirmed } from './mailcode.js?v=202611221803';
 export const SUPA_URL = 'https://yxddhpacuyaffaoutxjn.supabase.co';
 export const SUPA_KEY = 'sb_publishable_Vd-7c6e2f2s3G1d5Jbx9vw_0UCuHm-B'; // publishable key: public by design
 // v13: QA/test clients (?qa=1) live in a separate namespace and never appear in real players' rooms, lobby counts or chat history
@@ -251,7 +252,31 @@ export class Net {
   async signOut() { const auth = this.sb?.auth; if (!auth) throw new Error('로그인 준비 중이에요'); const { error } = await auth.signOut({ scope: 'local' }); if (error) throw error; }
   // A new password for the signed-in id or e-mail account, on this session (no e-mail is sent; an id has no mailbox). Errors as Supabase gives them.
   async changePassword(password) { const auth = this.sb?.auth; if (!auth?.updateUser) throw new Error('로그인 준비 중이에요'); const { error } = await auth.updateUser({ password: String(password || '') }); if (error) throw error; }
-  async passwordAuth(kind, email, password) { const auth = this.sb?.auth; if (!auth) throw new Error('로그인 준비 중이에요'); const first = kind === 'up' ? await auth.signUp({ email, password }) : await auth.signInWithPassword({ email, password }); if (first.error) throw first.error; if (first.data?.session) return first.data.session; if (kind === 'up') { const again = await auth.signInWithPassword({ email, password }); if (again.data?.session) return again.data.session; const err = new Error('가입은 기록됐지만 이 창에서 바로 로그인되지 않았어요. 메일 확인이 켜져 있으면 확인 후 다시 로그인해 주세요.'); err.code = 'confirm'; throw err; } throw new Error('로그인에 실패했어요'); }
+  // E-mail (or id, …@id.wishboard.dev) and password. -> { session }, or { code: 'up' | 'in', wait } when the address must be confirmed first
+  // (Supabase "Confirm email" on): 'up' a sign-up that mailed the 6-digit code (wait: seconds before another may be asked for, when the server
+  // refused to mail one so soon after the last), 'in' a sign-in of an address that is not confirmed yet (no mail is sent for it here).
+  // Errors as Supabase gives them; an address that is taken is { code: 'user_already_exists' } with the confirmation on or off.
+  async passwordAuth(kind, email, password) { const auth = this.sb?.auth; if (!auth) throw new Error('로그인 준비 중이에요');
+    if (kind === 'up') { const o = signUpOutcome(await auth.signUp({ email, password, options: { emailRedirectTo: mailReturn(location.origin) } }));
+      if (o.kind === 'session') return { session: o.session }; if (o.kind === 'code') return { code: 'up', wait: o.wait || 0 };
+      if (o.kind === 'exists') throw Object.assign(new Error('User already registered'), { code: 'user_already_exists' }); throw o.error || new Error('가입을 마치지 못했어요. 잠시 뒤에 다시 해 주세요.'); }
+    const r = await auth.signInWithPassword({ email, password }); if (r.error) { if (unconfirmed(r.error)) return { code: 'in', wait: 0 }; throw r.error; }
+    if (r.data?.session) return { session: r.data.session }; throw new Error('로그인에 실패했어요'); }
+  // The code of the sign-up mail -> the session. password: what the sheet's form holds. setPassword (after a sign-up): that password becomes the
+  // account's own, because Supabase keeps the first password of an address that signed up twice before confirming (someone else may have been
+  // first). When the code does not pass, or none was typed, the password is tried once: the address may have been confirmed another way
+  // meanwhile (the link of an older mail, opened in another browser). The code's own error wins over that one.
+  async verifyMail(email, token, { password = '', setPassword = false } = {}) { const auth = this.sb?.auth; if (!auth?.verifyOtp) throw new Error('로그인 준비 중이에요');
+    const code = otpDigits(token); let err = null;
+    if (code) { const r = await auth.verifyOtp({ email, token: code, type: 'signup' }); if (r.data?.session) { if (setPassword && password) await Promise.race([auth.updateUser({ password }).catch(() => null), soon(4000)]); return r.data.session; }
+      err = r.error || new Error('코드를 확인하지 못했어요'); if (String(err.code || '') !== 'otp_expired' && Number(err.status) !== 403) throw err; } // a rate limit or the network: no second request
+    if (password) { const s = await auth.signInWithPassword({ email, password }).catch(() => null); if (s?.data?.session) return s.data.session; }
+    throw err || Object.assign(new Error('메일로 받은 6자리 코드를 적어 주세요.'), { code: 'no_code' }); }
+  // Another code mail for a sign-up that is not confirmed yet. Supabase answers alike for an address it does not know or that is confirmed
+  // already (nothing is sent then), so the answer tells nobody which addresses exist.
+  async resendMail(email) { const auth = this.sb?.auth; if (!auth?.resend) throw new Error('로그인 준비 중이에요'); const { error } = await auth.resend({ type: 'signup', email, options: { emailRedirectTo: mailReturn(location.origin) } }); if (error) throw error; return true; }
+  // Supabase "Confirm email": 'on' | 'off' | '' (could not tell; asked again next time). One public GET to Supabase Auth per page, no Worker call.
+  mailConfirm() { if (!this._mc) this._mc = (async () => { try { const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(4000) : undefined; const r = await fetch(SUPA_URL + '/auth/v1/settings', { headers: { apikey: SUPA_KEY }, cache: 'no-store', signal }); return confirmState(r.ok ? await r.json() : null); } catch { return ''; } })().then((v) => { if (!v) this._mc = null; return v; }); return this._mc; }
   async mergeGuest(guestId, guestToken, nickname) { const tok = await doToken(this.sb); if (!tok || String(tok).startsWith('g1.')) throw new Error('로그인 세션이 없어요'); const r = await fetch('/rt/auth/merge', { method: 'POST', headers: { authorization: 'Bearer ' + tok, 'content-type': 'application/json' }, body: JSON.stringify({ guest_id: guestId, guest_token: guestToken, nickname: nickname || '', topic: this.topic || (NS + 'square') }) }); const data = await r.json().catch(() => ({})); if (!r.ok || data.ok === false) throw new Error(data.error || data.err || '계정 연결에 실패했어요'); return data; }
   // Does a withdrawal delete the login too (the Worker found forget_login in the database)? Asked when the withdrawal sheet opens; ?forget=1
   // makes the Worker wait for its own check. No answer counts as no, so the sheet never promises more than will happen.

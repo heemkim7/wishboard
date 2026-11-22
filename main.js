@@ -23,11 +23,14 @@ import { applyInboxPush, loadInbox, readInbox, liveOnly, handledRead, liveSeeabl
 import { openTribe, pledge, sendCheer } from './tribe.js?v=202611221803';
 import { applyOps, ballNotice, sessionEndPlan, nineBanner, kingMinute, clockSkew, clock, nowMs } from './live.js';
 import { pushRoute, awayRead } from './overlay.js?v=202611221803';
+import { isMailbox, mailArrival, mailBack, mailErrorText, retryAfterS, MAIL_ERR } from './mailcode.js?v=202611221803';
 
 adoptHandover(location.search, localStorage);
 // Back from a full-page sign-in (the fallback when the Google window could not open): read once here, because supabase-js takes
 // ?code= out of the address during net.init(). { code, failed, error, errorCode, description }
 const ARRIVED = oauthReturn(location.search, location.hash);
+// ?mail=1: this load is the confirmation link of an older sign-up mail (emailRedirectTo). The current template has only the code.
+const MAIL_BACK = mailBack(location.search);
 // 친구 초대: ?inv=<code> is kept (kts_inv_from, first one wins) only when this browser had no account of its own before this visit,
 // and goes out once with the first wish post. kts_inv_code is my own code, kts_inv_seen the newest reward the away sheet showed.
 const INV_FROM_KEY = 'kts_inv_from', INV_CODE_KEY = 'kts_inv_code', INV_SEEN_KEY = 'kts_inv_seen', INV_GOT_KEY = 'kts_inv_got', INV_WAIT_KEY = 'kts_inv_wait';
@@ -252,6 +255,10 @@ const ui = createUI(document.getElementById('ui'), {
   authEnv,
   oauth: (provider) => startOAuth(provider), // synchronous up to window.open: call it straight from the click
   passwordAuth: (kind, id, password) => passwordSign(kind, id, password),
+  // The code step of the login sheet (Supabase "Confirm email" on): the mailed code, another code mail, and whether the confirmation is on.
+  mailCode: (email, code, password, via) => mailCodeSign(email, code, password, via),
+  mailResend: (email) => mailCodeResend(email),
+  mailConfirm: () => net.mailConfirm(),
   // An id or e-mail sign-in (Supabase's 'email' provider), not Google: it has a password of its own to change.
   passwordAccount: () => !!sessionUser && (sessionUser.app_metadata?.provider === 'email' || /@id\.wishboard\.dev$/i.test(sessionUser.email || '')),
   changePassword: async (password) => { try { await net.changePassword(password); } catch (e) { throw new Error(authMessage(e)); } },
@@ -1933,13 +1940,17 @@ async function bootAccount() {
   try { session = await net.currentSession(); } catch { session = null; }
   // A handover link (?autologin=google) never starts the sign-in by itself: the sheet opens and the player taps 구글로 계속.
   const resume = q.get('autologin') === 'google' && !session?.user;
+  // The confirmation link of an older mail, with no session: opened in a browser without this sign-up's code verifier (the address is confirmed
+  // all the same), or a link that had expired. The one line about it goes instead of the sign-in lines below, and a tap opens the sheet.
+  const mailSaid = mailArrival(MAIL_BACK, ARRIVED, !!session?.user);
   if (session?.user) await finishLink(session, ARRIVED.code); // fresh: this load came back from the full-page sign-in with a code
   else {
     accountReady = true;
     ui.setAccount?.({ ready: true, guest: true, linked: false });
-    if (ARRIVED.code && !ARRIVED.failed) ui.note('로그인을 마치지 못했어요. 다시 시도해 주세요.', 'err');
+    if (mailSaid) ui.note(mailSaid, ARRIVED.failed ? 'err' : 'ok', () => ui.openLogin?.());
+    else if (ARRIVED.code && !ARRIVED.failed) ui.note('로그인을 마치지 못했어요. 다시 시도해 주세요.', 'err');
   }
-  if (ARRIVED.failed) ui.note(oauthErrorText(ARRIVED), 'err');
+  if (ARRIVED.failed && !mailSaid) ui.note(oauthErrorText(ARRIVED), 'err');
   // One-time parameters leave the address: handover, autologin, a code that could not be used, error*.
   try {
     const next = cleanAddress(location.href);
@@ -2047,16 +2058,41 @@ function startOAuth(provider) {
   } catch { /* a reused window that is already on another site */ }
   popupOAuth(provider, w);
 }
+// An id or e-mail sign-in or sign-up. -> null once signed in and linked, or { email, via, wait } when the address needs its mailed code first
+// (Supabase "Confirm email" on): the sheet then shows the code step, which ends in mailCodeSign. via 'up': the sign-up just mailed it;
+// 'in': a sign-in of an address that was never confirmed. wait: seconds before another code mail may be asked for.
 async function passwordSign(kind, id, password) {
   const email = loginEmail(id);
   if (!email) throw new Error('이메일 또는 아이디를 확인해 주세요');
   if (String(password || '').length < 6) throw new Error('비밀번호는 6자 이상이어야 해요');
+  // An id has no mailbox: with the confirmation on, its sign-up could never finish and its mail would bounce, so none is asked for.
+  if (kind === 'up' && !isMailbox(email) && (await net.mailConfirm()) === 'on') throw new Error(MAIL_ERR.idSignup);
+  return await actorOp(async () => {
+    let r;
+    try { r = await net.passwordAuth(kind, email, password); }
+    catch (e) { throw new Error(mailErrorText(e, { email })); }
+    if (r?.code) {
+      if (!isMailbox(email)) throw new Error(r.code === 'up' ? MAIL_ERR.idSignup : MAIL_ERR.idPending);
+      return { email, via: r.code, wait: r.wait || 0 };
+    }
+    await finishLink(r.session, true);
+    return null;
+  });
+}
+// The code step: the code from the sign-up mail, typed in this tab, so this tab's guest is the one linked. From the session on it is the
+// path of every sign-in (finishLink: link and merge, wallet, toasts). The client's sign-in event waits behind actorOp as for passwordSign.
+async function mailCodeSign(email, code, password, via) {
   await actorOp(async () => {
     let session;
-    try { session = await net.passwordAuth(kind, email, password); }
-    catch (e) { throw new Error(authMessage(e)); }
+    try { session = await net.verifyMail(email, code, { password, setPassword: via === 'up' }); }
+    catch (e) { throw new Error(mailErrorText(e, { email })); }
     await finishLink(session, true);
   });
+}
+// Another code mail. The error carries wait (seconds) when Supabase said how long until the next one.
+async function mailCodeResend(email) {
+  try { await net.resendMail(email); }
+  catch (e) { throw Object.assign(new Error(mailErrorText(e, { email })), { wait: retryAfterS(e) }); }
 }
 // ---- one actor per window ---------------------------------------------------------------------
 // The windows of one browser share the Supabase session (localStorage, SESSION_LS) and the stored guest (GT_LS); each window

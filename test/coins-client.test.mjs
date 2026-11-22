@@ -86,7 +86,7 @@ describe('account screens of this round', () => {
   it('the id sign-up says a forgotten password cannot be recovered, only while signing up', () => {
     const login = between(ui, '  function openLogin(opts) {', '\n  // In-app browser, back from the system browser');
     assert.match(login, /const idWarn = h\('p', \{ class: 'note', hidden: true, text: '아이디로 만든 계정은 비밀번호를 잊으면 되찾을 수 없어요\. 구글로 연결하면 그럴 걱정이 없어요\.' \}\);/);
-    assert.match(login, /idWarn\.hidden = !up;/);
+    assert.match(login, /idWarn\.hidden = !up \|\| mailOnly;/); // mailOnly: "Confirm email" is on, so there is no id sign-up to warn about
     assert.match(login, /id, pw, agreeRow, idWarn, formErr, submit/);
   });
   it('an id sign-in error after the sheet was closed is a toast', () => {

@@ -16,6 +16,7 @@ import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611221803';
 import { EMOTES, REACTIONS, AVATAR_COLORS, AVATAR_COLOR_NAMES, SPECIES } from './ts3d/avatars.js?v=202611221803';
 import { trackEvent, statsOff, statsGpc, setStatsOff } from './analytics.js?v=202611221803';
 import { CHEER_PHRASES, SITE, accountLabel, allowedLink, blockedText, linkedActor } from './plaza-account.js';
+import { codeStart, codeStep, codeView, otpField } from './mailcode.js?v=202611221803';
 import { policyDoc } from './legal.js?v=202611221803';
 import { setOperator, operatorInfo } from './legal.js?v=202611221803';
 import { SUPPORT_KINDS, SUPPORT_TEXT, SUPPORT_CONSENT, SUP, supportFault, textLen, maintOf, maintLines, operatorLine } from './opsrules.js';
@@ -4280,6 +4281,9 @@ export function createUI(root, hooks) {
   // Sign-in state main.js reports (setLogin): wait = a Google window is open or a sign-in is finishing (text overrides the button label),
   // err and info = the lines under the Google button. It outlives the sheet, so reopening the sheet shows the same state.
   let loginView = { wait: false, text: '', err: '', info: '' }, loginPaint = null;
+  // The code step of an e-mail sign-up (Supabase "Confirm email" on): { v: mailcode.js codeStart/codeStep view, pw: the password the form
+  // held }. Kept in memory only, and it outlives the sheet, so closing and reopening the sheet comes back to the code. Gone once linked.
+  let codeKeep = null;
   function setLogin(next) {
     loginView = { ...loginView, ...next };
     loginPaint?.();
@@ -4295,7 +4299,9 @@ export function createUI(root, hooks) {
       if (!entered) me.el.classList.add('front'); // over the boot card
       loginView = { ...loginView, err: '', info: '' };
       const legal = legalFold();
-      let mode = 'in', busy = false;
+      // mailOnly: the confirmation is on, so a new account needs a mailbox (an id sign-up could never get its code). inCode: the code step shows.
+      let mode = 'in', busy = false, mailOnly = false, inCode = false;
+      if (accountView.linked) codeKeep = null;
       const id = h('input', { class: 'input', name: 'username', maxLength: 80, placeholder: '이메일 또는 아이디', autocomplete: 'username', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'next', 'aria-label': '이메일 또는 아이디' });
       const pw = h('input', { class: 'input', name: 'password', type: 'password', maxLength: 72, placeholder: '비밀번호 (6자 이상)', autocomplete: 'current-password', autocapitalize: 'off', enterkeyhint: 'go', 'aria-label': '비밀번호' });
       const agree = h('input', { type: 'checkbox', 'aria-label': '만 14세 이상이며 약관과 개인정보처리방침에 동의' });
@@ -4313,8 +4319,12 @@ export function createUI(root, hooks) {
         submit.disabled = busy;
         swap.textContent = up ? '이미 계정이 있어요' : '처음이면 가입';
         agreeRow.hidden = !up;
-        idWarn.hidden = !up;
+        idWarn.hidden = !up || mailOnly;
         pw.autocomplete = up ? 'new-password' : 'current-password';
+        const label = up && mailOnly ? '이메일 주소' : '이메일 또는 아이디';
+        id.placeholder = label;
+        id.setAttribute('aria-label', label);
+        if (up && mailOnly) id.setAttribute('inputmode', 'email'); else id.removeAttribute('inputmode');
       };
       agree.addEventListener('change', () => { if (agree.checked) fail(''); });
       swap.addEventListener('click', () => { mode = mode === 'up' ? 'in' : 'up'; fail(''); sync(); });
@@ -4328,8 +4338,13 @@ export function createUI(root, hooks) {
         fail('');
         sync();
         try {
-          await hooks.passwordAuth?.(mode, id.value, pw.value);
-          if (sheet === me) closeSheet();
+          // { email, via, wait }: the address needs its mailed code first (the code step below); nothing: signed in and linked.
+          const next = await hooks.passwordAuth?.(mode, id.value, pw.value);
+          if (next?.email) {
+            codeKeep = { v: codeStart(next), pw: pw.value };
+            if (sheet === me) showCode(true);
+            else away(next.via === 'in' ? '가입 확인이 끝나지 않았어요. 눌러서 메일의 코드를 넣으세요' : '메일로 6자리 코드를 보냈어요. 눌러서 코드를 넣으세요', 'ok');
+          } else if (sheet === me) closeSheet();
         } catch (err) {
           const text = err?.message || '로그인에 실패했어요';
           fail(text);
@@ -4348,9 +4363,9 @@ export function createUI(root, hooks) {
         google.disabled = !!loginView.wait;
         google.textContent = loginView.wait ? (loginView.text || '구글 창에서 계속하세요…') : (resume ? '구글로 계속' : 'Google로 계속');
         gInfo.textContent = loginView.info || '';
-        gInfo.hidden = !loginView.info;
+        gInfo.hidden = !loginView.info || inCode;
         gErr.textContent = loginView.err || '';
-        gErr.hidden = !loginView.err;
+        gErr.hidden = !loginView.err || inCode;
       };
       const linkOut = h('input', { class: 'input', readOnly: true, hidden: true, 'aria-label': `${browser}에서 열 링크` });
       const copySaid = h('p', { class: 'note', role: 'status', hidden: true });
@@ -4418,11 +4433,97 @@ export function createUI(root, hooks) {
       ];
       if (env.inApp) kids.push(h('p', { class: 'note', text: env.routed ? `이 앱 안에서는 구글 로그인이 열리지 않아, 누르면 ${env.android ? '크롬으로' : '사파리로'} 넘어갑니다.` : `이 앱 안에서는 구글 로그인이 열리지 않아요. 아이디로 가입하거나, ${browser}에서 열 링크를 복사하세요.` }), copy, copySaid, linkOut);
       kids.push(h('div', { class: 'login-or', text: '또는' }), form, swap, legal.box);
-      host.append(...kids);
+      // The code step (Supabase "Confirm email" on). The sign-up mailed a 6-digit code ({{ .Token }} in the template), typed here so this
+      // tab's guest, the one with the coins, is the one linked. It takes the place of everything above but the policy box.
+      const codeIn = h('input', { class: 'input', name: 'one-time-code', inputmode: 'numeric', autocomplete: 'one-time-code', pattern: '[0-9]*', maxLength: 10, placeholder: '6자리 코드', enterkeyhint: 'go', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', 'aria-label': '메일로 받은 6자리 코드', style: { fontSize: '22px', letterSpacing: '0.3em', textAlign: 'center' } });
+      const codeTitle = h('div', { class: 'callout', style: { marginTop: 0 } });
+      const codeMail = h('p', { class: 'note' });
+      const codeLead = h('p', { class: 'note' });
+      const codeInfo = h('p', { class: 'note', role: 'status', hidden: true });
+      const codeErr = h('p', { class: 'note login-err', role: 'alert', hidden: true });
+      const codeGo = h('button', { class: 'btn gold cta', type: 'submit' });
+      const codeForm = h('form', { class: 'login-form', novalidate: true }, codeIn, codeInfo, codeErr, codeGo);
+      const codeAgain = h('button', { class: 'btn ghost', type: 'button' });
+      const codeBack = h('button', { class: 'btn ghost', type: 'button', text: '다른 주소로 하기' });
+      const codeNodes = [codeTitle, codeMail, codeLead, codeForm, codeAgain, codeBack];
+      for (const n of codeNodes) n.hidden = true;
+      const formNodes = kids.filter((n) => n && n !== legal.box);
+      let saved = [], tick = 0;
+      // A result that arrives after the player closed the sheet: its line would never be read, so it is a toast, and a tap reopens the sheet.
+      const away = (text, kind = 'err') => { if (sheet !== me) note(text, kind, () => openLogin()); };
+      const paintCode = () => {
+        const k = codeKeep;
+        if (!k) return;
+        const cv = codeView(k.v);
+        codeTitle.textContent = cv.title;
+        codeMail.replaceChildren(cv.mailLabel + ' ', h('b', { text: cv.email }));
+        codeLead.textContent = cv.lead;
+        codeGo.textContent = cv.submit;
+        codeGo.disabled = cv.submitOff;
+        codeIn.disabled = cv.submitOff;
+        codeAgain.textContent = cv.resend;
+        codeAgain.disabled = cv.resendOff;
+        codeBack.disabled = !!k.v.busy;
+        codeInfo.textContent = cv.info;
+        codeInfo.hidden = !cv.info;
+        codeErr.textContent = cv.err;
+        codeErr.hidden = !cv.err;
+        if (!cv.left && tick) { clearInterval(tick); tick = 0; }
+      };
+      const ticking = () => { if (!tick && sheet === me) tick = setInterval(paintCode, 1000); };
+      const setCode = (ev) => { if (!codeKeep) return null; codeKeep = { ...codeKeep, v: codeStep(codeKeep.v, ev) }; paintCode(); return codeKeep.v; };
+      // on: the code step replaces the form (each node's own hidden state comes back with the form).
+      const showCode = (on) => {
+        if (on !== inCode) {
+          inCode = on;
+          if (on) { saved = formNodes.map((n) => n.hidden); for (const n of formNodes) n.hidden = true; }
+          else formNodes.forEach((n, i) => { n.hidden = saved[i] ?? false; });
+          for (const n of codeNodes) n.hidden = !on;
+        }
+        if (on) { codeIn.value = ''; paintCode(); ticking(); try { codeIn.focus({ preventScroll: true }); } catch { /* not focusable yet */ } }
+        else { clearInterval(tick); tick = 0; paint(); sync(); }
+      };
+      codeIn.addEventListener('input', () => { const d = otpField(codeIn.value); if (d !== codeIn.value) codeIn.value = d; if (codeKeep?.v.err) setCode({ t: 'edit' }); });
+      codeForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const k = codeKeep;
+        if (!k || k.v.busy) return;
+        setCode({ t: 'verify' });
+        try {
+          await hooks.mailCode?.(k.v.email, codeIn.value, k.pw, k.v.via);
+          codeKeep = null;
+          if (sheet === me) closeSheet();
+        } catch (err) {
+          const text = err?.message || '코드를 확인하지 못했어요';
+          setCode({ t: 'fail', text });
+          away(text);
+          if (sheet === me) try { codeIn.focus({ preventScroll: true }); codeIn.select(); } catch { /* fine */ }
+        }
+      });
+      codeAgain.addEventListener('click', async () => {
+        if (setCode({ t: 'resend' })?.busy !== 'resend') return; // busy, or still counting down
+        const email = codeKeep.v.email;
+        try {
+          await hooks.mailResend?.(email);
+          setCode({ t: 'sent' });
+          ticking();
+        } catch (err) {
+          const s = Number(err?.wait) || 0, text = err?.message || '메일을 보내지 못했어요';
+          setCode(s ? { t: 'wait', s } : { t: 'fail', text });
+          if (s) ticking();
+          away(text);
+        }
+      });
+      codeBack.addEventListener('click', () => { codeKeep = null; showCode(false); try { id.focus({ preventScroll: true }); } catch { /* fine */ } });
+      host.append(...kids.filter((n) => n && n !== legal.box), ...codeNodes, legal.box);
       loginPaint = paint;
       paint();
       sync();
-      return () => { if (loginPaint === paint) loginPaint = null; };
+      if (codeKeep) showCode(true); // back to the code this sheet was showing when it closed
+      // Is the confirmation on? One public read per page (net.js mailConfirm), asked as the sheet opens so the sign-up form is right.
+      const asked = hooks.mailConfirm?.();
+      if (asked?.then) asked.then((s) => { mailOnly = s === 'on'; if (sheet === me && !inCode) sync(); }, () => { /* unknown: the id stays allowed */ });
+      return () => { if (loginPaint === paint) loginPaint = null; clearInterval(tick); tick = 0; };
     }, true);
   }
   // In-app browser, back from the system browser: the guest here was linked there and its coins and boards moved (main.js handoverBack).
