@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { COMPACT_HUD_Q, feverChip, STICK_H } from '../interact.js';
 
 const read = (p) => readFileSync(new URL('../' + p, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const html = read('index.html');
@@ -318,5 +319,145 @@ describe('toasts and the game panels', () => {
     // the bake panel is 112px up and about 170px tall: the default toast line (196px up) is inside it
     const bake = px(rule(css, '.bake'), 'bottom'), toasts = px(rule(css, '.toasts'), 'bottom');
     assert.ok(toasts > bake && toasts < bake + 170);
+  });
+});
+
+describe('compact phone HUD (a touch phone upright or on its side)', () => {
+  const ui = read('ui.js');
+  const Q = '(orientation: portrait) and (max-width: 599px), (orientation: landscape) and (max-height: 520px)';
+  const box = media(Q, '.id-coin');
+  // The column is min(62vw, 240px, 40vmax) wide: 40vmax is 40vw on its side, so landscape keeps min(240px, 40vw).
+  const colW = (vw, vh) => Math.min(vw * 0.62, 240, Math.max(vw, vh) * 0.4);
+  it('ui.js asks the same media query as the stylesheet, and only on a touch device', () => {
+    assert.equal(COMPACT_HUD_Q, Q);
+    assert.match(ui, /const compactMq = matchMedia\(COMPACT_HUD_Q\);\n\s*const compactNow = \(\) => coarse && compactMq\.matches;/);
+    assert.match(ui, /compactMq\.addEventListener\?\.\('change', \(\) => placeGoal\(\)\);/);
+    // the new pieces are hidden by default, so tablets and desktop windows look as they did
+    assert.match(css, /\.id-coin, \.hud-r > \.view-btn, \.wal-quick, \.phone-only, \.fever \.fs \{ display: none; \}/);
+    // every rule in the block starts with html.touch (the nested query too)
+    for (const line of box.split('\n').map((s) => s.trim()).filter(Boolean)) {
+      if (line === '}') continue;
+      assert.ok(line.startsWith('html.touch ') || /^@media \([^{]*\) \{ html\.touch /.test(line), line);
+    }
+  });
+  it('portrait: the left column is at most 62% wide and 112px tall (it was 172 x 418px at 360 x 780)', () => {
+    const col = rule(box, 'html.touch .hud-l');
+    assert.match(col, /display: grid;/);
+    assert.match(col, /width: min\(62vw, 240px, 40vmax\);/);
+    assert.match(col, /max-width: min\(62vw, 240px, 40vmax\);/);
+    for (const [vw, vh] of [[320, 640], [360, 780], [390, 844], [430, 932]]) assert.ok(colW(vw, vh) <= vw * 0.62 + 0.01, String(vw));
+    assert.equal(Math.round(colW(360, 780)), 223);
+    assert.equal(colW(390, 844), 240);
+    const gap = px(col, 'gap');
+    // identity row: the avatar (30px on touch) + 5px padding above and below + the card's 1px border each side
+    assert.match(rule(box, 'html.touch .ident .profile'), /padding: 5px 7px 5px 5px;/);
+    const ident = px(rule(css, 'html.touch .avatar'), 'height') + 2 * 5 + 2;
+    // goal pill: one 16px line, 6px padding, 1px border; guest pill: the 28px button alone
+    const goal = rule(box, 'html.touch .hud-l > .nextgoal:not(.task)');
+    assert.match(goal, /white-space: nowrap; overflow: hidden; text-overflow: ellipsis;/);
+    const pill = px(goal, 'line-height') + 2 * px(goal, 'padding') + 2;
+    const guest = px(rule(box, 'html.touch .hud-l > .guestwarn .btn'), 'height');
+    assert.match(rule(box, 'html.touch .hud-l > .guestwarn p'), /display: none;/);
+    const tall = ident + gap + pill + gap + guest;
+    assert.equal(tall, 42 + 6 + 30 + 6 + 28);
+    assert.ok(tall <= 130);
+    // the wallet card and the live board are gone from the column
+    assert.match(rule(box, 'html.touch .hud-l > .wallet, html.touch .hud-l > .liveboard'), /display: none;/);
+  });
+  it('the column ends well above the floating stick\'s zone, and its top row stops 8px left of the tool row', () => {
+    // 360 x 780 before: the column reached 10 + 418 = 428px, into the stick zone (from 351px down)
+    assert.ok(10 + 418 > 780 * (1 - STICK_H));
+    for (const vh of [568, 640, 780, 844]) assert.ok(10 + 112 + 12 <= vh * (1 - STICK_H), String(vh));
+    // tool row (portrait): 36px buttons, 3px padding and 1px border each side, 8px from the right; four buttons, five with 받은 소식
+    const row = (n) => n * 36 + 2 * 3 + 2;
+    assert.match(rule(box, 'html.touch .hud-l > .ident'), /max-width: min\(100%, calc\(100vw - 178px - var\(--safe-l\) - var\(--safe-r\)\)\);/);
+    assert.match(rule(box, 'html.touch #ui:has(.tool-inbox:not([hidden])) .hud-l > .ident'), /max-width: min\(100%, calc\(100vw - 214px - var\(--safe-l\) - var\(--safe-r\)\)\);/);
+    for (const vw of [320, 360, 390, 430]) {
+      assert.equal(vw - 8 - row(4) - (10 + vw - 178), 8, String(vw));
+      assert.equal(vw - 8 - row(5) - (10 + vw - 214), 8, String(vw));
+    }
+  });
+  it('landscape keeps the column min(240px, 40vw) wide, so the ticker and the taxi HUD still start past it', () => {
+    for (const [vw, vh] of [[568, 320], [667, 375], [740, 360], [780, 360], [844, 390]]) assert.equal(colW(vw, vh), Math.min(240, vw * 0.4), String(vw));
+  });
+  it('the identity row carries the coin amount (tap: the wallet sheet) and a +N badge while coins wait', () => {
+    assert.match(ui, /const idCoin = h\('button', \{ class: 'id-coin', type: 'button', 'aria-label': '내 지갑', title: '지갑 · 정산 안내', onclick: \(\) => openWalletInfo\(\) \}/);
+    assert.match(ui, /h\('div', \{ class: 'glass ident' \}, profile, idCoin, channelCard\)/);
+    assert.match(ui, /idAmt\.textContent = amtEl\.textContent;/);
+    assert.match(ui, /idPend\.hidden = pendingChip\.hidden;/);
+    assert.match(ui, /const badge = `\+\$\{money\(wallet\.pending\)\}`;/);
+    // the badge sits under the amount (a second grid row), so it never widens the row and squeezes the name
+    assert.match(rule(box, 'html.touch .ident .id-coin'), /display: grid; grid-template-rows: auto auto;/);
+    assert.match(rule(box, 'html.touch .id-coin .pend'), /grid-row: 2;/);
+    // under 375px upright the coin picture steps aside for the name
+    assert.match(box, /@media \(orientation: portrait\) and \(max-width: 374px\) \{ html\.touch \.id-coin img \{ display: none; \} \}/);
+  });
+  it('the next goal is one line under the identity row, with a small 목표 tag in place of "다음 목표: "', () => {
+    assert.match(ui, /if \(compactNow\(\)\) \{ if \(nextLine\.nextElementSibling !== guestWarn\) guestWarn\.before\(nextLine\); \}/);
+    assert.match(ui, /else if \(newbieOn\) walletEl\.before\(nextLine\);\n\s*else walletEl\.querySelector\('\.sub'\)\?\.append\(nextLine\);/);
+    // syncNewbie and the end of setup both go through placeGoal
+    assert.equal((ui.match(/\bplaceGoal\(\);/g) || []).length, 2);
+    assert.match(ui, /nextLine\.replaceChildren\(h\('span', \{ class: 'ng-k', text: m\[1\] \}\), document\.createTextNode\(m\[2\]\)\);/);
+    assert.match(rule(box, 'html.touch .hud-l > .nextgoal:not(.task) .ng-k::before'), /content: "목표";/);
+    // the newcomer card keeps its own look: only its row is set
+    assert.match(rule(box, 'html.touch .hud-l > .nextgoal'), /grid-row: 2;/);
+    assert.equal(box.includes('.nextgoal.task'), false);
+  });
+  it('the fever gauge is a chip beside the goal only while it moves', () => {
+    assert.deepEqual(feverChip(null), { show: false, text: '2배 0/20' });
+    assert.deepEqual(feverChip({ phase: '', gauge: 0 }), { show: false, text: '2배 0/20' });
+    assert.deepEqual(feverChip({ phase: '', gauge: 3 }), { show: true, text: '2배 3/20' });
+    assert.deepEqual(feverChip({ phase: 'count', gauge: 20, left: 4.2 }), { show: true, text: '2배까지 5초' });
+    assert.deepEqual(feverChip({ phase: 'party', gauge: 20, left: 41.5 }), { show: true, text: '2배 42초' });
+    assert.match(rule(box, 'html.touch .hud-l > .fever.idle'), /display: none;/);
+    assert.match(rule(box, 'html.touch .hud-l > .fever'), /grid-row: 2; grid-column: 2;/);
+    assert.match(ui, /class: 'glass fever idle'/);
+    // the mission sheet quotes the long text only
+    assert.match(ui, /text: `\$\{feverText\.textContent\}\. \$\{feverEl\.title\}`/);
+  });
+  it('the wallet chips are rows at the top of the wallet sheet with their own taps, and 광장 소식 opens from the ranks sheet', () => {
+    const w = ui.slice(ui.indexOf('  function openWalletInfo() {'), ui.indexOf('  function standings() {'));
+    for (const re of [/quickRow\(todayBtn, \(\) => openToday\(\)\)/, /quickRow\(sessionChip, \(\) => openToday\(\)\)/, /quickRow\(holdBtn, \(\) => openHolds\(\)\)/, /quickRow\(tribeBtn, \(\) => openTribeSheet\(\)\)/, /protectLine\.hidden \? \[\] : \[h\('button', \{ class: 'btn ghost wide', type: 'button', onclick: \(e\) => protectGo\(e\) \}/]) assert.match(w, re);
+    assert.match(w, /host\.append\(\n\s*quick,/);
+    assert.match(rule(box, 'html.touch .wal-quick'), /display: grid;/);
+    assert.ok(px(rule(box, 'html.touch .wal-quick .btn'), 'min-height') >= 44);
+    const r = ui.slice(ui.indexOf('  function openRanks() {'), ui.indexOf('  function openCredits() {'));
+    assert.match(r, /h\('button', \{ class: 'btn ghost phone-only', type: 'button', onclick: \(\) => openFeed\(\) \}/);
+    assert.match(rule(box, 'html.touch .sheet .phone-only'), /display: flex;/);
+  });
+  it('화면만 보기: the eye under the map hides the HUD, keeps the stick, the action buttons and itself, and lasts one tab session', () => {
+    assert.match(ui, /class: 'glass view-btn', type: 'button', 'aria-label': '화면만 보기'/);
+    assert.match(ui, /root\.classList\.toggle\('viewonly', !!on\);/);
+    assert.match(ui, /sessionStorage\.setItem\('kts_viewonly', on \? '1' : '0'\)/);
+    assert.match(ui, /if \(sessionStorage\.getItem\('kts_viewonly'\) === '1'\) setViewOnly\(true\);/);
+    assert.match(ui, /mapEl,\n\s*locPill,\n\s*viewBtn,\n/);
+    const m = box.match(/html\.touch #ui\.viewonly > :is\(([^)]*)\), html\.touch #ui\.viewonly > \.hud-r > :not\(\.view-btn\) \{([^}]*)\}/);
+    assert.ok(m, 'no #ui.viewonly rule');
+    const hidden = m[1].split(', ');
+    for (const gone of ['.hud-l', '.news', '.stay-ticket', '.prompt', '.waypill', '.dock', '.reacts']) assert.ok(hidden.includes(gone), gone);
+    for (const kept of ['.joy', '.acts', '.toasts', '.proof', '.bake', '.rhythm', '.taxihud']) assert.equal(hidden.includes(kept), false, kept);
+    assert.match(m[2], /visibility: hidden !important;/);
+    // the hiding rule is inside the compact block: a tablet or a desktop window never hides its HUD
+    assert.equal(css.replace(box, '').includes('#ui.viewonly'), false);
+  });
+  it('the eye clears the right-hand buttons: under the map upright, left of the map on its side', () => {
+    const eye = 36, hudTop = 8, gap = 6;
+    // upright (390 x 844): tool row 40px, map 58px, location pill about 24px, then the eye; the pouch balloon starts 274 + 52px up
+    const top = hudTop + 40 + gap + 58 + gap + 24 + gap;
+    assert.ok(top + eye + 12 <= 640 - 274 - 52, 'a 640px tall phone');
+    // on its side the column under the map belongs to the action buttons (three while driving reach 36 + 168 = 204px up,
+    // 116px from the top at 320px tall), so the eye moves left of the 56px map, level with its top
+    const side = box.match(/@media \(orientation: landscape\) \{ html\.touch \.hud-r > \.view-btn \{ ([^}]*) \} \}/);
+    assert.ok(side, 'no landscape rule for the eye');
+    const land = media('(orientation: landscape) and (max-height: 520px)', '.stay-ticket');
+    const mapW = px(rule(land, 'html.touch .minimap'), 'width');
+    assert.equal(px(side[1], 'top'), px(rule(css, 'html.touch .tools'), 'height') + gap);
+    assert.equal(px(side[1], 'right'), mapW + gap);
+    // its right edge (8 + 62px in) stays 6px left of the action column (12 + 52px wide); its bottom (8 + 48 + 36 = 92px) is
+    // above the pouch balloon in the dock column (160 + 52px up: 108px from the top at 320px tall)
+    const acts = rule(css, 'html.touch .acts');
+    assert.ok(8 + px(side[1], 'right') >= px(acts, 'right') + 52 + 6);
+    const balloon = rule(land, 'html.touch .hud-r .stay-balloon');
+    assert.ok(hudTop + px(side[1], 'top') + eye + 12 <= 320 - px(balloon, 'bottom') - 52);
   });
 });

@@ -63,6 +63,20 @@ export function isTouchUI({ coarse = false, points = 0 } = {}) {
   return !!coarse || (Number(points) || 0) > 1;
 }
 
+// ---- compact phone HUD -----------------------------------------------------------------------------------------
+// A phone held upright or on its side (index.html repeats this query for its compact HUD block; tablets and desktop
+// windows keep the full left column). On a touch device inside it the left column is one identity + coin row, the next
+// goal and the guest warning as slim pills, and the wallet chips move into the wallet sheet.
+export const COMPACT_HUD_Q = '(orientation: portrait) and (max-width: 599px), (orientation: landscape) and (max-height: 520px)';
+/** The fever gauge as a compact chip: hidden while it is empty and idle. fever: ui.js renderHud's hd.fever (or null). */
+export function feverChip(fever) {
+  const gauge = Math.max(0, Math.floor(Number(fever?.gauge) || 0));
+  const left = Math.max(0, Math.ceil(Number(fever?.left) || 0));
+  if (fever?.phase === 'party') return { show: true, text: `2배 ${left}초` };
+  if (fever?.phase === 'count') return { show: true, text: `2배까지 ${left}초` };
+  return { show: gauge > 0, text: `2배 ${gauge}/20` };
+}
+
 // ---- bake ------------------------------------------------------------------------------------------------------
 // One bake session is BAKE_FLIPS flips, one every BAKE_ROUND_MS, so the round ends when the Room's 8 s session can
 // pay (balance.js PAY.bake.minS). The session result is the best flip.

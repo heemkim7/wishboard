@@ -98,6 +98,9 @@ export const ICONS = Object.freeze({
   checkCircle: [['circle', 12, 12, 8.5], 'M8 12.3L10.8 15L16 9.5'],
   // an open mission step (the empty partner of checkCircle)
   todo: [['circle', 12, 12, 8.5]],
+  // 화면만 보기 on a phone, and (struck through) 화면 다시 보기
+  eye: ['M2.5 12C5 7.5 8.3 5.5 12 5.5C15.7 5.5 19 7.5 21.5 12C19 16.5 15.7 18.5 12 18.5C8.3 18.5 5 16.5 2.5 12Z', ['circle', 12, 12, 3]],
+  eyeOff: ['M2.5 12C5 7.5 8.3 5.5 12 5.5C15.7 5.5 19 7.5 21.5 12C19 16.5 15.7 18.5 12 18.5C8.3 18.5 5 16.5 2.5 12Z', ['circle', 12, 12, 3], 'M4 4L20 20'],
 });
 
 export const ICON_NAMES = Object.freeze(Object.keys(ICONS));
