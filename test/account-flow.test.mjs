@@ -674,15 +674,14 @@ describe('account: nickname, sign-out, settings, handover, withdrawal', () => {
     assert.match(between(main, 'async function withdrawAccount() {', '// 로그아웃'), /await net\.withdrawAccount\(\);\s+await becomeGuest\(\{ push: false \}\);/);
     assert.match(read('net.js'), /async signOut\(\) \{[^\n]*auth\.signOut\(\{ scope: 'local' \}\)/);
   });
-  it('leaves nothing of the account behind: wallet figures, the 소속 chip, the boards taken from it', () => {
+  it('leaves nothing of the account behind: wallet figures, the 응원 팀 chip, the old taken-board list', () => {
     const forget = between(main, '\nfunction forgetActor() {', '\n// The new guest another window stored');
     for (const line of ['walletGen += 1;', 'state.grants = [];', 'state.pending = 0;', 'state.confirmed = 0;', 'state.walletKnown = false;', 'ui.setWallet(state);', 'ui.forgetActor?.();']) assert.ok(forget.includes(line), line);
     const guest = between(main, 'async function becomeGuest(', 'async function withdrawAccount() {');
     assert.ok(guest.indexOf('forgetActor();') > 0 && guest.indexOf('forgetActor();') < guest.indexOf('refreshWallet()'), 'before the new wallet is read');
     const gone = between(ui, '    forgetActor() {', '    promptLink,');
-    assert.match(gone, /tribeBtn\.textContent = '소속';/);
+    assert.match(gone, /tribeBtn\.textContent = '응원 팀';/);
     assert.match(gone, /store\('kts_taken', \[\]\);/);
-    assert.match(gone, /takenWant\.length = 0;/);
   });
   it('gives a guest and a linked account a visible way in and out', () => {
     assert.match(ui, /h\('button', \{ class: 'btn gold', type: 'button', text: '계정 연결 \+300', onclick/); // the guest banner, same class

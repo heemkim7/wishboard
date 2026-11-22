@@ -335,7 +335,7 @@ describe('times square plaza', { concurrency: false }, () => {
       if (u.includes('/rpc/claim_billboard')) {
         const a = JSON.parse(opt.body);
         if (a.p_slot_id === 'PLOT_3') return json({ ok: true, billboard: { slot_id: 'PLOT_3', plot_id: 3, line1: '외벽', holder_id: a.p_actor_id }, remaining_coins: 60, prev_holder_id: 'guest:evicted' });
-        return json({ ok: true, billboard: { slot_id: 'MAIN_TOP', line1: '새 문구', holder_id: 'kept' }, remaining_coins: 80 });
+        return json({ ok: true, billboard: { slot_id: a.p_slot_id, line1: '새 문구', holder_id: 'kept' }, remaining_coins: 80 });
       }
       if (u.includes('/rpc/buy_or_upgrade_plot')) return json({ ok: true, plot: { plot_id: 3, level: 1, owner_name: '까마귀' }, remaining_coins: 40 });
       if (u.includes('/rpc/sell_coins_to_advertiser')) return json({ ok: true, remaining_coins: 30, buyer_name: '건물주', buyer_id: 'guest:landlord' });
@@ -373,7 +373,9 @@ describe('times square plaza', { concurrency: false }, () => {
       const boards = () => calls.filter(c => c.url.includes('/billboards')).length;
       const first = await call('/rt/world');
       assert.equal(first.status, 200);
-      assert.deepEqual(await first.json(), { billboards: world.boards, plots: world.plots, ranks: [], today: { visitors: 0, wishes: 0 } });
+      const fw = await first.json(), { prime: firstPlan, roof, ...rest } = fw;
+      assert.deepEqual(rest, { billboards: world.boards, plots: world.plots, ranks: [], today: { visitors: 0, wishes: 0 } });
+      assert.equal(roof, ''); assert.equal(firstPlan.day, new Date(Date.now() + 9 * 36e5).toISOString().slice(0, 10)); // the prime screens' plan (teamsrv.js), empty today
       assert.equal(boards(), 1);
       await call('/rt/world');
       assert.equal(boards(), 1);
@@ -385,7 +387,7 @@ describe('times square plaza', { concurrency: false }, () => {
       failFlush = true;
       const blocked = await call('/rt/claim-billboard', {
         method: 'POST', headers: auth,
-        body: JSON.stringify({ topic: 'chapel:square', slot_id: 'MAIN_TOP', bid: 120, line1: '새 문구', nickname: '까마귀', actor_id: 'user:hacker' }),
+        body: JSON.stringify({ topic: 'chapel:square', slot_id: 'STREET_5', bid: 120, line1: '새 문구', nickname: '까마귀', actor_id: 'user:hacker' }),
       });
       assert.equal(blocked.status, 409);
       const blockedBody = await blocked.json();
@@ -397,7 +399,7 @@ describe('times square plaza', { concurrency: false }, () => {
       failFlush = false;
       const claimed = await call('/rt/claim-billboard', {
         method: 'POST', headers: auth,
-        body: JSON.stringify({ topic: 'chapel:square', slot_id: 'MAIN_TOP', bid: 120, line1: '새 문구', line2: '타임스퀘어', emoji: '🔥', bg_theme: 'cyber_navy', text_color: '#ffffff', nickname: '까마귀', actor_id: 'user:hacker' }),
+        body: JSON.stringify({ topic: 'chapel:square', slot_id: 'STREET_5', bid: 120, line1: '새 문구', line2: '타임스퀘어', emoji: '🔥', bg_theme: 'cyber_navy', text_color: '#ffffff', nickname: '까마귀', actor_id: 'user:hacker' }),
       });
       assert.equal(claimed.status, 200);
       const claimBody = await claimed.json();
@@ -412,7 +414,7 @@ describe('times square plaza', { concurrency: false }, () => {
       assert.equal(claimArgs.p_key, 'flush-test-key');
       assert.equal(claimArgs.p_actor_id, actorId);
       assert.notEqual(claimArgs.p_actor_id, 'user:hacker');
-      assert.equal(claimArgs.p_bid, 120);
+      assert.equal(claimArgs.p_bid, 228, 'the fixed price of STREET_5 (its floor), not the 120 the page sent');
       const seen = msgs(sock);
       assert.ok(seen.some(m => m.t === 'WALLET_SYNC' && Object.keys(m).length === 1));
       // The push carries what polling used to fetch: the row and the fresh top-20 ranks. The replay ring keeps the row only.
@@ -458,7 +460,7 @@ describe('times square plaza', { concurrency: false }, () => {
       assert.equal(syncs(landlord), 1);
       assert.equal(syncs(evicted), 1);
       assert.equal(syncs(bystander), 0);
-      assert.equal(msgs(evicted).filter(m => m.t === 'TAKE').at(-1).victim, 'guest:evicted');
+      assert.equal(msgs(evicted).filter(m => m.t === 'TAKE').length, 0); // its time had run out: not a takeover, nobody is told "taken"
       assert.equal(msgs(landlord).filter(m => m.t === 'WORLD_UPDATE').at(-1).data.slot_id, 'PLOT_3');
       // Points are never sent (non-game change): a guest or an account with any balance gets 410 off, and the database is never asked.
       const sell = (headers = auth) => call('/rt/sell-coins', { method: 'POST', headers, body: JSON.stringify({ topic: 'chapel:square', slot_id: 'PLOT_3', amount: 10, nickname: '까마귀' }) });

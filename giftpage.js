@@ -32,7 +32,7 @@ const card = (...kids) => h('section', { class: 'card' }, ...kids);
 const top = () => h('div', { class: 'top' }, h('a', { class: 'brand', href: '/', onclick: (e) => toPlaza(e, 'close', '') }, 'WISH BOARD', h('small', { text: '모두의 전광판' })), h('span', { class: 'tag', text: '🎁 선물 전광판' }));
 const foot = () => h('p', { class: 'foot' }, '뉴욕 타임스퀘어를 본뜬 가상 광장이에요. 실제 타임스퀘어와는 관계가 없어요.', h('br'),
   '약관과 개인정보처리방침은 광장의 설정 › 정보에 있어요. ', h('a', { href: '/', text: '광장 가기', onclick: (e) => toPlaza(e, 'close', '') }));
-const screenName = (s) => { const m = /^(STREET|PLOT)_(\d+)$/.exec(String(s || '')); return m ? (m[1] === 'STREET' ? '메인거리 ' : '분양 앞 ') + m[2] + '번 화면' : '광장 화면'; };
+const screenName = (s) => { const m = /^(STREET|PLOT)_(\d+)$/.exec(String(s || '')); return m ? (m[1] === 'STREET' ? '메인거리 ' : '건물 앞 ') + m[2] + '번 화면' : '광장 화면'; };
 const say = (el, text, ok = false) => { el.textContent = text || ''; el.className = ok ? 'okmsg' : 'err'; };
 
 // ---- identity -----------------------------------------------------------------------------------------------------------

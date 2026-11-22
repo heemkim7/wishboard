@@ -64,7 +64,8 @@ function fakeSupa(state) {
     if (state.fail.has(rpc)) return json({ message: 'upstream' }, 500);
     if (state.missing?.has(rpc)) return json({ code: 'PGRST202', message: 'Could not find the function public.' + rpc + ' in the schema cache' }, 404);
     if (u.includes('/rest/v1/billboards') && u.includes('select=current_bid')) { const slot = decodeURIComponent(u.split('slot_id=eq.')[1] || ''); return json([{ current_bid: state.boards.get(slot)?.bid ?? 0 }]); }
-    if (u.includes('/rest/v1/billboards')) return json([...state.boards.entries()].map(([slot_id, b]) => ({ slot_id, holder_id: b.holder, current_bid: b.bid })));
+    // One board (the claim's no-takeover read) or all of them; a held board is lit for a day (a claim lights it).
+    if (u.includes('/rest/v1/billboards')) { const one = /slot_id=eq\.(\w+)/.exec(u)?.[1]; return json([...state.boards.entries()].filter(([slot_id]) => !one || slot_id === one).map(([slot_id, b]) => ({ slot_id, holder_id: b.holder, current_bid: b.bid, lit_until: new Date(Date.now() + 864e5).toISOString() }))); }
     if (u.includes('/rest/v1/plots')) return json([]);
     if (u.includes('/rest/v1/wallets')) return json(u.includes('spent=gt.0') ? state.ranks : []);
     if (rpc === 'plaza_live' || rpc === 'coin_batch') return json({ ok: true });
@@ -203,88 +204,31 @@ describe('weekly tally (Meter lg)', () => {
   });
 });
 
-describe('league routes', () => {
-  it('tallies what the RPCs charged (claim, takeover refund, edit raise, plot, sticker, takeover screen), not tribe or free claims', async () => {
+// The spend league is retired (2026-11-23, docs/prime-screens.md): 응원 순위 ranks teams by people (teamsrv.js). Nothing a person spends is
+// tallied any more; /rt/league answers an empty week with no DO call so a page opened before the change shows an empty list; the 'lg'
+// rows left from before still follow an account link and a withdrawal.
+describe('the retired spend league', () => {
+  it('claims, edits, plots and stickers add nothing; /rt/league is an empty week without a DO call; /rt/world has no league key', async () => {
     const { clock, state, done } = setup();
     try {
-      const env = makeEnv(), { guest, post, get, claim } = harness(env);
-      const a = await guest(), b = await guest(), c = await guest();
+      const env = makeEnv(), { guest, post, get, claim } = harness(env), lg = env.meter('lg').do, calls = [];
+      for (const k of ['lgAdd', 'lgBoard', 'lgTop', 'lgWorld', 'lgBack', 'lgApprove']) { const f = lg[k].bind(lg); lg[k] = (...a) => { calls.push(k); return f(...a); }; }
+      const a = await guest(), b = await guest();
       assert.equal((await claim(a, 'STREET_3', 300, '까마귀')).status, 200);
       clock.add(1000);
-      assert.equal((await claim(b, 'STREET_3', 350, '참새')).status, 200); // takeover: a gets 240 back
-      clock.add(1000);
-      assert.equal((await claim(b, 'STREET_3', 400, '참새', { mode: 'edit' })).status, 200); // a raise counts only +50
-      assert.equal((await post('/rt/buy-plot', { topic: 'chapel:square', plot_id: 2, nickname: '참새' }, b.token)).status, 200); // 300
-      assert.equal((await post('/rt/spend', { topic: 'chapel:square', kind: 'air', line: '안녕', pay: 'coins', nickname: '까마귀' }, a.token)).status, 200); // 5000
-      assert.equal((await post('/rt/claim-billboard', { topic: 'chapel:square', slot_id: 'STREET_8', bid: 0, mode: 'starter', line1: 'x', nickname: '비둘기' }, c.token)).status, 400); // refused, nothing tallied
-      assert.equal((await post('/rt/claim-billboard', { topic: 'chapel:square', slot_id: 'STREET_9', bid: 500, mode: 'tribe', line1: 'x', nickname: '비둘기' }, c.token)).status, 200); // the tribe paid
-      assert.equal((await post('/rt/spend', { topic: 'chapel:square', kind: 'sticker', slot_id: 'STREET_3', glyph: '🔥부럽다!', nickname: '비둘기' }, c.token)).status, 200); // 30
-      const d = await guest();
+      assert.equal((await claim(a, 'STREET_3', 400, '까마귀', { mode: 'edit' })).status, 200);
+      assert.equal((await post('/rt/buy-plot', { topic: 'chapel:square', plot_id: 2, nickname: '참새' }, b.token)).status, 200);
+      assert.equal((await post('/rt/spend', { topic: 'chapel:square', kind: 'sticker', slot_id: 'STREET_3', glyph: '🔥부럽다!', nickname: '참새' }, b.token)).status, 200);
+      assert.equal((await post('/rt/spend', { topic: 'chapel:square', kind: 'air', line: '안녕', pay: 'coins', nickname: '까마귀' }, a.token)).status, 410);
       const lb = await (await get('/rt/league', a.token)).json();
-      assert.equal(lb.ok, true);
-      assert.equal(lb.week, leagueWeek(clock.now()));
-      assert.equal(lb.ends, weekEnds(clock.now()));
-      assert.deepEqual(lb.top, [{ rank: 1, nick: '까마귀', spent: 300 - 240 + 5000, mine: true }, { rank: 2, nick: '참새', spent: 350 + 50 + 300, mine: false }, { rank: 3, nick: '비둘기', spent: 30, mine: false }]);
-      assert.deepEqual(lb.me, { rank: 1, spent: 5060, next: null });
-      const lb2 = await (await get('/rt/league', b.token)).json();
-      assert.deepEqual(lb2.me, { rank: 2, spent: 700, next: { rank: 1, gap: 4361 } });
-      const lc = await (await get('/rt/league', c.token)).json();
-      assert.deepEqual(lc.me, { rank: 3, spent: 30, next: { rank: 2, gap: 671 } });
-      const ld = await (await get('/rt/league', d.token)).json();
-      assert.deepEqual(ld.me, { rank: 0, spent: 0, next: { rank: 4, gap: 1 } });
-      const anon = await (await get('/rt/league')).json();
-      assert.equal('me' in anon, false);
-      assert.equal(anon.top.every((r) => r.mine === false), true);
-      assert.equal(hasActor(JSON.stringify([lb, lb2, lc, ld, anon])), false);
-      assert.equal((await post('/rt/league', {}, a.token)).status, 405);
-    } finally { done(); }
-  });
-  it('/rt/world leaves league out while the week is empty and adds the top 10 nick and spent without actor ids', async () => {
-    const { clock, state, done } = setup();
-    try {
-      const env = makeEnv(), { guest, get, claim } = harness(env);
-      const first = await (await get('/rt/world')).json();
-      assert.deepEqual(Object.keys(first).sort(), ['billboards', 'plots', 'ranks', 'today']);
-      const g = await guest();
-      for (let i = 1; i <= 12; i++) { const x = i === 1 ? g : await guest(); await claim(x, 'STREET_' + (12 + i), 200 + i, '이름' + i); }
+      assert.deepEqual(lb, { ok: true, off: true, week: leagueWeek(clock.now()), ends: weekEnds(clock.now()), top: [], me: null });
       clock.add(61000);
       const world = await (await get('/rt/world')).json();
-      assert.deepEqual(Object.keys(world).sort(), ['billboards', 'league', 'plots', 'ranks', 'today']);
-      assert.equal(world.league.week, leagueWeek(clock.now()));
-      assert.equal(world.league.top.length, 10);
-      assert.deepEqual(world.league.top[0], { nick: '이름12', spent: 212 });
-      assert.deepEqual(Object.keys(world.league.top[0]).sort(), ['nick', 'spent']);
-      assert.equal(hasActor(JSON.stringify(world.league)), false);
-      // The next week starts empty: the key goes again.
-      clock.set(weekEnds(clock.now()) + 3600000);
-      const next = await (await get('/rt/world')).json();
-      assert.equal('league' in next, false);
-    } finally { done(); }
-  });
-  it('subtracts refunds the admin routes give back: a rejected photo fee and a rejected S-tier bid', async () => {
-    const { clock, done, state } = setup();
-    try {
-      const env = makeEnv(), { guest, call } = harness(env), m = env.meter('lg').do, w = leagueWeek(clock.now()), last = leagueWeek(clock.now() - 7 * 864e5);
-      const a = await guest();
-      // What the photo and claim routes remember when they charge: the fee under p:<photo>, the S-tier bid under r:<review>. The bid was last week.
-      m.lgAdd(w, a.id, '가', 300, 1, '', 'p:' + 'f'.repeat(40));
-      m.lgAdd(last, a.id, '가', 1200, 1, '', 'r:7');
-      m.lgAdd(w, a.id, '가', 1200, 2);
-      const orig = globalThis.fetch;
-      globalThis.fetch = async (url, opt) => {
-        const u = String(url);
-        if (u.includes('/rpc/review_billboard_photo')) return json({ ok: true, billboard: null, photo: { photo_id: 'f'.repeat(40), slot_id: 'STREET_1', actor_id: a.id, status: 'rejected', refunded: 100 } });
-        if (u.includes('/rpc/review_slot_claim')) return json({ ok: true, rejected: true, actor_id: a.id, refund: 1200, remaining_coins: 0 });
-        return orig(url, opt);
-      };
-      const admin = (path, body) => call(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-key': 'admin-test-key-123' }, body: JSON.stringify(body) });
-      assert.equal((await admin('/rt/admin/photo', { photo_id: 'f'.repeat(40), approve: false })).status, 200);
-      assert.equal(m.lgTop(w, a.id).me.spent, 1400);
-      assert.equal((await admin('/rt/admin/review', { id: 7, approve: false })).status, 200);
-      assert.equal(m.lgTop(w, a.id).me.spent, 1400); // the rejected bid comes off last week, not this one
-      assert.equal(m.lgTop(last, a.id).me.rank, 0);
-      assert.equal((await admin('/rt/admin/review', { id: 7, approve: false })).status, 200); // a second answer finds no record: nothing twice
-      assert.equal(m.lgTop(w, a.id).me.spent, 1400);
+      assert.equal('league' in world, false);
+      assert.deepEqual(calls, []);
+      assert.equal((await post('/rt/league', {}, a.token)).status, 405);
+      // The edit kept the bid the board had (no raise), whatever the page sent.
+      assert.equal(rpcs(state, 'claim_billboard').at(-1).body.p_bid, rpcs(state, 'claim_billboard')[0].body.p_bid);
     } finally { done(); }
   });
   it('merge moves the guest week to the user; withdrawal clears it', async () => {
@@ -322,7 +266,6 @@ describe('bots out of the ranking', () => {
         assert.equal(r.status, 400); assert.equal((await r.json()).error, '그 이름은 쓸 수 없어요. 프로필에서 이름을 바꿔 주세요.');
       }
       assert.equal((await post('/rt/buy-plot', { topic: 'chapel:square', plot_id: 4, nickname: '네온봇5' }, g.token)).status, 400);
-      assert.equal((await post('/rt/spend', { topic: 'chapel:square', kind: 'air', line: '안녕', pay: 'coins', nickname: '네온봇5' }, g.token)).status, 400);
       assert.equal(rpcs(state, 'claim_billboard').length, before);
       assert.equal(rpcs(state, 'buy_or_upgrade_plot').length, 0);
       assert.equal(rpcs(state, 'spend_plaza').length, 0);
@@ -338,8 +281,8 @@ describe('bots out of the ranking', () => {
 });
 
 describe('lazy tribe settlement', () => {
-  it('refunds last week once per week across isolates, from /rt/world or the tribe sheet, and runs no other cron job', async () => {
-    const { clock, state, done } = setup();
+  it('refunds last week once per week across isolates from /rt/world; the 소속 roof is never awarded; no other cron job runs', async () => {
+    const { clock, state, done } = setup({ roofSql: 'new' });
     try {
       const env = makeEnv(), one = harness(env), two = harness(env, worker2);
       clock.set(mondayOf(clock.now()) + 7 * 864e5 + 3600000); // Monday 01:00 KST
@@ -349,18 +292,18 @@ describe('lazy tribe settlement', () => {
       assert.equal(rpcs(state, 'refund_tribe_week')[0].body.p_key, 'flush-test-key');
       clock.add(61000); await one.get('/rt/world');
       clock.add(61000); await two.get('/rt/world'); // another isolate: the durable marker says done
-      const g = await two.guest();
-      clock.add(61000); assert.equal((await two.post('/rt/tribe', { look: true }, g.token)).status, 200);
       assert.deepEqual(state.refunds, [prev]);
-      assert.deepEqual(state.roofs, [prev]); // the migrated award_tribe_roof: last week's roof at the rollover, once
-      assert.equal(rpcs(state, 'award_tribe_roof').length, 1);
+      // The old 소속 sheet's route answers moved (410) and settles nothing.
+      const g = await two.guest();
+      clock.add(61000); assert.equal((await two.post('/rt/tribe', { look: true }, g.token)).status, 410);
+      assert.deepEqual(state.refunds, [prev]);
+      // Sunday night and the rollover: no roof call on either kind of function.
+      clock.set(mondayOf(clock.now()) + 6 * 864e5 + 21 * 3600000 + 60000); await one.get('/rt/world');
+      clock.add(864e5); await one.get('/rt/world');
+      assert.equal(rpcs(state, 'award_tribe_roof').length, 0); assert.deepEqual(state.roofs, []);
       for (const job of ['clear_dark_boards', 'inbox_ball', 'push_ball', 'push_due']) assert.equal(rpcs(state, job).length, 0, job);
-      // The next week: the tribe sheet alone triggers it, before it reads the tribe.
-      clock.add(7 * 864e5);
-      assert.equal((await two.post('/rt/tribe', { look: true }, g.token)).status, 200);
+      // The next week's refund still runs.
       assert.deepEqual(state.refunds, [prev, leagueWeek(clock.now() - 7 * 864e5)]);
-      const calls = state.calls.map((c) => c.url), at = calls.findLastIndex((u) => u.includes('refund_tribe_week'));
-      assert.ok(at >= 0 && at < calls.findLastIndex((u) => u.includes('my_tribe')));
     } finally { done(); }
   });
   it('retries a failed refund a minute later, at most once a minute per isolate', async () => {
@@ -398,174 +341,23 @@ describe('lazy tribe settlement', () => {
       assert.equal(rpcs(state, 'refund_tribe_week').length - before, 2);
     } finally { done(); }
   });
-  it('roof on the migrated function: last week at the rollover (any isolate, once); a Sunday-night call gets open and is not repeated that night', async () => {
-    const { clock, state, done } = setup({ roofSql: 'new' });
-    try {
-      const env = makeEnv(), one = harness(env), two = harness(env, worker2);
-      const monday = mondayOf(clock.now()) + 7 * 864e5, prev = leagueWeek(monday - 864e5), week = leagueWeek(monday);
-      clock.set(monday + 1800000); await one.get('/rt/world');
-      clock.add(61000); await two.get('/rt/world');
-      assert.deepEqual(state.roofs, [prev]);
-      assert.equal(rpcs(state, 'award_tribe_roof').length, 1);
-      clock.set(monday + 6 * 864e5 + 21 * 3600000 + 60000); await one.get('/rt/world'); // Sunday 21:01
-      assert.equal(rpcs(state, 'award_tribe_roof').length, 2); // answered open
-      for (let i = 0; i < 5; i++) { clock.add(61000); await one.get('/rt/world'); }
-      assert.equal(rpcs(state, 'award_tribe_roof').length, 2);
-      clock.set(monday + 7 * 864e5 + 600000); await one.get('/rt/world'); // the next Monday: this week's roof
-      assert.deepEqual(state.roofs, [prev, week]);
-    } finally { done(); }
-  });
-  it('roof on the old function: skipped after the rollover rests 6 hours, Sunday 21:00-23:59 KST awards this week once across isolates', async () => {
-    const { clock, state, done } = setup({ roofSql: 'old' });
-    try {
-      const env = makeEnv(), one = harness(env), two = harness(env, worker2);
-      const monday = mondayOf(clock.now()) + 7 * 864e5, week = leagueWeek(monday), sunday = monday + 6 * 864e5;
-      clock.set(monday + 1800000); await one.get('/rt/world');
-      assert.equal(rpcs(state, 'award_tribe_roof').length, 1); // skipped: not migrated
-      for (let i = 0; i < 35; i++) { clock.add(10 * 60000); await one.get('/rt/world'); } // 5 h 50 min
-      assert.equal(rpcs(state, 'award_tribe_roof').length, 1); // resting 6 hours
-      clock.add(11 * 60000); await one.get('/rt/world');
-      assert.equal(rpcs(state, 'award_tribe_roof').length, 2);
-      assert.deepEqual(state.roofs, []);
-      clock.set(sunday + 20 * 3600000 + 59 * 60000); const before = rpcs(state, 'award_tribe_roof').length; await one.get('/rt/world'); // 20:59
-      assert.equal(rpcs(state, 'award_tribe_roof').length, before); // Sunday: no rollover call (it would award last week), not 21:00 yet
-      clock.add(2 * 60000); await one.get('/rt/world'); // 21:01
-      assert.deepEqual(state.roofs, [week]);
-      clock.add(61000); await two.get('/rt/world');
-      clock.add(61000); await one.get('/rt/world');
-      assert.deepEqual(state.roofs, [week]);
-      const n = rpcs(state, 'award_tribe_roof').length;
-      clock.set(sunday + 864e5 + 3600000); await one.get('/rt/world'); await two.get('/rt/world'); // Monday: that week is already done
-      assert.equal(rpcs(state, 'award_tribe_roof').length, n);
-    } finally { done(); }
-  });
 });
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-// Real edit semantics and one claim_billboard at a time with latency, as Postgres row locks give.
-function serialSupa(state) {
-  const base = fakeSupa(state); let chain = Promise.resolve();
-  return async (url, opt) => {
-    const u = String(url), a = opt?.body ? JSON.parse(opt.body) : {};
-    if (!u.includes('/rpc/claim_billboard')) return base(url, opt);
-    const run = chain.then(async () => { await sleep(3); state.calls.push({ url: u, body: a });
-      const cur = state.boards.get(a.p_slot_id);
-      if (a.p_mode === 'edit') { if (!cur || cur.holder !== a.p_actor_id || a.p_bid < cur.bid) return json({ ok: false, error: 'edit' });
-        state.charged = (state.charged || 0) + (a.p_bid - cur.bid); cur.bid = a.p_bid; return json({ ok: true, billboard: { slot_id: a.p_slot_id, holder_id: a.p_actor_id, current_bid: a.p_bid }, refund: 0, prev_holder_id: a.p_actor_id }); }
-      state.charged = (state.charged || 0) + a.p_bid;
-      const prev = cur?.holder || null, refund = prev ? Math.floor(cur.bid * 0.8) : 0; state.boards.set(a.p_slot_id, { holder: a.p_actor_id, bid: a.p_bid });
-      return json({ ok: true, billboard: { slot_id: a.p_slot_id, holder_id: a.p_actor_id, current_bid: a.p_bid }, prev_holder_id: prev, refund }); });
-    chain = run.catch(() => {}); return run;
-  };
-}
 describe('budget hard (lvlNow 2)', () => {
-  it('no lg reads for /rt/world or /rt/league, no tribe settlement, spends still tallied', async () => {
+  it('no lg calls for /rt/world, /rt/league or a claim, and no tribe settlement', async () => {
     const { clock, state, done } = setup();
     try {
       const env = makeEnv({ BUDGET_REQ_DAY: '1' }), H = harness(env), m = env.meter('lg').do, reads = [];
-      for (const k of ['lgWorld', 'lgTop', 'lgOnce']) { const f = m[k].bind(m); m[k] = (...a) => { reads.push(k); return f(...a); }; }
+      for (const k of ['lgWorld', 'lgTop', 'lgOnce', 'lgAdd', 'lgBoard']) { const f = m[k].bind(m); m[k] = (...a) => { reads.push(k); return f(...a); }; }
       clock.set(mondayOf(clock.now()) + 7 * 864e5 + 3600000); // Monday: a refund would be due
-      const busy = await H.get('/rt/league');
-      assert.equal(busy.status, 503); assert.deepEqual(await busy.json(), { ok: false, err: 'busy' });
+      const lb = await (await H.get('/rt/league')).json();
+      assert.deepEqual(lb.top, []);
       const world = await (await H.get('/rt/world')).json();
       assert.equal('league' in world, false);
       const a = await H.guest();
       assert.equal((await H.claim(a, 'STREET_5', 300, '가')).status, 200);
       assert.deepEqual(reads, []);
       assert.equal(rpcs(state, 'refund_tribe_week').length + rpcs(state, 'award_tribe_roof').length, 0);
-      assert.equal(m.lgTop(leagueWeek(clock.now()), a.id).me.spent, 300);
-    } finally { done(); }
-  });
-});
-
-describe('review regressions', () => {
-  // Half through each of two isolates: one edit per account per 3 s gets past each isolate's EDIT_GAP, so two reach the DO at once.
-  const edits = async (env, g, bids) => { const waits = [], ctx = { waitUntil(p) { waits.push(Promise.resolve(p)); } };
-    const res = await Promise.all(bids.map((bid, i) => (i % 2 ? worker2 : worker).fetch(new Request('https://sq.example/rt/claim-billboard', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + g.token }, body: JSON.stringify({ topic: 'chapel:square', slot_id: 'STREET_3', bid, mode: 'edit', line1: 'x', nickname: '공격자' }) }), env, ctx)));
-    while (waits.length) await Promise.all(waits.splice(0)); return res; };
-  it('parallel edits with one bid count the raise once', async () => {
-    const { state, done } = setup();
-    try {
-      globalThis.fetch = serialSupa(state);
-      const env = makeEnv(), H = harness(env), a = await H.guest();
-      assert.equal((await H.claim(a, 'STREET_3', 100, '공격자')).status, 200); state.charged = 0;
-      const res = await edits(env, a, Array(50).fill(200));
-      assert.equal(res.filter((r) => r.status === 200).length, 2); assert.equal(res.filter((r) => r.status === 429).length, 48); // the gap refuses before any RPC
-      assert.equal(state.charged, 100);
-      assert.equal((await (await H.get('/rt/league', a.token)).json()).me.spent, 200);
-    } finally { done(); }
-  });
-  it('parallel rising edits count what the database charged', async () => {
-    const { state, done } = setup();
-    try {
-      globalThis.fetch = serialSupa(state);
-      const env = makeEnv(), H = harness(env), a = await H.guest();
-      await H.claim(a, 'STREET_3', 100, '공격자'); state.charged = 0;
-      await edits(env, a, Array.from({ length: 20 }, (_, i) => 110 + i * 10));
-      assert.equal((await (await H.get('/rt/league', a.token)).json()).me.spent, 100 + state.charged);
-    } finally { done(); }
-  });
-  it('a takeover refund comes off the week the bid was tallied in, not this week', async () => {
-    const { clock, state, done } = setup();
-    try {
-      const env = makeEnv(), H = harness(env), a = await H.guest(), b = await H.guest(), m = env.meter('lg').do;
-      const monday = mondayOf(clock.now()) + 7 * 864e5, last = leagueWeek(monday - 864e5);
-      clock.set(monday - 3600000); await H.claim(a, 'STREET_3', 10000, 'A'); // Sunday 23:00
-      clock.set(monday + 3600000); // Monday 01:00
-      await H.claim(a, 'STREET_4', 3000, 'A');
-      await H.claim(b, 'STREET_3', 10050, 'B'); // a gets 8000 back for Sunday's bid
-      assert.deepEqual((await (await H.get('/rt/league', a.token)).json()).me, { rank: 2, spent: 3000, next: { rank: 1, gap: 7051 } });
-      assert.equal(m.lgTop(last, a.id).me.spent, 2000);
-    } finally { done(); }
-  });
-  it('a board held since before the league, edited at the same bid, then taken: the refund takes nothing from this week', async () => {
-    const { state, done } = setup();
-    try {
-      const env = makeEnv(), H = harness(env), a = await H.guest(), b = await H.guest();
-      state.boards.set('STREET_3', { holder: a.id, bid: 3000 }); // held at deploy: no lgs record
-      assert.equal((await H.post('/rt/spend', { topic: 'chapel:square', kind: 'air', line: '안녕', pay: 'coins', nickname: 'A' }, a.token)).status, 200);
-      assert.equal((await H.claim(a, 'STREET_3', 3000, 'A', { mode: 'edit' })).status, 200);
-      assert.equal((await H.claim(b, 'STREET_3', 3050, 'B')).status, 200); // a gets 2400 back for a bid never counted
-      assert.equal((await (await H.get('/rt/league', a.token)).json()).me.spent, 5000);
-    } finally { done(); }
-  });
-  it('a raise in a later week leaves the refund on the claim week', async () => {
-    const { clock, done } = setup();
-    try {
-      const env = makeEnv(), H = harness(env), a = await H.guest(), b = await H.guest(), m = env.meter('lg').do;
-      const n = leagueWeek(clock.now());
-      await H.claim(a, 'STREET_3', 10000, 'A');
-      clock.add(7 * 864e5);
-      assert.equal((await H.post('/rt/spend', { topic: 'chapel:square', kind: 'air', line: '안녕', pay: 'coins', nickname: 'A' }, a.token)).status, 200);
-      assert.equal((await H.claim(a, 'STREET_3', 10001, 'A', { mode: 'edit' })).status, 200); // +1 this week
-      assert.equal((await H.claim(b, 'STREET_3', 10051, 'B')).status, 200); // a gets 8000 back
-      assert.equal((await (await H.get('/rt/league', a.token)).json()).me.spent, 5001);
-      assert.equal(m.lgTop(n, a.id).me.spent, 2000);
-    } finally { done(); }
-  });
-  it('a refund arriving after a later spend in the same week, and a self-retake, are exact', async () => {
-    const { done } = setup();
-    try {
-      const env = makeEnv(), H = harness(env), a = await H.guest(), b = await H.guest();
-      await H.claim(a, 'STREET_3', 100, 'A');
-      await H.claim(b, 'STREET_3', 10000, 'B');
-      await H.claim(a, 'STREET_3', 10050, 'A'); // b gets 8000 back
-      assert.equal((await (await H.get('/rt/league', b.token)).json()).me.spent, 2000);
-      assert.equal((await (await H.get('/rt/league', a.token)).json()).me.spent, 100 - 80 + 10050);
-      await H.claim(a, 'STREET_3', 10100, 'A'); // a takes its own board again: 80% of 10050 back, then the new bid
-      assert.equal((await (await H.get('/rt/league', a.token)).json()).me.spent, 100 - 80 + 10050 - 8040 + 10100);
-    } finally { done(); }
-  });
-  it('a nickname the sticker or photo route did not check never reaches the weekly list', async () => {
-    const { clock, done } = setup();
-    try {
-      const env = makeEnv(), H = harness(env), a = await H.guest(), b = await H.guest();
-      assert.equal((await H.claim(a, 'STREET_3', 300, '착한이름')).status, 200);
-      for (const nickname of ['씨발', '네온봇3']) assert.equal((await H.post('/rt/spend', { topic: 'chapel:square', kind: 'sticker', slot_id: 'STREET_3', glyph: '🔥부럽다!', nickname }, a.token)).status, 200);
-      assert.equal((await H.post('/rt/spend', { topic: 'chapel:square', kind: 'sticker', slot_id: 'STREET_3', glyph: '🔥부럽다!', nickname: '네온봇4' }, b.token)).status, 200); // b's first row
-      clock.add(61000);
-      const w = await (await H.get('/rt/world')).json();
-      assert.deepEqual(w.league.top, [{ nick: '착한이름', spent: 360 }, { nick: '네온손님', spent: 30 }]);
     } finally { done(); }
   });
 });

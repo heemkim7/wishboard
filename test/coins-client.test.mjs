@@ -120,7 +120,7 @@ describe('account screens of this round', () => {
   });
   // Points are not transferable (non-game change): the wallet sheet has no send box and says so; there is no send floor to explain any more.
   it('the wallet sheet sends nothing: no send box, no send hook, and the rule said in place', () => {
-    const w = between(ui, '  function openWalletInfo() {', '\n  function standings() {');
+    const w = between(ui, '  function openWalletInfo() {', '\n  function openFeed() {');
     assert.doesNotMatch(w, /hooks\.sell|광고주에게|보내기/);
     assert.match(w, /돈으로 팔지 않고, 보낼 수도 없어요/);
     assert.doesNotMatch(main, /sell: \(payload\)|sellCoins|\/rt\/sell-coins/);

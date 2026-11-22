@@ -45,9 +45,10 @@ describe('push offer decision', () => {
   });
   it('has a context line for each moment and says what will arrive', () => {
     assert.equal(PUSH_WHY.wish, '하트가 오면 바로 알려 드릴까요?');
-    assert.equal(PUSH_WHY.claim, '빼앗기면 바로 알려 드릴까요?');
+    assert.equal(PUSH_WHY.claim, '내 전광판 불이 꺼지기 전에 알려 드릴까요?');
     assert.ok(PUSH_WHY.share);
-    assert.match(PUSH_DONE, /전광판을 빼앗기거나 내 소원에 하트가 오면 알려 드려요\./);
+    assert.match(PUSH_DONE, /내 전광판 불이 꺼지기 전이나 내 소원에 하트가 오면 알려 드려요\./);
+    for (const t of Object.values(PUSH_WHY).concat(PUSH_DONE)) assert.doesNotMatch(t, /빼앗|되찾/);
   });
   // The claim moment does not open the push sheet: its ask is the "알림 받기" button on the proof bar (test/overlay.test.mjs
   // proofOffers), and showing that button is this session's offer. Only when the bar is skipped (the player walked on: its
@@ -129,7 +130,7 @@ describe('다녀간 사이 rows', () => {
     const { rows, inboxIds } = awayRows(args);
     assert.deepEqual(rows.map((r) => r.kind), ['wish', 'taken', 'look', 'look', 'prize']);
     assert.equal(rows[1].text, applyInboxPush(inbox[0]));
-    assert.equal(rows[1].label, '되찾으러 가기');
+    assert.equal(rows[1].label, '보러가기', 'an old taken row: no 되찾기 any more');
     assert.equal(rows[1].slot, 'STREET_8');
     assert.equal(rows[2].label, '보러가기');
     assert.deepEqual(inboxIds, [9, 8, 7]);
@@ -214,14 +215,14 @@ describe('share links', () => {
     assert.equal(vip.includes('navigator.clipboard.writeText'), false);
   });
   it('used deep-link params leave the address bar, others stay', () => {
-    assert.deepEqual([...DEEP_KEYS], ['focus', 'gift', 'ref', 'tribe']);
+    assert.deepEqual([...DEEP_KEYS], ['focus', 'gift', 'ref', 'tribe', 'team']);
     assert.equal(dropParams('https://x.test/?focus=STREET_8&gift=1&ref=ab12cd34&q=hi#k'), '/?q=hi#k');
     assert.equal(dropParams('https://x.test/?tribe=abcd1234', ['tribe']), '/');
     assert.equal(dropParams('https://x.test/?q=1&focus=A', ['tribe']), '');
     assert.equal(dropParams('not a url'), '');
     const main = read('main.js');
     assert.match(main, /dropDeep\(\['focus', 'gift', 'ref'\]\);/);
-    assert.match(main, /dropDeep\(\['tribe'\]\);/);
+    assert.match(main, /dropDeep\(\['team', 'tribe'\]\);/);
   });
   it('manual-copy fallback order: share sheet (only when asked), clipboard, then the box', async () => {
     const data = { text: 'hi', url: 'https://x.test/rt/s/0' };
@@ -234,8 +235,9 @@ describe('share links', () => {
     assert.match(send, /if \(how === 'manual'\) showManual\(/);
     assert.match(send, /trackEvent\('share_link', \{ kind, how:/);
     assert.match(ui, /'길게 눌러 복사하세요'/);
-    // invite, tribe, wish and VIP all go through sendLink; no link lands in a toast.
-    for (const kind of ['invite', 'tribe', 'wish', 'vip', 'shot']) assert.ok(ui.includes(`sendLink({ kind: '${kind}'`), kind);
+    // invite, wish, VIP and the 응원 팀 link (teamui.js, handed sendLink) all go through sendLink; no link lands in a toast.
+    for (const kind of ['invite', 'wish', 'vip', 'shot']) assert.ok(ui.includes(`sendLink({ kind: '${kind}'`), kind);
+    assert.ok(read('teamui.js').includes("sendLink({ kind: 'team'"), 'team');
     assert.equal(/note\(line, 'err'\)|note\(href, 'ok'\)|note\(imageUrl\)/.test(ui), false);
     assert.ok(EVENT_NAMES.includes('share_link'));
   });
@@ -416,11 +418,12 @@ describe('final fix pass', () => {
     assert.match(fn, /loungeWatch/);
     assert.match(fn, /baking \|\| dance \|\| driving/);
   });
-  it('8: gift copy fallback, tribe param after success, midnight reload, iOS selection', () => {
+  it('8: gift copy fallback, a team link opens the team page once (never joins by itself), midnight reload, iOS selection', () => {
     assert.equal(applyInboxPush({ kind: 'gift' }), '누군가님이 전광판을 선물했어요');
     const main = read('main.js');
-    const fn = main.slice(main.indexOf('async function joinTribeLink()'), main.indexOf('async function refreshWallet()'));
-    assert.ok(fn.indexOf("dropDeep(['tribe'])") > fn.indexOf("net.authed('/rt/tribe', { id })"));
+    const fn = main.slice(main.indexOf('function openTeamLink()'), main.indexOf('let primeAsk'));
+    assert.ok(fn.indexOf("dropDeep(['team', 'tribe'])") > 0 && fn.indexOf("dropDeep(['team', 'tribe'])") < fn.indexOf('ui.openTeam?.(id)'));
+    assert.equal(fn.includes("'/rt/team'"), false, 'no join by link');
     const ui = read('ui.js');
     assert.match(ui, /out\.setSelectionRange\(0, out\.value\.length\)/);
     assert.match(ui, /if \(!wishView\.known && wasKnown\)/);

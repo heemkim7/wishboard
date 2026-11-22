@@ -2,11 +2,10 @@
 // scrolling news tickers, and the slot registry (MAIN_*, SUB_1A..4B, STREET_1..50, PLOT_1..18).
 import * as THREE from 'three';
 import { Kit, arcSlab } from './kit.js?v=202611222045';
-import { THEMES, makeCanvas, paintBillboard, paintTicker, fontsReady, tierOf, boardPhoto, photoReady, SANS, roundRect, chars, paintWish, wishOrd, wishRotates, wishStrip, cleanWishes, sameWishes, rowUntil, wishPlan, wishRelist, wishFontTargets, wishPinPlan, freshWish, wishSettled, WISH_CYCLE, WISH_CYCLE_LOW, WISH_BUDGET, WISH_BUDGET_LOW, WISH_NOW, WISH_DROPS, frameTone } from './art.js?v=202611222045';
-import { askBid } from '../balance.js';
+import { THEMES, makeCanvas, paintBillboard, paintTicker, fontsReady, tierOf, boardPhoto, photoReady, SANS, roundRect, chars, paintWish, wishOrd, wishRotates, wishStrip, cleanWishes, sameWishes, rowUntil, wishPlan, wishRelist, wishFontTargets, wishPinPlan, freshWish, wishSettled, WISH_CYCLE, WISH_CYCLE_LOW, WISH_BUDGET, WISH_BUDGET_LOW, WISH_NOW, WISH_DROPS, frameTone, paintPrime } from './art.js?v=202611222045';
 import { floorOf, live, SLOT_RE, isLateSlot } from '../balance.js';
-import { auctionClosed } from '../balance.js';
 import { nowMs, kingCovers } from '../live.js';
+import { isPrime, primeAt, primeCard, primeKey, primeNotice } from '../primerules.js';
 import { ADS, adView, adWorld, linkHost } from '../adsale.js';
 import { SEASONS } from '../seasons.js';
 import { GIFT_ID, OCCASIONS, GIFT_THEMES, placeGifts, turnOf, giftScreen } from '../giftrules.js';
@@ -72,8 +71,13 @@ function defaultData(slotId, soon = false) {
   const tier = tierOf(slotId);
   const price = (floorOf(slotId) || 0).toLocaleString('en-US') + ' 포인트부터';
   let row;
-  if (tier === 'S') {
-    row = { slot_id: slotId, emoji: '📢', bg_theme: 'cyber_navy', text_color: '#ffffff', line1: '이 자리를 점령하세요', line2: '타임스퀘어 메인 타워', line3: price, holder_id: null };
+  if (isPrime(slotId)) {
+    // 명당 (primerules.js): never claimable with points; the notice says how a team earns it.
+    const n = primeNotice(slotId), up = /A$/.test(slotId), c = Number(String(slotId).replace(/\D/g, '')) || 1;
+    row = { slot_id: slotId, emoji: '🏆', bg_theme: tier === 'S' ? 'cyber_navy' : ['neon_pink', 'gold_luxury', 'sunset_red', 'matrix_green'][(c - 1) % 4], text_color: '#ffffff', ...n, holder_id: null, prime: true };
+    if (tier === 'B') row.line1 = `${c}번 코너 ${up ? '위' : '아래'} · 응원 팀 명당`;
+  } else if (tier === 'S') {
+    row = { slot_id: slotId, emoji: '📢', bg_theme: 'cyber_navy', text_color: '#ffffff', line1: '응원 팀 명당', line2: '타임스퀘어 메인 타워', line3: price, holder_id: null };
   } else if (String(slotId).startsWith('STREET_')) {
     const n = Number(String(slotId).slice(7)) || 1;
     row = { slot_id: slotId, emoji: '🌃', bg_theme: 'cyber_navy', text_color: '#ffffff', line1: `${n}번 메인거리`, line2: soon ? '곧 열리는 자리' : '거리 쪽 큰 화면', line3: price, holder_id: null, ...(soon ? { soon: true } : {}) };
@@ -85,7 +89,7 @@ function defaultData(slotId, soon = false) {
   } else {
     const n = Number(String(slotId).replace(/\D/g, '')) || 1;
     const theme = ['matrix_green', 'neon_pink', 'sunset_red', 'cyber_navy', 'gold_luxury'][n % 5];
-    row = { slot_id: slotId, emoji: '🌟', bg_theme: theme, text_color: '#ffffff', line1: `${n}번 분양 전광판`, line2: '건물 앞 큰 화면', line3: price, holder_id: null };
+    row = { slot_id: slotId, emoji: '🌟', bg_theme: theme, text_color: '#ffffff', line1: `${n}번 건물 앞 전광판`, line2: '건물 앞 큰 화면', line3: price, holder_id: null };
   }
   return row;
 }
@@ -109,7 +113,8 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   const aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
   const plates = new WeakMap();
   let liveHead = 'WISH BOARD  ·  모두의 전광판  ·  응원 포인트를 모아 이 화면에 소원을 거세요  ·  ';
-  let liveAcc = 0, liveTick = 0, towerOpen = !auctionClosed('MAIN_TOP', nowMs());
+  let liveAcc = 0, liveTick = 0;
+  const towerOpen = false; // the main tower takes no claims at any hour now (a prime screen): wish cards may rotate there when no team is on
   // 오늘의 소원: idle boards alternate their notice with a wish card. Rotation repaints happen only on the 0.64 s cadence
   // (update() → wishPlan): at most wishBudget per tick (nearest first, then oldest waiting) plus WISH_DROPS clears of boards
   // whose wish left the list. A list change or a loaded font repaints at most the WISH_NOW nearest boards in that call.
@@ -167,14 +172,14 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   const kingBudget = quality === 'low' ? 1 : 3;
   const KING_CARD = { chip: '어제의 소원왕', strip: '어제 하트를 가장 많이 받은 소원' };
   let king = null, kingDirty = false, kingGen = 0;
-  function kingFor(b) { return !!king && !b.shared && !b.gifts && CLAIM.test(b.slotId) && !String(b.slotId).startsWith('MAIN_') && !airOn() && kingCovers(live(b.row)); } // NINE.overLit
+  function kingFor(b) { return !!king && !b.shared && !b.gifts && !b.primeKey && CLAIM.test(b.slotId) && !isPrime(b.slotId) && !airOn() && kingCovers(live(b.row)); } // NINE.overLit; prime screens keep their team
   // b.kingOn: the kingGen whose card this board shows, 0 for none. A board is stale when it differs from kingWant.
   const kingWant = (b) => (kingFor(b) ? kingGen : 0);
   function airRow(b) {
     const glyphs = Array.from(String(air?.line || ''));
     return {
       slot_id: b.slotId, emoji: '📣', bg_theme: 'gold_luxury', text_color: '#fff6d0',
-      line1: glyphs.slice(0, 12).join('') || '전광판 장악',
+      line1: glyphs.slice(0, 12).join('') || '모두의 전광판',
       line2: glyphs.slice(12, 24).join('') || chars(air?.nick || '', 16),
       line3: chars(air?.nick || '', 16),
       holder_name: chars(air?.nick || '', 16),
@@ -286,7 +291,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     return slot;
   }
   const giftSlot = (id) => [...giftPlan].find(([, ids]) => ids.includes(String(id)))?.[0] || '';
-  function wishOk(b) { return wishes.length > 0 && !b.shared && !b.gifts && b.mounts.length > 0 && wishRotates(b.slotId, b.row, airOn(), towerOpen, Date.now(), b.untilMs) && !kingFor(b); }
+  function wishOk(b) { return wishes.length > 0 && !b.shared && !b.gifts && !b.primeKey && b.mounts.length > 0 && wishRotates(b.slotId, b.row, airOn(), towerOpen, Date.now(), b.untilMs) && !kingFor(b); }
   function dropWish(b) {
     if (b.wish) wishShown--;
     b.wish = null;
@@ -304,7 +309,36 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     applyOverlay(b);
     b.tex.needsUpdate = true;
   }
+  // 명당 (primerules.js primeAt): a prime screen shows the team the day's plan gives it now (goal, participation, anniversary, 9 pm), over a
+  // wish card or a board lit there before the change. b.primeKey: what it shows ('' none); the 0.64 s cadence repaints when it changes.
+  let prime = null;
+  const TOWER_PART = { MAIN_UP: 0, MAIN_TOP: 1, MAIN_MID: 2, MAIN_BOT: 3, MAIN_LOW: 4 };
+  function primeNow(b) { return isPrime(b.slotId) && prime ? primeAt(prime, b.slotId, nowMs()) : null; }
+  function paintTeam(b, e) {
+    if (b.wish) dropWish(b);
+    b.kingOn = 0; b.primeKey = primeKey(e); b.primeName = e.wait ? '' : e.name;
+    paintPrime(b.canvas, primeCard(e), { wide: b.tier === 'S', part: TOWER_PART[b.slotId], last: b.slotId === 'MAIN_LOW' });
+    remember(b.canvas); b.tex.needsUpdate = true;
+  }
+  function primeTick() {
+    for (const b of boards.values()) {
+      if (!isPrime(b.slotId) || b.shared || !b.mounts.length) continue;
+      if (primeKey(primeNow(b)) !== (b.primeKey || '')) paint(b);
+    }
+  }
+  /** plan: /rt/world's prime (the day's plan, primerules.js planDay) or null. The prime screens repaint what changed. */
+  function setPrime(plan) {
+    const next = plan && typeof plan === 'object' && typeof plan.day === 'string' ? plan : null;
+    const sig = next ? JSON.stringify(next) : '';
+    if (sig === setPrime.sig) return false;
+    setPrime.sig = sig; prime = next;
+    for (const b of boards.values()) if (isPrime(b.slotId) && !b.shared) paint(b);
+    return true;
+  }
   function paint(b) {
+    const pe = primeNow(b);
+    if (pe) { paintTeam(b, pe); return; }
+    b.primeKey = ''; b.primeName = '';
     const gift = b.gifts && !airOn() ? giftAt(b) : null;
     if (gift) {
       if (b.wish) dropWish(b);
@@ -461,7 +495,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     b.untilMs = rowUntil(b.row);
     if (wasLive !== live(b.row) && (gifts.size || giftPin) && giftScreen(slotId)) giftDirty = true; // a gift moves off a screen someone lit, or back
     const held = !!b.row?.holder_id;
-    const next = live(b.row) ? b.row : held ? {
+    const next = live(b.row) ? b.row : held && isPrime(slotId) ? { ...defaultData(slotId, soon), views: b.row.views, clicks: b.row.clicks, cheers: b.row.cheers } : held ? {
       ...defaultData(slotId, soon),
       views: b.row.views,
       clicks: b.row.clicks,
@@ -522,7 +556,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   // The 10 nearest boards every 0.08 s; on the phone tier the 3 nearest every 0.16 s (every other tick: the 0.08 s tick
   // itself stays, so the king and wish cadences that count ticks are the same on every tier).
   const LIVE_HOT = quality === 'low' ? 3 : 10, LIVE_EVERY = quality === 'low' ? 2 : 1;
-  const TAGS = { gift: ['선물', '#ff4fa3', '#ffffff'], king: ['소원왕', 'rgba(255,176,32,0.16)', '#ffb020'], wish: ['소원', 'rgba(255,176,32,0.16)', '#ffb020'], live: ['LIVE', '#ff4fa3', '#ffffff'], dark: ['꺼짐', '#1c2440', '#8f96b8'], free: ['빈칸', '#1c2440', '#b9bfdc'] };
+  const TAGS = { prime: ['명당', '#ffb020', '#1c1300'], gift: ['선물', '#ff4fa3', '#ffffff'], king: ['소원왕', 'rgba(255,176,32,0.16)', '#ffb020'], wish: ['소원', 'rgba(255,176,32,0.16)', '#ffb020'], live: ['LIVE', '#ff4fa3', '#ffffff'], dark: ['꺼짐', '#1c2440', '#8f96b8'], free: ['빈칸', '#1c2440', '#b9bfdc'] };
   function drawLive(b, t) {
     const canvas = b.canvas;
     const plate = plates.get(canvas) || remember(canvas);
@@ -541,7 +575,8 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     const onAir = live(b.row);
     const held = !!b.row?.holder_id;
     const gift = b.gifts && b.giftKey ? gifts.get(b.giftKey) || (giftPin?.g.id === b.giftKey ? giftPin.g : null) : null;
-    const [tag, tagBg, tagInk] = TAGS[gift ? 'gift' : kingOn ? 'king' : wishOn ? 'wish' : onAir ? 'live' : held ? 'dark' : 'free'];
+    const team = b.primeKey ? b.primeName || '' : null;
+    const [tag, tagBg, tagInk] = TAGS[team != null ? 'prime' : gift ? 'gift' : kingOn ? 'king' : wishOn ? 'wish' : onAir ? 'live' : held ? 'dark' : 'free'];
     const ph = Math.max(16, th - 16 * k), pw = 92 * k, px = 12 * k;
     roundRect(g, px, body + (th - ph) / 2, pw, ph, ph / 2);
     g.fillStyle = tagBg;
@@ -563,7 +598,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     const cheers = Math.max(0, Math.floor(Number(b.data?.cheers) || 0));
     const clicks = Math.max(0, Math.floor(Number(b.data?.clicks) || 0));
     const notes = Array.isArray(b.data?.notes) ? b.data.notes.map((t) => chars(String(t || ''), 16)).filter(Boolean).slice(-5) : [];
-    const msg = gift ? `선물 전광판   ·   To. ${gift.to}   ·   ${(OCCASIONS[gift.occ] || OCCASIONS.bday).head}${gift.from ? '   ·   From. ' + gift.from : ''}${gift.n ? '   ·   💌 친구 메시지 ' + gift.n + '개' : ''}   ·   ${liveHead}` : kingOn ? `어제의 소원왕   ·   ${chars(b.kingNick || '', 16)}   ·   ${liveHead}` : wishOn ? `오늘의 소원   ·   ${b.wishMsg}   ·   ${liveHead}` : `택시 정차 ${views}회   ·   응원 ${cheers}회   ·   링크 클릭 ${clicks}회   ·   ${notes.length ? notes.join('   ·   ') + '   ·   ' : ''}${liveHead}`;
+    const msg = team != null ? `응원 팀 명당   ·   ${team ? chars(team, 16) + '   ·   ' : ''}서로 다른 사람의 응원으로 정해요   ·   ${liveHead}` : gift ? `선물 전광판   ·   To. ${gift.to}   ·   ${(OCCASIONS[gift.occ] || OCCASIONS.bday).head}${gift.from ? '   ·   From. ' + gift.from : ''}${gift.n ? '   ·   💌 친구 메시지 ' + gift.n + '개' : ''}   ·   ${liveHead}` : kingOn ? `어제의 소원왕   ·   ${chars(b.kingNick || '', 16)}   ·   ${liveHead}` : wishOn ? `오늘의 소원   ·   ${b.wishMsg}   ·   ${liveHead}` : `택시 정차 ${views}회   ·   응원 ${cheers}회   ·   링크 클릭 ${clicks}회   ·   ${notes.length ? notes.join('   ·   ') + '   ·   ' : ''}${liveHead}`;
     const tw = Math.max(8, g.measureText(msg).width);
     const x0 = sx + 6 * k - ((t * 90) % tw);
     g.fillText(msg, x0, body + th / 2 + 1);
@@ -577,22 +612,8 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   const showMeshes = [];
   function watchShow(holo, laser) { showMeshes[0] = holo; showMeshes[1] = laser; }
   function setShow(on) { for (const m of showMeshes) if (m) m.visible = !!on; }
-  function shieldText(b) {
-    const d = b.data;
-    if (!d?.holder_id || !d.protected_until) return '';
-    const until = d.lit_until || d.expires_at;
-    const exp = until ? new Date(until).getTime() : 0;
-    if (!(exp > Date.now())) return '';
-    const left = new Date(d.protected_until).getTime() - Date.now();
-    if (left > 60000) return '';
-    if (left > 0) {
-      const s = Math.ceil(left / 1000);
-      return `방어막 ${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
-    }
-    const rows = [...boards.values()].map((row) => row.data).filter(Boolean);
-    const min = askBid(d, rows, '', '');
-    return min > 0 ? `지금 빼기 가능 · ${min.toLocaleString('ko-KR')}포인트부터` : '지금 빼기 가능';
-  }
+  // No takeovers (docs/prime-screens.md): a lit board is nobody else's to take, so there is no protection countdown and no "take it now" band.
+  function shieldText() { return ''; }
   // update()'s nearest-first list, its { b, d } rows, the position it measures with and its two sets are made once and
   // reused every tick. Readers of lastNear (kingStep, fillNear, pinOn) take .b at once and keep no row.
   const nearList = [], nearRows = [], nearAt = new THREE.Vector3(), hotSet = new Set(), seenCanvas = new Set();
@@ -633,14 +654,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
       drawLive(b, screenTime.value);
     }
     if (liveTick % 8 === 0) {
-      const open = !auctionClosed('MAIN_TOP', nowMs());
-      if (open !== towerOpen) {
-        towerOpen = open;
-        for (const b of boards.values()) {
-          // Vacant ones change their notice; any main board showing a card (held or not) must lose it inside the window.
-          if (String(b.slotId).startsWith('MAIN_') && (!b.data?.holder_id || b.wish) && !b.shared) paint(b);
-        }
-      }
+      if (prime) primeTick();
       for (const b of boards.values()) {
         const text = shieldText(b);
         if (text !== (b.shield || '')) { b.shield = text; paint(b); }
@@ -691,7 +705,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     const count = fillNear();
     for (let i = 0; i < count; i++) {
       const b = nearB[i];
-      nearOk[i] = n > 0 && !b.shared && !b.kingOn && !b.gifts && b.mounts.length > 0 && wishRotates(b.slotId, b.row, air, towerOpen, now, b.untilMs);
+      nearOk[i] = n > 0 && !b.shared && !b.kingOn && !b.gifts && !b.primeKey && b.mounts.length > 0 && wishRotates(b.slotId, b.row, air, towerOpen, now, b.untilMs);
     }
     planCfg.list = wishes;
     planCfg.now = now;
@@ -704,7 +718,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     const now = Date.now(), air = airOn(), near = lastNear, cands = [];
     for (let i = 0; i < near.length; i++) {
       const b = near[i].b;
-      cands.push({ ok: b.mounts.length > 0 && !b.shared && !b.kingOn && !b.gifts && wishes.length > 0 && wishRotates(b.slotId, b.row, air, towerOpen, now, b.untilMs), pinId: b.wish?.id ?? null, pinUntil: b.wishPin });
+      cands.push({ ok: b.mounts.length > 0 && !b.shared && !b.kingOn && !b.gifts && !b.primeKey && wishes.length > 0 && wishRotates(b.slotId, b.row, air, towerOpen, now, b.untilMs), pinId: b.wish?.id ?? null, pinUntil: b.wishPin });
     }
     const plan = wishPinPlan(wishes, id, cands, now);
     if (!plan) return false;
@@ -793,7 +807,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     }
   }
 
-  return { boards, ensure, mount, unmount, set, expire, get: (id) => boards.get(id), worldPos, face, setTicker, setOps, setSeason, repaintAll, update, accentOf, tickerCanvas, watchShow, setShow, setAir, setKing, setDecals, setWishes, pinWish, setGifts, pinGift, giftSlot, decalsOf: (id) => (boards.get(id)?.decals || []).slice(), setRim };
+  return { boards, ensure, mount, unmount, set, expire, get: (id) => boards.get(id), worldPos, face, setTicker, setOps, setSeason, repaintAll, update, accentOf, tickerCanvas, watchShow, setShow, setAir, setKing, setDecals, setWishes, pinWish, setGifts, pinGift, giftSlot, setPrime, primeOf: (id) => { const b = boards.get(id); return b ? primeNow(b) : null; }, decalsOf: (id) => (boards.get(id)?.decals || []).slice(), setRim };
 }
 
 // ---- ad-only screens AD_1..AD_5 (adsale.js) -------------------------------------------------------------------------

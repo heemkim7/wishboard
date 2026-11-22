@@ -116,14 +116,14 @@ describe('recap.js: the words', () => {
   const rec = { w: '2026W47', days: ['2026-11-17', '2026-11-18'], claims: 2, held: 1, streak: 5, hearts: { abcde12345: 3, zzzzz99999: 2 } };
   it('lists rank, coins, boards, hearts and the streak, skipping what is zero or unknown', () => {
     const rows = R.recapLines(rec, { rank: 3, spent: 1250, players: 40 });
-    assert.deepEqual(rows.map((r) => [r.k, r.value]), [['rank', '3위 · 40명 중'], ['spent', '1,250'], ['claims', '2곳'], ['held', '1곳'], ['hearts', '5개'], ['streak', '5일']]);
+    assert.deepEqual(rows.map((r) => [r.k, r.value]), [['claims', '2곳'], ['held', '1곳'], ['hearts', '5개'], ['streak', '5일']], 'no league rank or points spent: the spend league is retired');
     assert.deepEqual(R.recapLines({ ...rec, claims: 0, held: 0, hearts: {}, streak: 1 }, null).map((r) => r.k), ['days'], 'no league row, nothing claimed: only the days');
     assert.equal(R.recapLines(rec, { rank: 0, spent: 0, players: 12 }).some((r) => r.k === 'rank' || r.k === 'spent'), false, 'unranked: no rank line');
-    assert.equal(R.recapLines(rec, { rank: 1, spent: 10, players: 1 })[0].value, '1위');
+    assert.equal(R.recapLines(rec, { rank: 1, spent: 10, players: 1 })[0].k, 'claims');
   });
   it('shares numbers only: no names, no ids', () => {
     const t = R.recapShareText(rec, { rank: 3, spent: 1250, players: 40 });
-    assert.equal(t, '지난주 모두의 전광판 기록 · 주간 리그 3위 · 40명 중 · 쓴 포인트 1,250 · 점령한 전광판 2곳 · 소원에 받은 하트 5개 · 연속 출석 5일');
+    assert.equal(t, '지난주 모두의 전광판 기록 · 건 전광판 2곳 · 소원에 받은 하트 5개 · 연속 출석 5일');
     assert.equal(/abcde|guest|user:/.test(t), false);
     assert.equal(R.recapShareText({ ...rec, claims: 0, hearts: {}, streak: 1 }, null), '지난주 모두의 전광판에 다녀갔어요');
   });

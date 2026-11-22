@@ -314,40 +314,43 @@ describe('share pages', () => {
   });
 });
 
+// A push to `who`: a wish of theirs gets its first heart from another guest (the first-heart milestone pushes its author). Takeovers, the
+// old trigger of these tests, are gone (no one's board is taken, so nobody is pushed "taken").
+async function pushTo(H, who, ip = '7.7.7.7') {
+  const wish = (await (await H.post('/rt/wish', { text: '합격 기원', nick: '가' }, who.token)).json()).wish;
+  const g = await H.guest(); return H.post('/rt/wish/heart', { id: wish.id }, g.token, ip);
+}
 describe('immediate push', () => {
-  it('a steal pushes the previous holder an encrypted { body, url } once per minute', async () => {
-    const { clock, state, done } = setup();
+  it('a claim on a board whose time ran out pushes nobody: there are no takeovers to tell', async () => {
+    const { state, done } = setup();
     try {
       const env = makeEnv({ VAPID_PRIV: VAPID }), { guest, post } = harness(env), v = await guest(), a = await guest(), s = await subscriber();
       const sub = await post('/rt/push', { s: s.sub() }, v.token);
       assert.equal(sub.status, 200); assert.deepEqual(await sub.json(), { ok: true });
       assert.deepEqual(pssRows(env).map((r) => ({ ...r })), [{ uid: v.id, e: s.endpoint }]);
-      state.victim = v.id;
-      const res = await post('/rt/claim-billboard', CLAIM('도둑'), a.token);
+      state.victim = v.id; // the RPC names the previous holder of a run-out board
+      const res = await post('/rt/claim-billboard', CLAIM('새주인'), a.token);
       assert.equal(res.status, 200); assert.equal((await res.json()).ok, true);
+      assert.equal(state.pushes.length, 0);
+      // The push itself still works: encrypted { body, url } to the subscriber.
+      const h = harness(env); await pushTo(h, v);
       assert.equal(state.pushes.length, 1);
       const p = state.pushes[0]; assert.equal(p.url, s.endpoint); assert.match(p.headers.Authorization, /^vapid t=[\w-]+\.[\w-]+\.[\w-]+, k=/);
       assert.equal(p.headers['Content-Encoding'], 'aes128gcm');
-      assert.deepEqual(await decrypt(p.body, s), { body: `도둑님이 ${slotName('STREET_5')}를 가져갔어요`, url: '/?focus=STREET_5' });
-      // Within the 60 s gap: no second push. After it: one more.
-      await post('/rt/claim-billboard', CLAIM('도둑'), a.token); assert.equal(state.pushes.length, 1);
-      clock.add(61000);
-      await post('/rt/claim-billboard', CLAIM('도둑'), a.token); assert.equal(state.pushes.length, 2);
+      assert.equal((await decrypt(p.body, s)).body, '내 소원에 첫 하트가 왔어요');
     } finally { done(); }
   });
 
   it('no push without VAPID_PRIV or without a subscription; the subscription survives a failing push_subscribe', async () => {
     const { state, done } = setup({ subFail: true });
     try {
-      const env = makeEnv(), { guest, post } = harness(env), v = await guest(), a = await guest(), s = await subscriber();
-      const sub = await post('/rt/push', { s: s.sub() }, v.token);
+      const env = makeEnv(), H = harness(env), v = await H.guest(), s = await subscriber();
+      const sub = await H.post('/rt/push', { s: s.sub() }, v.token);
       assert.equal(sub.status, 200); assert.equal((await sub.json()).ok, true);
-      state.victim = v.id;
-      assert.equal((await post('/rt/claim-billboard', CLAIM(), a.token)).status, 200);
+      assert.equal((await pushTo(H, v)).status, 200);
       assert.equal(state.pushes.length, 0);
-      const env2 = makeEnv({ VAPID_PRIV: VAPID }), h2 = harness(env2), v2 = await h2.guest(), a2 = await h2.guest();
-      state.victim = v2.id;
-      assert.equal((await h2.post('/rt/claim-billboard', CLAIM(), a2.token)).status, 200);
+      const env2 = makeEnv({ VAPID_PRIV: VAPID }), h2 = harness(env2), v2 = await h2.guest();
+      assert.equal((await pushTo(h2, v2)).status, 200);
       assert.equal(state.pushes.length, 0);
     } finally { done(); }
   });
@@ -355,15 +358,14 @@ describe('immediate push', () => {
   it('keeps 3 subscriptions per actor (oldest dropped), DELETE removes one, 410 removes it too', async () => {
     const { clock, state, done } = setup({ push: 410 });
     try {
-      const env = makeEnv({ VAPID_PRIV: VAPID }), { guest, post, call } = harness(env), v = await guest(), a = await guest();
+      const env = makeEnv({ VAPID_PRIV: VAPID }), H = harness(env), { guest, post, call } = H, v = await guest();
       const subs = [];
       for (let i = 0; i < 4; i++) { const s = await subscriber(); subs.push(s); await post('/rt/push', { s: s.sub() }, v.token); clock.add(1000); }
       assert.deepEqual(pssRows(env).map((r) => r.e), subs.slice(1).map((s) => s.endpoint));
       const del = await call('/rt/push', { method: 'DELETE', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + v.token }, body: JSON.stringify({ e: subs[1].endpoint }) });
       assert.equal(del.status, 200);
       assert.deepEqual(pssRows(env).map((r) => r.e), subs.slice(2).map((s) => s.endpoint));
-      state.victim = v.id;
-      assert.equal((await post('/rt/claim-billboard', CLAIM(), a.token)).status, 200);
+      assert.equal((await pushTo(H, v)).status, 200);
       assert.equal(state.pushes.length, 2);
       assert.deepEqual(pssRows(env), []);
       assert.deepEqual(state.drops.sort(), subs.slice(2).map((s) => s.endpoint).sort());
@@ -373,9 +375,9 @@ describe('immediate push', () => {
   it('404 from the push service drops the subscription as well', async () => {
     const { state, done } = setup({ push: 404 });
     try {
-      const env = makeEnv({ VAPID_PRIV: VAPID }), { guest, post } = harness(env), v = await guest(), a = await guest(), s = await subscriber();
-      await post('/rt/push', { s: s.sub() }, v.token); state.victim = v.id;
-      await post('/rt/claim-billboard', CLAIM(), a.token);
+      const env = makeEnv({ VAPID_PRIV: VAPID }), H = harness(env), v = await H.guest(), s = await subscriber();
+      await H.post('/rt/push', { s: s.sub() }, v.token);
+      await pushTo(H, v);
       assert.equal(state.pushes.length, 1); assert.deepEqual(pssRows(env), []); assert.deepEqual(state.drops, [s.endpoint]);
     } finally { done(); }
   });
@@ -421,19 +423,18 @@ describe('immediate push', () => {
     } finally { done(); }
   });
 
-  it('a throwing or failing push service never changes the claim response', async () => {
+  it('a throwing or failing push service never changes the answer that triggered it', async () => {
     const { state, done } = setup({ push: 'throw' });
     try {
-      const env = makeEnv({ VAPID_PRIV: VAPID }), { guest, post } = harness(env), v = await guest(), a = await guest(), s = await subscriber();
-      await post('/rt/push', { s: s.sub() }, v.token);
-      state.victim = v.id;
-      const res = await post('/rt/claim-billboard', CLAIM(), a.token), body = await res.json();
-      assert.equal(res.status, 200); assert.equal(body.ok, true); assert.equal(body.data.slot_id, 'STREET_5');
+      const env = makeEnv({ VAPID_PRIV: VAPID }), H = harness(env), v = await H.guest(), s = await subscriber();
+      await H.post('/rt/push', { s: s.sub() }, v.token);
+      const res = await pushTo(H, v), body = await res.json();
+      assert.equal(res.status, 200); assert.equal(body.hearts, 1);
       assert.equal(state.pushes.length, 1); assert.equal(pssRows(env).length, 1);
-      const env2 = makeEnv({ VAPID_PRIV: '{not json' }), h2 = harness(env2), v2 = await h2.guest(), a2 = await h2.guest();
-      await h2.post('/rt/push', { s: s.sub() }, v2.token); state.victim = v2.id;
-      const r2 = await h2.post('/rt/claim-billboard', CLAIM(), a2.token);
-      assert.equal(r2.status, 200); assert.equal((await r2.json()).ok, true);
+      const env2 = makeEnv({ VAPID_PRIV: '{not json' }), h2 = harness(env2), v2 = await h2.guest();
+      await h2.post('/rt/push', { s: s.sub() }, v2.token);
+      const r2 = await pushTo(h2, v2);
+      assert.equal(r2.status, 200); assert.equal((await r2.json()).hearts, 1);
     } finally { done(); }
   });
 
@@ -504,9 +505,9 @@ describe('immediate push', () => {
       const { get } = harness(env);
       assert.equal(metaOf(await (await get('/rt/card/STREET_15')).text(), 'property', 'og:image'), 'https://sq.example/rt/snap/' + shot);
       assert.equal(metaOf(await (await get('/rt/s/' + shot)).text(), 'property', 'og:title'), '나 줄');
-      state.victim = uid;
-      await post('/rt/claim-billboard', CLAIM(), a.token);
+      await pushTo(harness(env), { token: userToken, id: uid });
       assert.equal(state.pushes.length, 1); assert.equal(state.pushes[0].url, s.endpoint);
+      void a;
     } finally { done(); }
   });
 });

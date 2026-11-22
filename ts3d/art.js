@@ -1,5 +1,5 @@
-import { auctionClosed, live, floorOf, SLOT_IDS } from '../balance.js';
-import { nowMs } from '../live.js';
+import { live, floorOf, SLOT_IDS } from '../balance.js';
+import { isPrime } from '../primerules.js';
 // Canvas painters for every procedural texture in the plaza:
 // billboard artwork, LED tickers, neon signs, K-brand ads, facades, decals, name tags.
 export const SANS = '"Pretendard Variable", Pretendard, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
@@ -435,8 +435,8 @@ export function paintBillboard(canvas, data = {}, opts = {}) {
     const mode = opts.photo ? 'quiet' : 'soft';
     const maxC = W * 0.62;
     const label = vacant
-      ? (data.soon ? '곧 열려요' : auctionClosed(data.slot_id, nowMs()) ? '밤 9시에 10분만 열려요' : '빈 자리 · 지금 걸 수 있어요')
-      : data.holder_id === 'air' ? '전광판 장악' : th.title ? (th.sub ? `${th.title} · ${th.sub}` : th.title) : tierName(data.slot_id);
+      ? (data.soon ? '곧 열려요' : isPrime(data.slot_id) ? '응원 팀 명당 · 포인트로 살 수 없어요' : '빈 자리 · 지금 걸 수 있어요')
+      : th.title ? (th.sub ? `${th.title} · ${th.sub}` : th.title) : tierName(data.slot_id);
     chipY += pill(g, pad, chipY, label, accent, cs, maxC, mode).h + 10 * k;
     if (badge) chipY += pill(g, pad, chipY, badge.label, badge.color, cs, maxC, 'quiet').h + 10 * k;
     if (opts.pending && !vacant) chipY += pill(g, pad, chipY, '사진 검수 중', AMBER, cs, maxC, mode).h + 10 * k;
@@ -465,7 +465,7 @@ export function paintBillboard(canvas, data = {}, opts = {}) {
 
   footRow(g, W, body - 44 * k, k, vacant ? '' : chars(data.holder_name || '익명', 14), vacant && !cheers ? null : cheers, {
     dim: unlit,
-    note: data.taken_from ? `${chars(data.taken_from, 14)}님을 밀어내고 점령` : '',
+    note: '',
   });
 
   if (opts.shield) {
@@ -543,7 +543,7 @@ export function paintNeonSign(canvas, text, color = '#00ffcc', sub = '') {
   g.strokeStyle = color;
   roundRect(g, 12 * k, 12 * k, W - 24 * k, H - 24 * k, 10 * k);
   g.stroke();
-  const t = chars(text || '분양 중', 14);
+  const t = chars(text || '빈 땅', 14);
   flatText(g, t, W / 2, sub ? H * 0.43 : H * 0.53, W - 64 * k, Math.round((sub ? 52 : 60) * k), color, 800, 18 * k);
   if (sub) {
     g.font = `700 ${Math.round(20 * k)}px ${SANS}`;
@@ -1010,7 +1010,7 @@ export function paintPlotBadge(canvas, id, level, color) {
   g.fillStyle = color;
   g.fillRect(6 * k + 18 * k, 6 * k, W - 48 * k, Math.max(2, 3 * k));
   flatText(g, `${id}번 토지`, W / 2, H * 0.42, W - 40 * k, Math.round(50 * k), WHITE, 800, 18 * k);
-  flatText(g, level === 0 ? '분양 중 · FOR SALE' : '분양 완료', W / 2, H * 0.74, W - 40 * k, Math.round(24 * k), level === 0 ? color : MUTED, 700, 12 * k);
+  flatText(g, level === 0 ? '빈 땅 · OPEN LOT' : '건물 있음', W / 2, H * 0.74, W - 40 * k, Math.round(24 * k), level === 0 ? color : MUTED, 700, 12 * k);
   return canvas;
 }
 
@@ -1103,7 +1103,7 @@ export function paintTaxiStand(canvas) {
 }
 
 /** Waits for the Pretendard weights the canvases use (and the glyph subsets for `text`). */
-export function fontsReady(text = '타임스퀘어 붕어빵 전광판 점령 응원 포인트') {
+export function fontsReady(text = '타임스퀘어 붕어빵 전광판 걸기 응원 포인트 팀 명당') {
   if (!document.fonts?.load) return Promise.resolve();
   const sample = String(text || '').slice(0, 80) || 'A';
   return Promise.all([600, 700, 800, 900].map(w => document.fonts.load(`${w} 64px "Pretendard Variable"`, sample))).catch(() => {});
@@ -1166,9 +1166,10 @@ export function wishRotates(slotId, row, air, mainOpen, now = Date.now(), until 
 }
 /** The claim cue the wish card keeps in its bottom strip (same price the house notice uses). */
 export function wishStrip(slotId, row, mainOpen) {
+  void mainOpen;
+  if (isPrime(slotId)) return '응원 팀 명당 · 서로 다른 사람의 응원으로 정해요';
   if (row?.holder_id) return '불 꺼짐 · 주인이 다시 켤 수 있어요';
-  const price = (floorOf(slotId) || 0).toLocaleString('en-US') + '포인트부터';
-  return String(slotId).startsWith('MAIN_') && !mainOpen ? '밤 9시에 10분만 열려요 · ' + price : '빈 자리 · ' + price;
+  return '빈 자리 · ' + (floorOf(slotId) || 0).toLocaleString('en-US') + '포인트로 72시간';
 }
 /** What a board needs this tick. 'drop': its card must go now (not allowed to rotate, or nothing to show) — never budgeted.
  *  'reset': not allowed and nothing shown. 'none': step already painted. 'quiet': notice phase and the notice is up.
@@ -1451,6 +1452,36 @@ export function paintWish(canvas, data = {}, opts = {}) {
 
   footRow(g, W, body - 44 * k, k, chars(wishClean(data.nick), 16) || '누군가', data.hearts);
   infoStrip(g, W, H, statsH, k, String(opts.strip || '하루 한 줄, 누구나 무료'), opts.dark ? MUTED : hue);
+  g.restore();
+  return canvas;
+}
+
+// 응원 팀 명당 card (primerules.js primeCard): a prime screen showing the team that earned it. card: { chip, head, sub, foot }. opts.wide: a main
+// tower face; opts.part 0 is its top face (a crown before the name); opts.last its bottom face (the way in: "팀 페이지에서 함께 응원해요").
+// Text and the WISH BOARD look only: no photo, logo or picture of anyone (report: 아이돌 이름은 응원 라벨로만).
+export function paintPrime(canvas, card = {}, opts = {}) {
+  const g = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height, k = W / 1024;
+  const statsH = Math.max(28, Math.round(46 * k));
+  const body = H - statsH, pad = 44 * k;
+  g.save();
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.clearRect(0, 0, W, H);
+  boardPanel(g, W, body, k, AMBER, false);
+  const grad = g.createLinearGradient(0, 0, W, body);
+  grad.addColorStop(0, 'rgba(255,176,32,0.20)'); grad.addColorStop(0.55, 'rgba(255,176,32,0.04)'); grad.addColorStop(1, 'rgba(72,214,240,0.10)');
+  g.fillStyle = grad; g.fillRect(0, 0, W, body);
+  const cs = Math.max(11, Math.round(26 * k));
+  const ch = pill(g, pad, 30 * k, String(card.chip || '응원 팀 명당'), AMBER, cs, W * 0.62, 'solid').h;
+  pill(g, W - pad, 30 * k, '응원 팀 명당', CYAN, cs, W * 0.34, 'quiet', true);
+  const head = chars(String(card.head || ''), 16) || '응원 팀';
+  const top = 30 * k + ch + 24 * k, bottom = body - 70 * k;
+  let size = fit(g, head, W - pad * 2, (opts.wide ? 190 : 150) * k, 800, SANS, 34 * k);
+  size = Math.min(size, (bottom - top) * 0.62);
+  const y = top + (bottom - top) * 0.40;
+  flatText(g, (opts.part === 0 && opts.wide ? '👑 ' : '') + head, W / 2, y, W - pad * 2, Math.round(size), WHITE, 800, 30 * k);
+  flatText(g, String(card.sub || ''), W / 2, y + size * 0.86, W - pad * 2, Math.round(Math.min(48 * k, size * 0.36)), TEXT2, 700, 16 * k);
+  infoStrip(g, W, H, statsH, k, String(opts.last ? '팀 페이지에서 함께 응원해요 · 사람 수로만 정하는 자리' : card.foot || '응원 팀 명당 · 포인트로 살 수 없는 자리'), AMBER);
   g.restore();
   return canvas;
 }

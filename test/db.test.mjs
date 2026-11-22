@@ -262,8 +262,8 @@ describe('worker starter list', { concurrency: false }, () => {
         assert.equal(r.status, 400);
         assert.equal((await r.json()).error, SLOT_SOON);
       }
-      h.state.claimErr = '최소 197 코인 이상 입찰해야 합니다.'; // any other refusal is passed on, in points (worker.js pointWords)
-      assert.equal((await (await paid('STREET_40')).json()).error, '최소 197 포인트 이상 입찰해야 합니다.');
+      h.state.claimErr = '최소 197 코인 이상 입찰해야 합니다.'; // the price is fixed now: this only comes from losing a race to someone who lit it first
+      assert.equal((await (await paid('STREET_40')).json()).error, '이 전광판은 지금 다른 사람이 걸어 두었어요. 걸린 기간이 끝나면 비고, 그때 걸 수 있어요.');
       h.state.claimErr = '코인이 부족합니다. 붕어빵을 더 구워보세요!'; // never a promise that play pays
       assert.equal((await (await paid('STREET_40')).json()).error, '응원 포인트가 부족해요.');
       h.state.claimErr = null;

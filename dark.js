@@ -14,6 +14,6 @@ export function darkNext(r) { const lit = Number(r?.lit) || 0; if (!lit) return 
 // Whole hours left, 1..6 (a 6-hour notice moved to 08:00 says how long is really left).
 export const darkHours = (lit, now) => Math.min(6, Math.max(1, Math.ceil((Number(lit) - Number(now)) / H)));
 export function darkText(stage, slot, h = 6) { const name = slotName(String(slot || ''));
-  return stage === 'out' ? `${name} 불이 꺼졌어요. 다른 사람이 가져가기 전에 다시 켜세요.` : `🕯️ ${name} 불이 ${Math.floor(Number(h)) || 6}시간 뒤에 꺼져요. 지금 켜면 72시간 더 켜져요.`; }
+  return stage === 'out' ? `${name} 불이 꺼졌어요. 다른 사람이 걸기 전에 다시 켜세요.` : `🕯️ ${name} 불이 ${Math.floor(Number(h)) || 6}시간 뒤에 꺼져요. 지금 켜면 72시간 더 켜져요.`; }
 // A billboard row's clock (lit_until, else expires_at) in ms; 0 when it has none.
 export const litOf = (b) => { const t = Date.parse(b?.lit_until || b?.expires_at || ''); return Number.isFinite(t) ? t : 0; };

@@ -708,13 +708,13 @@ describe('compact phone HUD (a touch phone upright or on its side)', () => {
     assert.equal(/feverEl|feverText|feverChip|코인 2배|2배 코인/.test(ui), false);
   });
   it('the wallet chips are rows at the top of the wallet sheet with their own taps, and 광장 소식 opens from the ranks sheet', () => {
-    const w = ui.slice(ui.indexOf('  function openWalletInfo() {'), ui.indexOf('  function standings() {'));
+    const w = ui.slice(ui.indexOf('  function openWalletInfo() {'), ui.indexOf('  function openFeed() {'));
     assert.equal(ui.includes('sessionChip'), false); // the 놀이 n/30 chip went with the points for play
     for (const re of [/quickRow\(todayBtn, \(\) => openToday\(\)\)/, /quickRow\(holdBtn, \(\) => openHolds\(\)\)/, /quickRow\(tribeBtn, \(\) => openTribeSheet\(\)\)/, /protectLine\.hidden \? \[\] : \[h\('button', \{ class: 'btn ghost wide', type: 'button', onclick: \(e\) => protectGo\(e\) \}/]) assert.match(w, re);
     assert.match(w, /host\.append\(\n\s*quick,/);
     assert.match(rule(box, 'html.touch .wal-quick'), /display: grid;/);
     assert.ok(px(rule(box, 'html.touch .wal-quick .btn'), 'min-height') >= 44);
-    const r = ui.slice(ui.indexOf('  function openRanks() {'), ui.indexOf('  function openCredits() {'));
+    const r = ui.slice(ui.indexOf('  function openRanks('), ui.indexOf('  function openCredits() {'));
     assert.match(r, /h\('button', \{ class: 'btn ghost phone-only', type: 'button', onclick: \(\) => openFeed\(\) \}/);
     assert.match(rule(box, 'html.touch .sheet .phone-only'), /display: flex;/);
   });

@@ -8,8 +8,9 @@ export function nextBallUntil(now, open) {
   return stamp;
 }
 
-// 밤 9시 (client only). The main tower takes claims 21:00:00–21:10:00 KST (balance.js ballOpen, checked by the server).
-// t is the client clock plus the server offset (clockSkew). Banner from 20:50; yesterday's wish king 21:00–21:01.
+// 밤 9시 (client only). The main tower is a prime screen (primerules.js): 21:00-22:00 KST it shows the team with the most distinct supporters
+// before 21:00 (the 9 pm team). t is the client clock plus the server offset (clockSkew). Banner 20:50-21:10; yesterday's wish king 21:00-21:01
+// on the ordinary boards. balance.js ballOpen still names the 21:00-21:10 show (the crystal ball, the hologram).
 const DAY_MS = 864e5, H21 = 21 * 3600e3;
 // The browser's server offset (main.js sets clock.off once from clockSkew). The Worker never sets it, so nowMs() is Date.now().
 export const clock = { off: 0 };
@@ -22,12 +23,18 @@ export function ninePhase(t) { const m = kstMsOfDay(t); return m >= NINE.open &&
 export function nineLeft(t) { const m = kstMsOfDay(t), p = ninePhase(t); return p === 'open' ? NINE.close - m : p === 'pre' ? NINE.open - m : 0; }
 /** Whole seconds rounded up, so the last second of a phase reads 00:01 and never 00:00. */
 export function mmss(ms) { const s = Math.max(0, Math.ceil(Number(ms) / 1000) || 0); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); }
-/** The banner, or null when there is none. Its text changes once a second. */
-export function nineBanner(t) {
+/** The banner, or null when there is none. Its text changes once a second. who: { lead } before 21:00 (today's leading team so far, /rt/world
+ *  teams[0]), { gold } after it (the 9 pm team's name; '' while the server has not named it, null when no team reached 10 supporters). */
+export function nineBanner(t, who = {}) {
   const phase = ninePhase(t);
   if (!phase) return null;
-  const left = nineLeft(t);
-  return { phase, left, text: phase === 'pre' ? `밤 9시, 메인 타워가 열려요 · ${mmss(left)}` : `지금 메인 타워가 열렸어요 · 닫히기까지 ${mmss(left)}` };
+  const left = nineLeft(t), name = (v) => Array.from(String(v || '')).slice(0, 12).join('');
+  if (phase === 'pre') {
+    const lead = name(who?.lead);
+    return { phase, left, text: lead ? `밤 9시 메인 타워 주인공 · 지금 1위 ${lead} · ${mmss(left)}` : `밤 9시, 메인 타워 주인공이 정해져요 · ${mmss(left)}` };
+  }
+  const gold = who?.gold === null ? null : name(who?.gold);
+  return { phase, left, text: gold ? `지금 메인 타워 · 9시 주인공 ${gold}` : gold === null ? '오늘 밤 9시는 어제의 소원왕 · 내일 9시 주인공에 도전해요' : `9시 주인공을 정하는 중이에요 · ${mmss(left)}` };
 }
 /** Yesterday's top wish takes the non-main boards 21:00:00–21:00:59, only when there is one. */
 export function kingMinute(t, king) { const m = kstMsOfDay(t); return !!(king && String(king.txt || '')) && m >= NINE.open && m < NINE.king; }
@@ -42,7 +49,7 @@ export function clockSkew(date, sentAt, gotAt) {
   const skew = Math.round(s + 500 - (sentAt + gotAt) / 2);
   return Math.abs(skew) < 2000 || Math.abs(skew) > 12 * 3600e3 ? 0 : skew;
 }
-/** The main tower slot the banner opens: the cheapest one nobody keeps lit, else the cheapest. */
+/** A main tower face nobody keeps lit, else the lowest (kept for old callers; the banner now opens the prime screen sheet). */
 export function nineSlot(rows, now = Date.now()) {
   const list = Array.isArray(rows) ? rows : [];
   for (const id of ['MAIN_LOW', 'MAIN_BOT', 'MAIN_MID', 'MAIN_TOP', 'MAIN_UP']) {

@@ -157,7 +157,7 @@ describe('dark.js', () => {
   });
   it('copy', () => {
     assert.equal(darkText('pre', 'STREET_5'), `🕯️ ${slotName('STREET_5')} 불이 6시간 뒤에 꺼져요. 지금 켜면 72시간 더 켜져요.`);
-    assert.equal(darkText('out', 'STREET_5'), `${slotName('STREET_5')} 불이 꺼졌어요. 다른 사람이 가져가기 전에 다시 켜세요.`);
+    assert.equal(darkText('out', 'STREET_5'), `${slotName('STREET_5')} 불이 꺼졌어요. 다른 사람이 걸기 전에 다시 켜세요.`);
     assert.equal(applyInboxPush({ kind: 'dark', slot_id: 'STREET_5', phrase: 1 }), `${slotName('STREET_5')} 불이 곧 꺼져요`);
     assert.equal(applyInboxPush({ kind: 'dark', slot_id: 'STREET_5', phrase: 2 }), `${slotName('STREET_5')} 불이 꺼졌어요`);
     assert.equal(applyInboxPush({ kind: 'dark', slot_id: 'STREET_5' }), `${slotName('STREET_5')} 불이 곧 꺼져요`);
@@ -165,7 +165,7 @@ describe('dark.js', () => {
 });
 
 describe('dark registry', () => {
-  it('claim, takeover, tribe claim, review approval, relight and takedown keep the registry and its alarm', async () => {
+  it('claim, a new holder after the time ran out, review approval, relight and takedown keep the registry and its alarm; the 소속 claim is closed', async () => {
     const { state, clock, done } = setup();
     try {
       const env = makeEnv(), { guest, post, admin } = harness(env), a = await guest(), b = await guest();
@@ -175,7 +175,9 @@ describe('dark registry', () => {
       assert.equal(alarmOf(env), lit1 - 6 * H);
       clock.add(H); await post('/rt/claim-billboard', CLAIM('STREET_5', 'edit'), a.token); // same holder, same clock: unchanged
       assert.deepEqual(rows(env), [{ slot: 'STREET_5', uid: a.id, lit: lit1, pre: 0, out: 0 }]);
-      clock.add(H); assert.equal((await post('/rt/claim-billboard', CLAIM(), b.token)).status, 200); // takeover
+      clock.add(H); assert.equal((await post('/rt/claim-billboard', CLAIM(), b.token)).status, 409); // a's board is lit: no takeovers
+      assert.deepEqual(rows(env), [{ slot: 'STREET_5', uid: a.id, lit: lit1, pre: 0, out: 0 }]);
+      clock.to(lit1 + 1000); assert.equal((await post('/rt/claim-billboard', CLAIM(), b.token)).status, 200); // a's 72 h ran out: b lights it
       const lit2 = clock.now() + 72 * H;
       assert.deepEqual(rows(env), [{ slot: 'STREET_5', uid: b.id, lit: lit2, pre: 0, out: 0 }]);
       assert.equal(alarmOf(env), lit2 - 6 * H);
@@ -189,8 +191,8 @@ describe('dark registry', () => {
       state.review = { slot: 'STREET_7', actor: a.id };
       assert.equal((await admin('/rt/admin/review', { id: 9, approve: true })).status, 200);
       assert.equal(rows(env).find((r) => r.slot === 'STREET_7').uid, a.id);
-      await post('/rt/claim-billboard', CLAIM('STREET_7', 'tribe'), b.token); // a tribe now holds it: no personal row
-      assert.equal(rows(env).some((r) => r.slot === 'STREET_7'), false);
+      assert.equal((await post('/rt/claim-billboard', CLAIM('STREET_7', 'tribe'), b.token)).status, 410); // the 소속 claim is closed: a keeps it
+      assert.equal(rows(env).find((r) => r.slot === 'STREET_7').uid, a.id);
       // Takedown blanks the lines only: holder and clock stay, and so do the rows and the alarm.
       const before = rows(env), at = alarmOf(env);
       assert.equal((await admin('/rt/admin/takedown', { slot: 'STREET_6' })).status, 200);
@@ -218,7 +220,7 @@ describe('dark registry', () => {
     return { arm() { gate = new Promise((r) => { release = r; }); }, release() { release(); gate = null; } }; }
   const tick = () => new Promise((r) => setTimeout(r, 20));
 
-  it('a takeover while the alarm waits on Supabase keeps the new holder row (dark notice due)', async () => {
+  it('a new holder (after the time ran out) while the alarm waits on Supabase keeps the new holder row (dark notice due)', async () => {
     const { state, clock, done } = setup('17:00');
     try {
       const env = makeEnv(), { guest, post } = harness(env), a = await guest(), b = await guest();
@@ -233,16 +235,17 @@ describe('dark registry', () => {
     } finally { done(); }
   });
 
-  it('a takeover while the alarm waits on Supabase leaves the new holder its own 6-hour notice', async () => {
+  it('a relight while the alarm waits on Supabase leaves the holder its new 6-hour notice; nobody else can take the board meanwhile', async () => {
     const { state, clock, done } = setup('17:00');
     try {
       const env = makeEnv(), { guest, post } = harness(env), a = await guest(), b = await guest();
       await post('/rt/claim-billboard', CLAIM(), a.token); const lit = clock.now() + 72 * H;
       const g = gateRead(); clock.to(lit - 6 * H); g.arm();
       const p = fire(env); await tick();
-      await post('/rt/claim-billboard', CLAIM(), b.token);
+      assert.equal((await post('/rt/claim-billboard', CLAIM(), b.token)).status, 409); // still lit: refused
+      await post('/rt/relight', { slot: 'STREET_5' }, a.token);
       g.release(); await p;
-      assert.deepEqual(rows(env).map((r) => [r.uid, r.pre]), [[b.id, 0]]);
+      assert.deepEqual(rows(env).map((r) => [r.uid, r.pre]), [[a.id, 0]]);
       assert.equal(state.inbox.filter((x) => x.kind === 'dark').length, 0);
     } finally { done(); }
   });

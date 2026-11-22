@@ -257,8 +257,8 @@ export function pushAsk({ supported, permission, offered, dismissedAt, now = Dat
 // The line at the top of the push sheet for each moment.
 export const PUSH_WHY = Object.freeze({
   wish: '하트가 오면 바로 알려 드릴까요?',
-  claim: '빼앗기면 바로 알려 드릴까요?',
-  share: '전광판을 빼앗기거나 소원에 하트가 오면 바로 알려 드릴까요?',
+  claim: '내 전광판 불이 꺼지기 전에 알려 드릴까요?',
+  share: '내 전광판 불이 꺼지기 전이나 소원에 하트가 오면 바로 알려 드릴까요?',
 });
 
 // ---- 다녀간 사이: what the sheet after entering shows. Pure; main.js stores what it returns.
@@ -307,7 +307,7 @@ export function awayRows({ newbie, inbox, seen, copy, wish, wishSeen, prizeDay, 
     if (!kind) continue;
     // Already handled: a board I hold again, or the same news seen live during play.
     if ((kind === 'taken' && me && typeof holder === 'function' && holder(slot) === me) || seenLive(liveSeen, m.kind, slot, at)) { handled.push(id); continue; }
-    const row = { kind, id, slot, text: line, label: kind === 'taken' ? '되찾으러 가기' : '보러가기', at: Number.isFinite(at) ? at : 0, also: [] };
+    const row = { kind, id, slot, text: line, label: '보러가기', at: Number.isFinite(at) ? at : 0, also: [] };
     const key = m.kind + '|' + slot;
     const prev = byKey.get(key);
     if (prev) {

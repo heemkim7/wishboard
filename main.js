@@ -9,8 +9,9 @@ import { starSpot, insideLoop } from './ts3d/layout.js?v=202611222045';
 import { createUI } from './ui.js?v=202611222045';
 import { haptic, startMusic } from './audio.js?v=202611222045';
 import { isTouchUI } from './interact.js?v=202611222045';
-import { BALANCE, PAY, chainsOf, live, monopolyOf, slotName, slotOf, takeGrants, cheerCount, countsAsActivity, josa, slotOpen, SLOT_SOON } from './balance.js';
+import { BALANCE, PAY, chainsOf, live, slotName, slotOf, takeGrants, cheerCount, countsAsActivity, josa, slotOpen, SLOT_SOON } from './balance.js';
 import { auctionClosed, EQUIP_MAX, OWNED_MAX } from './balance.js';
+import { primeAt, WHY_CHIP } from './primerules.js';
 import { trackEvent } from './analytics.js?v=202611222045';
 import { adoptHandover, allowedLink, blockedText, handoverHref, isAndroid, isInAppWebView, loginEmail, CHEER_PHRASES, GT_LS, SESSION_LS, slotTier } from './plaza-account.js';
 import { authErrorText, cleanAddress, externalRoutes, oauthErrorText, oauthMessage, oauthReturn, sessionDrift, OAUTH_ACK, OAUTH_CHANNEL } from './plaza-account.js';
@@ -22,7 +23,7 @@ import { photoVerdicts } from './ftue.js?v=202611222045';
 import { WISH, cleanWish } from './wish.js';
 import { seasonFor, seasonPreview } from './seasons.js';
 import { applyInboxPush, loadInbox, readInbox, liveOnly, handledRead, liveSeeable } from './inbox.js?v=202611222045';
-import { openTribe, sendCheer } from './tribe.js?v=202611222045';
+import { sendCheer } from './tribe.js?v=202611222045';
 import { applyOps, ballNotice, nineBanner, kingMinute, clockSkew, clock, nowMs } from './live.js';
 import { pushRoute, awayRead } from './overlay.js?v=202611222045';
 import { isMailbox, mailArrival, mailBack, mailErrorText, retryAfterS, MAIL_ERR } from './mailcode.js?v=202611222045';
@@ -100,15 +101,16 @@ function paintBootLive(data, here) {
   king.hidden = false;
   stat.hidden = false;
   const boards = data.billboards.filter((b) => slotOf(b.slot_id));
-  const main = boards.find((b) => b.slot_id === 'MAIN_TOP');
   const open = boards.filter((b) => !b.holder_id && !auctionClosed(b.slot_id, nowMs())).length;
   // Small counts read as an empty plaza, so each one shows only from its threshold (ftue.js PUBLIC_MIN).
   const { visitors, wishes, crowd } = crowdFacts({ visitors: data.today?.visitors, wishes: data.today?.wishes, crowd: here?.live });
-  king.textContent = live(main)
-    ? `지금 메인 타워의 소원: ${main.holder_name || '익명'} — "${main.line1 || '소원 대기'}"`
-    : main?.holder_id
-      ? `메인 타워 정상은 불이 꺼져 있어요 — ${main.holder_name || '이전 주인'}`
-      : '메인 타워 정상이 비어 있어요 — 첫 소원을 걸 자리';
+  // 명당 (primerules.js): the main tower is a fan team's screen now. Who is on it, else today's leading team, else how it is earned.
+  const onTower = primeAt(data.prime, 'MAIN_TOP', nowMs()), lead = Array.isArray(data.teams) ? data.teams[0] : null;
+  king.textContent = onTower && !onTower.wait
+    ? `지금 메인 타워: ${chars(onTower.name, 16)} 응원 팀 · ${WHY_CHIP[onTower.why] || '응원 팀 명당'}`
+    : lead?.name
+      ? `오늘 가장 많이 응원받는 팀: ${chars(lead.name, 16)} · ${Math.max(0, Math.floor(Number(lead.n) || 0)).toLocaleString('ko-KR')}명`
+      : '메인 타워는 응원 팀 명당 — 하루 서로 다른 30명이 응원하면 다음 날 명당에 이름이 걸려요';
   stat.textContent = [
     open ? `지금 걸 수 있는 빈 자리 ${open}곳` : '지금은 빈 자리가 없어요',
     visitors ? `오늘 다녀간 사람 ${visitors.toLocaleString('ko-KR')}명` : '',
@@ -168,9 +170,11 @@ const state = {
   billboards: [],
   plots: [],
   ranks: [],
-  // 주간 리그: week = /rt/world's { week, top:[{ nick, spent }] } (null while that week is empty), league = the last GET /rt/league answer.
-  week: null,
-  league: null,
+  // 명당 (primerules.js): prime = the day's plan for the prime screens (/rt/world prime, /rt/prime at midnight and 21:00), teams = today's
+  // leading teams [{ id, name, n }], team = my team's { id, name } once the 응원 팀 sheet or /rt/team/me has told it.
+  prime: null,
+  teams: [],
+  team: null,
   // ponytail: session cheers and ticker lines, a column if they must survive refresh
   cheers: {},
   notes: {},
@@ -280,7 +284,6 @@ const ui = createUI(document.getElementById('ui'), {
   submitClaim: (payload) => claim(payload),
   sticker: (slot, glyph) => buySticker(slot, glyph),
   washSticker: (slot) => washSticker(slot),
-  takeover: (payload) => takeover(payload),
   stickerList: (slot) => world?.stickerList?.(slot) || [],
   submitPhoto: (payload) => submitPhoto(payload),
   capture: () => world?.capture() || null,
@@ -329,8 +332,14 @@ const ui = createUI(document.getElementById('ui'), {
   boost: (on) => world?.setBoost?.(on),
   adClick: (slot, url) => adClick(slot, url),
   cheer: (slot, msg) => cheer(slot, msg),
-  createTribe: (tag) => createTribe(tag),
-  myTribe: () => myTribe(),
+  // 응원 팀 (teamsrv.js): my team, a team's page, the writes (create / join / leave / cheer / anniv), rankings and search, the day's plan.
+  teamMe: () => teamMe(),
+  teamPage: (id) => net.teamGet('/rt/team?id=' + encodeURIComponent(id)),
+  teamOp: (body) => teamOp(body),
+  teamRanks: (q) => net.teamGet('/rt/teams' + (q ? '?q=' + encodeURIComponent(q) : '')),
+  prime: () => state.prime,
+  primeOf: (slot) => world?.primeOf?.(slot) || null, // what a prime screen shows now (a team, or null)
+  myTeamId: () => state.team?.id || '',
   inbox: () => openInbox(),
   report: (slot, reason) => reportBoard(slot, reason),
   joinCode: (code) => joinCode(code),
@@ -342,9 +351,8 @@ const ui = createUI(document.getElementById('ui'), {
   watchPortrait: (on) => world?.setWatchPortrait?.(!!on),
   throwPouch: () => world?.throwPouch(),
   syncCrown: () => paintCrown(),
-  league: () => state.league,
-  loadLeague: () => loadLeague(),
-  recap: () => net.recap(), // last week's league row for the Monday card (recap.js): one request a week, made by ui.js
+  teams: () => state.teams,
+  recap: () => net.recap(), // last week's row of the retired spend league for the Monday card (recap.js): no new rows are written
   interact: () => world?.interact(),
   enter: (p) => enter(p),
   wishData: () => state.wish,
@@ -360,7 +368,7 @@ const ui = createUI(document.getElementById('ui'), {
   ensureInvite: () => ensureInvite(),
   arrive() {
     if (FOCUS) trackEvent('focus_enter', { slot: FOCUS, ref: FOCUS_REF });
-    // Used once: a reload must not replay the gift toast or the focus camera (?tribe= goes after joinTribeLink).
+    // Used once: a reload must not replay the gift toast or the focus camera (?team= / ?tribe= go after openTeamLink).
     dropDeep(['focus', 'gift', 'ref']);
     dropDeep(['inv']); // already kept at load (kts_inv_from)
     if (giftUi?.arrive()) return; // ?gb=<id>: that gift board (and &rec=1: its 15-second video), instead of the intro
@@ -613,8 +621,9 @@ function setLounge(on) {
 // plus clock.off (nowMs). No server call; the banner never opens a sheet by itself.
 let kingShown = false;
 function tickNine() {
-  const t = nowMs();
-  ui.setNine?.(nineBanner(t));
+  const t = nowMs(), p = state.prime, gold = p && p.day === kstDay(t) && p.gold !== undefined ? (p.gold ? p.names?.[p.gold.id] || '' : null) : '';
+  ui.setNine?.(nineBanner(t, { lead: state.teams?.[0]?.name || '', gold }));
+  primeRefresh(t);
   const on = kingMinute(t, state.wish.king);
   if (on || kingShown) { world?.setKing?.(on ? state.wish.king : null); kingShown = on; }
 }
@@ -646,7 +655,7 @@ function adClick(slot, url) {
     savePlace();
     let where = '';
     try { where = new URL(url).hostname.replace(/^www\./, ''); } catch { where = ''; }
-    ui.note(`${where || '게임 밖'} 링크로 나가요. 광장 자리는 저장했어요 · 눌러서 열기`, '', go);
+    ui.note(`${where || '광장 밖'} 링크로 나가요. 광장 자리는 저장했어요 · 눌러서 열기`, '', go);
     return;
   }
   go();
@@ -719,13 +728,17 @@ async function weekCodes() {
 async function reportBoard(slot, reason) {
   return net.authed('/rt/report', { slot, reason });
 }
-async function myTribe() {
-  return net.authed('/rt/tribe', { look: true });
+// 응원 팀: my membership (teamsrv.js /rt/team/me) and the writes. state.team follows what they say (the ranking marks my row with it).
+async function teamMe() {
+  const me = await net.teamGet('/rt/team/me');
+  state.team = me?.team ? { id: me.team.id, name: me.team.name } : null;
+  return me;
 }
-async function createTribe(tag) {
-  const made = openTribe().create(tag);
-  if (!made.tag) throw new Error('태그를 적어 주세요');
-  return net.authed('/rt/tribe', { tag: made.tag });
+async function teamOp(body) {
+  const r = await net.authed('/rt/team', body);
+  if (r?.team?.id) state.team = { id: r.team.id, name: r.team.name };
+  else if (body?.op === 'leave') state.team = null;
+  return r;
 }
 function replyCheer(slot, phraseId, to) {
   const p = Math.floor(Number(phraseId));
@@ -739,17 +752,24 @@ function replyCheer(slot, phraseId, to) {
   }
   return true;
 }
-async function joinTribeLink() {
+// ?team=<id> (a team's share link, /t/<id>) opens that team's page once; ?tribe=<id> (an old 소속 invite) does the same. Nobody joins by a link
+// alone: the page has the join button.
+function openTeamLink() {
   let id = '';
-  try { id = new URLSearchParams(location.search).get('tribe') || ''; } catch { id = ''; }
+  try { const q = new URLSearchParams(location.search); id = q.get('team') || q.get('tribe') || ''; } catch { id = ''; }
   if (!/^[a-z0-9]{8}$/.test(id)) return;
-  try {
-    const res = await net.authed('/rt/tribe', { id });
-    dropDeep(['tribe']); // only once the join went through; a failed one can be retried with a reload
-    if (res?.tag) ui.note(`#${res.tag} 소속에 들어왔어요`, 'ok');
-  } catch (e) {
-    ui.note(e?.message || '소속에 들어가지 못했어요', 'err');
-  }
+  dropDeep(['team', 'tribe']);
+  ui.openTeam?.(id);
+}
+// The day's plan: /rt/world brings it; at 00:00 KST (a new day) and in the 9 pm hour until the team is named, one GET /rt/prime, jittered
+// (0-20 s) so a full plaza does not ask at once, at most once a minute. Nothing else asks.
+let primeAsk = 0, primeJob = null;
+function primeRefresh(t) {
+  const p = state.prime, day = kstDay(t), hour = Math.floor((t - Date.parse(day + 'T00:00:00+09:00')) / 3600e3);
+  const stale = !p || p.day !== day || (hour === 21 && p.gold === undefined);
+  if (!stale || primeJob || Date.now() - primeAsk < 60000 || !entered) return;
+  primeAsk = Date.now();
+  primeJob = new Promise((r) => setTimeout(r, Math.random() * 20000)).then(() => net.prime()).then((r) => { if (r?.prime) { state.prime = r.prime; world?.setPrime?.(r.prime); } if (Array.isArray(r?.top)) state.teams = r.top; if (typeof r?.roof === 'string') { state.roof = r.roof; world?.setRoof?.(r.roof); } }).catch(() => { }).finally(() => { primeJob = null; });
 }
 
 async function refreshWallet() {
@@ -874,7 +894,6 @@ async function claim(payload) {
   const res = await net.claimBillboard({ ...payload, external_url: link || '', nickname: state.nick });
   if (res?.review_id) {
     settle(res);
-    if (payload?.mode !== 'tribe') leagueSoon();
     ui.setNextLine('검수 대기');
     ui.note('S급은 확인 후 켜집니다. 거절되면 낸 포인트가 그대로 돌아와요.', 'ok');
     return res;
@@ -891,7 +910,6 @@ async function claim(payload) {
       else state.ranks.push({ actor_id: net.id, nickname: state.nick, spent: paid, linked: !!sessionUser });
       state.ranks.sort((a, b) => Number(b.spent) - Number(a.spent));
     }
-    if (paid > 0 && payload?.mode !== 'tribe' && payload?.mode !== 'edit') leagueSoon();
   }
   settle(res);
   if (res?.ok !== false && res?.data) {
@@ -914,7 +932,6 @@ async function buySticker(slot, glyph) {
   settle(res);
   world?.applyStk?.({ slot, list: res.list || [] });
   world?.launchSticker?.(slot, glyph);
-  leagueSoon();
   ui.note(`${glyph} 스티커를 날려 보냈어요`, 'ok');
   return res;
 }
@@ -929,21 +946,6 @@ async function washSticker(slot) {
   return res;
 }
 
-async function takeover(payload) {
-  const line = chars(payload?.line || '', 24).trim();
-  if (!line) throw new Error('한 줄을 적어 주세요');
-  if (blockedText(line) || blockedText(state.nick)) throw new Error('그 문구는 올릴 수 없어요');
-  const pay = payload?.pay === 'ticket' ? 'ticket' : 'coins';
-  if (pay === 'coins' && state.confirmed + state.pending < 5000) throw new Error('5000포인트가 필요해요');
-  if (pay === 'ticket' && !(state.vipTickets >= 1)) throw new Error('VIP 티켓이 없어요');
-  const res = await net._plazaPost('/rt/spend', { kind: 'air', line, pay });
-  settle(res);
-  world?.beginAir?.({ nick: res.nick || state.nick, line: res.line || line, until: res.until });
-  if (pay === 'coins') leagueSoon();
-  ui.note('60초 동안 모든 전광판을 장악했어요', 'ok');
-  return res;
-}
-
 async function submitPhoto(payload) {
   const res = await net.submitBillboardPhoto({ ...payload, nickname: state.nick });
   if (res?.data) {
@@ -952,7 +954,6 @@ async function submitPhoto(payload) {
     photoRemember(res.data);
   }
   settle(res);
-  if (res?.data) leagueSoon();
   return res;
 }
 
@@ -1001,7 +1002,7 @@ async function buy(payload) {
     world.applyPlot(res.data, true);
   }
   settle(res);
-  if (res?.ok !== false && res?.data) { ui.promptLink?.('own'); leagueSoon(); }
+  if (res?.ok !== false && res?.data) ui.promptLink?.('own');
   return res;
 }
 
@@ -1017,7 +1018,8 @@ function readPlaza() {
       ...(typeof j.roof === 'string' ? { roof: j.roof } : {}),
       ...(j.ops && j.ops.copy ? { ops: j.ops } : {}),
       ...(j.wish && typeof j.wish === 'object' ? { wish: j.wish } : {}),
-      ...(j.league && typeof j.league === 'object' ? { league: j.league } : {}),
+      ...(j.prime && typeof j.prime === 'object' ? { prime: j.prime } : {}),
+      ...(Array.isArray(j.teams) ? { teams: j.teams } : {}),
     };
   } catch { return null; }
 }
@@ -1031,7 +1033,8 @@ function writePlaza(remote) {
       ...(typeof remote.roof === 'string' ? { roof: remote.roof } : {}),
       ...(remote.ops ? { ops: remote.ops } : {}),
       ...(remote.wish ? { wish: remote.wish } : {}),
-      ...(remote.league ? { league: remote.league } : {}),
+      ...(remote.prime ? { prime: remote.prime } : {}),
+      ...(Array.isArray(remote.teams) ? { teams: remote.teams } : {}),
     }));
   } catch { /* private mode */ }
 }
@@ -1039,7 +1042,7 @@ let chainReady = false, chainSeen = new Set();
 function noteChains() {
   const list = chainsOf(state.billboards);
   if (!chainReady) { chainSeen = new Set(list.map((c) => c.id)); chainReady = true; return; }
-  for (const c of list) if (!chainSeen.has(c.id)) ui.note(`${c.name}님이 ${josa(c.building, '을', '를')} 완전 점령했습니다. 그 건물 응원은 +${BALANCE.cheerGroup} 포인트`, 'ok');
+  // A whole building lit by one side (only the main tower and the corners, prime screens now) is no news any more: nobody can claim them.
   chainSeen = new Set(list.map((c) => c.id));
 }
 function applyPlaza(remote) {
@@ -1048,7 +1051,9 @@ function applyPlaza(remote) {
   noteChains();
   state.plots = remote.plots || [];
   if (Array.isArray(remote.ranks)) state.ranks = remote.ranks;
-  state.week = remote.league && typeof remote.league === 'object' && Array.isArray(remote.league.top) ? remote.league : null; // a missing key is an empty week
+  // 명당: a missing key is no plan yet (the prime screens keep their notices); teams: today's leading teams, empty when the key is missing.
+  state.prime = remote.prime && typeof remote.prime === 'object' ? remote.prime : null;
+  state.teams = Array.isArray(remote.teams) ? remote.teams : [];
   if (remote.today) state.today = { visitors: Math.max(0, Math.floor(Number(remote.today.visitors) || 0)), wishes: Math.max(0, Math.floor(Number(remote.today.wishes) || 0)) };
   if (typeof remote.roof === 'string') state.roof = remote.roof;
   applyWishWorld(remote.wish);
@@ -1064,7 +1069,7 @@ function applyPlaza(remote) {
   world.updateWorld(state);
   world.setAds?.(remote.ads); // 광고 화면 (adsale.js adWorld checks it; a missing key is off and empty)
   if (giftUi) giftUi.apply(remote.gifts); else world.setGifts?.(remote.gifts); // 선물 전광판 up now (a missing key is none)
-  world.setMonopoly?.(!!monopolyOf(state.billboards));
+  world.setPrime?.(state.prime);
   markMine();
   paintCrown();
   photoNotice();
@@ -1102,15 +1107,7 @@ async function refreshWorld() {
     applyPlaza(remote);
   } catch { /* keep the cached plaza */ }
 }
-// 주간 리그: GET /rt/league when the 🏆 sheet opens and 1.5 s after my own spend (the Worker tallies it in waitUntil). Never on a timer.
-// One request at a time; resolves to the fresh answer or null.
-let leagueJob = null, leagueT = 0;
-function loadLeague() {
-  if (leagueJob) return leagueJob;
-  leagueJob = net.league().then((r) => { if (r) { state.league = r; ui.setWorld(state); } return r; }).catch(() => null).finally(() => { leagueJob = null; });
-  return leagueJob;
-}
-function leagueSoon() { clearTimeout(leagueT); leagueT = setTimeout(() => { loadLeague(); }, 1500); }
+// The weekly spend league is retired (응원 순위 ranks teams by people: teamsrv.js, teamui.js); nothing here asks /rt/league any more.
 
 // ---- 오늘의 소원 ------------------------------------------------------------------------
 // No timer refetches wishes (daily request budget): /rt/world carries the board, GET /rt/wishes runs once after entering,
@@ -1345,7 +1342,7 @@ function paintCrown() {
   const sig = tag + '|' + headlines.join('|');
   if (sig === crownSig) return;
   crownSig = sig;
-  const head = tag ? `👑 현재 타임스퀘어 점령 팀: ${tag}` : 'WISH BOARD · 모두의 전광판';
+  const head = tag ? `👑 지금 가장 많이 응원받는 팀: ${tag}` : 'WISH BOARD · 모두의 전광판';
   world?.setTicker?.([head, ...headlines].join('      ✦      '));
 }
 function headline(text) {
@@ -1525,12 +1522,9 @@ net.on('welcome', (m) => {
     paintCrown();
   }, 8000);
 });
-net.on('take', (m) => {
-  if (!m || m.victim !== net.id) return;
-  // Never a modal: ui queues one tappable notice ("○○님이 △△을 가져갔어요 · 되찾기") until the screen is quiet.
-  ui.taken({ slot: m.slot, attacker: m.attacker, price: m.price, line1: m.line1, line2: m.line2, line3: m.line3, emoji: m.emoji });
-});
-net.on('mono', (m) => { if (m?.name) ui.note(`${m.name}님이 메인 타워 3칸을 모두 독점하여 타임스퀘어를 지배했습니다!`, 'ok'); });
+// 'take' (a takeover notice) is no longer sent: no board is taken from anyone (docs/prime-screens.md). A room from before the deploy may still
+// relay one; it is dropped.
+// 'mono' (the main tower held by one side) can no longer happen: the main tower is a prime screen.
 net.on('air', (m) => { if (m?.line && m?.until) world?.beginAir?.({ nick: m.nick, line: m.line, until: m.until }); });
 net.on('stk', (m) => world?.applyStk?.(m));
 net.on('cheer', (m) => {
@@ -1626,13 +1620,8 @@ net.onWorldUpdate((ev) => {
   if (ev.kind === 'BILLBOARD' && sameHold) return;
   ui.news(ev.kind, ev.data);
   if (ev.kind === 'BILLBOARD') {
-    const stolen = prev?.holder_id && prev.holder_id !== ev.data.holder_id;
-    if (stolen) {
-      world.strike?.(ev.data.slot_id);
-      world.updateBillboardTexture(ev.data.slot_id, { taken_from: prev.holder_name || '이전 주인' }, false);
-    }
-    world.setMonopoly?.(!!monopolyOf(state.billboards));
-    headline(`👑 ${chars(ev.data?.holder_name || '누군가', 12)}님이 ${slotName(ev.data?.slot_id)} 점령!`);
+    // No takeovers: a new holder only lights a board that was free or whose 72 h ran out (no strike, no "taken from").
+    headline(`✨ ${chars(ev.data?.holder_name || '누군가', 12)}님이 ${slotName(ev.data?.slot_id)}에 전광판을 걸었어요`);
   }
   else if (ev.kind === 'PLOT') headline(`🏗️ ${chars(ev.data?.owner_name || '누군가', 12)}님의 ${ev.data?.plot_id}번 건물 완공`);
 });
@@ -1945,7 +1934,7 @@ function forgetActor() {
   state.vipTickets = 0;
   state.walletKnown = false;
   state.invite = null;
-  state.league = null;
+  state.team = null;
   state.starterUsed = null;
   inboxRows = []; inboxHandled = new Set(); liveNews = []; // 받은 소식 and its 🔔 dot were the old actor's: the next actor's list is read afresh
   ui.setWallet(state);
@@ -2167,7 +2156,7 @@ async function unwear(kind) {
   }
 }
 // 꾸미기 상점: the database charges its own price and equips what was bought. The room's pending coins are settled on the way (like every
-// spend), so the answer's remaining_coins is the whole wallet. Not a league spend (no leagueSoon). Throws the server's line on a refusal.
+// spend), so the answer's remaining_coins is the whole wallet. Throws the server's line on a refusal.
 // price: the one the sheet showed; the database refuses the buy when its price is another (code 'price', the live price in e.data.price).
 async function buyCosmetic(id, price) {
   const res = await net._plazaPost('/rt/shop/buy', { cosmetic_id: id, ...(Number.isInteger(price) && price > 0 ? { price } : {}) });
@@ -2227,7 +2216,7 @@ async function enter({ nick, color, species }) {
     await net.join('square', world.netState());
     bindTake();
     showAway();
-    joinTribeLink();
+    openTeamLink();
     ui.resendPush?.();
     if (!queuePos) ui.setStatus(net.status === 'online' ? '실시간 연결됨' : '광장 연결 중', net.status === 'online' ? 'ok' : 'warn');
   } catch { ui.setStatus('혼자 걷는 중', 'off'); }

@@ -9,12 +9,12 @@ it('cheers by phrase id; there is no pledge (소속 모금 is closed: points are
   assert.equal('pledge' in T, false);
 });
 
-it('wires the tribe sheet through tribe.js, without a pledge row', () => {
+it('the 소속 sheet is the 응원 팀 sheet now (teamui.js): no pledge row, no 소속 claim, no tribe RPC from the page', () => {
   const main = readFileSync(new URL('../main.js', import.meta.url), 'utf8');
   const ui = readFileSync(new URL('../ui.js', import.meta.url), 'utf8');
-  assert.match(main, /openTribe/);
   assert.match(main, /sendCheer/);
-  assert.doesNotMatch(main, /pledge|\/rt\/tribe\/pledge/);
-  assert.doesNotMatch(ui, /hooks\.pledge|pledgeRow|소속 모금/);
-  assert.match(ui, /text: '소속 포인트로 걸기'/); // a tribe's points pledged before the change still pay for its claims
+  assert.doesNotMatch(main, /pledge|\/rt\/tribe/);
+  assert.doesNotMatch(ui, /hooks\.pledge|pledgeRow|소속 모금|소속 포인트로 걸기|tribeGo/);
+  assert.match(ui, /function openTribeSheet\(\) \{ teamUi\(\)\.openTeams\(\); \}/);
+  assert.match(main, /teamOp: \(body\) => teamOp\(body\)/);
 });

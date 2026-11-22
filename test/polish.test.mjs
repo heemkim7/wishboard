@@ -121,7 +121,7 @@ describe('6. the liveboard repaints only when what it shows changed', () => {
     const ui = read('ui.js');
     const fn = ui.slice(ui.indexOf('  function paintLive() {'), ui.indexOf('rankRows.replaceChildren('));
     assert.match(fn, /if \(newbieOn\) return;/);
-    assert.match(fn, /const sig = liveSig\(rows, me\);\n\s*if \(sig === liveSigNow\) return;/);
+    assert.match(fn, /const sig = JSON\.stringify\(\[rows\.map\(\(r\) => \[r\.id, r\.name, r\.n\]\), mine\]\);\n\s*if \(sig === liveSigNow\) return;/);
   });
 });
 

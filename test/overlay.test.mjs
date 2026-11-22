@@ -358,11 +358,11 @@ describe('ui.js: taps, late answers, buttons that come back', () => {
       assert.deepEqual(bare, [], from + ': closeSheet() after an await without the check');
     }
   });
-  it('the tribe error gives both claim buttons back before the 소속 sheet opens', () => {
+  it('a refused claim gives the button back and says why under it (the 소속 claim is gone)', () => {
     const place = ui.slice(ui.indexOf('const placeBoard = async (mode) => {'), ui.indexOf("const more = h('details', { class: 'more' },"));
-    const back = place.indexOf('tribeGo.disabled = false;'), tribe = place.indexOf("if (msg.startsWith('소속에 들어간')) { note(msg, 'err'); openTribeSheet(); return; }");
-    assert.ok(back > 0 && tribe > back, [back, tribe].join());
-    assert.ok(place.indexOf('go.disabled = false;') < tribe);
+    const back = place.indexOf('go.disabled = false;'), say = place.indexOf('say(goErr, msg);');
+    assert.ok(back > 0 && say > back, [back, say].join());
+    assert.equal(place.includes('tribeGo'), false); assert.equal(place.includes("mode === 'tribe'"), false);
   });
 });
 
@@ -639,11 +639,11 @@ describe('proof bar', () => {
     assert.match(offer, /busy: screenBusy\(\) \|\| !!awayWant \|\| Date\.now\(\) < pushHoldUntil,/);
     assert.match(ui, /pumpTaken\(now\); if \(pushQueued\) maybeOfferPush\(\); \}/, 'a waiting offer is tried again every second');
   });
-  it('the chain upsell waits for the bar, and a taken board is a notice, never a sheet', () => {
+  it('no chain upsell and no "taken" notice any more (no takeovers); the celebration focus stays', () => {
     const ui = read('ui.js');
-    assert.match(ui, /if \(nxt && up\) \{\s*proofNext = \(\) => openSheet\('연속 점령', 'CHAIN'/);
+    assert.equal(ui.includes("'연속 점령'"), false);
     assert.equal(ui.includes("openSheet('전광판을 빼앗겼어요'"), false);
-    assert.match(ui, /note\(`\$\{t\.by\}님이 \$\{josa\(slotName\(t\.slot\), '을', '를'\)\} 가져갔어요 · 되찾기`, 'err', \(\) => retake\(t\)\)/);
+    assert.equal(/가져갔어요 · 되찾기|retake\(/.test(ui), false);
     const main = read('main.js');
     assert.match(main, /world\.focusSlot\(slot, \{ celebrate: true \}\)/);
     assert.equal(main.includes('ui.revenge('), false);

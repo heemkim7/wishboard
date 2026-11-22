@@ -1116,7 +1116,7 @@ void main(){
     for (const c of chainsOf(chainRows)) {
       on.add(c.id);
       let g = chainMarks.get(c.id);
-      const title = `👑 ${c.name} 독점 타워`;
+      const title = `👑 ${c.name} · 한 건물 모두`;
       if (!g) { g = chainMark(title); chainMarks.set(c.id, g); }
       else if (g.userData.title !== title) {
         const ctx = g.userData.tex.image.getContext('2d');
@@ -2628,12 +2628,12 @@ void main(){
     focusSlot,
     slotCard(id) {
       const p = boards.worldPos(id);
-      const mainName = { MAIN_UP: '맨 위 · 가장 비쌈', MAIN_TOP: '위에서 둘째', MAIN_MID: '한가운데', MAIN_BOT: '아래에서 둘째', MAIN_LOW: '가장 아래 · 길에서 잘 보임' };
+      const mainName = { MAIN_UP: '맨 위 · 응원 팀 명당', MAIN_TOP: '위에서 둘째', MAIN_MID: '한가운데', MAIN_BOT: '아래에서 둘째', MAIN_LOW: '가장 아래 · 길에서 잘 보임' };
       if (String(id).startsWith('MAIN_')) return { title: '원 타임스퀘어 북쪽 면', line: mainName[id] || '메인 타워', x: p?.x, y: p?.y, z: p?.z };
       if (!p) return { title: slotName(id), line: '아직 지도에 없습니다' };
       const dx = p.x - LAYOUT.oneTimes.x, dz = p.z - LAYOUT.oneTimes.z;
       const dir = Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? '동쪽' : '서쪽') : (dz > 0 ? '남쪽' : '북쪽');
-      const kind = String(id).startsWith('SUB_') ? '교차로 코너 빌딩' : String(id).startsWith('PLOT_') ? '분양 구역 상가 정면' : '메인거리를 보는 건물 벽';
+      const kind = String(id).startsWith('SUB_') ? '교차로 코너 빌딩' : String(id).startsWith('PLOT_') ? '건물 구역 상가 정면' : '메인거리를 보는 건물 벽';
       const h = p.y < 14 ? '길에서 바로 보이는 높이' : p.y < 30 ? '중간 층' : '높은 층';
       return { title: kind, line: `원 타임스퀘어에서 ${dir} ${Math.round(Math.hypot(dx, dz))}m · ${h}`, x: p.x, y: p.y, z: p.z };
     },
@@ -2721,6 +2721,9 @@ void main(){
     onFrame(fn) { afterRender.add(fn); return () => afterRender.delete(fn); },
     // 밤 9시 소원왕: {nick, txt, hearts} puts yesterday's top wish on every claimable board but the main tower; null ends it.
     setKing(k) { boards.setKing(k); },
+    // 명당 (primerules.js): the day's plan for the prime screens (/rt/world prime, or /rt/prime at midnight and 21:00); primeOf: what one shows now.
+    setPrime(plan) { return boards.setPrime?.(plan); },
+    primeOf(id) { return boards.primeOf?.(id) || null; },
     showGhost,
     setWatchPortrait,
     // 멍때리기: only the camera tours the boards (tourNext, every 8 s); the avatar stays where it stands.

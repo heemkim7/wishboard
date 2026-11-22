@@ -302,11 +302,11 @@ describe('which boards rotate', () => {
     assert.equal(wishRotates('WALL_1', undefined, false, false), false);
     assert.equal(wishRotates('MAIN_S', undefined, false, false), false);
   });
-  it('keeps the claim cue in the bottom strip', () => {
-    assert.equal(wishStrip('STREET_1', undefined, false), '빈 자리 · 200포인트부터');
-    assert.equal(wishStrip('SUB_1A', { holder_id: null }, false), '빈 자리 · 800포인트부터');
-    assert.equal(wishStrip('SUB_1A', { holder_id: 'u1', lit_until: past }, false), '불 꺼짐 · 주인이 다시 켤 수 있어요');
-    assert.equal(wishStrip('MAIN_UP', undefined, false), '밤 9시에 10분만 열려요 · 4,000포인트부터');
+  it('keeps the board cue in the bottom strip: a fixed price for 72 h, and a prime screen says how a team earns it (never a price)', () => {
+    assert.equal(wishStrip('STREET_1', undefined, false), '빈 자리 · 200포인트로 72시간');
+    assert.equal(wishStrip('STREET_1', { holder_id: 'u1', lit_until: past }, false), '불 꺼짐 · 주인이 다시 켤 수 있어요');
+    for (const id of ['SUB_1A', 'SUB_4B', 'MAIN_UP']) assert.equal(wishStrip(id, { holder_id: null }, false), '응원 팀 명당 · 서로 다른 사람의 응원으로 정해요', id);
+    assert.doesNotMatch(wishStrip('MAIN_UP', undefined, true), /포인트|열려요/);
   });
 });
 

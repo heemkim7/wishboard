@@ -54,7 +54,7 @@
 <body>
 <main>
   <h1>📷 사진 전광판 검수</h1>
-  <p class="sub">승인한 사진만 광장 전체 전광판에 송출됩니다. 거절하면 사진 요금이 점령자에게 환불되고, 송출 중인 사진을 내리면 환불 없이 글자 전광판으로 돌아갑니다.</p>
+  <p class="sub">승인한 사진만 광장 전체 전광판에 송출됩니다. 거절하면 사진 요금이 전광판 주인에게 환불되고, 송출 중인 사진을 내리면 환불 없이 글자 전광판으로 돌아갑니다.</p>
   <div class="sub">거절 기준
     <ul>
       <li>선정적·폭력적·혐오 표현, 불법 광고, 도박·사기 홍보</li>
@@ -77,7 +77,7 @@
   <div class="msg" id="msg"></div>
   <div class="grid" id="grid"></div>
   <h2>🚩 신고 <button id="modLoad" type="button">새로고침</button></h2>
-  <p class="sub">같은 계정은 같은 칸을 한국 시간으로 하루에 한 번만 신고합니다. S급 점령은 승인 전까지 칸을 바꾸지 않고, 거절하면 낸 코인을 그대로 돌려줍니다. 내리기는 문구와 링크만 지우고 코인은 되돌리지 않습니다.</p>
+  <p class="sub">같은 계정은 같은 칸을 한국 시간으로 하루에 한 번만 신고합니다. S급(전환 전에 들어온 메인 타워 신청)은 승인 전까지 칸을 바꾸지 않고, 거절하면 낸 포인트를 그대로 돌려줍니다. 내리기는 문구와 링크만 지우고 코인은 되돌리지 않습니다.</p>
   <div class="hits" id="reports"></div>
   <h2>S급 대기</h2>
   <div class="hits" id="reviews"></div>
@@ -118,7 +118,7 @@
   </div>
   <div class="msg" id="opsMsg"></div>
   <h2>📈 지표 <button id="statsLoad" type="button">새로고침</button></h2>
-  <p class="sub">한국 시간 기준 하루 단위. 방문자는 계정(게스트 포함) 수, 신규는 그날 처음 본 계정. D1·D7·D30은 그날 신규 가운데 1·7·30일 뒤에 다시 온 비율이고, 그 날짜가 지나야 채워집니다. 깔때기는 신규 방문자의 첫 화면 → 입장 → 첫 코인 → 첫 점령입니다.</p>
+  <p class="sub">한국 시간 기준 하루 단위. 방문자는 계정(게스트 포함) 수, 신규는 그날 처음 본 계정. D1·D7·D30은 그날 신규 가운데 1·7·30일 뒤에 다시 온 비율이고, 그 날짜가 지나야 채워집니다. 깔때기는 신규 방문자의 첫 화면 → 입장 → 첫 포인트 → 첫 전광판입니다.</p>
   <div class="msg" id="statsMsg"></div>
   <div class="scroll"><table id="stats"></table></div>
   <h2>🚀 성장 퍼널</h2>
@@ -128,6 +128,7 @@
 </main>
 <script type="module" src="./admin-ads.js?v=202611222045"></script>
 <script type="module" src="./admin-gift.js?v=202611222045"></script>
+<script type="module" src="./admin-team.js?v=202611222045"></script>
 <script type="module">
 import { GROW_STEPS, growDays, growSum, stepPct } from './growth.js?v=202611222045';
 import { kstDay } from './adsale.js'; // admin-ads.js loads the same module
@@ -205,7 +206,7 @@ async function load() {
   } catch (e) { msg(e.message, true); }
 }
 // Daily metrics from GET /rt/admin/stats (x-admin-key). Only on open and on the button: the readout reads the day's raw events.
-const STAT_COLS = ['날짜', '방문자', '신규', '재방문', 'D1', 'D7', 'D30', '세션', '체류(중앙)', '신규 깔때기: 첫 화면 → 입장 → 첫 코인 → 첫 점령', '점령', '택시', '링크', '로그인'];
+const STAT_COLS = ['날짜', '방문자', '신규', '재방문', 'D1', 'D7', 'D30', '세션', '체류(중앙)', '신규 깔때기: 첫 화면 → 입장 → 첫 포인트 → 첫 전광판', '전광판', '택시', '링크', '로그인'];
 const pct = (n, of) => of ? Math.round(n / of * 100) + '%' : '–';
 const span = (s) => s >= 60 ? Math.floor(s / 60) + '분 ' + (s % 60) + '초' : s + '초';
 async function loadStats() {
@@ -251,7 +252,7 @@ const REASON = { abuse: '욕설·혐오', ad: '광고', impersonation: '사칭',
 function modNote(text, err) { $('modMsg').textContent = text || ''; $('modMsg').className = err ? 'msg err' : 'msg'; }
 function emptyNote(text) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = text; return e; }
 async function reviewSlot(id, approve, btns) {
-  if (!confirm(approve ? '이 S급 점령을 승인할까요? 승인하는 시점의 칸에 환불 규칙을 적용합니다.' : '거절하고 입찰 코인을 그대로 돌려줄까요?')) return;
+  if (!confirm(approve ? '이 S급 신청을 승인할까요? 승인하는 시점의 칸에 환불 규칙을 적용합니다.' : '거절하고 낸 포인트를 그대로 돌려줄까요?')) return;
   for (const b of btns) b.disabled = true;
   try {
     const r = await api('/rt/admin/review', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, approve }) });
@@ -290,7 +291,7 @@ async function loadModeration() {
       no.onclick = () => reviewSlot(row.id, false, [ok, no]);
       el.append(ok, no);
       return el;
-    }) : [emptyNote('대기 중인 S급 점령이 없어요')]));
+    }) : [emptyNote('대기 중인 S급 신청이 없어요')]));
     modNote('');
   } catch (e) { modNote(e.message, true); }
 }
@@ -388,7 +389,7 @@ $('grant').onclick = async () => {
     const r = await api('/rt/admin/coins', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ actor_id: actorId, amount }) });
     const d = await r.json().catch(() => ({}));
     if (!r.ok || d.ok === false) throw new Error(d.error || '코인을 넣지 못했어요');
-    msg(`${d.nickname || '지갑'} 잔액 ${Number(d.coins).toLocaleString('ko-KR')} 코인. 게임에서 새로고침하세요.`);
+    msg(`${d.nickname || '지갑'} 잔액 ${Number(d.coins).toLocaleString('ko-KR')} 코인. 광장에서 새로고침하세요.`);
   } catch (e) { msg(e.message, true); }
   $('grant').disabled = false;
 };
