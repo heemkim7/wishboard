@@ -15,7 +15,7 @@ import { SLOTS, SLOT_IDS, SLOT_RE, isSlotId, STREET_N, floorOf, slotName, slotOp
 import { boardVantage, angledFit, frameDistance, portraitFov, boardRange, shortenFocus, facesBlock } from '../camrig.js';
 import { createNYC } from '../ts3d/nyc.js';
 import { SKIP_ZONES, LAYOUT, groundHeight } from '../ts3d/layout.js';
-import { planBowtie, wallsIn, pickWall, mulberry, faceGap, faceOf, CORE, STREET_OLD, STREET_NEW } from '../ts3d/bowtie.js';
+import { planBowtie, wallsIn, pickWall, mulberry, faceGap, faceOf, CORE, STREET_OLD, STREET_NEW, MOVED } from '../ts3d/bowtie.js';
 
 const read = (p) => readFileSync(new URL('../' + p, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const NEW = Array.from({ length: 20 }, (_, i) => 'STREET_' + (31 + i));
@@ -156,17 +156,34 @@ const PLACED = {
   STREET_46: [42.1, 127.1, 39.7, 22, 'stack'], STREET_47: [-45.1, 102.8, 15.4, 11.5, 'eye'], STREET_48: [-15.8, 184.4, 30.6, 14, 'stack'],
   STREET_49: [42.1, 127.1, 53.5, 22, 'stack'], STREET_50: [-15.8, 184.4, 39.8, 14, 'stack'],
 };
-// STREET_1..30 faces that the map puts inside a neighbouring building (overlapping OpenStreetMap outlines): no camera
-// can see them whole. They stay where they are (they have holders); see the inside-a-building check below.
-const EMBEDDED = ['STREET_18', 'STREET_21', 'STREET_22', 'STREET_24', 'STREET_27'];
+// STREET_1..30 faces that the map put inside a neighbouring building (overlapping OpenStreetMap outlines), so no camera
+// could see them whole. Nobody held them, so before launch they moved (bowtie.js MOVED) to the Marriott's east wall,
+// facing the square across Duffy Square. Where they went (face centre x, z, centre height, width), pinned like PLACED:
+const MOVED_IDS = MOVED.map((n) => 'STREET_' + n);
+const MOVED_TO = {
+  STREET_18: [-15.8, 140.65, 12, 14], STREET_21: [-15.8, 122.65, 38.34, 22], STREET_22: [-15.8, 104.65, 9.94, 19], STREET_24: [-15.8, 144.65, 34.12, 19],
+  STREET_25: [-15.8, 102.65, 37.35, 14.5], STREET_27: [-15.8, 102.65, 27.09, 14], STREET_28: [-15.8, 121.65, 7.69, 11], STREET_29: [-15.8, 139.65, 22.87, 11],
+};
+// Boards kept where they are (not part of that move) that still fall short on the map, each for the reason given:
+//  STREET_23, 35, 47: in the Marriott's atrium, which the map closes all round under its 59 m east shell (x -18.2..-16.7);
+//    the camera frames them from inside it, but nobody on the street sees them. STREET_23 also has only 12 m in front of
+//    it at its height (the shell), so the camera turns 60 degrees for it in portrait.
+//  STREET_26, 30 (W 42nd St): in a pocket the map closes, one end of the face 0.5 m inside the next outline. STREET_26
+//    has 17.8 m in front of it, not 18, and in portrait comes out short of the margin (fit 0.93, the lens opened 12°).
+const SEALED = ['STREET_23', 'STREET_26', 'STREET_30', 'STREET_35', 'STREET_47'];
+const OVERLAP = ['STREET_26', 'STREET_30'];
+const SHALLOW = ['STREET_23', 'STREET_26'];
+const SHORT = { STREET_26: ['portrait', 'portrait, phone tier'] };
 
 describe('where the twenty go (ts3d/bowtie.js on the real map)', { skip: haveMap ? false : 'assets/nyc/manhattan.bin missing' }, () => {
   before(loadMap);
-  it('STREET_1..30 and the corner towers are exactly where they shipped; blades only lose the ones through a board', () => {
+  it('STREET_1..30 and the corner towers are exactly where they shipped, but for the eight moved; blades only lose the ones through a board', () => {
     const old = shipped(nyc);
     for (let i = 0; i < 30; i++) {
       const a = plan.streets[i], b = old.streets[i];
       assert.equal(a.id, 'STREET_' + (i + 1));
+      if (MOVED_IDS.includes(a.id)) { assert.deepEqual(a.moved, { x: b.x, z: b.z, y: b.y, w: b.w }, a.id); continue; }
+      assert.equal(a.moved, undefined, a.id);
       for (const k of ['x', 'z', 'yaw', 'y', 'w']) assert.equal(a[k], b[k], a.id + ' ' + k);
     }
     for (let i = 0; i < 4; i++) for (const k of ['x', 'z', 'yaw', 'w', 'yB']) assert.equal(plan.corners[i][k], old.corners[i][k], 'SUB_' + (i + 1) + ' ' + k);
@@ -188,6 +205,44 @@ describe('where the twenty go (ts3d/bowtie.js on the real map)', { skip: haveMap
     assert.equal(plan.streets.slice(30).filter((s) => s.kind === 'eye').length, 13);
     assert.equal(plan.streets.slice(30).filter((s) => s.kind === 'stack').length, 7);
   });
+  it('the eight moved ones are where they were placed: the search lands exactly on the table the clients use', () => {
+    assert.deepEqual([...MOVED].sort((a, b) => a - b), [18, 21, 22, 24, 25, 27, 28, 29]);
+    const found = planBowtie(nyc, { search: true });
+    for (const id of MOVED_IDS) {
+      const s = plan.streets.find((q) => q.id === id), f = faceOf(s), [x, z, y, w] = MOVED_TO[id];
+      assert.ok(Math.abs(f.x - x) < 0.06 && Math.abs(f.z - z) < 0.06 && Math.abs(s.y - y) < 0.06 && Math.abs(s.w - w) < 1e-9, `${id} ${f.x} ${f.z} ${s.y} ${s.w}`);
+      const t = found.streets.find((q) => q.id === id);
+      assert.deepEqual([t.x, t.z, t.yaw, t.y, t.w, t.h], [s.x, s.z, s.yaw, s.y, s.w, s.h], id);
+      assert.ok(Math.abs(s.h - s.w * 9 / 16) < 1e-9 && s.w >= 10 && s.w <= s.moved.w, id);
+      assert.ok(Math.hypot(f.x - CORE.x, f.z - CORE.z) <= CORE.r && f.z >= CORE.z0 && f.z <= CORE.z1, id + ' in the core');
+      assert.ok(s.y - s.h / 2 >= 4.6 - 1e-9 && s.y + s.h / 2 + s.frame <= s.wall.h - 1 + 1e-9, id + ' under the roof');
+      assert.ok(s.nx > 0.99, id + ' faces east, onto the square');
+    }
+    // everything else in the plan is the same whichever way the eight were found
+    for (const s of plan.streets) if (!MOVED_IDS.includes(s.id)) { const t = found.streets.find((q) => q.id === s.id); assert.deepEqual([t.x, t.z, t.y, t.w], [s.x, s.z, s.y, s.w], s.id); }
+  });
+  it('the old spots of the eight were inside a neighbouring building', () => {
+    const old = shipped(nyc);
+    // across the face, 1.2 m and 2 m off its wall (the face is at 0.9 m), inside a building standing above its bottom edge
+    const clippedAt = (b) => {
+      const nx = Math.sin(b.yaw), nz = Math.cos(b.yaw), h = b.w * 9 / 16;
+      for (let i = 0; i <= 10; i++) for (const out of [1.2, 2]) {
+        const u = -b.w / 2 + (b.w * i) / 10, k = nyc.buildingAt(b.x + nx * (out - 0.7) + nz * u, b.z + nz * (out - 0.7) - nx * u);
+        if (k >= 0 && nyc.buildings.h[k] > b.y - h / 2) return true;
+      }
+      return false;
+    };
+    for (const id of MOVED_IDS) assert.ok(clippedAt(old.streets[Number(id.slice(7)) - 1]), id);
+  });
+  it('the two free first ones that moved (22, 27) are nearer the bakery walk than before', () => {
+    const A = LAYOUT.spawn, S = LAYOUT.stall;
+    const walk = (x, z) => { const dx = S.x - A.x, dz = S.z - A.z, t = Math.max(0, Math.min(1, ((x - A.x) * dx + (z - A.z) * dz) / (dx * dx + dz * dz))); return Math.hypot(x - A.x - dx * t, z - A.z - dz * t); };
+    for (const id of ['STREET_22', 'STREET_27']) {
+      assert.ok(TWELVE.includes(id), id);
+      const s = plan.streets.find((q) => q.id === id), f = faceOf(s);
+      assert.ok(walk(f.x, f.z) < walk(s.moved.x, s.moved.z) && walk(f.x, f.z) < 40, `${id} ${walk(f.x, f.z)} vs ${walk(s.moved.x, s.moved.z)}`);
+    }
+  });
   it('all in the core, facing the square, 16:9, the eye-level ones from 4.6 m up', () => {
     for (const s of plan.streets.slice(30)) {
       const f = faceOf(s);
@@ -198,38 +253,49 @@ describe('where the twenty go (ts3d/bowtie.js on the real map)', { skip: haveMap
       assert.ok(s.y + s.h / 2 + s.frame <= s.wall.h - 1 + 1e-9, s.id + ' under the roof');
     }
   });
-  it('no new face touches another face, the main stack, a corner board or a blade sign', () => {
+  it('no new or moved face touches another face, the main stack, a corner board or a blade sign', () => {
     const faces = plan.streets.map((s) => ({ id: s.id, r: faceOf(s, s.frame) }));
     for (const c of plan.corners) for (const y of [c.yA, c.yB]) faces.push({ id: 'SUB_' + c.n, r: { x: c.x + c.nx * 0.35, y, z: c.z + c.nz * 0.35, nx: c.nx, nz: c.nz, rx: c.nz, rz: -c.nx, hw: c.w / 2 + 0.16, hh: c.h / 2 + 0.16 } });
     faces.push({ id: 'MAIN', r: plan.main });
     for (const b of plan.blades) faces.push({ id: 'blade', r: b.face });
-    for (const a of faces.filter((f) => NEW.includes(f.id))) for (const b of faces) if (a !== b) assert.ok(faceGap(a.r, b.r) >= 0.3 - 1e-9, `${a.id} - ${b.id} ${faceGap(a.r, b.r)}`);
+    for (const a of faces.filter((f) => NEW.includes(f.id) || MOVED_IDS.includes(f.id))) for (const b of faces) if (a !== b) assert.ok(faceGap(a.r, b.r) >= 0.3 - 1e-9, `${a.id} - ${b.id} ${faceGap(a.r, b.r)}`);
+    // and no two street faces touch at all
+    const st = faces.filter((f) => /^STREET_/.test(f.id));
+    for (const a of st) for (const b of st) if (a !== b) assert.ok(faceGap(a.r, b.r) > 0, `${a.id} - ${b.id}`);
     // and the six blades that would have stood through STREET_1..30 or a corner board are gone
     for (const b of plan.blades) for (const s of plan.streets.slice(0, 30)) assert.ok(faceGap(b.face, faceOf(s, s.frame)) > 0, s.id);
   });
-  it('no new face is inside a building, and each has open street in front of it', () => {
-    const B = nyc.buildings;
-    for (const s of plan.streets.slice(30)) {
+  it('all 50: no face inside a building, 18 m of open street in front at its height, on a street the map leaves open (but for the ones named above)', () => {
+    const B = nyc.buildings, inside = [], shallow = [], sealed = [];
+    nyc.ensureSolid(16, 0, 400);
+    for (const s of plan.streets) {
       const f = faceOf(s);
+      let hit = false;
       for (let i = 0; i <= 10; i++) for (const out of [0.5, 1.2]) {
         const u = -s.w / 2 + (s.w * i) / 10, x = s.wall.mx + s.wall.tx * s.along + s.nx * out + f.rx * u, z = s.wall.mz + s.wall.tz * s.along + s.nz * out + f.rz * u;
         const b = nyc.buildingAt(x, z);
-        assert.ok(b < 0 || B.h[b] < s.y - s.h / 2, `${s.id} inside building ${b} at ${u}`);
+        if (b >= 0 && B.h[b] >= s.y - s.h / 2) hit = true;
       }
-      assert.equal(nyc.rayBlock(f.x + s.nx * 1.5, s.y, f.z + s.nz * 1.5, f.x + s.nx * 19.5, s.y, f.z + s.nz * 19.5), 1, s.id);
+      if (hit) inside.push(s.id);
+      if (nyc.rayBlock(f.x + s.nx * 1.5, s.y, f.z + s.nz * 1.5, f.x + s.nx * 19.5, s.y, f.z + s.nz * 19.5) < 1) shallow.push(s.id);
+      // from 3 m in front, at the face's height, two neighbouring lines (5 degrees apart, so not a crack between two
+      // outlines) within 85 degrees of straight out run 60 m clear
+      const ax = f.x + s.nx * 3, az = f.z + s.nz * 3;
+      const clear = (deg) => { const a = (deg * Math.PI) / 180, dx = s.nx * Math.cos(a) - s.nz * Math.sin(a), dz = s.nx * Math.sin(a) + s.nz * Math.cos(a); return nyc.rayBlock(ax, s.y, az, ax + dx * 60, s.y, az + dz * 60) === 1; };
+      let open = false;
+      for (let deg = -85; deg < 85 && !open; deg += 5) open = clear(deg) && clear(deg + 5);
+      if (!open) sealed.push(s.id);
     }
+    assert.deepEqual(inside, OVERLAP);
+    assert.deepEqual(shallow, SHALLOW);
+    assert.deepEqual(sealed, SEALED);
+    for (const id of MOVED_IDS) assert.ok(![...SEALED, ...OVERLAP, ...SHALLOW].includes(id), id);
   });
   it('the eight free first ones are the new eye-level faces nearest the bakery walk (spawn to the stall)', () => {
     const A = LAYOUT.spawn, S = LAYOUT.stall;
     const walk = (s) => { const f = faceOf(s), dx = S.x - A.x, dz = S.z - A.z, t = Math.max(0, Math.min(1, ((f.x - A.x) * dx + (f.z - A.z) * dz) / (dx * dx + dz * dz))); return Math.hypot(Math.hypot(f.x - A.x - dx * t, f.z - A.z - dz * t), s.y - 1.6); };
     const eye = plan.streets.slice(30).filter((s) => s.kind === 'eye').sort((a, b) => walk(a) - walk(b)).map((s) => s.id);
     assert.deepEqual(eye.slice(0, 8), EIGHT);
-  });
-  it('the faces the camera may not frame (EMBEDDED) are ones the map puts inside a neighbouring building', () => {
-    // the face's middle, 1.2 m off its wall (the face is at 0.9 m), inside a building that stands above the face's top edge
-    const inside = (s) => { const b = nyc.buildingAt(s.wall.mx + s.nx * 1.2, s.wall.mz + s.nz * 1.2); return b >= 0 && nyc.buildings.h[b] > s.y + s.h / 2; };
-    for (const id of EMBEDDED) assert.ok(inside(plan.streets.find((s) => s.id === id)), id);
-    for (const s of plan.streets.slice(30)) assert.equal(inside(s), false, s.id);
   });
 });
 
@@ -300,15 +366,13 @@ describe('every street board framed in portrait (390 x 844) and landscape', { sk
     const hit = facesBlock(faces.filter((f) => f.id !== id));
     return (ax, ay, az, bx, by, bz) => Math.min(nyc.rayBlock(ax, ay, az, bx, by, bz), hit(ax, ay, az, bx, by, bz));
   };
-  it('the twenty new ones: straight on, all of the face, nothing in the way, the frame\'s own FOV', () => {
-    for (const s of plan.streets.slice(30)) for (const [name, aspect, vfov] of FRAMES) {
+  it('the twenty new ones and the eight moved: straight on, all of the face, nothing in the way, the frame\'s own FOV', () => {
+    for (const s of plan.streets.filter((q) => q.n > 30 || MOVED_IDS.includes(q.id))) for (const [name, aspect, vfov] of FRAMES) {
       const v = boardVantage({ face: faceAt(s), dist: 18, aspect, vfov, block: blockFor(s.id), ground: groundHeight });
       assert.deepEqual([v.yaw, v.fit, v.seen, v.fov], [0, 1, 1, vfov], `${s.id} ${name}`);
     }
   });
-  // Part of the face in a building's footprint (the map overlaps there): the camera cannot see through it, wherever it stands.
-  const clipped = (s) => { const f = faceOf(s); for (let i = 0; i <= 10; i++) for (const out of [1.2, 2]) { const u = -s.w / 2 + (s.w * i) / 10, b = nyc.buildingAt(s.wall.mx + s.nx * out + f.rx * u, s.wall.mz + s.nz * out + f.rz * u); if (b >= 0 && nyc.buildings.h[b] > s.y - s.h / 2) return true; } return false; };
-  it('STREET_1..30: never worse than the straight-back camera; the whole face in the frame except the five inside a building; all of it seen where the map is clean', () => {
+  it('STREET_1..30: never worse than the straight-back camera; all of the face seen and in the frame, but for STREET_26 in portrait', () => {
     for (const s of plan.streets.slice(0, 30)) for (const [name, aspect, vfov] of FRAMES) {
       const f = faceAt(s), v = boardVantage({ face: f, dist: 18, aspect, vfov, block: blockFor(s.id), ground: groundHeight });
       const need = frameDistance({ w: f.w, h: f.h, aspect, vfov }), d = boardRange(18, need);
@@ -317,16 +381,15 @@ describe('every street board framed in portrait (390 x 844) and landscape', { sk
       const tag = `${s.id} ${name}: fit ${v.fit.toFixed(2)} (was ${old.toFixed(2)}) seen ${v.seen.toFixed(2)} yaw ${(v.yaw * 180 / Math.PI).toFixed(0)} fov ${v.fov}`;
       assert.ok(v.fov <= vfov + 12, tag);
       assert.ok(v.fit >= old - 1e-9 || v.seen > 0.99, tag);
-      if (EMBEDDED.includes(s.id)) continue;
-      assert.ok(v.fit >= 0.84, tag);
-      if (!clipped(s)) assert.equal(v.seen, 1, tag);
+      assert.equal(v.seen, 1, tag);
+      if (SHORT[s.id]?.includes(name)) { assert.ok(v.fit >= 0.84 && v.fit < 1, tag); continue; }
+      assert.equal(v.fit, 1, tag);
     }
   });
   it('the portrait boards the old straight-back camera cut (STREET_1, 2, 4, 8, 14, 17, 23 …) now fit', () => {
     const [, aspect, vfov] = FRAMES[0];
     let fixed = 0;
     for (const s of plan.streets.slice(0, 30)) {
-      if (EMBEDDED.includes(s.id)) continue;
       const f = faceAt(s), need = frameDistance({ w: f.w, h: f.h, aspect, vfov }), d = boardRange(18, need);
       const cy = Math.max(f.y * 0.42 + 1.8, groundHeight(f.x + f.nx * d, f.z + f.nz * d) + 1.6);
       const old = shortenFocus(d, nyc.rayBlock(f.x + f.nx * 2.5, f.y + (cy - f.y) * (2.5 / d), f.z + f.nz * 2.5, f.x + f.nx * d, cy, f.z + f.nz * d)) / need;
