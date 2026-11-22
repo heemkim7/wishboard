@@ -4,6 +4,14 @@
 #
 #   blender --background --factory-startup --python tools/blender/render_animal.py -- assets/models/BearToy.glb <outdir> [prefix] [--wire] [--only a,b]
 #   blender --background --factory-startup --python tools/blender/render_animal.py -- --lineup assets/models/MouseToy.glb assets/models/CatToy.glb assets/models/BearToy.glb <outdir> lineup
+#   blender --background --factory-startup --python tools/blender/render_animal.py -- --avatars assets/avatars [--models <dir>] [--sheet <png>]
+#
+# --avatars writes the character-picker thumbnails <key>.png (mouse, cat, bear, rabbit, puppy, panda, fox, penguin,
+# hamster, tiger; this one mode writes into the repository): 160x160, transparent, head and shoulders in a front
+# three-quarter view, first frame of Idle, the hoodie as exported (neutral light grey), one camera and one light rig
+# for all ten. Each is rendered at twice the size, averaged down and written as a 256-colour palette PNG (about 20 KB).
+# It also writes contact sheets of the ten (default %TEMP%/kts-avatars/sheet.png, and sheet_64.png at picker size).
+# --models reads the GLBs from another folder (default assets/models).
 #
 # It renders the exported GLB itself (not the build scene), so what you see is what the game loads.
 # The rest pose is the T-pose; the arms were modelled 40 degrees down, so the T-pose shows a stretched underarm. Judge the pose shots.
@@ -16,7 +24,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 pos, i = [], 0
 while i < len(argv):
-    if argv[i] == "--only":
+    if argv[i] in ("--only", "--models", "--sheet"):
         i += 2
         continue
     if not argv[i].startswith("--"):
@@ -27,6 +35,184 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 def here(p):
     # Blender resolves a bare relative render path against the drive root, so make every path absolute first.
     return os.path.abspath(p)
+
+# =====================================================================================================
+# Picker thumbnails (--avatars)
+AVATAR_KEYS = ("mouse", "cat", "bear", "rabbit", "puppy", "panda", "fox", "penguin", "hamster", "tiger")
+
+def write_png(path, rgba):
+    """rgba: (h, w, 4) uint8, top row first. A palette PNG when there are at most 256 colours, else RGBA with the
+    smallest-sum filter per row. Deflate level 9."""
+    import zlib, struct
+    h, w = rgba.shape[:2]
+    cols, inv = np.unique(np.ascontiguousarray(rgba).reshape(-1, 4).view(np.uint32).ravel(), return_inverse=True)
+    if len(cols) <= 256:
+        pal = cols.view(np.uint8).reshape(-1, 4)
+        order = np.argsort(pal[:, 3], kind="stable")          # see-through entries first keeps tRNS short
+        rank = np.empty_like(order); rank[order] = np.arange(len(order))
+        pal = pal[order]
+        rows, bpp, ctype = rank[inv.ravel()].astype(np.int16).reshape(h, w), 1, 3
+    else:
+        rows, bpp, ctype = rgba.reshape(h, w * 4).astype(np.int16), 4, 6
+    raw = bytearray()
+    prev = np.zeros(rows.shape[1], np.int16)
+    for row in rows:
+        if ctype == 3:
+            raw.append(0); raw += row.astype(np.uint8).tobytes()
+            continue
+        left = np.concatenate([np.zeros(bpp, np.int16), row[:-bpp]])
+        ul = np.concatenate([np.zeros(bpp, np.int16), prev[:-bpp]])
+        pa, pb, pc = np.abs(prev - ul), np.abs(left - ul), np.abs(left + prev - 2 * ul)
+        paeth = np.where((pa <= pb) & (pa <= pc), left, np.where(pb <= pc, prev, ul))
+        cands = [row, row - left, row - prev, row - (left + prev) // 2, row - paeth]
+        best = min(range(5), key=lambda k: int(np.abs(((cands[k] + 128) % 256) - 128).sum()))
+        raw.append(best); raw += (cands[best] % 256).astype(np.uint8).tobytes()
+        prev = row
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+    out = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, ctype, 0, 0, 0))
+    if ctype == 3:
+        out += chunk(b"PLTE", pal[:, :3].tobytes())
+        nt = int((pal[:, 3] < 255).sum())
+        if nt:
+            out += chunk(b"tRNS", pal[:nt, 3].tobytes())
+    out += chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b"")
+    with open(path, "wb") as f:
+        f.write(out)
+    return len(out)
+
+def quantize(rgba, n=256, iters=16):
+    """k-means palette (n - 1 colours plus clear) on premultiplied colour and alpha. Fully clear pixels stay (0,0,0,0)."""
+    px = rgba.reshape(-1, 4).astype(np.float32)
+    vis = px[:, 3] > 0
+    v = px[vis]
+    feat = np.concatenate([v[:, :3] * v[:, 3:4] / 255.0, v[:, 3:4]], 1)
+    uniq = np.unique(feat, axis=0)
+    if len(uniq) <= n - 1:
+        return rgba
+    rng = np.random.default_rng(7)
+    cent = uniq[rng.choice(len(uniq), n - 1, replace=False)]
+    for _ in range(iters):
+        lab = (-2 * feat @ cent.T + (cent * cent).sum(1)[None]).argmin(1)
+        cnt = np.bincount(lab, minlength=len(cent))
+        for c in range(4):
+            s = np.bincount(lab, weights=feat[:, c], minlength=len(cent))
+            cent[:, c] = np.where(cnt > 0, s / np.maximum(cnt, 1), cent[:, c])
+    lab = (-2 * feat @ cent.T + (cent * cent).sum(1)[None]).argmin(1)
+    a = np.clip(cent[:, 3:4], 1, 255)
+    col = np.clip(np.round(np.concatenate([cent[:, :3] * 255.0 / a, cent[:, 3:4]], 1)), 0, 255)
+    out = np.zeros_like(px)
+    out[vis] = col[lab]
+    return out.reshape(rgba.shape).astype(np.uint8)
+
+def render_avatars():
+    out_dir = here(pos[0]) if pos else os.path.join(REPO, "assets", "avatars")
+    models = here(argv[argv.index("--models") + 1]) if "--models" in argv else os.path.join(REPO, "assets", "models")
+    sheet = here(argv[argv.index("--sheet") + 1]) if "--sheet" in argv else os.path.join(tempfile.gettempdir(), "kts-avatars", "sheet.png")
+    os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(os.path.dirname(sheet), exist_ok=True)
+    S, SS = 160, 2                       # final size, supersampling
+    tiles = {}
+    for key in AVATAR_KEYS:
+        bpy.ops.wm.read_factory_settings(use_empty=True)
+        sc = bpy.context.scene
+        sc.render.fps = 30
+        bpy.ops.import_scene.gltf(filepath=os.path.join(models, key.capitalize() + "Toy.glb"))
+        arm = next(o for o in sc.objects if o.type == "ARMATURE")
+        for o in list(sc.objects):
+            if o.type == "MESH" and o.parent is None and len(o.data.polygons) <= 80 and not o.modifiers:
+                bpy.data.objects.remove(o, do_unlink=True)    # the importer's bone-shape icosphere
+        root = bpy.data.objects.new("Root", None)
+        sc.collection.objects.link(root)
+        root.scale = (0.01, 0.01, 0.01)
+        arm.parent = root
+        root.rotation_euler = (0, 0, math.radians(-22))      # front three-quarter: the face turns to the viewer's left
+        act = next(a for a in bpy.data.actions if a.name.split(".")[0] == "Idle")
+        ad = arm.animation_data or arm.animation_data_create()
+        for t in ad.nla_tracks:
+            t.mute = True
+        ad.action = act
+        try:
+            if ad.action_slot is None and act.slots:
+                ad.action_slot = act.slots[0]
+        except Exception:
+            pass
+        arm.data.pose_position = "POSE"
+        sc.frame_set(int(act.frame_range[0]))
+        wd = bpy.data.worlds.new("Soft")
+        sc.world = wd
+        wd.use_nodes = True
+        wd.node_tree.nodes["Background"].inputs[0].default_value = (0.16, 0.165, 0.18, 1)
+        def lamp(name, loc, power, size, color, target=(0, 0, 0.95)):
+            L = bpy.data.lights.new(name, "AREA")
+            L.energy, L.size, L.color = power, size, color
+            o = bpy.data.objects.new(name, L)
+            sc.collection.objects.link(o)
+            o.location = loc
+            o.rotation_euler = (Vector(target) - Vector(loc)).to_track_quat("-Z", "Y").to_euler()
+        lamp("Key", (-1.4, -2.6, 2.6), 95, 2.0, (1.0, 0.97, 0.92))
+        lamp("Fill", (2.0, -1.8, 1.2), 22, 2.5, (0.9, 0.94, 1.0))
+        lamp("Rim", (0.6, 2.4, 2.4), 120, 1.2, (1.0, 1.0, 1.0), target=(0, 0, 1.1))
+        cd = bpy.data.cameras.new("Cam")
+        cd.lens, cd.sensor_fit, cd.sensor_height = 85, "VERTICAL", 24.0
+        cam = bpy.data.objects.new("Cam", cd)
+        sc.collection.objects.link(cam)
+        sc.camera = cam
+        frame_h, aim = AVATAR_FRAME
+        dist = frame_h / 2 / math.tan(math.atan(12.0 / cd.lens))
+        pitch = math.radians(AVATAR_PITCH)
+        cam.location = aim + Vector((0, -dist * math.cos(pitch), dist * math.sin(pitch)))
+        cam.rotation_euler = (aim - cam.location).to_track_quat("-Z", "Y").to_euler()
+        r = sc.render
+        r.engine = "BLENDER_EEVEE_NEXT"
+        sc.eevee.taa_render_samples = 64
+        r.film_transparent = True
+        r.resolution_x = r.resolution_y = S * SS
+        r.resolution_percentage = 100
+        r.image_settings.file_format, r.image_settings.color_mode, r.image_settings.color_depth = "PNG", "RGBA", "8"
+        sc.view_settings.view_transform, sc.view_settings.look = "Standard", "None"
+        tmp = os.path.join(os.path.dirname(sheet), "_big_%s.png" % key)
+        r.filepath = tmp
+        bpy.ops.render.render(write_still=True)
+        img = bpy.data.images.load(tmp)
+        px = np.empty(S * SS * S * SS * 4, np.float32)
+        img.pixels.foreach_get(px)
+        px = px.reshape(S * SS, S * SS, 4)[::-1]                # top row first
+        pre = px.copy()
+        pre[..., :3] *= pre[..., 3:4]                            # average premultiplied, then un-premultiply
+        small = pre.reshape(S, SS, S, SS, 4).mean((1, 3))
+        a = small[..., 3:4]
+        small[..., :3] = np.where(a > 1e-4, small[..., :3] / np.maximum(a, 1e-4), 0)
+        rgba = np.clip(np.round(small * 255), 0, 255).astype(np.uint8)
+        rgba[rgba[..., 3] == 0] = 0
+        q = quantize(rgba)
+        path = os.path.join(out_dir, key + ".png")
+        print("AVATAR", key, write_png(path, q), "bytes", path)
+        tiles[key] = q
+        bpy.data.images.remove(img)
+        os.remove(tmp)
+    # contact sheets: the ten on a dark and on a light ground, at full size and at picker size
+    def comp(t, bg):
+        a = t[..., 3:4] / 255.0
+        return t[..., :3] * a + np.array(bg, float) * (1 - a)
+    grids = [np.concatenate([np.concatenate([comp(tiles[k], bg) for k in AVATAR_KEYS[i:i + 5]], 1) for i in (0, 5)], 0)
+             for bg in ((26, 32, 52), (236, 238, 242))]
+    big = np.concatenate(grids, 0)
+    h, w = big.shape[:2]
+    im = bpy.data.images.new("sheet", w, h, alpha=True)
+    im.pixels.foreach_set(np.concatenate([big / 255.0, np.ones((h, w, 1))], 2)[::-1].astype(np.float32).ravel())
+    im.filepath_raw, im.file_format = sheet, "PNG"
+    im.save()
+    im.scale(w * 64 // S, h * 64 // S)
+    im.filepath_raw = sheet[:-4] + "_64.png"
+    im.save()
+    print("SHEET", sheet)
+
+AVATAR_FRAME = (1.06, Vector((-0.02, 0.0, 1.035)))    # frame height and aim (m): chest to just above the rabbit's ear tips
+AVATAR_PITCH = 7.0
+if "--avatars" in argv:
+    render_avatars()
+    sys.exit(0)
 
 LINEUP = "--lineup" in argv
 WIRE = "--wire" in argv
@@ -293,7 +479,7 @@ if LINEUP:
             c["root"].rotation_euler = (0, 0, math.radians(y))
         scene.frame_set(0)
         bpy.context.view_layer.update()
-    pose_all([8, 0, -8][:n])
+    pose_all([8 - 16 * i / max(n - 1, 1) for i in range(n)])     # all of them posed, turned a little to the middle
     shoot("front", pitch=6, frame_h=max(frame_h, HEIGHT * 1.15), aim_z=HEIGHT * 0.5)
     pose_all([180] * n)
     shoot("back", pitch=10, frame_h=max(frame_h, HEIGHT * 1.15), aim_z=HEIGHT * 0.5)
