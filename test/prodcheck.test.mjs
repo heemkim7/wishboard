@@ -87,7 +87,7 @@ describe('prod-e2e pure helpers', () => {
     assert.deepEqual(st, [...BALANCE.starterSlots, 'STREET_1', 'STREET_2']);
     assert.deepEqual(E.starterOf(null), [...BALANCE.starterSlots]);
     c = E.slotCandidates({ billboards: boards.filter((b) => b.slot_id.startsWith('STREET_')), plots: [] }, st);
-    assert.equal(c[0].slot, 'STREET_3'); assert.ok(!c.some((x) => st.includes(x.slot)));
+    assert.equal(c[0].slot, 'STREET_31'); assert.ok(!c.some((x) => st.includes(x.slot))); // STREET_31..50 are the cheapest street faces
   });
   it('uses copy the server accepts, and refusal copy it refuses as link', () => {
     assert.equal(wishFault(E.WISH_TEXT), ''); assert.equal(wishFault(E.WISH_EDIT), '');
@@ -317,12 +317,12 @@ describe('prod-e2e dry run (in-memory Worker, Meter, Room; fake Supabase)', { co
 
   it('checks the read flag when GET /rt/inbox carries it, and stays off every free-first slot /rt/config lists', async () => {
     const h = setup(); h.db.readFlag = true;
-    // every plot front is taken by a player, so the cheapest empty boards are STREET_1, STREET_2, ...; the database lists STREET_1 and STREET_2 as free-first
+    // every plot front is taken by a player, so the cheapest empty boards are STREET_31, STREET_32, ...; the database lists STREET_31 and STREET_32 as free-first
     for (const b of h.db.boards.values()) if (b.slot_id.startsWith('PLOT_')) Object.assign(b, { holder_id: 'guest:g-33333333-3333-4333-8333-333333333333', holder_name: '손님' });
-    h.db.starter = ['STREET_1', 'STREET_2']; bump(61000); await W.starterSlots(h.env); // the Worker's 10-minute copy of starter_slot_list
+    h.db.starter = ['STREET_31', 'STREET_32']; bump(61000); await W.starterSlots(h.env); // the Worker's 10-minute copy of starter_slot_list
     const r = await go(h, { statePath: path.join(dir, 'flag.json') });
     assert.deepEqual(fails(r), [], r.text); assert.equal(r.code, 0, r.text);
-    assert.deepEqual(h.db.claims.map((x) => x.p_slot_id), ['STREET_3']);
+    assert.deepEqual(h.db.claims.map((x) => x.p_slot_id), ['STREET_33']);
     assert.match(r.text, /PASS {2}board +the row was unread before/); assert.match(r.text, /PASS {2}board +GET \/rt\/inbox shows it read/);
     assert.ok(!/the read flag is visible/.test(r.text));
     // config unreadable: the board step stops before any claim

@@ -107,7 +107,7 @@ async function coinsOf(token) {
   return Number(j.coins) || 0;
 }
 
-const streetFloor = (n) => 200 + Math.round((n - 1) * 200 / 29);
+const streetFloor = (n) => (n <= 30 ? 200 + Math.round((n - 1) * 200 / 29) : 150 + Math.round((n - 31) * 100 / 19)); // balance.js streetBid
 const plotFloor = (n) => 100 + Math.round((n - 1) * 200 / 17);
 function floorOf(slot) {
   const n = Number(String(slot).split('_')[1]);

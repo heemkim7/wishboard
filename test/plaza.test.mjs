@@ -949,7 +949,7 @@ describe('times square plaza', { concurrency: false }, () => {
       await click(SQ, a, 'STREET_1');
       assert.deepEqual(coinOf(env.room(SQ).sql, uid), { delta: 15, n: 1 });
       for (let i = 0; i < 20; i++) await click(SQ, a, 'STREET_1');
-      for (const bad of ['MAIN_S', 'STREET_31', '', undefined]) await click(SQ, a, bad);
+      for (const bad of ['MAIN_S', 'STREET_51', '', undefined]) await click(SQ, a, bad);
       assert.deepEqual(coinOf(env.room(SQ).sql, uid), { delta: 15, n: 1 });
       for (const slot of ['STREET_2', 'SUB_1A', 'PLOT_4', 'MAIN_TOP']) await click(SQ, a, slot);
       assert.deepEqual(coinOf(env.room(SQ).sql, uid), { delta: 75, n: 5 });

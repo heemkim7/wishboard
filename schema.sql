@@ -39,7 +39,7 @@ FROM generate_series(1, 20) AS g
 ON CONFLICT (plot_id) DO NOTHING;
 
 -- 3. 전광판(Billboards) 슬롯 테이블
--- 점령 가능한 슬롯: MAIN 3, SUB 8, STREET 30, PLOT 18.
+-- 점령 가능한 슬롯: MAIN 5, SUB 8, STREET 50, PLOT 18 (81칸).
 CREATE TABLE IF NOT EXISTS public.billboards (
   slot_id TEXT PRIMARY KEY,
   tier TEXT NOT NULL CHECK (tier IN ('S', 'B', 'C')),
@@ -134,6 +134,14 @@ SELECT 'STREET_' || g, 'C',
   200 + round((g - 1) * 200.0 / 29)::bigint,
   g || '번 메인거리', '거리 쪽 큰 화면', '200~400 코인'
 FROM generate_series(1, 30) AS g
+ON CONFLICT (slot_id) DO NOTHING;
+
+-- STREET_31..50: the plaza core, added 2026-11-22 (migrations/2026-11-22-boards.sql), the cheapest street faces.
+INSERT INTO public.billboards (slot_id, tier, current_bid, line1, line2, line3)
+SELECT 'STREET_' || g, 'C',
+  150 + round((g - 31) * 100.0 / 19)::bigint,
+  g || '번 메인거리', '거리 쪽 큰 화면', '150~250 코인'
+FROM generate_series(31, 50) AS g
 ON CONFLICT (slot_id) DO NOTHING;
 
 -- 4. 앱 설정 시크릿 테이블 (Worker FLUSH_KEY 검증용)
@@ -821,7 +829,7 @@ BEGIN
 END;
 $$;
 
--- 29-slot floors. 0 means the id is not claimable.
+-- Floors of the 81 claimable slots (balance.js SLOTS). 0 means the id is not claimable.
 CREATE OR REPLACE FUNCTION public.slot_floor(p_slot TEXT)
 RETURNS BIGINT
 LANGUAGE sql
@@ -838,6 +846,8 @@ AS $$
     ELSE CASE
       WHEN p_slot ~ '^STREET_([1-9]|[12][0-9]|30)$'
         THEN (200 + round((substring(p_slot from 8)::int - 1) * 200.0 / 29))::bigint
+      WHEN p_slot ~ '^STREET_(3[1-9]|4[0-9]|50)$'
+        THEN (150 + round((substring(p_slot from 8)::int - 31) * 100.0 / 19))::bigint
       WHEN p_slot ~ '^PLOT_([1-9]|1[0-8])$'
         THEN (100 + round((substring(p_slot from 6)::int - 1) * 200.0 / 17))::bigint
       ELSE 0
@@ -845,15 +855,17 @@ AS $$
   END;
 $$;
 
--- Free first slots (claim_billboard p_mode = 'starter'). The one list the database enforces; nearest the bakery walk first.
--- The Worker reads it with starter_slot_list and serves it in /rt/config. migrations/2026-11-21-mid.sql part 1 adds both to production.
+-- Free first slots (claim_billboard p_mode = 'starter'). The one list the database enforces; nearest the bakery walk first,
+-- then the eight new core faces nearest that walk. The Worker reads it with starter_slot_list and serves it in /rt/config.
+-- migrations/2026-11-21-mid.sql part 1 added the first twelve; migrations/2026-11-22-boards.sql part 2 makes it these twenty.
 CREATE OR REPLACE FUNCTION public.starter_slots()
 RETURNS TEXT[]
 LANGUAGE sql
 IMMUTABLE
 AS $$
   SELECT ARRAY['STREET_20','STREET_23','STREET_28','STREET_19','STREET_27','STREET_16',
-               'STREET_22','STREET_7','STREET_11','STREET_9','STREET_8','STREET_10']::TEXT[];
+               'STREET_22','STREET_7','STREET_11','STREET_9','STREET_8','STREET_10',
+               'STREET_32','STREET_37','STREET_31','STREET_44','STREET_43','STREET_36','STREET_33','STREET_45']::TEXT[];
 $$;
 
 CREATE OR REPLACE FUNCTION public.starter_slot_list(p_key TEXT)

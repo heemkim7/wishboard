@@ -1646,7 +1646,7 @@ let GATE = { at: 0, r: null }; // per-isolate meter cache: /rt/gate no longer co
 const GATE_TTL = 15000, PC = new Map(); // PC: per-isolate world cache (Cache API is a no-op on *.workers.dev)
 const HERE = new Map(); // GET /rt/here: { at, v } per topic, 5 s per isolate
 const WORLD_CACHE = 'https://cache.masil/rt/world';
-const SLOT_RE = /^(MAIN_(UP|TOP|MID|BOT|LOW)|SUB_[1-4][AB]|STREET_([1-9]|[12]\d|30)|PLOT_([1-9]|1[0-8]))$/;
+import { SLOT_RE, soonError } from './balance.js'; // the claimable ids (81), kept with the slot table
 const AD_SLOT = SLOT_RE;
 const REPORT_REASONS = ['abuse', 'ad', 'impersonation', 'other'];
 function clip(s, n) { return Array.from(String(s ?? '').replace(/[\u0000-\u001f]/g, '')).slice(0, n).join(''); }
@@ -2295,7 +2295,8 @@ async function plaza(req, env, ctx, u) {
     rpc = await supabaseRpc('buy_or_upgrade_plot', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_nickname: nick, p_plot_id: b.plot_id, p_sign_text: clip(b.sign_text, 14), p_theme_color: hexColor(b.theme_color, '#00ffcc') });
   }
   const data = rpc.data || {};
-  const claimErr = data.error === 'tribe' ? '소속에 들어간 뒤에 소속 코인으로 걸 수 있어요' : data.error === 'starter' ? '무료 칸은 계정당 한 번이고, 비어 있는 거리 칸만 돼요' : playerErr(data.error, data.message || '요청을 처리하지 못했습니다.');
+  // A board on the map whose row the database does not have yet (STREET_31..50 before migrations/2026-11-22-boards.sql): '곧 열려요'.
+  const claimErr = data.error === 'tribe' ? '소속에 들어간 뒤에 소속 코인으로 걸 수 있어요' : data.error === 'starter' ? '무료 칸은 계정당 한 번이고, 비어 있는 거리 칸만 돼요' : (claim && soonError(String(b.slot_id || ''), data.error)) || playerErr(data.error, data.message || '요청을 처리하지 못했습니다.');
   if (!rpc.ok || data.ok === false) {
     if (sip) { try { await acct(env).sipGive(sip.h, sip.d); } catch { } }
     return J({ ok: false, error: claimErr }, rpc.ok ? 400 : 502);

@@ -4,11 +4,11 @@
 // on the canyon walls, the New Year's ball, steam stacks, and the Koreatown gate on W 32nd St.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { TILE } from './nyc.js?v=202611212346';
 import { LAYOUT } from './layout.js?v=202611212346';
 import { Kit, cropPlane, imgCrop } from './kit.js?v=202611212346';
-import { makeCanvas, paintAdAtlas, paintBlade, paintLabel, paintGlow, paintNeonSign } from './art.js?v=202611212346';
-import { screenTime } from './screens.js?v=202611212346';
+import { makeCanvas, paintAdAtlas, paintBlade, paintLabel, paintGlow, paintNeonSign, THEMES } from './art.js?v=202611212346';
+import { screenTime, addFrame } from './screens.js?v=202611212346';
+import { planBowtie, wallsIn, pickWall, mulberry, STREET_OLD } from './bowtie.js?v=202611212346';
 import { ENV_PHOTOS, envPhotoUrl } from './loadplan.js?v=202611212346';
 
 const ONE = new THREE.Vector3(1, 1, 1);
@@ -44,17 +44,6 @@ const BLADES = ['K-TOWN', 'BROADWAY', 'THEATRE', 'HOTEL', 'K-POP', '서울식당
 const BLADE_COLORS = ['#ff3d9a', '#ffcf5a', '#3fe6ff', '#ff6a3d', '#b84dff', '#39f58a', '#ffe2a8', '#ff7ac0', '#ffb020', '#3fe6ff', '#ff3d9a', '#ff6a3d'];
 const ACCENTS = ['#3fe6ff', '#ff3d9a', '#ffcf5a', '#b84dff', '#39f58a', '#ff6a3d'];
 
-function mulberry(seed) {
-  let a = seed >>> 0;
-  return () => { a = (a + 0x6d2b79f5) >>> 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-}
-function segPointDist(px, pz, ax, az, bx, bz) {
-  const dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz;
-  const t = L2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / L2)) : 0;
-  const qx = ax + dx * t, qz = az + dz * t;
-  return [Math.hypot(px - qx, pz - qz), qx, qz];
-}
-
 export function buildTimesSquare(ctx) {
   const { scene, renderer, manager, kitMats, boards, nyc, quality, colliders, world } = ctx;
   const low = quality === 'low';
@@ -62,8 +51,7 @@ export function buildTimesSquare(ctx) {
   const loader = new THREE.TextureLoader(manager);
   const updaters = [];
   const kit = new Kit();
-  const r = mulberry(4242);
-  const B = nyc.buildings;
+  const r = mulberry(4242); // slideAt's phases and accents
 
   // ---- materials ---------------------------------------------------------------------------------------
   const photoMats = {}, photoTextures = {};
@@ -185,106 +173,33 @@ diffuseColor.rgb += vec3(0.35, 0.3, 0.45) * (1.0 - smoothstep(0.0, 0.012, vFlip)
     kit.box(2.4, size + 0.4, 0.16, '#121318', { mat: 'metal', x, y, z, ry });
   };
 
-  /** Building walls (outward normal, tangent, midpoint) inside a rectangle. */
-  function walls(x0, x1, z0, z1, minH = 8) {
-    const out = [];
-    for (let tx = Math.floor(x0 / TILE); tx <= Math.floor(x1 / TILE); tx++) for (let tz = Math.floor(z0 / TILE); tz <= Math.floor(z1 / TILE); tz++) {
-      const t = nyc.tiles.get(nyc.tileKey(tx, tz));
-      if (!t) continue;
-      for (const b of t.b) {
-        if (nyc.skipBuilding[b] || B.h[b] < minH || B.minh[b] > 3) continue;
-        for (let p = B.off[b], e = B.off[b + 1]; p < e; p++) {
-          const q = p + 1 < e ? p + 1 : B.off[b];
-          const ax = B.xs[p], az = B.zs[p], bx = B.xs[q], bz = B.zs[q];
-          const dx = bx - ax, dz = bz - az, len = Math.hypot(dx, dz);
-          if (len < 5) continue;
-          const mx = (ax + bx) / 2, mz = (az + bz) / 2;
-          if (mx < x0 || mx > x1 || mz < z0 || mz > z1) continue;
-          const nx = dz / len, nz = -dx / len;
-          out.push({ b, mx, mz, nx, nz, tx: -nz, tz: nx, len, h: B.h[b] - (B.flags[b] & 1 ? B.roof[b] : 0) });
-        }
-      }
-    }
-    return out;
-  }
-  const pickWall = (list, ax, az, nx, nz, minLen, minH) => {
-    let best = null, bd = Infinity;
-    for (const w of list) {
-      if (w.len < minLen || w.h < minH || w.nx * nx + w.nz * nz < 0.75) continue;
-      const d = Math.hypot(w.mx - ax, w.mz - az);
-      if (d < bd) { bd = d; best = w; }
-    }
-    return best;
-  };
+  const walls = (x0, x1, z0, z1, minH = 8) => wallsIn(nyc, x0, x1, z0, z1, minH);
 
   // ---- the bowtie: facades facing the square ----------------------------------------------------------------------
-  const AXES = [[-1, -250, -1, 262], [-63.4, -233, 49, 249.7]];
-  const facing = walls(-110, 120, -250, 262, 9).filter(w => {
-    let best = Infinity, qx = 0, qz = 0;
-    for (const [ax, az, bx, bz] of AXES) { const [d, x, z] = segPointDist(w.mx, w.mz, ax, az, bx, bz); if (d < best) { best = d; qx = x; qz = z; } }
-    if (best > 95 || best < 4) return false;
-    const vx = (qx - w.mx) / best, vz = (qz - w.mz) / best;
-    w.dist = best;
-    return w.nx * vx + w.nz * vz > (best > 60 ? 0.62 : 0.5);
-  });
-  const used = new Set();
+  // ts3d/bowtie.js decides every face from the map alone (so all clients agree); this only builds what it lists.
+  const plan = planBowtie(nyc, { oneTimes: LAYOUT.oneTimes });
   // Four corner towers, two claimable boards each (upper A, lower B).
-  const CORNERS = [['1', -42, -40, 1, 0], ['2', 14, -112, -1, 0], ['3', -14, 124, 1, 0], ['4', 40, 58, -1, 0]];
-  for (const [n, ax, az, nx, nz] of CORNERS) {
-    const w = pickWall(facing, ax, az, nx, nz, 13, 26) || pickWall(facing, ax, az, nx, nz, 9, 16);
+  for (const c of plan.corners) {
     const g = new THREE.Group();
     scene.add(g);
-    if (w) {
-      used.add(w);
-      g.position.set(w.mx + w.nx * 0.8, 0, w.mz + w.nz * 0.8);
-      g.rotation.y = Math.atan2(w.nx, w.nz);
-    } else {
-      g.position.set(ax, 0, az);
-      g.rotation.y = Math.atan2(nx, nz);
-    }
-    const bw = w ? Math.min(16, Math.max(11, w.len - 1.4)) : 14;
-    const bh = bw * 9 / 16;
-    boards.mount('SUB_' + n + 'A', g, { x: 0, y: 26, z: 0.35, w: bw, h: bh });
-    boards.mount('SUB_' + n + 'B', g, { x: 0, y: 26 - bh - 0.7, z: 0.35, w: bw, h: bh });
+    g.position.set(c.x, 0, c.z);
+    g.rotation.y = c.yaw;
+    boards.mount('SUB_' + c.n + 'A', g, { x: 0, y: c.yA, z: 0.35, w: c.w, h: c.h });
+    boards.mount('SUB_' + c.n + 'B', g, { x: 0, y: c.yB, z: 0.35, w: c.w, h: c.h });
   }
-  // About 30 large faces on the buildings that look onto the main street.
-  const streetPool = facing
-    .filter((w) => !used.has(w) && w.len >= 12 && w.h >= 12 && w.dist < 85 && Math.hypot(w.mx - LAYOUT.oneTimes.x, w.mz - LAYOUT.oneTimes.z) > 28)
-    .sort((a, b) => a.dist - b.dist);
-  const streetWalls = [];
-  for (const w of streetPool) {
-    if (streetWalls.length >= 30) break;
-    if (streetWalls.some((p) => Math.hypot(p.mx - w.mx, p.mz - w.mz) < 16)) continue;
-    streetWalls.push(w);
-  }
-  for (const w of streetPool) {
-    if (streetWalls.length >= 30) break;
-    if (!streetWalls.includes(w)) streetWalls.push(w);
-  }
-  streetWalls.forEach((w, i) => {
-    used.add(w);
+  // STREET_1..30 on the walls that look onto the main street; STREET_31..50 stacked above them and low on the walls of
+  // the plaza core. The newer faces' frames go into this file's merged kit, so each adds one draw call, its screen.
+  for (const st of plan.streets) {
     const g = new THREE.Group();
     scene.add(g);
-    g.position.set(w.mx + w.nx * 0.7, 0, w.mz + w.nz * 0.7);
-    g.rotation.y = Math.atan2(w.nx, w.nz);
-    const bw = Math.min(22, Math.max(14, w.len * 0.78));
-    const bh = bw * 9 / 16;
-    const y = Math.min(w.h - bh / 2 - 1.2, Math.max(bh / 2 + 6, 12));
-    boards.mount('STREET_' + (i + 1), g, { x: 0, y, z: 0.2, w: bw, h: bh, frameT: 0.45 });
-  });
-  // Canyon walls: large screens butted together so the facade barely shows, same as the real bowtie.
-  for (const w of facing) {
-    const L = w.len, H = w.h;
-    if (H < 9 || Math.hypot(w.mx - LAYOUT.oneTimes.x, w.mz - LAYOUT.oneTimes.z) < 24) {
-      // corner towers and the main stack own the claimable faces
-    }
-    // blade signs
-    if (L > 14 && H > 18 && w.dist <= 60 && r() < 0.35) {
-      const along = (r() < 0.5 ? -1 : 1) * (L / 2 - 2.2);
-      const p = new THREE.Vector3(w.mx + w.tx * along + w.nx * 1.55, 0, w.mz + w.tz * along + w.nz * 1.55);
-      bladeAt(BLADES[(r() * 5) | 0], p.x, 15, p.z, Math.atan2(w.nx, w.nz) + Math.PI / 2, 12);
-    }
+    g.position.set(st.x, 0, st.z);
+    g.rotation.y = st.yaw;
+    const bare = st.n > STREET_OLD;
+    boards.mount(st.id, g, { x: 0, y: st.y, z: 0.2, w: st.w, h: st.h, frameT: st.frame, bare });
+    if (bare) addFrame(kit, st.w, st.h, st.frame, THEMES.cyber_navy?.accent || '#3fe6ff', new THREE.Matrix4().compose(new THREE.Vector3(st.x + st.nx * 0.2, st.y, st.z + st.nz * 0.2), new THREE.Quaternion().setFromAxisAngle(Y_AXIS, st.yaw), ONE));
   }
+  // Blade signs on the canyon walls (none through a claimable face).
+  for (const b of plan.blades) bladeAt(BLADES[b.name], b.x, 15, b.z, b.ry, 12);
 
   // ---- One Times Square ----------------------------------------------------------------------------------------------
   const OT = LAYOUT.oneTimes;

@@ -7,7 +7,7 @@ import { starSpot, insideLoop } from './ts3d/layout.js?v=202611212346';
 import { createUI } from './ui.js?v=202611212346';
 import { haptic, startMusic } from './audio.js?v=202611212346';
 import { coinGate, COIN_WAIT_MS, COIN_CAP_MS, isTouchUI } from './interact.js?v=202611212346';
-import { BALANCE, PAY, chainsOf, live, monopolyOf, slotName, slotOf, takeGrants, cheerCount, countsAsPlay, josa } from './balance.js';
+import { BALANCE, PAY, chainsOf, live, monopolyOf, slotName, slotOf, takeGrants, cheerCount, countsAsPlay, josa, slotOpen, SLOT_SOON } from './balance.js';
 import { auctionClosed } from './balance.js';
 import { trackEvent } from './analytics.js?v=202611212346';
 import { adoptHandover, allowedLink, blockedText, handoverHref, isAndroid, isInAppWebView, loginEmail, CHEER_PHRASES, GT_LS, SESSION_LS, slotTier } from './plaza-account.js';
@@ -847,6 +847,8 @@ function celebrateClaim(slot, wizard) {
 }
 
 async function claim(payload) {
+  // A board without a database row yet (STREET_31..50 before the migration) is never sent: the Worker would refuse it too.
+  if (payload?.slot_id && !slotOpen(state.billboards, payload.slot_id)) throw new Error(SLOT_SOON);
   if (blockedText(state.nick) || blockedText(payload?.line1) || blockedText(payload?.line2) || blockedText(payload?.line3)) {
     throw new Error('그 문구는 올릴 수 없어요');
   }

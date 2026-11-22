@@ -23,6 +23,7 @@
 -- 임시 표라 밖에서 읽을 수 없다. "Run without RLS"를 누른다.
 --
 -- 2026-11-21: 2부만 운영 DB에 적용했다(임시 표 줄 + 2부 + 결과 표). 파일 전체를 실행하면 2부는 건너뛴다.
+-- 2026-11-22: 1부는 starter_slots()가 이미 있으면 그 목록을 그대로 둔다(2026-11-22-boards.sql의 20칸). 그 파일이 1부의 일을 같이 한다.
 --
 -- 순서: 이번 코드를 배포한 뒤에 실행한다. 4부를 실행한 뒤 예전 코드로 되돌리면(rollback) 예전 코드는 일요일에
 -- '지금 주'만 묻기 때문에 소속 지붕이 정해지지 않는다. 다시 새 코드를 올리면 끝난 주부터 이어서 정해진다.
@@ -41,6 +42,8 @@ DECLARE
   d TEXT; n INT;
 BEGIN
   BEGIN
+    -- 2026-11-22-boards.sql이 먼저 돌았으면 목록(20칸)이 이미 있다. 12칸으로 되돌리지 않는다.
+    IF to_regprocedure('public.starter_slots()') IS NULL THEN
     EXECUTE $f$
 CREATE OR REPLACE FUNCTION public.starter_slots()
 RETURNS TEXT[]
@@ -51,6 +54,7 @@ AS $$
                'STREET_22','STREET_7','STREET_11','STREET_9','STREET_8','STREET_10']::TEXT[];
 $$
 $f$;
+    END IF;
     EXECUTE $f$
 CREATE OR REPLACE FUNCTION public.starter_slot_list(p_key TEXT)
 RETURNS JSONB

@@ -1,5 +1,5 @@
 // Coin amounts and trigger sizes. Map coordinates stay in ts3d/layout.js.
-// Claimable screens: 3 main, 8 corners, 30 main-street faces, 18 plot fronts.
+// Claimable screens: 5 main, 8 corners, 50 main-street faces, 18 plot fronts (81).
 // Free first slots: the database owns the list (public.starter_slots()), /rt/config carries it. Until it arrives, these four.
 export const STARTER_DEFAULT = Object.freeze(['STREET_8', 'STREET_9', 'STREET_10', 'STREET_11']);
 let STARTER = null;
@@ -35,7 +35,28 @@ export const BALANCE = {
 };
 
 const plotBid = (n) => 100 + Math.round((n - 1) * 200 / 17);
-const streetBid = (n) => 200 + Math.round((n - 1) * 200 / 29);
+// STREET_1..30 run 200..400; STREET_31..50 (the plaza core, added later) are the cheapest street faces, 150..250.
+// public.slot_floor() in schema.sql is the same formula.
+const streetBid = (n) => (n <= 30 ? 200 + Math.round((n - 1) * 200 / 29) : 150 + Math.round((n - 31) * 100 / 19));
+export const STREET_N = 50;
+/** The one test for a claimable board id. The Worker, the screens and the share pages all use this. */
+export const SLOT_RE = /^(MAIN_(UP|TOP|MID|BOT|LOW)|SUB_[1-4][AB]|STREET_([1-9]|[1-4]\d|50)|PLOT_([1-9]|1[0-8]))$/;
+export const isSlotId = (id) => typeof id === 'string' && SLOT_RE.test(id);
+// A board is claimable only once its row is in the database (the billboards list /rt/world serves). STREET_31..50 are on
+// the map before migrations/2026-11-22-boards.sql adds their rows; until then they show the house notice and this line.
+export const SLOT_SOON = '이 전광판은 곧 열려요. 지금은 다른 칸을 골라 주세요';
+/** The boards added after launch (their rows come with a migration): the screen says '곧 열려요' until a row arrives. */
+export const isLateSlot = (id) => /^STREET_(3[1-9]|4\d|50)$/.test(String(id ?? ''));
+/** rows: the world's billboards. An empty or missing list (not loaded yet) does not close anything. */
+export function slotOpen(rows, id) {
+  if (!isSlotId(id)) return false;
+  if (!Array.isArray(rows) || !rows.length) return true;
+  return rows.some((r) => r?.slot_id === id);
+}
+// What claim_billboard answers for an id without a row: the old slot_floor() gives 0 for STREET_31..50 ('그 전광판은 점령할
+// 수 없습니다.'), a missing row gives '존재하지 않는 전광판 슬롯입니다.'. Both mean "not open yet" for a real board id.
+const NO_ROW = ['그 전광판은 점령할 수 없습니다.', '존재하지 않는 전광판 슬롯입니다.'];
+export function soonError(slot, error) { return isSlotId(slot) && NO_ROW.includes(String(error || '')) ? SLOT_SOON : null; }
 export const SLOTS = [
   { id: 'MAIN_UP', tier: 'S', bid: 4000, name: '메인 타워 최상단' },
   { id: 'MAIN_TOP', tier: 'S', bid: 3000, name: '메인 타워 정상' },
@@ -50,7 +71,7 @@ export const SLOTS = [
   { id: 'SUB_3B', tier: 'B', bid: 500, name: '3번 타워 하단' },
   { id: 'SUB_4A', tier: 'B', bid: 800, name: '4번 타워 상단' },
   { id: 'SUB_4B', tier: 'B', bid: 500, name: '4번 타워 하단' },
-  ...Array.from({ length: 30 }, (_, i) => ({ id: 'STREET_' + (i + 1), tier: 'C', bid: streetBid(i + 1), name: (i + 1) + '번 메인거리' })),
+  ...Array.from({ length: STREET_N }, (_, i) => ({ id: 'STREET_' + (i + 1), tier: 'C', bid: streetBid(i + 1), name: (i + 1) + '번 메인거리' })),
   ...Array.from({ length: 18 }, (_, i) => ({ id: 'PLOT_' + (i + 1), tier: 'C', bid: plotBid(i + 1), name: (i + 1) + '번 분양 전광판' })),
 ];
 export const SLOT_IDS = SLOTS.map((s) => s.id);

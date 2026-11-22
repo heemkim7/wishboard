@@ -1,10 +1,10 @@
 // LED billboard screens: shader-animated materials, curved screens with bezels and
-// scrolling news tickers, and the slot registry (MAIN_S, SUB_B1..4, PLOT_1..20).
+// scrolling news tickers, and the slot registry (MAIN_*, SUB_1A..4B, STREET_1..50, PLOT_1..18).
 import * as THREE from 'three';
 import { Kit, arcSlab } from './kit.js?v=202611212346';
 import { THEMES, makeCanvas, paintBillboard, paintTicker, fontsReady, tierOf, boardPhoto, photoReady, SANS, roundRect, chars, paintWish, wishOrd, wishRotates, wishStrip, cleanWishes, sameWishes, rowUntil, wishPlan, wishRelist, wishFontTargets, wishPinPlan, freshWish, wishSettled, WISH_CYCLE, WISH_CYCLE_LOW, WISH_BUDGET, WISH_BUDGET_LOW, WISH_NOW, WISH_DROPS } from './art.js?v=202611212346';
 import { askBid } from '../balance.js';
-import { floorOf, live } from '../balance.js';
+import { floorOf, live, SLOT_RE, isLateSlot } from '../balance.js';
 import { auctionClosed } from '../balance.js';
 import { nowMs, kingCovers } from '../live.js';
 
@@ -63,7 +63,8 @@ function scaleU(geo, factor) {
 }
 
 // House notice for a vacant screen (never held, or the hold expired): the slot and its real floor price, never a made-up wish.
-function defaultData(slotId) {
+// soon: a board on the map whose database row has not arrived (STREET_31..50 before their migration) says it opens soon.
+function defaultData(slotId, soon = false) {
   const tier = tierOf(slotId);
   const price = (floorOf(slotId) || 0).toLocaleString('en-US') + ' 코인부터';
   let row;
@@ -71,7 +72,7 @@ function defaultData(slotId) {
     row = { slot_id: slotId, emoji: '📢', bg_theme: 'cyber_navy', text_color: '#ffffff', line1: '이 자리를 점령하세요', line2: '타임스퀘어 메인 타워', line3: price, holder_id: null };
   } else if (String(slotId).startsWith('STREET_')) {
     const n = Number(String(slotId).slice(7)) || 1;
-    row = { slot_id: slotId, emoji: '🌃', bg_theme: 'cyber_navy', text_color: '#ffffff', line1: `${n}번 메인거리`, line2: '거리 쪽 큰 화면', line3: price, holder_id: null };
+    row = { slot_id: slotId, emoji: '🌃', bg_theme: 'cyber_navy', text_color: '#ffffff', line1: `${n}번 메인거리`, line2: soon ? '곧 열리는 자리' : '거리 쪽 큰 화면', line3: price, holder_id: null, ...(soon ? { soon: true } : {}) };
   } else if (tier === 'B') {
     const n = Number(String(slotId).replace(/\D/g, '')) || 1;
     const upper = /A$/.test(slotId);
@@ -83,6 +84,18 @@ function defaultData(slotId) {
     row = { slot_id: slotId, emoji: '🌟', bg_theme: theme, text_color: '#ffffff', line1: `${n}번 분양 전광판`, line2: '건물 앞 큰 화면', line3: price, holder_id: null };
   }
   return row;
+}
+
+/** The flat board's frame (four bars, the back plate, the accent line) into `kit`, around a w x h face centred at the
+ *  origin of `m` (or of the kit's own space). mount() uses it; a caller with many boards bakes them into one kit. */
+export function addFrame(kit, w, h, t, accent, m) {
+  kit.box(w + t * 2, t, 0.22, '#1a1c22', { y: h / 2 + t / 2, z: -0.05, mat: 'metal', m });
+  kit.box(w + t * 2, t, 0.22, '#1a1c22', { y: -h / 2 - t / 2, z: -0.05, mat: 'metal', m });
+  kit.box(t, h, 0.22, '#1a1c22', { x: -w / 2 - t / 2, z: -0.05, mat: 'metal', m });
+  kit.box(t, h, 0.22, '#1a1c22', { x: w / 2 + t / 2, z: -0.05, mat: 'metal', m });
+  kit.box(w + t * 2, h + t * 2, 0.12, '#0b0c10', { z: -0.16, mat: 'metal', m });
+  kit.box(w + t * 2, 0.04, 0.05, accent, { y: h / 2 + t + 0.02, z: 0.03, glow: 3, m });
+  return kit;
 }
 
 const sigOf = (d) => [d.line1, d.line2, d.line3, d.emoji, d.bg_theme, d.text_color, d.holder_name, d.holder_id, d.photo_id, d.photo_status, d.external_url, d.views, d.clicks, d.cheers, d.lit_days, d.taken_from, ...(d.notes || [])].join('\u0001');
@@ -101,7 +114,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   const wishBudget = quality === 'low' ? WISH_BUDGET_LOW : WISH_BUDGET;
   const wishSeen = new Set(), wishFonts = new Set();
   const wishFontsOk = new Set();
-  const planCfg = { list: [], now: 0, cyc: wishCyc, budget: wishBudget, drops: WISH_DROPS, since: new Array(64), rank: new Array(64), who: new Array(64), pick: [], delta: 0 };
+  const planCfg = { list: [], now: 0, cyc: wishCyc, budget: wishBudget, drops: WISH_DROPS, since: new Array(96), rank: new Array(96), who: new Array(96), pick: [], delta: 0 };
   const nearB = [], nearOk = [], planOut = [], relistRes = { delta: 0 };
   let wishes = [], wishShown = 0, wishFirstAt = 0, wishNonEmpty = false, lastNear = [];
   const fontKey = (w) => w.id + '\u0001' + w.txt + '\u0001' + w.nick;
@@ -139,7 +152,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   tickerTex.anisotropy = aniso;
   const tickerMat = screenMaterial(tickerTex, { gain: 1.35, grid: [1400, 22], sweep: 0 });
 
-  const CLAIM = /^(MAIN_(UP|TOP|MID|BOT|LOW)|SUB_[1-4][AB]|STREET_([1-9]|[12]\d|30)|PLOT_([1-9]|1[0-8]))$/;
+  const CLAIM = SLOT_RE;
   let air = null;
   let opsLine = '';
   function airOn() { return !!(air && air.until > Date.now()); }
@@ -255,17 +268,20 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     let b = boards.get(slotId);
     if (b) return b;
     const tier = tierOf(slotId);
-    const canvas = tier === 'C' ? makeCanvas(512, 288) : makeCanvas(1024, 576);
+    // Street and lot faces are 512 x 288 (0.6 MB each for the canvas, its plate and the texture); on the phone tier 384 x 216,
+    // so the 68 of them there take less memory than the 48 did at full size.
+    const canvas = tier === 'C' ? (quality === 'low' ? makeCanvas(384, 216) : makeCanvas(512, 288)) : makeCanvas(1024, 576);
     const tex = tune(new THREE.CanvasTexture(canvas));
     const mat = screenMaterial(tex, { gain: tier === 'S' ? 1.16 : tier === 'B' ? 1.12 : 1.06, grid: tier === 'C' ? [128, 72] : [256, 144] });
-    b = { slotId, tier, canvas, tex, mat, data: defaultData(slotId), sig: '', mounts: [], wish: null, wishKey: -1, wishPin: 0, wishDue: 0, wishDrop: false, wishFontOk: false, wishOrd: wishOrd(slotId), wishMsg: '', untilMs: 0 };
+    b = { slotId, tier, canvas, tex, mat, data: defaultData(slotId, isLateSlot(slotId)), real: false, sig: '', mounts: [], wish: null, wishKey: -1, wishPin: 0, wishDue: 0, wishDrop: false, wishFontOk: false, wishOrd: wishOrd(slotId), wishMsg: '', untilMs: 0 };
     b.sig = sigOf(b.data);
     boards.set(slotId, b);
     paint(b);
     return b;
   }
 
-  /** spec: {x,y,z,ry,w,h,curve,ticker,frame,marquee} — (x,y,z) is the screen center (apex for curved). */
+  /** spec: {x,y,z,ry,w,h,curve,ticker,frame,marquee,bare} — (x,y,z) is the screen center (apex for curved). bare: no
+   *  frame here (the caller bakes one with addFrame into a merged kit of its own). */
   function mount(slotId, parent, spec) {
     const b = ensure(slotId);
     const group = new THREE.Group();
@@ -316,14 +332,8 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
         back2.position.set(0, strip.position.y, -0.55);
         group.add(back2);
       }
-    } else {
-      const t = spec.frameT ?? 0.16;
-      kit.box(w + t * 2, t, 0.22, '#1a1c22', { y: h / 2 + t / 2, z: -0.05, mat: 'metal' });
-      kit.box(w + t * 2, t, 0.22, '#1a1c22', { y: -h / 2 - t / 2, z: -0.05, mat: 'metal' });
-      kit.box(t, h, 0.22, '#1a1c22', { x: -w / 2 - t / 2, z: -0.05, mat: 'metal' });
-      kit.box(t, h, 0.22, '#1a1c22', { x: w / 2 + t / 2, z: -0.05, mat: 'metal' });
-      kit.box(w + t * 2, h + t * 2, 0.12, '#0b0c10', { z: -0.16, mat: 'metal' });
-      kit.box(w + t * 2, 0.04, 0.05, accent, { y: h / 2 + t + 0.02, z: 0.03, glow: 3 });
+    } else if (!spec.bare) {
+      addFrame(kit, w, h, spec.frameT ?? 0.16, accent);
     }
     const frame = kit.build({ ...kitMats, metal: frameMat });
     group.add(frame);
@@ -378,11 +388,13 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   // b.row keeps what the server said. A live hold shows that ad. A dark hold keeps the owner's name. An empty slot shows the house notice.
   function set(slotId, row, celebrate) {
     const b = ensure(slotId);
+    if (row && ('holder_id' in row || 'current_bid' in row)) b.real = true; // a database row (not a repaint with {})
+    const soon = !b.real && isLateSlot(slotId);
     b.row = { ...b.row, ...row, slot_id: slotId };
     b.untilMs = rowUntil(b.row);
     const held = !!b.row?.holder_id;
     const next = live(b.row) ? b.row : held ? {
-      ...defaultData(slotId),
+      ...defaultData(slotId, soon),
       views: b.row.views,
       clicks: b.row.clicks,
       cheers: b.row.cheers,
@@ -394,7 +406,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
       line3: (floorOf(slotId) || 0).toLocaleString('en-US') + ' 코인부터',
       emoji: '💡',
       unlit: true,
-    } : { ...defaultData(slotId), views: b.row.views, clicks: b.row.clicks, cheers: b.row.cheers, ...(opsLine ? { line2: opsLine } : {}) };
+    } : { ...defaultData(slotId, soon), views: b.row.views, clicks: b.row.clicks, cheers: b.row.cheers, ...(opsLine && !soon ? { line2: opsLine } : {}) };
     const sig = sigOf(next);
     const changed = sig !== b.sig;
     b.data = next;
