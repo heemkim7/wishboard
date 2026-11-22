@@ -3,13 +3,13 @@ import { errlogCtx } from './errlog.js?v=202611221134'; // first: its error list
 import { Net, CDN, guestToken } from './net.js?v=202611221134';
 import { createTimesSquare, STARTER_COLORS, taxiTrainMult } from './timesSquare3d.js?v=202611221134';
 import { speciesId } from './ts3d/avatars.js?v=202611221134';
-import { equip, loadProfile, profileSpecies, saveColor, saveNick, saveSpecies, setSpecies } from './profile.js?v=202611221134';
+import { equip, unequip, loadShop, loadProfile, profileSpecies, saveColor, saveNick, saveSpecies, setSpecies } from './profile.js?v=202611221134';
 import { starSpot, insideLoop } from './ts3d/layout.js?v=202611221134';
 import { createUI } from './ui.js?v=202611221134';
 import { haptic, startMusic } from './audio.js?v=202611221134';
 import { coinGate, COIN_WAIT_MS, COIN_CAP_MS, isTouchUI } from './interact.js?v=202611221134';
 import { BALANCE, PAY, chainsOf, live, monopolyOf, slotName, slotOf, takeGrants, cheerCount, countsAsPlay, josa, slotOpen, SLOT_SOON } from './balance.js';
-import { auctionClosed } from './balance.js';
+import { auctionClosed, EQUIP_MAX, OWNED_MAX } from './balance.js';
 import { trackEvent } from './analytics.js?v=202611221134';
 import { adoptHandover, allowedLink, blockedText, handoverHref, isAndroid, isInAppWebView, loginEmail, CHEER_PHRASES, GT_LS, SESSION_LS, slotTier } from './plaza-account.js';
 import { authErrorText, cleanAddress, externalRoutes, oauthErrorText, oauthMessage, oauthReturn, sessionDrift, OAUTH_ACK, OAUTH_CHANNEL } from './plaza-account.js';
@@ -234,6 +234,9 @@ const ui = createUI(document.getElementById('ui'), {
   profile: () => state.profile,
   starterUsed: () => state.starterUsed,
   wear: (id) => wear(id),
+  unwear: (kind) => unwear(kind),
+  shop: () => loadShop(),
+  buyCosmetic: (id) => buyCosmetic(id),
   hasSession: () => !!recall(NICK_KEY),
   actorId: () => net.id,
   isGuest: () => accountReady && !sessionUser,
@@ -2246,8 +2249,8 @@ async function pullProfile() {
     state.profile = {
       level: Math.min(99, 1 + Math.floor(reputation / 10)),
       reputation,
-      equip: Array.isArray(p.equip) ? p.equip.slice(0, 4) : [],
-      owned: Array.isArray(p.owned) ? p.owned.slice(0, 12) : [],
+      equip: Array.isArray(p.equip) ? p.equip.slice(0, EQUIP_MAX) : [],
+      owned: Array.isArray(p.owned) ? p.owned.slice(0, OWNED_MAX) : [],
     };
     state.species = profileSpecies(p, state.species);
     keep(SPECIES_KEY, String(state.species));
@@ -2278,6 +2281,29 @@ async function wear(id) {
     return false;
   }
 }
+async function unwear(kind) {
+  try {
+    const res = await unequip(kind);
+    if (!res || res.ok === false) {
+      ui.note(res?.error === 'soon' ? '꾸미기 상점이 열리면 벗을 수 있어요' : '벗지 못했어요', 'err');
+      return false;
+    }
+    await pullProfile();
+    ui.note('벗었어요', 'ok');
+    return true;
+  } catch {
+    ui.note('벗지 못했어요', 'err');
+    return false;
+  }
+}
+// 꾸미기 상점: the database charges its own price and equips what was bought. The room's pending coins are settled on the way (like every
+// spend), so the answer's remaining_coins is the whole wallet. Not a league spend (no leagueSoon). Throws the server's line on a refusal.
+async function buyCosmetic(id) {
+  const res = await net._plazaPost('/rt/shop/buy', { cosmetic_id: id });
+  settle(res);
+  await pullProfile();
+  return res;
+}
 function applyServerProfile(m) {
   if (!m) return;
   if (m.av != null) {
@@ -2286,7 +2312,7 @@ function applyServerProfile(m) {
     world?.setSpecies(state.species);
   }
   if (Array.isArray(m.equip)) {
-    state.profile.equip = m.equip.slice(0, 4);
+    state.profile.equip = m.equip.slice(0, EQUIP_MAX);
     world?.setEquip(state.profile.equip);
   }
   ui.refreshProfile();

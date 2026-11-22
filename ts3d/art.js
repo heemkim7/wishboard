@@ -1018,30 +1018,176 @@ export function paintPuddles(canvas, seed = 3) {
 
 /** Name tag: a slim dark pill with white 600 text and no outline. The player's own tag carries a small dot in their
  *  ring colour (color). */
-export function paintNameTag(canvas, name, color = '#3fe6ff', mine = false) {
+// Name-tag themes from the cosmetics shop (balance.js SHOP kind 'tag'), by cosmetic id. Anything else is the plain dark pill.
+// fill: the pill (one colour or a top-to-bottom gradient), text: the name, edge/glow: an outline and its blur, hearts: a heart at each end.
+export const TAG_THEMES = Object.freeze({
+  tag_gold: Object.freeze({ fill: ['#ffe39a', '#ffb020', '#d98a00'], text: '#1c1300', edge: '#fff2c8' }),
+  tag_neon: Object.freeze({ fill: ['rgba(10,14,28,0.9)'], text: '#eaffff', edge: '#48d6f0', glow: '#48d6f0', inner: '#ff4fa3' }),
+  tag_heart: Object.freeze({ fill: ['#ff8cc4', '#ff4fa3'], text: '#ffffff', edge: '#ffd6ea', hearts: '#ffffff' }),
+});
+/** A heart centred on (x, y), r about half its width. */
+export function heartPath(g, x, y, r) {
+  g.beginPath();
+  g.moveTo(x, y + r * 0.9);
+  g.bezierCurveTo(x - r * 1.25, y + r * 0.05, x - r * 0.9, y - r * 1.0, x, y - r * 0.38);
+  g.bezierCurveTo(x + r * 0.9, y - r * 1.0, x + r * 1.25, y + r * 0.05, x, y + r * 0.9);
+  g.closePath();
+}
+/** theme: a cosmetic id from TAG_THEMES (the wearer's equipped name tag), or '' for the plain one. */
+export function paintNameTag(canvas, name, color = '#3fe6ff', mine = false, theme = '') {
   const g = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height, k = H / 64;
+  const T = TAG_THEMES[theme] || null;
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.clearRect(0, 0, W, H);
   const text = chars(name || '익명', 12);
-  g.font = `600 ${Math.round(24 * k)}px ${SANS}`;
-  const padX = 15 * k, dot = mine ? 5 * k : 0, gap = mine ? 8 * k : 0;
-  const tw = Math.max(1, Math.min(W - 8 * k - padX * 2 - dot * 2 - gap, g.measureText(text).width));
+  g.font = `${T ? 700 : 600} ${Math.round(24 * k)}px ${SANS}`;
+  const heart = T?.hearts ? 7 * k : 0;
+  const padX = 15 * k + heart * 1.6, dot = mine ? 5 * k : 0, gap = mine ? 8 * k : 0;
+  const tw = Math.max(1, Math.min(W - 12 * k - padX * 2 - dot * 2 - gap, g.measureText(text).width));
   const ph = 36 * k, pw = tw + padX * 2 + dot * 2 + gap;
   const x = (W - pw) / 2, y = (H - ph) / 2;
   roundRect(g, x, y, pw, ph, ph / 2);
-  g.fillStyle = 'rgba(10,14,28,0.82)';
-  g.fill();
+  if (T) {
+    if (T.fill.length > 1) {
+      const gr = g.createLinearGradient(0, y, 0, y + ph);
+      T.fill.forEach((c, i) => gr.addColorStop(i / (T.fill.length - 1), c));
+      g.fillStyle = gr;
+    } else g.fillStyle = T.fill[0];
+    g.fill();
+    g.save();
+    if (T.glow) { g.shadowColor = T.glow; g.shadowBlur = 9 * k; }
+    g.lineWidth = (T.glow ? 2.6 : 1.6) * k;
+    g.strokeStyle = T.edge;
+    g.stroke();
+    g.restore();
+    if (T.inner) {
+      roundRect(g, x + 3.2 * k, y + 3.2 * k, pw - 6.4 * k, ph - 6.4 * k, (ph - 6.4 * k) / 2);
+      g.lineWidth = 1 * k;
+      g.strokeStyle = T.inner;
+      g.stroke();
+    }
+    if (heart) {
+      g.fillStyle = T.hearts;
+      heartPath(g, x + 13 * k, H / 2, heart);
+      g.fill();
+      heartPath(g, x + pw - 13 * k, H / 2, heart);
+      g.fill();
+    }
+  } else {
+    g.fillStyle = 'rgba(10,14,28,0.82)';
+    g.fill();
+  }
   if (mine) {
     g.fillStyle = color;
     g.beginPath();
     g.arc(x + padX + dot, H / 2, dot, 0, Math.PI * 2);
     g.fill();
+    if (T && !T.glow) { g.lineWidth = 1.2 * k; g.strokeStyle = 'rgba(10,14,28,0.7)'; g.stroke(); }
   }
-  g.fillStyle = '#ffffff';
+  g.save();
+  if (T?.glow) { g.shadowColor = T.glow; g.shadowBlur = 6 * k; }
+  g.fillStyle = T ? T.text : '#ffffff';
   g.textAlign = 'left';
   g.textBaseline = 'middle';
   g.fillText(text, x + padX + dot * 2 + gap, H / 2 + 1 * k, tw);
+  g.restore();
+  return canvas;
+}
+
+// Foot-ring effects from the cosmetics shop (kind 'ring'), by cosmetic id: the texture of a flat square under the avatar, its ring at
+// RING_FX_R of the half width (the plain ring's 0.63..0.69 m on a RING_FX_SIZE plane). spin: turns per second in the scene; twinkle:
+// the opacity pulses. Painted once per id and shared by every avatar wearing it; the shop sheet paints the same canvas as its preview.
+export const RING_FX_SIZE = 1.7;
+export const RING_FX_R = 0.66 / (RING_FX_SIZE / 2);
+export const RING_FX = Object.freeze({
+  ring_rainbow: Object.freeze({ spin: 0.12 }),
+  ring_sparkle: Object.freeze({ spin: 0.18, twinkle: true }),
+  ring_heart: Object.freeze({ spin: 0.08 }),
+});
+function star4(g, x, y, r) {
+  g.beginPath();
+  g.moveTo(x, y - r); g.quadraticCurveTo(x, y, x + r, y); g.quadraticCurveTo(x, y, x, y + r);
+  g.quadraticCurveTo(x, y, x - r, y); g.quadraticCurveTo(x, y, x, y - r);
+  g.closePath();
+}
+export function paintRingFx(canvas, id) {
+  const g = canvas.getContext('2d');
+  const S = canvas.width, c = S / 2, R = c * RING_FX_R, k = S / 256;
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.clearRect(0, 0, S, S);
+  g.lineCap = 'round';
+  if (id === 'ring_rainbow') {
+    const n = 48;
+    for (let i = 0; i < n; i++) {
+      const a0 = (i / n) * Math.PI * 2, a1 = ((i + 1.15) / n) * Math.PI * 2;
+      g.strokeStyle = `hsl(${Math.round((i / n) * 360)}, 100%, 62%)`;
+      g.lineWidth = 11 * k;
+      g.beginPath(); g.arc(c, c, R, a0, a1); g.stroke();
+    }
+    g.globalAlpha = 0.35;
+    g.lineWidth = 3 * k;
+    g.strokeStyle = '#ffffff';
+    g.beginPath(); g.arc(c, c, R + 10 * k, 0, Math.PI * 2); g.stroke();
+    g.globalAlpha = 1;
+  } else if (id === 'ring_sparkle') {
+    g.strokeStyle = '#ffe9a8';
+    g.lineWidth = 5 * k;
+    g.beginPath(); g.arc(c, c, R, 0, Math.PI * 2); g.stroke();
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2, big = i % 2 === 0;
+      g.fillStyle = big ? '#ffffff' : '#ffd36a';
+      star4(g, c + Math.cos(a) * R, c + Math.sin(a) * R, (big ? 17 : 10) * k);
+      g.fill();
+    }
+  } else if (id === 'ring_heart') {
+    g.strokeStyle = '#ff5fa8';
+    g.lineWidth = 4 * k;
+    g.beginPath(); g.arc(c, c, R, 0, Math.PI * 2); g.stroke();
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * Math.PI * 2;
+      g.fillStyle = i % 3 === 0 ? '#ffffff' : '#ff6fb5';
+      heartPath(g, c + Math.cos(a) * R, c + Math.sin(a) * R, 12 * k);
+      g.fill();
+    }
+  }
+  return canvas;
+}
+
+// Board-frame looks from the cosmetics shop (kind 'frame'), by cosmetic id: the rim colour behind the holder's boards (ts3d/screens.js
+// setRim) and how it moves. 'shine' breathes the opacity, 'rainbow' walks the hue.
+export const FRAME_FX = Object.freeze({
+  frame_streak: Object.freeze({ color: '#ff3d9a', anim: '' }),
+  frame_gold: Object.freeze({ color: '#ffc94a', anim: 'shine' }),
+  frame_rainbow: Object.freeze({ color: '#ff3d4a', anim: 'rainbow' }),
+});
+// The rim colour of an animated frame at time t (seconds): the hue walk for 'rainbow', the plain colour otherwise.
+export function frameTone(fx, t) {
+  if (fx?.anim !== 'rainbow') return fx?.color || '';
+  const h = (((t * 0.15) % 1) + 1) % 1;
+  return `hsl(${Math.round(h * 360)}, 100%, 60%)`;
+}
+/** The shop's preview of a frame: a small dark board with the frame around it. */
+export function paintFrameSwatch(canvas, id) {
+  const g = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height, k = H / 64, fx = FRAME_FX[id];
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.clearRect(0, 0, W, H);
+  const x = 10 * k, y = 8 * k, w = W - 20 * k, h = H - 16 * k;
+  if (fx?.anim === 'rainbow') {
+    const gr = g.createLinearGradient(x, y, x + w, y + h);
+    ['#ff3d4a', '#ffcf5a', '#39f58a', '#3fe6ff', '#b84dff', '#ff7ad9'].forEach((c, i, a) => gr.addColorStop(i / (a.length - 1), c));
+    g.fillStyle = gr;
+  } else g.fillStyle = fx?.color || '#3a4266';
+  roundRect(g, x - 5 * k, y - 5 * k, w + 10 * k, h + 10 * k, 7 * k);
+  g.fill();
+  g.fillStyle = PANEL;
+  roundRect(g, x, y, w, h, 4 * k);
+  g.fill();
+  g.fillStyle = TEXT2;
+  g.fillRect(x + 8 * k, y + h / 2 - 5 * k, w * 0.55, 3 * k);
+  g.fillStyle = DIM;
+  g.fillRect(x + 8 * k, y + h / 2 + 3 * k, w * 0.35, 3 * k);
   return canvas;
 }
 

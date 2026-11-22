@@ -193,7 +193,7 @@ CREATE TABLE IF NOT EXISTS public.coin_ledger (
   delta BIGINT NOT NULL,
   reason TEXT NOT NULL CHECK (reason IN (
     'mine','fare','bonus','claim','refund','landlord','photo','photo_refund',
-    'sell','spend','link','admin','lottery','starter'
+    'sell','spend','link','admin','lottery','starter','shop'
   )),
   ref TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -2092,7 +2092,7 @@ GRANT EXECUTE ON FUNCTION public.ensure_ref_code(TEXT, TEXT) TO anon, authentica
 -- Cosmetics locker. No public read. A 7-day streak fills only the rows that are still missing.
 CREATE TABLE IF NOT EXISTS public.cosmetics (
   id TEXT PRIMARY KEY,
-  kind TEXT NOT NULL CHECK (kind IN ('hat','cab','frame','emote')),
+  kind TEXT NOT NULL CHECK (kind IN ('hat','cab','frame','emote','tag','ring')),
   season TEXT,
   grant_via TEXT NOT NULL CHECK (grant_via IN ('attend7','shop','season','tribe'))
 );
@@ -2146,6 +2146,199 @@ BEGIN
 END;
 $$;
 
+-- 꾸미기 상점 (migrations/2026-11-22-shop.sql adds all of this to production; the statements are the same). Coins only, never cash.
+-- A table made before it checks kind against hat/cab/frame/emote and the ledger reason without 'shop': widened here, keeping every value
+-- already there. Thirteen priced items (balance.js SHOP); the three attendance ones keep grant_via attend7 and are sold too. Re-run safe.
+DO $sk$
+DECLARE
+  c RECORD;
+  v_vals TEXT;
+BEGIN
+  FOR c IN
+    SELECT conname, pg_get_constraintdef(oid) AS def FROM pg_constraint
+    WHERE conrelid = 'public.cosmetics'::regclass AND contype = 'c' AND pg_get_constraintdef(oid) ILIKE '%kind%'
+  LOOP
+    IF position('''tag''' IN c.def) > 0 AND position('''ring''' IN c.def) > 0 THEN CONTINUE; END IF;
+    SELECT string_agg(quote_literal(v), ', ' ORDER BY o) INTO v_vals FROM (
+      SELECT v, min(o) AS o FROM (
+        SELECT m[1] AS v, n AS o FROM regexp_matches(c.def, '''([a-z_0-9]+)''', 'g') WITH ORDINALITY AS t(m, n)
+        UNION ALL SELECT 'tag', 1000001 UNION ALL SELECT 'ring', 1000002
+      ) a GROUP BY v
+    ) b;
+    EXECUTE format('ALTER TABLE public.cosmetics DROP CONSTRAINT %I', c.conname);
+    EXECUTE format('ALTER TABLE public.cosmetics ADD CONSTRAINT %I CHECK (kind IN (%s))', c.conname, v_vals);
+  END LOOP;
+END
+$sk$;
+ALTER TABLE public.cosmetics ADD COLUMN IF NOT EXISTS price INT CHECK (price IS NULL OR price > 0);
+INSERT INTO public.cosmetics (id, kind, grant_via, price) VALUES
+  ('tag_heart', 'tag', 'shop', 300),
+  ('tag_gold', 'tag', 'shop', 500),
+  ('tag_neon', 'tag', 'shop', 700),
+  ('ring_sparkle', 'ring', 'shop', 700),
+  ('ring_heart', 'ring', 'shop', 800),
+  ('ring_rainbow', 'ring', 'shop', 1000),
+  ('cab_yellow', 'cab', 'attend7', 800),
+  ('cab_pink', 'cab', 'shop', 900),
+  ('cab_black', 'cab', 'shop', 1100),
+  ('frame_streak', 'frame', 'attend7', 600),
+  ('frame_gold', 'frame', 'shop', 1000),
+  ('frame_rainbow', 'frame', 'shop', 1500),
+  ('hat_ribbon', 'hat', 'attend7', 400)
+ON CONFLICT (id) DO UPDATE SET price = EXCLUDED.price;
+DO $sl$
+DECLARE
+  c RECORD;
+  v_vals TEXT;
+BEGIN
+  FOR c IN
+    SELECT conname, pg_get_constraintdef(oid) AS def FROM pg_constraint
+    WHERE conrelid = 'public.coin_ledger'::regclass AND contype = 'c' AND pg_get_constraintdef(oid) ILIKE '%reason%'
+  LOOP
+    IF position('''shop''' IN c.def) > 0 THEN CONTINUE; END IF;
+    SELECT string_agg(quote_literal(v), ', ' ORDER BY o) INTO v_vals FROM (
+      SELECT v, min(o) AS o FROM (
+        SELECT m[1] AS v, n AS o FROM regexp_matches(c.def, '''([a-z_0-9]+)''', 'g') WITH ORDINALITY AS t(m, n)
+        UNION ALL SELECT 'shop', 1000001
+      ) a GROUP BY v
+    ) b;
+    EXECUTE format('ALTER TABLE public.coin_ledger DROP CONSTRAINT %I', c.conname);
+    EXECUTE format('ALTER TABLE public.coin_ledger ADD CONSTRAINT %I CHECK (reason IN (%s))', c.conname, v_vals);
+  END LOOP;
+END
+$sl$;
+
+CREATE OR REPLACE FUNCTION public.shop_list(p_key TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_items JSONB;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  SELECT COALESCE(jsonb_agg(jsonb_build_object('id', id, 'kind', kind, 'price', price) ORDER BY kind, price, id), '[]'::jsonb)
+  INTO v_items
+  FROM public.cosmetics WHERE price IS NOT NULL;
+  RETURN jsonb_build_object('ok', true, 'items', v_items);
+END;
+$$;
+
+-- One purchase, all or nothing: the wallet row is locked first, so two buys of one account run one after the other and the second sees the
+-- first one's item (owned). The price is the database's. The bought item is equipped in its kind. Not counted in wallets.spent or the league.
+CREATE OR REPLACE FUNCTION public.buy_cosmetic(p_key TEXT, p_actor_id TEXT, p_cosmetic_id TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_kind TEXT;
+  v_price INT;
+  v_coins BIGINT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  SELECT kind, price INTO v_kind, v_price FROM public.cosmetics WHERE id = p_cosmetic_id;
+  IF v_kind IS NULL OR v_price IS NULL OR v_price <= 0 THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'item');
+  END IF;
+  SELECT coins INTO v_coins FROM public.wallets WHERE actor_id = p_actor_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'coins', 'coins', 0, 'price', v_price);
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.inventory WHERE actor_id = p_actor_id AND cosmetic_id = p_cosmetic_id) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'owned', 'coins', v_coins);
+  END IF;
+  IF v_coins < v_price THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'coins', 'coins', v_coins, 'price', v_price);
+  END IF;
+  UPDATE public.wallets SET coins = coins - v_price, updated_at = now() WHERE actor_id = p_actor_id RETURNING coins INTO v_coins;
+  INSERT INTO public.coin_ledger (actor_id, delta, reason, ref) VALUES (p_actor_id, -v_price, 'shop', p_cosmetic_id);
+  UPDATE public.inventory AS inv
+  SET equipped = false
+  FROM public.cosmetics AS c
+  WHERE inv.actor_id = p_actor_id AND inv.cosmetic_id = c.id AND c.kind = v_kind AND inv.equipped;
+  INSERT INTO public.inventory (actor_id, cosmetic_id, equipped) VALUES (p_actor_id, p_cosmetic_id, true);
+  RETURN jsonb_build_object('ok', true, 'cosmetic_id', p_cosmetic_id, 'kind', v_kind, 'price', v_price, 'coins', v_coins);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.unequip_cosmetic(p_key TEXT, p_actor_id TEXT, p_kind TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_n INT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  UPDATE public.inventory AS inv
+  SET equipped = false
+  FROM public.cosmetics AS c
+  WHERE inv.actor_id = p_actor_id AND inv.cosmetic_id = c.id AND c.kind = p_kind AND inv.equipped;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN jsonb_build_object('ok', true, 'n', v_n);
+END;
+$$;
+
+-- A guest's locker follows it into the account it links to (the Worker calls this after merge_guest_account). What the account already
+-- has stays; a guest's equipped item stays equipped only in a kind the account has nothing equipped in.
+CREATE OR REPLACE FUNCTION public.move_cosmetics(p_key TEXT, p_from TEXT, p_to TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_secret TEXT;
+  v_n INT;
+BEGIN
+  SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
+  IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
+    RAISE EXCEPTION 'Unauthorized worker key';
+  END IF;
+  IF p_from IS NULL OR p_from NOT LIKE 'guest:%' OR p_to IS NULL OR p_to NOT LIKE 'user:%'
+    OR NOT EXISTS (SELECT 1 FROM public.wallets WHERE actor_id = p_to) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'actor');
+  END IF;
+  INSERT INTO public.inventory (actor_id, cosmetic_id, equipped, granted_at)
+  SELECT p_to, g.cosmetic_id,
+    g.equipped AND NOT EXISTS (
+      SELECT 1 FROM public.inventory AS u JOIN public.cosmetics AS uc ON uc.id = u.cosmetic_id
+      WHERE u.actor_id = p_to AND u.equipped AND uc.kind = c.kind),
+    g.granted_at
+  FROM public.inventory AS g JOIN public.cosmetics AS c ON c.id = g.cosmetic_id
+  WHERE g.actor_id = p_from
+  ON CONFLICT (actor_id, cosmetic_id) DO NOTHING;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  DELETE FROM public.inventory WHERE actor_id = p_from;
+  RETURN jsonb_build_object('ok', true, 'moved', v_n);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.shop_list(TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.buy_cosmetic(TEXT, TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.unequip_cosmetic(TEXT, TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.move_cosmetics(TEXT, TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.shop_list(TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.buy_cosmetic(TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.unequip_cosmetic(TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.move_cosmetics(TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
+
 -- Level is read-time: least(99, 1 + reputation / 10). Reputation itself is the relight +1.
 CREATE OR REPLACE FUNCTION public.profile_read(p_key TEXT, p_actor_id TEXT)
 RETURNS JSONB
@@ -2183,7 +2376,7 @@ BEGIN
     SELECT cosmetic_id FROM public.inventory
     WHERE actor_id = p_actor_id AND equipped
     ORDER BY cosmetic_id
-    LIMIT 4
+    LIMIT 6
   ) s;
   SELECT COALESCE(jsonb_agg(s.cosmetic_id ORDER BY s.cosmetic_id), '[]'::jsonb)
   INTO v_owned
@@ -2191,7 +2384,7 @@ BEGIN
     SELECT cosmetic_id FROM public.inventory
     WHERE actor_id = p_actor_id
     ORDER BY cosmetic_id
-    LIMIT 12
+    LIMIT 16
   ) s;
   RETURN jsonb_build_object(
     'ok', true,

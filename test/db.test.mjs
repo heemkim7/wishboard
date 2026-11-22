@@ -471,7 +471,14 @@ describe('SQL in PGlite', { skip: PGlite ? false : 'PGlite not installed (see th
     // And the twenty new street boards (test/boards.test.mjs runs it on its own, before and after).
     const boards = (await old.exec(read(BOARDS))).at(-1).rows;
     assert.equal(boards.length, 1); assert.equal(boards[0].applied, true, boards[0].note);
+    // And the cosmetics shop (test/shop.test.mjs runs it in both states and buys for real).
+    const shop = (await old.exec(read('migrations/2026-11-22-shop.sql'))).at(-1).rows;
+    assert.equal(shop.length, 1); assert.equal(shop[0].applied, true, shop[0].note);
     const neu = await fresh(read('schema.sql'));
+    const cons = async (d) => (await d.query("SELECT conrelid::regclass::text AS t, conname, pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid IN ('public.cosmetics'::regclass, 'public.coin_ledger'::regclass) AND contype = 'c' ORDER BY 1, 2")).rows;
+    assert.deepEqual(await cons(old), await cons(neu));
+    const seed = async (d) => (await d.query('SELECT id, kind, grant_via, price FROM public.cosmetics ORDER BY id')).rows;
+    assert.deepEqual(await seed(old), await seed(neu));
     const checks = async (d) => (await d.query("SELECT conname, pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid = 'public.profiles'::regclass AND contype = 'c' ORDER BY 1")).rows;
     assert.deepEqual(await checks(old), await checks(neu));
     const [a, b] = [await shape(old), await shape(neu)];
