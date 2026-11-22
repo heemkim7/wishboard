@@ -6,9 +6,9 @@
 
 | 무엇 | 상태 |
 | --- | --- |
-| 실서비스 | https://studio.wishboard.workers.dev, Worker `studio` 버전 `256d7ee8-5737-4bf4-a839-8d56ad47d604`(2026-11-22 11:11 KST 배포, 4차 작업, 커밋 `9018ab5`, 빌드 id `202611221059`). 그 뒤의 옷 색 16색, 커피 곡, 휴대폰 동작 패널, 5차 작업 전부(운영 장치, 광고 판매, 꾸미기 상점, 검색·홈 화면·주간 카드, 계절 테마, 코드 정리; 빌드 id `202611221326`)는 **아직 배포하지 않았다**. 배포 뒤 공개 파일 122개가 커밋과 같았고 숨길 경로는 모두 404, `/rt/world` 81칸, 새 손님의 코인 보내기는 `손님은 코인을 보낼 수 없어요…`로 거절(새 서버 코드 확인). |
+| 실서비스 | https://studio.wishboard.workers.dev, Worker `studio` 버전 `e373c36e-7ecf-40c7-859f-551ecd81af3f`(2026-11-22 14:28 KST 배포, 주인이 "배포해 줘", 5차 작업까지, 커밋 `8eae8d5`, 빌드 id `202611221326`). 배포 뒤 `tools/prod-check.mjs`: 공개 파일 147개가 커밋과 같음, 숨길 경로(`ops.js`·`adsrv.js` 포함) 404, 모듈 51개, `[seo]`·`[ads]` 문제 없음. `/rt/health`가 새 칸(`db: ok`, `budget: 0`, `build: 202611221326`)을 줘서 새 서버 코드를 확인했다. 상점은 SQL 전이라 `open:false`, 광고는 `ADS_ON` 없이 꺼짐, 공유 카드에 `X-Robots-Tag: noindex`. 휴대폰 크기 실서비스 화면에서 16색, 썸네일 10장과 후드티 미리보기, 꾸미기 줄, '동작·리액션' 패널을 봤다. 아래 4차 배포 기록(`256d7ee8`)은 그 전 버전이다. 배포 뒤 공개 파일 122개가 커밋과 같았고 숨길 경로는 모두 404, `/rt/world` 81칸, 새 손님의 코인 보내기는 `손님은 코인을 보낼 수 없어요…`로 거절(새 서버 코드 확인). |
 | Git | **`main`에서 작업한다.** 2026-11-22에 주인이 "main으로 합쳐 줘"라고 해서 `main`을 `commercial-build`까지 앞으로 당겨(`59d054a..f44df4b`, 되감기 없음) GitHub `heemkim7/wishboard`에 올렸다. 그 뒤의 커밋(`b8dc6f9`까지 푸시, 5차 작업은 **푸시 안 함**)은 이 PC의 `main`에만 있다. `commercial-build`는 그 직전(`c1ec486`)에 남아 있고 더 쓰지 않는다. `feat/hanriver-penthouse`는 실험이라 건드리지 않는다. |
-| 되돌리기 | `npx wrangler rollback b9c3aa62-1528-42f0-bb30-946ce052a782`(3차 작업 빌드). 운영 DB는 새 마이그레이션이 적용된 채로 남는데, 3차 Worker도 새 DB에서 동작한다(배포 전 몇 분 동안 실제로 그 조합으로 돌았고 `/rt/world`·`/rt/config`가 정상이었다. 새 칸 20개는 옛 코드가 무시한다). 되돌린 뒤 `/rt/config`에 `invite: true`가 있는지 본다. |
+| 되돌리기 | 5차 작업만 되돌리려면 `npx wrangler rollback 256d7ee8-5737-4bf4-a839-8d56ad47d604`(4차 작업 빌드, 운영 DB 그대로 동작). 그보다 앞은 `npx wrangler rollback b9c3aa62-1528-42f0-bb30-946ce052a782`(3차 작업 빌드). 운영 DB는 새 마이그레이션이 적용된 채로 남는데, 3차 Worker도 새 DB에서 동작한다(배포 전 몇 분 동안 실제로 그 조합으로 돌았고 `/rt/world`·`/rt/config`가 정상이었다. 새 칸 20개는 옛 코드가 무시한다). 되돌린 뒤 `/rt/config`에 `invite: true`가 있는지 본다. |
 | Worker 시크릿 | `ADMIN_KEY` `FLUSH_KEY` `GUEST_KEY` `INVITE_ON`(=1, 친구 초대 켬) `VAPID_PRIV`. 값은 `.dev.vars`에만 있다. |
 | 운영 DB 마이그레이션 | **모두 적용됨**(2026-11-22, 주인이 "SQL 실행 후 배포"): `2026-11-21-mid.sql` 1~4부, `2026-11-22-forget-login.sql`, `2026-11-22-species.sql`, `2026-11-22-boards.sql`, `2026-11-22-coins.sql` 1부. 결과 줄은 모두 `applied = true`, 뒤 확인 조회: 종 CHECK 1~10, 거리 칸 50, 바닥가 31번 150·50번 250·51번 0, 무료 첫 칸 20, `tribe_roofs` 있음, 코인 트리거 2개, 새 표(`gone_logins` `starter_taken` `tribe_roofs`) RLS 켬, 로그인 수 2 그대로. **안 함**: 코인 2부(옛 미확인 가입 확인 처리, 대상 1개, 주인 결정), 5차에 새로 생긴 `2026-11-22-shop.sql`(꾸미기 상점; 검토 수정으로 `buy_cosmetic`이 인자 4개가 된 최신 파일)과 `2026-11-22-themes.sql`(운영 달력의 새 계절 키). |
 | Supabase 인증 설정 | Site URL `https://studio.wishboard.workers.dev`, Redirect URLs에 실서비스와 `http://localhost:8790/**`, 이메일 확인 끔, 구글 로그인 켬. |
@@ -40,7 +40,6 @@
 
 | 급 | 항목 | 내용 |
 | --- | --- | --- |
-| 상 | 배포 | 5차 작업 전부가 배포 전이다. "배포해 줘"면 빌드 id 확인, dry-run, 배포, `tools/prod-check.mjs`, 실서비스 확인. |
 | 상 | Cloudflare Workers 유료 요금제 + `PLAN=paid` | 무료는 하루 요청 10만 건. 출시 전에 권한다(`docs/monetize-readiness-2026-11-22.md` A). |
 | 상 | 운영 SQL | `2026-11-22-shop.sql`(최신 파일), `2026-11-22-themes.sql`. 주인이 이름을 대서 맡기면 Chrome으로 실행. |
 | 중 | 광고 판매 켜기 | 사업자 등록·통신판매업, `OPERATOR_INFO`, `ADS_PRICES`, `ADS_ON=1`, 약관의 광고 조항 법무 검토. |
