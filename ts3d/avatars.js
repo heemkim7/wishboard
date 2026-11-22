@@ -1,5 +1,6 @@
-// Animated GLTF characters: the mouse, cat and bear toys from tools/blender/build_animal.py. All three sit on the
-// Mixamo rig (46 joints) and carry the same ten Mixamo clips.
+// Animated GLTF characters: ten toy species (SPECIES below, presence field `av` 1..10) from tools/blender/build_animal.py.
+// Every species sits on the same Mixamo rig (46 joints) and carries the same ten Mixamo clips. A model that is not on the
+// server yet (or fails) shows another species' body instead (loadplan.js modelFor), so a new id never breaks a room.
 // One AnimationMixer per avatar; locomotion states cross-fade and emotes play once on top.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -23,14 +24,24 @@ export const REACTIONS = [
   { g: '🍜' }, { g: '🎶', anim: 'Dance' }, { g: '🗽', anim: 'Wave' }, { g: '🚕' }, { g: '💸', anim: 'Yes' }, { g: '😴', anim: 'No' },
 ];
 export const AVATAR_COLORS = ['#ff3d9a', '#3fe6ff', '#ffcf5a', '#39f58a', '#b84dff', '#ff6a3d', '#f4f6ff', '#4d7cff'];
+// thumb: the picker's tile picture (ui.js speciesPicker); the glyph stands in while it is missing or fails.
 export const SPECIES = [
-  { id: 1, label: '쥐', glyph: '🐭' },
-  { id: 2, label: '고양이', glyph: '🐱' },
-  { id: 3, label: '곰', glyph: '🐻' },
+  { id: 1, label: '쥐', glyph: '🐭', thumb: '/assets/avatars/mouse.png' },
+  { id: 2, label: '고양이', glyph: '🐱', thumb: '/assets/avatars/cat.png' },
+  { id: 3, label: '곰', glyph: '🐻', thumb: '/assets/avatars/bear.png' },
+  { id: 4, label: '토끼', glyph: '🐰', thumb: '/assets/avatars/rabbit.png' },
+  { id: 5, label: '강아지', glyph: '🐶', thumb: '/assets/avatars/puppy.png' },
+  { id: 6, label: '판다', glyph: '🐼', thumb: '/assets/avatars/panda.png' },
+  { id: 7, label: '여우', glyph: '🦊', thumb: '/assets/avatars/fox.png' },
+  { id: 8, label: '펭귄', glyph: '🐧', thumb: '/assets/avatars/penguin.png' },
+  { id: 9, label: '햄스터', glyph: '🐹', thumb: '/assets/avatars/hamster.png' },
+  { id: 10, label: '호랑이', glyph: '🐯', thumb: '/assets/avatars/tiger.png' },
 ];
+export const SPECIES_MAX = 10;
+// Any input to a species id: an integer 1..SPECIES_MAX, anything else (0, 11, 2.5, '7a', null) is the mouse.
 export function speciesId(id) {
-  const n = Math.floor(Number(id));
-  return n === 2 || n === 3 ? n : 1;
+  const n = typeof id === 'number' ? id : typeof id === 'string' && /^\s*\d{1,2}\s*$/.test(id) ? Number(id) : NaN; // a number, or digits from storage or JSON
+  return Number.isInteger(n) && n >= 1 && n <= SPECIES_MAX ? n : 1;
 }
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
@@ -115,7 +126,7 @@ export function createAvatars({ scene, urls, models, first, height = 1.8 }) {
     });
   }
   sys.load = loadId;
-  // Only the player's own species is fetched up front; others on first sight (Avatar.want) or by prefetch().
+  // Only the player's own species is fetched up front; others on first sight (Avatar.want) or by prefetch(ids).
   loadId(speciesId(first));
 
   function create(opts) {
@@ -123,7 +134,8 @@ export function createAvatars({ scene, urls, models, first, height = 1.8 }) {
     sys.all.add(a);
     return a;
   }
-  function prefetch() { for (const key of Object.keys(sources)) loadId(speciesId(key)); }
+  // Idle prefetch: only the species in `ids` (those the room's other players wear), never the whole table.
+  function prefetch(ids) { for (const id of new Set(ids || [])) loadId(speciesId(id)); }
   return { create, sys, prefetch, want: loadId, get ready() { return sys.species.size > 0; } };
 }
 

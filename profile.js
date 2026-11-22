@@ -12,9 +12,19 @@ async function bearer() {
   return raw;
 }
 
+// Species ids 1..10 (ts3d/avatars.js SPECIES; kept here as a number so this module loads without three.js). Anything else is 1.
+export const SPECIES_MAX = 10;
 export function setSpecies(id) {
-  const n = Math.floor(Number(id));
-  return n === 2 || n === 3 ? n : 1;
+  const n = typeof id === 'number' ? id : typeof id === 'string' && /^\s*\d{1,2}\s*$/.test(id) ? Number(id) : NaN; // a number, or digits from storage or JSON
+  return Number.isInteger(n) && n >= 1 && n <= SPECIES_MAX ? n : 1;
+}
+
+// The species a GET /rt/profile answer leaves this device with. Before migrations/2026-11-22-species.sql the database stores 1 for a choice
+// of 4..10; the Worker answers the choice from its account registry, and when it could not ask (hard budget, a failed call) it says
+// species_sure: false. Only then, and only against an answer of 1, does this device's own choice of 4..10 stand.
+export function profileSpecies(p, local) {
+  const got = setSpecies(p?.species), mine = setSpecies(local);
+  return p?.species_sure === false && got === 1 && mine > 3 ? mine : got;
 }
 
 export async function loadProfile() {

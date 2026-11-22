@@ -436,7 +436,12 @@ describe('SQL in PGlite', { skip: PGlite ? false : 'PGlite not installed (see th
     // the function exists but cannot delete: not applied.
     const forget = (await old.exec(read('migrations/2026-11-22-forget-login.sql'))).at(-1).rows;
     assert.equal(forget.length, 1); assert.equal(forget[0].applied, false); assert.match(forget[0].note, /함수는 있지만 지우지 못합니다/);
+    // Then the ten species (test/species.test.mjs runs it in both states): the profiles CHECK and save_species.
+    const species = (await old.exec(read('migrations/2026-11-22-species.sql'))).at(-1).rows;
+    assert.equal(species.length, 1); assert.equal(species[0].applied, true, species[0].note);
     const neu = await fresh(read('schema.sql'));
+    const checks = async (d) => (await d.query("SELECT conname, pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid = 'public.profiles'::regclass AND contype = 'c' ORDER BY 1")).rows;
+    assert.deepEqual(await checks(old), await checks(neu));
     const [a, b] = [await shape(old), await shape(neu)];
     assert.deepEqual(a.cols, b.cols);
     assert.deepEqual(a.rls, b.rls);

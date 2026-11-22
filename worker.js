@@ -239,10 +239,25 @@ export class Meter extends DurableObject {
     if (!hit || Date.now() - hit.at > 300000) return null;
     return { av: hit.av, equip: hit.equip.slice() };
   }
-  profilePut(uid, av, equip) {
+  // av is the database's species. Before migrations/2026-11-22-species.sql, save_species stores 1 for a choice of 4..10 (its old 1..3 clamp),
+  // so the account's last such choice is kept here (durable, `held`) and a database answer of 1 reads through it. `chose`: the species the
+  // account has just saved (POST /rt/profile): kept when the database clamped it to 1, dropped when the database kept what was saved.
+  profilePut(uid, av, equip, chose) {
     if (!this._prof) this._prof = new Map();
-    const row = { av: speciesOf(av), equip: equipList(equip), at: Date.now() };
-    this._prof.set(String(uid || ''), row);
+    const id = String(uid || '');
+    let sp = speciesOf(av);
+    try {
+      const q = this.ctx.storage.sql;
+      if (!this.heldOk) { q.exec('create table if not exists held(uid text primary key, av integer not null)'); this.heldOk = 1; }
+      if (chose != null) {
+        const c = speciesOf(chose);
+        if (c > 3 && sp === 1) q.exec('insert into held(uid, av) values(?, ?) on conflict(uid) do update set av = excluded.av', id, c);
+        else q.exec('delete from held where uid = ?', id);
+      }
+      if (sp === 1) { const h = q.exec('select av from held where uid = ?', id).toArray()[0]; if (h) sp = speciesOf(h.av); }
+    } catch { /* the database's answer stands */ }
+    const row = { av: sp, equip: equipList(equip), at: Date.now() };
+    this._prof.set(id, row);
     return { av: row.av, equip: row.equip.slice() };
   }
   gatePut(rows) { this.acInit(); const q = this.ctx.storage.sql; for (const [uid, k, d, v] of rows || []) agPut(q, uid, k, d, v); return { ok: 1 }; }
@@ -1377,7 +1392,7 @@ export class Room extends DurableObject {
   async loadProf(uid) {
     try {
       const hit = await this.acct().profileOf(uid);
-      if (hit && (hit.av === 1 || hit.av === 2 || hit.av === 3)) return { av: speciesOf(hit.av), equip: equipList(hit.equip) };
+      if (hit && Number.isInteger(hit.av) && hit.av >= 1 && hit.av <= SPECIES_MAX) return { av: speciesOf(hit.av), equip: equipList(hit.equip) };
     } catch { /* a meter without the cache still lets the socket open */ }
     const key = this.env?.FLUSH_KEY;
     if (typeof key !== 'string' || !key) return null;
@@ -1385,7 +1400,7 @@ export class Room extends DurableObject {
       const rpc = await supabaseRpc('profile_read', { p_key: key, p_actor_id: uid });
       if (!rpc.ok || !rpc.data || rpc.data.ok === false || rpc.data.species == null) return null;
       const prof = normProf(rpc.data);
-      try { await this.acct().profilePut(uid, prof.av, prof.equip); } catch { /* this socket keeps the copy */ }
+      try { prof.av = speciesOf((await this.acct().profilePut(uid, prof.av, prof.equip))?.av); } catch { /* this socket keeps the copy */ }
       return prof;
     } catch { return null; }
   }
@@ -1534,9 +1549,26 @@ function pushUrl(row) {
   if ((row?.kind === 'wish' || row?.kind === 'wishwin') && WISH_ID.test(wid)) return '/?wish=' + wid;
   return '';
 }
+// Avatar species, presence field av: 1..SPECIES_MAX (ts3d/avatars.js SPECIES), anything else is 1 (the mouse).
+const SPECIES_MAX = 10;
 function speciesOf(id) {
-  const n = Math.floor(Number(id));
-  return n === 2 || n === 3 ? n : 1;
+  const n = typeof id === 'number' ? id : typeof id === 'string' && /^\s*\d{1,2}\s*$/.test(id) ? Number(id) : NaN; // a number, or digits from storage or JSON
+  return Number.isInteger(n) && n >= 1 && n <= SPECIES_MAX ? n : 1;
+}
+// Does save_species still clamp 4..10 to 1 (before migrations/2026-11-22-species.sql)? When this isolate last saw it do so; 0 = not seen
+// or seen keeping a 4..10. Only paces speciesHeal: correctness never depends on it.
+let SPC_OLD = 0;
+// A choice the account registry holds (Meter.profilePut `held`) goes into the database once the database can keep it: at most one try
+// per 10 minutes per isolate while it still clamps, in the request's waitUntil. Kept: the registry drops its copy (one tallied DO call).
+function speciesHeal(env, ctx, actorId, av, equip) {
+  if (SPC_OLD && !stale(SPC_OLD, 600000)) return;
+  SPC_OLD = Date.now();
+  const job = supabaseRpc('save_species', { p_key: env.FLUSH_KEY || '', p_actor_id: actorId, p_species: av }).then(async (r) => {
+    if (!r.ok || !r.data || r.data.ok === false || speciesOf(r.data.species) !== av) return;
+    SPC_OLD = 0;
+    await acct(env).profilePut(actorId, av, equip, av);
+  }).catch(() => null);
+  try { ctx?.waitUntil?.(job); } catch { /* the next read tries again */ }
 }
 function levelOf(rep) {
   const n = Math.max(0, Math.floor(Number(rep) || 0));
@@ -1557,11 +1589,12 @@ function normProf(data) {
   const reputation = Math.max(0, Math.floor(Number(data?.reputation) || 0));
   return { av: speciesOf(data?.species), equip: equipList(data?.equip), reputation, level: levelOf(reputation) };
 }
-async function publishProfile(env, actorId) {
+// chose: the species just saved (POST /rt/profile), so the account registry can hold one the database clamped (Meter.profilePut).
+async function publishProfile(env, actorId, chose) {
   const rpc = await supabaseRpc('profile_read', { p_key: env.FLUSH_KEY || '', p_actor_id: actorId });
   if (!rpc.ok || !rpc.data || rpc.data.ok === false || rpc.data.species == null) return null;
   const prof = normProf(rpc.data);
-  try { await acct(env).profilePut(actorId, prof.av, prof.equip); } catch { /* the room push still carries this copy */ }
+  try { prof.av = speciesOf((await acct(env).profilePut(actorId, prof.av, prof.equip, chose))?.av); } catch { if (chose != null && prof.av === 1) prof.av = speciesOf(chose); /* the room push still carries this copy */ }
   try {
     const room = await acct(env).roomOf(actorId);
     if (room) await env.ROOM.get(env.ROOM.idFromName(room)).fetch(new Request('https://room.internal/profile', { method: 'POST', headers: { 'x-uid': actorId, 'content-type': 'application/json' }, body: JSON.stringify(prof) }));
@@ -1575,10 +1608,24 @@ async function profileApi(req, env, u, ctx) {
     const rpc = await supabaseRpc('profile_read', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id });
     if (!rpc.ok || !rpc.data || rpc.data.ok === false || rpc.data.species == null) return J({ err: 'profile' }, 502);
     const prof = normProf(rpc.data);
+    // A database answer of 1 may be a choice of 4..10 the database clamped (before migrations/2026-11-22-species.sql): the account registry
+    // answers it (one tallied DO call, only for an answer of 1). At the hard budget level, or when that call fails, the answer carries
+    // species_sure: false and the client keeps its own choice of 4..10 (main.js pullProfile).
+    let sure = true;
+    if (prof.av === 1) {
+      sure = false;
+      if (!(await budgetHard(env))) {
+        try {
+          const av = speciesOf((await acct(env).profilePut(actor.id, prof.av, prof.equip))?.av);
+          sure = true;
+          if (av !== 1) { prof.av = av; speciesHeal(env, ctx, actor.id, av, prof.equip); }
+        } catch { /* sure stays false */ }
+      }
+    }
     const color = /^#[0-9a-fA-F]{6}$/.test(String(rpc.data.color || '')) ? String(rpc.data.color) : '';
     const streak = Math.max(0, Math.floor(Number(rpc.data.streak) || 0));
     const attendLast = /^\d{4}-\d{2}-\d{2}/.test(String(rpc.data.attend_last || '')) ? String(rpc.data.attend_last).slice(0, 10) : '';
-    return J({ level: prof.level, reputation: prof.reputation, species: prof.av, equip: prof.equip, owned: equipList(rpc.data.owned), starter: rpc.data.starter === true, streak, ...(attendLast ? { attend_last: attendLast } : {}), ...(color ? { color } : {}) });
+    return J({ level: prof.level, reputation: prof.reputation, species: prof.av, equip: prof.equip, owned: equipList(rpc.data.owned), starter: rpc.data.starter === true, streak, ...(attendLast ? { attend_last: attendLast } : {}), ...(color ? { color } : {}), ...(sure ? {} : { species_sure: false }) });
   }
   if (u.pathname === '/rt/profile' && req.method === 'POST') {
     if (!env.FLUSH_KEY) return J({ err: 'profile' }, 503);
@@ -1589,7 +1636,8 @@ async function profileApi(req, env, u, ctx) {
       const species = speciesOf(b.species);
       const rpc = await supabaseRpc('save_species', { p_key: env.FLUSH_KEY, p_actor_id: actor.id, p_species: species });
       if (!rpc.ok || rpc.data?.ok === false) return J({ ok: false, error: rpc.data?.error || 'profile' }, rpc.ok ? 400 : 502);
-      const prof = await publishProfile(env, actor.id);
+      if (species > 3) SPC_OLD = speciesOf(rpc.data?.species) === species ? 0 : Date.now();
+      const prof = await publishProfile(env, actor.id, species);
       out.species = prof?.av || species;
     }
     if (typeof b.nickname === 'string') {

@@ -152,7 +152,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   actor_id TEXT PRIMARY KEY REFERENCES public.wallets(actor_id) ON DELETE CASCADE,
   level INT NOT NULL DEFAULT 1 CHECK (level BETWEEN 1 AND 99),
   reputation INT NOT NULL DEFAULT 0 CHECK (reputation >= 0),
-  species SMALLINT NOT NULL DEFAULT 1 CHECK (species BETWEEN 1 AND 3),
+  species SMALLINT NOT NULL DEFAULT 1 CHECK (species BETWEEN 1 AND 10),
   ring_color TEXT NOT NULL DEFAULT '#ff3d9a',
   starter_slot TEXT,
   attend_streak INT NOT NULL DEFAULT 0,
@@ -162,6 +162,21 @@ CREATE TABLE IF NOT EXISTS public.profiles (
 );
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS tribe_id TEXT;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS ring_set BOOLEAN NOT NULL DEFAULT false;
+-- Ten avatar species (ts3d/avatars.js SPECIES). A table made before 2026-11-22 checks species against 1..3: widened here, the same
+-- statement as migrations/2026-11-22-species.sql. Re-run safe.
+DO $sp$
+DECLARE
+  c RECORD;
+BEGIN
+  FOR c IN
+    SELECT conname FROM pg_constraint
+    WHERE conrelid = 'public.profiles'::regclass AND contype = 'c' AND pg_get_constraintdef(oid) ILIKE '%species%'
+  LOOP
+    EXECUTE format('ALTER TABLE public.profiles DROP CONSTRAINT %I', c.conname);
+  END LOOP;
+  ALTER TABLE public.profiles ADD CONSTRAINT profiles_species_check CHECK (species BETWEEN 1 AND 10);
+END
+$sp$;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
 CREATE TABLE IF NOT EXISTS public.coin_ledger (
@@ -2070,7 +2085,7 @@ BEGIN
   IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
     RAISE EXCEPTION 'Unauthorized worker key';
   END IF;
-  v_species := CASE WHEN p_species IN (2, 3) THEN p_species ELSE 1 END;
+  v_species := CASE WHEN p_species BETWEEN 1 AND 10 THEN p_species ELSE 1 END;
   INSERT INTO public.wallets (actor_id) VALUES (p_actor_id) ON CONFLICT (actor_id) DO NOTHING;
   INSERT INTO public.profiles (actor_id, species) VALUES (p_actor_id, v_species)
   ON CONFLICT (actor_id) DO UPDATE SET species = EXCLUDED.species;
@@ -2134,7 +2149,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   actor_id TEXT PRIMARY KEY REFERENCES public.wallets(actor_id) ON DELETE CASCADE,
   level INT NOT NULL DEFAULT 1 CHECK (level BETWEEN 1 AND 99),
   reputation INT NOT NULL DEFAULT 0 CHECK (reputation >= 0),
-  species SMALLINT NOT NULL DEFAULT 1 CHECK (species BETWEEN 1 AND 3),
+  species SMALLINT NOT NULL DEFAULT 1 CHECK (species BETWEEN 1 AND 10),
   ring_color TEXT NOT NULL DEFAULT '#ff3d9a',
   starter_slot TEXT,
   attend_streak INT NOT NULL DEFAULT 0,

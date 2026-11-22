@@ -1,19 +1,21 @@
 // What a fresh visit downloads, per phase, resolved statically from the files on disk.
 //   boot   before the player taps 입장하기: index.html and what it links, the module graph from its <script type=module>,
 //          and every asset the boot path asks for (city, env photos, own species model, HUD images)
-//   first  the first minute after entering: the other species once their avatars are on screen (worst case: both), audio
-//   later  only when a sheet opens (plot pictures, hub picture, photo credits)
+//   first  the first minute after entering: other species once their avatars are on screen or in the idle prefetch, counted
+//          as the PREFETCH_MAX largest other models on disk (the prefetch asks for at most that many), audio
+//   later  only when a sheet opens (plot pictures, hub picture, photo credits, the character picker's thumbnails), and the
+//          remaining species models, which load only when an avatar of that species walks into view
 // Every '/assets/…' or 'icons/…' literal in a loaded module must match a RULE below, so a new download cannot slip into
 // the boot path unnoticed (test/load.test.mjs). Wire bytes are gzip -9 for text and raw for images, models and the
 // already-gzipped manhattan.bin; Cloudflare's brotli is a little smaller. CDN files (supabase-js, fonts) are listed
 // under `external` and not counted, nor are approved billboard photos (decided by world data at run time); together they
 // add a few hundred KB on a fresh phone.
-//   node tools/load-budget.mjs [--quality low|medium|high] [--species 1|2|3] [--json]   (phones run the low tier)
+//   node tools/load-budget.mjs [--quality low|medium|high] [--species 1..10] [--json]   (phones run the low tier)
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
-import { MODEL_URL, ENV_PHOTOS, envPhotoUrl } from '../ts3d/loadplan.js';
+import { MODEL_URL, ENV_PHOTOS, envPhotoUrl, PREFETCH_MAX } from '../ts3d/loadplan.js';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const BUDGET = { boot: 5_000_000, first: 7_000_000 };
@@ -30,7 +32,8 @@ export const RULES = [
   [/^icons\/bokjumeoni\.png$/, 'boot'], // the pouch balloon floats over the plaza from the first frame
   [/^icons\/coin\.jpg$/, 'boot'], // wallet icon, built with the HUD
   [/^assets\/times-square\/\$\{name\}\.env\.jpg$/, 'boot', () => ENV_PHOTOS.map((n) => clean(envPhotoUrl(n)))],
-  [/^assets\/models\/(Mouse|Cat|Bear)Toy\.glb$/, (lit, ctx) => (lit === clean(MODEL_URL[ctx.species]) ? 'boot' : 'first')],
+  [/^assets\/models\/[A-Z][a-z]+Toy\.glb$/, (lit, ctx) => (lit === clean(MODEL_URL[ctx.species]) ? 'boot' : ctx.peers.has(lit) ? 'first' : 'later')],
+  [/^assets\/avatars\/[a-z]+\.png$/, 'later'], // character picker tiles (ts3d/avatars.js SPECIES thumb), only in the profile sheet
   [/^assets\/audio\/(sfx\/)?$/, 'first', () => []], // 'assets/audio/' + id + '.ogg': no such files in the repo, the browser gets 404s
   [/^icons\/(lot|tent|pocha|shop|tower)\.jpg$/, 'later'],
   [/^icons\/board\.jpg$/, 'later'],
@@ -54,7 +57,15 @@ const IMPORT_RE = /\b(?:import|export)\s*(?:[\w*${}\s,]+?\s*from\s*)?['"]([^'"]+
 const ASSET_RE = /['"`]\/?((?:assets|icons)\/[^'"`]*?)(?:\?[^'"`]*)?['"`]/g;
 const TPL_RE = /`\/?((?:assets|icons)\/[^`]*)`/g;
 
+// The other species' models the first minute counts: the `n` largest on disk (missing files weigh nothing and come last).
+export function firstPeers(root, species, n = PREFETCH_MAX) {
+  const size = (u) => { try { return fs.statSync(path.join(root, clean(u))).size; } catch { return -1; } };
+  return new Set(Object.entries(MODEL_URL).filter(([id]) => Number(id) !== species).map(([, u]) => [clean(u), size(u)])
+    .filter(([, b]) => b >= 0).sort((a, b) => b[1] - a[1]).slice(0, n).map(([u]) => u));
+}
+
 export function loadBudget({ root = ROOT, species = 1, quality = 'low' } = {}) {
+  const peers = firstPeers(root, species);
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const map = importMap(html);
   const items = new Map(); // file -> { file, phase, why }
@@ -92,7 +103,7 @@ export function loadBudget({ root = ROOT, species = 1, quality = 'low' } = {}) {
     for (const lit of lits) {
       const rule = RULES.find(([re]) => re.test(lit));
       if (!rule) { unclassified.push(file + ': ' + lit); continue; }
-      const phase = typeof rule[1] === 'function' ? rule[1](lit, { species, quality }) : rule[1];
+      const phase = typeof rule[1] === 'function' ? rule[1](lit, { species, quality, peers }) : rule[1];
       const files = rule[2] ? rule[2](root, { species, quality }) : [lit];
       for (const f of files) add(f, phase, file);
     }
