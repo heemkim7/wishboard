@@ -14,7 +14,7 @@ export const OPS = {
   rlKeep: 3600e3,
   ipMin: 20, // per isolate, per IP and route, per minute: the fallback when the OPS_RL binding is missing
   sameMs: 30000, // one isolate sends one group at most once per 30 s; repeats ride along as a count
-  maintTtl: 60000, maintHardTtl: 300000, maintWait: 800,
+  maintTtl: 300000, maintHardTtl: 900000, maintWait: 800, // one DO read per isolate per 5 min (15 at hard): a maintenance notice may lag that long
   dbTtl: 30000, dbSlow: 1000, dbTimeout: 2000,
 };
 export const OPS_PATHS = new Set(['/rt/err', '/rt/support', '/rt/admin/errors', '/rt/admin/errors/clear', '/rt/admin/support', '/rt/admin/maint']);
@@ -193,7 +193,7 @@ export async function opsCrash(req, env, ctx, e, deps) {
 // ---- /rt/config: operator and maint ----------------------------------------------------------------------------------------------
 let OPC = { raw: undefined, v: null };
 export function operatorFor(env) { const raw = env?.OPERATOR_INFO; if (raw !== OPC.raw) OPC = { raw, v: operatorOf(raw) }; return OPC.v; }
-// The maintenance notice as this isolate knows it: at most OPS.maintTtl old (5 min at budget hard), refreshed behind the response.
+// The maintenance notice as this isolate knows it: at most OPS.maintTtl old (5 min; 15 min at budget hard), refreshed behind the response.
 // An isolate that never read it waits for its first read (OPS.maintWait at most). No METER binding: never on.
 let MAINT = { at: 0, v: null, p: null };
 export function maintNow() { return MAINT.v; }

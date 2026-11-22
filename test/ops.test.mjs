@@ -343,7 +343,7 @@ describe('/rt/config: operator and maint', { concurrency: false }, () => {
       for (const v of [undefined, '', 'not json', '[]', '{}']) assert.equal('operator' in (await (await harness(makeEnv(v === undefined ? {} : { OPERATOR_INFO: v })).get('/rt/config')).json()), false, String(v));
     } finally { done(); }
   });
-  it('maint: carried while on, absent when off; read once a minute per isolate, behind the response once known', async () => {
+  it('maint: carried while on, absent when off; read once every 5 minutes per isolate, behind the response once known', async () => {
     const { clock, done } = setup();
     try {
       const env = makeEnv(), log = spyDo(env), { get, post } = harness(env);
@@ -358,9 +358,9 @@ describe('/rt/config: operator and maint', { concurrency: false }, () => {
       env.meter('ops').do.opsMaintPut({ on: true, msg: '다른 isolate', until: 0 });
       assert.deepEqual((await (await get('/rt/config')).json()).maint, { msg: '다른 isolate', until: 0 });
       env.meter('ops').do.opsMaintPut({ on: false });
-      log.length = 0; clock.add(30000); assert.equal('maint' in (await (await get('/rt/config')).json()), true, 'still the copy within a minute');
+      log.length = 0; clock.add(240000); assert.equal('maint' in (await (await get('/rt/config')).json()), true, 'still the copy within 5 minutes');
       assert.deepEqual(log.filter((x) => x.startsWith('ops.')), []);
-      clock.add(31000); await get('/rt/config'); // stale: served, refreshed behind
+      clock.add(61000); await get('/rt/config'); // stale: served, refreshed behind
       assert.equal('maint' in (await (await get('/rt/config')).json()), false);
     } finally { done(); }
   });
