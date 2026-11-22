@@ -416,15 +416,42 @@ describe('wiring and copy', () => {
   });
   it('the terms and the privacy policy carry the ad sections, before 시행일', () => {
     const t = policyDoc('terms'), p = policyDoc('privacy');
-    const ad = t.sections.find((s) => s.h === '광고 서비스'), pr = p.sections.find((s) => s.h === '광고 문의');
-    assert.ok(ad && pr);
-    assert.equal(t.sections.at(-1).h, '시행일'); assert.equal(p.sections.at(-1).h, '시행일');
+    const heads = ['광고 서비스', '광고 기준', '광고 취소와 환불'], at = heads.map((h) => t.sections.findIndex((s) => s.h === h));
+    assert.ok(at.every((i) => i > 0), String(at)); assert.deepEqual(at, [at[0], at[0] + 1, at[0] + 2]); // in this order, together
+    const ad = { p: at.map((i) => t.sections[i].p).join(' ') }, pr = p.sections.find((s) => s.h === '광고 문의');
+    assert.ok(pr);
+    assert.equal(t.sections.at(-1).h, '시행일'); assert.equal(p.sections.at(-1).h, '시행일'); assert.equal(at[2], t.sections.length - 2);
     for (const s of ['광고 전용 화면', '거절하거나', '보장하지 않', '돌려드립니다', '날수만큼 나누어', '‘광고’ 표시', '전광판·토지·코인을 얻지 않습니다']) assert.ok(ad.p.includes(s), s);
     for (const s of ['회사 또는 이름', '이메일', '1년 뒤 지웁니다', '되돌릴 수 없는 값', '날짜별 합계']) assert.ok(pr.p.includes(s), s);
     for (const s of t.sections.concat(p.sections)) assert.equal(/[<>]/.test(s.p), false, s.h);
   });
+  it('the ad terms after the 2026-11-22 review: contract on payment, refunds by law, ad rules, minors; privacy keeps the legal records apart', () => {
+    const t = policyDoc('terms'), sec = (h) => t.sections.find((s) => s.h === h)?.p || '';
+    const sale = sec('광고 서비스'), rules = sec('광고 기준'), refund = sec('광고 취소와 환불');
+    assert.match(sale, /입금하고 운영자가 그 입금을 확인하면 계약이 이루어집니다/); assert.match(sale, /신청서를 보내는 것만으로는 계약이 이루어지지 않고 돈이 나가지 않습니다/);
+    assert.match(sale, /부가가치세 포함 여부/); assert.match(sale, /카드 결제는 받지 않습니다/);
+    assert.equal(/계좌이체 또는 세금계산서/.test(sale + rules + refund), false); // 세금계산서 is a tax invoice, not a way to pay
+    assert.match(rules, /청소년에게 해로운 광고/); assert.match(rules, /그 이유를 광고주에게 알리고 광고를 내릴 수 있습니다/); assert.match(rules, /운영자의 고의나 과실로 생긴 손해는 운영자가 책임집니다/);
+    assert.match(refund, /아직 송출되지 않은 날을 그 전날까지 취소할 수 있고/); assert.match(refund, /3영업일 안에/); assert.match(refund, /연 15%의 지연이자/);
+    assert.match(refund, /만 19세 미만인 사람이 법정대리인의 동의 없이/); assert.match(refund, /광고주에게 유리한 쪽을 따릅니다/);
+    assert.equal(/따로 정한 내용에 따릅니다/.test(refund), false); // the old open-ended carve-out is gone
+    const pr = policyDoc('privacy').sections.find((s) => s.h === '광고 문의').p;
+    assert.match(pr, /광고나 홍보 메일을 보내는 데 쓰지 않습니다/); assert.match(pr, /기록은 5년/); assert.match(pr, /3년\(전자상거래법\)/); assert.match(pr, /5년\(국세기본법\)/); assert.match(pr, /만 14세 미만은 광고를 신청할 수 없습니다/);
+    assert.match(t.sections.find((s) => s.h === '코인').p, /돈이나 다른 재산을 받고 사고팔거나 빌려줄 수 없고/);
+    assert.match(t.sections.find((s) => s.h === '운영자').p, /호스팅 서비스는 Cloudflare, Inc\.가 제공합니다/);
+  });
+  it('/ads shows the refund rules, minors and the seller details before a request, and never calls an invoice a way to pay', () => {
+    const js = read('adspage.js');
+    assert.match(js, /^import \{ operatorLine, operatorOf \} from '\.\/opsrules\.js';$/m); // bundled by the Worker too: no query
+    assert.match(js, /h\('h2', \{ text: '취소와 환불' \}\), refundCard\(\),\s*h\('h2', \{ text: '광고 신청' \}\), form\(\)/);
+    assert.match(js, /만 19세 미만이 법정대리인의 동의 없이 산 광고는 본인이나 법정대리인이 취소할 수 있어요/);
+    assert.match(js, /만 14세 미만은 신청할 수 없어요/);
+    assert.match(js, /function operatorFooter\(cfg\)/); assert.match(js, /호스팅 Cloudflare, Inc\./); assert.match(js, /open\(d, cfg\)/);
+    assert.match(js, /가상 타임스퀘어의 광고 화면에 광고하세요/);
+    assert.equal(/계좌이체 또는 세금계산서/.test(js), false);
+  });
   it('the 9 pm sponsor is said to take all five screens for 60 seconds at 21:00 KST on its days, in the products and the terms', () => {
-    const ad = policyDoc('terms').sections.find((s) => s.h === '광고 서비스').p;
+    const ad = policyDoc('terms').sections.find((s) => s.h === '광고 서비스').p; // the products and the 9 pm minute stay in the first ad section
     assert.ok(ad.includes('한국 시간 21시 정각부터 60초 동안 광고 화면 다섯 곳 모두를 차지'), ad);
     assert.ok(ad.includes('링크 클릭과 화면 봄도 세지 않습니다'));
     assert.match(S.AD_PRODUCTS.sponsor9.desc, /밤 9시 정각부터 60초 동안 광고 화면 다섯 곳 모두/);

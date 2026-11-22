@@ -2,6 +2,7 @@
 // (ADS_PRICES; '견적 문의' without one) and the request form, which posts to /rt/ads/request. Payment is never taken here:
 // the operator answers by email with a quote and bank transfer / invoice details. Off (ADS_ON not '1'): "준비 중이에요".
 import { ADS, AD_SCREENS, AD_PRODUCTS, AD_PRODUCT_IDS, AD_TEMPLATES, AD_THEMES, AD_EMOJI, AD_COUNTED, adRequestFault, priceText, kstDay, addDays } from './adsale.js';
+import { operatorLine, operatorOf } from './opsrules.js';
 
 const THEME_NAME = { cyber_navy: '사이버 네이비', neon_pink: 'K-POP 핑크', gold_luxury: '골드', matrix_green: '그린', sunset_red: '선셋', bday_party: '생일', cheer_exam: '합격 기원', love_anniv: '기념일' };
 function h(tag, props, ...kids) {
@@ -22,6 +23,14 @@ function contactOf(cfg) {
   if (!o) return '';
   if (typeof o === 'string') return o.slice(0, 200);
   return [o.name || o.company || '', o.email || ''].filter(Boolean).join(' · ').slice(0, 200);
+}
+
+// The seller's details under the page (전자상거래법 제10조·제13조: 상호, 대표자, 주소, 전화, 이메일, 사업자등록번호, 통신판매업 신고번호,
+// the hosting provider): the cleaned OPERATOR_INFO fields from /rt/config, nothing when the Worker has none.
+function operatorFooter(cfg) {
+  const foot = document.querySelector('footer'), line = operatorLine(operatorOf(cfg?.operator));
+  if (!foot || !line || foot.querySelector('.op')) return;
+  foot.append(h('p', { class: 'op', text: `${line} · 호스팅 Cloudflare, Inc.` }));
 }
 
 function closed(cfg) {
@@ -105,10 +114,10 @@ function form() {
     h('div', { class: 'hp', 'aria-hidden': 'true' }, h('label', { for: 'f-website', text: '웹사이트 (비워 두세요)' }), input('website', { type: 'text', tabindex: '-1', autocomplete: 'off' })),
     h('div', { class: 'agree' },
       h('b', { text: '개인정보 수집·이용 동의 (필수)' }),
-      h('div', { text: '수집 항목: 회사 또는 이름, 이메일, 전화번호(적은 경우), 광고 문구와 링크, 요청 사항. 이용 목적: 광고 문의 처리, 견적과 입금 안내, 광고 송출 일정 연락. 보유 기간: 문의일로부터 1년 뒤 지웁니다(계약이 이루어지면 세금계산서 등 법령이 정한 기록은 그 기간 동안). 동의하지 않을 수 있지만, 그러면 신청을 받을 수 없어요.' }),
+      h('div', { text: '수집 항목: 회사 또는 이름, 이메일, 광고 문구(적은 경우에만 전화번호, 링크, 요청 사항). 이용 목적: 광고 문의 처리, 견적과 입금 안내, 광고 송출 일정 연락, 리포트 전달. 홍보 메일에는 쓰지 않아요. 보유 기간: 문의일로부터 1년 뒤 지웁니다(계약이 이루어지면 계약·결제 기록 5년, 분쟁 처리 기록 3년 등 법령이 정한 기록은 그 기간 동안 따로 보관). 동의하지 않을 수 있지만, 그러면 신청을 받을 수 없어요. 만 14세 미만은 신청할 수 없어요.' }),
       h('label', { for: 'f-agree' }, agree, h('span', { text: '위 내용에 동의합니다.' })), fieldErr('agree')),
     fieldErr('body'), btn,
-    h('p', { class: 'muted', text: '신청만으로는 결제되지 않아요. 운영자가 문구를 검토한 뒤 견적과 입금 안내(계좌이체 또는 세금계산서)를 이메일로 보내 드려요. 카드 결제는 받지 않아요.' }));
+    h('p', { class: 'muted', text: '신청만으로는 계약이 이루어지거나 결제되지 않아요. 운영자가 문구를 검토한 뒤 견적과 입금 안내(계좌이체)를 이메일로 보내 드리고, 입금이 확인되면 계약이 이루어져요. 카드 결제는 받지 않아요.' }));
   f.addEventListener('change', paint);
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -136,16 +145,30 @@ function form() {
 function thanks(email, id) {
   app.replaceChildren(h('div', { class: 'card done' },
     h('h2', { text: '신청을 받았어요' }),
-    h('p', {}, '운영자가 광고 문구를 검토한 뒤 ', h('b', { text: email }), '로 견적과 입금 안내(계좌이체 또는 세금계산서)를 이메일로 보내 드려요.'),
+    h('p', {}, '운영자가 광고 문구를 검토한 뒤 ', h('b', { text: email }), '로 견적과 입금 안내(계좌이체)를 이메일로 보내 드려요. 견적에는 금액, 부가가치세 포함 여부, 발급할 수 있는 증빙, 취소·환불 규정이 함께 적혀 있어요.'),
     h('p', { text: '입금이 확인되면 일정을 잡고, 광고가 끝나면 게임이 센 숫자로 리포트 링크를 보내 드려요. 카드 결제는 받지 않아요.' }),
     id ? h('p', { class: 'muted', text: `접수 번호 ${id}` }) : null,
     h('p', {}, h('a', { href: './', text: '광장으로 돌아가기' }))));
   window.scrollTo(0, 0);
 }
 
-function open(d) {
+// What a request agrees to, before it is sent (전자상거래법 제13조제2항·제3항): when the contract is made, cancelling and refunds, minors.
+// The terms' 광고 취소와 환불 says the same in full (legal.js).
+function refundCard() {
+  return h('div', { class: 'card' },
+    h('ul', { class: 'steps' },
+      h('li', { text: '송출이 시작되기 전에 취소하면 낸 금액을 모두 돌려드려요.' }),
+      h('li', { text: '여러 날을 산 광고는 송출이 시작된 뒤에도 아직 나가지 않은 날을 그 전날까지 취소할 수 있고, 그 날수만큼 돌려드려요.' }),
+      h('li', { text: '운영자 쪽 장애나 점검으로 그날 합해서 1시간 넘게 광고가 나가지 못하면, 그 날수만큼 돌려드리거나 원하는 다른 날에 다시 내보내요.' }),
+      h('li', { text: '취소는 견적 이메일에 답장하거나 광장 설정의 문의하기로 하면 돼요. 받은 날부터 3영업일 안에 입금한 계좌로 돌려드려요.' }),
+      h('li', { text: '만 19세 미만이 법정대리인의 동의 없이 산 광고는 본인이나 법정대리인이 취소할 수 있어요.' })),
+    h('p', { class: 'muted' }, '자세한 내용은 ', h('a', { href: './?policy=terms', text: '이용약관' }), '의 ‘광고 서비스’, ‘광고 기준’, ‘광고 취소와 환불’에 있어요.'));
+}
+
+function open(d, cfg) {
+  operatorFooter(cfg);
   app.replaceChildren(
-    h('h1', { text: '타임스퀘어 광고 화면에 광고하세요' }),
+    h('h1', { text: '가상 타임스퀘어의 광고 화면에 광고하세요' }),
     h('p', { class: 'lede', text: '모두의 전광판은 뉴욕 타임스퀘어를 옮겨 놓은 3D 광장이에요. 광장 곳곳에 광고 전용 화면 다섯 곳이 있고, 하루 단위로 가게·채널 홍보나 생일·응원 광고를 걸 수 있어요. 광장에서 화면을 누르면 링크가 열려요.' }),
     h('div', { class: 'card' }, h('span', { class: 'chip', text: '광고' }), ' 광고 화면에는 언제나 ‘광고’ 표시가 붙어요. 게임의 점령 전광판(코인으로 경쟁하는 칸)과는 따로 있어서, 광고를 사도 게임 안의 칸이나 코인을 얻지 않아요.'),
     h('h2', { text: '광고 화면' }),
@@ -154,12 +177,13 @@ function open(d) {
     h('h2', { text: '광장 숫자' }), statsCard(d.stats),
     h('h2', { text: '상품과 가격' }), products(d.prices),
     h('h2', { text: '진행 순서' }),
-    h('ol', { class: 'steps' }, h('li', { text: '아래 신청서를 보내요.' }), h('li', { text: '운영자가 문구를 검토하고 견적을 이메일로 보내요. 법령·약관에 어긋나거나 광장에 맞지 않는 광고는 거절할 수 있어요.' }),
-      h('li', { text: '계좌이체 또는 세금계산서로 입금해요.' }), h('li', { text: '정한 날짜(한국 시간)에 광고가 나가요.' }), h('li', { text: '끝나면 리포트 링크를 보내 드려요(게임이 센 수).' })),
+    h('ol', { class: 'steps' }, h('li', { text: '아래 신청서를 보내요. 신청만으로는 계약이 이루어지지 않아요.' }), h('li', { text: '운영자가 문구를 검토하고 견적을 이메일로 보내요. 청소년이 보면 안 되는 광고나 법령·약관에 어긋나는 광고는 거절할 수 있어요.' }),
+      h('li', { text: '견적에 적힌 계좌로 입금하면 계약이 이루어져요.' }), h('li', { text: '정한 날짜(한국 시간)에 광고가 나가요.' }), h('li', { text: '끝나면 리포트 링크를 보내 드려요(게임이 센 수).' })),
+    h('h2', { text: '취소와 환불' }), refundCard(),
     h('h2', { text: '광고 신청' }), form());
 }
 
 Promise.all([
   fetch('/rt/ads/stats').then((r) => r.json()).catch(() => null),
   fetch('/rt/config').then((r) => r.json()).catch(() => null),
-]).then(([d, cfg]) => (d?.on ? open(d) : closed(cfg)));
+]).then(([d, cfg]) => (d?.on ? open(d, cfg) : closed(cfg)));
