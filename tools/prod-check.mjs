@@ -42,6 +42,26 @@ export function ignoredBy(rules, rel, dir = false) {
 // wrangler never uploads its own ignore file
 export const ALWAYS_SKIP = new Set(['.assetsignore']);
 
+// The search and install files the site must serve: robots.txt (the API and admin closed, the sitemap named), sitemap.xml (the home page), the web
+// app manifest (a 192 and a 512 icon, one maskable). '' when the answer is fine, else what is wrong. type: the content-type header, body: text.
+export function seoFault(name, status, type, body) {
+  const t = String(type || ''), b = String(body || '');
+  if (status !== 200) return `status ${status}`;
+  if (name === 'robots') {
+    if (!/text\/plain/i.test(t)) return 'not text/plain';
+    if (!/^Disallow:\s*\/rt\/\s*$/m.test(b) || !/^Disallow:\s*\/admin\s*$/m.test(b)) return 'does not close /rt/ and /admin';
+    return /^Sitemap:\s*https:\/\/\S+\/sitemap\.xml\s*$/m.test(b) ? '' : 'no Sitemap line';
+  }
+  if (name === 'sitemap') return /xml/i.test(t) && /<urlset[\s>]/.test(b) && /<loc>https:\/\/[^<]+\/<\/loc>/.test(b) ? '' : 'not a sitemap with the home page';
+  if (name === 'manifest') {
+    let m = null; try { m = JSON.parse(b); } catch { return 'not JSON'; }
+    const icons = Array.isArray(m?.icons) ? m.icons : [];
+    const has = (size, purpose) => icons.some((i) => i.sizes === size && i.type === 'image/png' && String(i.purpose || 'any').split(/\s+/).includes(purpose));
+    return m.start_url && m.display === 'standalone' && has('192x192', 'any') && has('512x512', 'any') && has('512x512', 'maskable') ? '' : 'start_url, display or icons are off';
+  }
+  return 'unknown check';
+}
+
 async function main() {
   const ORIGIN = String(process.argv[2] || '').replace(/\/+$/, '');
   if (!/^https?:\/\/[^/]+$/.test(ORIGIN)) { console.error('usage: node tools/prod-check.mjs https://host'); process.exit(64); }
@@ -128,6 +148,12 @@ async function main() {
     const oa = await get('/oauth?code=probe'); const okOa = oa.status === 200 && /html/.test(oa.type) && sha(oa.buf) === sha(fs.readFileSync('oauth.html'));
     if (!okOa) bad++;
     console.log(`[oauth] /oauth?code=probe -> ${oa.status} ${oa.type.split(';')[0]} ${oa.loc ? '-> ' + oa.loc : ''}${okOa ? '' : '  <-- not oauth.html'}`);
+  }
+  // Search and install files (the byte comparison above already covers that they match the tree; this says they say the right things).
+  for (const [name, p] of [['robots', '/robots.txt'], ['sitemap', '/sitemap.xml'], ['manifest', '/manifest.webmanifest']]) {
+    const r = await get(p); const fault = seoFault(name, r.status, r.type, r.buf.toString('utf8'));
+    if (fault) bad++;
+    console.log(`[seo] ${p.padEnd(22)} -> ${r.status} ${r.type.split(';')[0]}${fault ? '  <-- ' + fault : ''}`);
   }
   console.log(bad ? `\n${bad} problem(s)` : '\nno problems');
   process.exit(bad ? 1 : 0);

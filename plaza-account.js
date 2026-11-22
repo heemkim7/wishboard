@@ -30,6 +30,8 @@ export const EVENT_NAMES = Object.freeze([
   'return_visit',
   'invite_land',
   'invite_reward',
+  'install_prompt',
+  'week_recap',
 ]);
 const GUEST_SUB = /^g-[0-9a-f-]{36}$/i;
 const TICKET = /^h1\.[A-Za-z0-9_-]{20,200}\.[A-Za-z0-9_-]{20,90}$/;

@@ -7,7 +7,7 @@
 <link rel="icon" href="./icons/app-icon.jpg?v=4" type="image/jpeg" />
 <link rel="apple-touch-icon" href="./icons/app-icon.jpg?v=4" />
 <link rel="manifest" href="./manifest.webmanifest" />
-<meta name="description" content="붕어빵 구워 뉴욕 타임스퀘어 전광판과 건물을 차지하세요!" />
+<meta name="description" content="내 소원 한 줄을 뉴욕 타임스퀘어 전광판에 거는 무료 웹 게임. 붕어빵을 구워 코인을 모으고 전광판과 건물을 차지하세요. 설치 없이 바로 플레이." />
 <link rel="canonical" href="https://studio.wishboard.workers.dev/" />
 <meta property="og:title" content="WISH BOARD : 모두의 전광판" />
 <meta property="og:description" content="붕어빵 구워 뉴욕 타임스퀘어 전광판과 건물을 차지하세요!" />
@@ -27,6 +27,9 @@
 <meta name="twitter:image" content="https://studio.wishboard.workers.dev/og.jpg?v=2" />
 <meta name="twitter:image:alt" content="WISH BOARD : 모두의 전광판 — 뉴욕 타임스퀘어를 차지하세요" />
 <title>WISH BOARD : 모두의 전광판</title>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebApplication","name":"WISH BOARD : 모두의 전광판","url":"https://studio.wishboard.workers.dev/","description":"내 소원 한 줄을 뉴욕 타임스퀘어 전광판에 거는 무료 웹 게임.","applicationCategory":"GameApplication","operatingSystem":"Any","browserRequirements":"Requires JavaScript and WebGL","inLanguage":"ko","image":"https://studio.wishboard.workers.dev/og.jpg?v=2","offers":{"@type":"Offer","price":"0","priceCurrency":"KRW"}}
+</script>
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm" crossorigin />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
@@ -44,6 +47,12 @@ fitVV();
 addEventListener('resize', fitVV);
 visualViewport?.addEventListener('resize', fitVV);
 visualViewport?.addEventListener('scroll', fitVV);
+</script>
+<script>
+// 홈 화면 추가 (install.js): the browser's own install offer is kept for the card ui.js shows later (window.__ktsInstall, prompted once); an install
+// (by the card or the browser's menu) marks the card as spent (kts_a2hs).
+addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); window.__ktsInstall = e; });
+addEventListener('appinstalled', () => { window.__ktsInstall = null; try { localStorage.setItem('kts_a2hs', String(Date.now())); } catch { /* storage blocked */ } });
 </script>
 <script type="importmap">
 {
@@ -1097,6 +1106,18 @@ visualViewport?.addEventListener('scroll', fitVV);
   .sheet.wish .wish-push-act .btn { width: auto; margin: 0; }
   .wish-push-later { min-height: 40px; padding: 0 6px; background: none; border: 0; color: var(--text-2); font: 700 13px/1 var(--font); text-decoration: underline; cursor: pointer; }
   .push-why { margin: 0 0 6px; font: 800 17px/1.4 var(--font); letter-spacing: -.01em; color: var(--text); }
+  /* 홈 화면 추가 card (install.js): small, non-modal, above the toasts' resting place. ui.js hides it while a sheet or a celebration is up. */
+  .a2hs { position: fixed; z-index: 60; left: 50%; transform: translateX(-50%); bottom: calc(150px + var(--safe-b)); width: min(360px, calc(100vw - 24px)); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; pointer-events: auto; animation: toastIn .35s cubic-bezier(.2,1.2,.4,1); }
+  .a2hs[hidden], body.has-sheet .a2hs, body.has-proof .a2hs { display: none; } /* at once, not at the next 1 s tick */
+  .a2hs .a2hs-t { margin: 0; font-weight: 700; line-height: 1.4; }
+  .a2hs ol { margin: 6px 0 0; padding-left: 20px; color: var(--text-2); font-size: 13px; line-height: 1.6; }
+  .a2hs .a2hs-act { display: flex; align-items: center; gap: 12px; }
+  .a2hs .btn { width: auto; min-height: 40px; height: auto; margin: 0; padding: 8px 18px; }
+  .a2hs .a2hs-later { min-height: 40px; padding: 0 6px; background: none; border: 0; color: var(--text-2); font: 700 13px/1 var(--font); text-decoration: underline; cursor: pointer; }
+  html.touch .a2hs { bottom: calc(232px + var(--safe-b)); }
+  .recap-list { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 14px; }
+  .recap-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); }
+  .recap-row b { color: var(--accent); font-size: 17px; }
   .away-list { display: flex; flex-direction: column; gap: 10px; }
   .away-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); }
   .away-row p { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; line-height: 1.4; }

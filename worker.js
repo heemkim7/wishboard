@@ -692,6 +692,8 @@ export class Meter extends DurableObject {
   lgRows(w) { this.lgInit(); return this.ctx.storage.sql.exec('select uid, nick, spent, at from lg where w = ? and spent > 0', String(w || '')).toArray(); }
   lgTop(w, uid = '', n = LEAGUE.top) { return leagueBoard(this.lgRows(w), String(uid || ''), n); }
   lgWorld(w, n = LEAGUE.world) { return leagueBoard(this.lgRows(w), '', n).top.map(r => ({ nick: r.nick, spent: r.spent })); }
+  // 주간 돌아보기: one account's row of one finished week, numbers only (rank 0 = nothing spent that week; players = how many were ranked).
+  lgMe(w, uid) { const rows = this.lgRows(w), me = leagueBoard(rows, String(uid || ''), 1).me; return { rank: me ? me.rank : 0, spent: me ? me.spent : 0, players: rows.filter(r => Number(r.spent) > 0 && !botNick(r.nick)).length }; }
   lgNick(w, uid, nick) { this.lgInit(); this.ctx.storage.sql.exec('update lg set nick = ? where w = ? and uid = ?', String(nick || ''), String(w || ''), String(uid || '')); return { ok: true }; }
   // Account merge: the guest's weekly rows are summed into the user's (the user's nick stays when it has one).
   lgMove(from, to) { this.lgInit(); const q = this.ctx.storage.sql, f = String(from || ''), t = String(to || ''); if (!f || !t || f === t) return { ok: false };
@@ -2166,6 +2168,20 @@ async function leagueApi(req, env) {
     return J({ ok: true, week: w, ends: weekEnds(now), top: v.top, ...(actor ? { me: v.me } : {}) });
   } catch { return J({ ok: false, err: 'league' }, 502); }
 }
+// 주간 돌아보기 카드 (recap.js): GET /rt/recap = the caller's own row of LAST week's league (the weeks are kept 5), numbers only. The browser asks at most once
+// a week, and only when it knows the player was active last week. A token is required (the row is the caller's). The answer is final but for refunds, so it is
+// kept 10 minutes per account in this isolate; at the hard budget level only that copy answers (no DO call).
+const LGR = new Map();
+async function recapApi(req, env) {
+  if (req.method !== 'GET') return J({ err: 'get' }, 405);
+  if (!(await rateOk(env.EVENT_RL, req))) return J({ ok: false, err: 'rate' }, 429);
+  const tok = tokenOf(req), actor = tok ? await resolveActor(env, tok) : null; if (!actor) return J({ ok: false, err: 'auth' }, 401);
+  const now = Date.now(), w = isoWeek(now - 7 * 864e5), k = w + '|' + actor.id, hit = LGR.get(k);
+  if (hit && now - hit.at < 600000) return J({ ok: true, week: w, me: hit.v });
+  if ((await lvlNow(env)) >= 2) return J({ ok: false, err: 'busy' }, 503);
+  try { const v = await lgM(env).lgMe(w, actor.id); if (LGR.size >= 500) LGR.clear(); LGR.set(k, { at: now, v }); return J({ ok: true, week: w, me: v }); }
+  catch { return J({ ok: false, err: 'league' }, 502); }
+}
 // Lazy weekly tribe settlement (scheduled stays off on the free plan). No other cron job runs here. Jobs, each once per week across isolates through a
 // marker in the 'lg' instance (refund:<week>, roof:<week>):
 // - refund: after the KST week rolls over, refund_tribe_week(last week). A refunded row has spent = amount, so a second run pays nothing.
@@ -3320,6 +3336,7 @@ export default {
     if (u.pathname === '/rt/ad-report') return adReportApi(req, env, u);
     if (u.pathname === '/rt/tribe' || u.pathname === '/rt/tribe/pledge') return tribeApi(req, env, u, ctx);
     if (u.pathname === '/rt/league') return leagueApi(req, env);
+    if (u.pathname === '/rt/recap') return recapApi(req, env);
     if (u.pathname === '/rt/world' || u.pathname === '/rt/wallet' || u.pathname === '/rt/claim-billboard' || u.pathname === '/rt/buy-plot' || u.pathname === '/rt/sell-coins' || u.pathname === '/rt/flush-wallet' || u.pathname === '/rt/spend') return plaza(req, env, ctx, u);
     if (WISH_PATHS.has(u.pathname)) return wishApi(req, env, ctx, u);
     if (u.pathname.startsWith('/rt/w/')) return wishPage(req, env, u);

@@ -1,0 +1,15 @@
+# WISH BOARD : 모두의 전광판
+# The game and its landing page may be crawled. The API and admin are not.
+# The share and preview pages under /rt/ stay open so link-preview crawlers can read their Open Graph tags
+# (a longer Allow beats the shorter Disallow).
+User-agent: *
+Allow: /
+Allow: /rt/w/
+Allow: /rt/s/
+Allow: /rt/card/
+Allow: /rt/snap/
+Disallow: /rt/
+Disallow: /admin
+Disallow: /oauth
+
+Sitemap: https://studio.wishboard.workers.dev/sitemap.xml
