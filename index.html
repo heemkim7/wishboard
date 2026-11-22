@@ -1232,6 +1232,48 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html :is(button, a[href], input, select, textarea, summary, [tabindex], [role="button"]):not(#view):focus-visible { outline: none; box-shadow: var(--focus) !important; }
   /* The identity card clips its children, so its two buttons get the ring inside their edge. */
   #ui .ident .profile:focus-visible, #ui .ident .channel-card:focus-visible { box-shadow: inset 0 0 0 2px var(--info) !important; }
+  /* Compact phone HUD (interact.js COMPACT_HUD_Q: a touch phone held upright or on its side; tablets and desktop windows
+     never match). The left column is one identity + coin row, then the next goal as a one-line pill (the fever gauge as a
+     chip beside it only while it moves), then the guest warning as a one-line amber pill. The wallet chips are rows at the
+     top of the wallet sheet (.wal-quick); the live board's ranks are the trophy tool, its feed a button in that sheet
+     (.phone-only). The eye under the map (.view-btn) hides the HUD to look around (#ui.viewonly). */
+  .id-coin, .hud-r > .view-btn, .wal-quick, .phone-only, .fever .fs { display: none; }
+  @media (orientation: portrait) and (max-width: 599px), (orientation: landscape) and (max-height: 520px) {
+    html.touch .hud-l { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; width: min(62vw, 240px, 40vmax); min-width: 0; max-width: min(62vw, 240px, 40vmax); }
+    html.touch .hud-l > * { grid-column: 1 / -1; justify-self: start; max-width: 100%; }
+    html.touch .hud-l > .wallet, html.touch .hud-l > .liveboard { display: none; }
+    html.touch .hud-l > .ident { grid-row: 1; border-radius: 22px; max-width: min(100%, calc(100vw - 178px - var(--safe-l) - var(--safe-r))); }
+    html.touch #ui:has(.tool-inbox:not([hidden])) .hud-l > .ident { max-width: min(100%, calc(100vw - 214px - var(--safe-l) - var(--safe-r))); }
+    html.touch .ident .profile { flex: 0 1 auto; gap: 7px; padding: 5px 7px 5px 5px; }
+    html.touch .ident .profile .status { margin-top: 1px; gap: 5px; font-size: 11px; }
+    html.touch .ident .id-coin { position: relative; display: grid; grid-template-rows: auto auto; align-content: center; justify-items: start; flex: none; padding: 0 10px 0 7px; border: 0; border-left: 1px solid var(--line); background: none; color: var(--accent); font: 800 15px/1 var(--font); cursor: pointer; pointer-events: auto; }
+    html.touch .id-coin img { grid-column: 1; grid-row: 1 / span 2; align-self: center; width: 24px; height: 24px; margin: -3px 2px -3px -4px; clip-path: circle(34%); object-fit: cover; filter: brightness(1.35) saturate(1.3); }
+    html.touch .id-coin > span { grid-column: 2; grid-row: 1; }
+    html.touch .id-coin .pend { grid-row: 2; margin-top: 2px; padding: 0 4px; border-radius: 999px; background: var(--accent-weak); font-size: 10px; font-weight: 700; line-height: 13px; animation: chipPulse 1.4s ease-in-out infinite; }
+    html.touch .id-coin .pend.warn { color: var(--danger); }
+    html.touch .id-coin.bump > span:first-of-type { animation: bump .5s cubic-bezier(.2,1.6,.4,1); }
+    html.touch .hud-l > .nextgoal { grid-row: 2; }
+    @media (orientation: portrait) and (max-width: 374px) { html.touch .id-coin img { display: none; } }
+    html.touch .hud-l > .nextgoal:not(.task) { grid-column: 1; display: block; width: auto; padding: 6px 10px; border-radius: 999px; background: var(--surface-hud); border: 1px solid var(--line); font-size: 12px; line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: auto; }
+    html.touch .hud-l > .nextgoal:not(.task) .ng-k { font-size: 0; line-height: 0; vertical-align: top; }
+    html.touch .hud-l > .nextgoal:not(.task) .ng-k::before { content: "목표"; display: inline-block; vertical-align: top; margin-right: 6px; padding: 0 5px; border-radius: 6px; background: color-mix(in srgb, var(--info) 20%, transparent); font-size: 11px; line-height: 16px; }
+    html.touch .hud-l > .fever { grid-row: 2; grid-column: 2; display: inline-flex; align-items: center; gap: 4px; width: auto; padding: 6px 9px; border-radius: 999px; font-size: 12px; line-height: 16px; white-space: nowrap; }
+    html.touch .hud-l > .fever.idle { display: none; }
+    html.touch .fever .fl { display: none; }
+    html.touch .fever .fs { display: inline; }
+    html.touch .hud-l > .guestwarn { width: auto; padding: 0; border: 0; border-radius: 0; background: none; }
+    html.touch .hud-l > .guestwarn p { display: none; }
+    html.touch .hud-l > .guestwarn .btn { height: 28px; padding: 0 12px; border-radius: 999px; font-size: 12px; }
+    html.touch .hud-r > .view-btn { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border-radius: 50%; color: var(--text); cursor: pointer; pointer-events: auto; }
+    html.touch .hud-r > .view-btn svg.ico { width: 20px; height: 20px; }
+    @media (orientation: landscape) { html.touch .hud-r > .view-btn { position: absolute; top: 48px; right: 62px; } }
+    html.touch #ui.viewonly > :is(.hud-l, .news, .stay-ticket, .prompt, .waypill, .dock, .reacts, .help, .coach, .sponsor), html.touch #ui.viewonly > .hud-r > :not(.view-btn) { visibility: hidden !important; pointer-events: none !important; }
+    html.touch #ui.viewonly > .hud-r > .view-btn { color: var(--on-accent); background: var(--accent); border-color: transparent; }
+    html.touch .wal-quick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0 0 12px; }
+    html.touch .wal-quick .btn { justify-content: space-between; gap: 6px; height: auto; min-height: 44px; padding: 8px 10px 8px 12px; font-size: 13px; text-align: left; white-space: normal; }
+    html.touch .wal-quick .btn.wide { grid-column: 1 / -1; }
+    html.touch .sheet .phone-only { display: flex; width: 100%; margin-top: 12px; justify-content: center; }
+  }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
   }

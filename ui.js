@@ -22,7 +22,7 @@ import { SUPPORT_KINDS, SUPPORT_TEXT, SUPPORT_CONSENT, SUP, supportFault, textLe
 import { subscribePush, resendPush } from './push.js?v=202611221326';
 import { bindSfx, bindMusic, duckMusic, play, setSound, haptic, musicVisible } from './audio.js?v=202611221326';
 import { createBgm } from './bgm.js?v=202611221326';
-import { stickVec, isTouchUI, STICK_W, STICK_H, STICK_THROW, STICK_ENGAGE, bakeFlip, bakeBest, BAKE_FLIPS, BAKE_ROUND_MS } from './interact.js?v=202611221326';
+import { stickVec, isTouchUI, STICK_W, STICK_H, STICK_THROW, STICK_ENGAGE, bakeFlip, bakeBest, BAKE_FLIPS, BAKE_ROUND_MS, COMPACT_HUD_Q, feverChip } from './interact.js?v=202611221326';
 import { AD, AD_TEMPLATES, adSums, adBars } from './adreport.js';
 import { adScreenName, linkHost } from './adsale.js';
 import { qrEncode, paintQr } from './qr.js?v=202611221326';
@@ -341,10 +341,22 @@ export function createUI(root, hooks) {
     if (ninePhase === 'pre') hooks.focusShot?.('MAIN_TOP');
     else if (ninePhase === 'open') openBillboard(nineSlot(world.billboards), 'tower');
   } });
-  root.append(h('div', { class: 'hud-l' }, h('div', { class: 'glass ident' }, profile, channelCard), guestWarn, walletEl, nineEl, nextLineEl, liveBoard));
-  const feverText = h('span', { text: '코인 2배 0/20' });
-  const feverEl = h('button', { type: 'button', class: 'glass fever', title: '택시 손님을 내리거나 전광판을 점령하면 1칸. 20칸이 되면 1분 동안 코인이 2배이고 택시 부스트가 무제한입니다.', onclick: () => openToday() }, icon('orb'), feverText);
+  // Compact phone HUD (index.html, interact.js COMPACT_HUD_Q): the coin amount rides in the identity row, with a +N badge
+  // while coins wait to be settled. Hidden elsewhere; the wallet card above stays the desktop and tablet readout.
+  const idAmt = h('span', { class: 'tnum', text: '0' });
+  const idPend = h('span', { class: 'pend tnum', hidden: true });
+  const idCoin = h('button', { class: 'id-coin', type: 'button', 'aria-label': '내 지갑', title: '지갑 · 정산 안내', onclick: () => openWalletInfo() },
+    h('img', { src: 'icons/coin.jpg?v=2', alt: '' }), idAmt, idPend);
+  root.append(h('div', { class: 'hud-l' }, h('div', { class: 'glass ident' }, profile, idCoin, channelCard), guestWarn, walletEl, nineEl, nextLineEl, liveBoard));
+  const feverText = h('span', { class: 'fl', text: '코인 2배 0/20' });
+  // fs: the short text the compact HUD shows (interact.js feverChip); .idle hides the chip there while the gauge is empty.
+  const feverShort = h('span', { class: 'fs', text: '2배 0/20' });
+  const feverEl = h('button', { type: 'button', class: 'glass fever idle', title: '택시 손님을 내리거나 전광판을 점령하면 1칸. 20칸이 되면 1분 동안 코인이 2배이고 택시 부스트가 무제한입니다.', onclick: () => openToday() }, icon('orb'), feverText, feverShort);
   root.querySelector('.hud-l')?.append(feverEl);
+  // Is the compact phone HUD on? Only on a touch device (html.touch) inside COMPACT_HUD_Q; the goal line moves with it.
+  const compactMq = matchMedia(COMPACT_HUD_Q);
+  const compactNow = () => coarse && compactMq.matches;
+  compactMq.addEventListener?.('change', () => placeGoal());
 
   const soundBtn = h('button', { class: 'btn ghost icon tool-more', type: 'button', 'aria-label': '사운드', title: '사운드', onclick: () => {
     soundOn = !soundOn;
@@ -391,6 +403,18 @@ export function createUI(root, hooks) {
   const wishBtn = h('button', { class: 'btn icon tool-wish', type: 'button', 'aria-label': '오늘의 소원', title: '오늘의 소원', onclick: () => openWish({ from: 'hud' }) }, icon('wish'), wishDot);
   // 받은 소식: in the bar only while there is something unread (main.js setInboxDot), on phones too, never in newcomer mode.
   const inboxBtn = h('button', { class: 'btn icon tool-inbox', type: 'button', 'aria-label': '받은 소식', title: '받은 소식', hidden: true, onclick: () => openInboxSheet() }, icon('bell'), h('i', { class: 'inbox-dot', 'aria-hidden': 'true' }));
+  // 화면만 보기 (compact phone HUD only, index.html): the eye under the map hides the HUD to look around; the joystick, the
+  // action buttons and this button stay, and the same button brings the HUD back. Remembered for this tab's session only.
+  const viewBtn = h('button', { class: 'glass view-btn', type: 'button', 'aria-label': '화면만 보기', title: '화면만 보기', 'aria-pressed': 'false', onclick: () => setViewOnly(!root.classList.contains('viewonly')) }, icon('eye'));
+  function setViewOnly(on) {
+    root.classList.toggle('viewonly', !!on);
+    viewBtn.setAttribute('aria-pressed', String(!!on));
+    viewBtn.setAttribute('aria-label', on ? '화면 다시 보기' : '화면만 보기');
+    viewBtn.title = on ? '화면 다시 보기' : '화면만 보기';
+    viewBtn.replaceChildren(icon(on ? 'eyeOff' : 'eye'));
+    try { sessionStorage.setItem('kts_viewonly', on ? '1' : '0'); } catch { /* private mode */ }
+    if (on) { foldTools(false); toggleReacts(false); }
+  }
   root.append(h('div', { class: 'hud-r' },
     h('div', { class: 'bar' },
       h('div', { class: 'glass tools' },
@@ -413,6 +437,7 @@ export function createUI(root, hooks) {
     ),
     mapEl,
     locPill,
+    viewBtn,
   ));
   // The phone ⋯ fold: closed again once one of its items is chosen, or on a tap anywhere outside the capsule.
   const toolsEl = root.querySelector('.tools');
@@ -717,12 +742,18 @@ export function createUI(root, hooks) {
   // ---------------------------------------------------------------- helpers
   function renderPending() {
     pendingChip.hidden = !(wallet.pending > 0);
+    idPend.hidden = pendingChip.hidden;
     if (pendingChip.hidden) return;
     const info = hooks.walletInfo?.() || {};
     const age = info.pendingSince ? (Date.now() - info.pendingSince) / 1000 : 0;
     const text = info.canSettle === false ? `+${money(wallet.pending)} 미정산 · 테스트 서버` : age < 40 ? `+${money(wallet.pending)} 정산 중…` : `+${money(wallet.pending)} 정산 대기`;
     if (pendingChip.textContent !== text) pendingChip.textContent = text;
     pendingChip.classList.toggle('warn', info.canSettle === false);
+    // The compact identity row: only +N; the long line (정산 중… / 정산 대기 / 테스트 서버) is the wallet sheet's and the tablet chip's.
+    const badge = `+${money(wallet.pending)}`;
+    if (idPend.textContent !== badge) idPend.textContent = badge;
+    idPend.title = text;
+    idPend.classList.toggle('warn', info.canSettle === false);
   }
   function renderGoal() {
     const earned = Math.max(0, Math.floor(Number(today().earn) || 0));
@@ -755,7 +786,10 @@ export function createUI(root, hooks) {
       }
     } else if (nextLine.dataset.task || nextLine.textContent !== goalText) {
       delete nextLine.dataset.task;
-      nextLine.textContent = goalText;
+      // "다음 목표: " is its own span so the compact pill can swap it for a small 목표 tag (index.html .ng-k).
+      const m = goalText.match(/^(다음 목표: )([\s\S]*)$/);
+      if (m) nextLine.replaceChildren(h('span', { class: 'ng-k', text: m[1] }), document.createTextNode(m[2]));
+      else nextLine.textContent = goalText;
     }
   }
   // Newcomer card: the first of NEWCOMER_STEPS that returns { text, go } wins. Put a new step in front to take over the card.
@@ -814,8 +848,7 @@ export function createUI(root, hooks) {
     newbieOn = on;
     root.classList.toggle('newbie', on);
     nextLine.classList.toggle('task', on);
-    if (on) walletEl.before(nextLine);
-    else walletEl.querySelector('.sub')?.append(nextLine);
+    placeGoal();
     if (was && !on) {
       starterToastShown = true;
       root.classList.add('reveal');
@@ -823,6 +856,13 @@ export function createUI(root, hooks) {
       setTutorial('grad');
     }
     renderGoal();
+  }
+  // Where the goal line sits: the newcomer card above the wallet, the line inside the wallet card, or on the compact
+  // phone HUD a pill straight under the identity row (the wallet card is hidden there).
+  function placeGoal() {
+    if (compactNow()) { if (nextLine.nextElementSibling !== guestWarn) guestWarn.before(nextLine); }
+    else if (newbieOn) walletEl.before(nextLine);
+    else walletEl.querySelector('.sub')?.append(nextLine);
   }
   function graduate() {
     if (grad) return;
@@ -832,9 +872,10 @@ export function createUI(root, hooks) {
   }
   function renderWallet(bump) {
     amtEl.textContent = money(wallet.confirmed + wallet.pending);
+    idAmt.textContent = amtEl.textContent;
     renderPending();
     renderGoal();
-    if (bump) { walletEl.classList.remove('bump'); void walletEl.offsetWidth; walletEl.classList.add('bump'); }
+    if (bump) for (const el of [walletEl, idCoin]) { el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
   }
   let accountView = { ready: false, guest: false, linked: false }, bootLogin = null;
   function renderProfile() {
@@ -1955,7 +1996,7 @@ export function createUI(root, hooks) {
         h('p', { class: 'note' }, ...withIcon((d.qPaid || {}).all ? 'gift' : 'todo', `택시·응원·링을 모두 끝내면 +${PAY.quest.all}`)),
         h('p', { class: 'note', text: `출석 ${d.streak || 0}일 · 내일 접속하면 +${tomorrow}` }),
         h('p', { class: 'note', text: todayFacts(d) }),
-        h('p', { class: 'note', text: `${feverEl.textContent}. ${feverEl.title}` }),
+        h('p', { class: 'note', text: `${feverText.textContent}. ${feverEl.title}` }),
       );
     }, true);
   }
@@ -3500,7 +3541,21 @@ export function createUI(root, hooks) {
     openSheet(['coin', '내 지갑'], 'COINS', (host) => {
       const stat = (label, el) => h('div', { class: 'stat' }, h('small', { text: label }), el);
       const doneEl = h('b', { class: 'gold tnum' }), waitEl = h('b', { class: 'tnum' }), sumEl = h('b', { class: 'tnum' }), ticketEl = h('b', { class: 'tnum' });
+      // The compact phone HUD has no wallet chips: they are these rows at the top of the sheet, with the same labels and
+      // the same taps (index.html shows .wal-quick only there). Each opens its sheet over this one.
+      const quickRow = (chip, go) => h('button', { class: 'btn ghost', type: 'button', onclick: go }, h('span', { text: chip.textContent }), icon('chevronRight'));
+      const quick = h('div', { class: 'wal-quick' });
+      const fillQuick = () => quick.replaceChildren(
+        quickRow(todayBtn, () => openToday()),
+        quickRow(sessionChip, () => openToday()),
+        quickRow(holdBtn, () => openHolds()),
+        quickRow(tribeBtn, () => openTribeSheet()),
+        ...(protectLine.hidden ? [] : [h('button', { class: 'btn ghost wide', type: 'button', onclick: (e) => protectGo(e) }, h('span', { text: protectLine.textContent }), icon('chevronRight'))]),
+      );
+      const quickSig = () => [todayBtn, sessionChip, holdBtn, tribeBtn, protectLine].map((el) => (el.hidden ? '' : el.textContent)).join('|');
+      let quickNow = '';
       const fill = () => {
+        if (quickSig() !== quickNow) { quickNow = quickSig(); fillQuick(); }
         doneEl.textContent = `${money(wallet.confirmed)} 코인`;
         waitEl.textContent = `+${money(wallet.pending)} 코인`;
         sumEl.textContent = `${money(wallet.confirmed + wallet.pending)} 코인`;
@@ -3554,6 +3609,7 @@ export function createUI(root, hooks) {
         refresh.disabled = false;
       });
       host.append(
+        quick,
         h('div', { class: 'holder', style: { marginTop: 0 } }, stat('정산 완료', doneEl), stat('정산 대기', waitEl), stat('합계', sumEl), stat('VIP 티켓', ticketEl)),
         h('div', { class: 'callout' }, h('b', { text: '코인은 점령에 쓰는 돈이에요' }), ' — 바닥 동전, 택시, 붕어빵, 댄스에서 모읍니다. 아래는 이미 전광판을 가진 사람에게 코인을 넘겨 주는 자리입니다.'),
         sellBox,
@@ -3709,7 +3765,9 @@ export function createUI(root, hooks) {
       const tabBtn = (id, text) => h('button', { type: 'button', class: id === tab ? 'on' : '', text, onclick: (e) => { tab = id; for (const c of e.currentTarget.parentElement.children) c.classList.toggle('on', c === e.currentTarget); paint(); } });
       rankRefresh = paint;
       paint();
-      host.append(h('div', { class: 'seg' }, tabBtn('week', '이번 주'), tabBtn('spent', '누적'), tabBtn('hot', '실시간 인기 소원'), tabBtn('team', '해시태그')), meEl, list, note);
+      // 광장 소식: the compact phone HUD has no live board, so its feed list opens from here (index.html .phone-only).
+      const feedBtn = h('button', { class: 'btn ghost phone-only', type: 'button', onclick: () => openFeed() }, ...withIcon('board', '광장 소식'));
+      host.append(h('div', { class: 'seg' }, tabBtn('week', '이번 주'), tabBtn('spent', '누적'), tabBtn('hot', '실시간 인기 소원'), tabBtn('team', '해시태그')), meEl, list, note, feedBtn);
       return () => { rankRefresh = null; };
     }, false, 'steady');
   }
@@ -5861,6 +5919,9 @@ export function createUI(root, hooks) {
       else if (!ballOpenFlag && ballLeft > 0 && ballLeft <= 3600000) ft += ` · 타워까지 ${Math.max(1, Math.ceil(ballLeft / 60000))}분`;
       if (feverText.textContent !== ft) feverText.textContent = ft;
     }
+    const chip = feverChip(fever);
+    if (feverShort.textContent !== chip.text) feverShort.textContent = chip.text;
+    if (feverEl.classList.contains('idle') === chip.show) feverEl.classList.toggle('idle', !chip.show);
     wayPill.hidden = !hd.waypoint;
     if (hd.waypoint) {
       const m = hd.waypoint.dist;
@@ -6071,6 +6132,8 @@ export function createUI(root, hooks) {
   if (!grad && silentGrad({ ftue: recall('kts_ftue', ''), daily: recall('kts_daily', null), day: kstDay() })) { grad = true; store('kts_grad', 1); }
   root.querySelector('.hud-l')?.append(h('button', { class: 'newbie-more', type: 'button', text: '메뉴 모두 보기', onclick: (e) => { e.stopPropagation(); graduate(); } }));
   newbieReady = true;
+  placeGoal();
+  try { if (sessionStorage.getItem('kts_viewonly') === '1') setViewOnly(true); } catch { /* private mode */ }
   renderWallet();
   renderProfile();
   renderStatus();
