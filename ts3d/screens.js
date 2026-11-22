@@ -7,6 +7,7 @@ import { askBid } from '../balance.js';
 import { floorOf, live, SLOT_RE, isLateSlot } from '../balance.js';
 import { auctionClosed } from '../balance.js';
 import { nowMs, kingCovers } from '../live.js';
+import { ADS, adView, adWorld, linkHost } from '../adsale.js';
 
 export const screenTime = { value: 0 };
 // Highest linear luminance a screen pixel may reach (see screenMaterial): just under the default bloom threshold.
@@ -690,4 +691,141 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   }
 
   return { boards, ensure, mount, unmount, set, expire, get: (id) => boards.get(id), worldPos, face, setTicker, setOps, repaintAll, update, accentOf, tickerCanvas, watchShow, setShow, setAir, setKing, setDecals, setWishes, pinWish, decalsOf: (id) => (boards.get(id)?.decals || []).slice(), setRim };
+}
+
+// ---- ad-only screens AD_1..AD_5 (adsale.js) -------------------------------------------------------------------------
+// Paid advertising the operator booked by hand, apart from the coin game: not in the slot registry (no bid, wish card,
+// sticker, king card or takeover), picked as { kind: 'adscreen', id }. Every screen with nothing booked shares one canvas
+// (the house ad while ADS_ON is on, a quiet city screen while it is off); a booked screen gets its own while its booking
+// shows. The state is checked once a second and a canvas is painted only when what it shows changes; no live strip.
+const AD_INK = { amber: '#ffb020', navy: '#070a18', text: '#eef0fb', sub: '#b9bfdc', muted: '#7d86ad' };
+function adFit(g, text, maxW, size, weight, min) {
+  let s = size;
+  for (; s > min; s -= 2) { g.font = `${weight} ${Math.round(s)}px ${SANS}`; if (g.measureText(text).width <= maxW) break; }
+  g.font = `${weight} ${Math.round(s)}px ${SANS}`;
+  return s;
+}
+/** Paints an ad screen: v = adView()'s { kind: 'ad', ad } | { kind: 'house' } | { kind: 'city' }; host: this site's host for the house ad. */
+export function paintAdScreen(canvas, v, host = '') {
+  const g = canvas.getContext('2d'), W = canvas.width, H = canvas.height, k = W / 1024;
+  const ad = v?.kind === 'ad' ? v.ad : null, accent = ad ? (THEMES[ad.th]?.accent || '#48d6f0') : AD_INK.amber;
+  g.save();
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  const bg = g.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, '#0b1030'); bg.addColorStop(1, v?.kind === 'city' ? '#05070f' : '#140c26');
+  g.fillStyle = bg; g.fillRect(0, 0, W, H);
+  const glow = g.createRadialGradient(W * 0.5, H * 0.42, 10, W * 0.5, H * 0.42, W * 0.6);
+  glow.addColorStop(0, v?.kind === 'city' ? 'rgba(72,214,240,0.10)' : `${accent}33`); glow.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = glow; g.fillRect(0, 0, W, H);
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  const chip = (text, x, y, fill, ink) => {
+    g.font = `800 ${Math.round(30 * k)}px ${SANS}`;
+    const w = g.measureText(text).width + 34 * k, h = 50 * k;
+    roundRect(g, x, y, w, h, 12 * k); g.fillStyle = fill; g.fill();
+    g.fillStyle = ink; g.textAlign = 'left'; g.fillText(text, x + 17 * k, y + h / 2 + 1); g.textAlign = 'center';
+    return w;
+  };
+  if (v?.kind === 'city') {
+    // Neutral: no offer, no chip. A dim skyline and the square's name.
+    g.fillStyle = 'rgba(120,140,200,0.10)';
+    for (let i = 0, x = 0; x < W; i++) { const bw = (40 + ((i * 53) % 70)) * k, bh = (90 + ((i * 97) % 220)) * k; g.fillRect(x, H - bh, bw - 6 * k, bh); x += bw; }
+    adFit(g, 'TIMES SQUARE', W * 0.8, 96 * k, 900, 40 * k); g.fillStyle = 'rgba(238,240,251,0.82)'; g.fillText('TIMES SQUARE', W / 2, H * 0.42);
+    adFit(g, '모두의 전광판 · 뉴욕', W * 0.8, 40 * k, 700, 18 * k); g.fillStyle = AD_INK.muted; g.fillText('모두의 전광판 · 뉴욕', W / 2, H * 0.6);
+  } else if (!ad) {
+    chip('광고 문의', 40 * k, 34 * k, AD_INK.amber, AD_INK.navy);
+    adFit(g, '이 화면에 광고하세요', W * 0.86, 92 * k, 900, 36 * k); g.fillStyle = AD_INK.text; g.fillText('이 화면에 광고하세요', W / 2, H * 0.4);
+    adFit(g, '하루 단위 · 생일·응원 광고도 돼요', W * 0.84, 42 * k, 700, 18 * k); g.fillStyle = AD_INK.sub; g.fillText('하루 단위 · 생일·응원 광고도 돼요', W / 2, H * 0.58);
+    const where = host + '/ads';
+    adFit(g, where, W * 0.8, 48 * k, 800, 20 * k); g.fillStyle = AD_INK.amber; g.fillText(where, W / 2, H * 0.78);
+  } else {
+    // The disclosure first: every booked creative carries 광고, top left, the same on every screen.
+    chip('광고', 40 * k, 34 * k, AD_INK.amber, AD_INK.navy);
+    const lines = (ad.l || []).map((t) => chars(String(t || ''), 24)).filter(Boolean);
+    const e = chars(ad.e || '', 4);
+    let y = H * (lines.length > 2 ? 0.34 : 0.4);
+    if (e) { g.font = `${Math.round(70 * k)}px ${SANS}`; g.fillStyle = AD_INK.text; g.fillText(e, W / 2, H * 0.17 + 30 * k); y += 20 * k; }
+    const caps = [88, 52, 42], mins = [34, 20, 18], inks = [AD_INK.text, AD_INK.sub, accent];
+    lines.forEach((t, i) => { const s = adFit(g, t, W * 0.86, caps[i] * k, i ? 700 : 900, mins[i] * k); g.fillStyle = inks[i]; g.fillText(t, W / 2, y); y += s * 1.25 + 8 * k; });
+    const site = ad.u ? linkHost(ad.u) : '';
+    if (site) { adFit(g, '↗ ' + site, W * 0.7, 30 * k, 700, 16 * k); g.fillStyle = AD_INK.muted; g.fillText('↗ ' + site, W / 2, H - 44 * k); }
+  }
+  g.fillStyle = accent; g.fillRect(0, H - 6 * k, W, 6 * k);
+  g.restore();
+  return canvas;
+}
+export function createAdScreens({ renderer, pick, quality }) {
+  const low = quality === 'low', CW = low ? 512 : 1024, CH = low ? 288 : 576;
+  const aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  const host = typeof location !== 'undefined' ? location.host : '';
+  const recs = new Map(), shared = {};
+  let ads = { on: false, list: [] }, acc = 1;
+  const sampled = Math.random() < ADS.seenRate;
+  const seen = new Map(), seenDone = new Set(); // booking id -> seconds in view this session; ids past ADS.seenAfter
+  const make = () => {
+    const canvas = makeCanvas(CW, CH), tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = aniso; tex.generateMipmaps = false; tex.minFilter = THREE.LinearFilter;
+    return { canvas, tex, mat: screenMaterial(tex, { gain: 1.08, grid: low ? [128, 72] : [256, 144] }), key: '' };
+  };
+  function paintOn(surf, v, key) {
+    surf.key = key;
+    paintAdScreen(surf.canvas, v, host);
+    surf.tex.needsUpdate = true;
+    const text = v.kind === 'ad' ? (v.ad.l || []).join(' ') : '이 화면에 광고하세요 하루 단위 생일 응원 광고도 돼요 TIMES SQUARE 모두의 전광판';
+    fontsReady(text).then(() => { if (surf.key === key) { paintAdScreen(surf.canvas, v, host); surf.tex.needsUpdate = true; } });
+  }
+  // One canvas per view that more than one screen can show (house, city), made when first needed; booked screens own theirs.
+  const sharedOf = (kind) => {
+    if (!shared[kind]) { shared[kind] = make(); paintOn(shared[kind], { kind }, kind); }
+    return shared[kind];
+  };
+  function refresh(now) {
+    for (const r of recs.values()) {
+      const v = adView(ads, r.id, now);
+      const key = v.kind === 'ad' ? 'ad:' + v.ad.id + ':' + (v.ad.l || []).join('|') + v.ad.e + v.ad.th + v.ad.u : v.kind;
+      if (key === r.key) continue;
+      r.key = key; r.view = v;
+      if (v.kind === 'ad') { if (!r.own) r.own = make(); if (r.own.key !== key) paintOn(r.own, v, key); r.mesh.material = r.own.mat; }
+      else { r.mesh.material = sharedOf(v.kind).mat; if (r.own) { r.own.tex.dispose(); r.own.mat.dispose(); r.own = null; } }
+    }
+  }
+  /** spec: { y, z, w, h } of the face in the parent group (16:9). */
+  function mount(id, parent, spec) {
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(spec.w, spec.h), sharedOf('city').mat);
+    mesh.position.set(0, spec.y, spec.z || 0);
+    mesh.userData.pick = { kind: 'adscreen', id };
+    parent.add(mesh);
+    pick.push(mesh);
+    recs.set(id, { id, mesh, key: '', view: null, own: null, pos: new THREE.Vector3(), normal: new THREE.Vector3() });
+    refresh(nowMs());
+    return mesh;
+  }
+  /** /rt/world's `ads` (any shape: adWorld checks it). */
+  function set(v) { ads = adWorld(v); refresh(nowMs()); }
+  const fr = new THREE.Frustum(), pm = new THREE.Matrix4(), to = new THREE.Vector3();
+  /** Once a second: what each screen shows, and (in a sampled session) which booked screens are in view. occluded(a, b): a wall between. */
+  function update(dt, camera, occluded) {
+    acc += dt;
+    if (acc < 1) return;
+    const step = Math.min(acc, 2); acc = 0;
+    refresh(nowMs());
+    if (!sampled || !camera) return;
+    let frustumSet = false;
+    for (const r of recs.values()) {
+      const id = r.view?.kind === 'ad' ? r.view.ad.id : '';
+      if (!id || seenDone.has(id)) continue;
+      r.mesh.getWorldPosition(r.pos);
+      r.normal.set(0, 0, 1).transformDirection(r.mesh.matrixWorld);
+      to.copy(camera.position).sub(r.pos);
+      const d = to.length();
+      if (d > 140 || to.dot(r.normal) < 0.25 * d) continue;
+      if (!frustumSet) { fr.setFromProjectionMatrix(pm.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)); frustumSet = true; }
+      if (!fr.containsPoint(r.pos) || occluded?.(r.pos, camera.position)) continue;
+      const t = (seen.get(id) || 0) + step;
+      seen.set(id, t);
+      if (t >= ADS.seenAfter) seenDone.add(id);
+    }
+  }
+  /** The tapped screen: { id, kind, ad } (ad null for the house and city views). */
+  function info(id) { const r = recs.get(id); const v = r?.view || adView(ads, id, nowMs()); return { id, kind: v.kind, ad: v.kind === 'ad' ? v.ad : null, on: !!ads.on }; }
+  return { mount, set, update, info, seen: () => [...seenDone], sampled: () => sampled, ids: () => [...recs.keys()], front: (id) => recs.get(id)?.mesh || null };
 }

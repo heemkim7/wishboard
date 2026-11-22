@@ -363,10 +363,11 @@ visualViewport?.addEventListener('scroll', fitVV);
   .farcard .far-acts { display: flex; flex-direction: row; align-items: center; gap: 6px; flex: none; pointer-events: auto; }
   .farcard .far-acts button { min-height: 40px; padding: 0 12px; border-radius: 14px; border: 1px solid var(--line); background: transparent; color: var(--text); font-size: 13px; font-weight: 700; white-space: nowrap; }
   .farcard .far-acts button.go { border-color: var(--accent); color: var(--accent); }
-  .farcard .far-acts button:disabled { color: var(--text-2); opacity: .5; }
-  html.touch .farcard .far-acts button { min-width: 44px; min-height: 44px; }
+  .farcard .far-acts button:disabled { color: var(--text-2); opacity: .5; }  html.touch .farcard .far-acts button { min-width: 44px; min-height: 44px; }
 
   .dock { position: absolute; left: 50%; bottom: calc(18px + var(--safe-b)); transform: translateX(-50%); display: flex; gap: 8px; padding: 8px; pointer-events: auto !important; }
+  /* An ad screen's card (ui.js showAdCard, a .farcard): the 광고 disclosure in front of the advertiser's line. */
+  .farcard .where b .adtag { display: inline-block; font-size: 12px; font-weight: 800; color: var(--on-accent); background: var(--accent); border-radius: 6px; padding: 0 6px; vertical-align: 1px; white-space: nowrap; }
   .emote { position: relative; width: 74px; height: 70px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: var(--text); background: var(--surface-2); border: 1px solid transparent; transition: transform .15s, background .2s, border-color .2s; }
   .emote:hover { border-color: var(--line-strong); transform: translateY(-2px); }
   .emote:active { transform: translateY(0) scale(.96); }

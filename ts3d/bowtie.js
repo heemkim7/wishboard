@@ -217,7 +217,99 @@ export function planBowtie(nyc, { oneTimes = LAYOUT.oneTimes, search = false } =
       keep.push(faceOf(s, s.frame));
     }
   }
-  return { facing, corners, streets: all, blades, main };
+  // ---- AD_1..AD_N: the ad-only screens (not claimable), last, so nothing above moves for them ----
+  const ads = planAds(nyc, list, facing, keep, all, corners, search);
+  return { facing, corners, streets: all, blades, main, ads };
+}
+
+// ---- ad-only screens ---------------------------------------------------------------------------------------------
+// AD_1..AD_N carry paid advertising booked by the operator (adsale.js, adsrv.js), never a coin bid or a wish. Same rules
+// as a new street face (fits: on its own wall, out of every building, GAP clear of every face, frame and blade, SEE m
+// of open street in front; onStreet; inSight: the 보기 camera sees it whole straight back in a tall phone frame), within
+// AD_REACH m of the plaza centre (the core is full: 7th Avenue and Broadway up to One Times Square and TKTS, as the second
+// move round), from AD_MIN m wide, AD_APART m from each other, and never across the straight-back camera of another
+// board, so no claimable board is framed through one. Nearest the walk from the spawn to the bakery stall first.
+export const AD_N = 5;
+export const AD_IDS = Array.from({ length: AD_N }, (_, i) => 'AD_' + (i + 1));
+const AD_MIN = 11, AD_MAX = 17, AD_STEP = 1.5, AD_APART = 26, AD_REACH = 150;
+// What adSearch finds on the shipped map: [wall midpoint x, z, metres along the wall, width, height level]. planBowtie
+// takes these after checking them against the same rules; test/ad-screens.test.mjs runs the search and checks it lands here.
+export const AD_SPOTS = {
+  AD_1: [70.85, 112.7, 11, 11, 1], AD_2: [14, 204.45, 2, 17, 2], AD_3: [-26.5, -12, 0, 11, 4], AD_4: [49.75, 203.6, 11, 12.5, 3], AD_5: [13.85, -30.4, 18, 11, 2],
+};
+const adShape = () => ({ kind: 'ad', frame: FRAME_T, min: AD_MIN, eye: false, low: false }); // FRAME_T is declared further down
+const adSlot = (w, along, bw, level) => slotOn(w, along, bw, level, adShape());
+// The straight-back camera of every claimable face (the corner pairs, the main stack, STREET_1..50) as segments from
+// points on the face to where inSight puts the camera: an ad face may cross none of them.
+function viewLines(nyc, streets, corners) {
+  const out = [], add = (x, y, z, nx, nz, w, h) => {
+    const need = Math.max(w / TALL, h) / (2 * TALL_T), d = Math.max(Math.min(18, Math.max(6, need * 1.7)), Math.min(need, 48));
+    const gx = x + nx * d, gz = z + nz * d, gy = Math.max(y * 0.42 + 1.8, groundHeight(gx, gz) + 1.6), rx = nz, rz = -nx;
+    for (const [u, v] of [[0, 0], [-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5]]) out.push([x + rx * u * w, y + v * h, z + rz * u * w, gx, gy, gz]);
+  };
+  for (const s of streets) { const f = faceOf(s); add(f.x, s.y, f.z, s.nx, s.nz, s.w, s.h); }
+  for (const c of corners) for (const y of [c.yA, c.yB]) add(c.x + c.nx * 0.35, y, c.z + c.nz * 0.35, c.nx, c.nz, c.w, c.h);
+  const fh = 24 * 9 / 16, OT = LAYOUT.oneTimes;
+  for (let i = 0; i < 5; i++) add(OT.x, 11 + fh / 2 + i * (fh + 0.5), OT.z - 1.2, 0, -1, 24, fh);
+  return out;
+}
+/** True when the segment [ax, ay, az, bx, by, bz] passes through the upright rectangle r. */
+export function segThrough(r, [ax, ay, az, bx, by, bz]) {
+  const den = (bx - ax) * r.nx + (bz - az) * r.nz;
+  if (Math.abs(den) < 1e-9) return false;
+  const t = ((r.x - ax) * r.nx + (r.z - az) * r.nz) / den;
+  if (t < 0 || t > 1) return false;
+  const hx = ax + (bx - ax) * t, hy = ay + (by - ay) * t, hz = az + (bz - az) * t;
+  return Math.abs((hx - r.x) * r.rx + (hz - r.z) * r.rz) <= r.hw && Math.abs(hy - r.y) <= r.hh;
+}
+const inAdReach = (x, z) => Math.hypot(x - CORE.x, z - CORE.z) <= AD_REACH;
+const adFits = (nyc, list, c, taken, views, picked) => c.y - c.h / 2 >= EYE_Y0 - 1e-9 && c.y + c.h / 2 + c.frame <= c.wall.h - 1 && Math.abs(c.along) <= room(c.wall, c.w, c.frame) + 1e-9
+  && inAdReach(c.x, c.z) && picked.every((p) => Math.hypot(p.x - c.x, p.z - c.z) >= AD_APART)
+  && fits(nyc, list, c, taken) && inSight(nyc, list, c) && onStreet(nyc, list, c) && !views.some((v) => segThrough(faceOf(c, c.frame), v));
+function planAds(nyc, list, facing, taken, streets, corners, search) {
+  const views = viewLines(nyc, streets, corners), keep = taken.slice(), out = [];
+  const take = (c, i) => { c.id = AD_IDS[i]; c.n = i + 1; out.push(c); keep.push(faceOf(c, c.frame)); };
+  if (!search) {
+    AD_IDS.forEach((id, i) => {
+      const m = AD_SPOTS[id]; if (!m) return;
+      const [mx, mz, along, bw, level] = m, w = facing.find((q) => Math.abs(q.mx - mx) < 0.05 && Math.abs(q.mz - mz) < 0.05);
+      if (!w || level >= levels(w, bw, adShape()).length) return;
+      const c = adSlot(w, along, bw, level);
+      if (adFits(nyc, list, c, keep, views, out)) take(c, out.length);
+    });
+    if (out.length === AD_N) return out;
+    out.length = 0; keep.length = taken.length; // the map changed under the table: search it all again
+  }
+  const A = LAYOUT.spawn, S = LAYOUT.stall, dx = S.x - A.x, dz = S.z - A.z, L2 = dx * dx + dz * dz;
+  const walk = (x, z, y) => { const t = Math.max(0, Math.min(1, ((x - A.x) * dx + (z - A.z) * dz) / L2)); return Math.hypot(x - A.x - dx * t, z - A.z - dz * t, y - 1.6); };
+  const cands = [];
+  for (const w of facing) {
+    for (let bw = AD_MAX, k = 0; bw >= AD_MIN - 1e-9; bw -= AD_STEP, k++) {
+      const r = room(w, bw, FRAME_T);
+      if (r < 0) continue;
+      levels(w, bw, adShape()).forEach((y, level) => {
+        const bh = bw * 9 / 16;
+        if (y - bh / 2 < EYE_Y0 - 1e-9 || y + bh / 2 + FRAME_T > w.h - 1) return;
+        for (let along = -Math.floor(r); along <= r + 1e-9; along += 1) {
+          const x = w.mx + w.tx * along + w.nx * 0.7, z = w.mz + w.tz * along + w.nz * 0.7;
+          if (inAdReach(x, z)) cands.push({ w, along, bw, level, x, z, y, rank: walk(x, z, y) + k * SHRINK_M });
+        }
+      });
+    }
+  }
+  cands.sort((a, b) => a.rank - b.rank || a.x - b.x || a.z - b.z || a.y - b.y || b.bw - a.bw);
+  for (const k of cands) {
+    if (out.length >= AD_N) break;
+    const c = adSlot(k.w, k.along, k.bw, k.level);
+    if (adFits(nyc, list, c, keep, views, out)) take(c, out.length);
+  }
+  return out;
+}
+/** [wall midpoint x, z, along, width, level] of each planned ad screen, rounded as AD_SPOTS keeps them. */
+export function adSpots(ads) {
+  const o = {};
+  for (const a of ads) o[a.id] = [Math.round(a.wall.mx * 100) / 100, Math.round(a.wall.mz * 100) / 100, a.along, a.w, a.level];
+  return o;
 }
 // The faces nobody on the street could see whole; nobody held them, so they moved before anyone could. Two rounds:
 //  1. STREET_1..30 whose face the map puts inside a neighbouring building (overlapping OpenStreetMap outlines). 22 and

@@ -17,7 +17,7 @@ const HTML_SRC = /(<script\b[^>]*\bsrc=)(['"])((?:\.{1,2}\/)?[^'"?\s:]+\.js)(\?v
 const posix = (p) => p.split(path.sep).join('/');
 
 export function browserFiles(root = ROOT) {
-  const top = fs.readdirSync(root).filter((f) => (f.endsWith('.js') && f !== 'worker.js' && f !== 'sw.js') || f === 'index.html' || f === 'admin.html');
+  const top = fs.readdirSync(root).filter((f) => (f.endsWith('.js') && f !== 'worker.js' && f !== 'sw.js') || f === 'index.html' || f === 'admin.html' || f === 'ads.html');
   const scene = fs.existsSync(path.join(root, 'ts3d')) ? fs.readdirSync(path.join(root, 'ts3d')).filter((f) => f.endsWith('.js')).map((f) => 'ts3d/' + f) : [];
   return top.concat(scene).sort();
 }

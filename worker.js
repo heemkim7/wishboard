@@ -15,6 +15,7 @@ import { LEAGUE, leagueBoard, leagueCut, weekEnds, botNick } from './league.js';
 import { DARK, quietShift, darkNext, darkHours, darkText, litOf } from './dark.js';
 import { INVITE, invCode, newCode, inviteFault, inviteWaits, inviteOn, ipWide } from './invite.js';
 import { adTables, adIngest, adTenure, adRename, adForget, adReport } from './adreport.js';
+import { adsApi, adsDb, adsWorld } from './adsrv.js';
 // v16 cost pass: ping 25s (client) / STALE 75s, idle scan alarm 60s, meter report 60s, compact pos ('p'/'P'), nearby fanout, event ring + world cache, HMAC guest tokens.
 const CAP = 50, MEM = 0.125, LEAN = 0.8, HARD = 0.95, STALE = 75000, SCAN = 5000, IDLE_SCAN = 60000, REP = 60000;
 const NEAR_R = 1600, FAR_MS = 3000, HIST_N = 10, PRAY_TTL = 15;
@@ -242,6 +243,14 @@ export class Meter extends DurableObject {
   // av is the database's species. Before migrations/2026-11-22-species.sql, save_species stores 1 for a choice of 4..10 (its old 1..3 clamp),
   // so the account's last such choice is kept here (durable, `held`) and a database answer of 1 reads through it. `chose`: the species the
   // account has just saved (POST /rt/profile): kept when the database clamped it to 1, dropped when the database kept what was saved.
+  // 광고 판매 (adsrv.js): instance 'ads' keeps the /ads requests, the bookings and their counts; adsTal reads the plaza's daily visitors on 'acct'.
+  adsI() { if (!this.adsOk) { this.adsOk = 1; adsDb.tables(this.ctx.storage.sql); } }
+  adsAsk(ip, v, now) { this.adsI(); return adsDb.ask(this.ctx.storage.sql, ip, v, now); }
+  adsAdmin(op, arg, now) { this.adsI(); return adsDb.admin(this.ctx.storage.sql, op, arg, now); }
+  adsNow(now) { this.adsI(); return adsDb.now(this.ctx.storage.sql, now); }
+  adsHit(ids, kind, who, now) { this.adsI(); return adsDb.hit(this.ctx.storage.sql, ids, kind, who, now); }
+  adsRead(tok) { this.adsI(); return adsDb.read(this.ctx.storage.sql, tok); }
+  adsTal(d0, d1) { this.acInit(); return adsDb.tal(this.ctx.storage.sql, d0, d1); }
   profilePut(uid, av, equip, chose) {
     if (!this._prof) this._prof = new Map();
     const id = String(uid || '');
@@ -1835,7 +1844,7 @@ function evProps(p) { const o = {}; let n = 0; if (p && typeof p === 'object') f
 // today = { visitors, wishes } for the boot screen comes from the account registry: one DO call per cache refill (15 s), never per request.
 async function readWorld(env) {
   const h = { apikey: ANON, accept: 'application/json' };
-  const [bs, ps, rs, tally, live, wish, league] = await Promise.all([
+  const [bs, ps, rs, tally, live, wish, league, ads] = await Promise.all([
     fetch(SUPA + '/rest/v1/billboards?select=*&slot_id=in.(' + SLOT_IDS.join(',') + ')&order=slot_id.asc', { headers: h }),
     fetch(SUPA + '/rest/v1/plots?select=*&order=plot_id.asc', { headers: h }),
     fetch(SUPA + '/rest/v1/wallets?select=actor_id, nickname, spent, linked&spent=gt.0&order=spent.desc&limit=60', { headers: h }), // 60: room for the 네온봇N rows filtered out below
@@ -1843,6 +1852,7 @@ async function readWorld(env) {
     supabaseRpc('plaza_live', { p_key: env.FLUSH_KEY || '' }).catch(() => null),
     lvlNow(env).then(l => l >= 2 ? (WWLAST.day === kstDay() ? WWLAST.v : null) : wishM(env).wWorld(kstDay()).then(v => { WWLAST = { day: kstDay(), v }; return v; })).catch(() => null), // budget hard: the last copy, no wish-DO call
     Promise.resolve().then(() => leagueWorld(env)).catch(() => null),
+    Promise.resolve().then(() => adsWorld(env, { lvlNow })).catch(() => null), // the ad screens' bookings (adsrv.js): one 'ads' DO call per isolate per minute at most
   ]);
   if (!bs.ok || !ps.ok) return { err: 'upstream ' + (bs.ok ? ps.status : bs.status) };
   const [billboards, plots, ranks] = await Promise.all([bs.json(), ps.json(), rs.ok ? rs.json() : null]);
@@ -1852,6 +1862,7 @@ async function readWorld(env) {
   if (row?.ops?.id) world.ops = { id: String(row.ops.id), theme: String(row.ops.theme || ''), title: String(row.ops.title || ''), copy: String(row.ops.copy || '') };
   if (row && typeof row.roof === 'string') world.roof = row.roof;
   const ww = wishWorld(wish); if (ww.count || ww.board.length || ww.king) world.wish = ww; // left out while empty or failing: clients read a missing key as { board: [], king: null, count: 0 }
+  if (ads) world.ads = ads; // { on, list }: left out while ADS_ON is off and nothing is booked
   if (league?.top?.length) world.league = { week: league.week, top: league.top.map(r => ({ nick: clip(r.nick, 16), spent: Math.max(0, Math.floor(Number(r.spent)) || 0) })) }; // also left out while empty
   return { body: JSON.stringify(world), world, ranked: Array.isArray(ranks) };
 }
@@ -3313,6 +3324,8 @@ export default {
         const r = GATE.r, l = r.lvl, used = Math.round(r.n), gbs = Math.round(r.g);
         return J(l >= 2 ? { full: true, used, gbs } : { ok: true, cap: CAP, used, gbs, lean: l >= 1 }); } catch (e) { return J({ full: true, err: 1 }, 503); } }
     if (u.pathname === '/rt/sponsor' && req.method === 'GET') return J({ url: extUrl(env.SPONSOR_INQUIRY_URL) || '' });
+    if (u.pathname.startsWith('/rt/ads/') || u.pathname === '/rt/admin/ads' || u.pathname.startsWith('/rt/admin/ads/')) return adsApi(req, env, ctx, u, { adminOk, lvlNow, resolveActor, tokenOf, ipHash, // 광고 판매 (adsrv.js)
+      dropWorld: async () => { PC.delete('world'); try { await caches.default.delete(new Request(WORLD_CACHE)); } catch { } } });
     if (u.pathname === '/rt/share-bonus' || u.pathname === '/rt/redeem-code') return promo(req, env, u);
     if (u.pathname === '/rt/report') return fileReport(req, env);
     if (u.pathname.startsWith('/rt/card/')) return cardPage(req, env, u);

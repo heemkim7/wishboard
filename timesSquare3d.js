@@ -16,7 +16,7 @@ import { BALANCE, PAY, chainsOf, slotName } from './balance.js';
 import { isSlotId, STREET_N } from './balance.js';
 import { kitMaterials } from './ts3d/kit.js?v=202611221134';
 import { createReflection } from './ts3d/ground.js?v=202611221134';
-import { createBoards, screenTime } from './ts3d/screens.js?v=202611221134';
+import { createBoards, createAdScreens, screenTime } from './ts3d/screens.js?v=202611221134';
 import { loadNYC, ROAD } from './ts3d/nyc.js?v=202611221134';
 import { createWorld, FAR_LAYER } from './ts3d/world.js?v=202611221134';
 import { createTraffic } from './ts3d/traffic.js?v=202611221134';
@@ -219,6 +219,8 @@ void main(){
   const fireworks = [];
   const sparkTex = new THREE.CanvasTexture(paintGlow(makeCanvas(64, 64)));
   const boards = createBoards({ renderer, kitMats, pick, quality, onBurst: (slotId, color) => celebrateBoard(slotId, color) });
+  // AD_1..AD_5 (adsale.js): paid ad-only screens, outside the board registry; /rt/world's `ads` says what they show.
+  const adScreens = createAdScreens({ renderer, pick, quality });
   const avatars = createAvatars({ scene, first: opts.species });
   {
     const S = LAYOUT.stairs, G = LAYOUT.stage;
@@ -228,6 +230,7 @@ void main(){
 
   // The city streams in from /assets/nyc/manhattan.bin; everything below tolerates it not being there yet.
   let nyc = null, world = null, traffic = null, tsq = null, marks = null;
+  const adOccluded = (a, b) => !!nyc && nyc.rayBlock(a.x, a.y, a.z, b.x, b.y, b.z) < 0.98; // a wall between an ad screen and the camera
   let cityProgress = 0, mgrProgress = 0, pendingPlots = [], cityFailed = false;
   const reportProgress = () => opts.onProgress?.(Math.min(0.99, cityProgress * 0.45 + mgrProgress * 0.55));
   loadNYC('/assets/nyc/manhattan.bin', (p) => { cityProgress = p; reportProgress(); }).then((data) => {
@@ -237,7 +240,7 @@ void main(){
     world = createWorld({ scene, renderer, manager, nyc, quality, kitMats, reflection, layout: { SKIP_ZONES, NO_PROPS, NO_TREES, FAR_CLUSTERS } });
     buildRockefeller(rock, { scene });
     buildIcons(icons, { scene });
-    tsq = buildTimesSquare({ scene, renderer, manager, kitMats, boards, nyc, quality, colliders });
+    tsq = buildTimesSquare({ scene, renderer, manager, kitMats, boards, adScreens, nyc, quality, colliders });
     hideStockBall();
     marks = buildLandmarks({ scene, kitMats, boards, ground: world, colliders, blockers, pick, quality, onFishLanded: (p, gold) => burst(p, gold ? '#ffcf5a' : '#ffb070', gold ? 70 : 34, gold ? 0.8 : 0.5) });
     traffic = createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk: () => opts.onHonk?.() });
@@ -417,6 +420,7 @@ void main(){
       } else opts.onBillboard?.(info.slotId);
     }
     else if (info.kind === 'plot') opts.onPlot?.(info.plotId);
+    else if (info.kind === 'adscreen') opts.onInteract?.('adscreen', info.id, { clicked: true, dist, ...adScreens.info(info.id) });
     else if (info.kind === 'atm' && route === 'waypoint') opts.onInteract?.('atm', null, { clicked: true, near: false, far: true, at: { x: LAYOUT.atm.x, z: LAYOUT.atm.z } });
     else opts.onInteract?.(info.kind, null, { clicked: true, near: near?.kind === info.kind });
   };
@@ -1927,6 +1931,8 @@ void main(){
       // The board in front of the player (front point within 12 m), looked up four times a second. Above ring and crowd.
       if (now - boardAt > 250) { boardAt = now; boardNear = nearBoard(); }
       if (!nk && boardNear) nk = boardNear;
+      // An ad screen in front of the player (its front point 9 m out, within 9 m): E opens its card, as a tap does.
+      if (!nk) for (const f of tsq?.adFaces || []) { if (Math.hypot(pos.x - f.x - f.nx * 9, pos.z - f.z - f.nz * 9) < 9) { nk = { kind: 'adscreen', id: f.id }; break; } }
       if (!nk) {
         for (const s of STUNTS) {
           if (Math.hypot(pos.x - s.x, pos.z - s.z) < 5) { nk = { kind: 'ring' }; break; }
@@ -1969,6 +1975,7 @@ void main(){
     tsq?.update(dt, t);
     marks?.update(dt, t);
     boards.update(dt, camera.position);
+    adScreens.update(dt, camera, adOccluded);
     stepPlaza(dt, t);
     updateStars(now, t);
     updateCoins(now, t);
@@ -2745,6 +2752,10 @@ void main(){
     setTicker(text) { boards.setTicker(text); },
     // 오늘의 소원 on every screen that is not live: list is 0–24 {id, nick, txt, hearts}; [] or missing turns it off.
     setWishes(list) { boards.setWishes(list); },
+    // 광고 화면: /rt/world's `ads`; what a screen shows ({ id, kind, ad }); the bookings this sampled session had in view.
+    setAds(v) { adScreens.set(v); },
+    adInfo: (id) => adScreens.info(id),
+    adSeen: () => (adScreens.sampled() ? adScreens.seen() : null),
     // Shows that wish (must be in the current list) on up to 4 nearest idle boards now, for one card duration; true if shown.
     pinWish(id) { return boards.pinWish(id); },
     // 밤 9시 소원왕: {nick, txt, hearts} puts yesterday's top wish on every claimable board but the main tower; null ends it.

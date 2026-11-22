@@ -451,6 +451,7 @@ world = createTimesSquare(document.getElementById('view'), {
     else if (kind === 'ring') ui.note('황금 링을 지나가면 코인이 들어와요 · 걸어서도, 택시로도 돼요');
     else if (kind === 'fountain') drawFortune();
     else if (kind === 'lounge') setLounge(true);
+    else if (kind === 'adscreen') ui.adCard?.({ ...(world?.adInfo?.(id) || {}), id }, openAdLink);
   },
   onProximity: (near) => { ui.setNear(near); if (near?.kind === 'cart') ftueApi?.onArrive?.(); },
   onStarTouch: (i) => takeStar(i),
@@ -1046,12 +1047,27 @@ function applyPlaza(remote) {
   }
   ui.setWorld(state);
   world.updateWorld(state);
+  world.setAds?.(remote.ads); // 광고 화면 (adsale.js adWorld checks it; a missing key is off and empty)
   world.setMonopoly?.(!!monopolyOf(state.billboards));
   markMine();
   paintCrown();
   photoNotice();
 }
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// 광고 화면: the link opens at once (in the tap, so no popup blocker), the click is counted behind it. A sampled session
+// reports every 2 minutes the bookings it had in view and has not reported yet; nothing is sent while none is booked.
+function openAdLink(ad) {
+  if (!ad?.u || !ad.id) return;
+  try { window.open(ad.u, '_blank', 'noopener,noreferrer'); } catch { /* blocked: nothing to count */ return; }
+  net._plazaPost('/rt/ads/click', { b: ad.id }).catch(() => { });
+}
+const adSent = new Set();
+setInterval(() => {
+  const ids = (world?.adSeen?.() || []).filter((id) => !adSent.has(id)).slice(0, 6);
+  if (!ids.length) return;
+  for (const id of ids) adSent.add(id);
+  net._plazaPost('/rt/ads/seen', { b: ids }).catch(() => { });
+}, 120000);
 
 async function refreshWorld() {
   try {

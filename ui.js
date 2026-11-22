@@ -20,6 +20,7 @@ import { bindSfx, bindMusic, duckMusic, play, setSound, haptic, musicVisible } f
 import { createBgm } from './bgm.js?v=202611221134';
 import { stickVec, isTouchUI, STICK_W, STICK_H, STICK_THROW, STICK_ENGAGE, bakeFlip, bakeBest, BAKE_FLIPS, BAKE_ROUND_MS } from './interact.js?v=202611221134';
 import { AD, AD_TEMPLATES, adSums, adBars } from './adreport.js';
+import { adScreenName, linkHost } from './adsale.js';
 import { qrEncode, paintQr } from './qr.js?v=202611221134';
 import { icon } from './uiicons.js?v=202611221134';
 import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, proofOffers, proofPlan, TOAST } from './overlay.js?v=202611221134';
@@ -912,6 +913,7 @@ export function createUI(root, hooks) {
     fountain: ['포춘쿠키 뽑기', '빨간 계단 앞 분수', '뽑기'],
     ring: ['황금 링 통과', '걸어서도, 택시로도 링을 지나가면 +8', '통과'],
     lounge: ['빨간 계단에서 멍때리기', '켜 두면 20초마다 +2', '관람'],
+    adscreen: ['광고 화면', `${PRESS} 광고 정보가 열려요`, '광고'],
   };
   let focusOn = false, exitLabel = '';
   function renderPrompt() {
@@ -965,6 +967,27 @@ export function createUI(root, hooks) {
     farEl = el;
     requestAnimationFrame(() => el.classList.add('show'));
     farTimer = setTimeout(hideFar, 4000);
+  }
+  // A tap (or E) on an ad screen AD_1..AD_5 (adsale.js): the same small card, labelled 광고, with the advertiser's link.
+  // info: { id, kind: 'ad' | 'house' | 'city', ad }; open(ad): opens the link and counts the click (main.js).
+  function showAdCard(info = {}, open) {
+    if (!info.id || sheet || baking || dance) return;
+    hideFar();
+    const ad = info.kind === 'ad' ? info.ad : null, site = ad?.u ? linkHost(ad.u) : '';
+    const act = (text, fn, cls = '') => h('button', { type: 'button', class: cls, text, onclick: () => { hideFar(); fn(); } });
+    const title = ad ? chars((ad.l || []).filter(Boolean).join(' · '), 40) : info.kind === 'house' ? '이 화면에 광고하세요' : '광고 화면';
+    const sub = ad ? `${adScreenName(info.id)}${site ? ' · ' + site : ''}` : info.kind === 'house' ? '하루 단위 · 생일·응원 광고' : `${adScreenName(info.id)} · 지금은 비어 있어요`;
+    const acts = [];
+    if (ad && site) acts.push(act('링크 열기', () => open?.(ad), 'go'));
+    if (!ad && info.kind === 'house') acts.push(act('광고 안내', () => { try { window.open('/ads', '_blank', 'noopener'); } catch { location.href = '/ads'; } }, 'go'));
+    acts.push(act('닫기', () => { }));
+    const el = h('div', { class: 'farcard adcard', role: 'status' },
+      h('div', { class: 'where' }, h('b', {}, h('span', { class: 'adtag', text: '광고' }), document.createTextNode(' ' + title)), h('span', { text: sub })),
+      h('div', { class: 'far-acts' }, ...acts));
+    root.append(el);
+    farEl = el;
+    requestAnimationFrame(() => el.classList.add('show'));
+    farTimer = setTimeout(hideFar, 6000);
   }
   function levelOf(id) {
     const p = world.plots.find(x => Number(x.plot_id) === Number(id));
@@ -5869,6 +5892,7 @@ export function createUI(root, hooks) {
     setStatus(text, kind = 'warn') { statusText = text || ''; statusKind = kind; renderStatus(); },
     setNear(v) { near = v || null; renderPrompt(); },
     farBoard: showFarCard,
+    adCard: showAdCard,
     setWorld(next) {
       world = { billboards: next?.billboards || [], plots: next?.plots || [], ranks: next?.ranks || [], today: next?.today || null, week: next?.week || null };
       plazaReady = true;

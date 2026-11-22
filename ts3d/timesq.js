@@ -198,6 +198,18 @@ diffuseColor.rgb += vec3(0.35, 0.3, 0.45) * (1.0 - smoothstep(0.0, 0.012, vFlip)
     boards.mount(st.id, g, { x: 0, y: st.y, z: 0.2, w: st.w, h: st.h, frameT: st.frame, bare });
     if (bare) addFrame(kit, st.w, st.h, st.frame, THEMES.cyber_navy?.accent || '#3fe6ff', new THREE.Matrix4().compose(new THREE.Vector3(st.x + st.nx * 0.2, st.y, st.z + st.nz * 0.2), new THREE.Quaternion().setFromAxisAngle(Y_AXIS, st.yaw), ONE));
   }
+  // AD_1..AD_5: the ad-only screens (bowtie.js planAds, adsale.js). Not claimable: they mount on adScreens, never on boards,
+  // and their amber frames go into this file's merged kit like the newer street faces' (one draw call each, the screen).
+  const adFaces = [];
+  for (const a of ctx.adScreens ? plan.ads : []) {
+    const g = new THREE.Group();
+    scene.add(g);
+    g.position.set(a.x, 0, a.z);
+    g.rotation.y = a.yaw;
+    ctx.adScreens.mount(a.id, g, { y: a.y, z: 0.2, w: a.w, h: a.h });
+    addFrame(kit, a.w, a.h, a.frame, '#ffb020', new THREE.Matrix4().compose(new THREE.Vector3(a.x + a.nx * 0.2, a.y, a.z + a.nz * 0.2), new THREE.Quaternion().setFromAxisAngle(Y_AXIS, a.yaw), ONE));
+    adFaces.push({ id: a.id, x: a.x + a.nx * 0.2, y: a.y, z: a.z + a.nz * 0.2, nx: a.nx, nz: a.nz, w: a.w, h: a.h });
+  }
   // Blade signs on the canyon walls (none through a claimable face).
   for (const b of plan.blades) bladeAt(BLADES[b.name], b.x, 15, b.z, b.ry, 12);
 
@@ -323,7 +335,7 @@ diffuseColor.rgb += vec3(0.35, 0.3, 0.45) * (1.0 - smoothstep(0.0, 0.012, vFlip)
 
   function update(dt, t) { for (const u of updaters) u(dt, t); }
   return {
-    update, photoTextures,
+    update, photoTextures, adFaces,
     mainScreenCenter: new THREE.Vector3(OT.x, 25, OT.z - 1.2),
     panels: slideMats.length + Object.values(photoGeos).reduce((a, l) => a + l.length, 0),
   };
