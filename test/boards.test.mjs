@@ -83,7 +83,7 @@ describe('claimable iff the database has the row', () => {
     const m = read('main.js'), u = read('ui.js');
     assert.match(m, /async function claim\(payload\) \{\n  \/\/ [^\n]*\n  if \(payload\?\.slot_id && !slotOpen\(state\.billboards, payload\.slot_id\)\) throw new Error\(SLOT_SOON\);/);
     const bid = u.slice(u.indexOf('const refreshBid = () => {'), u.indexOf('const fillStats = () => {'));
-    assert.match(bid, /if \(!slotOpen\(world\.billboards, slot\)\) \{\n\s+go\.disabled = true;\n\s+tribeGo\.disabled = true;\n\s+setIconText\(go, '', '곧 열려요'\);/);
+    assert.match(bid, /if \(!slotOpen\(world\.billboards, slot\)\) \{\n\s+go\.disabled = true;\n\s+setIconText\(go, '', '곧 열려요'\);/);
     assert.match(u, /const placeBoard = async \(mode\) => \{\n\s+if \(placing\) return;\n\s+hush\(\);\n\s+if \(!slotOpen\(world\.billboards, slot\)\) \{ say\(goErr, SLOT_SOON\); return; \}/);
     assert.match(u, /badgeEl\.textContent = !slotOpen\(world\.billboards, slot\) \? '곧 열림'/);
     assert.match(u, /!slotOpen\(world\.billboards, near\.id\) \? \['곧 열리는 전광판', slotName\(near\.id\), '보기'\]/);
@@ -98,7 +98,7 @@ describe('claimable iff the database has the row', () => {
     assert.match(sc, /line2: soon \? '곧 열리는 자리' : '거리 쪽 큰 화면'/);
     assert.match(sc, /data: defaultData\(slotId, isLateSlot\(slotId\)\), real: false,/);
     assert.match(sc, /if \(row && \('holder_id' in row \|\| 'current_bid' in row\)\) b\.real = true;/);
-    assert.match(art, /\? \(data\.soon \? '곧 열려요' : auctionClosed/);
+    assert.match(art, /\? \(data\.soon \? '곧 열려요' : isPrime\(data\.slot_id\)/);
   });
   it('the Worker maps the refusal for claims and reads /rt/world rows for the 81 ids', () => {
     const w = read('worker.js');

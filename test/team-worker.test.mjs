@@ -4,6 +4,7 @@
 import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, it } from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 
 registerHooks({
@@ -349,5 +350,26 @@ describe('no takeovers on the claim path', { concurrency: false }, () => {
       const l = await H.post('/rt/relight', { slot_id: 'MAIN_TOP' }, A.token); assert.equal(l.status, 400); assert.equal((await l.json()).code, 'prime');
       assert.equal(state.relights || 0, 0);
     } finally { done(); }
+  });
+  it('a claim that loses a race (someone lit the board a moment earlier) is refused by the database\'s protection and reads as held; an unreadable board waits', async () => {
+    const { clock, state, done } = await setup();
+    try {
+      const env = makeEnv(), H = harness(env), A = await user(state, clock, 'racer');
+      const net = globalThis.fetch;
+      globalThis.fetch = async (u, o) => (String(u).includes('/rpc/claim_billboard') ? json({ ok: false, error: '현재 광고의 최소 보장 시간이 남아있습니다.' }) : net(u, o));
+      const r = await H.post('/rt/claim-billboard', body({ slot_id: 'STREET_6', bid: 300 }), A.token), j = await r.json();
+      assert.equal(r.status, 400); assert.match(j.error, /다른 사람이 걸어 두었어요/);
+      globalThis.fetch = async (u, o) => (String(u).includes('/rest/v1/billboards') ? new Response('down', { status: 500 }) : net(u, o));
+      const w = await H.post('/rt/claim-billboard', body({ slot_id: 'STREET_6', bid: 300 }), A.token);
+      assert.equal(w.status, 503); assert.equal((await w.json()).code, 'busy');
+      globalThis.fetch = net;
+    } finally { done(); }
+  });
+  it('the only Supabase Auth read is GET /auth/v1/user with the caller\'s own token and the publishable key', () => {
+    const src = readFileSync(new URL('../teamsrv.js', import.meta.url), 'utf8');
+    const calls = src.match(/fetch\([^;]*auth\/v1[^;]*;/g) || [];
+    assert.equal(calls.length, 1); assert.doesNotMatch(calls[0], /method|service_role|admin/i);
+    assert.match(calls[0], /authorization: 'Bearer ' \+ t/);
+    assert.equal(/service_role|auth\/v1\/admin/.test(readFileSync(new URL('../worker.js', import.meta.url), 'utf8')), false);
   });
 });

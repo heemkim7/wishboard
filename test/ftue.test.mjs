@@ -57,16 +57,12 @@ it('the takeover asks a second time with the price and what is left', () => {
   assert.deepEqual(airAsk({ line: '안녕', pay: 'ticket', have: 0, tickets: 3 }), { ok: true, text: '안녕', cost: 'VIP 티켓 1장', after: '남는 티켓 2장' });
 });
 
-it('the takeover is only in the VIP sheet and only its confirm button spends', () => {
-  const ui = readFileSync(new URL('../ui.js', import.meta.url), 'utf8');
-  const bill = ui.slice(ui.indexOf('function openBillboard('), ui.indexOf('function openAdReport('));
-  assert.equal(bill.includes('airBar()'), false);
-  const vip = ui.slice(ui.indexOf('function openVip()'), ui.indexOf('// ---------------------------------------------------------------- city map'));
-  assert.match(vip, /airBar\(\)/);
-  const air = ui.slice(ui.indexOf('function airBar()'), ui.indexOf('function openReport('));
-  assert.equal(air.split('hooks.takeover').length - 1, 1);
-  assert.ok(air.indexOf('if (busy) return;') > 0);
-  assert.match(air, /되돌릴 수 없어요/);
+it('the 60-second cover over every board is gone: no bar in any sheet, no takeover hook, and the Worker answers 410 off', () => {
+  const ui = readFileSync(new URL('../ui.js', import.meta.url), 'utf8'), main = readFileSync(new URL('../main.js', import.meta.url), 'utf8');
+  const wk = readFileSync(new URL('../worker.js', import.meta.url), 'utf8');
+  assert.equal(ui.includes('airBar'), false); assert.equal(ui.includes('hooks.takeover'), false);
+  assert.equal(main.includes("kind: 'air', line"), false); assert.equal(/takeover: \(payload\)/.test(main), false);
+  assert.match(wk, /if \(u\.pathname === '\/rt\/spend' && b\.kind === 'air'\) return J\(\{ ok: false, code: 'off', error: BOARD_ERR\.air \}, 410\);/);
 });
 
 it('photo review results are told once, also when they came while the player was away', () => {

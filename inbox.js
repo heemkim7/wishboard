@@ -16,7 +16,7 @@ async function bearer() {
 }
 
 const COPY = {
-  taken: (m) => `${m.from_name || '누군가'}님이 ${josa(slotName(m.slot_id), '을', '를')} 가져갔어요`,
+  taken: (m) => `${m.from_name || '누군가'}님이 ${josa(slotName(m.slot_id), '에', '에')} 새로 걸었어요`, // rows from before takeovers ended (no new ones)
   cheer: (m) => {
     const phrase = CHEER_PHRASES[Math.floor(Number(m.phrase)) - 1] || '';
     const who = m.from_name || '누군가';

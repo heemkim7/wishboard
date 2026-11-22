@@ -71,12 +71,12 @@ export function recapDue({ raw, shown, now = Date.now(), newbie } = {}) {
 }
 
 const n0 = (n) => Math.floor(Number(n) || 0).toLocaleString('en-US');
-// The lines of the card. me: GET /rt/recap's row ({ rank, spent, players }) or null when it could not be had: then the league lines are simply left out.
+// The lines of the card. me (GET /rt/recap's row of the retired spend league) is no longer shown: a rank by points spent is a game's league
+// (응원 순위 ranks teams by people, docs/prime-screens.md). The argument stays for callers from before.
 export function recapLines(rec, me) {
+  void me;
   const rows = [];
-  if (me && me.rank >= 1) rows.push({ k: 'rank', label: '주간 리그', value: me.players >= me.rank && me.players > 1 ? `${n0(me.rank)}위 · ${n0(me.players)}명 중` : `${n0(me.rank)}위` });
-  if (me && me.spent > 0) rows.push({ k: 'spent', label: '쓴 포인트', value: n0(me.spent) });
-  if (rec.claims > 0) rows.push({ k: 'claims', label: '점령한 전광판', value: `${n0(rec.claims)}곳` });
+  if (rec.claims > 0) rows.push({ k: 'claims', label: '건 전광판', value: `${n0(rec.claims)}곳` });
   if (rec.held > 0) rows.push({ k: 'held', label: '내 전광판', value: `${n0(rec.held)}곳` });
   const hearts = heartsOf(rec);
   if (hearts > 0) rows.push({ k: 'hearts', label: '소원에 받은 하트', value: `${n0(hearts)}개` });

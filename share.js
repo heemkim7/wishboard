@@ -37,7 +37,7 @@ export function vipShareLink({ origin, wish, boards, me, now = Date.now() } = {}
 }
 
 // Deep-link params that must not replay on a reload once used. Returns the new path+search+hash, or '' when nothing changed.
-export const DEEP_KEYS = Object.freeze(['focus', 'gift', 'ref', 'tribe']);
+export const DEEP_KEYS = Object.freeze(['focus', 'gift', 'ref', 'tribe', 'team']);
 export function dropParams(href, keys = DEEP_KEYS) {
   let u;
   try { u = new URL(String(href || '')); } catch { return ''; }

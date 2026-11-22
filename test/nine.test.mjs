@@ -29,14 +29,16 @@ describe('밤 9시 clock rules', () => {
       assert.equal(ninePhase(t) === 'open', ballOpen(t), new Date(t).toISOString());
     }
   });
-  it('banner text and countdown, never 00:00 inside a phase', () => {
+  it('banner text and countdown, never 00:00 inside a phase: today\'s leader before 21:00, the 9 pm team after it', () => {
     assert.equal(nineBanner(kst(20, 49, 59)), null);
-    assert.deepEqual(nineBanner(kst(20, 50)), { phase: 'pre', left: 600000, text: '밤 9시, 메인 타워가 열려요 · 10:00' });
-    assert.equal(nineBanner(kst(20, 58, 30, 400)).text, '밤 9시, 메인 타워가 열려요 · 01:30');
-    assert.equal(nineBanner(kst(20, 59, 59, 999)).text, '밤 9시, 메인 타워가 열려요 · 00:01');
-    assert.equal(nineBanner(kst(21, 0)).text, '지금 메인 타워가 열렸어요 · 닫히기까지 10:00');
-    assert.equal(nineBanner(kst(21, 9, 59, 1)).text, '지금 메인 타워가 열렸어요 · 닫히기까지 00:01');
+    assert.deepEqual(nineBanner(kst(20, 50)), { phase: 'pre', left: 600000, text: '밤 9시, 메인 타워 주인공이 정해져요 · 10:00' });
+    assert.equal(nineBanner(kst(20, 58, 30, 400), { lead: '은하수 응원단' }).text, '밤 9시 메인 타워 주인공 · 지금 1위 은하수 응원단 · 01:30');
+    assert.equal(nineBanner(kst(20, 59, 59, 999)).text, '밤 9시, 메인 타워 주인공이 정해져요 · 00:01');
+    assert.equal(nineBanner(kst(21, 0)).text, '9시 주인공을 정하는 중이에요 · 10:00', 'the server has not named it yet');
+    assert.equal(nineBanner(kst(21, 9, 59, 1), { gold: '은하수 응원단' }).text, '지금 메인 타워 · 9시 주인공 은하수 응원단');
+    assert.equal(nineBanner(kst(21, 5), { gold: null }).text, '오늘 밤 9시는 어제의 소원왕 · 내일 9시 주인공에 도전해요');
     assert.equal(nineBanner(kst(21, 10)), null);
+    for (const t of [kst(20, 55), kst(21, 3)]) assert.doesNotMatch(nineBanner(t, { lead: 'x', gold: 'y' }).text, /열려요|열렸어요|점령/);
     assert.equal(nineLeft(kst(12, 0)), 0);
     assert.equal(mmss(0), '00:00');
     assert.equal(mmss(61000), '01:01');
@@ -123,7 +125,7 @@ async function boardsFor(quality) {
 const KING = { nick: '소원왕님', txt: '우리 가족 건강하게', hearts: 12 };
 
 describe('wish king minute on the boards', () => {
-  it('enters and leaves on a per-tick budget, nearest first, never the main tower', async () => {
+  it('enters and leaves on a per-tick budget, nearest first, never a prime screen (the main tower and the corners keep their team or notice)', async () => {
     for (const [quality, per] of [['low', 1], ['high', 3]]) {
       const { boards, log, ids, cam, words } = await boardsFor(quality);
       boards.update(1, cam);
@@ -134,7 +136,7 @@ describe('wish king minute on the boards', () => {
       assert.equal(boards.setKing(KING), true);
       assert.equal(log.paints, 0, 'setKing paints nothing by itself');
       assert.equal(boards.setKing({ ...KING }), false, 'same card again is no work');
-      const want = ids.filter((id) => !id.startsWith('MAIN_')).length;
+      const want = ids.filter((id) => !/^(MAIN_|SUB_)/.test(id)).length;
       let ticks = 0;
       while (ids.filter((id) => boards.get(id).kingOn).length < want && ticks < 200) {
         log.paints = 0;
@@ -145,7 +147,8 @@ describe('wish king minute on the boards', () => {
       }
       assert.equal(ids.filter((id) => boards.get(id).kingOn).length, want, quality);
       assert.ok(ticks >= Math.ceil(want / per), `${quality} took ${ticks} ticks`);
-      assert.equal(boards.get('SUB_1A').kingOn > 0, true);
+      assert.equal(!!boards.get('SUB_1A').kingOn, false);
+      assert.equal(!!boards.get('SUB_1B').kingOn, false);
       assert.equal(!!boards.get('MAIN_TOP').kingOn, false);
       assert.equal(!!boards.get('MAIN_MID').kingOn, false);
       assert.match(words('STREET_2'), /우리 가족 건강하게/);
@@ -175,7 +178,7 @@ describe('wish king minute on the boards', () => {
     assert.equal(!!boards.get('STREET_5').kingOn, false);
     boards.setAir(null);
     assert.match(words('STREET_5'), /우리 가족 건강하게/);
-    assert.ok(ids.filter((id) => !id.startsWith('MAIN_')).every((id) => boards.get(id).kingOn));
+    assert.ok(ids.filter((id) => !/^(MAIN_|SUB_)/.test(id)).every((id) => boards.get(id).kingOn));
   });
   it('wish cards give way without a burst while the minute starts', async () => {
     const { boards, log, cam } = await boardsFor('low');

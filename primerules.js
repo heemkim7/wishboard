@@ -314,7 +314,7 @@ export const BOARD_ERR = Object.freeze({
   mine: '이미 내 전광판이에요. 문구 고치기나 불 켜기를 써 주세요.',
   tribe: '소속 포인트로 걸기는 닫혔어요. 팀은 응원한 사람 수로 명당을 얻어요.',
   air: '모든 전광판에 60초 동안 올리기는 닫혔어요. 다른 사람의 전광판은 가리지 않아요.',
-  plot: '이 땅은 지금 다른 사람이 쓰고 있어요. 마지막 분양·증축 뒤 30일이 지나면 비어요.',
+  plot: '이 땅은 지금 다른 사람이 쓰고 있어요. 마지막으로 짓거나 올린 뒤 30일이 지나면 비어요.',
   relight: '명당은 다시 켤 수 없어요. 걸린 기간이 끝나면 응원 팀 명당으로 돌아가요.',
 });
 /** A plot someone else holds stays theirs this long after its last purchase or upgrade (worker.js checks it before the RPC). */

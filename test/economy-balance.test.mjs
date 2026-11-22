@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { PAY, PLAY, BONUS_KINDS, ballOpen, auctionClosed, claimSplit, BALANCE, takeGrants, stickerNext, chainBoost, cheerCount, countsAsActivity, askBid } from '../balance.js';
+import { PAY, PLAY, BONUS_KINDS, ballOpen, auctionClosed, claimSplit, BALANCE, takeGrants, stickerNext, chainBoost, cheerCount, countsAsActivity, askBid, floorOf } from '../balance.js';
 import * as BAL from '../balance.js';
 import { taxiTrainMult } from '../taxiTrain.js';
 
@@ -70,12 +70,15 @@ describe('economy numbers', () => {
     for (const k of ['fare', 'bake', 'dance', 'mine', 'star', 'stunt', 'hive', 'pouch', 'attend', 'hello', 'quest', 'mission', 'shot']) assert.equal(countsAsActivity(k), false, k);
   });
 
-  it('lets the holder edit at the current bid', () => {
+  it('lets the holder edit at the current bid; nobody else may take a lit board; a free one costs its floor; a prime screen is not for sale', () => {
     const now = Date.parse('2026-11-17T03:00:00Z');
     const board = { slot_id: 'STREET_8', holder_id: 'me', current_bid: 0, lit_until: '2026-11-18T00:00:00Z' };
     assert.equal(askBid(board, [], 'me', '', now), 0);
     assert.equal(askBid({ ...board, current_bid: 248 }, [], 'me', '', now), 248);
-    assert.equal(askBid({ ...board, current_bid: 248 }, [], 'other', '', now), 298);
+    assert.equal(askBid({ ...board, current_bid: 248 }, [], 'other', '', now), 0, 'no outbidding');
+    assert.equal(askBid({ ...board, lit_until: '2026-11-16T00:00:00Z' }, [], 'other', '', now), floorOf('STREET_8'), 'its time ran out: the fixed price');
+    assert.equal(askBid({ slot_id: 'MAIN_TOP' }, [], 'other', '', now), 0);
+    assert.equal(askBid({ slot_id: 'SUB_2B' }, [], 'other', '', now), 0);
   });
 
   it('keeps the higher cheer count when two rooms report', () => {
@@ -129,11 +132,9 @@ describe('조사: the particle after a name that is only known at run time', () 
       assert.ok(s.startsWith(slotName(id)) && /[을를]$/.test(s), id);
     }
   });
-  it('is what the "taken" lines use, in the game, the inbox and the push text', () => {
+  it('no "taken" line is left: takeovers are gone; old inbox rows read as a new board, never as taken', () => {
     const read = (p) => readFileSync(new URL('../' + p, import.meta.url), 'utf8');
-    assert.match(read('ui.js'), /josa\(slotName\(t\.slot\), '을', '를'\)\} 가져갔어요/);
-    assert.match(read('inbox.js'), /josa\(slotName\(m\.slot_id\), '을', '를'\)\} 가져갔어요/);
-    assert.match(read('worker.js'), /josa\(slot, '을', '를'\)\} 가져갔어요/);
-    for (const f of ['ui.js', 'main.js', 'inbox.js', 'worker.js']) assert.equal(/\}을 (가져갔어요|점령했습니다|완전 점령)/.test(read(f)), false, f);
+    assert.match(read('inbox.js'), /josa\(slotName\(m\.slot_id\), '에', '에'\)\} 새로 걸었어요/);
+    for (const f of ['ui.js', 'main.js', 'inbox.js', 'worker.js']) assert.equal(/가져갔어요|점령했습니다|완전 점령|되찾기/.test(read(f)), false, f);
   });
 });

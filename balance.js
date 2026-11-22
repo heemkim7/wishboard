@@ -66,7 +66,7 @@ export const SLOTS = [
   { id: 'SUB_4A', tier: 'B', bid: 800, name: '4번 타워 상단' },
   { id: 'SUB_4B', tier: 'B', bid: 500, name: '4번 타워 하단' },
   ...Array.from({ length: STREET_N }, (_, i) => ({ id: 'STREET_' + (i + 1), tier: 'C', bid: streetBid(i + 1), name: (i + 1) + '번 메인거리' })),
-  ...Array.from({ length: 18 }, (_, i) => ({ id: 'PLOT_' + (i + 1), tier: 'C', bid: plotBid(i + 1), name: (i + 1) + '번 분양 전광판' })),
+  ...Array.from({ length: 18 }, (_, i) => ({ id: 'PLOT_' + (i + 1), tier: 'C', bid: plotBid(i + 1), name: (i + 1) + '번 건물 앞 전광판' })),
 ];
 export const SLOT_IDS = SLOTS.map((s) => s.id);
 const SLOT_BY = new Map(SLOTS.map((s) => [s.id, s]));
@@ -162,18 +162,16 @@ export function monopolyOf(boards, now = Date.now()) {
   }
   return shared ? { name: shared, holder: '', tag: shared } : null;
 }
+// The price of lighting a board (no bidding, no takeovers: docs/prime-screens.md). A free board or one whose 72 h ran out: its floor, fixed.
+// My own lit board: its current bid (an edit costs nothing). Someone else's lit board, or a prime screen (MAIN_*, SUB_*): 0, not for sale.
+// boards and draft are kept in the signature for old callers; they no longer change the price.
 export function askBid(board, boards, actorId, draft = '', now = Date.now()) {
+  void boards; void draft;
   const floor = floorOf(board?.slot_id);
-  if (!floor) return 0;
+  if (!floor || isPrimeSlot(board?.slot_id)) return 0;
   const active = live(board, now);
-  if (active && actorId && board?.holder_id === actorId) return Math.max(0, Number(board.current_bid) || 0);
-  let min = active ? Math.max(floor, Number(board.current_bid || 0) + 50) : floor;
-  const mono = monopolyOf(boards, now);
-  if (!mono || !String(board?.slot_id || '').startsWith('MAIN_')) return min;
-  const self = mono.holder && actorId && actorId === mono.holder;
-  const tagged = mono.tag && tagsOf({ line1: draft, line2: board?.line2, line3: board?.line3 }).has(mono.tag);
-  if (!self && !tagged) min = Math.ceil(min * 1.5);
-  return min;
+  if (active) return actorId && board?.holder_id === actorId ? Math.max(0, Number(board.current_bid) || 0) : 0;
+  return floor;
 }
 // 응원 포인트 earned by repetition (docs/non-game-plan-2026-11-22.md 4-3). WISH BOARD is not a game: no controlled play pays (bake, dance,
 // taxi fares, stars, rings, high fives, ground coins, the pouch, the lottery are gone from this table), so the hour window, the play-time
@@ -208,9 +206,10 @@ export function ballOpen(now = Date.now()) {
   const sec = g('hour') * 3600 + g('minute') * 60 + g('second');
   return sec >= 21 * 3600 && sec < 21 * 3600 + 600;
 }
-export function auctionClosed(slotId, now = Date.now()) {
-  return String(slotId || '').startsWith('MAIN_') && !ballOpen(now);
-}
+// Prime screens (명당: the main tower faces and the corner screens) never take a claim with points, at any hour (primerules.js isPrime is the
+// same set; this copy keeps balance.js free of imports). The 21:00 hour is the 9 pm team's on the main tower (primerules.js).
+export const isPrimeSlot = (slotId) => /^(MAIN_(UP|TOP|MID|BOT|LOW)|SUB_[1-4][AB])$/.test(String(slotId ?? ''));
+export function auctionClosed(slotId, now = Date.now()) { void now; return isPrimeSlot(slotId); }
 // Pending coins leave in order as the confirmed balance rises. A short server credit shrinks the front grant.
 export const STICKER_GLYPHS = Object.freeze(['🔥부럽다!', '👑성지순례', '💖하트폭탄', '👀내자리찜']);
 // op add appends one known glyph, pop drops the last, anything else only keeps known glyphs (max 8).

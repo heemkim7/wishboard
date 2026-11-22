@@ -157,7 +157,7 @@ describe('dark.js', () => {
   });
   it('copy', () => {
     assert.equal(darkText('pre', 'STREET_5'), `🕯️ ${slotName('STREET_5')} 불이 6시간 뒤에 꺼져요. 지금 켜면 72시간 더 켜져요.`);
-    assert.equal(darkText('out', 'STREET_5'), `${slotName('STREET_5')} 불이 꺼졌어요. 다른 사람이 가져가기 전에 다시 켜세요.`);
+    assert.equal(darkText('out', 'STREET_5'), `${slotName('STREET_5')} 불이 꺼졌어요. 다른 사람이 걸기 전에 다시 켜세요.`);
     assert.equal(applyInboxPush({ kind: 'dark', slot_id: 'STREET_5', phrase: 1 }), `${slotName('STREET_5')} 불이 곧 꺼져요`);
     assert.equal(applyInboxPush({ kind: 'dark', slot_id: 'STREET_5', phrase: 2 }), `${slotName('STREET_5')} 불이 꺼졌어요`);
     assert.equal(applyInboxPush({ kind: 'dark', slot_id: 'STREET_5' }), `${slotName('STREET_5')} 불이 곧 꺼져요`);

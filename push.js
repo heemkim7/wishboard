@@ -15,7 +15,7 @@ async function bearer() {
 }
 
 // What the server sends right away (worker.js pushNow: taken, wish, wishwin).
-export const PUSH_DONE = '알림을 켰어요. 전광판을 빼앗기거나 내 소원에 하트가 오면 알려 드려요.';
+export const PUSH_DONE = '알림을 켰어요. 내 전광판 불이 꺼지기 전이나 내 소원에 하트가 오면 알려 드려요.';
 
 export function installHint(env) {
   if (env?.ios && !env?.standalone) return '홈 화면에 추가한 뒤 이 버튼을 누르세요';

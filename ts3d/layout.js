@@ -34,7 +34,7 @@ export const LAYOUT = {
 export const TAXI_STANDS = [
   { x: 9.4, z: 72, axis: 'z', name: '타임스퀘어' },
   { x: -11.6, z: -40, axis: 'z', name: '더피 스퀘어' },
-  { x: 0, z: 255, axis: 'z', name: '분양 구역' },
+  { x: 0, z: 255, axis: 'z', name: '건물 구역' },
 ];
 
 const lot = (id, i, z, rot) => ({ id, x: -44 + i * 22, z, rot, side: rot ? 'S' : 'N', scale: 0.9 });
@@ -124,7 +124,7 @@ export const LANDMARKS = [
   { id: 'atm', ko: '황금 ATM', en: 'Golden ATM', x: LAYOUT.atm.x, z: LAYOUT.atm.z, g: '💰', major: true, side: 1 },
   { id: 'subway', ko: '타임스퀘어역', en: 'Times Sq Station', x: LAYOUT.subway.x, z: LAYOUT.subway.z, g: '🚇', major: true, side: 1 },
   { id: 'stage', ko: 'K-POP 스테이지', en: 'K-POP Stage', x: LAYOUT.stage.spot.x, z: LAYOUT.stage.spot.z, g: '💃', major: true },
-  { id: 'lots', ko: '분양 구역', en: 'Lots', x: 0, z: 305, g: '🏗️', major: true },
+  { id: 'lots', ko: '건물 구역', en: 'Lots', x: 0, z: 305, g: '🏗️', major: true },
   ...MAP_LANDMARKS.filter(l => !['timessq', 'ktown', 'bryant'].includes(l.id) && insideLoop(l.x, l.z, 0)).map(l => {
     if (l.id === 'rock') return { ...l, ko: '30 록펠러 플라자', en: '30 Rockefeller Plaza', x: 406, z: -328, g: '🏢', major: true };
     const mark = { esb: '🏙️', chrysler: '🏢', flatiron: '🏢', owtc: '🏙️', gct: '🚉', msg: '🏟️', un: '🏛️' }[l.id];

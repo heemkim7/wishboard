@@ -552,7 +552,7 @@ export function buildLandmarks(ctx) {
       kit.box(4.4, 2.5, 0.22, '#e6b84a', { y: 2.15, z: 2.55 });
       for (const s of [-1, 1]) kit.box(0.16, 1.15, 0.16, '#6a5030', { x: s * 1.55, y: 0.75, z: 2.4 });
       board = { x: 0, y: 2.2, z: 2.72, w: 3.7, h: 2.05 };
-      signSpec = { x: 0, y: 3.7, z: 2.6, w: 3.2, h: 0.55, text: '분양 중', sub: `PLOT ${slot.id}` };
+      signSpec = { x: 0, y: 3.7, z: 2.6, w: 3.2, h: 0.55, text: '빈 땅', sub: `PLOT ${slot.id}` };
       for (const s of [-1, 1]) {
         kit.cone(0.32, 0.9, '#ff6a1a', { x: s * 2.7, y: 0.62, z: 1.7, seg: 12, mat: 'gloss' });
         kit.cyl(0.18, 0.22, 0.16, '#fff4e8', { x: s * 2.7, y: 0.7, z: 1.7, seg: 12, glow: 1.2 });
@@ -605,7 +605,7 @@ export function buildLandmarks(ctx) {
     built.traverse(o => { if (o.isMesh) { o.userData.pick = { kind: 'plot', plotId: slot.id }; pick.push(o); } });
     group.add(built);
     own.forEach(o => group.add(o));
-    const label = data?.sign_text || (level === 0 ? '분양 중' : data?.owner_name || `${slot.id}번 토지`);
+    const label = data?.sign_text || (level === 0 ? '빈 땅' : data?.owner_name || `${slot.id}번 토지`);
     const sMat = plotSign(label, color, level === 0 ? signSpec.sub : (data?.owner_name ? `OWNER · ${String(data.owner_name).slice(0, 10)}` : ''));
     const sign = new THREE.Mesh(new THREE.PlaneGeometry(signSpec.w, signSpec.h), sMat);
     sign.position.set(signSpec.x, signSpec.y, signSpec.z);

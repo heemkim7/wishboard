@@ -1590,7 +1590,7 @@ async function encryptPush(sub, bytes) {
 function pushText(row) {
   const slot = slotName(String(row?.slot_id || ''));
   const name = clip(row?.from_name, 12);
-  if (row?.kind === 'taken') return `${name}님이 ${josa(slot, '을', '를')} 가져갔어요`;
+  if (row?.kind === 'taken') return `${slot}에 다른 사람이 새로 전광판을 걸었어요`; // an old row only: takeovers are gone
   if (row?.kind === 'cheer') return CHEER_PHRASES[Math.floor(Number(row.phrase)) - 1] || '';
   if (row?.kind === 'dark') return row.stage ? darkText(row.stage, row.slot_id, row.h) : `${slot} 불이 곧 꺼져요`; // stage: the registry's notices; none: the (paid-plan) cron
   if (row?.kind === 'gift') return `${name}님이 전광판을 선물했어요`;
@@ -1869,7 +1869,7 @@ function pointWords(s) {
 }
 function playerErr(code, fallback) {
   const map = {
-    holder: '이 칸의 주인만 할 수 있어요. 다른 계정으로 점령했다면 그 계정으로 들어오세요.',
+    holder: '이 칸의 주인만 할 수 있어요. 다른 계정으로 걸었다면 그 계정으로 들어오세요.',
     edit: '지금 가진 칸의 문구만 고칠 수 있어요.',
     blocked: '그 문구는 올릴 수 없어요.',
     empty: '서버가 결과를 주지 않았어요. 잠시 뒤 다시 해 주세요.',
@@ -2564,7 +2564,7 @@ async function plaza(req, env, ctx, u) {
     if (rejectedCopy(nick, b.line1, b.line2, b.line3)) return J({ ok: false, error: 'blocked' }, 400);
     if (botNick(nick)) return J({ ok: false, error: BOT_NAME_ERR }, 400);
     if (mode === 'starter') { // one atomic take of today's 3 per IP; given back below if the claim is refused
-      try { sip = { h: await ipHash(env, req), d: kstDay() }; if (!(await acct(env).sipTake(sip.h, sip.d, 3))) return J({ ok: false, error: '오늘 무료 점령은 이 연결에서 세 번까지예요' }, 400); } catch { sip = null; }
+      try { sip = { h: await ipHash(env, req), d: kstDay() }; if (!(await acct(env).sipTake(sip.h, sip.d, 3))) return J({ ok: false, error: '오늘 무료 칸은 이 연결에서 세 번까지예요' }, 400); } catch { sip = null; }
     }
     rpc =await supabaseRpc('claim_billboard', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_nickname: nick, p_slot_id: slot, p_bid: b.bid, p_line1: clip(b.line1, 16), p_line2: clip(b.line2, 16), p_line3: clip(b.line3, 16), p_emoji: clip(b.emoji || '✨', 4) || '✨', p_bg_theme: /^[\w-]{1,32}$/.test(theme) ? theme : 'cyber_navy', p_text_color: hexColor(b.text_color, '#ffffff'), p_external_url: allowedLink(b.external_url), p_caption_y: Math.min(88, Math.max(12, Math.round(Number(b.caption_y) || 72))), p_mode: mode })
       .catch(async (e) => { if (sip) await acct(env).sipGive(sip.h, sip.d).catch(() => {}); throw e; }); // a network throw gives the take back too
@@ -2581,7 +2581,9 @@ async function plaza(req, env, ctx, u) {
   }
   const data = rpc.data || {};
   // A board on the map whose row the database does not have yet (STREET_31..50 before migrations/2026-11-22-boards.sql): '곧 열려요'.
-  const claimErr = data.error === 'tribe' ? '소속에 들어간 뒤에 소속 포인트로 걸 수 있어요' : data.error === 'starter' ? '무료 칸은 계정당 한 번이고, 비어 있는 거리 칸만 돼요' : (claim && soonError(String(b.slot_id || ''), data.error)) || playerErr(data.error, data.message || '요청을 처리하지 못했습니다.');
+  // The database's own takeover wording (a claim that lost a race with someone who lit the board a moment earlier) reads as BOARD_ERR.held.
+  const raced = claim && /최소 보장 시간|입찰해야/.test(String(data.error || ''));
+  const claimErr = data.error === 'tribe' ? BOARD_ERR.tribe : data.error === 'starter' ? '무료 칸은 계정당 한 번이고, 비어 있는 거리 칸만 돼요' : raced ? BOARD_ERR.held : (claim && soonError(String(b.slot_id || ''), data.error)) || playerErr(data.error, data.message || '요청을 처리하지 못했습니다.');
   if (!rpc.ok || data.ok === false) {
     if (sip) { try { await acct(env).sipGive(sip.h, sip.d); } catch { } }
     return J({ ok: false, error: claimErr }, rpc.ok ? 400 : 502);
