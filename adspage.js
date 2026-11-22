@@ -50,7 +50,7 @@ function mapSvg() {
   for (const [ax, az, bx, bz] of [[-1, -90, -1, 240], [-30.1, -90, 46.8, 240]]) svg.append(s('line', { x1: ax, y1: az, x2: bx, y2: bz, stroke: '#2a3358', 'stroke-width': 9, 'stroke-linecap': 'round' }));
   svg.append(s('circle', { cx: 16, cy: 90, r: 22, fill: 'rgba(255,176,32,.10)', stroke: 'rgba(255,176,32,.35)', 'stroke-dasharray': '3 3' }));
   const t = (x, y, text, fill, size, anchor = 'middle') => { const n = s('text', { x, y, fill, 'font-size': size, 'font-weight': 700, 'text-anchor': anchor, 'font-family': 'inherit' }); n.textContent = text; return n; };
-  svg.append(t(16, 122, '광장', '#b9bfdc', 9), t(17, 222, '원 타임스퀘어', '#8f96b8', 8), t(-21, -78, 'TKTS ↑', '#8f96b8', 8), t(100, -78, 'N ↑', '#666d92', 8, 'end'));
+  svg.append(t(16, 122, '광장', '#b9bfdc', 9), t(17, 222, '메인 타워', '#8f96b8', 8), t(-21, -78, '빨간 계단 ↑', '#8f96b8', 8), t(100, -78, 'N ↑', '#666d92', 8, 'end'));
   AD_SCREENS.forEach((a, i) => {
     svg.append(s('circle', { cx: a.x, cy: a.z, r: 7, fill: '#ffb020' }), t(a.x, a.z + 3.4, String(i + 1), '#1c1300', 9));
   });

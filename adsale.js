@@ -29,10 +29,10 @@ export const ADS = {
 // face centre x, z (metres; north is -z, east +x), centre height, width.
 export const AD_SCREENS = [
   { id: 'AD_1', name: '광장 동쪽 눈높이 화면', x: 69.9, z: 101.7, y: 7.7, w: 11 },
-  { id: 'AD_2', name: '원 타임스퀘어 서쪽 큰 화면', x: 13.1, z: 202.4, y: 20.3, w: 17 },
+  { id: 'AD_2', name: '메인 타워 서쪽 큰 화면', x: 13.1, z: 202.4, y: 20.3, w: 17 },
   { id: 'AD_3', name: '7번가 북쪽 높은 화면', x: -25.6, z: -12.2, y: 30.5, w: 11 },
-  { id: 'AD_4', name: '원 타임스퀘어 건너편 화면', x: 46, z: 193.2, y: 25, w: 12.5 },
-  { id: 'AD_5', name: 'TKTS 가는 길 화면', x: 12.7, z: -48.4, y: 15.3, w: 11 },
+  { id: 'AD_4', name: '메인 타워 건너편 화면', x: 46, z: 193.2, y: 25, w: 12.5 },
+  { id: 'AD_5', name: '빨간 계단 가는 길 화면', x: 12.7, z: -48.4, y: 15.3, w: 11 },
 ];
 export const AD_SCREEN_IDS = AD_SCREENS.map((s) => s.id);
 export const isAdScreen = (id) => AD_SCREEN_IDS.includes(String(id));
