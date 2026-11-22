@@ -1,4 +1,5 @@
 // Times Square K-점령전 — app wiring: realtime net (DO), 3D world, UI, wallet, world state, star shower.
+import { errlogCtx } from './errlog.js?v=202611221134'; // first: its error listeners are on before any other module runs
 import { Net, CDN, guestToken } from './net.js?v=202611221134';
 import { createTimesSquare, STARTER_COLORS, taxiTrainMult } from './timesSquare3d.js?v=202611221134';
 import { speciesId } from './ts3d/avatars.js?v=202611221134';
@@ -403,7 +404,40 @@ const ui = createUI(document.getElementById('ui'), {
   setGlow(v) { gfx.glow = v; world?.setGlow(v); saveGfx(); },
   setExposure(v) { gfx.exposure = v; world?.setExposure(v); saveGfx(); },
   setQuality(q) { gfx.quality = q; saveGfx(); },
+  support: (payload) => supportSend(payload),
 });
+
+// 문의하기 (ui.js openSupport, POST /rt/support): the account is the one the token proves (the Worker reads it); the nickname, build id, page
+// path and device class go with the inquiry so an account or coin question can be looked up. Errors come back in Korean from the Worker.
+const BUILD_ID = (() => { try { return new URL(import.meta.url).searchParams.get('v') || ''; } catch { return ''; } })();
+function deviceClass() {
+  try { if (!matchMedia('(pointer: coarse)').matches) return 'desktop'; return Math.min(screen.width, screen.height) >= 600 ? 'tablet' : 'phone'; } catch { return ''; }
+}
+function supportSend(p) {
+  return net.authed('/rt/support', { kind: p.kind, text: p.text, email: p.email || '', agree: p.agree === true, nick: state.nick || '', build: BUILD_ID, page: location.pathname, dev: deviceClass() });
+}
+
+// 점검 (launch plan 상4): /rt/config carries maint { msg, until } while the operator has it on (admin.html 점검). The boot card shows it in place
+// of 입장하기 and asks again every 60 s; inside, every 5 minutes while the tab is visible, and a player inside only gets a toast. No bypass for
+// players: ?maint=skip opens the card only in a tab where admin.html kept an ADMIN_KEY the Worker accepts (GET /rt/admin/maint answers 200).
+const MAINT_SKIP = (() => {
+  let k = ''; try { k = new URLSearchParams(location.search).get('maint') === 'skip' ? sessionStorage.getItem('kts-admin') || '' : ''; } catch { k = ''; }
+  return k ? fetch('/rt/admin/maint', { headers: { 'x-admin-key': k }, cache: 'no-store' }).then((r) => r.ok).catch(() => false) : Promise.resolve(false);
+})();
+let maintSkipTold = false, maintTimer = 0;
+async function maintShow(m) {
+  if (m && await MAINT_SKIP) { if (!maintSkipTold) { maintSkipTold = true; ui.note('점검 중이지만 운영자 키로 열었어요', 'ok'); } m = null; }
+  ui.boot.maint(m);
+}
+function maintTick() {
+  clearTimeout(maintTimer);
+  maintTimer = setTimeout(async () => {
+    if (!document.hidden) { try { await net.loadConfig(); } catch { /* the last answer stands */ } await maintShow(net.maint); }
+    maintTick();
+  }, ui.boot.entered() ? 300000 : 60000);
+}
+// kakaoKey settles when net.init's one /rt/config read has finished (net.js loadConfig): maint and operator are known then.
+net.kakaoKey().then(() => { ui.setOperator(net.operator); maintShow(net.maint); maintTick(); }).catch(() => {});
 
 world = createTimesSquare(document.getElementById('view'), {
   net,
@@ -509,6 +543,7 @@ world = createTimesSquare(document.getElementById('view'), {
 });
 window.G.world = world;
 window.G.ui = ui;
+errlogCtx({ tier: String(world?.quality || '') });
 
 let ftueApi = null;
 let ftueArmed = false;
@@ -1732,6 +1767,7 @@ net.on('status', (s) => {
   else ui.setStatus('혼자 걷는 중', 'off');
 });
 net.on('gate', (g) => {
+  if (g?.ok) errlogCtx({ lean: !!g.lean }); // error reports: one in five while the budget is lean
   if (g?.pos) { queuePos = g.pos; ui.setStatus(`입장 대기 ${g.pos}번째`, 'warn'); }
   if (g?.ok || g?.down) queuePos = 0;
   if (g?.down) ui.setStatus('오늘 광장 정원이 찼어요', 'off');

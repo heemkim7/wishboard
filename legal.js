@@ -1,6 +1,14 @@
 // Policy documents. policyDoc(kind) is the text: the plaza unfolds it inside its own sheets (ui.js), so reading it never leaves the game.
-// A direct ?policy= load still paints the full-page document. This module has no game imports so it can paint before the plaza loads.
+// A direct ?policy= load still paints the full-page document. This module has no game imports so it can paint before the plaza loads
+// (opsrules.js is plain text rules, shared with the Worker, so it is imported without a query).
+import { operatorLine, operatorOf } from './opsrules.js';
 const CONTACT = 'Wishboard 운영자';
+// The operator's details from /rt/config (Worker var OPERATOR_INFO). Until then, or without them, the documents point at 문의하기.
+let OP = null;
+export function setOperator(op) { OP = operatorOf(op); return OP; }
+export const operatorInfo = () => OP;
+const ASK = '문의는 설정의 문의하기로 해 주세요.';
+const who = () => OP?.name || CONTACT;
 const EFFECTIVE = '2026년 11월 22일부터 적용합니다(개정 2026-11-22).';
 
 export function policyKind() {
@@ -43,8 +51,10 @@ function privacy() {
     { h: '이용 목적', p: '계정 식별, 코인과 전광판의 유지, 유료 서비스 제공, 부정 이용 방지를 위해 사용합니다.' },
     { h: '보유 기간', p: `회원 탈퇴 시 삭제합니다. 탈퇴하면 그 계정의 지갑 연결과 그 계정이 가진 전광판·토지 소유를 지웁니다. 로그인 정보(이메일 또는 소셜 로그인 식별자)는 탈퇴와 함께 지웁니다. 탈퇴 화면에서 자동으로 지워지지 않는다고 안내한 경우에는 운영자가 확인한 뒤 지우며, ${CONTACT}에게 요청하면 지웁니다. 탈퇴한 뒤에는 연결 보상이 다시 지급되는 것을 막으려고, 계정으로 되돌릴 수 없는 값(계정 식별자와 이메일을 각각 해시한 값)만 보관합니다.` },
     { h: '방문 통계 (Google 애널리틱스)', p: '방문자 수와 이용 흐름을 보려고 Google 애널리틱스를 씁니다. 따로 묻지 않고 처음부터 켜져 있습니다. 설정의 ‘방문 통계 보내지 않기’를 켜면 그 브라우저에서는 Google 애널리틱스를 불러오지 않고, 브라우저가 개인정보 보호 신호(Global Privacy Control)를 보내도 불러오지 않습니다. 켜져 있을 때 사이트를 열면 브라우저가 페이지 주소와 제목, 들어온 경로, 기기와 브라우저 종류, 화면 크기, 언어, 게임에서 쓴 기능의 이름을 Google 서버(국외)로 보내고, Google은 IP 주소로 대략의 지역을 추정합니다. 방문을 구분하려고 이름이 _ga로 시작하는 쿠키를 브라우저에 저장합니다. 이메일, 닉네임, 소원 글, 사진은 Google로 보내지 않습니다. 이 통계는 계정과 연결하지 않아서 회원 탈퇴로 지워지지 않습니다. Google 애널리틱스의 보관 기간은 이벤트 기록 2개월, 방문자 식별값 14개월로 설정되어 있고, 합산한 통계는 그 뒤에도 남습니다. 브라우저에서 쿠키를 지우거나 막을 수 있고, Google의 차단 부가 기능(https://tools.google.com/dlpage/gaoptout)을 설치하면 수집되지 않습니다.' },
+    { h: '문의하기', p: '설정의 문의하기로 보낸 분류와 내용, 계정 번호, 닉네임, 기기 종류(휴대폰·태블릿·컴퓨터), 게임 버전, 보낸 화면의 경로를 저장합니다. 답장 받을 이메일은 적은 경우에만 저장하고 그 문의의 답장에만 씁니다. 문의에 답하고 문제를 고치려고 씁니다. 처리한 문의는 처리한 뒤 1년 안에 지우고, 보관은 최근 500건까지입니다. 같은 곳에서 너무 많이 보내는 것을 막으려고 접속 주소(IP)를 되돌릴 수 없게 바꾼 값을 1시간 동안 둡니다.' },
+    { h: '오류 기록', p: '게임 화면에 오류가 나면 오류 문구, 오류가 난 파일과 줄, 게임 버전, 페이지 경로, 그래픽 품질, 터치 화면인지, 브라우저와 운영체제 종류를 운영 서버로 보냅니다. 계정 번호, 닉네임, 이메일, 주소의 검색어는 보내지 않습니다. 같은 오류끼리 묶어 최근 300종류만 남기고, 운영자가 고친 뒤 지웁니다.' },
     { h: '이용자의 권리', p: '자신의 계정 정보를 열람할 수 있고, 설정에 있는 회원 탈퇴로 삭제를 요청할 수 있습니다.' },
-    { h: '개인정보 문의', p: `개인정보 문의는 ${CONTACT}에게 합니다. 이 문서는 전화번호, 사업자등록번호, 담당자 이름을 적지 않습니다.` },
+    { h: '개인정보 문의', p: OP ? `개인정보 문의는 ${who()}에게 합니다. ${operatorLine(OP)}. ${ASK}` : `개인정보 문의는 ${CONTACT}에게 합니다. ${ASK} 이 문서는 전화번호, 사업자등록번호, 담당자 이름을 적지 않습니다.` },
     { h: '시행일', p: EFFECTIVE },
   ] };
 }
@@ -55,7 +65,7 @@ function terms() {
     { h: '계정', p: '게스트로 바로 입장할 수 있습니다. 창을 닫으면 게스트의 코인과 전광판이 사라질 수 있습니다. 만 14세 이상이고 이용약관과 개인정보처리방침에 동의한 경우에만 계정을 만들 수 있습니다. 계정을 연결하면 전광판과 토지 소유, 게스트가 모은 코인을 그 계정으로 옮깁니다. 게스트가 처음 받은 코인(시작 100과 도착 보너스)은 그 계정의 첫 연결 때만 옮기고, 연결 보상 300코인은 계정마다 한 번만 줍니다. 아이디로 만든 계정은 비밀번호를 잊으면 되찾을 수 없습니다.' },
     { h: '코인', p: '코인은 게임 안의 점수입니다. 현금으로 바꾸지 않습니다. 전광판 점령과 토지 분양은 코인으로만 합니다. 다른 사람에게 코인을 보내거나 소속에 모금하는 것은 계정만 할 수 있고, 선물로 받은 코인 580개까지는 보내거나 모금할 수 없습니다. 그보다 더 모은 만큼만 보낼 수 있습니다.' },
     { h: '탈퇴', p: '로그인한 회원은 설정에서 회원 탈퇴를 할 수 있습니다. 탈퇴하면 그 회원의 지갑과 코인, 전광판·토지 소유, 사진, 소원, 알림 구독을 지우고, 로그인 정보(계정, 연결된 소셜 로그인, 로그인 세션)도 지웁니다. 탈퇴 화면에서 로그인 정보가 자동으로 지워지지 않는다고 안내한 경우에는 운영자가 확인한 뒤 지웁니다. 되돌릴 수 없습니다. 다른 사람의 데이터는 지우지 않습니다. 탈퇴한 뒤 같은 이메일로 다시 가입해도 연결 보상 300코인은 다시 주지 않습니다.' },
-    { h: '운영자', p: `문의는 ${CONTACT}에게 합니다.` },
+    { h: '운영자', p: OP ? `${operatorLine(OP)}. ${ASK}` : `문의는 ${CONTACT}에게 합니다. ${ASK}` },
     { h: '시행일', p: EFFECTIVE },
   ] };
 }
@@ -77,6 +87,8 @@ export function mountPolicyDoc() {
   root.className = 'policydoc';
   root.append(article(policyDoc(kind)));
   document.body.append(root);
+  // The full page has no plaza to tell it the operator's details: one read of /rt/config, and the text again when they are there.
+  try { fetch('/rt/config', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((j) => { if (j?.operator && setOperator(j.operator)) root.replaceChildren(article(policyDoc(kind))); }).catch(() => { }); } catch { /* the text without them stays */ }
   document.title = kind === 'privacy' ? '개인정보처리방침 · WISH BOARD' : '이용약관 · WISH BOARD';
   return true;
 }

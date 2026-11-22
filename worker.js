@@ -15,6 +15,7 @@ import { LEAGUE, leagueBoard, leagueCut, weekEnds, botNick } from './league.js';
 import { DARK, quietShift, darkNext, darkHours, darkText, litOf } from './dark.js';
 import { INVITE, invCode, newCode, inviteFault, inviteWaits, inviteOn, ipWide } from './invite.js';
 import { adTables, adIngest, adTenure, adRename, adForget, adReport } from './adreport.js';
+import * as ops from './ops.js'; // 운영 장치: error reports, 문의하기, operator details, maintenance, /rt/health extras
 // v16 cost pass: ping 25s (client) / STALE 75s, idle scan alarm 60s, meter report 60s, compact pos ('p'/'P'), nearby fanout, event ring + world cache, HMAC guest tokens.
 const CAP = 50, MEM = 0.125, LEAN = 0.8, HARD = 0.95, STALE = 75000, SCAN = 5000, IDLE_SCAN = 60000, REP = 60000;
 const NEAR_R = 1600, FAR_MS = 3000, HIST_N = 10, PRAY_TTL = 15;
@@ -265,6 +266,16 @@ export class Meter extends DurableObject {
   heldIs(uid, av) { try { const h = this.ctx.storage.sql.exec('select av from held where uid = ?', String(uid || '')).toArray()[0]; return !!h && speciesOf(h.av) === speciesOf(av); } catch { return false; } }
   heldDrop(uid, av) { try { this.ctx.storage.sql.exec('delete from held where uid = ? and av = ?', String(uid || ''), speciesOf(av)); } catch { /* no held table */ } return true; }
   gatePut(rows) { this.acInit(); const q = this.ctx.storage.sql; for (const [uid, k, d, v] of rows || []) agPut(q, uid, k, d, v); return { ok: 1 }; }
+  // 운영 장치 (ops.js), instance 'ops': error groups (newest 300), inquiries (newest 500), the maintenance notice. The SQL lives in ops.js.
+  opsQ() { if (!this.oi) { this.oi = 1; ops.opsInit(this.ctx.storage.sql); } return this.ctx.storage.sql; }
+  opsErrPut(r) { return ops.errPut(this.opsQ(), r); }
+  opsErrList() { return ops.errList(this.opsQ()); }
+  opsErrClear() { return ops.errClear(this.opsQ()); }
+  opsSupPut(row, keys) { return ops.supPut(this.opsQ(), row, keys); }
+  opsSupList(status) { return ops.supList(this.opsQ(), status); }
+  opsSupMark(id, status) { return ops.supMark(this.opsQ(), id, status); }
+  opsMaintGet() { return ops.maintGet(this.opsQ()); }
+  opsMaintPut(m) { return ops.maintPut(this.opsQ(), m); }
   // Boot screen "today": distinct accounts that connected to the plaza and successful billboard claims, per KST day.
   visit(uid, day) { this.acInit(); const q = this.ctx.storage.sql; if (q.exec('insert or ignore into vis(d, uid) values(?, ?)', day, uid).rowsWritten) this.tally(day, 'v');
     if (Math.random() < 0.01) q.exec('delete from vis where d < ?', dayShift(day, -2)); return { ok: 1 }; }
@@ -2984,7 +2995,8 @@ async function accountApi(req, env, ctx, u) {
     // forget: a withdrawal also deletes the login (forget_login is installed). The boot path gets what this isolate already knows and asks behind
     // the response; the withdrawal sheet asks with ?forget=1 and waits for the probe (1.5 s at most), so it never promises more than will happen.
     const asked = forgetProbe(env); if (u.searchParams.get('forget') === '1') await asked; else ctx?.waitUntil?.(asked);
-    return J({ ...(/^[\w-]{16,80}$/.test(kakao) ? { url: SUPA, key: ANON, kakao, starter: STARTER_C.list } : { url: SUPA, key: ANON, starter: STARTER_C.list }), ...(inviteOn(env) ? { invite: true } : {}), ...(FORGET_C.yes ? { forget: true } : {}) }); // invite: the master switch INVITE_ON
+    const maint = await ops.maintFor(env, ctx, () => LVL.l), operator = ops.operatorFor(env); // maint: the isolate's copy (one DO call a minute at most); operator: OPERATOR_INFO
+    return J({ ...(/^[\w-]{16,80}$/.test(kakao) ? { url: SUPA, key: ANON, kakao, starter: STARTER_C.list } : { url: SUPA, key: ANON, starter: STARTER_C.list }), ...(inviteOn(env) ? { invite: true } : {}), ...(FORGET_C.yes ? { forget: true } : {}), ...(maint ? { maint } : {}), ...(operator ? { operator } : {}) }); // invite: the master switch INVITE_ON
   }
   if (u.pathname === '/rt/event') {
     if (req.method !== 'POST') return J({ err: 'post' }, 405);
@@ -3256,7 +3268,10 @@ async function snapPage(req, env, u) {
 }
 export default {
   async fetch(req, env, ctx) {
-    const u = new URL(req.url); budget(env); env = tallied(env, ctx);
+    budget(env); env = tallied(env, ctx);
+    // A throw anywhere below (a DO fetch that throws reaches here too) is kept as an error group of kind 'server' and answers 500.
+    try { return await (async () => {
+    const u = new URL(req.url);
     if (u.pathname === '/rt/snap' && req.method === 'POST') {
       if (await lvlNow(env) >= 2) return wishNo('busy', 503);
       const actor = await resolveActor(env, tokenOf(req)); if (!actor) return J({ err: 'auth' }, 401);
@@ -3284,8 +3299,9 @@ export default {
     }
     if (u.pathname === '/rt/health') {
       if (req.method !== 'GET' && req.method !== 'HEAD') return J({ err: 'get' }, 405);
-      return J({ hasFlushKey: typeof env.FLUSH_KEY === 'string' && env.FLUSH_KEY.length > 0, hasGuestKey: typeof env.GUEST_KEY === 'string' && env.GUEST_KEY.length > 0, mode: 'DO' });
+      return ops.opsHealth(req, env, ctx, { hasFlushKey: typeof env.FLUSH_KEY === 'string' && env.FLUSH_KEY.length > 0, hasGuestKey: typeof env.GUEST_KEY === 'string' && env.GUEST_KEY.length > 0, mode: 'DO' }, { lvl: () => lvlNow(env), lvlCopy: () => LVL.l }); // + db, budget, maint, build
     }
+    if (ops.OPS_PATHS.has(u.pathname)) return ops.opsApi(req, env, ctx, u, { lvl: () => lvlNow(env), lvlCopy: () => LVL.l, admin: () => adminOk(env, req), actor: () => resolveActor(env, tokenOf(req)), ipHash: () => ipHash(env, req) }); // /rt/err, /rt/support, their admin routes
     if (u.pathname === '/rt/ws') {
       if (req.headers.get('Upgrade') !== 'websocket') return new Response('websocket only', { status: 426 });
       const t = u.searchParams.get('topic') || ''; if (!PLAZA_TOPICS.includes(t)) return new Response('bad topic', { status: 400 }); // only the plaza's own channels may create a room
@@ -3361,6 +3377,7 @@ export default {
       return J(await env.ROOM.get(env.ROOM.idFromName(t)).stats()); }
     if (u.pathname === '/.env.local' || u.pathname === '/.git/config' || u.pathname.startsWith('/.env') || u.pathname.startsWith('/.git/')) return new Response(null, { status: 404 });
     return env.ASSETS.fetch(req);
+    })(); } catch (e) { return ops.opsCrash(req, env, ctx, e, { lvl: () => lvlNow(env) }); }
   },
   // Paid plan only. Free returns before any push work. Dark boards and unread taken/cheer, at most PUSH_N.
 // 50 11 * * * is 20:50 KST (ball inbox). 0 12 * * * is 21:00 KST (Sunday roof). 5 * * * * stays the hourly pass.

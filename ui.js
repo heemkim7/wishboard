@@ -15,6 +15,8 @@ import { EMOTES, REACTIONS, AVATAR_COLORS, AVATAR_COLOR_NAMES, SPECIES } from '.
 import { trackEvent, statsOff, statsGpc, setStatsOff } from './analytics.js?v=202611221134';
 import { CHEER_PHRASES, accountLabel, allowedLink, blockedText, linkedActor } from './plaza-account.js';
 import { policyDoc } from './legal.js?v=202611221134';
+import { setOperator, operatorInfo } from './legal.js?v=202611221134';
+import { SUPPORT_KINDS, SUPPORT_TEXT, SUPPORT_CONSENT, SUP, supportFault, textLen, maintOf, maintLines, operatorLine } from './opsrules.js';
 import { subscribePush, resendPush } from './push.js?v=202611221134';
 import { bindSfx, bindMusic, duckMusic, play, setSound, haptic, musicVisible } from './audio.js?v=202611221134';
 import { createBgm } from './bgm.js?v=202611221134';
@@ -4320,9 +4322,32 @@ export function createUI(root, hooks) {
     // A returning player on a new device signs in before entering; the sheet opens over this card (renderAccount shows it to a guest only).
     bootLogin = h('button', { class: 'linkbtn boot-login', type: 'button', text: '이미 계정이 있어요 · 로그인', hidden: !(accountView.ready && accountView.guest && !accountView.linked), onclick: () => openLogin() });
     const bootFields = known ? [go, bootLogin] : [nick, nickErr, go, bootLogin];
-    bootEnter.replaceChildren(...bootFields);
+    if (maintOn) { maintSaved = bootFields; bootEnter.replaceChildren(maintCard(maintOn)); }
+    else bootEnter.replaceChildren(...bootFields);
     bootEnter.hidden = false;
-    if (!coarse) setTimeout(() => go.focus(), 60);
+    if (!coarse && !maintOn) setTimeout(() => go.focus(), 60);
+  }
+  // 점검 (launch plan 상4, main.js maintShow): while a notice is on, the boot card shows it in place of 입장하기, and the button comes back by
+  // itself when it ends. A player already inside is not moved: one toast per notice.
+  let maintOn = null, maintSaved = null, maintTold = '';
+  function maintCard(m) {
+    const t = maintLines(m);
+    return h('div', { class: 'bootlive maintcard', role: 'status', 'aria-live': 'polite' },
+      h('b', { text: t.title }), h('div', { text: t.msg }), h('div', { text: t.end }), h('div', { class: 'note', text: '1분마다 다시 확인해요. 열리면 이 화면에서 바로 입장할 수 있어요.' }));
+  }
+  function maintSet(m) {
+    const v = maintOf(m);
+    if (entered) {
+      const key = v ? v.msg + '|' + v.until : '';
+      if (v && maintTold !== key) note(`점검 안내: ${v.msg} 지금 하던 것은 그대로 이어서 할 수 있어요.`, '', null, { ms: 8000 });
+      maintTold = key;
+      maintOn = v;
+      return;
+    }
+    maintOn = v;
+    if (!bootEnter?.dataset.ready) return; // bootReady draws whichever it is
+    if (v) { if (!maintSaved) maintSaved = [...bootEnter.childNodes]; bootEnter.replaceChildren(maintCard(v)); bootEnter.hidden = false; }
+    else if (maintSaved) { bootEnter.replaceChildren(...maintSaved); maintSaved = null; }
   }
   setTimeout(() => bootReady(true), BOOT_FALLBACK_MS);
   // Entered before the city (and its collision) is in: movement waits under its own owner, 'city', and that owner is
@@ -5402,9 +5427,69 @@ export function createUI(root, hooks) {
         h('button', { class: 'btn gold', type: 'button', text: '알림', onclick: () => openPushSheet() }),
         h('button', { class: 'btn ghost', type: 'button', text: '받은 소식', onclick: () => openInboxSheet() }),
         h('button', { class: 'btn ghost', type: 'button', text: '이번 주 코드', onclick: () => openCodeSheet() }),
+        h('button', { class: 'btn ghost', type: 'button', text: '문의하기', onclick: () => openSupport() }),
         statsField(),
         h('p', { class: 'note' }, '지도 © ', h('a', { href: 'https://www.openstreetmap.org/copyright', target: '_blank', rel: 'noopener', text: 'OpenStreetMap' }), ' · ', h('button', { type: 'button', class: 'linkbtn', text: '사진·캐릭터 라이선스', onclick: () => openCredits() })),
         policyLinks(),
+        operatorFooter(),
+      );
+    }, true);
+  }
+  // One line under the policy links when the Worker has OPERATOR_INFO (legal.js setOperator), nothing otherwise.
+  function operatorFooter() {
+    const text = operatorLine(operatorInfo());
+    return text ? h('p', { class: 'note operator-line', text }) : null;
+  }
+  // 문의하기 (launch plan 상2): 분류, 내용 10–1000자, 답장 받을 이메일(선택, 적으면 안내에 동의). The account id (from the token, in the
+  // Worker), nickname, build, page and device class go along (main.js hooks.support). 광고·제휴 shows the ad page link. The check is
+  // opsrules.js supportFault, the same rule the Worker runs.
+  function openSupport() {
+    openSheet('문의하기', null, (host) => {
+      const me = sheet;
+      let kind = '';
+      const err = h('p', { class: 'note login-err', role: 'alert', hidden: true });
+      const kinds = h('div', { class: 'chips', role: 'group', 'aria-label': '분류' });
+      const adsLine = h('p', { class: 'note', hidden: true }, '광고 신청은 ', h('a', { href: '/ads', target: '_blank', rel: 'noopener', text: '광고 안내 페이지', style: { color: 'var(--info)', fontWeight: '700' } }), '에서 할 수 있어요. 제휴 문의는 여기에 적어 주세요.');
+      for (const [id, label] of SUPPORT_KINDS) {
+        const b = h('button', { type: 'button', text: label, 'aria-pressed': 'false', onclick: () => {
+          kind = id;
+          for (const c of kinds.children) { const on = c === b; c.classList.toggle('on', on); c.setAttribute('aria-pressed', on ? 'true' : 'false'); }
+          adsLine.hidden = id !== 'ads';
+          err.hidden = true;
+        } });
+        kinds.append(b);
+      }
+      const text = h('textarea', { class: 'input support-text', rows: 6, maxLength: SUP.max + 200, placeholder: '무슨 일이 있었는지 적어 주세요. (10자 이상)', 'aria-label': '문의 내용', style: { height: 'auto', minHeight: '132px', padding: '10px 14px', lineHeight: '1.5', resize: 'vertical' } });
+      const count = h('span', { class: 'tnum', text: `0 / ${SUP.max}` });
+      text.addEventListener('input', () => { count.textContent = `${textLen(text.value.trim())} / ${SUP.max}`; });
+      const email = h('input', { class: 'input', type: 'email', maxLength: SUP.email, placeholder: '답장 받을 이메일 (선택)', autocomplete: 'email', 'aria-label': '답장 받을 이메일' });
+      const agree = h('input', { type: 'checkbox', 'aria-label': SUPPORT_CONSENT });
+      const agreeRow = h('label', { class: 'agree', hidden: true, style: { marginTop: '8px' } }, agree, h('span', { text: SUPPORT_CONSENT }));
+      email.addEventListener('input', () => { agreeRow.hidden = !email.value.trim(); });
+      const go = h('button', { class: 'btn gold cta', type: 'button', text: '보내기' });
+      const fail = (t) => { err.textContent = t; err.hidden = false; };
+      go.addEventListener('click', async () => {
+        const payload = { kind, text: text.value, email: email.value.trim(), agree: agree.checked };
+        const fault = supportFault(payload);
+        if (fault) { fail(SUPPORT_TEXT[fault]); return; }
+        go.disabled = true;
+        err.hidden = true;
+        try {
+          await hooks.support?.(payload);
+          if (sheet === me) closeSheet();
+          note(payload.email ? '문의를 보냈어요. 답장은 적은 이메일로 드려요.' : '문의를 보냈어요. 고맙습니다.', 'ok');
+        } catch (e) {
+          fail(e?.message || SUPPORT_TEXT.down);
+          go.disabled = false;
+        }
+      });
+      host.append(
+        h('p', { class: 'note', style: { marginTop: 0 }, text: '버그, 계정·코인, 신고, 광고·제휴 무엇이든 적어 주세요. 계정 번호와 기기 종류가 함께 가서 확인이 빨라요.' }),
+        h('div', { class: 'field' }, h('label', null, '분류'), kinds, adsLine),
+        h('div', { class: 'field' }, h('label', null, '내용', count), text),
+        h('div', { class: 'field' }, h('label', null, '답장 받을 이메일', h('span', { text: '선택' })), email, h('div', null, agreeRow)), // wrapped: .field > label is the field's title row
+        err,
+        go,
       );
     }, true);
   }
@@ -5885,7 +5970,10 @@ export function createUI(root, hooks) {
       progress(p) { if (bootBar && !entered) bootBar.style.width = `${Math.round(Math.max(0.06, Math.min(1, p)) * 92)}%`; },
       ready: bootReady,
       label: bootLabelSet,
+      maint: maintSet,
+      entered: () => entered,
     },
+    setOperator,
     setWish,
     openWish,
     openAway,

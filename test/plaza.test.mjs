@@ -679,17 +679,22 @@ describe('times square plaza', { concurrency: false }, () => {
     const sw = await readFile(new URL('../sw.js', import.meta.url), 'utf8');
     assert.match(sw, /pathname\.startsWith\('\/assets\/'\)/);
     assert.doesNotMatch(sw, /sprite-manifest|char_manifest|sprites\.json|7759/);
-    const ctx = { waitUntil() {} };
-    const present = await worker.fetch(new Request('https://sq.example/rt/health'), { FLUSH_KEY: 'flush-secret-value', GUEST_KEY: 'guest-secret-value' }, ctx);
-    const body = await present.json();
-    assert.deepEqual(body, { hasFlushKey: true, hasGuestKey: true, mode: 'DO' });
-    const encoded = JSON.stringify(body);
-    assert.equal(encoded.includes('flush-secret-value'), false);
-    assert.equal(encoded.includes('guest-secret-value'), false);
-    const missing = await worker.fetch(new Request('https://sq.example/rt/health'), {}, ctx);
-    assert.deepEqual(await missing.json(), { hasFlushKey: false, hasGuestKey: false, mode: 'DO' });
-    const blank = await worker.fetch(new Request('https://sq.example/rt/health'), { FLUSH_KEY: '', GUEST_KEY: '' }, ctx);
-    assert.deepEqual(await blank.json(), { hasFlushKey: false, hasGuestKey: false, mode: 'DO' });
+    const ctx = { waitUntil() {} }, origFetch = globalThis.fetch;
+    // /rt/health also probes Supabase (db), says the budget level and the maintenance switch (test/ops.test.mjs): only the secret part here.
+    globalThis.fetch = async () => new Response('[]', { status: 200 });
+    const secrets = ({ hasFlushKey, hasGuestKey, mode, db, maint }) => { assert.equal(db, 'ok'); assert.equal(maint, false); return { hasFlushKey, hasGuestKey, mode }; };
+    try {
+      const present = await worker.fetch(new Request('https://sq.example/rt/health'), { FLUSH_KEY: 'flush-secret-value', GUEST_KEY: 'guest-secret-value' }, ctx);
+      const body = await present.json();
+      assert.deepEqual(secrets(body), { hasFlushKey: true, hasGuestKey: true, mode: 'DO' });
+      const encoded = JSON.stringify(body);
+      assert.equal(encoded.includes('flush-secret-value'), false);
+      assert.equal(encoded.includes('guest-secret-value'), false);
+      const missing = await worker.fetch(new Request('https://sq.example/rt/health'), {}, ctx);
+      assert.deepEqual(secrets(await missing.json()), { hasFlushKey: false, hasGuestKey: false, mode: 'DO' });
+      const blank = await worker.fetch(new Request('https://sq.example/rt/health'), { FLUSH_KEY: '', GUEST_KEY: '' }, ctx);
+      assert.deepEqual(secrets(await blank.json()), { hasFlushKey: false, hasGuestKey: false, mode: 'DO' });
+    } finally { globalThis.fetch = origFetch; }
     assert.equal((await worker.fetch(new Request('https://sq.example/.env.local'), { ASSETS: { fetch: () => new Response('secret') } }, ctx)).status, 404);
     assert.equal((await worker.fetch(new Request('https://sq.example/.git/config'), { ASSETS: { fetch: () => new Response('secret') } }, ctx)).status, 404);
   });
