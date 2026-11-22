@@ -25,6 +25,7 @@ import { claimRockefeller, buildRockefeller } from './ts3d/rockefeller.js?v=2026
 import { claimIcons, buildIcons } from './ts3d/icons.js?v=202611221803';
 import { buildLandmarks } from './ts3d/landmarks.js?v=202611221803';
 import { createAvatars, EMOTES, REACTIONS, AVATAR_COLORS, STARTER_COLORS, speciesId } from './ts3d/avatars.js?v=202611221803';
+import { createPouchKit } from './ts3d/pouch.js?v=202611221803';
 import { seesAvatar, prefetchDelay, prefetchIds } from './ts3d/loadplan.js?v=202611221803';
 import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, paintLabel, fontsReady, chars, hashStr, FRAME_FX } from './ts3d/art.js?v=202611221803';
 import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=202611221803';
@@ -691,7 +692,7 @@ void main(){
     if (!r || now - lastReact < 700) return false;
     lastReact = now;
     me.say(r.g);
-    if (r.anim && !drive) me.emote(r.anim, r.anim === 'Dance' ? 3 : 0);
+    if (!drive) me.emote(r.anim); // each glyph's own gesture (ts3d/gestures.js REACTIONS)
     if (send) { try { net?.send?.('react', { r: i }); } catch { /* offline */ } }
     return true;
   }
@@ -700,7 +701,7 @@ void main(){
     const av = remoteFor(id);
     if (!r || !av) return;
     av.say(r.g);
-    if (r.anim) av.emote(r.anim, r.anim === 'Dance' ? 3 : 0);
+    av.emote(r.anim);
   }
   function jump() {
     const now = performance.now();
@@ -992,18 +993,12 @@ void main(){
     '붉은 복이 쏟아졌어요. 이름 석 자가 빛나는 해가 옵니다.',
     '던져 연 복주머니입니다. 전광판에 걸린 소원도 같이 열리세요.',
   ];
-  let pouchMat = null;
-  function pouchMaterial() {
-    if (pouchMat) return pouchMat;
-    const map = new THREE.TextureLoader(manager).load('/icons/bokjumeoni.png');
-    map.colorSpace = THREE.SRGBColorSpace;
-    pouchMat = new THREE.SpriteMaterial({ map, transparent: true, depthWrite: false, alphaTest: 0.12 });
-    return pouchMat;
-  }
+  // A small lit 3D 복주머니 (ts3d/pouch.js): geometry, texture and materials are built once and shared by every throw and
+  // the balloon; a throw is a Group of two meshes that is only removed from the scene.
+  let pouchKit = null;
   function makePouch(size) {
-    const s = new THREE.Sprite(pouchMaterial());
-    s.scale.set(size, size, 1);
-    return s;
+    pouchKit ||= createPouchKit({ quality });
+    return pouchKit.make(size);
   }
   function popBalloon() {
     if (!balloon || balloon.hp < 0) return;
@@ -1025,7 +1020,7 @@ void main(){
     balloon.hp -= 10;
     if (balloon.hp <= 0) { popBalloon(); return; }
     const s = 16 + 12 * (balloon.hp / 1000);
-    balloon.mesh.scale.set(s, s, 1);
+    balloon.mesh.scale.setScalar(s);
     opts.onBalloon?.(balloon.hp);
   }
   // One throw per THROW_GAP_MS (a held or mashed button is not 30 throws a second). The balloon floats 58 m up, out of
@@ -1045,7 +1040,10 @@ void main(){
     const mesh = makePouch(1.8);
     mesh.position.copy(from);
     scene.add(mesh);
-    pouchThrows.push({ mesh, from, t: 0 });
+    // It tumbles end over end and turns on the way up, so its round body, knot and tassel show from any camera.
+    const r = Math.random;
+    mesh.rotation.set(r() * 6.3, r() * 6.3, 0);
+    pouchThrows.push({ mesh, from, t: 0, spin: { x: (r() < 0.5 ? -1 : 1) * (7 + r() * 4), y: 5 + r() * 4, rx: mesh.rotation.x, ry: mesh.rotation.y } });
     me?.emote?.('Throw');
     return true;
   }
@@ -1057,6 +1055,8 @@ void main(){
       const target = balloon?.mesh?.position || p.from;
       p.mesh.position.lerpVectors(p.from, target, u);
       p.mesh.position.y += Math.sin(u * Math.PI) * 8;
+      p.mesh.rotation.x = p.spin.rx + p.t * 0.65 * p.spin.x;
+      p.mesh.rotation.y = p.spin.ry + p.t * 0.65 * p.spin.y;
       if (u < 1) continue;
       scene.remove(p.mesh);
       pouchThrows.splice(i, 1);
@@ -1782,6 +1782,7 @@ void main(){
     updateThrows(dt);
     if (balloon && balloon.hp > 0) {
       balloon.mesh.position.y = 58 + Math.sin(t * 0.6) * 1.6;
+      balloon.mesh.rotation.set(Math.sin(t * 0.45) * 0.06, t * 0.25, Math.sin(t * 0.6) * 0.05); // turns slowly, so it reads as round from the plaza
     }
     if (lounge && inputEnabled && (keys.size || Math.hypot(joy.x, joy.y) > 0.25)) endCine();
     else if (lounge && performance.now() - loungeAt > 8000) {
@@ -2144,6 +2145,7 @@ void main(){
       o.geometry?.dispose?.();
       for (const m of [].concat(o.material || [])) { m.map?.dispose?.(); m.dispose?.(); }
     });
+    pouchKit?.dispose(); // also when no pouch is in the scene (popped balloon)
     reflection.dispose();
     envRT.dispose();
     pmrem.dispose();
