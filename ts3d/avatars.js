@@ -5,8 +5,8 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
-import { makeCanvas, paintNameTag, paintBubble } from './art.js?v=202611212346';
-import { MODEL_URL, modelFor } from './loadplan.js?v=202611212346';
+import { makeCanvas, paintNameTag, paintBubble } from './art.js?v=202611221059';
+import { MODEL_URL, modelFor } from './loadplan.js?v=202611221059';
 
 const LOOPS = new Set(['Idle', 'Walking', 'Running', 'Dance', 'Sitting', 'Standing']);
 export const EMOTES = {

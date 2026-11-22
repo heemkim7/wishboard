@@ -6,7 +6,7 @@
 // v6: Seoul project (ap-northeast-2). Rooms = 행정동 code + scene; a shared lobby presence channel gives per-dong head counts.
 import { GT_LS, SESSION_LS, isInAppWebView, returnUrl } from './plaza-account.js';
 import { setStarterSlots } from './balance.js';
-import { snapQuery, kakaoOf } from './share.js?v=202611212346';
+import { snapQuery, kakaoOf } from './share.js?v=202611221059';
 export const SUPA_URL = 'https://yxddhpacuyaffaoutxjn.supabase.co';
 export const SUPA_KEY = 'sb_publishable_Vd-7c6e2f2s3G1d5Jbx9vw_0UCuHm-B'; // publishable key: public by design
 // v13: QA/test clients (?qa=1) live in a separate namespace and never appear in real players' rooms, lobby counts or chat history
