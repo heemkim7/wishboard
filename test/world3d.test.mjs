@@ -21,7 +21,7 @@ describe('shader patches', () => {
         n++;
       }
     }
-    assert.ok(n >= 20, String(n));
+    assert.ok(n >= 16, String(n)); // 16 since the unused facade slideshow material (4 patches) left ts3d/timesq.js
   });
   it('the paver joints take their pixel footprint before the running-bond shift', () => {
     const g = read('ts3d/ground.js');
@@ -85,11 +85,20 @@ describe('dead 3D code is gone', () => {
     const all = SOURCES.map(read).join('\n') + read('ui.js') + read('main.js');
     for (const fn of ['paintTentPrint', 'paintStorefronts', 'paintWindows', 'paintManhole', 'paintLanes', 'paintCrosswalk', 'roadInk']) assert.equal(all.includes(fn), false, fn);
     // the painters that are used are still exported
-    for (const fn of ['paintBillboard', 'paintGlow', 'paintBeam', 'paintPuddles', 'paintAdAtlas', 'paintLabel']) assert.match(art, new RegExp('export function ' + fn + '\\('), fn);
+    for (const fn of ['paintBillboard', 'paintGlow', 'paintBeam', 'paintPuddles', 'paintLabel']) assert.match(art, new RegExp('export function ' + fn + '\\('), fn);
     const av = read('ts3d/avatars.js');
     assert.equal(/'Grey'|'Black'/.test(av), false);
     assert.match(av, /if \(m\.name === 'Main'\) \{ m\.metalness = 0; m\.roughness = 0\.6; \}/);
     const s = read('ts3d/screens.js');
     assert.equal(/vacantCanvas|vacantTex|vacantMat|ownCanvas|shared: true/.test(s), false);
+  });
+  it('no facade photo, ad-atlas or slideshow meshes that nothing places, and no helpers nothing calls', () => {
+    const tq = read('ts3d/timesq.js');
+    // the facades are claimable boards and ad screens: the photo panels, the ad atlas and the slideshow were never placed
+    for (const s of ['photoAt', 'adAt', 'slideAt', 'coverWall', 'wantBoard', 'mountBoard', 'paintAdAtlas', 'photoMats', 'slideMat', 'TALL_KEYS', 'WIDE_KEYS', 'panels:']) assert.equal(tq.includes(s), false, s);
+    // the photos are still fetched for the environment map
+    assert.match(tq, /photoTextures\[name\] = t;/);
+    const gone = { 'balance.js': 'fareCredit', 'ops.js': 'maintNow', 'share.js': 'copyCard', 'ts3d/bowtie.js': 'adSpots', 'ts3d/layout.js': 'inZones', 'timesSquare3d.js': 'commitSticker', 'main.js': 'STAR_BONUS' };
+    for (const [f, name] of Object.entries(gone)) assert.equal(read(f).includes(name), false, f + ' ' + name);
   });
 });

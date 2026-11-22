@@ -100,11 +100,6 @@ export function groundHeight(x, z) {
   return 0;
 }
 
-export function inZones(zones, x, z) {
-  for (const q of zones) if (x >= q.x0 && x <= q.x1 && z >= q.z0 && z <= q.z1) return true;
-  return false;
-}
-
 /** Deterministic star spot (every client derives the same shower from the shared seed). */
 export function starSpot(rand) {
   const area = STAR_ZONES.map(q => (q.x1 - q.x0) * (q.z1 - q.z0));

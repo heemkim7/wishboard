@@ -46,7 +46,6 @@ const COLOR_KEY = 'kts_color';
 const SPECIES_KEY = 'kts_species';
 const GFX_KEY = 'kts_gfx';
 const POS_KEY = 'kts_pos';
-const STAR_BONUS = BALANCE.starCoin;
 const STAR_LIFE = 60000;
 const NICKS = ['뉴욕붕어빵', '네온후드', '브로드웨이곰', '타임스퀘어냥', '옐로캡러버', '빨간계단요정', '전광판헌터', '맨해튼호떡'];
 const FOCUS = (() => {

@@ -5,44 +5,20 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { LAYOUT } from './layout.js?v=202611221134';
-import { Kit, cropPlane, imgCrop } from './kit.js?v=202611221134';
-import { makeCanvas, paintAdAtlas, paintBlade, paintLabel, paintGlow, paintNeonSign, THEMES } from './art.js?v=202611221134';
-import { screenTime, addFrame } from './screens.js?v=202611221134';
-import { planBowtie, wallsIn, pickWall, mulberry, STREET_OLD } from './bowtie.js?v=202611221134';
+import { Kit, cropPlane } from './kit.js?v=202611221134';
+import { makeCanvas, paintBlade, paintLabel, paintGlow, paintNeonSign, THEMES } from './art.js?v=202611221134';
+import { addFrame } from './screens.js?v=202611221134';
+import { planBowtie, wallsIn, pickWall, STREET_OLD } from './bowtie.js?v=202611221134';
 import { ENV_PHOTOS, envPhotoUrl } from './loadplan.js?v=202611221134';
 
 const ONE = new THREE.Vector3(1, 1, 1);
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 
-const C = {
-  m13a: ['night-2013', imgCrop(0, 0.17, 0.24, 0.70), 0.68],
-  m13b: ['night-2013', imgCrop(0.69, 0.16, 0.95, 0.66), 0.78],
-  m25a: ['night-2025', imgCrop(0.6, 0.08, 1.0, 0.58), 1.2],
-  m25b: ['night-2025', imgCrop(0, 0, 0.17, 0.48), 0.53],
-  m25c: ['night-2025', imgCrop(0.29, 0.18, 0.43, 0.58), 0.52],
-  bbA: ['night-billboards', imgCrop(0.2, 0.05, 1.0, 0.44), 3.6],
-  lkA: ['night-lionking', imgCrop(0.52, 0.1, 0.99, 0.68), 1.21],
-  lkB: ['night-lionking', imgCrop(0.08, 0.16, 0.17, 0.8), 0.21],
-  pnA: ['night-pano', imgCrop(0.38, 0, 0.76, 0.62), 2.72],
-  pnB: ['night-pano', imgCrop(0, 0, 0.2, 0.65), 1.36],
-  pnC: ['night-pano', imgCrop(0.8, 0, 1.0, 0.72), 1.23],
-  cyL: ['night-canyon', imgCrop(0, 0.1, 0.33, 0.72), 1.28],
-  cyR: ['night-canyon', imgCrop(0.72, 0, 1.0, 0.72), 0.94],
-  stL: ['night-steps', imgCrop(0, 0.02, 0.22, 0.5), 1.22],
-  stR: ['night-steps', imgCrop(0.66, 0, 1.0, 0.58), 1.56],
-  p2A: ['night-pano2', imgCrop(0, 0, 0.14, 0.72), 0.9],
-  p2B: ['night-pano2', imgCrop(0.42, 0.05, 0.62, 0.62), 1.62],
-  p2C: ['night-pano2', imgCrop(0.66, 0.15, 0.84, 0.62), 1.77],
-};
-// Only the four photos the environment map uses are fetched (photoAt is not called; the facades are ad screens now).
+// Only the four photos the environment map uses are fetched (the facades are ad screens and claimable boards now).
 export const PHOTO_FILES = ENV_PHOTOS;
-const PHOTO_KEYS = Object.keys(C);
-const TALL_KEYS = PHOTO_KEYS.filter(k => C[k][2] < 1);
-const WIDE_KEYS = PHOTO_KEYS.filter(k => C[k][2] >= 1);
 
 const BLADES = ['K-TOWN', 'BROADWAY', 'THEATRE', 'HOTEL', 'K-POP', '서울식당', '노래방', 'K-BBQ', '치킨', 'CAFE 서울', '포장마차', 'HOTPOT'];
 const BLADE_COLORS = ['#ff3d9a', '#ffcf5a', '#3fe6ff', '#ff6a3d', '#b84dff', '#39f58a', '#ffe2a8', '#ff7ac0', '#ffb020', '#3fe6ff', '#ff3d9a', '#ff6a3d'];
-const ACCENTS = ['#3fe6ff', '#ff3d9a', '#ffcf5a', '#b84dff', '#39f58a', '#ff6a3d'];
 
 export function buildTimesSquare(ctx) {
   const { scene, renderer, manager, kitMats, boards, nyc, quality, colliders, world } = ctx;
@@ -51,16 +27,14 @@ export function buildTimesSquare(ctx) {
   const loader = new THREE.TextureLoader(manager);
   const updaters = [];
   const kit = new Kit();
-  const r = mulberry(4242); // slideAt's phases and accents
 
   // ---- materials ---------------------------------------------------------------------------------------
-  const photoMats = {}, photoTextures = {};
+  const photoTextures = {};
   for (const name of PHOTO_FILES) {
     const t = loader.load(envPhotoUrl(name));
     t.colorSpace = THREE.SRGBColorSpace;
     t.anisotropy = aniso;
     photoTextures[name] = t;
-    photoMats[name] = new THREE.MeshBasicMaterial({ map: t, color: new THREE.Color(0.92, 0.92, 0.92) });
   }
   const toTex = (c) => {
     const t = new THREE.CanvasTexture(c);
@@ -68,10 +42,6 @@ export function buildTimesSquare(ctx) {
     t.colorSpace = THREE.SRGBColorSpace;
     return t;
   };
-  const adCanvas = makeCanvas(low ? 1024 : 2048, low ? 1024 : 2048);
-  const adCells = paintAdAtlas(adCanvas);
-  const adTex = toTex(adCanvas);
-  const adMat = new THREE.MeshBasicMaterial({ map: adTex, color: new THREE.Color(1.0, 1.0, 1.0) });
   const bladeCanvas = makeCanvas(128 * BLADES.length, 1024);
   BLADES.forEach((n, i) => {
     const c = makeCanvas(128, 1024);
@@ -79,90 +49,8 @@ export function buildTimesSquare(ctx) {
     bladeCanvas.getContext('2d').drawImage(c, i * 128, 0);
   });
   const bladeMat = new THREE.MeshBasicMaterial({ map: toTex(bladeCanvas), color: new THREE.Color(1.05, 1.05, 1.05) });
-  const slideMat = new THREE.MeshBasicMaterial({ map: adTex, color: new THREE.Color(1.1, 1.1, 1.1) });
-  slideMat.onBeforeCompile = (sh) => {
-    sh.uniforms.uTime = screenTime;
-    sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float aPhase;\nuniform float uTime;\nvarying float vFlip;')
-      .replace('#include <uv_vertex>', `#include <uv_vertex>
-{
-  float slot = uTime / 7.0 + aPhase;
-  float cell = mod(floor(slot), 16.0);
-  float cx = mod(cell, 4.0), cy = floor(cell / 4.0);
-  vec2 inset = vec2(0.006) + uv * 0.988;
-  vMapUv = vec2((cx + inset.x) / 4.0, 1.0 - (cy + 1.0 - inset.y) / 4.0);
-  vFlip = fract(slot);
-}`);
-    sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying float vFlip;')
-      .replace('#include <map_fragment>', `#include <map_fragment>
-diffuseColor.rgb *= 0.2 + 0.8 * smoothstep(0.0, 0.03, vFlip);
-diffuseColor.rgb += vec3(0.35, 0.3, 0.45) * (1.0 - smoothstep(0.0, 0.012, vFlip));`);
-  };
-  slideMat.customProgramCacheKey = () => 'kts-slideshow';
-
   // ---- facade helpers -------------------------------------------------------------------------------------------
-  const photoGeos = {}, adGeos = [], bladeGeos = [], slideMats = [], slidePhase = [];
-  const wanted = [];
-  const faceM = (w, along, y, out) => {
-    const p = new THREE.Vector3(w.mx + w.tx * along + w.nx * out, y, w.mz + w.tz * along + w.nz * out);
-    return new THREE.Matrix4().compose(p, new THREE.Quaternion().setFromAxisAngle(Y_AXIS, Math.atan2(w.nx, w.nz)), ONE);
-  };
-  const framed = (w, h, m, accent) => {
-    kit.box(w + 0.5, h + 0.5, 0.35, '#111217', { z: -0.24, mat: 'metal', m });
-    kit.box(w + 0.5, 0.08, 0.1, accent || '#ffe2a8', { y: h / 2 + 0.29, z: 0.02, glow: 2.0, m });
-  };
-  const photoAt = (key, m, h) => {
-    const [file, crop, aspect] = C[key];
-    const w = h * aspect;
-    (photoGeos[file] ||= []).push(cropPlane(w, h, crop).applyMatrix4(m));
-    framed(w, h, m);
-    return w;
-  };
-  const adAt = (i, m, s) => {
-    adGeos.push(cropPlane(s, s, adCells[i % adCells.length]).applyMatrix4(m));
-    framed(s, s, m, '#ff3d9a');
-  };
-  const slideAt = (m, w, h) => {
-    slideMats.push(m.clone().multiply(new THREE.Matrix4().makeScale(w, h, 1)));
-    slidePhase.push(r() * 16);
-    framed(w, h, m, ACCENTS[(r() * ACCENTS.length) | 0]);
-  };
-  // Claimable boards only. WALL_1..500 stay scarce enough to fight over.
-  const wantBoard = (m, w, h, pri = 1) => {
-    if (w < 6 || h < 3.4) return;
-    wanted.push({ m, w, h, pri });
-  };
-  // Real Times Square faces are a few huge 16:9 screens with a thin joint, not a scatter of posters.
-  const coverWall = (w, hole) => {
-    const gap = 0.7;
-    const span = Math.max(6, w.len - 0.8);
-    let cols = Math.max(1, Math.ceil(span / 26));
-    let cw = (span - gap * (cols - 1)) / cols;
-    if (cw < 11 && cols > 1) { cols = 1; cw = span; }
-    const ch = cw * 9 / 16;
-    if (ch < 4) return;
-    const top = Math.min(w.h - 1, 120);
-    let y = 3.2 + ch / 2;
-    for (let guard = 0; y + ch / 2 <= top + 0.3 && guard < 16; guard++) {
-      const y0 = y - ch / 2, y1 = y + ch / 2;
-      if (hole && y1 > hole.y0 && y0 < hole.y1) { y = hole.y1 + gap + ch / 2; continue; }
-      for (let c = 0; c < cols; c++) {
-        const along = -span / 2 + cw / 2 + c * (cw + gap);
-        wantBoard(faceM(w, along, y, 0.55), cw, ch, w.dist);
-      }
-      y += ch + gap;
-    }
-  };
-  const mountBoard = (slot, m, w, h) => {
-    const p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
-    m.decompose(p, q, s);
-    const g = new THREE.Group();
-    g.position.copy(p);
-    g.quaternion.copy(q);
-    scene.add(g);
-    boards.mount(slot, g, { x: 0, y: 0, z: 0.05, w, h, frameT: Math.min(0.22, Math.max(0.08, h * 0.035)) });
-  };
+  const bladeGeos = [];
   const bladeAt = (name, x, y, z, ry, size) => {
     const i = Math.max(0, BLADES.indexOf(name));
     const u0 = (i * 128 + 2) / (128 * BLADES.length), u1 = ((i + 1) * 128 - 2) / (128 * BLADES.length);
@@ -319,24 +207,12 @@ diffuseColor.rgb += vec3(0.35, 0.3, 0.45) * (1.0 - smoothstep(0.0, 0.012, vFlip)
     scene.add(m);
     return m;
   };
-  for (const [file, geos] of Object.entries(photoGeos)) putMesh(geos, photoMats[file]);
-  putMesh(adGeos, adMat);
   putMesh(bladeGeos, bladeMat);
-  if (slideMats.length) {
-    const slideGeo = new THREE.PlaneGeometry(1, 1);
-    slideGeo.setAttribute('aPhase', new THREE.InstancedBufferAttribute(new Float32Array(slidePhase), 1));
-    const slides = new THREE.InstancedMesh(slideGeo, slideMat, slideMats.length);
-    slideMats.forEach((m, i) => slides.setMatrixAt(i, m));
-    slides.instanceMatrix.needsUpdate = true;
-    slides.computeBoundingSphere();
-    scene.add(slides);
-  }
   scene.add(kit.build(kitMats));
 
   function update(dt, t) { for (const u of updaters) u(dt, t); }
   return {
     update, photoTextures, adFaces,
     mainScreenCenter: new THREE.Vector3(OT.x, 25, OT.z - 1.2),
-    panels: slideMats.length + Object.values(photoGeos).reduce((a, l) => a + l.length, 0),
   };
 }

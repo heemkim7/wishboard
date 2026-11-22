@@ -2428,16 +2428,6 @@ void main(){
       boards.setDecals(id, kept);
     }
   }
-  function commitSticker(slot, glyph) {
-    if (!STICKER_GLYPHS.includes(glyph)) return false;
-    const list = stickerMap.get(slot) || [];
-    if (list.length >= 8) return false;
-    list.push({ g: glyph, c: list.length % 4 });
-    stickerMap.set(slot, list);
-    saveStickers();
-    boards.setDecals(slot, list);
-    return true;
-  }
   function launchSticker(slot, glyph) {
     if (!STICKER_GLYPHS.includes(glyph)) return false;
     const to = boards.worldPos(slot);

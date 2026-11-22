@@ -305,12 +305,6 @@ function planAds(nyc, list, facing, taken, streets, corners, search) {
   }
   return out;
 }
-/** [wall midpoint x, z, along, width, level] of each planned ad screen, rounded as AD_SPOTS keeps them. */
-export function adSpots(ads) {
-  const o = {};
-  for (const a of ads) o[a.id] = [Math.round(a.wall.mx * 100) / 100, Math.round(a.wall.mz * 100) / 100, a.along, a.w, a.level];
-  return o;
-}
 // The faces nobody on the street could see whole; nobody held them, so they moved before anyone could. Two rounds:
 //  1. STREET_1..30 whose face the map puts inside a neighbouring building (overlapping OpenStreetMap outlines). 22 and
 //     27 (free first boards) take the best spots first, nearest the walk from the spawn to the bakery stall, in the core.
