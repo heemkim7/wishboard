@@ -5,10 +5,13 @@
 import { TILE } from './nyc.js?v=202611212346';
 import { LAYOUT, PLAZA_CENTER, groundHeight } from './layout.js?v=202611212346';
 
-export const STREET_OLD = 30; // STREET_1..30: chosen by distance to the street axis (unchanged since launch, but for the eight in MOVED)
+export const STREET_OLD = 30; // STREET_1..30: chosen by distance to the street axis (unchanged since launch, but for the ones in MOVED)
 export const STREET_NEW = 20; // STREET_31..50: the core of the bowtie, picked by planBowtie below
 // The core the new faces stay in: the plaza players gather in, from Duffy Square to the foot of One Times Square.
 export const CORE = { x: PLAZA_CENTER.x, z: PLAZA_CENTER.z, r: 120, z0: -60, z1: 190 };
+
+// The two avenues' centre lines through the square: 7th Avenue and Broadway.
+const AXES = [[-1, -250, -1, 262], [-63.4, -233, 49, 249.7]];
 
 export function mulberry(seed) {
   let a = seed >>> 0;
@@ -126,7 +129,6 @@ export function faceGap(a, b) {
  */
 export function planBowtie(nyc, { oneTimes = LAYOUT.oneTimes, search = false } = {}) {
   // ---- the bowtie: facades facing the square ----
-  const AXES = [[-1, -250, -1, 262], [-63.4, -233, 49, 249.7]];
   const facing = wallsIn(nyc, -110, 120, -250, 262, 9).filter(w => {
     let best = Infinity, qx = 0, qz = 0;
     for (const [ax, az, bx, bz] of AXES) { const [d, x, z] = segPointDist(w.mx, w.mz, ax, az, bx, bz); if (d < best) { best = d; qx = x; qz = z; } }
@@ -178,7 +180,7 @@ export function planBowtie(nyc, { oneTimes = LAYOUT.oneTimes, search = false } =
     const fx = c.x + c.nx * 0.35, fz = c.z + c.nz * 0.35;
     taken.push(rect(fx, c.yA, fz, c.nx, c.nz, c.w / 2 + 0.2, c.h / 2 + 0.2), rect(fx, c.yB, fz, c.nx, c.nz, c.w / 2 + 0.2, c.h / 2 + 0.2));
   }
-  const own = new Map(streets.map((s) => [s.n, faceOf(s, s.frame)]));
+  const own = new Map(streets.map((s) => [s, faceOf(s, s.frame)])); // each claimable street face's frame, by board
   taken.push(...own.values());
   // Blade signs: the same draw from the same seed as before the plan moved here (timesq.js builds them). A blade that
   // would stand through a claimable face is left out; the draw goes on unchanged for the rest.
@@ -196,78 +198,105 @@ export function planBowtie(nyc, { oneTimes = LAYOUT.oneTimes, search = false } =
   // ---- STREET_31..50: the core ----
   for (const b of blades) taken.push(b.face);
   const list = solids(nyc, CORE.x - CORE.r - 60, CORE.x + CORE.r + 60, CORE.z0 - 60, CORE.z1 + 60);
-  const extra = planCore(nyc, list, facing, used, streets, taken);
+  const extra = planCore(nyc, list, facing, used, streets, taken, own);
   extra.forEach((s, i) => { s.id = 'STREET_' + (STREET_OLD + 1 + i); s.n = STREET_OLD + 1 + i; });
-  // ---- the STREET_1..30 faces the map buried in a neighbouring building: moved to a clear wall in the core ----
-  // Everything above was placed with them where they first stood, so no other face, blade or STREET_31..50 moves.
+  // ---- the faces nobody on the street could see whole: moved to a clear wall on the square, round by round ----
+  // Everything above was placed with them where they first stood, so no other face, blade or STREET_31..50 moves; a
+  // round is checked against every face but its own old spots, so a later round never moves an earlier one.
   const all = streets.concat(extra);
-  const gone = new Set(MOVED.map((n) => own.get(n)));
-  const keep = taken.filter((t) => !gone.has(t));
-  for (const n of MOVED) {
-    const s = streets[n - 1];
-    // where the search put it (MOVES), checked against the same rules; the search itself only if the map has changed
-    const c = (!search && movedTo(nyc, list, facing, MOVES[n], keep)) || rehome(nyc, list, facing, s, keep);
-    if (!c) continue; // never on the shipped map (test/boards.test.mjs pins every move)
-    Object.assign(s, c, { id: s.id, n: s.n, moved: { x: s.x, z: s.z, y: s.y, w: s.w } });
-    keep.push(faceOf(s, s.frame));
+  let keep = taken;
+  for (const round of MOVE_ROUNDS) {
+    const gone = new Set(round.boards.map((n) => own.get(all[n - 1])));
+    keep = keep.filter((t) => !gone.has(t));
+    for (const n of round.boards) {
+      const s = all[n - 1];
+      // where the search put it (MOVES), checked against the same rules; the search itself only if the map has changed
+      const c = (!search && movedTo(nyc, list, facing, s, MOVES[n], keep, round)) || rehome(nyc, list, facing, s, keep, round);
+      if (!c) continue; // never on the shipped map (test/boards.test.mjs pins every move)
+      Object.assign(s, c, { id: s.id, n: s.n, moved: { x: s.x, z: s.z, y: s.y, w: s.w } });
+      keep.push(faceOf(s, s.frame));
+    }
   }
   return { facing, corners, streets: all, blades, main };
 }
-// STREET_1..30 whose face the map puts inside a neighbouring building (overlapping OpenStreetMap outlines), so no camera
-// could see it whole; nobody held them, so they moved before launch. Picked in this order: 22 and 27 (free first boards)
-// take the best spots by the spawn-to-bakery walk first.
-export const MOVED = [22, 27, 18, 21, 24, 25, 28, 29];
+// The faces nobody on the street could see whole; nobody held them, so they moved before anyone could. Two rounds:
+//  1. STREET_1..30 whose face the map puts inside a neighbouring building (overlapping OpenStreetMap outlines). 22 and
+//     27 (free first boards) take the best spots first, nearest the walk from the spawn to the bakery stall, in the core.
+//  2. STREET_23 and STREET_31..50's 35 and 47, in the Marriott's atrium (the map closes it all round under a 59 m shell),
+//     and STREET_26 and 30, in a pocket the map closes north of Duffy Square. No clear wall was left near the walk, so
+//     these go nearest the avenues players walk (7th Avenue, Broadway), up to 150 m from the plaza centre (One Times
+//     Square's sides, 7th Avenue toward TKTS), 23 (a free first board) first; 35 stays at eye level.
+export const MOVE_ROUNDS = [
+  { boards: [22, 27, 18, 21, 24, 25, 28, 29], near: 'walk', reach: 0 },
+  { boards: [23, 35, 47, 26, 30], near: 'avenue', reach: 150 },
+];
+export const MOVED = MOVE_ROUNDS.flatMap((r) => r.boards);
 // What rehome() finds for them on the shipped map: [wall midpoint x, z, metres along the wall, width, height level].
-// planBowtie takes these instead of searching (the search takes ~0.2 s), after checking them against the same rules;
+// planBowtie takes these instead of searching (the search takes ~0.4 s), after checking them against the same rules;
 // test/boards.test.mjs runs the search and checks it lands exactly here.
 export const MOVES = {
   22: [-16.7, 124.65, -20, 19, 1], 27: [-16.7, 124.65, -22, 14, 3], 18: [-16.7, 124.65, 16, 14, 0], 21: [-16.7, 124.65, -2, 22, 3],
   24: [-16.7, 124.65, 20, 19, 3], 25: [-16.7, 124.65, -22, 14.5, 4], 28: [-16.7, 124.65, -3, 11, 1], 29: [-16.7, 124.65, 15, 11, 3],
+  23: [13.35, 225.75, -1, 14, 1], 35: [23.6, 204.05, 2, 11.5, 0], 47: [13.85, -30.4, 20, 11.5, 0], 26: [14, 204.45, -3, 14, 1], 30: [13.35, 225.75, -1, 14, 2],
 };
 const MOVE_MIN = 10, MOVE_STEP = 1.5, MOVE_TOP = 45, SHRINK_M = 6;
-// The heights a w-wide moved face may take on wall w: the STREET_1..30 rule first, then rows up from the eye-level one.
-function levels(w, bw) {
-  const bh = bw * 9 / 16, ys = [Math.min(w.h - bh / 2 - 1.2, Math.max(bh / 2 + 6, 12))];
-  for (let y = EYE_Y0 + bh / 2; y + bh / 2 <= MOVE_TOP; y += bh + 2 * FRAME_T + GAP + 0.2) ys.push(y);
-  return ys;
+// How a moved face keeps its kind: a STREET_1..30 face stays a framed street face from MOVE_MIN m wide; a STREET_31..50
+// eye-level face stays one (from EYE_MIN m wide, its thin frame, on the eye rows), and the bottom one of a pair keeps
+// the bottom row (its lower edge EYE_Y0 up), so it stays at eye level.
+const shapeOf = (s) => s.kind === 'eye'
+  ? { kind: 'eye', frame: EYE_FRAME, min: EYE_MIN, eye: true, low: Math.abs(s.y - s.h / 2 - EYE_Y0) < 1e-6 }
+  : { kind: 'street', frame: FRAME_T, min: MOVE_MIN, eye: false, low: false };
+// The heights a w-wide moved face may take on wall w: the STREET_1..30 rule first, then rows up from the eye-level one
+// (only those rows for an eye-level face, only the first for the bottom one).
+function levels(w, bw, sh) {
+  const bh = bw * 9 / 16, ys = sh.eye ? [] : [Math.min(w.h - bh / 2 - 1.2, Math.max(bh / 2 + 6, 12))];
+  for (let y = EYE_Y0 + bh / 2; y + bh / 2 <= MOVE_TOP; y += bh + 2 * sh.frame + GAP + 0.2) ys.push(y);
+  return sh.low ? ys.slice(0, 1) : ys;
 }
-const slotOn = (w, along, bw, level) => {
-  const bh = bw * 9 / 16, y = levels(w, bw)[level];
-  return { wall: w, along, x: w.mx + w.tx * along + w.nx * 0.7, z: w.mz + w.tz * along + w.nz * 0.7, nx: w.nx, nz: w.nz, yaw: Math.atan2(w.nx, w.nz), y, w: bw, h: bh, frame: FRAME_T, kind: 'street', level };
+const slotOn = (w, along, bw, level, sh) => {
+  const bh = bw * 9 / 16, y = levels(w, bw, sh)[level];
+  return { wall: w, along, x: w.mx + w.tx * along + w.nx * 0.7, z: w.mz + w.tz * along + w.nz * 0.7, nx: w.nx, nz: w.nz, yaw: Math.atan2(w.nx, w.nz), y, w: bw, h: bh, frame: sh.frame, kind: sh.kind, level };
 };
 const inCore = (x, z) => Math.hypot(x - CORE.x, z - CORE.z) <= CORE.r && z >= CORE.z0 && z <= CORE.z1;
-const room = (w, bw) => w.len / 2 - 0.3 - FRAME_T - bw / 2;
-const placeable = (nyc, list, c, taken) => c.y - c.h / 2 >= EYE_Y0 - 1e-9 && c.y + c.h / 2 + FRAME_T <= c.wall.h - 1 && Math.abs(c.along) <= room(c.wall, c.w) + 1e-9 && inCore(c.x, c.z)
-  && fits(nyc, list, c, taken) && inSight(nyc, list, c) && onStreet(nyc, list, c);
-function movedTo(nyc, list, facing, m, taken) {
+// Where a round's faces may go: the core, or (reach) that many metres round the plaza centre.
+const inReach = (round, x, z) => (round.reach ? Math.hypot(x - CORE.x, z - CORE.z) <= round.reach : inCore(x, z));
+const room = (w, bw, frame) => w.len / 2 - 0.3 - frame - bw / 2;
+const placeable = (nyc, list, c, taken, round) => c.y - c.h / 2 >= EYE_Y0 - 1e-9 && c.y + c.h / 2 + c.frame <= c.wall.h - 1 && Math.abs(c.along) <= room(c.wall, c.w, c.frame) + 1e-9
+  && inReach(round, c.x, c.z) && fits(nyc, list, c, taken) && inSight(nyc, list, c) && onStreet(nyc, list, c);
+function movedTo(nyc, list, facing, s, m, taken, round) {
   if (!m) return null;
-  const [mx, mz, along, bw, level] = m, w = facing.find((q) => Math.abs(q.mx - mx) < 0.05 && Math.abs(q.mz - mz) < 0.05);
-  if (!w || level >= levels(w, bw).length) return null;
-  const c = slotOn(w, along, bw, level);
-  return placeable(nyc, list, c, taken) ? c : null;
+  const sh = shapeOf(s), [mx, mz, along, bw, level] = m, w = facing.find((q) => Math.abs(q.mx - mx) < 0.05 && Math.abs(q.mz - mz) < 0.05);
+  if (!w || level >= levels(w, bw, sh).length || bw > s.w || bw < sh.min - 1e-9) return null;
+  const c = slotOn(w, along, bw, level, sh);
+  return placeable(nyc, list, c, taken, round) ? c : null;
 }
-/** A clear spot for street board s under the STREET_31..50 rules (fits), nearest the walk, as large as it was if it can be. */
-export function rehome(nyc, list, facing, s, taken) {
-  // nearest the walk from the spawn to the bakery stall, counting height (a face up high is farther from a walker's eye)
+/**
+ * A clear spot for street board s under the STREET_31..50 rules (fits), as large as it was if it can be, nearest the
+ * round's walk (round.near): 'walk', the walk from the spawn to the bakery stall; 'avenue', 7th Avenue or Broadway.
+ */
+export function rehome(nyc, list, facing, s, taken, round = MOVE_ROUNDS[0]) {
+  // counting height too: a face up high is farther from a walker's eye
   const A = LAYOUT.spawn, S = LAYOUT.stall, dx = S.x - A.x, dz = S.z - A.z, L2 = dx * dx + dz * dz;
-  const walk = (x, z, y) => { const t = Math.max(0, Math.min(1, ((x - A.x) * dx + (z - A.z) * dz) / L2)); return Math.hypot(x - A.x - dx * t, z - A.z - dz * t, y - 1.6); };
-  const cands = [];
+  const walk = round.near === 'avenue'
+    ? (x, z, y) => Math.hypot(Math.min(...AXES.map(([ax, az, bx, bz]) => segPointDist(x, z, ax, az, bx, bz)[0])), y - 1.6)
+    : (x, z, y) => { const t = Math.max(0, Math.min(1, ((x - A.x) * dx + (z - A.z) * dz) / L2)); return Math.hypot(x - A.x - dx * t, z - A.z - dz * t, y - 1.6); };
+  const sh = shapeOf(s), cands = [];
   for (const w of facing) {
-    for (let bw = s.w, k = 0; bw >= MOVE_MIN - 1e-9; bw -= MOVE_STEP, k++) {
-      const r = room(w, bw);
+    for (let bw = s.w, k = 0; bw >= sh.min - 1e-9; bw -= MOVE_STEP, k++) {
+      const r = room(w, bw, sh.frame);
       if (r < 0) continue;
-      levels(w, bw).forEach((y, level) => {
+      levels(w, bw, sh).forEach((y, level) => {
         const bh = bw * 9 / 16;
-        if (y - bh / 2 < EYE_Y0 - 1e-9 || y + bh / 2 + FRAME_T > w.h - 1) return;
+        if (y - bh / 2 < EYE_Y0 - 1e-9 || y + bh / 2 + sh.frame > w.h - 1) return;
         for (let along = -Math.floor(r); along <= r + 1e-9; along += 1) {
           const x = w.mx + w.tx * along + w.nx * 0.7, z = w.mz + w.tz * along + w.nz * 0.7;
-          if (inCore(x, z)) cands.push({ w, along, bw, level, x, z, y, rank: walk(x, z, y) + k * SHRINK_M });
+          if (inReach(round, x, z)) cands.push({ w, along, bw, level, x, z, y, rank: walk(x, z, y) + k * SHRINK_M });
         }
       });
     }
   }
   cands.sort((a, b) => a.rank - b.rank || a.x - b.x || a.z - b.z || a.y - b.y || b.bw - a.bw);
-  for (const k of cands) { const c = slotOn(k.w, k.along, k.bw, k.level); if (placeable(nyc, list, c, taken)) return c; }
+  for (const k of cands) { const c = slotOn(k.w, k.along, k.bw, k.level, sh); if (placeable(nyc, list, c, taken, round)) return c; }
   return null;
 }
 // On a street, not in a courtyard the map closes all round (the Marriott's atrium, say): from 3 m in front of the face,
@@ -333,7 +362,7 @@ export function faceOf(s, pad = 0) {
 // Candidates go nearest the plaza centre first; at most PER_KIND of either kind, so the square gets both.
 export const FRAME_T = 0.45, EYE_FRAME = 0.3;
 const GAP = 0.3, SEE = 18, EYE_Y0 = 4.6, PER_KIND = 13, EYE_MIN = 7.5, EYE_MAX = 13;
-function planCore(nyc, list, facing, used, streets, taken) {
+function planCore(nyc, list, facing, used, streets, taken, own) {
   const cands = [];
   // rank: nearest the plaza centre first; a column's upper faces wait until every lower face had its turn, and a
   // smaller size of the same slot (tried when the full size does not fit) comes right after the full one.
@@ -373,7 +402,9 @@ function planCore(nyc, list, facing, used, streets, taken) {
     if (per[c.kind] >= PER_KIND) continue;
     if (!fits(nyc, list, c, taken)) continue;
     out.push(c);
-    taken.push(faceOf(c, c.frame));
+    const f = faceOf(c, c.frame);
+    taken.push(f);
+    own.set(c, f);
     per[c.kind]++;
   }
   for (const c of out) delete c.rank;
