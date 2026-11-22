@@ -1837,7 +1837,7 @@ async function finishLink(session, fresh, echo = false) {
   if (fresh && !echo) trackEvent('auth_login_success', { method: user.app_metadata?.provider || 'email' });
   if (merged?.bonus) ui.note(`계정을 연결했어요. +${merged.bonus}코인`, 'ok');
   // again: the server's answer on the one link after a withdrawal (no reward, and the guest's start coins stayed out). Said that once.
-  else if (merged?.again) ui.note('계정을 연결했어요. 예전에 탈퇴한 계정이라 시작 코인과 연결 보상은 다시 붙지 않아요', 'ok');
+  else if (merged?.again) ui.note('계정을 연결했어요. 예전에 탈퇴한 계정이라 연결 보상 300코인은 다시 주지 않아요', 'ok');
   else if (fresh && !failed) ui.note('계정을 연결했어요', 'ok'); // after a failed merge the error toast stands alone
   await rejoin();
   return merged;
@@ -2202,7 +2202,7 @@ async function showAway() {
 
 async function pullProfile() {
   try {
-    const p = await loadProfile();
+    const p = await loadProfile(state.species);
     if (!p || p.err || p.species == null) return;
     const reputation = Math.max(0, Math.floor(Number(p.reputation) || 0));
     state.profile = {

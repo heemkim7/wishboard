@@ -69,8 +69,9 @@ describe('개인정보처리방침과 이용약관', () => {
     const quit = between(terms, "{ h: '탈퇴', p: '", "' },");
     assert.match(quit, /로그인 정보\(계정, 연결된 소셜 로그인, 로그인 세션\)도 지웁니다/);
     assert.doesNotMatch(quit, /지갑 연결과 전광판·토지 소유만 지우고/);
-    assert.match(quit, /시작 코인과 연결 보상은 다시 주지 않습니다/);
-    assert.match(terms, /계정만 할 수 있고, 처음 받은 440코인\(시작 100 \+ 첫 방문 40 \+ 연결 보상 300\)보다 더 모은 만큼만 보낼 수 있습니다/);
+    assert.match(quit, /탈퇴한 뒤 같은 이메일로 다시 가입해도 연결 보상 300코인은 다시 주지 않습니다/); // true before the coins migration too (the account's own row may still start at 100 then)
+    assert.doesNotMatch(quit, /시작 코인/);
+    assert.match(terms, /계정만 할 수 있고, 선물로 받은 코인 580개까지는 보내거나 모금할 수 없습니다\. 그보다 더 모은 만큼만 보낼 수 있습니다\./);
     assert.match(terms, /아이디로 만든 계정은 비밀번호를 잊으면 되찾을 수 없습니다/);
     assert.equal(/Google/.test(terms), false);
   });
@@ -106,7 +107,7 @@ describe('account screens of this round', () => {
   });
   it('a re-join after a withdrawal is told once, from the link answer', () => {
     const fl = between(main, 'async function finishLink(', 'async function bootAccount(');
-    assert.match(fl, /else if \(merged\?\.again\) ui\.note\('계정을 연결했어요\. 예전에 탈퇴한 계정이라 시작 코인과 연결 보상은 다시 붙지 않아요', 'ok'\);/);
+    assert.match(fl, /else if \(merged\?\.again\) ui\.note\('계정을 연결했어요\. 예전에 탈퇴한 계정이라 연결 보상 300코인은 다시 주지 않아요', 'ok'\);/);
     assert.match(read('worker.js'), /\.\.\.\(again \? \{ again: true \} : \{\}\) \}\);/);
   });
   it('a sign-out or withdrawal clears 받은 소식 and its 🔔: main.js drops the rows, ui.js hides the button and closes an open list', () => {
@@ -117,6 +118,7 @@ describe('account screens of this round', () => {
     assert.match(between(ui, '  function openInboxSheet() {', '\n  }\n'), /sheet\.inbox = true;/);
   });
   it('the wallet sheet says the send floor before the player taps', () => {
-    assert.match(ui, /hooks\.isGuest\?\.\(\) \? '손님은 코인을 보낼 수 없어요\. 계정을 연결하면 처음 받은 440코인\(시작 100 \+ 첫 방문 40 \+ 연결 보상 300\)보다 더 모은 만큼 보낼 수 있어요\.' : '처음 받은 440코인\(시작 100 \+ 첫 방문 40 \+ 연결 보상 300\)보다 더 모은 만큼만 보낼 수 있어요\.'/);
+    assert.match(ui, /hooks\.isGuest\?\.\(\) \? '손님은 코인을 보낼 수 없어요\. 계정을 연결하면 선물로 받은 코인 580개보다 더 모은 만큼 보낼 수 있어요\.' : '선물로 받은 코인 580개까지는 보낼 수 없어요\. 그보다 더 모은 만큼만 보낼 수 있어요\.'/);
+    assert.equal(/440/.test(read('legal.js') + ui.slice(ui.indexOf('손님은 코인을 보낼 수 없어요'), ui.indexOf('손님은 코인을 보낼 수 없어요') + 300)), false);
   });
 });

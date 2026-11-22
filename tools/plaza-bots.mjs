@@ -2,7 +2,8 @@
 // Players on chapel:square never see them and /rt/here never counts them.
 //   node tools/plaza-bots.mjs                        walk and emote on http://localhost:8787
 //   BOT_HOST=https://... node tools/plaza-bots.mjs    another worker (the production host also needs --allow-prod)
-//   node tools/plaza-bots.mjs --trade                also earn coins, claim street boards and send coins to each other
+//   node tools/plaza-bots.mjs --trade                also earn coins and claim street boards (no coin sends: the bots are guests,
+//                                                    and the Worker refuses every send from a guest)
 // Wallets, board claims and the spend ranking live in one database for every namespace. So --trade only runs when the
 // worker's database (/rt/config) is not the production Supabase project, and never on the production host.
 // Stop: Ctrl+C. They leave after 40 minutes.
@@ -84,17 +85,6 @@ async function claim(token, nick, slot, bid, color, steal) {
       line1: nick, line2: steal ? '빼앗았다' : '샀다', line3: '#QA봇',
       emoji: steal ? '⚔️' : '💰', bg_theme: 'cyber_navy', text_color: color,
     }),
-  });
-  const j = await r.json().catch(() => ({}));
-  return { ok: r.ok && j.ok !== false, error: j.error || j.err || r.status };
-}
-
-async function sell(token, nick, slot, amount) {
-  if (!trade) throw new Error('trade off');
-  const r = await fetch(HOST + '/rt/sell-coins', {
-    method: 'POST',
-    headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
-    body: JSON.stringify({ topic: TOPIC, nickname: nick, slot_id: slot, amount }),
   });
   const j = await r.json().catch(() => ({}));
   return { ok: r.ok && j.ok !== false, error: j.error || j.err || r.status };
@@ -187,13 +177,7 @@ async function market(token, name, color) {
     console.log(name, deal.offer.steal ? '강탈' : '매수', deal.offer.slot, deal.offer.bid, c.ok ? 'ok' : c.error, '보유', coins);
     return;
   }
-  const buyer = rows.find((b) => b.holder_id && Date.parse(b.expires_at) > Date.now() && String(b.holder_name || '').startsWith('QA봇') && b.holder_name !== name);
-  const amount = coins >= 80 ? 20 : 10;
-  if (buyer && coins >= amount + 30) {
-    const s = await sell(token, name, buyer.slot_id, amount);
-    console.log(name, '판매', buyer.holder_name, amount, s.ok ? 'ok' : s.error, '보유', coins);
-    return;
-  }
+  // No coin send to another bot's board: guests cannot send coins (the send route answers code 'starter'), so the step is skipped.
   console.log(name, '벌는 중', coins);
 }
 
@@ -226,7 +210,6 @@ if (process.argv.includes('--check')) {
   let sent = 0;
   globalThis.fetch = async () => { sent++; return { ok: true, json: async () => ({}) }; };
   await claim('t', 'QA봇1', 'STREET_1', 200, '#ffffff', false).catch(() => {});
-  await sell('t', 'QA봇1', 'STREET_1', 10).catch(() => {});
   await market('t', 'QA봇1', '#ffffff');
   globalThis.fetch = realFetch;
   if (sent) throw new Error('a request went out with trade off');

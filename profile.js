@@ -27,8 +27,11 @@ export function profileSpecies(p, local) {
   return p?.species_sure === false && got === 1 && mine > 3 ? mine : got;
 }
 
-export async function loadProfile() {
-  const r = await fetch('/rt/profile', { headers: { authorization: 'Bearer ' + await bearer() } });
+// local: this device's species, sent as a hint (?sp=). The Worker asks its account registry for a clamped choice of 4..10 only when the
+// database answers 1 and the hint is missing or above 3: a device on 1..3 has no such choice to recover, so its reads cost no registry call.
+export async function loadProfile(local) {
+  const sp = local == null ? '' : '?sp=' + setSpecies(local);
+  const r = await fetch('/rt/profile' + sp, { headers: { authorization: 'Bearer ' + await bearer() } });
   return r.json();
 }
 

@@ -3472,7 +3472,7 @@ export function createUI(root, hooks) {
         ? h('div', { class: 'field' }, h('label', null, '광고주에게 코인 보내기', h('span', { text: '정산된 코인 · 10 / 20 / 50' })),
           h('p', { class: 'note', text: '고른 전광판 주인의 지갑으로 내 코인이 그대로 넘어갑니다. 되돌려 받는 금액은 없어요.' }),
           // The send floor (worker.js floored): what the server will refuse, said before the player taps.
-          h('p', { class: 'note', text: hooks.isGuest?.() ? '손님은 코인을 보낼 수 없어요. 계정을 연결하면 처음 받은 440코인(시작 100 + 첫 방문 40 + 연결 보상 300)보다 더 모은 만큼 보낼 수 있어요.' : '처음 받은 440코인(시작 100 + 첫 방문 40 + 연결 보상 300)보다 더 모은 만큼만 보낼 수 있어요.' }), pick,
+          h('p', { class: 'note', text: hooks.isGuest?.() ? '손님은 코인을 보낼 수 없어요. 계정을 연결하면 선물로 받은 코인 580개보다 더 모은 만큼 보낼 수 있어요.' : '선물로 받은 코인 580개까지는 보낼 수 없어요. 그보다 더 모은 만큼만 보낼 수 있어요.' }), pick,
           h('div', { class: 'steps', style: { marginTop: '8px' } }, ...[10, 20, 50].map((n) => {
             const btn = h('button', { class: 'btn ghost', type: 'button', text: `${n}코인 보내기` });
             btn.addEventListener('click', async () => {

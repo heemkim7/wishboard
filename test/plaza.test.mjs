@@ -286,6 +286,17 @@ describe('times square plaza', { concurrency: false }, () => {
       const hello = sql3.db.prepare('select delta, n from coin where uid = ?').get('guest:new');
       assert.equal(hello.delta, 40);
       assert.equal(hello.n, 1);
+      // An account is no new visitor (its arrival coins came with its first guest): its hello is recorded, so the free first board opens
+      // (hasHello), and answered with 0; nothing is queued for it. An anonymous sign-in has a user: id too but is a guest, and is paid.
+      const acct = openSock(room3, 'user:5eed0000-0000-4000-8000-00000000ac01');
+      await room3.webSocketMessage(acct, JSON.stringify({ t: 'BONUS', kind: 'hello', amount: 40, nick: '계정' }));
+      await room3.webSocketMessage(acct, JSON.stringify({ t: 'BONUS', kind: 'hello', amount: 40, nick: '계정' }));
+      assert.equal(sql3.db.prepare('select count(*) c from coin where uid = ?').get('user:5eed0000-0000-4000-8000-00000000ac01').c, 0);
+      assert.equal(room3.hasHello('user:5eed0000-0000-4000-8000-00000000ac01'), true);
+      assert.deepEqual(msgs(acct).filter(m => m.t === 'PAY'), [{ t: 'PAY', kind: 'hello', amount: 0 }]);
+      const anon = openSock(room3, 'user:5eed0000-0000-4000-8000-00000000ac02'); room3.socks().get(anon).an = true;
+      await room3.webSocketMessage(anon, JSON.stringify({ t: 'BONUS', kind: 'hello', amount: 40, nick: '익명' }));
+      assert.equal(sql3.db.prepare('select delta from coin where uid = ?').get('user:5eed0000-0000-4000-8000-00000000ac02').delta, 40);
     } finally {
       Date.now = orig;
       globalThis.fetch = origFetch;
@@ -447,7 +458,7 @@ describe('times square plaza', { concurrency: false }, () => {
       assert.equal(syncs(bystander), 0);
       assert.equal(msgs(evicted).filter(m => m.t === 'TAKE').at(-1).victim, 'guest:evicted');
       assert.equal(msgs(landlord).filter(m => m.t === 'WORLD_UPDATE').at(-1).data.slot_id, 'PLOT_3');
-      // A guest sends nothing, with no row or with coins (test/merge-guard.test.mjs); an account sends what it holds above 400.
+      // A guest sends nothing, with no row or with coins (test/merge-guard.test.mjs); an account sends what it holds above 580.
       const sell = (headers = auth) => call('/rt/sell-coins', { method: 'POST', headers, body: JSON.stringify({ topic: 'chapel:square', slot_id: 'PLOT_3', amount: 10, nickname: '까마귀' }) });
       const early = await sell();
       assert.equal(early.status, 400); assert.equal((await early.json()).code, 'starter');
@@ -460,7 +471,7 @@ describe('times square plaza', { concurrency: false }, () => {
       const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url'), head = b64({ alg: 'ES256', kid: 'plaza-sell-kid' });
       const claims = b64({ sub: '22222222-3333-4444-5555-666666666666', iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 600, iss: 'https://yxddhpacuyaffaoutxjn.supabase.co/auth/v1', aud: 'authenticated' });
       const userTok = head + '.' + claims + '.' + Buffer.from(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, pair.privateKey, Buffer.from(head + '.' + claims))).toString('base64url');
-      world.wallet = { coins: 450 };
+      world.wallet = { coins: 590 };
       const sold = await sell({ authorization: 'Bearer ' + userTok, 'content-type': 'application/json' });
       assert.equal(sold.status, 200);
       const soldBody = await sold.json();

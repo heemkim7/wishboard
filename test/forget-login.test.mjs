@@ -114,7 +114,7 @@ async function pgRaw(schemaText, auth = true) {
   const db = new PGlite(); await db.exec(ROLES); if (auth) await db.exec(AUTH); await db.exec(schemaText);
   await db.query('UPDATE public.app_secrets SET key_value = $1 WHERE key_name = $2', [KEY, 'FLUSH_KEY']); return db;
 }
-const REAL = ['profile_read', 'coin_batch', 'spend_plaza', 'grant_coins', 'merge_guest_account', 'withdraw_account', 'forget_login'];
+const REAL = ['profile_read', 'coin_batch', 'spend_plaza', 'grant_coins', 'merge_guest_account', 'withdraw_account', 'forget_login', 'save_species', 'set_nickname', 'set_ring_color'];
 async function pgDb() {
   const db = await pgRaw(read('schema.sql'));
   return {
@@ -317,7 +317,12 @@ function after(label, makeDb, skip) {
         const a = await s.user('token.after@example.com'); await s.link(a, await s.guest());
         s.clock.add(5000); assert.deepEqual((await s.withdraw(a)).body, { ok: true, login: 'deleted' });
         const prof = await s.get('/rt/profile', a.token);
-        if (db.pg) { assert.equal(prof.status, 502); assert.equal(await s.coins(a.id), null); await s.earn(a.id, 300); assert.equal(await s.coins(a.id), null); } // wallets_need_login: no login, no row
+        // wallets_need_login: no login, no row. The profile functions say so ({ ok: false, error: 'login' }) and the Worker answers a plain 401
+        // gone, not a 502 (they used to fail on the profiles foreign key). The model keeps no logins, so this part is the database's.
+        const GONE = { ok: false, err: 'gone', error: '탈퇴한 계정이에요. 다시 로그인해 주세요.' };
+        if (db.pg) { assert.equal(prof.status, 401); assert.deepEqual(await prof.json(), GONE); assert.equal(await s.coins(a.id), null); await s.earn(a.id, 300); assert.equal(await s.coins(a.id), null);
+          for (const body of [{ species: 2 }, { nickname: '돌아온이름' }, { color: '#112233' }]) { const r = await s.post('/rt/profile', body, a.token); assert.equal(r.status, 401, JSON.stringify(body)); assert.deepEqual(await r.json(), GONE); }
+          assert.equal(await s.coins(a.id), null); }
         const g = await s.guest(), res = await s.post('/rt/auth/merge', { guest_id: g.id, guest_token: g.token, nickname: '' }, a.token);
         assert.equal(res.status, 401); assert.equal((await res.json()).err, 'gone'); assert.equal(await s.coins(g.id), 100);
       } finally { s.done(); }
