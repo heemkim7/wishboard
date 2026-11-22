@@ -112,6 +112,14 @@ describe('the board sheet and the team sheets', () => {
     assert.doesNotMatch(team, /입찰|점령|빼앗|포인트를 (쓰면|더 쓰면)/);
     assert.match(team, /명당은 포인트나 돈으로 살 수 없어요/);
   });
+  it('the team sheets never hand replaceChildren a null (the DOM writes it out as the text "null")', () => {
+    for (let i = team.indexOf('replaceChildren('); i >= 0; i = team.indexOf('replaceChildren(', i + 1)) {
+      let depth = 0, j = i + 'replaceChildren'.length;
+      for (; j < team.length; j++) { const c = team[j]; if (c === '(') depth++; else if (c === ')' && --depth === 0) break; }
+      const args = team.slice(i, j + 1);
+      if (/:\s*null\b/.test(args)) assert.match(args, /\.filter\(Boolean\)/, 'a null branch reaches replaceChildren: ' + args.slice(0, 80));
+    }
+  });
   it('the 🏆 sheet is 응원 순위 (people, participation, goals) and the HUD board shows today\'s teams', () => {
     const r = ui.slice(ui.indexOf('  function openRanks('), ui.indexOf('  function openCredits() {'));
     assert.match(r, /tabBtn\('today', '오늘 응원'\), tabBtn\('rate', '참여율'\), tabBtn\('week', '이번 주 목표'\)/);

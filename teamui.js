@@ -186,7 +186,7 @@ export function createTeamUI(k) {
       catch (e) { err.textContent = e?.message || TEAM_ERR.down; err.hidden = false; make.disabled = false; }
     });
     const guest = !!me?.guest;
-    box.replaceChildren(
+    box.replaceChildren(...[ // replaceChildren writes a null out as the text "null", so the empty branches are dropped
       h('p', { class: 'team-line', text: '응원 팀은 팬덤, 동네, 친구 모임이에요. 하루에 서로 다른 30명이 응원하면 다음 날 명당(코너 화면, 메인 타워)에 팀 이름이 걸려요. 사람 수로만 정하고, 포인트로는 살 수 없어요.' }),
       me?.hopAt ? h('p', { class: 'team-why', text: `팀을 나온 지 24시간이 지나면 다른 팀에 들어갈 수 있어요 · ${new Date(me.hopAt).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}부터` }) : null,
       h('div', { class: 'team-sec', text: '팀 찾기' }), find, found,
@@ -194,7 +194,7 @@ export function createTeamUI(k) {
       h('div', { class: 'team-sec', text: '새 팀 만들기' }),
       guest ? h('p', { class: 'team-why', text: TEAM_ERR.link }) : h('div', { class: 'team-form' }, name, make, err),
       guest ? h('button', { class: 'btn ghost', type: 'button', style: { width: '100%' }, onclick: () => hooks.openLogin?.() }, ...ic('user', '계정 연결하기')) : null,
-      rules());
+      rules()].filter(Boolean));
     hooks.teamRanks?.('').then((r) => { const list = (r?.today || []).slice(0, 10); top.replaceChildren(list.length ? rows(list, (x) => `${num(x.n)}명`) : h('p', { class: 'note', text: '오늘은 아직 응원한 팀이 없어요. 첫 팀이 되어 보세요.' })); }).catch((e) => fail(top, e));
   }
   /** My team (or how to find / make one). */
