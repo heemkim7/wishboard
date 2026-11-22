@@ -460,7 +460,7 @@ describe('framing a board', () => {
     assert.equal(/camera\.fov/.test(pose), false); // not the FOV in mid-ease
     // focus / claim, lounge (both orientations) and the photo frame all ask with clear = true
     assert.match(w, /const pose = slotPose\(slotId, 18, true\);/);
-    assert.match(w, /const pose = watchPortrait \? framePose\(id\) : slotPose\(id, 18, true\);/);
+    assert.match(w, /const pose = framePose\(id\);/);
     assert.match(w, /return slotPose\(slotId, d, true, true\);/);
     // the mount's size in metres, parent scale included
     const s = read('ts3d/screens.js');
@@ -672,7 +672,7 @@ describe('deep link and lounge wiring', () => {
   it('the lounge tour chains board to board and refuses in a taxi', () => {
     const w = read('timesSquare3d.js');
     const tour = w.slice(w.indexOf('function tourNext()'), w.indexOf('function taxiCanSit('));
-    assert.match(tour, /startCine\(pose\.cam, pose\.look, \{ dur: first \? 1100 : 1800, fov: pose\.fov \}\);/);
+    assert.match(tour, /startCine\(pose\.cam, pose\.look, \{ dur: first \? 1100 : 1800, fov \}\);/);
     assert.equal(/until/.test(tour), false); // no timed return between boards
     assert.match(w, /startLounge\(\) \{\n\s+if \(drive\) \{ tell\('운전 중에는 내린 뒤에 볼 수 있어요'\); return false; \}/);
     const main = read('main.js');

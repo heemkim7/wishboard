@@ -1337,6 +1337,79 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     html.touch .wal-quick .btn.wide { grid-column: 1 / -1; }
     html.touch .sheet .phone-only { display: flex; width: 100%; margin-top: 12px; justify-content: center; }
   }
+  /* ---------- Phone pass (2026-11-23, after the owner's phone review) ----------
+     Last in the sheet on purpose: at equal specificity these win. What it settles: nothing in the HUD lies on anything
+     else, 멍때리기 leaves the boards alone, a sheet's text and buttons have room, button labels never spill out of their
+     button, inputs never zoom the page (iOS zooms into a field whose text is under 16px), and a notice shown while a
+     sheet is open no longer covers the sheet's title. */
+
+  /* 속보 on a touch screen: a short line under the left column (ui.js keeps the column's bottom edge in --hudl-b), clear
+     of the map column on the right. It used to squeeze into the bottom lane under the prompt card, against the edge. */
+  html.touch .news { top: calc(var(--hudl-b, 128px) + 8px); bottom: auto; left: calc(10px + var(--safe-l)); right: calc(78px + var(--safe-r)); width: auto; max-width: 420px; height: 30px; margin: 0; transform: translateY(-6px); }
+  html.touch .news.show { transform: none; }
+  html.touch .news .body strong { line-height: 28px; }
+  /* A phone on its side has no height to spare under the left column: there the line is the top centre banner, between
+     the left column (at most min(240px, 40vmax) wide) and the icon bar (150px, 10px in). */
+  @media (orientation: landscape) and (max-height: 520px) {
+    html.touch .news { top: calc(10px + var(--safe-t)); left: calc(min(240px, 40vmax) + 18px + var(--safe-l)); right: calc(168px + var(--safe-r)); margin: 0 auto; }
+  }
+  /* An upright phone: the street name under the minimap was always cut ("브로드웨…"); the minimap says where you are. */
+  @media (orientation: portrait) and (max-width: 599px) { html.touch .hud-r .locpill { display: none; } }
+  /* The goal pill and the guest pill: a whole line of text and a thumb-sized height. */
+  @media (orientation: portrait) and (max-width: 599px), (orientation: landscape) and (max-height: 520px) {
+    /* The closed icon bar holds four: 전광판 걸기, 오늘의 소원, 선물 전광판 (gift.js puts it after the wish button) and ⋯.
+       With 응원 순위 as a fifth it was 188px wide and lay on the 응원 포인트 number of the identity row; it is in ⋯ now. */
+    html.touch .tools:not(.open) .tool-rank { display: none; }
+    html.touch .hud-l > .nextgoal:not(.task) { min-height: 30px; line-height: 18px; }
+    html.touch .hud-l > .guestwarn .btn { height: 32px; }
+  }
+
+  /* ⋯ on a touch screen: a labelled menu under the bar instead of a grid of bare icons (two speaker-like icons, a crown, a
+     building: nobody could tell them apart). Each row is the same button as before, its aria-label written beside the
+     icon; ⋯ itself becomes 닫기 at the bottom. It lies over the minimap while open, like any menu. */
+  html.touch .tools.open { position: absolute; top: 0; right: 0; z-index: 9; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; width: min(300px, calc(100vw - 20px - var(--safe-l) - var(--safe-r))); max-width: none; height: auto; padding: 8px; border-radius: 18px; background: var(--surface); border: 1px solid var(--line-strong); box-shadow: var(--shadow-sheet); }
+  html.touch .tools.open > .btn { position: relative; width: auto; height: 44px; justify-content: flex-start; gap: 8px; padding: 0 10px; border-radius: 12px; }
+  html.touch .tools.open > .btn::after { content: attr(aria-label); min-width: 0; font: 700 13px/1.2 var(--font); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  html.touch .tools.open > .tool-fold { grid-column: 1 / -1; order: 99; justify-content: center; }
+  html.touch .tools.open > .tool-fold::after { content: "닫기"; }
+
+  /* 멍때리기: the boards are the whole view. One small line at the top says what is happening; 그만 is the only button.
+     The stick still works where it was (moving ends the tour), it is just not drawn. */
+  .stay-lounge { top: calc(10px + var(--safe-t)); width: auto; max-width: calc(100% - 24px); padding: 7px 14px; border-radius: 999px; font: 700 12px/1.3 var(--font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #ui.lounging > :is(.hud-r, .prompt, .waypill, .stay-focus, .reacts, .joy, .acts, .help) { visibility: hidden !important; }
+  #ui.lounging .dock > :not(.stay-lounge-btn) { display: none !important; }
+  html:not(.touch) #ui.lounging .dock { background: none; border-color: transparent; box-shadow: none; }
+  /* On a touch screen 그만 보기 is one pill in the bottom right corner, off the boards (it was a round button on their
+     right edge); the notices take the bottom edge left of it. */
+  html.touch #ui.lounging .dock { left: auto; right: calc(16px + var(--safe-r)); top: auto; bottom: calc(14px + var(--safe-b)); transform: none; }
+  html.touch #ui.lounging .dock button.stay-lounge-btn { flex-direction: row; gap: 6px; width: auto; height: 44px; padding: 0 18px; border-radius: 999px; }
+  html.touch #ui.lounging .dock button.stay-lounge-btn .l { display: block; font-size: 14px; line-height: 1; color: var(--text); }
+  html.touch #ui.lounging .dock button.stay-lounge-btn .e svg.ico { width: 18px; height: 18px; }
+  body:has(#ui.lounging) .toasts { bottom: calc(76px + var(--safe-b)); }
+  html.touch body:has(#ui.lounging) .toasts { left: calc(16px + var(--safe-l)); right: calc(150px + var(--safe-r)); bottom: calc(14px + var(--safe-b)) !important; } /* over the waypoint-pill rules of a phone on its side */
+  html.touch body:has(#ui.lounging) .toasts > * { align-self: center; margin-left: 0; max-width: 100%; translate: none; }
+  body:has(#ui.lounging) .toasts > :not(.toast) { display: none !important; }
+
+  /* Sheets on a touch screen. As tall as the visible screen allows (a short sheet stays short); while a notice is up the
+     sheet leaves it a strip at the bottom of the visible screen (above the keyboard), where the notice now shows. */
+  html.touch .sheet { max-height: calc(var(--app-h, 100dvh) - 20px - var(--safe-t) - var(--safe-b)); }
+  html.touch body.has-sheet:has(.toasts > .toast) .sheet { max-height: calc(var(--app-h, 100dvh) - 84px - var(--safe-t) - var(--safe-b)); }
+  html.touch body.has-sheet .toasts { top: calc(var(--app-top, 0px) + var(--app-h, 100dvh) - 10px - var(--safe-b)); bottom: auto !important; left: calc(10px + var(--safe-l)); right: calc(10px + var(--safe-r)); flex-direction: column-reverse; translate: 0 -100%; }
+  /* Fields: 16px text so the page does not zoom in when one is tapped. */
+  html.touch :is(.input, textarea, select) { font-size: 16px; }
+  html.touch .bid .input { font-size: 20px; }
+  html.touch .lines .input { height: 44px; }
+  /* Buttons in a sheet: at least a thumb tall, the label centred and allowed to wrap instead of running out of the button
+     (lists of choices, the shop rows and the big call to action keep their own layout). */
+  html.touch .sheet :where(.btn:not(.icon, .pick, .shop-open, .cta)) { height: auto; min-height: 44px; padding-top: 9px; padding-bottom: 9px; justify-content: center; text-align: center; white-space: normal; line-height: 1.3; font-size: 14px; }
+  html.touch .sheet .callout > .btn { display: flex; width: 100%; margin-top: 10px; }
+  /* Room between a line of text and the buttons under it. */
+  html.touch .sheet :is(p, .note, .callout, .team-why, .team-line) + :is(.btn, .shot-row, .wiz-nav) { margin-top: 12px; }
+  /* Tabs in one row that scrolls sideways (the half-shown last tab says there is more), never two ragged rows. */
+  html.touch .sheet .seg { flex-wrap: nowrap; max-width: 100%; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
+  html.touch .sheet .seg::-webkit-scrollbar { display: none; }
+  html.touch .sheet .seg button { flex: none; min-height: 40px; white-space: nowrap; }
+  html.touch .sheet .chips button { min-height: 36px; }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
   }
@@ -1405,7 +1478,7 @@ const CLARITY_ID = '';
 <script>
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js?v=10');
 </script>
-<script type="module" src="./legal.js?v=202611231200"></script>
-<script type="module" src="./main.js?v=202611231200"></script>
+<script type="module" src="./legal.js?v=202611230850"></script>
+<script type="module" src="./main.js?v=202611230850"></script>
 </body>
 </html>

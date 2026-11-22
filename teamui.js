@@ -169,13 +169,13 @@ export function createTeamUI(k) {
   }
   // No team yet: what a team is, find one, today's top teams, make one (accounts only).
   function discover(box, me, rerender) {
-    const find = h('input', { class: 'input', type: 'search', maxLength: 16, placeholder: '팀 이름으로 찾기', 'aria-label': '팀 이름으로 찾기' });
+    const find = h('input', { class: 'input', type: 'search', maxLength: 16, placeholder: '팀 이름으로 찾기', 'aria-label': '팀 이름으로 찾기', autocomplete: 'off', enterkeyhint: 'search' });
     const found = h('div');
     const top = h('div', null, loading());
     let timer = 0;
     find.addEventListener('input', () => { clearTimeout(timer); const q = find.value.trim(); if (!q) { found.replaceChildren(); return; }
       timer = setTimeout(async () => { try { const r = await hooks.teamRanks?.(q); const list = r?.found || []; found.replaceChildren(list.length ? rows(list, (x) => `팀원 ${num(x.members)}`) : h('p', { class: 'note', text: '그 이름의 팀이 없어요. 새로 만들 수 있어요.' })); } catch (e) { fail(found, e); } }, 350); });
-    const name = h('input', { class: 'input', maxLength: PRIME.nameMax, placeholder: '팀 이름 (16자) 예: ○○ 응원단, 망원동 친구들', 'aria-label': '팀 이름' });
+    const name = h('input', { class: 'input', maxLength: PRIME.nameMax, placeholder: '팀 이름 (16자) 예: ○○ 응원단, 망원동 친구들', 'aria-label': '팀 이름', autocomplete: 'off', enterkeyhint: 'done' });
     const err = h('p', { class: 'note login-err', role: 'alert', hidden: true });
     const make = h('button', { class: 'btn gold', type: 'button', style: { width: '100%' } }, ...ic('plus', '응원 팀 만들기'));
     make.addEventListener('click', async () => {

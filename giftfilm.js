@@ -5,7 +5,7 @@
 // sought and recorded the same way each time; the scene is seeded by the board id.
 // recordCanvas is shared with the plaza's 3D recording (gift.js): MP4 where MediaRecorder makes it, WebM otherwise.
 import { OCCASIONS, pickRecordType } from './giftrules.js';
-import { paintGift, themeOf, seeded, GIFT_SANS, fitSize } from './giftart.js?v=202611231200';
+import { paintGift, themeOf, seeded, GIFT_SANS, fitSize } from './giftart.js?v=202611230850';
 
 export const FILM_MS = 15000;
 const ease = (u) => (u <= 0 ? 0 : u >= 1 ? 1 : u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2);

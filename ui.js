@@ -1,36 +1,36 @@
 // Plaza UI: glass HUD, wallet, news wire, emote dock, prompts, bungeo-ppang timing game, K-POP rhythm game,
 // taxi HUD, city map + minimap, billboard / plot / ATM / settings / credits sheets, onboarding, touch controls, SFX.
-import { paintBillboard, paintNeonSign, THEMES, makeCanvas, chars, fontsReady, tierOf, boardPhoto, photoReady, paintNameTag, paintRingFx, paintFrameSwatch } from './ts3d/art.js?v=202611231200';
-import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, LANDMARKS } from './ts3d/layout.js?v=202611231200';
+import { paintBillboard, paintNeonSign, THEMES, makeCanvas, chars, fontsReady, tierOf, boardPhoto, photoReady, paintNameTag, paintRingFx, paintFrameSwatch } from './ts3d/art.js?v=202611230850';
+import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, LANDMARKS } from './ts3d/layout.js?v=202611230850';
 import { BALANCE, PAY, chainBoost, floorOf, slotName, josa, STREET_N, SLOT_SOON, slotOpen, SHOP_KINDS, shopTiles, shopItem, isPrimeSlot } from './balance.js';
-import { createTeamUI } from './teamui.js?v=202611231200';
-import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, tutorialTap, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611231200';
+import { createTeamUI } from './teamui.js?v=202611230850';
+import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, tutorialTap, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611230850';
 import { WISH, WISH_ERR, cleanWish, wishRejected, wishShareText } from './wish.js';
 import { botNick } from './league.js';
-import { backFields, returnGap } from './growth.js?v=202611231200';
-import { A2HS_KEY, VISITS_KEY, bumpVisits, isStandalone, isIosSafari, installMode, installDue, INSTALL_COPY, INSTALL_CRAMPED_Q } from './install.js?v=202611231200';
-import { RECAP_KEY, RECAP_SHOWN_KEY, noteDay, noteHeld, noteHearts, noteClaim as recapClaim, recapDue, recapLines, recapShareText, weekOf } from './recap.js?v=202611231200';
+import { backFields, returnGap } from './growth.js?v=202611230850';
+import { A2HS_KEY, VISITS_KEY, bumpVisits, isStandalone, isIosSafari, installMode, installDue, INSTALL_COPY, INSTALL_CRAMPED_Q } from './install.js?v=202611230850';
+import { RECAP_KEY, RECAP_SHOWN_KEY, noteDay, noteHeld, noteHearts, noteClaim as recapClaim, recapDue, recapLines, recapShareText, weekOf } from './recap.js?v=202611230850';
 import { nowMs } from './live.js';
-import { cardUrl, vipShareLink, composeWishShot, kakaoFeed, kakaoSend, loadKakao, invited } from './share.js?v=202611231200';
+import { cardUrl, vipShareLink, composeWishShot, kakaoFeed, kakaoSend, loadKakao, invited } from './share.js?v=202611230850';
 import { inviteView } from './invite.js';
-import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611231200';
-import { EMOTES, REACTIONS, AVATAR_COLORS, AVATAR_COLOR_NAMES, SPECIES } from './ts3d/avatars.js?v=202611231200';
-import { trackEvent, statsOff, statsGpc, setStatsOff } from './analytics.js?v=202611231200';
+import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611230850';
+import { EMOTES, REACTIONS, AVATAR_COLORS, AVATAR_COLOR_NAMES, SPECIES } from './ts3d/avatars.js?v=202611230850';
+import { trackEvent, statsOff, statsGpc, setStatsOff } from './analytics.js?v=202611230850';
 import { CHEER_PHRASES, SITE, accountLabel, allowedLink, blockedText, linkedActor } from './plaza-account.js';
-import { codeStart, codeStep, codeView, otpField } from './mailcode.js?v=202611231200';
-import { policyDoc } from './legal.js?v=202611231200';
-import { setOperator, operatorInfo } from './legal.js?v=202611231200';
+import { codeStart, codeStep, codeView, otpField } from './mailcode.js?v=202611230850';
+import { policyDoc } from './legal.js?v=202611230850';
+import { setOperator, operatorInfo } from './legal.js?v=202611230850';
 import { SUPPORT_KINDS, SUPPORT_TEXT, SUPPORT_CONSENT, SUP, supportFault, textLen, maintOf, maintLines, operatorLine } from './opsrules.js';
-import { subscribePush, resendPush } from './push.js?v=202611231200';
-import { bindSfx, bindMusic, duckMusic, play, setSound, haptic, musicVisible } from './audio.js?v=202611231200';
-import { createBgm } from './bgm.js?v=202611231200';
-import { stickVec, isTouchUI, STICK_W, STICK_H, STICK_THROW, STICK_ENGAGE, bakeFlip, bakeBest, BAKE_FLIPS, BAKE_ROUND_MS, COMPACT_HUD_Q } from './interact.js?v=202611231200';
+import { subscribePush, resendPush } from './push.js?v=202611230850';
+import { bindSfx, bindMusic, duckMusic, play, setSound, haptic, musicVisible } from './audio.js?v=202611230850';
+import { createBgm } from './bgm.js?v=202611230850';
+import { stickVec, isTouchUI, STICK_W, STICK_H, STICK_THROW, STICK_ENGAGE, bakeFlip, bakeBest, BAKE_FLIPS, BAKE_ROUND_MS, COMPACT_HUD_Q } from './interact.js?v=202611230850';
 import { AD, AD_TEMPLATES, adSums, adBars } from './adreport.js';
 import { adScreenName, linkHost } from './adsale.js';
-import { qrEncode, paintQr } from './qr.js?v=202611231200';
-import { icon } from './uiicons.js?v=202611231200';
-import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, proofOffers, proofPlan, TOAST } from './overlay.js?v=202611231200';
-import { linesFault, LINES_ERR } from './ftue.js?v=202611231200'; // the board-line checks
+import { qrEncode, paintQr } from './qr.js?v=202611230850';
+import { icon } from './uiicons.js?v=202611230850';
+import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, proofOffers, proofPlan, TOAST } from './overlay.js?v=202611230850';
+import { linesFault, LINES_ERR } from './ftue.js?v=202611230850'; // the board-line checks
 
 const LEVELS = [
   { src: 'icons/lot.jpg', t: '빈 땅' },
@@ -330,6 +330,15 @@ export function createUI(root, hooks) {
   const idCoin = h('button', { class: 'id-coin', type: 'button', 'aria-label': '내 응원 포인트', title: '응원 포인트 · 정산 안내', onclick: () => openWalletInfo() },
     h('img', { src: 'icons/coin.jpg?v=2', alt: '' }), idAmt, idPend);
   root.append(h('div', { class: 'hud-l' }, h('div', { class: 'glass ident' }, profile, idCoin, channelCard), guestWarn, walletEl, nineEl, nextLineEl, liveBoard));
+  // On a touch screen the 속보 line sits under the left column (index.html 'Phone pass'). The column grows and shrinks (the
+  // guest pill, the goal, the quests), so its bottom edge, in #ui's own coordinates, is kept in --hudl-b.
+  {
+    const col = root.querySelector('.hud-l');
+    const put = () => { if (col) root.style.setProperty('--hudl-b', Math.round(col.offsetTop + col.offsetHeight) + 'px'); };
+    if (col && typeof ResizeObserver === 'function') new ResizeObserver(put).observe(col);
+    addEventListener('resize', put);
+    put();
+  }
   // Is the compact phone HUD on? Only on a touch device (html.touch) inside COMPACT_HUD_Q; the goal line moves with it.
   const compactMq = matchMedia(COMPACT_HUD_Q);
   const compactNow = () => coarse && compactMq.matches;
@@ -404,7 +413,7 @@ export function createUI(root, hooks) {
         inboxBtn,
         h('button', { class: 'btn icon tool-more tool-adv', type: 'button', 'aria-label': 'VIP 메뉴', title: 'VIP 메뉴', onclick: () => openVip() }, icon('crown')),
         h('button', { class: 'btn icon tool-more', type: 'button', 'aria-label': '사진 찍어 공유', title: '사진 찍어 공유', onclick: () => openShot() }, icon('camera')),
-        h('button', { class: 'btn icon', type: 'button', 'aria-label': '응원 순위', title: '응원 순위', onclick: () => openRanks() }, icon('trophy')),
+        h('button', { class: 'btn icon tool-rank', type: 'button', 'aria-label': '응원 순위', title: '응원 순위', onclick: () => openRanks() }, icon('trophy')),
         h('button', { class: 'btn icon tool-more tool-adv', type: 'button', 'aria-label': '내 건물 짓기', title: '내 건물 짓기', onclick: () => openHub() }, icon('building')),
         soundBtn,
         fsBtn,
@@ -2582,7 +2591,7 @@ export function createUI(root, hooks) {
       const inks = h('div', { class: 'swatches' });
       const inkIn = h('input', { type: 'color', 'aria-label': '글자색 직접 선택' });
       const lines = [0, 1, 2].map(i => h('input', { class: 'input', maxLength: 16, placeholder: ['메인 문구 (16자)', '둘째 줄 (16자)', '셋째 줄 (16자)'][i] }));
-      const urlIn = h('input', { class: 'input', type: 'url', placeholder: 'https://threads.net/...' });
+      const urlIn = h('input', { class: 'input', type: 'url', placeholder: 'https://threads.net/...', 'aria-label': '연결할 링크', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'done' });
       // Inline errors: one line under the field or button they are about (the same class as the sign-in sheet's).
       const errLine = () => h('p', { class: 'note login-err', role: 'alert', hidden: true });
       const linesErr = errLine(), toErr = errLine(), urlErr = errLine(), goErr = errLine();
@@ -3517,7 +3526,7 @@ export function createUI(root, hooks) {
 
   function openProfile() {
     openSheet(['user', '내 캐릭터'], null, (host) => {
-      const input = h('input', { class: 'input', maxLength: 16, value: hooks.nick(), placeholder: '닉네임 (16자)' });
+      const input = h('input', { class: 'input', maxLength: 16, value: hooks.nick(), placeholder: '닉네임 (16자)', 'aria-label': '닉네임', autocomplete: 'off', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'done' });
       let color = hooks.color();
       let species = hooks.species();
       const me = sheet; // a late answer must not close a sheet opened after this one
@@ -3815,7 +3824,7 @@ export function createUI(root, hooks) {
         inputs.forEach((el, i) => host.append(h('label', { class: 'claimline' }, el, counts[i])));
         host.append(linesErr);
         // Shop templates and a link: folded for a newcomer (and while that is still undecided), open for everyone else. The filled lines stay editable and pass the same checks.
-        const linkIn = h('input', { class: 'input', type: 'url', placeholder: 'https://smartstore.naver.com/...', value: model.link || '', 'aria-label': '가게 링크' });
+        const linkIn = h('input', { class: 'input', type: 'url', placeholder: 'https://smartstore.naver.com/...', value: model.link || '', 'aria-label': '가게 링크', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'done' });
         linkIn.addEventListener('input', () => say(linkErr, ''));
         const more = h('details', { class: 'more', open: newbieOn === false || !!model.link },
           h('summary', { text: '가게·행사 예시 문구와 링크' }),
@@ -4222,7 +4231,7 @@ export function createUI(root, hooks) {
     let color = hooks.color();
     let species = hooks.species();
     const known = hooks.hasSession?.();
-    const nick = h('input', { class: 'input', maxLength: 16, value: hooks.nick(), placeholder: '닉네임', 'aria-label': '닉네임' });
+    const nick = h('input', { class: 'input', maxLength: 16, value: hooks.nick(), placeholder: '닉네임', 'aria-label': '닉네임', autocomplete: 'off', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'done' });
     const go = h('button', { class: 'btn enter-go pulse', type: 'button', text: bootLabel || '입장하기' });
     const nickErr = h('p', { class: 'note', role: 'alert', hidden: true }); // on the boot card: a toast would sit under it
     bootGo = go;
@@ -4801,7 +4810,7 @@ export function createUI(root, hooks) {
     trackEvent('vip_modal_open');
     promptLink('vip');
     openSheet(['crown', '공유와 스폰서 코드'], 'SPONSOR', (host) => {
-      const code = h('input', { class: 'input', maxLength: 32, placeholder: '8자리 스폰서 코드', 'aria-label': '스폰서 코드' });
+      const code = h('input', { class: 'input', maxLength: 32, placeholder: '8자리 스폰서 코드', 'aria-label': '스폰서 코드', autocomplete: 'off', autocapitalize: 'characters', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'go' });
       // The share bonus is for accounts (POST /rt/share-bonus answers a guest 403 code 'account'). A guest sees that, a button to the account
       // sheet, and a plain share button that asks for no bonus.
       const shareGuest = accountView.ready && accountView.guest && !accountView.linked;
@@ -4860,7 +4869,7 @@ export function createUI(root, hooks) {
         h('div', { class: 'hub' },
           vipLink,
           h('div', { class: 'vipcard' }, h('h4', null, ...withIcon('gift', '친구에게 링크 공유하고 +300')),
-            h('p', { text: shareGuest ? `${SHARE_ACCOUNT} 하루 한 번, 오늘 내 소원이나 내 전광판 링크를 보내면 바로 들어옵니다.` : '계정 전용, 하루 한 번. 오늘 내 소원이나 내 전광판 링크를 보내면 포인트가 바로 들어옵니다.' }),
+            h('p', { text: shareGuest ? `${SHARE_ACCOUNT}. 하루 한 번, 오늘 내 소원이나 내 전광판 링크를 보내면 바로 들어와요.` : '계정 전용, 하루 한 번. 오늘 내 소원이나 내 전광판 링크를 보내면 포인트가 바로 들어옵니다.' }),
             shareLink, share, shareBox),
           h('div', { class: 'vipcard' }, h('h4', null, ...withIcon('key', 'VIP 스폰서 코드')), h('p', { text: '코드가 맞으면 응원 포인트 10,000이 들어와요. 명당(메인 타워와 큰 화면)은 응원 팀 사람 수로만 정해서 포인트로는 걸 수 없어요.' }), code, redeem),
           h('div', { class: 'vipcard' }, h('h4', null, ...withIcon('briefcase', '스폰서 안내')), h('p', { text: '현금 결제는 없어요. 안내 페이지만 엽니다.' }), ask, askNote),
@@ -5773,9 +5782,10 @@ export function createUI(root, hooks) {
     root.classList.toggle('lounging', !!on);
     loungeBtn.classList.toggle('on', !!on);
     const label = loungeBtn.querySelector('.l');
-    if (label) label.textContent = on ? '그만' : '멍때리기';
+    if (label) label.textContent = on ? '그만 보기' : '멍때리기';
     loungeN = n || 0;
-    if (on) setIconText(loungeEl, 'coffee', `야경 감상 중. 전광판은 8초마다 알아서 바뀝니다. (${Math.round(PAY.lounge.gapMs / 1000)}초마다 +${PAY.lounge.base} 포인트 | 누적 +${loungeN})`);
+    // One short line at the top of the screen (index.html .stay-lounge): what is on, and what it has paid so far.
+    if (on) setIconText(loungeEl, 'coffee', `전광판 관람 중 · ${Math.round(PAY.lounge.gapMs / 1000)}초마다 +${PAY.lounge.base} · 누적 +${loungeN}`);
   }
   function paintQuests() {
     const d = today();

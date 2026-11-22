@@ -9,28 +9,28 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { toNetUnits, fromNetUnits } from './net.js?v=202611231200';
+import { toNetUnits, fromNetUnits } from './net.js?v=202611230850';
 import { walkerPoints } from './ts3d/walkers.js';
-import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, SKIP_ZONES, NO_PROPS, NO_TREES, FAR_CLUSTERS, LANDMARKS, groundHeight, onStairs, fountainSpot } from './ts3d/layout.js?v=202611231200';
+import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, SKIP_ZONES, NO_PROPS, NO_TREES, FAR_CLUSTERS, LANDMARKS, groundHeight, onStairs, fountainSpot } from './ts3d/layout.js?v=202611230850';
 import { BALANCE, PLAY, chainsOf, slotName } from './balance.js';
 import { isSlotId, STREET_N, shopItem, equippedOf, EQUIP_MAX } from './balance.js';
-import { kitMaterials } from './ts3d/kit.js?v=202611231200';
-import { createReflection } from './ts3d/ground.js?v=202611231200';
-import { createBoards, createAdScreens, screenTime } from './ts3d/screens.js?v=202611231200';
-import { loadNYC, ROAD } from './ts3d/nyc.js?v=202611231200';
-import { createWorld, FAR_LAYER } from './ts3d/world.js?v=202611231200';
-import { createTraffic } from './ts3d/traffic.js?v=202611231200';
-import { buildTimesSquare } from './ts3d/timesq.js?v=202611231200';
-import { claimRockefeller, buildRockefeller } from './ts3d/rockefeller.js?v=202611231200';
-import { claimIcons, buildIcons } from './ts3d/icons.js?v=202611231200';
-import { buildLandmarks } from './ts3d/landmarks.js?v=202611231200';
-import { createAvatars, EMOTES, REACTIONS, AVATAR_COLORS, STARTER_COLORS, speciesId } from './ts3d/avatars.js?v=202611231200';
-import { createPouchKit } from './ts3d/pouch.js?v=202611231200';
-import { seesAvatar, prefetchDelay, prefetchIds } from './ts3d/loadplan.js?v=202611231200';
-import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, paintLabel, fontsReady, chars, hashStr, FRAME_FX } from './ts3d/art.js?v=202611231200';
-import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=202611231200';
-import { taxiExit, EXIT_SLOW, nextOfferDelay, fareWait } from './interact.js?v=202611231200';
-import { RETURN_MS, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, portraitFov, fitDistance, reverseTime, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange, boardVantage, facesBlock } from './camrig.js?v=202611231200';
+import { kitMaterials } from './ts3d/kit.js?v=202611230850';
+import { createReflection } from './ts3d/ground.js?v=202611230850';
+import { createBoards, createAdScreens, screenTime } from './ts3d/screens.js?v=202611230850';
+import { loadNYC, ROAD } from './ts3d/nyc.js?v=202611230850';
+import { createWorld, FAR_LAYER } from './ts3d/world.js?v=202611230850';
+import { createTraffic } from './ts3d/traffic.js?v=202611230850';
+import { buildTimesSquare } from './ts3d/timesq.js?v=202611230850';
+import { claimRockefeller, buildRockefeller } from './ts3d/rockefeller.js?v=202611230850';
+import { claimIcons, buildIcons } from './ts3d/icons.js?v=202611230850';
+import { buildLandmarks } from './ts3d/landmarks.js?v=202611230850';
+import { createAvatars, EMOTES, REACTIONS, AVATAR_COLORS, STARTER_COLORS, speciesId } from './ts3d/avatars.js?v=202611230850';
+import { createPouchKit } from './ts3d/pouch.js?v=202611230850';
+import { seesAvatar, prefetchDelay, prefetchIds } from './ts3d/loadplan.js?v=202611230850';
+import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, paintLabel, fontsReady, chars, hashStr, FRAME_FX } from './ts3d/art.js?v=202611230850';
+import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=202611230850';
+import { taxiExit, EXIT_SLOW, nextOfferDelay, fareWait } from './interact.js?v=202611230850';
+import { RETURN_MS, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, portraitFov, fitDistance, reverseTime, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange, boardVantage, facesBlock } from './camrig.js?v=202611230850';
 
 export { paintBillboard, THEMES, LAYOUT, PLOT_SLOTS, groundHeight, EMOTES, AVATAR_COLORS, STARTER_COLORS, taxiTrainMult, applyTaxiHardHit };
 export const PLAZA = LAYOUT;
@@ -1329,6 +1329,7 @@ void main(){
     const look = p.clone();
     const cam = new THREE.Vector3();
     let fov = 0; // 0: the frame's own FOV; more when the vantage had to open the lens
+    let yaw = 0; // how far the vantage turned off the face's normal (radians); 0 = straight on
     if (face && nyc) {
       // Walls are only loaded around the player; load the ones around this board (as taxiCanSit does) before testing.
       nyc.ensureSolid(p.x, p.z, 60);
@@ -1344,12 +1345,13 @@ void main(){
       const v = boardVantage({ face: { x: p.x, y: p.y, z: p.z, nx: f.x, nz: f.z, w: face.w, h: face.h }, dist, aspect: camera.aspect, vfov, block, ground: groundHeight, level });
       cam.set(v.x, v.y, v.z);
       if (v.fov > vfov + 0.5) fov = v.fov;
+      yaw = Number(v.yaw) || 0;
     } else {
       if (face) dist = boardRange(dist, frameDistance({ w: face.w, h: face.h, aspect: camera.aspect, vfov }));
       cam.copy(p).addScaledVector(f, dist);
       if (!level) cam.y = Math.max(look.y * 0.42 + 1.8, groundHeight(cam.x, cam.z) + 1.6);
     }
-    return { look, cam, fov, front: { x: p.x + f.x * 9, z: p.z + f.z * 9 }, board: boards.get(slotId)?.data || null, slot: slotId };
+    return { look, cam, fov, yaw, front: { x: p.x + f.x * 9, z: p.z + f.z * 9 }, board: boards.get(slotId)?.data || null, slot: slotId };
   }
   const AD_IDS = ['MAIN_TOP', 'MAIN_MID', 'MAIN_BOT', 'SUB_1A', 'SUB_1B', 'SUB_2A', 'SUB_2B', 'SUB_3A', 'SUB_3B', 'SUB_4A', 'SUB_4B'];
   for (let i = 1; i <= STREET_N; i++) AD_IDS.push('STREET_' + i);
@@ -1580,24 +1582,39 @@ void main(){
     at(ms, () => { stop(); o.onDone?.(); });
     return { stop };
   }
-  const LOUNGE_IDS = ['MAIN_TOP', 'MAIN_MID', 'MAIN_BOT', 'SUB_1A', 'SUB_2A', 'SUB_3A', 'SUB_4A'];
+  // The prime screens, each seen the way the photo frame sees it: level with the face and straight on (framePose), in
+  // either orientation. A screen whose straight view is blocked (a corner screen the vantage can only see turned up to
+  // 72° along the street) is skipped, so the tour never shows a board from the side or from far below; only when no
+  // screen at all can be seen straight on does it fall back to the first turned view.
+  const LOUNGE_IDS = ['MAIN_TOP', 'MAIN_MID', 'MAIN_BOT', 'SUB_1A', 'SUB_2A', 'SUB_3A', 'SUB_4A', 'SUB_1B', 'SUB_2B', 'SUB_3B', 'SUB_4B'];
+  const LOUNGE_YAW = (12 * Math.PI) / 180;
   /** 멍때리기: the camera glides from the board it is on to the next one. The avatar stays where it is. */
   function tourNext() {
     // A photo is being framed: no glide under it. The tour does not pick up again afterwards: the photo's endFocus goes
     // through endCine, which ends the lounge (onLoungeEnd), so the player starts it again by hand.
     if (cine?.pin) return false;
+    let turned = null;
     for (let k = 0; k < LOUNGE_IDS.length; k++) {
       const id = LOUNGE_IDS[loungeI++ % LOUNGE_IDS.length];
-      const pose = watchPortrait ? framePose(id) : slotPose(id, 18, true);
+      const pose = framePose(id);
       if (!pose) continue;
-      const first = !cine || cine.back;
-      startCine(pose.cam, pose.look, { dur: first ? 1100 : 1800, fov: pose.fov });
-      // A low arc keeps the glide above the street furniture between two boards.
-      cine.arc = first ? 0 : Math.min(14, cineFrom.distanceTo(cineTo) * 0.12);
-      if (first) opts.onFocus?.(true);
-      return true;
+      if (Math.abs(pose.yaw || 0) > LOUNGE_YAW) { turned = turned || pose; continue; }
+      return tourTo(pose);
     }
-    return false;
+    return turned ? tourTo(turned) : false;
+  }
+  // In a landscape frame the fitted face is nearly as tall as the screen, and the lounge line (top) and 그만 보기 / the
+  // notices (bottom) lay on it: the lens opens 12° there, so the face is about two thirds of the height with a free band
+  // above and below. The upright watch frame already has that room.
+  const LOUNGE_WIDEN = 12;
+  function tourTo(pose) {
+    const first = !cine || cine.back;
+    const fov = watchPortrait ? pose.fov : Math.min(95, (pose.fov || portraitFov(camera.aspect, baseFov)) + LOUNGE_WIDEN);
+    startCine(pose.cam, pose.look, { dur: first ? 1100 : 1800, fov });
+    // A low arc keeps the glide above the street furniture between two boards.
+    cine.arc = first ? 0 : Math.min(14, cineFrom.distanceTo(cineTo) * 0.12);
+    if (first) opts.onFocus?.(true);
+    return true;
   }
   function taxiCanSit(x, z) {
     if (!nyc || !insideLoop(x, z, 6) || !nyc.onLand(x, z) || nyc.buildingAt(x, z) >= 0) return false;

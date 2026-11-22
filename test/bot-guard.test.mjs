@@ -415,6 +415,6 @@ describe('client: the share bonus is for accounts', () => {
     const guestOut = vip.indexOf("if (shareGuest) { share.disabled = false; note(SHARE_ACCOUNT, 'ok', () => openLogin()); return; }");
     assert.ok(guestOut > 0 && guestOut < vip.indexOf('hooks.shareBonus?.()'));
     assert.match(vip, /if \(e\?\.code === 'account'\) note\(SHARE_ACCOUNT, 'err', \(\) => openLogin\(\)\);/);
-    assert.match(ui, /shareGuest \? `\$\{SHARE_ACCOUNT\} 하루 한 번/);
+    assert.match(ui, /shareGuest \? `\$\{SHARE_ACCOUNT\}\. 하루 한 번/);
   });
 });
