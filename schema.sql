@@ -261,6 +261,8 @@ ALTER TABLE public.billboard_reviews ENABLE ROW LEVEL SECURITY;
 -- RPC 1: Worker DO 전용 코인 배치 정산 (기존 tap_batch 대체)
 -- p_items 형식: [{"actor_id":"guest:123", "nickname":"홍길동", "delta":45, "reason":"mine"}, ...]
 -- coin_batch 항목: reason이 없으면 'mine'
+-- 답의 bal: 계정마다 이 배치 뒤 잔액 {actor_id: coins}. Room이 WALLET_SYNC에 실어 화면이 /rt/wallet을 다시 읽지 않는다
+--   (migrations/2026-11-22-coin-balance.sql). 지갑 줄이 생기지 않은 계정(wallets_need_login)은 bal에 없다.
 -- ============================================================================
 CREATE OR REPLACE FUNCTION public.coin_batch(p_key TEXT, p_items JSONB)
 RETURNS JSONB
@@ -274,6 +276,8 @@ DECLARE
   v_count INT := 0;
   v_delta BIGINT;
   v_reason TEXT;
+  v_coins BIGINT;
+  v_bal JSONB := '{}'::jsonb;
 BEGIN
   SELECT key_value INTO v_secret FROM public.app_secrets WHERE key_name = 'FLUSH_KEY';
   IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
@@ -301,13 +305,18 @@ BEGIN
     ON CONFLICT (actor_id) DO UPDATE
     SET coins = public.wallets.coins + v_delta,
         nickname = COALESCE(NULLIF(left(v_item->>'nickname', 16), ''), public.wallets.nickname),
-        updated_at = now();
+        updated_at = now()
+    RETURNING coins INTO v_coins;
+    -- 같은 계정이 여러 항목이면(500씩 나뉜 큰 정산) 마지막 잔액이 남는다.
+    IF v_coins IS NOT NULL THEN
+      v_bal := v_bal || jsonb_build_object(v_item->>'actor_id', v_coins);
+    END IF;
     INSERT INTO public.coin_ledger (actor_id, delta, reason)
     VALUES (v_item->>'actor_id', v_delta, v_reason);
     v_count := v_count + 1;
   END LOOP;
 
-  RETURN jsonb_build_object('ok', true, 'flushed', v_count);
+  RETURN jsonb_build_object('ok', true, 'flushed', v_count, 'bal', v_bal);
 END;
 $$;
 

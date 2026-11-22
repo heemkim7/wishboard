@@ -446,6 +446,20 @@ describe('SQL in PGlite', { skip: PGlite ? false : 'PGlite not installed (see th
     assert.deepEqual(await procs(db), before);
     assert.equal((await claimIn(db, 'guest:d', 'STREET_28')).ok, true);
   });
+  // migrations/2026-11-22-coin-balance.sql: the Room's WALLET_SYNC carries what coin_batch answers (test/traffic-tabs.test.mjs, part 2).
+  it('coin_batch: no bal before the coin-balance migration; after it (run twice) the balance per account, the last of split items', { skip: OLD ? false : 'no old schema' }, async () => {
+    const d = await fresh(OLD);
+    try {
+      const batch = async (db1, items) => (await db1.query('SELECT public.coin_batch($1, $2::jsonb) AS r', [KEY, JSON.stringify(items)])).rows[0].r;
+      assert.deepEqual(await batch(d, [{ actor_id: 'guest:cb', nickname: 'a', delta: 5 }]), { ok: true, flushed: 1 });
+      for (let i = 0; i < 2; i++) { const st = (await d.exec(read('migrations/2026-11-22-coin-balance.sql'))).at(-1).rows; assert.equal(st.length, 1); assert.equal(st[0].applied, true, st[0].note); }
+      assert.deepEqual(await batch(d, [{ actor_id: 'guest:cb', nickname: 'a', delta: 500 }, { actor_id: 'guest:cb', nickname: 'a', delta: 30 }, { actor_id: 'guest:cb2', nickname: '', delta: 7 }]),
+        { ok: true, flushed: 3, bal: { 'guest:cb': 635, 'guest:cb2': 107 } });
+      assert.equal((await d.query("SELECT coins::int c FROM public.wallets WHERE actor_id = 'guest:cb'")).rows[0].c, 635);
+      // schema.sql's coin_batch answers the same.
+      assert.deepEqual((await batch(db, [{ actor_id: 'guest:cb3', nickname: '', delta: 1 }])).bal, { 'guest:cb3': 101 });
+    } finally { await d.close(); }
+  });
   it('old schema + migration = new schema.sql: every public function, ACL, column and RLS flag', { skip: OLD ? false : 'git show df5a739:schema.sql not available' }, async () => {
     const shape = async (d) => ({
       fns: (await d.query("SELECT p.oid::regprocedure::text AS sig, pg_get_functiondef(p.oid) AS def, p.proacl::text AS acl FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace ORDER BY 1")).rows,
@@ -477,6 +491,9 @@ describe('SQL in PGlite', { skip: PGlite ? false : 'PGlite not installed (see th
     // And the seasonal wish themes (test/seasons.test.mjs runs it in both states): the ops_events CHECK and upsert_ops_event.
     const themes = (await old.exec(read('migrations/2026-11-22-themes.sql'))).at(-1).rows;
     assert.equal(themes.length, 1); assert.equal(themes[0].applied, true, themes[0].note);
+    // And coin_batch answering each account's balance (the Room's WALLET_SYNC carries it; test/traffic-tabs.test.mjs).
+    const bal = (await old.exec(read('migrations/2026-11-22-coin-balance.sql'))).at(-1).rows;
+    assert.equal(bal.length, 1); assert.equal(bal[0].applied, true, bal[0].note);
     const neu = await fresh(read('schema.sql'));
     const cons = async (d) => (await d.query("SELECT conrelid::regclass::text AS t, conname, pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid IN ('public.cosmetics'::regclass, 'public.coin_ledger'::regclass, 'public.ops_events'::regclass) AND contype = 'c' ORDER BY 1, 2")).rows;
     assert.deepEqual(await cons(old), await cons(neu));

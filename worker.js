@@ -28,6 +28,12 @@ let BUD = FREE;
 const budget = env => { const p = env && env.PLAN === 'paid' ? PAID : FREE; BUD = { DAY: +(env && env.BUDGET_REQ_DAY) || p.DAY, GBS: +(env && env.BUDGET_GBS_DAY) || p.GBS }; return BUD; };
 const lvlOf = (n, g = 0) => { const f = Math.max(n / BUD.DAY, g / BUD.GBS); return f >= HARD ? 2 : f >= LEAN ? 1 : 0; };
 const today = () => new Date().toISOString().slice(0, 10);
+// A socket the server will not keep: accepted, told why, closed with a code the page reads (4001 from the Worker: the token was refused, get a
+// fresh one; 4002 after { t:'down' } from a Room at budget hard: wait for the 00:00 UTC reset). A refused upgrade (401, 503) reaches the page only
+// as 1006, the same as a network blip, so it renewed its guest token on every retry and kept retrying a room that was closed for the day.
+function wsShut(code, why, v2, msg, accept) { const [c, s] = Object.values(new WebSocketPair()); if (accept) accept(s); else s.accept();
+  if (msg) { try { s.send(JSON.stringify(msg)); } catch { } } try { s.close(code, why); } catch { }
+  return new Response(null, { status: 101, webSocket: c, headers: { 'Sec-WebSocket-Protocol': v2 ? 'masil2' : 'masil' } }); }
 // Budget tally: DO calls the Worker makes for HTTP routes, summed per isolate and added to 'day' at most once per TALLY_MS (a /rt/gate read that comes
 // first carries it too). Not counted here: Meter.add (it counts its own call) and the /rt/ws upgrade (the Room counts the connection). A tail lost with
 // the isolate is accepted; a failed add is not retried, so nothing is counted twice. LVL is the level the last add answered, at most LVL_TTL old.
@@ -772,7 +778,9 @@ export class Room extends DurableObject {
     if (u.pathname === '/chr') return this.httpCheer(req);
     if (u.pathname === '/fever') return this.httpFever(req);
     const topic = u.searchParams.get('topic') || '', k = req.headers.get('x-uid') || ''; if (topic) this.topicName = topic; if (!k) return new Response('auth', { status: 401 });
-    if (this.lvl >= 2) return new Response('down', { status: 503 });
+    // Budget hard: the page is told 'down' (it waits for the reset, net.js hardDown) instead of a 503 it would retry every 30 s. The level is the
+    // last report's; one from an earlier UTC day is stale (the day budget has reset), so this connect goes in and the next report sets it again.
+    if (this.lvl >= 2) { if (new Date(this.lastRep).toISOString().slice(0, 10) !== today()) this.lvl = 0; else return wsShut(4002, 'budget', req.headers.get('x-v2') === '1', { t: 'down' }, (s) => this.ctx.acceptWebSocket(s)); }
     if (this.banned(k)) return new Response('flood', { status: 429, headers: { 'retry-after': '60' } });
     const sf = await this.sit(k, topic); if (sf < 0) return new Response('moved', { status: 429 });
     const room = (u.searchParams.get('room') || '').slice(0, 48), v2 = req.headers.get('x-v2') === '1';
@@ -1373,7 +1381,10 @@ export class Room extends DurableObject {
       await this.flushInbox();
       try { await this.flushTribeScores(); } catch { /* coins are already settled */ }
       this.syncPending(); this.flushes = (this.flushes || 0) + 1; this.flushErr = null; this.flushBad = 0;
-      for (const row of kept) this.walletSync(row.uid);
+      // coin_batch from migrations/2026-11-22-coin-balance.sql answers each account's balance after the batch (bal); the WALLET_SYNC carries it
+      // and the page needs no /rt/wallet read. Before that migration there is no bal: the plain WALLET_SYNC, and the page reads its wallet.
+      const bal = out.bal && typeof out.bal === 'object' ? out.bal : null;
+      for (const row of kept) this.walletSync(row.uid, bal ? bal[row.uid] : null);
       if (this.tapN) this.arm(); return { ok: true, flushed: kept.length, pending: 0 };
     } catch (e) {
       for (const row of kept) q.exec('insert into coin(uid, nick, delta, n, at, reason) values(?, ?, ?, ?, ?, ?) on conflict(uid) do update set delta = delta + excluded.delta, n = n + excluded.n, nick = excluded.nick, at = min(coin.at, excluded.at), reason = excluded.reason', row.uid, row.nick, row.delta, row.n, row.at, row.reason || 'mine');
@@ -1422,7 +1433,9 @@ export class Room extends DurableObject {
     }
     if (m.mono) this.bc({ t: 'MONO', name: clip(m.mono, 24) });
     return J({ ok: true, n: this.socks().size }); }
-  walletSync(uid) { let n = 0; for (const [w, b] of this.socks()) if (b.k === uid) { this.tx(w, { t: 'WALLET_SYNC' }); n++; } return n; }
+  // c: the balance a coin flush just wrote (whole coins). Without it (somebody else's request moved this balance, or coin_batch without bal) the page reads it.
+  walletSync(uid, coins) { const c = Number(coins), o = JSON.stringify(coins != null && Number.isSafeInteger(c) && c >= 0 ? { t: 'WALLET_SYNC', c } : { t: 'WALLET_SYNC' });
+    let n = 0; for (const [w, b] of this.socks()) if (b.k === uid) { this.tx(w, o); n++; } return n; }
   httpSync(req) { return J({ ok: true, n: this.walletSync(String(req.headers.get('x-uid') || '')) }); }
   async httpAir(req) { let m = null; try { m = await req.json(); } catch { return J({ err: 'json' }, 400); }
     const until = Math.floor(Number(m?.until));
@@ -3533,7 +3546,7 @@ export default {
       if (req.headers.get('Upgrade') !== 'websocket') return new Response('websocket only', { status: 426 });
       const t = u.searchParams.get('topic') || ''; if (!PLAZA_TOPICS.includes(t)) return new Response('bad topic', { status: 400 }); // only the plaza's own channels may create a room
       const pr = (req.headers.get('Sec-WebSocket-Protocol') || '').split(',').map(x => x.trim()), at = (pr.find(x => x.startsWith('at.')) || '').slice(3), v2 = pr.includes('masil2');
-      const actor = await resolveActor(env, at); if (!actor) return new Response('unauthorized', { status: 401 });
+      const actor = await resolveActor(env, at); if (!actor) return wsShut(4001, 'auth', v2); // the page renews its token only on this (net.js badTok)
       if (!(await actOk(env, 'ws', actor.id))) return new Response('rate', { status: 429, headers: { 'retry-after': '60' } }); // joins per account a minute (ACT_RL), before the room
       const h = new Headers(req.headers); h.set('x-uid', actor.id); h.set('x-anon', (actor.guest || actor.anon) ? '1' : '0'); h.set('x-v2', v2 ? '1' : '0');
       return env.ROOM.get(env.ROOM.idFromName(t)).fetch(new Request(req, { headers: h }));
