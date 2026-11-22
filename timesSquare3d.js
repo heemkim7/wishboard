@@ -12,7 +12,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { toNetUnits, fromNetUnits } from './net.js?v=202611222045';
 import { walkerPoints } from './ts3d/walkers.js';
 import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, SKIP_ZONES, NO_PROPS, NO_TREES, FAR_CLUSTERS, LANDMARKS, groundHeight, onStairs, fountainSpot } from './ts3d/layout.js?v=202611222045';
-import { BALANCE, PAY, chainsOf, slotName } from './balance.js';
+import { BALANCE, PLAY, chainsOf, slotName } from './balance.js';
 import { isSlotId, STREET_N, shopItem, equippedOf, EQUIP_MAX } from './balance.js';
 import { kitMaterials } from './ts3d/kit.js?v=202611222045';
 import { createReflection } from './ts3d/ground.js?v=202611222045';
@@ -926,48 +926,6 @@ void main(){
     return true;
   }
   function clearStars() { for (const i of [...stars.keys()]) removeStar(i, false); }
-  // Sidewalk coins in the bowtie, in front of the spawn. Walk over one for +1.
-  const COIN_HOME = [[14, 38], [21, 44], [11, 50], [23, 56], [16, 64], [8, 47], [27, 52], [18, 74]];
-  const coinMat = new THREE.MeshStandardMaterial({ color: '#ffd56a', emissive: '#ffb020', emissiveIntensity: 1.4, metalness: 0.85, roughness: 0.25 });
-  const coinGeo = new THREE.CylinderGeometry(0.28, 0.28, 0.08, 16);
-  const coinBeamMat = beamMat(REWARD);
-  const coinBeamGeo = crossBeamGeo(BEAM_W, 8);
-  const coins = COIN_HOME.map(([x, z], i) => {
-    const mesh = new THREE.Mesh(coinGeo, coinMat);
-    mesh.rotation.x = Math.PI / 2;
-    mesh.position.set(x, 0.9, z);
-    const beam = new THREE.Mesh(coinBeamGeo, coinBeamMat);
-    beam.position.set(x, 0, z);
-    scene.add(mesh, beam);
-    return { i, x, z, mesh, beam, back: 0 };
-  });
-  // A picked coin hides at once (holdCoin) while its MINE waits; PAY removes it for 20 s (removeCoin), a refusal or a
-  // timeout puts it back (holdCoin false). Only a visible coin fires onCoin.
-  function removeCoin(i) {
-    const c = coins[i];
-    if (!c) return;
-    c.mesh.visible = false;
-    if (c.beam) c.beam.visible = false;
-    c.held = false;
-    c.back = performance.now() + 20000;
-  }
-  function holdCoin(i, on) {
-    const c = coins[i];
-    if (!c) return null;
-    if (on) {
-      if (!c.mesh.visible) return null;
-      c.mesh.visible = false;
-      if (c.beam) c.beam.visible = false;
-      c.held = true;
-      c.back = 0;
-      return screenOf(tmp.set(c.x, groundHeight(c.x, c.z) + 1.1, c.z));
-    }
-    if (!c.held) return null;
-    c.held = false;
-    c.mesh.visible = true;
-    if (c.beam) c.beam.visible = true;
-    return null;
-  }
   const STUNTS = [
     { x: 16, z: 52 },
     { x: 16, z: 90 },
@@ -1072,20 +1030,6 @@ void main(){
     scene.add(mesh);
     balloon = { hp: 1000, mesh, next: 0 };
     opts.onBalloon?.(1000);
-  }
-  function updateCoins(now, t) {
-    for (const c of coins) {
-      if (!c.mesh.visible) {
-        if (c.back && now >= c.back) { c.mesh.visible = true; if (c.beam) c.beam.visible = true; c.back = 0; }
-        continue;
-      }
-      const gy = groundHeight(c.x, c.z) + 0.85 + Math.sin(t * 2.2 + c.i) * 0.12;
-      c.mesh.position.y = gy;
-      c.mesh.rotation.z = t * 1.4;
-      if (drive) continue;
-      const dx = pos.x - c.x, dz = pos.z - c.z;
-      if (dx * dx + dz * dz < BALANCE.coinR * BALANCE.coinR) opts.onCoin?.(c.i);
-    }
   }
   function updateStars(now, t) {
     for (const s of stars.values()) {
@@ -1307,9 +1251,7 @@ void main(){
 
   function stepDrive(dt, input, t) {
     const d = drive;
-    const party = feverLive();
-    // Fever (party) is unlimited boost, not a faster car: the same boost top speed, without holding the button.
-    const boosting = party || input.walk || boostHeld;
+    const boosting = input.walk || boostHeld;
     if (boosting && d.v > 8 && t - boostSnd > 1.4) { boostSnd = t; opts.onBoost?.(); }
     const top = boosting ? CAR.boost : CAR.max;
     if (d.exiting) d.v -= Math.sign(d.v) * Math.min(Math.abs(d.v), CAR.brake * dt); // 택시 내리기 at speed: brake, then out
@@ -1666,7 +1608,7 @@ void main(){
   function boardExtra(t) {
     job.riders = Math.min(5, (job.riders || 1) + 1);
     job.extra = null;
-    job.extraAt = t + PAY.fare.pickGapMs / 1000;
+    job.extraAt = t + PLAY.pick.gapMs / 1000;
     markers.pickup.set(null);
     showPassenger(null);
     syncTrailers();
@@ -1698,7 +1640,7 @@ void main(){
         job.t0 = t;
         job.riders = 1;
         job.extra = null;
-        job.extraAt = t + PAY.fare.pickGapMs / 1000;
+        job.extraAt = t + PLAY.pick.gapMs / 1000;
         job.phase = 'ride';
         markers.drop.set(job.dest);
         syncTrailers();
@@ -1749,8 +1691,8 @@ void main(){
     if (drive) stepDrive(dt, input, t);
     else sitting = stepWalk(dt, input);
     reverseT = drive ? reverseTime(reverseT, drive.v, dt) : 0;
-    // The rings share one 20 s reward gap (main.js pays through onStunt): dim while it runs, and no shake or burst.
-    const ringWait = now - stuntAt < PAY.stunt.gapMs + 250;
+    // The rings share one 20 s gap (PLAY.ring, no points: main.js only cheers through onStunt): dim while it runs, and no shake or burst.
+    const ringWait = now - stuntAt < PLAY.ring.gapMs + 250;
     if (ringWait !== ringDim) {
       ringDim = ringWait;
       ringMat.color.set(REWARD).multiplyScalar(ringDim ? 0.28 : 1);
@@ -1769,7 +1711,7 @@ void main(){
     }
     if (drive) {
       let close = 99;
-      const pay = performance.now() - hiveAt > PAY.hive.gapMs;
+      const pay = performance.now() - hiveAt > PLAY.hive.gapMs;
       for (const c of traffic?.positions?.() || []) {
         if (c.mode === 'driven') continue;
         const d = Math.hypot(c.x - drive.x, c.z - drive.z);
@@ -1931,7 +1873,7 @@ void main(){
       const S = LAYOUT.stall, A = LAYOUT.atm, spot = LAYOUT.stage.spot, F = fountainSpot();
       if ((pos.x - S.x) ** 2 + (pos.z - S.z) ** 2 < BALANCE.stallR ** 2) nk = { kind: 'cart' };
       else if ((pos.x - A.x) ** 2 + (pos.z - A.z) ** 2 < A.r * A.r) nk = { kind: 'atm' };
-      else if ((pos.x - spot.x) ** 2 + (pos.z - spot.z) ** 2 < PAY.dance.nearM ** 2) nk = { kind: 'stage' };
+      else if ((pos.x - spot.x) ** 2 + (pos.z - spot.z) ** 2 < PLAY.stage.nearM ** 2) nk = { kind: 'stage' };
       else if ((pos.x - F.x) ** 2 + (pos.z - F.z) ** 2 < 4.8 * 4.8) nk = { kind: 'fountain' };
       else if (pos.x > -34 && pos.x < -8 && pos.z > -122 && pos.z < -102) nk = { kind: 'lounge' };
       else {
@@ -2002,7 +1944,6 @@ void main(){
     adScreens.update(dt, camera, adOccluded);
     stepPlaza(dt, t);
     updateStars(now, t);
-    updateCoins(now, t);
 
     for (let i = rockets.length - 1; i >= 0; i--) {
       const r = rockets[i];
@@ -2255,49 +2196,18 @@ void main(){
       if (Math.hypot(o.position.x - roof.x, o.position.z - roof.z) < 2) o.visible = false;
     });
   }
-  const fever = { gauge: 0, phase: 'idle', until: 0, confetti: 0 };
+  // The crystal ball drops at 21:00 (openPlaza) and hovers on the roof the rest of the time. Its old coin-2x party (the fever) is gone.
   const night = { phase: 'idle', until: 0 };
   function openPlaza() {
-    if (night.phase === 'drop' || fever.phase !== 'idle') return;
+    if (night.phase === 'drop') return;
     night.phase = 'drop';
     night.until = performance.now() + 10000;
   }
-  function feverLive() { return fever.phase === 'party' && performance.now() < fever.until; }
-  function rejectFever() {
-    if (fever.phase !== 'party' && fever.phase !== 'count') return;
-    fever.phase = 'idle';
-    fever.gauge = Math.min(19, fever.gauge);
-    fever.until = 0;
-    lasers.visible = false;
-  }
-  function feverHud() {
-    const left = fever.phase === 'idle' ? 0 : Math.max(0, (fever.until - performance.now()) / 1000);
-    return { gauge: fever.gauge, phase: fever.phase, left };
-  }
-  function setFever(gauge, untilMs) {
-    const end = Number(untilMs) || 0;
-    if (end > Date.now()) {
-      fever.phase = 'party';
-      fever.gauge = 20;
-      fever.until = performance.now() + (end - Date.now());
-      return fever.gauge;
-    }
-    if (fever.phase !== 'idle') return fever.gauge;
-    const n = Math.max(0, Math.min(20, Math.floor(Number(gauge)) || 0));
-    fever.gauge = n;
-    if (n >= 20) {
-      fever.phase = 'count';
-      fever.until = performance.now() + 10000;
-      opts.onFever?.({ phase: 'count', gauge: 20, left: 10 });
-    }
-    return fever.gauge;
-  }
-  function bumpFever() { return setFever((fever.gauge || 0) + 1); }
-  function stepFever(t) {
+  function stepCrystal(t) {
     const now = performance.now();
     ball.rotation.y += 0.01;
     glowBall.scale.setScalar(1 + Math.sin(t * 3) * 0.04);
-    if (fever.phase === 'idle' && night.phase === 'drop') {
+    if (night.phase === 'drop') {
       const u = Math.min(1, 1 - Math.max(0, night.until - now) / 10000);
       const y = crystalHome + (crystalLow - crystalHome) * (u * u);
       ball.position.y = y;
@@ -2312,40 +2222,10 @@ void main(){
       }
       return;
     }
-    if (fever.phase === 'count') {
-      const u = 1 - Math.max(0, fever.until - now) / 10000;
-      const y = crystalHome + (crystalLow - crystalHome) * (u * u);
-      ball.position.y = y;
-      glowBall.position.y = y;
-      lasers.visible = true;
-      lasers.rotation.y = t;
-      if (now >= fever.until) {
-        fever.phase = 'party';
-        fever.until = now + 60000;
-        opts.onFever?.({ phase: 'party', gauge: 20, left: 60 });
-      }
-    } else if (fever.phase === 'party') {
-      ball.position.y = crystalLow + Math.sin(t * 2) * 0.4;
-      glowBall.position.y = ball.position.y;
-      lasers.visible = true;
-      lasers.rotation.y = t * 1.4;
-      if (t - fever.confetti > 0.85) {
-        fever.confetti = t;
-        burst(crystal.position.clone().setY(roof.h + ball.position.y), PALETTE[(fever.gauge + (t * 3) | 0) % PALETTE.length], 36, 0.7);
-      }
-      if (now >= fever.until) {
-        fever.phase = 'idle';
-        fever.gauge = 0;
-        fever.until = 0;
-        lasers.visible = false;
-        opts.onFever?.({ phase: 'idle', gauge: 0, done: true });
-      }
-    } else {
-      const target = crystalHome + Math.sin(t * 0.8) * 0.35;
-      ball.position.y += (target - ball.position.y) * 0.08;
-      glowBall.position.y = ball.position.y;
-      lasers.visible = false;
-    }
+    const target = crystalHome + Math.sin(t * 0.8) * 0.35;
+    ball.position.y += (target - ball.position.y) * 0.08;
+    glowBall.position.y = ball.position.y;
+    lasers.visible = false;
     lasers.position.y = ball.position.y - 14;
   }
 
@@ -2560,7 +2440,7 @@ void main(){
     blimp.rotation.y = -ang + Math.PI / 2;
   }
   function stepPlaza(dt, t) {
-    stepFever(t);
+    stepCrystal(t);
     stepFallen(dt);
     stepShots(dt);
     stepBlimp(t);
@@ -2738,7 +2618,7 @@ void main(){
     near() { return near; },
     isDriving: () => !!drive,
     exitTaxi,
-    startStars, removeStar, clearStars, removeCoin, holdCoin,
+    startStars, removeStar, clearStars,
     capture() {
       // The picture is taken without my own name tag (the frame loop decides its visibility again on the next frame).
       const tagOn = me.tag.visible;
@@ -2764,7 +2644,7 @@ void main(){
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
       return new Blob([bytes], { type: 'image/jpeg' });
     },
-    bake(amount) { marks?.stall.popFish(amount >= 15); },
+    bake(gold) { marks?.stall.popFish(!!gold); }, // a good flip pops a fish, a gold one the gold fish
     setTicker(text) { boards.setTicker(text); },
     // 오늘의 소원 on every screen that is not live: list is 0–24 {id, nick, txt, hearts}; [] or missing turns it off.
     setWishes(list) { boards.setWishes(list); },
@@ -2794,7 +2674,6 @@ void main(){
       if (!had) opts.onFocus?.(false);
     },
     throwPouch,
-    bumpFever, setFever, rejectFever,
     openPlaza,
     setRoof: (name) => paintRoof(name),
     launchSticker,
@@ -2802,7 +2681,6 @@ void main(){
     peelSticker,
     stickerList: (slot) => (stickerMap.get(slot) || []).slice(),
     beginAir,
-    feverOn: feverLive,
     balloonUp: () => !!(balloon && balloon.hp > 0),
     teleport(x, z) {
       if (drive) exitTaxi();
@@ -2844,7 +2722,7 @@ void main(){
     onLand: (x, z) => (nyc ? nyc.onLand(x, z) : true),
     where,
     hud() {
-      const out = { driving: !!drive, speed: drive ? Math.abs(drive.v) * 3.6 : 0, fare: drive ? drive.fare : 0, job: null, waypoint: null, where: where(), train: null, fever: feverHud(), hive: hiveHint };
+      const out = { driving: !!drive, speed: drive ? Math.abs(drive.v) * 3.6 : 0, fare: drive ? drive.fare : 0, job: null, waypoint: null, where: where(), train: null, hive: hiveHint };
       if (drive && job.phase === 'ride' && job.riders > 0) out.train = { riders: job.riders, mult: taxiTrainMult(job.riders) };
       if (drive && job.phase !== 'none') {
         const aim = job.phase === 'pickup' ? job.target : job.dest;
@@ -2864,13 +2742,11 @@ void main(){
       for (const r of remotes.values()) peers.push({ x: r.x, z: r.z, color: r.av.color });
       const st = [];
       for (const s of stars.values()) if (s.g.visible) st.push({ x: s.x, z: s.z });
-      const coinDots = [];
-      for (const c of coins) if (c.mesh.visible) coinDots.push({ x: c.x, z: c.z });
       const lv = [];
       for (const rec of marks?.plots.values() || []) lv.push({ id: rec.id, level: rec.level, color: rec.color, mine: !!rec.data?.owner_id && rec.data.owner_id === opts.actorId?.() });
       const cd = camera.getWorldDirection(tmp);
       const jobTarget = drive && job.phase !== 'none' ? (job.phase === 'pickup' ? { ...job.target, kind: 'pickup' } : { ...job.dest, kind: 'drop' }) : null;
-      return { me: { x: pos.x, z: pos.z, yaw }, camYaw: Math.atan2(cd.x, cd.z), peers, stars: st, coins: coinDots, plots: lv, taxis: traffic?.positions() || [], driving: !!drive, job: jobTarget, waypoint, pin: mapPin };
+      return { me: { x: pos.x, z: pos.z, yaw }, camYaw: Math.atan2(cd.x, cd.z), peers, stars: st, plots: lv, taxis: traffic?.positions() || [], driving: !!drive, job: jobTarget, waypoint, pin: mapPin };
     },
   };
   loadStickers();

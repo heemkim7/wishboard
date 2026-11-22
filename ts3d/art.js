@@ -632,7 +632,7 @@ export function paintMenuBoard(canvas) {
   neon(g, '황금 붕어빵', W / 2, 92 * k, Math.round(70 * k), SANS, 900, '#ffcf5a', { align: 'center', glow: 0.6 });
   g.font = `${Math.round(70 * k)}px ${EMOJI}`;
   g.fillText('🐟', W / 2, 190 * k);
-  const rows = [['팥 붕어빵', '+6 코인'], ['슈크림 붕어빵', '+6 코인'], ['황금 붕어빵', '+16 코인!']];
+  const rows = [['팥 붕어빵', '바삭'], ['슈크림 붕어빵', '달콤'], ['황금 붕어빵', '정중앙!']]; // play only: no points
   rows.forEach(([a, b], i) => {
     const y = 290 * k + i * 74 * k;
     g.font = `800 ${Math.round(38 * k)}px ${SANS}`;
@@ -646,7 +646,7 @@ export function paintMenuBoard(canvas) {
   g.font = `700 ${Math.round(28 * k)}px ${SANS}`;
   g.textAlign = 'center';
   g.fillStyle = 'rgba(255,255,255,0.75)';
-  g.fillText('타이밍 맞춰 구우면 코인!', W / 2, H - 70 * k);
+  g.fillText('타이밍 맞춰 바삭하게!', W / 2, H - 70 * k);
   return canvas;
 }
 
@@ -1103,7 +1103,7 @@ export function paintTaxiStand(canvas) {
 }
 
 /** Waits for the Pretendard weights the canvases use (and the glyph subsets for `text`). */
-export function fontsReady(text = '타임스퀘어 붕어빵 전광판 점령 코인') {
+export function fontsReady(text = '타임스퀘어 붕어빵 전광판 점령 응원 포인트') {
   if (!document.fonts?.load) return Promise.resolve();
   const sample = String(text || '').slice(0, 80) || 'A';
   return Promise.all([600, 700, 800, 900].map(w => document.fonts.load(`${w} 64px "Pretendard Variable"`, sample))).catch(() => {});
@@ -1167,7 +1167,7 @@ export function wishRotates(slotId, row, air, mainOpen, now = Date.now(), until 
 /** The claim cue the wish card keeps in its bottom strip (same price the house notice uses). */
 export function wishStrip(slotId, row, mainOpen) {
   if (row?.holder_id) return '불 꺼짐 · 주인이 다시 켤 수 있어요';
-  const price = (floorOf(slotId) || 0).toLocaleString('en-US') + '코인부터';
+  const price = (floorOf(slotId) || 0).toLocaleString('en-US') + '포인트부터';
   return String(slotId).startsWith('MAIN_') && !mainOpen ? '밤 9시에 10분만 열려요 · ' + price : '빈 자리 · ' + price;
 }
 /** What a board needs this tick. 'drop': its card must go now (not allowed to rotate, or nothing to show) — never budgeted.

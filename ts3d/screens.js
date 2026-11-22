@@ -68,7 +68,7 @@ function scaleU(geo, factor) {
 // soon: a board on the map whose database row has not arrived (STREET_31..50 before their migration) says it opens soon.
 function defaultData(slotId, soon = false) {
   const tier = tierOf(slotId);
-  const price = (floorOf(slotId) || 0).toLocaleString('en-US') + ' 코인부터';
+  const price = (floorOf(slotId) || 0).toLocaleString('en-US') + ' 포인트부터';
   let row;
   if (tier === 'S') {
     row = { slot_id: slotId, emoji: '📢', bg_theme: 'cyber_navy', text_color: '#ffffff', line1: '이 자리를 점령하세요', line2: '타임스퀘어 메인 타워', line3: price, holder_id: null };
@@ -106,7 +106,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   const boards = new Map();
   const aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
   const plates = new WeakMap();
-  let liveHead = 'WISH BOARD  ·  모두의 전광판  ·  코인을 모아 이 화면을 점령하세요  ·  ';
+  let liveHead = 'WISH BOARD  ·  모두의 전광판  ·  응원 포인트를 모아 이 화면에 소원을 거세요  ·  ';
   let liveAcc = 0, liveTick = 0, towerOpen = !auctionClosed('MAIN_TOP', nowMs());
   // 오늘의 소원: idle boards alternate their notice with a wish card. Rotation repaints happen only on the 0.64 s cadence
   // (update() → wishPlan): at most wishBudget per tick (nearest first, then oldest waiting) plus WISH_DROPS clears of boards
@@ -147,7 +147,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   const frameMat = new THREE.MeshStandardMaterial({ color: 0x15171d, roughness: 0.38, metalness: 0.85 });
   const backMat = new THREE.MeshStandardMaterial({ color: 0x0b0c10, roughness: 0.6, metalness: 0.6, side: THREE.DoubleSide });
   const tickerCanvas = makeCanvas(4096, 64);
-  paintTicker(tickerCanvas, 'WISH BOARD  ·  모두의 전광판  ·  코인을 모아 이 화면을 점령하세요');
+  paintTicker(tickerCanvas, 'WISH BOARD  ·  모두의 전광판  ·  응원 포인트를 모아 이 화면에 소원을 거세요');
   const tickerTex = new THREE.CanvasTexture(tickerCanvas);
   tickerTex.colorSpace = THREE.SRGBColorSpace;
   tickerTex.wrapS = THREE.RepeatWrapping;
@@ -406,7 +406,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
       holder_name: b.row.holder_name,
       line1: '불 꺼짐',
       line2: '주인이 다시 켤 수 있어요',
-      line3: (floorOf(slotId) || 0).toLocaleString('en-US') + ' 코인부터',
+      line3: (floorOf(slotId) || 0).toLocaleString('en-US') + ' 포인트부터',
       emoji: '💡',
       unlit: true,
     } : { ...defaultData(slotId, soon), views: b.row.views, clicks: b.row.clicks, cheers: b.row.cheers, ...(opsLine && !soon ? { line2: opsLine } : {}) };
@@ -525,7 +525,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     }
     const rows = [...boards.values()].map((row) => row.data).filter(Boolean);
     const min = askBid(d, rows, '', '');
-    return min > 0 ? `지금 빼기 가능 · ${min.toLocaleString('ko-KR')}코인부터` : '지금 빼기 가능';
+    return min > 0 ? `지금 빼기 가능 · ${min.toLocaleString('ko-KR')}포인트부터` : '지금 빼기 가능';
   }
   // update()'s nearest-first list, its { b, d } rows, the position it measures with and its two sets are made once and
   // reused every tick. Readers of lastNear (kingStep, fillNear, pinOn) take .b at once and keep no row.

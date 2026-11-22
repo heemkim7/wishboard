@@ -2,8 +2,8 @@
 // Players on chapel:square never see them and /rt/here never counts them.
 //   node tools/plaza-bots.mjs                        walk and emote on http://localhost:8787
 //   BOT_HOST=https://... node tools/plaza-bots.mjs    another worker (the production host also needs --allow-prod)
-//   node tools/plaza-bots.mjs --trade                also earn coins and claim street boards (no coin sends: the bots are guests,
-//                                                    and the Worker refuses every send from a guest)
+//   node tools/plaza-bots.mjs --trade                also earn 응원 포인트 by 관람 (no play pays any more) and claim street boards
+//                                                    (no sends: points are not transferable, the send route answers 410 off)
 // Wallets, board claims and the spend ranking live in one database for every namespace. So --trade only runs when the
 // worker's database (/rt/config) is not the production Supabase project, and never on the production host.
 // Stop: Ctrl+C. They leave after 40 minutes.
@@ -149,7 +149,7 @@ async function runBot(i) {
       last = t;
       const now = pose(dt, t);
       send({ t: 'p', a: [toU(now.p.x), toU(now.p.z), now.face, now.p.anim, 0, now.vx, now.vy] });
-      if (trade && t > mineAt) { send({ t: 'MINE', amount: 15, nick: name }); mineAt = t + 2100; }
+      if (trade && t > mineAt) { send({ t: 'BONUS', kind: 'lounge', amount: 2, nick: name }); mineAt = t + 20100; } // 관람: PAY.lounge, 20 s apart
       if (t > emoteAt) { send({ t: 'E', e: 4 }); emoteAt = t + 45000; }
     }, 120);
     const ping = setInterval(() => { if (ws.readyState === 1) ws.send('ping'); }, 20000);
@@ -177,7 +177,7 @@ async function market(token, name, color) {
     console.log(name, deal.offer.steal ? '강탈' : '매수', deal.offer.slot, deal.offer.bid, c.ok ? 'ok' : c.error, '보유', coins);
     return;
   }
-  // No coin send to another bot's board: guests cannot send coins (the send route answers code 'starter'), so the step is skipped.
+  // No send to another bot's board: points are never sent (the send route answers 410 off).
   console.log(name, '벌는 중', coins);
 }
 

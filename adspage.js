@@ -170,7 +170,7 @@ function open(d, cfg) {
   app.replaceChildren(
     h('h1', { text: '가상 타임스퀘어의 광고 화면에 광고하세요' }),
     h('p', { class: 'lede', text: '모두의 전광판은 뉴욕 타임스퀘어를 옮겨 놓은 3D 광장이에요. 광장 곳곳에 광고 전용 화면 다섯 곳이 있고, 하루 단위로 가게·채널 홍보나 생일·응원 광고를 걸 수 있어요. 광장에서 화면을 누르면 링크가 열려요.' }),
-    h('div', { class: 'card' }, h('span', { class: 'chip', text: '광고' }), ' 광고 화면에는 언제나 ‘광고’ 표시가 붙어요. 게임의 점령 전광판(코인으로 경쟁하는 칸)과는 따로 있어서, 광고를 사도 게임 안의 칸이나 코인을 얻지 않아요.'),
+    h('div', { class: 'card' }, h('span', { class: 'chip', text: '광고' }), ' 광고 화면에는 언제나 ‘광고’ 표시가 붙어요. 광장의 일반 전광판(응원 포인트로 거는 칸)과는 따로 있어서, 광고를 사도 광장의 칸이나 응원 포인트를 얻지 않아요.'),
     h('h2', { text: '광고 화면' }),
     h('div', { class: 'card' }, mapSvg(),
       h('ul', { class: 'screens' }, ...AD_SCREENS.map((a, i) => h('li', {}, h('b', { text: String(i + 1) }), h('span', { text: `${a.name} · 가로 ${a.w}m, 땅에서 ${Math.round(a.y)}m` }))))),

@@ -51,11 +51,11 @@ describe('tutorial last step', () => {
     assert.deepEqual(calls.at(-2), ['wp', { x: 3, z: 4 }]);
     assert.deepEqual(calls.at(-1), ['line', '하늘색 기둥을 따라 무료 칸으로 가세요']);
   });
-  it('names the cheapest slot and the coins left when no starter slot is free', () => {
+  it('names the cheapest slot and the points left when no starter slot is free', () => {
     const all = ['STREET_8', 'STREET_9', 'STREET_10', 'STREET_11'];
     const calls = run({ free: false, slot: 'PLOT_1', name: '분양 전광판', left: 140 }, all);
     assert.deepEqual(calls.at(-2), ['wp', null]);
-    assert.equal(calls.at(-1)[1], '분양 전광판까지 140코인 더 모으면 걸 수 있어요');
+    assert.equal(calls.at(-1)[1], '분양 전광판까지 140포인트 더 모으면 걸 수 있어요');
     assert.equal(calls.some(([, t]) => typeof t === 'string' && t.includes('무료')), false);
   });
   it('does not promise a free slot when the starter was already used', () => {
@@ -64,8 +64,8 @@ describe('tutorial last step', () => {
     assert.equal(calls.at(-1)[1], '분양 전광판에 이름을 걸 수 있어요');
   });
   it('goalLine formats with thousands separators and falls back without a goal', () => {
-    assert.equal(goalLine({ name: '메인거리', left: 1200 }), '메인거리까지 1,200코인 더 모으면 걸 수 있어요');
-    assert.equal(goalLine(null), '코인을 모아 전광판에 이름을 걸어 보세요');
+    assert.equal(goalLine({ name: '메인거리', left: 1200 }), '메인거리까지 1,200포인트 더 모으면 걸 수 있어요');
+    assert.equal(goalLine(null), '응원 포인트를 모아 전광판에 이름을 걸어 보세요');
   });
   it('ui exposes nextGoal with name and left', () => {
     const ui = read('ui.js');
@@ -121,9 +121,11 @@ describe('newcomer mode', () => {
     assert.match(ui, /메뉴 모두 보기/);
     assert.match(ui, /지금 할 일/);
     const html = read('index.html');
-    for (const sel of ['.liveboard', '.fever', '.stay-quest', '.stay-ticket', '.stay-balloon', '.channel-card']) {
+    for (const sel of ['.liveboard', '.stay-quest', '.stay-balloon', '.channel-card']) {
       assert.ok(html.includes(`#ui.newbie ${sel}`), sel);
     }
+    // the coin-2x gauge and the draw line are gone (no points for play, no lottery)
+    for (const sel of ['.fever', '.stay-ticket']) assert.equal(html.includes(sel), false, sel);
   });
   it('holds back the entry star shower for newcomers', () => {
     const main = read('main.js');
@@ -215,12 +217,14 @@ describe('public numbers', () => {
 });
 
 describe('copy', () => {
-  it('calls the draw 추첨 and never 복권, 잭팟, 당첨, 🎰', () => {
-    for (const f of ['ui.js', 'main.js', 'index.html', 'ftue.js']) {
+  // There is no lottery any more (WISH BOARD is not a game): no draw, no tickets, no words of chance.
+  it('has no draw: never 추첨, 복권, 잭팟, 당첨, 🎰, 로또 in the plaza screens', () => {
+    for (const f of ['ui.js', 'main.js', 'index.html', 'ftue.js', 'net.js']) {
       const src = read(f);
-      for (const w of ['복권', '잭팟', '당첨', '🎰', '로또']) assert.equal(src.includes(w), false, `${f}: ${w}`);
+      for (const w of ['추첨', '복권', '잭팟', '당첨', '🎰', '로또']) assert.equal(src.includes(w), false, `${f}: ${w}`);
     }
-    assert.match(read('ui.js'), /5분 추첨/);
+    assert.doesNotMatch(read('ui.js'), /showDraw|paintTickets|noteLot|stay-ticket/);
+    assert.doesNotMatch(read('main.js'), /DRAW_CHECK|net\.on\('draw'|net\.on\('lot'/);
   });
 });
 

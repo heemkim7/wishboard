@@ -50,9 +50,9 @@ it('the takeover asks a second time with the price and what is left', () => {
   assert.equal(AIR_PRICE, 5000);
   assert.deepEqual(airAsk({ line: '  ', pay: 'coins', have: 9000 }), { ok: false, err: '한 줄을 적어 주세요' });
   assert.equal(airAsk({ line: '안녕', pay: 'coins', have: 4999 }).ok, false);
-  assert.match(airAsk({ line: '안녕', pay: 'coins', have: 4999 }).err, /5,000코인이 필요해요. 지금 4,999코인/);
+  assert.match(airAsk({ line: '안녕', pay: 'coins', have: 4999 }).err, /5,000포인트가 필요해요. 지금 4,999포인트/);
   const coins = airAsk({ line: ' 안녕 타임스퀘어 ', pay: 'coins', have: 12345.7 });
-  assert.deepEqual(coins, { ok: true, text: '안녕 타임스퀘어', cost: '5,000코인', after: '쓴 뒤 잔액 7,345코인' });
+  assert.deepEqual(coins, { ok: true, text: '안녕 타임스퀘어', cost: '5,000포인트', after: '쓴 뒤 잔액 7,345포인트' });
   assert.deepEqual(airAsk({ line: '안녕', pay: 'ticket', have: 0, tickets: 0 }), { ok: false, err: 'VIP 티켓이 없어요' });
   assert.deepEqual(airAsk({ line: '안녕', pay: 'ticket', have: 0, tickets: 3 }), { ok: true, text: '안녕', cost: 'VIP 티켓 1장', after: '남는 티켓 2장' });
 });

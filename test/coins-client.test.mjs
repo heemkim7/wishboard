@@ -107,7 +107,7 @@ describe('account screens of this round', () => {
   });
   it('a re-join after a withdrawal is told once, from the link answer', () => {
     const fl = between(main, 'async function finishLink(', 'async function bootAccount(');
-    assert.match(fl, /else if \(merged\?\.again\) ui\.note\('계정을 연결했어요\. 예전에 탈퇴한 계정이라 연결 보상 300코인은 다시 주지 않아요', 'ok'\);/);
+    assert.match(fl, /else if \(merged\?\.again\) ui\.note\('계정을 연결했어요\. 예전에 탈퇴한 계정이라 연결 보상 300포인트는 다시 주지 않아요', 'ok'\);/);
     assert.match(read('worker.js'), /\.\.\.\(again \? \{ again: true \} : \{\}\) \}\);/);
   });
   it('a sign-out or withdrawal clears 받은 소식 and its 🔔: main.js drops the rows, ui.js hides the button and closes an open list', () => {
@@ -117,8 +117,12 @@ describe('account screens of this round', () => {
     assert.match(uf, /inboxBtn\.hidden = true;/); assert.match(uf, /if \(sheet\?\.inbox\) closeSheet\(\);/);
     assert.match(between(ui, '  function openInboxSheet() {', '\n  }\n'), /sheet\.inbox = true;/);
   });
-  it('the wallet sheet says the send floor before the player taps', () => {
-    assert.match(ui, /hooks\.isGuest\?\.\(\) \? '손님은 코인을 보낼 수 없어요\. 계정을 연결하면 선물로 받은 코인 580개보다 더 모은 만큼 보낼 수 있어요\.' : '선물로 받은 코인 580개까지는 보낼 수 없어요\. 그보다 더 모은 만큼만 보낼 수 있어요\.'/);
-    assert.equal(/440/.test(read('legal.js') + ui.slice(ui.indexOf('손님은 코인을 보낼 수 없어요'), ui.indexOf('손님은 코인을 보낼 수 없어요') + 300)), false);
+  // Points are not transferable (non-game change): the wallet sheet has no send box and says so; there is no send floor to explain any more.
+  it('the wallet sheet sends nothing: no send box, no send hook, and the rule said in place', () => {
+    const w = between(ui, '  function openWalletInfo() {', '\n  function standings() {');
+    assert.doesNotMatch(w, /hooks\.sell|광고주에게|보내기/);
+    assert.match(w, /돈으로 팔지 않고, 보낼 수도 없어요/);
+    assert.doesNotMatch(main, /sell: \(payload\)|sellCoins|\/rt\/sell-coins/);
+    assert.doesNotMatch(read('net.js'), /sellCoins|\/rt\/sell-coins/);
   });
 });

@@ -330,7 +330,7 @@ describe('the Worker before and after the shop migration (JS model)', { concurre
     try {
       const g = await s.guest();
       const poor = await s.buy(g, 'tag_gold');
-      assert.equal(poor.status, 400); assert.equal(poor.body.code, 'coins'); assert.match(poor.body.error, /코인이 부족해요\. 500코인이 필요해요\./);
+      assert.equal(poor.status, 400); assert.equal(poor.body.code, 'coins'); assert.match(poor.body.error, /응원 포인트가 부족해요\. 500포인트가 필요해요\./);
       db.wallets.set(g.id, 10000);
       s.clock.add(4000);
       const log = spyDo(s.env); state.rpcs.length = 0;

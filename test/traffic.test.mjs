@@ -82,59 +82,56 @@ describe('1. main.js: the online work runs once per connect', () => {
     new Function('net', 'ui', 'refreshWallet', 'refreshWorld', 'bindTake', 'Q', block.replace(/\bqueuePos\b/g, 'Q.pos'))(net, ui, () => log.wallet++, () => log.world++, () => log.bind++, Q);
     return { say: (s) => h.status(s), sent, log, Q };
   }
-  it('presence syncs (the same status again) neither resync nor ask for the draw', () => {
+  // There is no draw any more (no lottery): a connect sends nothing to the room by itself, it only resyncs and binds once.
+  it('presence syncs (the same status again) do not resync; a connect sends no DRAW_CHECK', () => {
     const was = Date.now; let now = 1e12; Date.now = () => now;
     try {
       const t = harness();
       t.say('connecting'); t.say('online');
-      assert.deepEqual(t.sent, ['DRAW_CHECK']);
+      assert.deepEqual(t.sent, []);
       assert.deepEqual(t.log, { wallet: 1, world: 1, bind: 1 });
       for (let i = 0; i < 40; i++) { now += 1000; t.say('online'); } // 40 joins / leaves / outfit changes in the room
-      assert.deepEqual(t.sent, ['DRAW_CHECK']);
       assert.deepEqual(t.log, { wallet: 1, world: 1, bind: 1 });
-      t.say('connecting'); now += 1000; t.say('online'); // a reconnect: asks again (resync keeps its own 15 s spacing)
-      assert.deepEqual(t.sent, ['DRAW_CHECK', 'DRAW_CHECK']);
+      t.say('connecting'); now += 1000; t.say('online'); // a reconnect: resyncs again (resync keeps its own 15 s spacing)
       assert.equal(t.log.wallet, 2);
+      assert.deepEqual(t.sent, []);
     } finally { Date.now = was; }
   });
-  it('a connect while a queue number shows asks once the number is gone', () => {
+  it('a connect while a queue number shows binds once the number is gone', () => {
     const t = harness();
     t.Q.pos = 3; t.say('online');
-    assert.deepEqual(t.sent, []);
+    assert.equal(t.log.bind, 0);
     t.Q.pos = 0; t.say('online'); t.say('online');
-    assert.deepEqual(t.sent, ['DRAW_CHECK']);
+    assert.equal(t.log.bind, 1);
+    assert.deepEqual(t.sent, []);
   });
 });
 
-describe('2. Room: the draw once per bucket, and its own DO calls in the budget', () => {
-  it('a room full of DRAW_CHECKs asks lotto once per bucket and pays every ticket', async () => {
+describe('2. Room: no draw, and its own DO calls in the budget', () => {
+  it('a room full of DRAW_CHECKs (pages from before the lottery went) asks lotto nothing and pays nothing', async () => {
     const was = Date.now; let now = Date.UTC(2026, 10, 22, 3, 2, 0); Date.now = () => now;
     try {
       const { room, draws } = makeRoom(), bucket = Math.floor(now / 300000) - 1;
       room.tapDb();
       const socks = Array.from({ length: 20 }, (_, i) => openSock(room, 'guest:d' + i));
-      room.ctx.storage.sql.exec("insert into ag(uid, k, d, v) values(?, ?, '', ?)", 'guest:d3', 'lot:' + bucket, 1 + (bucket % 15)); // d3 holds the winning ticket
-      room.lastRep = now; // no report in between (it would zero the counters)
+      room.ctx.storage.sql.exec("insert into ag(uid, k, d, v) values(?, ?, '', ?)", 'guest:d3', 'lot:' + bucket, 1 + (bucket % 15)); // a ticket from before
+      room.lastRep = now;
       const c0 = room.conns;
       for (let round = 0; round < 3; round++) for (const ws of socks) await room.webSocketMessage(ws, JSON.stringify({ t: 'DRAW_CHECK' }));
-      assert.deepEqual(draws, [bucket]);
-      assert.equal(room.conns - c0, 1); // the one lotto call is in the budget
-      const hit = socks[3].sent.map((s) => JSON.parse(s)).filter((m) => m.t === 'DRAW');
-      assert.equal(hit.length, 1);
-      assert.equal(hit[0].hit, true);
-      now += 300000; // next bucket: asked again
-      await room.webSocketMessage(socks[0], JSON.stringify({ t: 'DRAW_CHECK' }));
-      assert.deepEqual(draws, [bucket, bucket + 1]);
+      assert.deepEqual(draws, []);
+      assert.equal(room.conns - c0, 0); // no DO call at all
+      assert.equal(socks.some((w) => w.sent.some((s) => JSON.parse(s).t === 'DRAW')), false);
+      assert.equal(room.ctx.storage.sql.exec('select count(*) n from coin').one().n, 0);
     } finally { Date.now = was; }
   });
-  it('the alarm counts itself, and its lotto draw counts toward the next report', async () => {
+  it('the alarm counts itself and draws nothing', async () => {
     const { room, adds, draws } = makeRoom();
     openSock(room, 'guest:a1');
     await room.alarm();
     assert.ok(adds.length >= 1);
     assert.ok(adds[0][0] >= 1, 'the alarm itself is in the first report');
-    assert.equal(draws.length, 1);
-    assert.equal(room.conns, 1); // the draw the alarm made after its report goes out with the next one
+    assert.equal(draws.length, 0);
+    assert.equal(room.conns, 0); // nothing after its report
   });
   it('the alarm still settles pending coins after its report', async () => {
     const { room } = makeRoom();

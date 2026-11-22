@@ -54,7 +54,7 @@ export const inviteOn = (env) => env?.INVITE_ON === '1';
 // What the screen shows and sends. on: /rt/config carried `invite: true`. Off: no code on links, no lines, nothing sent with a wish.
 export function inviteView({ on = false, code = '', sum = null, from = '' } = {}) {
   if (!on) return { code: '', line: '', box: '', send: '' };
-  return { code: invCode(code), line: Number(sum?.count) >= INVITE.total ? '' : `친구가 이 링크로 와서 소원을 걸면 둘 다 ${INVITE.invitee}코인`, box: inviteLine(sum), send: invCode(from) };
+  return { code: invCode(code), line: Number(sum?.count) >= INVITE.total ? '' : `친구가 이 링크로 와서 소원을 걸면 둘 다 응원 포인트 ${INVITE.invitee}`, box: inviteLine(sum), send: invCode(from) };
 }
 // The coarse prefix of an address for the wideDay cap: IPv6 /48, IPv4 /24 ('x' when there is none). Hashed by the Worker like wishIp.
 export function ipWide(ip) {
@@ -84,11 +84,11 @@ export function withInvite(url, code, origins = []) {
 // The wish sheet line: '' until somebody came through my links.
 export function inviteLine(sum) {
   const n = Math.max(0, Math.floor(Number(sum?.count) || 0));
-  return n > 0 ? `초대한 친구 ${n}명 · 받은 코인 ${Math.max(0, Math.floor(Number(sum?.earned) || 0)).toLocaleString('ko-KR')}` : '';
+  return n > 0 ? `초대한 친구 ${n}명 · 받은 포인트 ${Math.max(0, Math.floor(Number(sum?.earned) || 0)).toLocaleString('ko-KR')}` : '';
 }
 // The 다녀간 사이 row for rewards paid since `seen` (ms, the newest one shown before), or null. at = the newest of them.
 export function inviteNews(sum, seen = 0) {
   const fresh = (Array.isArray(sum?.recent) ? sum.recent : []).map(Number).filter((t) => Number.isFinite(t) && t > (Number(seen) || 0));
   if (!fresh.length) return null;
-  return { kind: 'invite', id: 0, slot: '', text: `초대한 친구 ${fresh.length}명이 소원을 걸었어요. +${(fresh.length * INVITE.inviter).toLocaleString('ko-KR')}코인`, label: '소원 보기', at: Math.max(...fresh) };
+  return { kind: 'invite', id: 0, slot: '', text: `초대한 친구 ${fresh.length}명이 소원을 걸었어요. +${(fresh.length * INVITE.inviter).toLocaleString('ko-KR')} 포인트`, label: '소원 보기', at: Math.max(...fresh) };
 }

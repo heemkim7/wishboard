@@ -41,9 +41,9 @@ export function leagueBoard(rows, uid = '', n = LEAGUE.top) {
 export function leagueLine(me) {
   if (!me) return '';
   const rank = Math.floor(Number(me.rank) || 0);
-  if (rank < 1) return '이번 주 순위는 0에서 시작했어요 · 코인을 쓰면 순위에 올라요';
+  if (rank < 1) return '이번 주 순위는 0에서 시작했어요 · 포인트를 쓰면 순위에 올라요';
   const next = me.next && Number(me.next.gap) > 0 ? me.next : null;
-  return next ? `이번 주 ${rank}위 · ${Math.floor(Number(next.gap)).toLocaleString('en-US')}코인 더 쓰면 ${Math.floor(Number(next.rank))}위` : `이번 주 ${rank}위`;
+  return next ? `이번 주 ${rank}위 · ${Math.floor(Number(next.gap)).toLocaleString('en-US')}포인트 더 쓰면 ${Math.floor(Number(next.rank))}위` : `이번 주 ${rank}위`;
 }
 // What the HUD liveboard would paint (top rows, my rank, my line): ui.js skips the DOM write while this stays the same.
 export function liveSig(rows, me) { return JSON.stringify([(Array.isArray(rows) ? rows : []).map((r) => [String(r?.nick || ''), Number(r?.spent) || 0]), Math.floor(Number(me?.rank) || 0), leagueLine(me)]); }

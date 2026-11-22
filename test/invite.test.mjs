@@ -157,10 +157,10 @@ describe('invite rules (invite.js)', () => {
   it('the sheet line shows only with friends; the away row counts payments since last seen', () => {
     assert.equal(inviteLine({ count: 0, earned: 0 }), '');
     assert.equal(inviteLine(null), '');
-    assert.equal(inviteLine({ count: 2, earned: 200 }), '초대한 친구 2명 · 받은 코인 200');
+    assert.equal(inviteLine({ count: 2, earned: 200 }), '초대한 친구 2명 · 받은 포인트 200');
     assert.equal(inviteNews({ recent: [] }, 0), null);
     assert.equal(inviteNews({ recent: [100, 200] }, 200), null);
-    assert.deepEqual(inviteNews({ recent: [300, 250, 100] }, 200), { kind: 'invite', id: 0, slot: '', text: '초대한 친구 2명이 소원을 걸었어요. +200코인', label: '소원 보기', at: 300 });
+    assert.deepEqual(inviteNews({ recent: [300, 250, 100] }, 200), { kind: 'invite', id: 0, slot: '', text: '초대한 친구 2명이 소원을 걸었어요. +200 포인트', label: '소원 보기', at: 300 });
   });
   it('awayRows adds the invite row (not for newcomers) and keeps its old shape without one', () => {
     const base = { inbox: [], wish: { mine: null, yesterday: [] }, day: '2027-01-02', now: 5000 };
@@ -696,7 +696,7 @@ describe('invite budget per invocation and the master switch', () => {
     const sum = { count: 2, earned: 200 };
     assert.deepEqual(inviteView({ on: false, code: 'ab12cd34', sum, from: 'zz12cd34' }), { code: '', line: '', box: '', send: '' });
     assert.deepEqual(inviteView({}), { code: '', line: '', box: '', send: '' });
-    assert.deepEqual(inviteView({ on: true, code: 'ab12cd34', sum, from: 'zz12cd34' }), { code: 'ab12cd34', line: '친구가 이 링크로 와서 소원을 걸면 둘 다 100코인', box: '초대한 친구 2명 · 받은 코인 200', send: 'zz12cd34' });
+    assert.deepEqual(inviteView({ on: true, code: 'ab12cd34', sum, from: 'zz12cd34' }), { code: 'ab12cd34', line: '친구가 이 링크로 와서 소원을 걸면 둘 다 응원 포인트 100', box: '초대한 친구 2명 · 받은 포인트 200', send: 'zz12cd34' });
     assert.equal(inviteView({ on: true, sum: { count: 50, earned: 5000 } }).line, '');
     assert.equal(inviteView({ on: true, sum: { count: 0 } }).box, '');
     assert.equal(inviteOn({ INVITE_ON: '1' }), true); for (const v of [undefined, '', '0', 'true', 1]) assert.equal(inviteOn({ INVITE_ON: v }), false, String(v));

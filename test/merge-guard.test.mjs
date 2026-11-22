@@ -1,8 +1,8 @@
-// Package U6: the starter guard, and the send floor.
+// Package U6: the starter guard, and closed transfers.
 // Links (/rt/auth/merge): a guest wallet starts with 100 coins nobody earned and is paid the hello bonus 40 on arrival (140 "arrival coins").
 // merge_guest_account moves every coin, so sign-out -> a new guest -> sign-in added them a cycle, and many fresh guests linked into one account
-// piled up their hello bonuses. Sends (/rt/sell-coins, /rt/tribe/pledge): the coins everybody is given are not transferable; a guest sends
-// nothing, an account only what it holds above 580 (SEND_FLOOR: its own row's 100 and hello 40, its first guest's 140, the link reward 300).
+// piled up their hello bonuses. Sends (/rt/sell-coins, /rt/tribe/pledge): 응원 포인트 are not transferable at all since the non-game change
+// (docs/non-game-plan-2026-11-22.md 4-3); both routes answer 410 code 'off' for everybody, before any check, Durable Object call or RPC.
 // The database is changed by hand (migrations/2026-11-22-coins.sql), so the link scenarios run in both states:
 //   before  the functions as they were (the Worker takes the arrival coins back after the call): a JS model, and the previous schema.sql
 //   after   the functions of schema.sql now (the database guards the link in one step, answer guard: 2): a JS model, and schema.sql
@@ -230,13 +230,13 @@ async function scene(db, extra = {}) {
   const rich = async (n) => { const u = await linked(); await earn(u.id, 140 + n); return u; };
   const stp = (id) => env.meter('acct').sql.db.prepare("select count(*) n from sqlite_master where name = 'stp'").get().n ? env.meter('acct').sql.db.prepare('select v from stp where g = ?').get(id)?.v ?? 0 : 0;
   const burns = () => state.rpcs.filter((x) => /^(spend_plaza|grant_coins) /.test(x));
-  // 광고주에게 코인 보내기, as net.js posts it.
+  // 광고주에게 코인 보내기, as an older page posted it (closed: 410 off).
   const send = async (who, slot, amount) => { const res = await post('/rt/sell-coins', { topic: 'chapel:square', slot_id: slot, amount, nickname: '손님' }, who.token); return { status: res.status, body: await res.json() }; };
   const sells = () => state.rpcs.filter((x) => x.startsWith('sell_coins_to_advertiser ')).length;
   const acctDb = () => env.meter('acct').sql.db, has = (tb) => acctDb().prepare('select count(*) n from sqlite_master where name = ?').get(tb).n > 0;
-  const lease = (id) => (has('shl') ? acctDb().prepare('select count(*) n from shl where uid = ?').get(id).n : 0) + (has('lkl') ? acctDb().prepare('select count(*) n from lkl where uid = ?').get(id).n : 0); // sends and links
+  const lease = (id) => (has('lkl') ? acctDb().prepare('select count(*) n from lkl where uid = ?').get(id).n : 0); // links (the send lease went with the sends)
   const gone = () => (has('gone') ? acctDb().prepare('select h from gone').all().map((r) => String(r.h)) : []);
-  // A tribe of its own for `who`, and a pledge as net.js posts it.
+  // A tribe of its own for `who`, and a pledge as an older page posted it (closed: 410 off).
   const tribe = async (who) => assert.equal((await db.rpc('create_tribe', { p_key: KEY, p_actor_id: who.id, p_id: 'tr' + String(++seq).padStart(6, '0'), p_tag: 'T' + seq })).ok, true);
   const pledge = async (who, amount) => { const res = await post('/rt/tribe/pledge', { topic: 'chapel:square', slot: 'STREET_3', amount }, who.token); return { status: res.status, body: await res.json() }; };
   const pledges = () => state.rpcs.filter((x) => x.startsWith('pledge_tribe ')).length;
@@ -415,17 +415,17 @@ function suite(label, makeDb, skip) {
         const t = await s.link(throwaway, g); assert.equal(t.bonus, 300); assert.equal(await s.coins(throwaway.id), 300);
         assert.equal((await s.get('/rt/profile', g.token)).status, 200); await s.earn(g.id, 40); assert.equal(await s.coins(g.id), 140); // its row: 100 + hello 40
         const r = await s.link(main, g); assert.equal(r.bonus, 0); assert.equal(r.coins, 440); assert.equal(await s.coins(main.id), 440); assert.equal(await s.coins(g.id), 0);
-        // The throwaway account itself holds only gifts (300 < 580): it can send nothing either.
-        await db.hold('STREET_9', main.id); assert.equal((await s.send(throwaway, 'STREET_9', 10)).body.code, 'starter');
+        // The throwaway account cannot hand its 300 on either: points are never sent.
+        await db.hold('STREET_9', main.id); assert.equal((await s.send(throwaway, 'STREET_9', 10)).body.code, 'off'); assert.equal(await s.coins(throwaway.id), 300);
       } finally { s.done(); }
     });
 
-    it('an account row made before the first link: after the migration it starts at 0, before it the 100 stay under the send floor', async () => {
+    it('an account row made before the first link: after the migration it starts at 0, before it 100, and none of it can be sent', async () => {
       const s = await scene(db);
       try {
         const u = await s.user(); assert.equal((await s.get('/rt/profile', u.token)).status, 200); assert.equal(await s.coins(u.id), A ? 0 : 100);
         const r = await s.link(u, await s.guest()); assert.equal(r.bonus, 300); assert.equal(await s.coins(u.id), A ? 440 : 540);
-        await db.hold('STREET_10', (await s.linked()).id); assert.equal((await s.send(u, 'STREET_10', 10)).body.code, 'starter'); // under 580 in both states
+        await db.hold('STREET_10', (await s.linked()).id); assert.equal((await s.send(u, 'STREET_10', 10)).body.code, 'off'); // closed in both states
       } finally { s.done(); }
     });
 
@@ -605,45 +605,31 @@ function suite(label, makeDb, skip) {
       } finally { s.done(); }
     });
 
-    it('the account\'s coin sends and a link that moves coins keep each other out (before); after, a link of a rewarded account holds nothing', async () => {
+    it('a link that moves coins (before) holds its lease until its take-back is done; nothing can be sent meanwhile or after', async () => {
       const s = await scene(db);
       try {
         const owner = await s.linked(), u = await s.rich(160), g = await s.guest(); await db.hold('STREET_23', owner.id); // u: 740
         let open; const gate = new Promise((r) => { open = r; }); s.state.before = (name) => (name === 'merge_guest_account' ? gate : null); // the merge RPC is on its way
         const linking = s.link(u, g); await new Promise((r) => setTimeout(r, 20));
-        if (!A) {
-          const during = await Promise.all([50, 50, 50, 50].map((n) => s.quick('/rt/sell-coins', { topic: 'chapel:square', slot_id: 'STREET_23', amount: n, nickname: '손님' }, u.token))); // the account floods its sends
-          for (const r of during) { assert.equal(r.status, 429); assert.deepEqual(r.body, BUSY); }
-          assert.equal(s.sells(), 0);
-        } else assert.equal(s.lease(u.id), 0); // the database does the move and its take-back in one step: nothing to wait for
+        if (!A) assert.equal(s.lease(u.id), 1); else assert.equal(s.lease(u.id), 0); // after: the database does the move and its take-back in one step
+        const during = await Promise.all([50, 50].map((n) => s.quick('/rt/sell-coins', { topic: 'chapel:square', slot_id: 'STREET_23', amount: n, nickname: '손님' }, u.token)));
+        for (const r of during) { assert.equal(r.status, 410); assert.equal(r.body.code, 'off'); }
         open(); s.state.before = null;
         const r = await linking; assert.equal(r.coins, 740); assert.equal(await s.coins(u.id), 740); assert.equal(s.lease(u.id), 0);
-        assert.equal((await s.send(u, 'STREET_23', 50)).status, 200); assert.equal(await s.coins(u.id), 690);
-        // The other way round: a send of the account is under way, so (before) the link is asked to come back.
-        let open2; const gate2 = new Promise((r) => { open2 = r; }); s.state.before = (name) => (name === 'sell_coins_to_advertiser' ? gate2 : null);
-        const sending = s.send(u, 'STREET_23', 50); await new Promise((r) => setTimeout(r, 20));
-        const g2 = await s.guest(), res = await s.quick('/rt/auth/merge', { guest_id: g2.id, guest_token: g2.token, nickname: '', topic: 'chapel:square' }, u.token);
-        if (!A) { assert.equal(res.status, 429); assert.equal(res.headers.get('retry-after'), '60'); assert.deepEqual(res.body, { ok: false, err: 'rate', error: '계정을 연결하지 못했어요. 잠시 뒤 다시 해 주세요.' }); assert.equal(await s.coins(g2.id), 140); }
-        else assert.equal(res.status, 200);
-        open2(); s.state.before = null; assert.equal((await sending).status, 200);
-        await s.link(u, g2); assert.equal(await s.coins(u.id), 640); assert.equal(s.lease(u.id), 0);
+        assert.equal((await s.send(u, 'STREET_23', 50)).status, 410); assert.equal(await s.coins(u.id), 740); assert.equal(s.sells(), 0);
       } finally { s.done(); }
     });
 
-    it('before: the hold across isolates is the acct lease: a link elsewhere stops this account\'s send, a send elsewhere stops its link, links share', async (t) => {
+    it('before: links of one account share the acct lease, and a link whose request died lets go after the lease time', async (t) => {
       if (A) { t.skip('after the migration a rewarded account\'s link takes no lease'); return; }
       const s = await scene(db);
       try {
-        const owner = await s.linked(), u = await s.rich(160), g = await s.guest(), M = s.env.meter('acct').do; await db.hold('STREET_24', owner.id);
+        const u = await s.rich(160), g = await s.guest(), M = s.env.meter('acct').do;
         const at = M.linkTake(u.id, 15000); assert.equal(typeof at, 'number'); // another isolate is linking this account
-        const no = await s.send(u, 'STREET_24', 50); assert.equal(no.status, 429); assert.deepEqual(no.body, BUSY);
         await s.link(u, g); assert.equal(await s.coins(u.id), 740); // a second link of the account joins the first
-        assert.equal((await s.send(u, 'STREET_24', 50)).status, 429); // the first one is still under way
-        M.linkDone(u.id, at); assert.equal(s.lease(u.id), 0); assert.equal((await s.send(u, 'STREET_24', 50)).status, 200);
-        const until = M.sellTake(u.id, 15000); assert.equal(typeof until, 'number'); // another isolate is sending for this account
-        const g2 = await s.guest(), res = await s.post('/rt/auth/merge', { guest_id: g2.id, guest_token: g2.token, nickname: '' }, u.token);
-        assert.equal(res.status, 429); assert.equal(await s.coins(g2.id), 140);
-        s.clock.add(15001); await s.link(u, g2); assert.equal(await s.coins(u.id), 690); // that request died: its lease ran out
+        assert.equal(s.lease(u.id), 1); // the first one is still under way
+        M.linkDone(u.id, at); assert.equal(s.lease(u.id), 0);
+        M.linkTake(u.id, 15000); s.clock.add(15001); const g2 = await s.guest(); await s.link(u, g2); assert.equal(await s.coins(u.id), 740); // that request died: its lease ran out
       } finally { s.done(); }
     });
 
@@ -694,245 +680,42 @@ describe('after the migration, an older Worker (rollback) never takes the arriva
   });
 });
 
-// ---- /rt/sell-coins and /rt/tribe/pledge: guests send nothing, accounts only above 580 ----------------------------------------------------------
-const GUEST_NO = { ok: false, code: 'starter', error: '손님은 코인을 보낼 수 없어요. 계정을 연결하면 보낼 수 있어요.' };
-const FLOOR = { ok: false, code: 'starter', error: '선물로 받은 코인 580개까지는 보낼 수 없어요. 그보다 더 모은 만큼만 보낼 수 있어요.' };
-const PLEDGE_GUEST = { ok: false, code: 'starter', error: '손님은 모금할 수 없어요. 계정을 연결하면 모금할 수 있어요.' };
-const PLEDGE_FLOOR = { ok: false, code: 'starter', error: '선물로 받은 코인 580개까지는 모금할 수 없어요. 그보다 더 모은 만큼만 모금할 수 있어요.' };
-const BUSY = { ok: false, code: 'busy', error: '앞선 코인 보내기가 끝난 뒤에 다시 해 주세요.' };
+// ---- /rt/sell-coins and /rt/tribe/pledge: closed for everybody ---------------------------------------------------------------------------------
+const NO_SEND = { ok: false, code: 'off', error: '응원 포인트는 다른 사람에게 보낼 수 없어요.' };
+const NO_POOL = { ok: false, code: 'off', error: '소속 모금은 닫혔어요. 응원 포인트는 모아서 보낼 수 없어요.' };
 const HARD = { ok: false, code: 'busy', error: '지금은 광장이 붐벼요. 잠시 뒤에 다시 해 주세요.' };
-const GONE_SEND = { ok: false, code: 'gone', error: '탈퇴한 계정이에요. 다시 로그인해 주세요.' };
-function sendSuite(label, makeDb, skip) {
-  describe('send floor: ' + label, { concurrency: false, skip }, () => {
-    let db;
-    before(async () => { db = await makeDb(); });
-
-    it('a guest sends nothing, whatever it holds: no balance read, no room, no acct call, nothing reaches the database function', async () => {
-      const s = await scene(db);
-      try {
-        const owner = await s.linked(), g = await s.guest(), b = await s.bare(), richG = await s.guest(); await db.hold('STREET_12', owner.id); await s.earn(richG.id, 500);
-        const log = spyDo(s.env); s.state.wreads.length = 0;
-        for (const n of [10, 20, 50]) { const r = await s.send(g, 'STREET_12', n); assert.equal(r.status, 400); assert.deepEqual(r.body, GUEST_NO); }
-        assert.deepEqual((await s.send(b, 'STREET_12', 10)).body, GUEST_NO); assert.deepEqual((await s.send(richG, 'STREET_12', 50)).body, GUEST_NO);
-        assert.equal(s.sells(), 0); assert.deepEqual(s.state.wreads, []); assert.deepEqual(log, []); // not even the room's pending coins are asked for
-        assert.equal(await s.coins(g.id), 140); assert.equal(await s.coins(richG.id), 640); assert.equal(await s.coins(owner.id), 440);
-        assert.equal(await s.coins(b.id), null); // the function would have made the row with 100 and sent from it
-      } finally { s.done(); }
-    });
-
-    it('an account keeps 580: with 630 it sends 50 and not one coin more; a new account (440, or 540 before the migration) sends nothing', async () => {
-      const s = await scene(db);
-      try {
-        const owner = await s.linked(), u = await s.rich(50), v = await s.rich(49), fresh = await s.linked(); await db.hold('STREET_13', owner.id);
-        const ok = await s.send(u, 'STREET_13', 50);
-        assert.equal(ok.status, 200); assert.equal(ok.body.ok, true); assert.equal(ok.body.remaining_coins, 580); assert.equal(ok.body.amount, 50);
-        assert.equal(await s.coins(u.id), 580); assert.equal(await s.coins(owner.id), 490);
-        assert.deepEqual((await s.send(u, 'STREET_13', 10)).body, FLOOR);
-        assert.deepEqual((await s.send(v, 'STREET_13', 50)).body, FLOOR); // 629: 50 would leave 579
-        assert.equal((await s.send(v, 'STREET_13', 20)).status, 200); assert.equal((await s.send(v, 'STREET_13', 20)).status, 200);
-        assert.deepEqual((await s.send(v, 'STREET_13', 10)).body, FLOOR); // 589: 10 would leave 579
-        // A new account holds only gifts: its first guest's 100 and hello 40 and the reward 300, and before the migration also the 100 (and a
-        // hello 40 rooms used to pay it) of its own row made before the link: at most 580, so a fresh ID account has nothing to hand on.
-        assert.deepEqual((await s.send(fresh, 'STREET_13', 50)).body, FLOOR);
-        assert.deepEqual((await s.send(fresh, 'STREET_13', 10)).body, FLOOR);
-        const most = await s.user(); assert.equal((await s.get('/rt/profile', most.token)).status, 200); await s.earn(most.id, 40); await s.link(most, await s.guest());
-        assert.equal(await s.coins(most.id), db.guard ? 480 : 580); assert.deepEqual((await s.send(most, 'STREET_13', 10)).body, FLOOR);
-        assert.equal(await s.coins(v.id), 589); assert.equal(await s.coins(fresh.id), 440); assert.equal(await s.coins(owner.id), 530); assert.equal(s.sells(), 3);
-      } finally { s.done(); }
-    });
-
-    it('coins an account was sent by someone else count as above the floor', async () => {
-      const s = await scene(db);
-      try {
-        const owner = await s.linked(), w = await s.rich(300), u = await s.rich(0); await db.hold('STREET_14', owner.id); await db.hold('STREET_15', u.id);
-        assert.equal((await s.send(w, 'STREET_15', 50)).status, 200); assert.equal(await s.coins(u.id), 630);
-        assert.equal((await s.send(u, 'STREET_14', 50)).status, 200); assert.equal(await s.coins(u.id), 580); assert.equal(await s.coins(owner.id), 490);
-        assert.deepEqual((await s.send(u, 'STREET_14', 50)).body, FLOOR);
-      } finally { s.done(); }
-    });
-
-    it('an account send reads the balance twice (before the lease and under it) and takes one lease; a refused one reads once and asks no acct', async () => {
-      const s = await scene(db);
-      try {
-        const owner = await s.linked(), poor = await s.linked(), u = await s.rich(50); await db.hold('STREET_25', owner.id);
-        const log = spyDo(s.env); s.state.wreads.length = 0;
-        assert.deepEqual((await s.send(poor, 'STREET_25', 50)).body, FLOOR);
-        assert.deepEqual(s.state.wreads, [poor.id]); assert.deepEqual(s.acctCalls(log, /^(sell|link)/), []);
-        s.state.wreads.length = 0; assert.equal((await s.send(u, 'STREET_25', 50)).status, 200);
-        assert.deepEqual(s.state.wreads, [u.id, u.id]);
-        assert.deepEqual(s.acctCalls(log, /^(sell|link)/), ['acct.sellTake', 'acct.sellDone']); assert.equal(s.lease(u.id), 0);
-      } finally { s.done(); }
-    });
-
-    it('the balance is judged again under the lease: a send that passed the first read is refused if the coins left meanwhile', async () => {
-      const s = await scene(db);
-      try {
-        const owner = await s.linked(), u = await s.rich(50); await db.hold('STREET_26', owner.id);
-        // Another isolate's send of the same account lands between this request's first read and its lease.
-        const real = s.env.METER.get; let once = true;
-        s.env.METER.get = (n) => (n === 'acct' ? new Proxy(real(n), { get: (t, k) => (k === 'sellTake' && once ? async (...a) => { once = false; await db.rpc('sell_coins_to_advertiser', { p_key: KEY, p_actor_id: u.id, p_nickname: '손님', p_slot_id: 'STREET_26', p_amount: 50 }); return t[k](...a); } : t[k]) }) : real(n));
-        const r = await s.send(u, 'STREET_26', 50); assert.equal(r.status, 400); assert.deepEqual(r.body, FLOOR);
-        assert.equal(await s.coins(u.id), 580); assert.equal(s.sells(), 0); assert.equal(s.lease(u.id), 0);
-      } finally { s.done(); }
-    });
-
-    it('an anonymous sign-in is a guest: it sends and pledges nothing', async () => {
-      const s = await scene(db);
-      try {
-        const owner = await s.linked(), a = await s.user(true); await db.hold('STREET_27', owner.id);
-        assert.equal((await s.get('/rt/profile', a.token)).status, 200); await s.earn(a.id, 500); await s.tribe(a);
-        assert.deepEqual((await s.send(a, 'STREET_27', 10)).body, GUEST_NO);
-        const p0 = await s.pledge(a, 10); assert.equal(p0.status, 400); assert.deepEqual(p0.body, PLEDGE_GUEST);
-        assert.equal(await s.coins(a.id), db.guard ? 500 : 600); assert.equal(s.sells() + s.pledges(), 0); // (this test database has no auth schema to tell an anonymous row)
-      } finally { s.done(); }
-    });
-
-    it('a pledge to the tribe has the same floor and the same hold as a send', async () => {
-      const s = await scene(db);
-      try {
-        const g = await s.guest(), bare = await s.bare(), u = await s.rich(50); await s.tribe(g); await s.tribe(u);
-        const log = spyDo(s.env);
-        for (const n of [10, 20, 50]) { const r = await s.pledge(g, n); assert.equal(r.status, 400); assert.deepEqual(r.body, PLEDGE_GUEST); }
-        assert.deepEqual((await s.pledge(bare, 10)).body, PLEDGE_GUEST); assert.equal(await s.coins(bare.id), null);
-        assert.equal(s.pledges(), 0); assert.deepEqual(log, []); // refused before any Durable Object call
-        const ok = await s.pledge(u, 50); assert.equal(ok.status, 200); assert.equal(ok.body.ok, true); assert.equal(ok.body.amount, 50);
-        assert.equal(await s.coins(u.id), 580); assert.deepEqual((await s.pledge(u, 10)).body, PLEDGE_FLOOR);
-        assert.deepEqual(s.acctCalls(log, /^(sell|link)/), ['acct.sellTake', 'acct.sellDone']); assert.equal(s.lease(u.id), 0);
-        // A pledge and a send of one account at once share the hold: together they cannot take more than what is above the floor.
-        const owner = await s.linked(), u2 = await s.rich(50); await db.hold('STREET_28', owner.id); await s.tribe(u2);
-        s.state.slowRead = 25;
-        const both = await Promise.all([s.pledge(u2, 50), s.send(u2, 'STREET_28', 50)]);
-        assert.deepEqual(both.map((r) => r.status).sort(), [200, 429]); assert.equal(await s.coins(u2.id), 580);
-      } finally { s.done(); }
-    });
-
-    it('several sends at once from one account: one goes through, the rest are told to wait, the balance stays at the floor', async () => {
-      const s = await scene(db);
-      try {
-        const owner = await s.linked(), u = await s.rich(50), v = await s.rich(150); await db.hold('STREET_18', owner.id);
-        s.state.slowRead = 25; // the balance read takes a moment: without the hold all six would read 630 and some would get through
-        const out = await Promise.all([50, 50, 50, 50, 50, 50].map((n) => s.send(u, 'STREET_18', n)));
-        assert.deepEqual(out.map((r) => r.status).sort(), [200, 429, 429, 429, 429, 429]);
-        for (const r of out) if (r.status === 429) assert.deepEqual(r.body, BUSY);
-        assert.equal(s.sells(), 1); assert.equal(await s.coins(u.id), 580); assert.equal(s.lease(u.id), 0);
-        s.state.slowRead = 0; assert.deepEqual((await s.send(u, 'STREET_18', 10)).body, FLOOR); // the hold is gone: the next send is judged on its own
-        // What the database function alone guarantees: each call checks only that the balance covers the amount, so the same burst sent straight to
-        // it goes well under the floor (never below 0).
-        const raw = await Promise.all([50, 50, 50, 50, 50, 50].map((n) => db.rpc('sell_coins_to_advertiser', { p_key: KEY, p_actor_id: v.id, p_nickname: '손님', p_slot_id: 'STREET_18', p_amount: n })));
-        assert.equal(raw.filter((r) => r.ok).length, 6); assert.equal(await s.coins(v.id), 430);
-      } finally { s.done(); }
-    });
-
-    it('a send under way somewhere else (the acct lease) holds this one back until it ends or runs out', async () => {
-      const s = await scene(db);
-      try {
-        const owner = await s.linked(), u = await s.rich(100); await db.hold('STREET_19', owner.id);
-        const log = spyDo(s.env);
-        assert.equal(typeof s.env.meter('acct').do.sellTake(u.id, 15000), 'number'); // another isolate took it
-        const no = await s.send(u, 'STREET_19', 50); assert.equal(no.status, 429); assert.deepEqual(no.body, BUSY); assert.equal(s.sells(), 0);
-        s.clock.add(15001); // that request died: the lease runs out
-        assert.equal((await s.send(u, 'STREET_19', 50)).status, 200); assert.equal(s.lease(u.id), 0);
-        assert.equal((await s.send(u, 'STREET_19', 50)).status, 200); assert.equal(await s.coins(u.id), 580); // given back each time, so the next one is not held
-        assert.deepEqual(s.acctCalls(log, /^sell/), ['acct.sellTake', 'acct.sellTake', 'acct.sellDone', 'acct.sellTake', 'acct.sellDone']);
-      } finally { s.done(); }
-    });
-
-    it('the two acct calls of an account send are counted against the daily budget', async () => {
-      const s = await scene(db);
-      try {
-        const owner = await s.linked(), u = await s.rich(50); await db.hold('STREET_20', owner.id);
-        const log = spyDo(s.env);
-        s.clock.add(61000); await s.get('/rt/wishes'); // its add lands what earlier requests left pending; its own calls wait for the next one
-        const base = dayN(s.env);
-        s.clock.add(1000); assert.equal((await s.send(u, 'STREET_20', 50)).status, 200);
-        assert.equal(log.filter((x) => /^acct\.sell/.test(x)).length, 2);
-        const counted = log.length; s.clock.add(30000); await s.call('/rt/health');
-        assert.equal(dayN(s.env), base + counted + 1);
-      } finally { s.done(); }
-    });
-
-    it('closed when the guard cannot run: budget level hard, or the lease call failing, refuses with "잠시 뒤에" and sends nothing', async () => {
-      const s = await scene(db);
-      try {
-        const owner = await s.linked(), u = await s.rich(100), g = await s.guest(); await db.hold('STREET_21', owner.id); await s.tribe(u);
-        const real = s.env.METER.get; s.env.METER.get = (n) => (n === 'acct' ? new Proxy(real(n), { get: (t, k) => (k === 'sellTake' ? async () => { throw new Error('do down'); } : t[k]) }) : real(n));
-        const a = await s.send(u, 'STREET_21', 50); assert.equal(a.status, 503); assert.deepEqual(a.body, HARD);
-        assert.deepEqual((await s.pledge(u, 50)).body, HARD);
-        s.env.METER.get = real; assert.equal(s.sells() + s.pledges(), 0); assert.equal(await s.coins(u.id), 680);
-        await s.hard();
-        const log = spyDo(s.env); s.state.wreads.length = 0;
-        const b = await s.send(u, 'STREET_21', 50); assert.equal(b.status, 503); assert.deepEqual(b.body, HARD);
-        const p = await s.pledge(u, 10); assert.equal(p.status, 503); assert.deepEqual(p.body, HARD);
-        assert.deepEqual((await s.send(g, 'STREET_21', 10)).body, GUEST_NO); // a guest is told the real reason
-        assert.deepEqual(log, []); assert.deepEqual(s.state.wreads, []); assert.equal(s.sells() + s.pledges(), 0); // no room, no read, no acct
-        await s.calm(); assert.equal((await s.send(u, 'STREET_21', 50)).status, 200);
-      } finally { s.done(); }
-    });
-
-    it('a balance that cannot be read refuses the send (502) and gives the hold back', async () => {
-      const s = await scene(db);
-      try {
-        const owner = await s.linked(), u = await s.rich(50); await db.hold('STREET_22', owner.id);
-        s.state.failRead = (id) => (id === u.id ? json({ message: 'upstream' }, 500) : null);
-        const a = await s.send(u, 'STREET_22', 50); assert.equal(a.status, 502); assert.deepEqual(a.body, { ok: false, error: '판매를 처리하지 못했습니다.' });
-        s.state.failRead = (id) => { if (id === u.id) throw new TypeError('network down'); return null; };
-        assert.equal((await s.send(u, 'STREET_22', 50)).status, 502);
-        assert.equal(s.sells(), 0); assert.equal(s.lease(u.id), 0); assert.equal(await s.coins(u.id), 630);
-        s.state.failRead = null; assert.equal((await s.send(u, 'STREET_22', 50)).status, 200);
-      } finally { s.done(); }
-    });
-
-    it('a token from before the withdrawal sends and pledges nothing, even with coins in a wallet made again; a fresh sign-in can', async () => {
-      const s = await scene(db);
-      try {
-        const owner = await s.linked(), u = await s.rich(100); await db.hold('STREET_1', owner.id);
-        s.clock.add(5000); assert.equal((await s.post('/rt/auth/withdraw', {}, u.token)).status, 200);
-        // The old token reads the profile (before the migration this makes a fresh 100-coin row, after it one with 0: this test database has
-        // no auth schema, so the row is made) and coins are flushed onto it.
-        assert.equal((await s.get('/rt/profile', u.token)).status, 200); await s.earn(u.id, 500); await s.earn(u.id, 200); await s.tribe(u);
-        const had = db.guard ? 700 : 800; assert.equal(await s.coins(u.id), had);
-        const r = await s.send(u, 'STREET_1', 50); assert.equal(r.status, 401); assert.deepEqual(r.body, GONE_SEND);
-        assert.deepEqual((await s.pledge(u, 50)).body, GONE_SEND);
-        assert.equal(s.sells() + s.pledges(), 0); assert.equal(await s.coins(u.id), had); assert.equal(s.lease(u.id), 0);
-        const back = await s.relogin(u); assert.equal((await s.send(back, 'STREET_1', 50)).status, 200); // the login was kept and signed in again
-      } finally { s.done(); }
-    });
-  });
-}
-sendSuite('model, before the migration', async () => memDb({ guard: false }), false);
-sendSuite('schema.sql in PGlite', () => pgDb(read('schema.sql'), true), NO_PG);
-
-// ---- the rest: needs no database of its own -------------------------------------------------------------------------------------------------
-describe('send floor: holds that run out, quiet errors, the share bonus', { concurrency: false }, () => {
+describe('transfers are closed (응원 포인트 are never sent or pooled)', { concurrency: false }, () => {
   const db = memDb();
-
-  it('a send whose request died does not block the account for longer than the lease time', async () => {
+  it('a guest, an account, an anonymous sign-in, a rich account and no token at all: 410 off, nothing asked, nothing moved', async () => {
     const s = await scene(db);
     try {
-      const owner = await s.linked(), u = await s.rich(200); await db.hold('STREET_29', owner.id);
-      s.state.before = (name) => (name === 'sell_coins_to_advertiser' ? new Promise(() => {}) : null); // the RPC never answers
-      s.quick('/rt/sell-coins', { topic: 'chapel:square', slot_id: 'STREET_29', amount: 50, nickname: '손님' }, u.token).catch(() => {}); await new Promise((r) => setTimeout(r, 20));
-      s.state.before = null;
-      const held = await s.quick('/rt/sell-coins', { topic: 'chapel:square', slot_id: 'STREET_29', amount: 50, nickname: '손님' }, u.token); assert.equal(held.status, 429);
-      s.clock.add(14000); assert.equal((await s.quick('/rt/sell-coins', { topic: 'chapel:square', slot_id: 'STREET_29', amount: 50, nickname: '손님' }, u.token)).status, 429);
-      s.clock.add(1001); assert.equal((await s.quick('/rt/sell-coins', { topic: 'chapel:square', slot_id: 'STREET_29', amount: 50, nickname: '손님' }, u.token)).status, 200);
+      const owner = await s.linked(), u = await s.rich(500), g = await s.guest(), a = await s.user(true); await db.hold('STREET_12', owner.id); await s.tribe(u);
+      const log = spyDo(s.env), rpcs = s.state.rpcs.length, had = await s.coins(u.id);
+      for (const who of [g, u, a]) for (const n of [10, 20, 50]) {
+        const r = await s.send(who, 'STREET_12', n); assert.equal(r.status, 410); assert.deepEqual(r.body, NO_SEND);
+        const p = await s.pledge(who, n); assert.equal(p.status, 410); assert.deepEqual(p.body, NO_POOL);
+      }
+      for (const path of ['/rt/sell-coins', '/rt/tribe/pledge']) {
+        const none = await s.call(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); assert.equal(none.status, 410); // no token
+        const getr = await s.call(path); assert.equal(getr.status, 410); // any method
+      }
+      await s.hard(); assert.equal((await s.send(u, 'STREET_12', 10)).status, 410); await s.calm(); // budget hard: the same answer
+      assert.deepEqual(log.filter((x) => !x.startsWith('wish.')), [], 'no Durable Object call'); // (the wish reads are hard() and calm() setting the level)
+      assert.deepEqual(s.state.rpcs.slice(rpcs), [], 'no RPC');
+      assert.equal(s.sells() + s.pledges(), 0); assert.equal(await s.coins(u.id), had); assert.equal(await s.coins(owner.id), 440); assert.equal(s.lease(u.id), 0);
     } finally { s.done(); }
   });
-
-  it('a database or gateway message never reaches the player: a fixed line, the detail in the log', async () => {
-    const s = await scene(db), warn = console.warn, seen = [];
-    try {
-      console.warn = (...a) => { seen.push(a.join(' ')); };
-      const owner = await s.linked(), u = await s.rich(100); await db.hold('STREET_30', owner.id); await s.tribe(u);
-      s.state.fail = (name) => (name === 'sell_coins_to_advertiser' || name === 'pledge_tribe' ? json({ code: '42P01', message: 'relation "public.wallets_x" does not exist' }, 500) : null);
-      const a = await s.send(u, 'STREET_30', 50); assert.equal(a.status, 502); assert.deepEqual(a.body, { ok: false, error: '판매를 처리하지 못했습니다.' });
-      const b = await s.pledge(u, 10); assert.equal(b.status, 502); assert.deepEqual(b.body, { ok: false, error: '모금하지 못했어요.' });
-      assert.equal(seen.length, 2); assert.match(seen[0], /sell_coins_to_advertiser 500 relation/); assert.match(seen[1], /pledge_tribe 500 relation/);
-      assert.equal(seen.join(' ').includes(KEY), false); assert.equal(s.lease(u.id), 0);
-      // The function's own refusal is still shown as written.
-      s.state.fail = null; await db.hold('STREET_2', u.id); const own = await s.send(u, 'STREET_2', 10); assert.equal(own.status, 400); assert.equal(own.body.error, '내 광고에는 코인을 팔 수 없어요.');
-    } finally { console.warn = warn; s.done(); }
+  it('the Worker keeps no send path: no floor, no hold, no lease for sends', () => {
+    const w = read('worker.js');
+    assert.doesNotMatch(w, /SEND_FLOOR|sellTake|sellDone|function floored|function sendHold|sell_coins_to_advertiser',|'pledge_tribe'/);
+    assert.match(w, /if \(u\.pathname === '\/rt\/sell-coins'\) return J\(NO_SEND, 410\);/);
+    assert.match(w, /if \(u\.pathname === '\/rt\/tribe\/pledge'\) return J\(NO_POOL, 410\);/);
   });
+});
+
+// ---- the rest: needs no database of its own -------------------------------------------------------------------------------------------------
+describe('the share bonus and the VIP code', { concurrency: false }, () => {
+  const db = memDb();
 
   it('share bonus: accounts only; a guest or an anonymous sign-in is refused with code account before any DO call or RPC', async () => {
     const s = await scene(db);
@@ -940,7 +723,7 @@ describe('send floor: holds that run out, quiet errors, the share bonus', { conc
       const g = await s.guest(), anon = await s.user(true), log = spyDo(s.env), rpcs = s.state.rpcs.length;
       for (const who of [g, anon]) {
         const res = await s.post('/rt/share-bonus', {}, who.token, '7.7.6.1');
-        assert.equal(res.status, 403); assert.deepEqual(await res.json(), { ok: false, code: 'account', error: '계정을 연결하면 공유 보너스 300코인을 받을 수 있어요.' });
+        assert.equal(res.status, 403); assert.deepEqual(await res.json(), { ok: false, code: 'account', error: '계정을 연결하면 공유 보너스 300포인트를 받을 수 있어요.' });
       }
       assert.deepEqual(log, []); assert.equal(s.state.rpcs.length, rpcs); assert.equal(await s.coins(g.id), 140);
       // The refusal takes nothing: the same network's account still gets today's bonus.
@@ -1020,37 +803,27 @@ describe('send floor: holds that run out, quiet errors, the share bonus', { conc
 
 describe('Meter leases, marks and the share-bonus record', () => {
   const clocked = (fn) => { const orig = Date.now; let t = 1e12; Date.now = () => t; try { fn({ add: (ms) => { t += ms; } }); } finally { Date.now = orig; } };
-  it('sellTake: one live lease per account, its until is the token; sellDone removes only the lease it was given', () => clocked((clock) => {
+  it('linkTake: links of one account share a lease and count; the coin-send lease is gone', () => clocked((clock) => {
     const m = new Meter(makeCtx(sqliteStorage()), {});
-    assert.equal(m.sellDone('guest:a', 5), true); // nothing held yet
-    const t1 = m.sellTake('guest:a', 15000); assert.equal(t1, 1e12 + 15000); assert.equal(m.sellTake('guest:a', 15000), false); assert.equal(typeof m.sellTake('guest:b', 15000), 'number');
-    assert.equal(m.sellDone('guest:a', t1), true); const t2 = m.sellTake('guest:a', 15000); assert.equal(typeof t2, 'number');
-    clock.add(14999); assert.equal(m.sellTake('guest:a', 15000), false); clock.add(1); const t3 = m.sellTake('guest:a', 15000); assert.equal(typeof t3, 'number');
-    m.sellDone('guest:a', t2); assert.equal(m.sellTake('guest:a', 15000), false); // the request that held t2 finishes late: t3 is not its lease to end
-    m.sellDone('guest:a'); assert.equal(m.sellTake('guest:a', 15000), false); // and no token ends nothing
-    m.sellDone('guest:a', t3); assert.equal(typeof m.sellTake('guest:a', 15000), 'number');
-    assert.equal(m.sellTake('', 15000), false);
-    clock.add(60001); assert.equal(typeof m.sellTake('guest:c', 1e9), 'number'); clock.add(60000); assert.equal(typeof m.sellTake('guest:c', 1e9), 'number'); // never longer than a minute
-  }));
-  it('linkTake: links of one account share a lease and count; a send and a link keep each other out', () => clocked((clock) => {
-    const m = new Meter(makeCtx(sqliteStorage()), {});
-    const a1 = m.linkTake('user:a', 15000), a2 = m.linkTake('user:a', 15000); assert.equal(typeof a1, 'number'); assert.equal(a2, a1);
-    assert.equal(m.sellTake('user:a', 15000), false); assert.equal(typeof m.sellTake('user:b', 15000), 'number'); assert.equal(m.linkTake('user:b', 15000), false);
-    m.linkDone('user:a', a1); assert.equal(m.sellTake('user:a', 15000), false); // one link is still under way
-    m.linkDone('user:a', a2); const t = m.sellTake('user:a', 15000); assert.equal(typeof t, 'number'); m.sellDone('user:a', t);
+    assert.equal('sellTake' in m, false); assert.equal('sellDone' in m, false);
+    const n = () => m.ctx.storage.sql.exec('select coalesce(sum(n), 0) n from lkl').one().n;
+    const a1 = m.linkTake('user:a', 15000), a2 = m.linkTake('user:a', 15000); assert.equal(typeof a1, 'number'); assert.equal(a2, a1); assert.equal(n(), 2);
+    const b1 = m.linkTake('user:b', 15000); assert.equal(typeof b1, 'number');
+    m.linkDone('user:a', a1); assert.equal(n(), 2); // one link of user:a is still under way, and user:b's
+    m.linkDone('user:a', a2); m.linkDone('user:b', b1); assert.equal(n(), 0);
     const old = m.linkTake('user:a', 15000); clock.add(15001); const fresh = m.linkTake('user:a', 15000); assert.notEqual(fresh, old); // the first one ran out
-    m.linkDone('user:a', old); assert.equal(m.sellTake('user:a', 15000), false); // a late release of the dead lease does not end the live one
-    m.linkDone('user:a', fresh); assert.equal(typeof m.sellTake('user:a', 15000), 'number');
+    m.linkDone('user:a', old); assert.equal(n(), 1); // a late release of the dead lease does not end the live one
+    m.linkDone('user:a', fresh); assert.equal(n(), 0);
     assert.equal(m.linkTake('', 15000), false);
   }));
   it('goneSince: a token issued before the latest withdrawal of any of its marks is gone, a later one or one without iat is not', () => clocked((clock) => {
     const m = new Meter(makeCtx(sqliteStorage()), {});
     const iat = Math.floor(Date.now() / 1000); clock.add(5000);
-    assert.equal(m.goneSince(['h-id', 'h-mail'], iat), false); assert.equal(typeof m.sellTake('user:x', 15000, ['h-id'], iat), 'number');
+    assert.equal(m.goneSince(['h-id', 'h-mail'], iat), false); assert.equal(typeof m.linkTake('user:x', 15000, ['h-id'], iat), 'number');
     m.goneSet(['h-id', 'h-mail']);
     assert.equal(m.goneSince(['h-id'], iat), true); assert.equal(m.goneSince(['h-other', 'h-mail'], iat), true); assert.equal(m.goneSince(['h-other'], iat), false);
     assert.equal(m.goneSince(['h-id'], 0), false); assert.equal(m.goneSince(['h-id']), false); // no iat: not held back
-    assert.equal(m.sellTake('user:y', 15000, ['h-id'], iat), 'gone'); assert.equal(m.linkTake('user:y', 15000, ['h-id'], iat), 'gone');
+    assert.equal(m.linkTake('user:y', 15000, ['h-id'], iat), 'gone');
     clock.add(1000); const later = Math.floor(Date.now() / 1000); assert.equal(m.goneSince(['h-id'], later), false); // signed in after the withdrawal
     clock.add(1000); m.goneSet('h-id'); assert.equal(m.goneSince(['h-id'], later), true); // a second withdrawal moves the mark forward
     assert.equal(m.ctx.storage.sql.exec('select count(*) n from gone').one().n, 2);

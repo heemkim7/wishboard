@@ -1,12 +1,4 @@
-import { isSlotId } from './balance.js';
-
-export function pledge(slot, amount) {
-  const n = Math.floor(Number(amount));
-  if (n !== 10 && n !== 20 && n !== 50) return null;
-  if (!isSlotId(String(slot || ''))) return null;
-  return { slot: String(slot), amount: n };
-}
-
+// 소속 모금 (pledge) is closed: 응원 포인트 are never pooled or sent (worker.js NO_POOL).
 export function sendCheer(slot, phraseId) {
   const p = Math.floor(Number(phraseId));
   if (p < 1 || p > 12) return null;

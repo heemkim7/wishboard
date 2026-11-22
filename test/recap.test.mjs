@@ -123,7 +123,7 @@ describe('recap.js: the words', () => {
   });
   it('shares numbers only: no names, no ids', () => {
     const t = R.recapShareText(rec, { rank: 3, spent: 1250, players: 40 });
-    assert.equal(t, '지난주 모두의 전광판 기록 · 주간 리그 3위 · 40명 중 · 쓴 코인 1,250 · 점령한 전광판 2곳 · 소원에 받은 하트 5개 · 연속 출석 5일');
+    assert.equal(t, '지난주 모두의 전광판 기록 · 주간 리그 3위 · 40명 중 · 쓴 포인트 1,250 · 점령한 전광판 2곳 · 소원에 받은 하트 5개 · 연속 출석 5일');
     assert.equal(/abcde|guest|user:/.test(t), false);
     assert.equal(R.recapShareText({ ...rec, claims: 0, hearts: {}, streak: 1 }, null), '지난주 모두의 전광판에 다녀갔어요');
   });

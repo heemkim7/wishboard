@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { COMPACT_HUD_Q, feverChip, STICK_H } from '../interact.js';
+import { COMPACT_HUD_Q, STICK_H } from '../interact.js';
 
 const read = (p) => readFileSync(new URL('../' + p, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const html = read('index.html');
@@ -108,15 +108,15 @@ describe('touch portrait', () => {
   });
 });
 
-describe('touch bottom lane: the draw line (or a news line), the prompt and the waypoint pill are one stack', () => {
+describe('touch bottom lane: the news line, the prompt and the waypoint pill are one stack', () => {
   const ui = read('ui.js');
-  const slot = rule(css, 'html.touch .stay-ticket, html.touch .news');
+  const slot = rule(css, 'html.touch .news');
   const prompt = rule(css, 'html.touch .prompt');
   const way = rule(css, 'html.touch .waypill');
   const joy = rule(css, 'html.touch .joy');
   const acts = rule(css, 'html.touch .acts');
   const LAND = '(orientation: landscape) and (max-height: 520px)';
-  const land = media(LAND, 'html.touch .waypill, html.touch .stay-ticket, html.touch .news, html.touch .prompt');
+  const land = media(LAND, 'html.touch .waypill, html.touch .news, html.touch .prompt');
   const landWide = media(LAND + ' and (min-width: 641px)', '.prompt');
   const landBlock = media(LAND, '.taxihud');
   it('upright and on tablets the three share one lane between the resting stick and the right-hand buttons', () => {
@@ -149,14 +149,14 @@ describe('touch bottom lane: the draw line (or a news line), the prompt and the 
     assert.ok(px(prompt, 'bottom') + tallest <= px(way, 'bottom') - 8);
     assert.equal(px(way, 'bottom'), 142);
     assert.ok(px(way, 'bottom') >= px(joy, 'bottom') + px(joy, 'height'));
-    // the news line is one line here (no kicker line), the same height as the draw line
+    // the news line is one line here (no kicker line), the slot's height
     assert.match(rule(css, 'html.touch .news .body small'), /display: none;/);
     assert.match(rule(css, 'html.touch .news .body strong'), /line-height: 30px;/);
     // the stick stays put while a news line shows: nothing moves the prompt or the pill
     assert.equal(/#ui:has\(> \.news\.show\)[^{]*\.(prompt|waypill)/.test(css), false);
   });
   it('a phone on its side: right of the stick and left of the dock column, and from 641px on the toasts\' centre', () => {
-    const r = rule(land, 'html.touch .waypill, html.touch .stay-ticket, html.touch .news, html.touch .prompt');
+    const r = rule(land, 'html.touch .waypill, html.touch .news, html.touch .prompt');
     // the stick is 88px wide there; the dock column is 52px wide, 76px from the right
     assert.equal(px(rule(landBlock, 'html.touch .joy'), 'width'), 88);
     assert.ok(px(r, 'left') >= 10 + 88 + 8);
@@ -166,14 +166,15 @@ describe('touch bottom lane: the draw line (or a news line), the prompt and the 
     assert.ok(46 + 46 + 8 <= 108);
     const toasts = rule(media(LAND, '.toasts'), 'html.touch .toasts');
     assert.ok(px(toasts, 'bottom') >= 108 + 38 + 8);
-    const wide = rule(landWide, 'html.touch .waypill, html.touch .stay-ticket, html.touch .news, html.touch .prompt');
+    const wide = rule(landWide, 'html.touch .waypill, html.touch .news, html.touch .prompt');
     const leftOf = (d) => d.match(/left: (calc\([^;]*\));/)[1];
     assert.equal(leftOf(wide), leftOf(toasts));
     assert.equal(px(r, 'right'), px(toasts, 'right'));
   });
   it('the 화면만 보기 and 멍때리기 rules still name the stack pieces', () => {
-    assert.match(css, /#ui\.viewonly > :is\(\.hud-l, \.news, \.stay-ticket, \.prompt, \.waypill,/);
-    assert.match(css, /#ui\.lounging > \.news, #ui\.lounging > \.stay-ticket/);
+    assert.match(css, /#ui\.viewonly > :is\(\.hud-l, \.news, \.prompt, \.waypill,/);
+    assert.match(css, /#ui\.lounging > \.news, #ui\.lounging > \.help/);
+    assert.equal(css.includes('.stay-ticket'), false); // the 5-minute draw line is gone (no lottery)
     // the slot is no longer emptied while driving: the taxi HUD is at the top on touch
     assert.equal(css.includes('html.touch #ui:has(.taxihud:not([hidden])) .news'), false);
     assert.match(css, /html\.touch #ui:has\(\.taxihud:not\(\[hidden\]\)\) \.waypill \{ display: none; \}/);
@@ -208,7 +209,7 @@ describe('touch toasts and the pouch count', () => {
   it('the pouch is an icon in its circle with the count as a badge on the edge, at most 999+', () => {
     const paint = ui.slice(ui.indexOf('function balloonText('), ui.indexOf('setInterval(paintBalloon, 1000);'));
     assert.match(paint, /balloonEl\.replaceChildren\(icon\('packet'\), h\('span', \{ class: 'bn', text \}\)\);/);
-    assert.match(paint, /balloonText\(coarse \? \(left > 999 \? '999\+' : `\$\{left\}`\) : `\$\{left\}번 남음 · 터지면 코인`\);/);
+    assert.match(paint, /balloonText\(coarse \? \(left > 999 \? '999\+' : `\$\{left\}`\) : `\$\{left\}번 남음 · 터뜨려 보세요`\);/); // play: no points
     const bn = rule(css, 'html.touch .hud-r .stay-balloon .bn');
     assert.match(bn, /position: absolute;/);
     assert.ok(px(bn, 'top') < 0 && px(bn, 'right') < 0);
@@ -239,8 +240,7 @@ describe('the floating stack: the hint, a far-board card, 홈 화면 추가, a l
     const home = ui.slice(ui.indexOf('  function openHome('), ui.indexOf('  function pumpHome('));
     assert.match(home, /toasts\.prepend\(el\); \/\/ in the floating stack/);
     assert.equal(home.includes('document.body.append(el)'), false);
-    const draw = ui.slice(ui.indexOf('    showDraw('), ui.indexOf('    balloon(hp, wait)'));
-    assert.match(draw, /toasts\.append\(el\);/);
+    assert.equal(ui.includes('showDraw'), false); // the lottery result card is gone with the lottery
     assert.match(ui, /if \(!coarse\) root\.append\(sponsorEl\);/);
     assert.match(ui, /if \(coarse\) toasts\.prepend\(sponsorEl\);/);
     // note(): over three toasts the oldest plain toast goes; a card in the column is never counted or dropped
@@ -285,14 +285,14 @@ describe('the floating stack: the hint, a far-board card, 홈 화면 추가, a l
     assert.equal(px(stack, 'bottom'), 190);
     assert.ok(px(stack, 'bottom') >= px(joy, 'bottom') + px(joy, 'height') + 12);
     assert.ok(px(stack, 'bottom') >= px(lane, 'bottom') + 38 + 8);
-    const far = rule(css, '.farcard'), home = rule(css, '.a2hs'), draw = rule(css, '.stay-draw');
-    for (const r of [far, home, draw, rule(css, '.coach')]) {
+    const far = rule(css, '.farcard'), home = rule(css, '.a2hs');
+    assert.equal(css.includes('.stay-draw'), false);
+    for (const r of [far, home, rule(css, '.coach')]) {
       assert.equal(/(^|[;\s])(left|bottom|top): /.test(r), false, r);
       assert.equal(/position: (absolute|fixed)/.test(r), false, r);
     }
     assert.equal(css.includes('html.touch .a2hs { bottom'), false);
     assert.match(rule(css, 'html.touch .a2hs'), /width: min\(360px, calc\(100% \+ 60px\)\);/);
-    assert.match(draw, /width: max-content; max-width: min\(480px, calc\(100vw - 32px\)\);/);
   });
   it('the far-board card shows its name: it wraps its buttons to a second row instead of squeezing the name to nothing', () => {
     // as a box at left: 50% it could never be wider than half the screen: 195px at 390px, the three buttons alone 156px
@@ -313,7 +313,7 @@ describe('the floating stack: the hint, a far-board card, 홈 화면 추가, a l
     assert.ok(430 - 84 >= 322 && 390 - 84 < 322);
   });
   it('a card in the stack sends the hint aside, a far-board card sends 홈 화면 추가 aside, and over a sheet only the toasts show', () => {
-    assert.match(css, /\.toasts:has\(> \.farcard, > \.a2hs:not\(\[hidden\]\), > \.stay-draw, > \.sponsor:not\(\[hidden\]\)\) > \.coach \{ display: none; \}/);
+    assert.match(css, /\.toasts:has\(> \.farcard, > \.a2hs:not\(\[hidden\]\), > \.sponsor:not\(\[hidden\]\)\) > \.coach \{ display: none; \}/);
     assert.match(css, /\.toasts:has\(> \.farcard\) > \.a2hs \{ display: none; \}/);
     assert.match(css, /body\.has-sheet \.toasts > :not\(\.toast\), body\.has-proof \.toasts > :not\(\.toast\), body:has\(#ui > \.bake\.show\) \.toasts > :not\(\.toast\), body:has\(#ui > \.rhythm\.show\) \.toasts > :not\(\.toast\) \{ display: none; \}/);
     // up there the toasts are centred 72px in, as before, not on the lane
@@ -349,7 +349,7 @@ describe('the floating stack: the hint, a far-board card, 홈 화면 추가, a l
     assert.match(rule(landStack, 'html.touch .toasts > .sponsor p'), /display: none;/);
     // under 641px the column is 175-222px: the card would need two rows (108px), so it is one row in the lane for its 4 s
     const far = rule(narrow, 'html.touch .toasts > .farcard');
-    const landLane = rule(media(LAND, 'html.touch .waypill, html.touch .stay-ticket, html.touch .news, html.touch .prompt'), 'html.touch .waypill, html.touch .stay-ticket, html.touch .news, html.touch .prompt');
+    const landLane = rule(media(LAND, 'html.touch .waypill, html.touch .news, html.touch .prompt'), 'html.touch .waypill, html.touch .news, html.touch .prompt');
     assert.match(far, /position: fixed;/);
     assert.equal(px(far, 'left'), px(landLane, 'left'));
     assert.equal(px(far, 'right'), px(landLane, 'right'));
@@ -485,27 +485,22 @@ describe('desktop windows', () => {
   });
 });
 
-describe('desktop top-centre column: the draw line, the news line and the waypoint pill on one axis', () => {
+describe('desktop top-centre column: the news line and the waypoint pill on one axis', () => {
   const IDENT_RIGHT = 14 + 340, TOOL_BOTTOM = 14 + 46, MAP_COL = 14 + 184;
-  const ticket = rule(css, '.stay-ticket'), news = rule(css, '.news'), way = rule(css, 'html:not(.touch) .waypill');
+  const news = rule(css, '.news'), way = rule(css, 'html:not(.touch) .waypill');
   /** The box an absolutely placed rule with left, right, width: auto, max-width and auto margins gets at a viewport width. */
   const box = (r, vw) => {
     const l = px(r, 'left'), rr = px(r, 'right'), w = Math.min(px(r, 'max-width'), vw - l - rr);
     return { l: l + (vw - l - rr - w) / 2, w };
   };
   it('from 820px the slot is one box under the top row, between the left column and the minimap column', () => {
-    for (const r of [ticket, news]) {
-      assert.match(r, /width: auto;/);
-      assert.match(r, /margin: 0 auto;/);
-      assert.equal(px(r, 'top'), 68);
-      assert.equal(px(r, 'height'), 40);
-    }
-    assert.equal(px(ticket, 'left'), px(news, 'left'));
-    assert.equal(px(ticket, 'right'), px(news, 'right'));
-    assert.equal(px(ticket, 'max-width'), px(news, 'max-width'));
-    assert.ok(px(ticket, 'top') >= TOOL_BOTTOM + 8);
+    assert.match(news, /width: auto;/);
+    assert.match(news, /margin: 0 auto;/);
+    assert.equal(px(news, 'top'), 68);
+    assert.equal(px(news, 'height'), 40);
+    assert.ok(px(news, 'top') >= TOOL_BOTTOM + 8);
     for (const vw of [820, 900, 1024, 1089, 1090, 1280, 1440, 1920]) {
-      const b = box(ticket, vw);
+      const b = box(news, vw);
       assert.ok(b.l >= IDENT_RIGHT + 12, String(vw));
       assert.ok(b.l + b.w <= vw - MAP_COL - 12, String(vw));
       // one centre for the slot and the pill: the middle of the band between the two columns (50% + 78px)
@@ -516,17 +511,17 @@ describe('desktop top-centre column: the draw line, the news line and the waypoi
     assert.equal(1440 / 2 + 78, 798);
   });
   it('the waypoint pill is centred under the slot, as wide as its text, and no longer steps aside', () => {
-    assert.equal(px(way, 'left'), px(ticket, 'left'));
-    assert.equal(px(way, 'right'), px(ticket, 'right'));
+    assert.equal(px(way, 'left'), px(news, 'left'));
+    assert.equal(px(way, 'right'), px(news, 'right'));
     assert.match(way, /width: fit-content;/);
     assert.match(way, /margin: 0 auto;/);
     assert.match(way, /transform: none;/);
-    assert.ok(px(way, 'top') >= px(ticket, 'top') + px(ticket, 'height') + 8);
+    assert.ok(px(way, 'top') >= px(news, 'top') + px(news, 'height') + 8);
     assert.equal(/html:not\(\.touch\) #ui:has\(> \.news\.show\) \.waypill/.test(css), false);
   });
   it('641-819px: the slot and the pill are under the minimap column (it ends about 353px down), off the left column', () => {
     const mid = media('(min-width: 641px) and (max-width: 819px)', '.waypill');
-    const slot = rule(mid, 'html:not(.touch) .stay-ticket, html:not(.touch) .news');
+    const slot = rule(mid, 'html:not(.touch) .news');
     const pill = rule(mid, 'html:not(.touch) .waypill');
     assert.ok(px(slot, 'top') >= 353 + 24);
     assert.ok(px(pill, 'top') >= px(slot, 'top') + 40 + 8);
@@ -538,36 +533,12 @@ describe('desktop top-centre column: the draw line, the news line and the waypoi
     // before: the pill (88 … 126px, centred, 136px) lay on the left column's second row at 720px
     assert.ok(720 / 2 - 68 < IDENT_RIGHT);
   });
-  it('the news line takes the draw line\'s slot and the draw line steps out while it shows', () => {
-    const m = css.match(/#ui:has\(> \.news\.show\) > \.stay-ticket \{([^}]*)\}/);
-    assert.ok(m, 'no rule that hides the draw line under a news line');
-    assert.match(m[1], /opacity: 0;/);
-    assert.match(m[1], /visibility: hidden;/);
-    assert.match(m[1], /pointer-events: none;/);
-    // it outranks #ui > .stay-ticket { pointer-events: auto }
-    assert.match(css, /#ui > \.stay-ticket, #ui > \.stay-balloon, #ui > \.stay-focus \{ pointer-events: auto; \}/);
+  it('the news line has the slot to itself (the draw line is gone with the lottery)', () => {
+    assert.equal(/#ui:has\(> \.news\.show\) > \./.test(css), false);
+    assert.match(css, /#ui > \.stay-balloon, #ui > \.stay-focus \{ pointer-events: auto; \}/);
     // the news line only fades (a live region that stays in the page) and takes no taps until it shows a board
     assert.match(rule(css, '.news'), /opacity: 0;[^}]*pointer-events: none;/);
     assert.match(css, /#ui > \.news\.show\.go \{ pointer-events: auto; cursor: pointer; \}/);
-  });
-});
-
-describe('the draw line drops parts instead of cutting the time', () => {
-  const ui = read('ui.js');
-  it('ui.js writes it in parts, and a size container hides them in order', () => {
-    const paint = ui.slice(ui.indexOf('function paintTickets('), ui.indexOf('ticketEl.addEventListener('));
-    assert.match(paint, /h\('span', \{ class: 'hk', text: '다음 ' \}\), time, h\('span', \{ class: 'tail', text: tail \}\), h\('span', \{ class: 'odds', text: ' · 1\/15, 맞으면 25코인' \}\)/);
-    assert.match(paint, /const time = `추첨까지 \$\{mm\}:\$\{ss\}`;/);
-    assert.match(rule(css, '.stay-ticket'), /container: ticket \/ inline-size;/);
-    const at = (part) => Number(css.match(new RegExp('@container ticket \\(max-width: (\\d+)px\\) \\{ \\.stay-ticket \\.' + part + ' \\{ display: none; \\} \\}'))[1]);
-    // measured at 12px (Pretendard): icon + 다음 추첨까지 mm:ss 118px, the odds 111px, the middle part up to 144px
-    const head = 118, odds = 111, tail = 144;
-    assert.ok(at('tail') + 1 >= head + odds + tail);
-    assert.ok(at('odds') + 1 >= head + odds);
-    assert.ok(at('hk') + 1 >= head);
-    // a phone upright keeps the time: the lane is 166px at 360 (text area 144px), 126px at 320 (104px, without 다음)
-    assert.ok(166 - 22 > at('hk'));
-    assert.ok(head - 24 <= 126 - 22);
   });
 });
 
@@ -631,7 +602,7 @@ describe('멍때리기 clears the view', () => {
     const m = css.match(/#ui\.lounging > \.hud-l,([^{]*)\{([^}]*)\}/);
     assert.ok(m, 'no #ui.lounging rule');
     const sel = '#ui.lounging > .hud-l,' + m[1];
-    for (const gone of ['.hud-l', '.hud-r > :not(.bar)', '.news', '.stay-ticket', '.help']) assert.ok(sel.includes('#ui.lounging > ' + gone), gone);
+    for (const gone of ['.hud-l', '.hud-r > :not(.bar)', '.news', '.help']) assert.ok(sel.includes('#ui.lounging > ' + gone), gone);
     assert.match(m[2], /visibility: hidden !important;/);
     // the lounge line, the dock (그만) and 시점 해제 are not in the list
     for (const kept of ['.dock', '.stay-lounge', '.stay-focus', '.bar,']) assert.equal(sel.includes('#ui.lounging > ' + kept), false, kept);
@@ -661,7 +632,7 @@ describe('compact phone HUD (a touch phone upright or on its side)', () => {
     assert.match(ui, /const compactMq = matchMedia\(COMPACT_HUD_Q\);\n\s*const compactNow = \(\) => coarse && compactMq\.matches;/);
     assert.match(ui, /compactMq\.addEventListener\?\.\('change', \(\) => placeGoal\(\)\);/);
     // the new pieces are hidden by default, so tablets and desktop windows look as they did
-    assert.match(css, /\.id-coin, \.hud-r > \.view-btn, \.wal-quick, \.phone-only, \.fever \.fs \{ display: none; \}/);
+    assert.match(css, /\.id-coin, \.hud-r > \.view-btn, \.wal-quick, \.phone-only \{ display: none; \}/);
     // every rule in the block starts with html.touch (the nested query too)
     for (const line of box.split('\n').map((s) => s.trim()).filter(Boolean)) {
       if (line === '}') continue;
@@ -709,7 +680,7 @@ describe('compact phone HUD (a touch phone upright or on its side)', () => {
     for (const [vw, vh] of [[568, 320], [667, 375], [740, 360], [780, 360], [844, 390]]) assert.equal(colW(vw, vh), Math.min(240, vw * 0.4), String(vw));
   });
   it('the identity row carries the coin amount (tap: the wallet sheet) and a +N badge while coins wait', () => {
-    assert.match(ui, /const idCoin = h\('button', \{ class: 'id-coin', type: 'button', 'aria-label': '내 지갑', title: '지갑 · 정산 안내', onclick: \(\) => openWalletInfo\(\) \}/);
+    assert.match(ui, /const idCoin = h\('button', \{ class: 'id-coin', type: 'button', 'aria-label': '내 응원 포인트', title: '응원 포인트 · 정산 안내', onclick: \(\) => openWalletInfo\(\) \}/);
     assert.match(ui, /h\('div', \{ class: 'glass ident' \}, profile, idCoin, channelCard\)/);
     assert.match(ui, /idAmt\.textContent = amtEl\.textContent;/);
     assert.match(ui, /idPend\.hidden = pendingChip\.hidden;/);
@@ -731,21 +702,15 @@ describe('compact phone HUD (a touch phone upright or on its side)', () => {
     assert.match(rule(box, 'html.touch .hud-l > .nextgoal'), /grid-row: 2;/);
     assert.equal(box.includes('.nextgoal.task'), false);
   });
-  it('the fever gauge is a chip beside the goal only while it moves', () => {
-    assert.deepEqual(feverChip(null), { show: false, text: '2배 0/20' });
-    assert.deepEqual(feverChip({ phase: '', gauge: 0 }), { show: false, text: '2배 0/20' });
-    assert.deepEqual(feverChip({ phase: '', gauge: 3 }), { show: true, text: '2배 3/20' });
-    assert.deepEqual(feverChip({ phase: 'count', gauge: 20, left: 4.2 }), { show: true, text: '2배까지 5초' });
-    assert.deepEqual(feverChip({ phase: 'party', gauge: 20, left: 41.5 }), { show: true, text: '2배 42초' });
-    assert.match(rule(box, 'html.touch .hud-l > .fever.idle'), /display: none;/);
-    assert.match(rule(box, 'html.touch .hud-l > .fever'), /grid-row: 2; grid-column: 2;/);
-    assert.match(ui, /class: 'glass fever idle'/);
-    // the mission sheet quotes the long text only
-    assert.match(ui, /text: `\$\{feverText\.textContent\}\. \$\{feverEl\.title\}`/);
+  // The coin-2x gauge (fever) is gone with the points for play: no chip, no rules for it.
+  it('there is no fever gauge any more', () => {
+    assert.equal(/\.fever\b/.test(css), false);
+    assert.equal(/feverEl|feverText|feverChip|코인 2배|2배 코인/.test(ui), false);
   });
   it('the wallet chips are rows at the top of the wallet sheet with their own taps, and 광장 소식 opens from the ranks sheet', () => {
     const w = ui.slice(ui.indexOf('  function openWalletInfo() {'), ui.indexOf('  function standings() {'));
-    for (const re of [/quickRow\(todayBtn, \(\) => openToday\(\)\)/, /quickRow\(sessionChip, \(\) => openToday\(\)\)/, /quickRow\(holdBtn, \(\) => openHolds\(\)\)/, /quickRow\(tribeBtn, \(\) => openTribeSheet\(\)\)/, /protectLine\.hidden \? \[\] : \[h\('button', \{ class: 'btn ghost wide', type: 'button', onclick: \(e\) => protectGo\(e\) \}/]) assert.match(w, re);
+    assert.equal(ui.includes('sessionChip'), false); // the 놀이 n/30 chip went with the points for play
+    for (const re of [/quickRow\(todayBtn, \(\) => openToday\(\)\)/, /quickRow\(holdBtn, \(\) => openHolds\(\)\)/, /quickRow\(tribeBtn, \(\) => openTribeSheet\(\)\)/, /protectLine\.hidden \? \[\] : \[h\('button', \{ class: 'btn ghost wide', type: 'button', onclick: \(e\) => protectGo\(e\) \}/]) assert.match(w, re);
     assert.match(w, /host\.append\(\n\s*quick,/);
     assert.match(rule(box, 'html.touch .wal-quick'), /display: grid;/);
     assert.ok(px(rule(box, 'html.touch .wal-quick .btn'), 'min-height') >= 44);
@@ -762,7 +727,7 @@ describe('compact phone HUD (a touch phone upright or on its side)', () => {
     const m = box.match(/html\.touch #ui\.viewonly > :is\(([^)]*)\), html\.touch #ui\.viewonly > \.hud-r > :not\(\.view-btn\) \{([^}]*)\}/);
     assert.ok(m, 'no #ui.viewonly rule');
     const hidden = m[1].split(', ');
-    for (const gone of ['.hud-l', '.news', '.stay-ticket', '.prompt', '.waypill', '.dock', '.reacts']) assert.ok(hidden.includes(gone), gone);
+    for (const gone of ['.hud-l', '.news', '.prompt', '.waypill', '.dock', '.reacts']) assert.ok(hidden.includes(gone), gone);
     for (const kept of ['.joy', '.acts', '.toasts', '.proof', '.bake', '.rhythm', '.taxihud']) assert.equal(hidden.includes(kept), false, kept);
     assert.match(m[2], /visibility: hidden !important;/);
     // the hiding rule is inside the compact block: a tablet or a desktop window never hides its HUD

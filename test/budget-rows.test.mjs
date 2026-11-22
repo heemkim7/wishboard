@@ -66,17 +66,17 @@ let clockBase = Date.parse('2027-06-01T03:00:00Z');
 function clock() { clockBase += 10 * 864e5; let t = clockBase; const was = Date.now; Date.now = () => t; return { add: (ms) => { t += ms; }, now: () => t, done: () => { Date.now = was; } }; }
 
 describe('1. rows come from the cursors', () => {
-  it('a coin grant: the rows the room reports are the sum of its cursors\' rowsWritten / rowsRead, plus its setAlarm', async () => {
+  it('a 관람 grant: the rows the room reports are the sum of its cursors\' rowsWritten / rowsRead, plus its setAlarm', async () => {
     const c = clock();
     try {
       const sql = sqliteStorage(), ctx = makeCtx(sql), { env, adds } = roomEnv(), room = new Room(ctx, env);
       const ws = join(room, ctx, 'guest:m1'); room.tapDb(); await turn();
       room.meter(true); await turn(); // report what joining cost, so the next report is the grant alone
       const from = sql.log.length, sets0 = ctx.sets; c.add(61000);
-      await room.webSocketMessage(ws, JSON.stringify({ t: 'MINE', amount: 1, nick: 'n' })); await turn(); await turn();
+      await room.webSocketMessage(ws, JSON.stringify({ t: 'BONUS', kind: 'lounge', amount: 2, nick: 'n' })); await turn(); await turn();
       assert.ok(JSON.parse(ws.sent.at(-1)).amount > 0, 'the grant was paid');
       const want = billed(sql.log.slice(from)), last = adds.at(-1);
-      assert.ok(want.w >= 3, 'a grant writes rows (rate, the hour gate, the coin row)');
+      assert.ok(want.w >= 3, 'a grant writes rows (the gap gate, the hour and day counts, the coin row)');
       assert.ok(ctx.sets - sets0 >= 1, 'the grant set the flush alarm');
       // the report at the end of the message has the grant's rows; the alarm set after an await waits for the next report
       assert.deepEqual({ w: last.x.w + room.rows.w, r: last.x.r + room.rows.r }, { w: want.w + (ctx.sets - sets0), r: want.r }, 'cursor rows plus one per setAlarm');
@@ -161,7 +161,7 @@ describe('3. a room keeps what it counted', () => {
       const ws = join(r1, ctx, 'guest:h1'); join(r1, ctx, 'guest:h2'); r1.tapDb(); r1.meter(true); await turn(); const n0 = adds.length;
       c.add(5000);
       for (let i = 0; i < 45; i++) await r1.webSocketMessage(ws, JSON.stringify({ t: 'p', a: [1500 + i, 1500, '0', 'walk', 0, 0, 0] }));
-      c.add(2100); await r1.webSocketMessage(ws, JSON.stringify({ t: 'MINE', amount: 1, nick: 'n' })); await turn(); await turn();
+      c.add(2100); await r1.webSocketMessage(ws, JSON.stringify({ t: 'BONUS', kind: 'lounge', amount: 2, nick: 'n' })); await turn(); await turn();
       assert.equal(adds.length, n0, 'nothing reported inside REP');
       const held = { msgs: r1.msgs, conns: r1.conns, w: r1.rows.w, r: r1.rows.r }; assert.ok(held.w > 0 && held.msgs === 46);
       // r1 is evicted from memory here. A new instance on the same ctx (sockets and attachments kept) gets the next message.
@@ -193,7 +193,7 @@ describe('3. a room keeps what it counted', () => {
     try {
       const sql = sqliteStorage(), ctx = makeCtx(sql), { env, adds } = roomEnv(), room = new Room(ctx, env);
       const a = join(room, ctx, 'guest:c1'), b = join(room, ctx, 'guest:c2'); room.tapDb(); room.meter(true); await turn(); c.add(3000);
-      await room.webSocketMessage(a, JSON.stringify({ t: 'MINE', amount: 1, nick: 'n' })); await turn(); await turn();
+      await room.webSocketMessage(a, JSON.stringify({ t: 'BONUS', kind: 'lounge', amount: 2, nick: 'n' })); await turn(); await turn();
       const n0 = adds.length, carrier = room.pdW, rest = carrier === a ? b : a;
       carrier.closed = true; await room.webSocketClose(carrier, 1000);
       assert.equal(adds.length, n0, 'one socket left: no report'); assert.equal(room.pdW, rest); assert.ok(rest.att.pd?.[2] > 0, 'the rows moved');
@@ -316,7 +316,7 @@ describe('5. no DO call on a hot path', () => {
     try {
       const sql = sqliteStorage(), ctx = makeCtx(sql), { env, adds } = roomEnv(), room = new Room(ctx, env);
       const ws = join(room, ctx, 'guest:b1'), ws2 = join(room, ctx, 'guest:b2'); room.tapDb();
-      for (let i = 0; i < 300; i++) { c.add(150); await room.webSocketMessage(i % 2 ? ws : ws2, JSON.stringify(i % 15 ? { t: 'p', a: [1500 + i, 1500, '0', 'walk', 0, 0, 0] } : { t: 'MINE', amount: 1, nick: 'n' })); }
+      for (let i = 0; i < 300; i++) { c.add(150); await room.webSocketMessage(i % 2 ? ws : ws2, JSON.stringify(i % 15 ? { t: 'p', a: [1500 + i, 1500, '0', 'walk', 0, 0, 0] } : { t: 'BONUS', kind: 'lounge', amount: 2, nick: 'n' })); }
       await turn();
       assert.equal(adds.length, 1, '45 s of traffic: the wake report only');
       assert.ok(room.rows.w > 0, 'rows wait for the next report');

@@ -35,7 +35,7 @@ globalThis.WebSocketRequestResponsePair = class {
 
 const { Room, Meter } = await import('../worker.js');
 const worker = (await import('../worker.js')).default;
-const { Net, sendMine, sendEmoji, claimBillboard, buyPlot, onWorldUpdate, rtPatch, toNetUnits, fromNetUnits, guestToken } = await import('../net.js');
+const { Net, sendEmoji, claimBillboard, buyPlot, onWorldUpdate, rtPatch, toNetUnits, fromNetUnits, guestToken } = await import('../net.js');
 const { ticketSub, adoptHandover, GT_LS, SESSION_LS } = await import('../plaza-account.js');
 
 function sqliteStorage() {
@@ -197,7 +197,8 @@ describe('times square plaza', { concurrency: false }, () => {
     assert.equal(msgs(me).some(m => m.t === 'E'), false);
   });
 
-  it('credits mines in memory-backed sqlite, ignores sub-2s repeats, caps 15, and flushes coin_batch', async () => {
+  // Ground coins pay nothing since the non-game change (MINE is answered why 'off'); the flush mechanics are the same for any grant, here 관람.
+  it('credits 관람 in memory-backed sqlite, pays ground coins nothing, keeps the 20 s gap, and flushes coin_batch', async () => {
     const orig = Date.now;
     let clock = 1_700_000_000_000;
     Date.now = () => clock;
@@ -214,20 +215,23 @@ describe('times square plaza', { concurrency: false }, () => {
       const { room, sql } = makeRoom();
       const me = openSock(room, 'guest:g-1');
       const other = openSock(room, 'guest:g-2');
-      await room.webSocketMessage(me, JSON.stringify({ t: 'MINE', amount: 100, nick: '까마귀' }));
-      await room.webSocketMessage(me, JSON.stringify({ t: 'MINE', amount: 5, nick: '까마귀' }));
-      await room.webSocketMessage(me, JSON.stringify({ t: 'MINE', amount: 14.2, nick: '까마귀' }));
-      await room.webSocketMessage(me, JSON.stringify({ t: 'MINE', amount: 4, nick: '까마귀' }));
+      const watch = (r, w, amount = 2) => r.webSocketMessage(w, JSON.stringify({ t: 'BONUS', kind: 'lounge', amount, nick: '까마귀' }));
+      for (const amount of [100, 5, 14.2, 1]) await room.webSocketMessage(me, JSON.stringify({ t: 'MINE', amount, nick: '까마귀' }));
+      room.tapDb();
       assert.equal(sql.db.prepare('select count(*) c from coin').get().c, 0);
-      await room.webSocketMessage(me, JSON.stringify({ t: 'MINE', amount: 1, nick: '까마귀' }));
+      assert.deepEqual(msgs(me).filter(m => m.t === 'PAY').map(m => m.why), ['off', 'off', 'off', 'off']);
+      await watch(room, me, 100); // the client's amount is ignored: 관람 pays PAY.lounge.base
       let row = sql.db.prepare('select delta, n, nick from coin').get();
-      assert.equal(row.delta, 1);
+      assert.equal(row.delta, 2);
       assert.equal(row.n, 1);
       assert.equal(row.nick, '까마귀');
       clock += 2000;
-      await room.webSocketMessage(me, JSON.stringify({ t: 'MINE', amount: 1, nick: '까마귀' }));
+      await watch(room, me); // too soon: 20 s between pays
+      assert.equal(sql.db.prepare('select delta from coin').get().delta, 2);
+      clock += 18000;
+      await watch(room, me);
       row = sql.db.prepare('select delta, n from coin').get();
-      assert.equal(row.delta, 2);
+      assert.equal(row.delta, 4);
       assert.equal(row.n, 2);
 
       await room.flush('guest:g-1');
@@ -237,12 +241,12 @@ describe('times square plaza', { concurrency: false }, () => {
       const failed = JSON.parse(calls[0].body);
       assert.equal(failed.p_key, 'flush-test-key');
       assert.equal(failed.p_items[0].actor_id, 'guest:g-1');
-      assert.equal(failed.p_items[0].delta, 2);
+      assert.equal(failed.p_items[0].delta, 4);
 
       const room2 = new Room(makeCtx(sql), room.env);
       const again = openSock(room2, 'guest:g-1');
-      await room2.webSocketMessage(again, JSON.stringify({ t: 'MINE', amount: 5, nick: '까마귀' }));
-      assert.equal(sql.db.prepare('select delta from coin').get().delta, 2);
+      await watch(room2, again); // a woken room keeps the gap (SQLite)
+      assert.equal(sql.db.prepare('select delta from coin').get().delta, 4);
 
       clock += 2000;
       await room.flush('guest:g-1');
@@ -251,17 +255,15 @@ describe('times square plaza', { concurrency: false }, () => {
       assert.equal(msgs(other).some(m => m.t === 'WALLET_SYNC'), false);
       const okBody = JSON.parse(calls[1].body);
       assert.equal(okBody.p_items[0].nickname, '까마귀');
-      assert.equal(okBody.p_items[0].delta, 2);
+      assert.equal(okBody.p_items[0].delta, 4);
 
-      await room2.webSocketMessage(again, JSON.stringify({ t: 'MINE', amount: 4, nick: '까마귀' }));
+      await watch(room2, again); // still inside the 20 s
       assert.equal(sql.db.prepare('select count(*) c from coin').get().c, 0);
-      clock += 2000;
-      await room2.webSocketMessage(again, JSON.stringify({ t: 'MINE', amount: 1, nick: '까마귀' }));
-      assert.equal(sql.db.prepare('select delta from coin').get().delta, 1);
-      clock += 10000;
-      await room2.alarm();
-      assert.equal(sql.db.prepare('select count(*) c from coin').get().c, 1);
       clock += 20000;
+      await watch(room2, again);
+      assert.equal(sql.db.prepare('select delta from coin').get().delta, 2);
+      // (room2 still counts the row room1 flushed as its oldest grant, so its alarm is due at once)
+      clock += 30000;
       await room2.alarm();
       assert.equal(sql.db.prepare('select count(*) c from coin').get().c, 0);
       assert.equal(msgs(again).some(m => m.t === 'WALLET_SYNC'), true);
@@ -270,14 +272,14 @@ describe('times square plaza', { concurrency: false }, () => {
       const room3 = new Room(makeCtx(sql3), room.env);
       const farmer = openSock(room3, 'guest:farm');
       for (let i = 0; i < 20; i++) {
-        clock += 2000;
-        await room3.webSocketMessage(farmer, JSON.stringify({ t: 'MINE', amount: 1, nick: '농부' }));
+        clock += 20000;
+        await room3.webSocketMessage(farmer, JSON.stringify({ t: 'BONUS', kind: 'lounge', amount: 2, nick: '농부' }));
       }
       await room3._fq;
       const batch = calls.map(c => ({ url: c.url, body: c.body })).filter(c => c.url.includes('coin_batch')).at(-1);
       const items = JSON.parse(batch.body).p_items;
       assert.equal(items.length, 1);
-      assert.equal(items[0].delta, 20);
+      assert.equal(items[0].delta, 40); // 20 pays of 2: the 20th grant flushes (FLUSH_N)
       assert.equal(items[0].actor_id, 'guest:farm');
       assert.equal(sql3.db.prepare('select count(*) c from coin').get().c, 0);
       const newbie = openSock(room3, 'guest:new');
@@ -377,7 +379,7 @@ describe('times square plaza', { concurrency: false }, () => {
       assert.equal(boards(), 1);
 
       const sock = await join(env, 'chapel:square', actorId);
-      await room.webSocketMessage(sock, JSON.stringify({ t: 'MINE', amount: 1, nick: '까마귀' }));
+      await room.webSocketMessage(sock, JSON.stringify({ t: 'BONUS', kind: 'lounge', amount: 2, nick: '까마귀' })); // 관람 +2, pending
       world.boards = [{ slot_id: 'MAIN_TOP', line1: '새 문구', tier: 'S' }];
       world.ranks = [{ actor_id: actorId, nickname: '까마귀', spent: 120, linked: false }];
       failFlush = true;
@@ -388,7 +390,7 @@ describe('times square plaza', { concurrency: false }, () => {
       assert.equal(blocked.status, 409);
       const blockedBody = await blocked.json();
       assert.equal(blockedBody.pending, true);
-      assert.match(blockedBody.error, /미정산/);
+      assert.match(blockedBody.error, /정산되지 않은 포인트/);
       assert.equal(calls.some(c => c.url.includes('claim_billboard')), false);
       assert.equal(sql.db.prepare('select delta from coin').get().delta, 2);
 
@@ -458,26 +460,15 @@ describe('times square plaza', { concurrency: false }, () => {
       assert.equal(syncs(bystander), 0);
       assert.equal(msgs(evicted).filter(m => m.t === 'TAKE').at(-1).victim, 'guest:evicted');
       assert.equal(msgs(landlord).filter(m => m.t === 'WORLD_UPDATE').at(-1).data.slot_id, 'PLOT_3');
-      // A guest sends nothing, with no row or with coins (test/merge-guard.test.mjs); an account sends what it holds above 580.
+      // Points are never sent (non-game change): a guest or an account with any balance gets 410 off, and the database is never asked.
       const sell = (headers = auth) => call('/rt/sell-coins', { method: 'POST', headers, body: JSON.stringify({ topic: 'chapel:square', slot_id: 'PLOT_3', amount: 10, nickname: '까마귀' }) });
       const early = await sell();
-      assert.equal(early.status, 400); assert.equal((await early.json()).code, 'starter');
-      world.wallet = { coins: 140 };
+      assert.equal(early.status, 410); assert.equal((await early.json()).code, 'off');
+      world.wallet = { coins: 5900 };
       const still = await sell();
-      assert.equal(still.status, 400); assert.equal((await still.json()).code, 'starter');
+      assert.equal(still.status, 410); assert.equal((await still.json()).code, 'off');
       assert.equal(calls.some(c => c.url.includes('sell_coins_to_advertiser')), false);
-      const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
-      world.jwks = [{ ...(await crypto.subtle.exportKey('jwk', pair.publicKey)), kid: 'plaza-sell-kid' }];
-      const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url'), head = b64({ alg: 'ES256', kid: 'plaza-sell-kid' });
-      const claims = b64({ sub: '22222222-3333-4444-5555-666666666666', iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 600, iss: 'https://yxddhpacuyaffaoutxjn.supabase.co/auth/v1', aud: 'authenticated' });
-      const userTok = head + '.' + claims + '.' + Buffer.from(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, pair.privateKey, Buffer.from(head + '.' + claims))).toString('base64url');
-      world.wallet = { coins: 590 };
-      const sold = await sell({ authorization: 'Bearer ' + userTok, 'content-type': 'application/json' });
-      assert.equal(sold.status, 200);
-      const soldBody = await sold.json();
-      assert.equal(soldBody.buyer_name, '건물주');
-      assert.equal('buyer_id' in soldBody, false);
-      assert.equal(syncs(landlord), 2);
+      assert.equal(syncs(landlord), 1);
       assert.equal(syncs(bystander), 0);
 
       // A bulk change (no kind) reaches every socket and is not replayed to late joiners.
@@ -592,19 +583,16 @@ describe('times square plaza', { concurrency: false }, () => {
     }
   });
 
-  it('exports mine, emoji, claim, plot, and world-update hooks', async () => {
+  it('exports emoji, claim, plot, and world-update hooks; no ground-coin send, and a drop-off carries only its board', async () => {
     const net = new Net();
     net.me = { name: '까마귀', x: 3.2, y: 4.6, face: 'e', anim: 'idle', fl: 2, vx: 0, vy: 0 };
     assert.equal(net.state().fl, 0);
     const sent = [];
     net.status = 'online';
     net.ch = { raw(o) { sent.push(o); return true; } };
-    assert.equal(sendMine(5), true);
-    assert.deepEqual(sent[0], { t: 'MINE', amount: 5, nick: '까마귀' });
-    assert.equal(sendMine(40, '길드'), true);
-    assert.equal(sent[1].amount, 15);
-    assert.equal(sent[1].nick, '길드');
-    assert.equal(sendMine(0), false);
+    for (const gone of ['sendMine', 'sendFare', 'sendSess', 'sendFever', 'sendRevenge', 'sellCoins']) assert.equal(typeof net[gone], 'undefined', gone);
+    assert.equal(net.sendDrop('STREET_4'), true);
+    assert.deepEqual(sent[0], { t: 'FARE', slot: 'STREET_4' });
     assert.equal(net.sendBonus('hello', 40, '뉴'), true);
     assert.deepEqual(sent.at(-1), { t: 'BONUS', kind: 'hello', amount: 40, nick: '뉴' });
     assert.equal(sendEmoji(3), true);
@@ -921,39 +909,30 @@ describe('times square plaza', { concurrency: false }, () => {
     }
   });
 
-  it('S3: the fever gauge moves only for fares the server accepted', async () => {
+  // The fever (a coin-2x party a taxi gauge opened) is gone with the points for play: no gauge, no answer to FEVER, nothing on welcome.
+  it('S3: no fever: fares move no gauge, FEVER and REV get no answer, and a joining socket hears no gauge', async () => {
     const origFetch = globalThis.fetch, origNow = Date.now;
-    let clock = NOON - 400000; // the 20 fares below straddle an hour (10 + 10): PAY.fare.perHour pays at most 15 in one
+    let clock = NOON - 400000;
     Date.now = () => clock;
     globalThis.fetch = okFetch;
     try {
       const { room } = makeRoom();
       const uid = 'guest:taxi', me = openSock(room, uid);
-      const fare = (amount) => room.webSocketMessage(me, JSON.stringify({ t: 'FARE', amount, nick: '기사', slot: 'STREET_1', riders: 1 }));
-      const fever = async () => { await room.webSocketMessage(me, JSON.stringify({ t: 'FEVER' })); return msgs(me).filter((m) => m.t === 'FEVER').at(-1).until; };
-      const gauge = () => room.gateAt('fg|' + uid);
       let x = 0;
-      const ride = async () => {
+      for (let i = 0; i < 25; i++) {
+        clock += 40000;
         await room.webSocketMessage(me, JSON.stringify({ t: 'p', a: [toNetUnits(x), toNetUnits(0), 0, 'idle', 0, 0, 0] }));
         await room.webSocketMessage(me, JSON.stringify({ t: 'PICK' }));
-        await fare(20);
+        await room.webSocketMessage(me, JSON.stringify({ t: 'FARE', amount: 25, nick: '기사', slot: 'STREET_1', riders: 1 }));
         x += 20;
-      };
-      for (const junk of [0, -5, 'x', null, 0.4, {}]) for (let i = 0; i < 5; i++) await fare(junk);
-      assert.equal(gauge(), 0);
-      assert.equal(await fever(), 0);
-      await ride();
-      assert.equal(gauge(), 1);
-      for (let i = 0; i < 30; i++) await fare(25); // inside the fare gap, and with no new pick: not counted
-      assert.equal(gauge(), 1);
-      assert.equal(await fever(), 0);
-      for (let i = 0; i < 18; i++) { clock += 40000; await ride(); }
-      assert.equal(gauge(), 19);
-      assert.equal(await fever(), 0);
-      clock += 40000;
-      await ride();
-      assert.equal(await fever(), clock + 60000);
-      assert.equal(gauge(), 0);
+      }
+      for (const t of ['FEVER', 'REV']) await room.webSocketMessage(me, JSON.stringify({ t }));
+      assert.equal(room.gateAt('fg|' + uid), 0);
+      assert.equal(msgs(me).some((m) => m.t === 'FEVER' || m.t === 'REV' || m.t === 'PAY'), false);
+      room.tapDb(); assert.equal(room.ctx.storage.sql.exec('select count(*) n from coin').one().n, 0);
+      const fresh = openSock(room, 'guest:late'); room.admit(fresh, room.socks().get(fresh));
+      const ok = msgs(fresh).find((m) => m.t === 'ok');
+      for (const k of ['fg', 'fv', 'rv', 'lot']) assert.equal(k in ok, false, k);
       await room._fq;
     } finally {
       globalThis.fetch = origFetch;
@@ -1038,7 +1017,7 @@ describe('times square plaza', { concurrency: false }, () => {
     assert.match(cfg, /\{ "name": "GUEST_RL", "namespace_id": "\d+", "simple": \{ "limit": 10, "period": 60 \} \}/);
   });
 
-  it('S6: attend, mission and pouch bonuses pay within their caps, per account per KST day', async () => {
+  it('S6: attend and mission bonuses pay within their caps, per account per KST day; the pouch pays nothing', async () => {
     const origFetch = globalThis.fetch, origNow = Date.now;
     let clock = NOON;
     Date.now = () => clock;
@@ -1061,37 +1040,27 @@ describe('times square plaza', { concurrency: false }, () => {
       assert.deepEqual(held(SQ), { delta: 10, n: 1 });
       for (const amount of [20, 15, 5, 15, 15]) await bonus(SQ, a, 'mission', amount);
       assert.deepEqual(held(SQ), { delta: 10 + 15 + 15 + 15, n: 4 });
-      await bonus(SQ, a, 'pouch', 99);
-      assert.deepEqual(held(SQ), { delta: 75, n: 5 });
-      clock += 25000 - 401;
-      await bonus(SQ, a2, 'pouch', 30);
-      assert.equal(held(SQ).n, 5);
-      clock += 1;
-      await bonus(SQ, a, 'pouch', 30);
-      assert.deepEqual(held(SQ), { delta: 95, n: 6 });
-      for (const [kind, amount] of [['jackpot', 30], ['attend', 0], ['mission', -3], ['pouch', 'x'], ['', 5]]) await bonus(SQ, a, kind, amount);
-      assert.equal(held(SQ).n, 6);
-      // Same day, another room: nothing more. The pouch gap counts from the move.
+      for (let i = 0; i < 3; i++) { clock += 25000; await bonus(SQ, a, 'pouch', 99); } // the pouch is play: nothing
+      assert.deepEqual(held(SQ), { delta: 55, n: 4 });
+      for (const [kind, amount] of [['jackpot', 30], ['attend', 0], ['mission', -3], ['pouch', 'x'], ['star', 6], ['stunt', 8], ['hive', 2], ['', 5]]) await bonus(SQ, a, kind, amount);
+      assert.equal(held(SQ).n, 4);
+      // Same day, another room: nothing more.
       const b = await join(env, SQ2, uid);
       for (const kind of ['attend', 'mission', 'pouch']) await bonus(SQ2, b, kind, 30);
       assert.equal(held(SQ2).n, 0);
-      clock += 25000;
-      await bonus(SQ2, b, 'pouch', 30);
-      assert.deepEqual(held(SQ2), { delta: 20, n: 1 });
-      // Next KST day. Fever does not multiply attend or mission. The attendance double pays 10, not 20.
+      // Next KST day: one more mission and the day's attendance (the server's 10, not the client's 30).
       clock += 86400000;
       await bonus(SQ2, b, 'mission', 15);
-      env.room(SQ2).do.gateSet('fv|' + uid, clock + 60000);
       await bonus(SQ2, b, 'attend', 30);
       await bonus(SQ2, b, 'attend', 30);
-      assert.deepEqual(held(SQ2), { delta: 20 + 15 + 10, n: 3 });
+      assert.deepEqual(held(SQ2), { delta: 15 + 10, n: 2 });
     } finally {
       globalThis.fetch = origFetch;
       Date.now = origNow;
     }
   });
 
-  it('pays repeat income from the server table and ignores client amounts', async () => {
+  it('pays no repeat income for play, and ignores client amounts', async () => {
     const origFetch = globalThis.fetch, origNow = Date.now;
     let clock = Date.parse('2026-11-15T03:00:00Z');
     Date.now = () => clock;
@@ -1107,38 +1076,32 @@ describe('times square plaza', { concurrency: false }, () => {
       clock += 8000;
       await room.webSocketMessage(me, JSON.stringify({ t: 'SESS', id: started.id, op: 'end', result: 'gold' }));
       const pay = msgs(me).filter((m) => m.t === 'PAY').at(-1);
-      assert.deepEqual(pay, { t: 'PAY', kind: 'bake', amount: 16 });
+      assert.deepEqual(pay, { t: 'PAY', kind: 'bake', amount: 0, why: 'off' }); // a gold bake from an older page: nothing
       await room.webSocketMessage(me, JSON.stringify({ t: 'MINE', amount: 15, nick: '가' }));
       await room.webSocketMessage(me, JSON.stringify({ t: 'BONUS', kind: 'draw', amount: 300, nick: '가' }));
-      const row = room.ctx.storage.sql.exec('select delta from coin where uid = ?', 'guest:eco').toArray()[0];
-      assert.equal(Number(row.delta), 16);
+      room.tapDb();
+      assert.equal(room.ctx.storage.sql.exec('select delta from coin where uid = ?', 'guest:eco').toArray().length, 0);
     } finally {
       globalThis.fetch = origFetch;
       Date.now = origNow;
     }
   });
 
-  it('draws one winning number per five-minute bucket', async () => {
+  // The 5-minute draw is gone (WISH BOARD has no lottery): no 'lotto' draw, no DRAW_CHECK answer, no ticket, nothing paid.
+  it('has no draw: DRAW_CHECK gets no answer and pays nothing, and the Meter draws no number', async () => {
     const env = makeEnv();
     const room = env.room(SQ).do;
-    const bucket = Math.floor(Date.now() / 300000);
     const lotto = env.METER.get(env.METER.idFromName('lotto'));
-    const a = await lotto.draw(bucket);
-    const b = await lotto.draw(bucket);
-    assert.equal(a, b);
-    assert.ok(a >= 1 && a <= 15);
-    const prev = await lotto.draw(bucket - 1);
+    assert.equal(typeof lotto.draw, 'undefined');
     const me = openSock(room, 'guest:lot');
     room.tapDb();
-    room.ctx.storage.sql.exec("insert into ag(uid, k, d, v) values(?, ?, '', ?)", 'guest:lot', 'lot:' + (bucket - 1), prev);
+    room.ctx.storage.sql.exec("insert into ag(uid, k, d, v) values(?, ?, '', ?)", 'guest:lot', 'lot:' + (Math.floor(Date.now() / 300000) - 1), 7); // a ticket from before
     await room.webSocketMessage(me, JSON.stringify({ t: 'DRAW_CHECK' }));
-    const msg = msgs(me).filter((m) => m.t === 'DRAW').at(-1);
-    assert.equal(msg.bucket, bucket - 1);
-    assert.equal(msg.win, prev);
-    assert.equal(msg.hit, true);
-    assert.equal(msg.amount, 25);
-    const row = room.ctx.storage.sql.exec('select delta from coin where uid = ?', 'guest:lot').toArray()[0];
-    assert.equal(Number(row.delta), 25);
+    await room.alarm();
+    assert.equal(msgs(me).some((m) => m.t === 'DRAW'), false);
+    assert.equal(room.ctx.storage.sql.exec('select count(*) n from coin').one().n, 0);
+    const w = await readFile(new URL('../worker.js', import.meta.url), 'utf8');
+    assert.doesNotMatch(w, /record_lottery_draw|drawDue|drawCheck|payDraw|DRAW_CHECK' && a\.q/);
   });
 
   it('relays only the game\'s own broadcasts as numbers, never chat, and caps them per socket', async () => {
@@ -1313,15 +1276,16 @@ describe('times square plaza', { concurrency: false }, () => {
       assert.match(sent[0].body.sid, /^[\w-]{8,40}$/);
       trackEvent('enter_square', { load_ms: 5 });
       assert.deepEqual(sent[1].body, { name: 'enter_square', sid: sent[0].body.sid, p: { load_ms: 5 } });
-      // first_coin: once per session, on the first coin earned by playing. The hello and attendance payouts are automatic and do not count.
+      // first_coin: once per session, on the first points asked for (관람, a mission, the share photo; play pays none). The hello and
+      // attendance payouts are automatic and do not count.
       net.status = 'online';
       net.ch = { raw: () => true };
       net.sendBonus('hello', 40, '가');
       net.sendBonus('attend', 10, '가');
       assert.equal(sent.length, 2);
-      net.sendMine(5, '가');
-      net.sendFare(25, '가', 'STREET_1', 1);
-      net.sendBonus('stunt', 10, '가');
+      net.sendBonus('lounge', 2, '가');
+      net.sendBonus('mission', 15, '가');
+      net.sendDrop('STREET_1'); // a taxi drop-off is no earning
       assert.deepEqual(sent.slice(2).map((e) => e.body.name), ['first_coin']);
       // Signed in: the Supabase session is the account.
       localStorage.setItem(SESSION_LS, JSON.stringify({ access_token: 'jwt.user.tok', expires_at: Math.floor(Date.now() / 1000) + 3600 }));

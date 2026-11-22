@@ -1,19 +1,6 @@
-// Pure rules for the plaza's interactions and feedback (ground coins, taxi exit and offers, the floating stick, the
-// touch-device test, the bake rounds). No DOM, no three.js: ui.js, main.js and timesSquare3d.js call these, and
-// test/interact.test.mjs pins them.
-
-// ---- ground coins ----------------------------------------------------------------------------------------------
-// The Room pays one sidewalk coin per MINE and refuses one that comes too soon (worker.js MINE_GAP 2 s). The client
-// sends at most one MINE per COIN_GAP_MS and none while one is waiting for its PAY (up to COIN_WAIT_MS), and after an
-// hour cap it stops for COIN_CAP_MS. The wallet still changes only when PAY arrives.
-export const COIN_GAP_MS = 2100, COIN_WAIT_MS = 3000, COIN_CAP_MS = 60000;
-/** true when a MINE may go out now. st: { at: last send (ms), wait: a send is waiting for its PAY, block: no send before (ms) }. */
-export function coinGate(st, now) {
-  const at = Number(st?.at) || 0;
-  if (st?.wait) return false;
-  if (now < (Number(st?.block) || 0)) return false;
-  return !at || now - at >= COIN_GAP_MS;
-}
+// Pure rules for the plaza's interactions and feedback (taxi exit and offers, the floating stick, the touch-device test,
+// the bake rounds). No DOM, no three.js: ui.js, main.js and timesSquare3d.js call these, and test/interact.test.mjs pins
+// them. None of this play pays 응원 포인트 (balance.js PAY): the ground coins are gone, a taxi fare and a bake are play only.
 
 // ---- taxi ------------------------------------------------------------------------------------------------------
 // Leaving a taxi: with riders the first press only warns (EXIT_CONFIRM_MS to press again); above EXIT_SLOW m/s the
@@ -25,9 +12,9 @@ export function taxiExit({ riders = 0, speed = 0, now = 0, armedUntil = 0 } = {}
   if (n > 0 && !(now < armedUntil)) return { act: 'warn', armedUntil: now + EXIT_CONFIRM_MS };
   return { act: Math.abs(Number(speed) || 0) > EXIT_SLOW ? 'brake' : 'exit', armedUntil: 0 };
 }
-// The Room pays one fare per FARE_GAP_S (PAY.fare.gapMs 40 s, counted from the last paid drop-off). A new passenger
-// is offered OFFER_RIDE_S before that gap ends (a ride takes at least that long), never sooner than OFFER_MIN_S after
-// the last job; a cab that reaches the drop-off early waits there (fareWait) instead of sending a fare that is refused.
+// Pacing for a fare gap, kept for the world's taxi jobs. No fare is paid any more (main.js onJob sends ev.sent = false), so
+// `since` stays null and a new passenger comes OFFER_MIN_S after the last job, with no wait at the drop-off. With a gap:
+// a passenger is offered OFFER_RIDE_S before FARE_GAP_S ends, and a cab that arrives early waits there (fareWait).
 export const FARE_GAP_S = 40, OFFER_MIN_S = 2.5, OFFER_RIDE_S = 15;
 /** Seconds until the next passenger is offered. since: seconds since the last fare was sent (null = none yet). */
 export function nextOfferDelay(since, { gap = FARE_GAP_S, min = OFFER_MIN_S, ride = OFFER_RIDE_S } = {}) {
@@ -68,18 +55,9 @@ export function isTouchUI({ coarse = false, points = 0 } = {}) {
 // windows keep the full left column). On a touch device inside it the left column is one identity + coin row, the next
 // goal and the guest warning as slim pills, and the wallet chips move into the wallet sheet.
 export const COMPACT_HUD_Q = '(orientation: portrait) and (max-width: 599px), (orientation: landscape) and (max-height: 520px)';
-/** The fever gauge as a compact chip: hidden while it is empty and idle. fever: ui.js renderHud's hd.fever (or null). */
-export function feverChip(fever) {
-  const gauge = Math.max(0, Math.floor(Number(fever?.gauge) || 0));
-  const left = Math.max(0, Math.ceil(Number(fever?.left) || 0));
-  if (fever?.phase === 'party') return { show: true, text: `2배 ${left}초` };
-  if (fever?.phase === 'count') return { show: true, text: `2배까지 ${left}초` };
-  return { show: gauge > 0, text: `2배 ${gauge}/20` };
-}
 
 // ---- bake ------------------------------------------------------------------------------------------------------
-// One bake session is BAKE_FLIPS flips, one every BAKE_ROUND_MS, so the round ends when the Room's 8 s session can
-// pay (balance.js PAY.bake.minS). The session result is the best flip.
+// One bake is BAKE_FLIPS flips, one every BAKE_ROUND_MS (about 8 s). The result is the best flip. It pays nothing.
 export const BAKE_FLIPS = 3, BAKE_ROUND_MS = 2600;
 /** 'gold' | 'good' | 'miss' for a needle position 0..1. */
 export function bakeFlip(p) {
