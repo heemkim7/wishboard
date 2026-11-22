@@ -46,13 +46,6 @@ export function dropParams(href, keys = DEEP_KEYS) {
   return hit ? u.pathname + u.search + u.hash : '';
 }
 
-export async function copyCard(slot, opts) {
-  const url = cardUrl(slot, opts || {});
-  if (!url || typeof navigator === 'undefined' || !navigator.clipboard) return false;
-  await navigator.clipboard.writeText(url);
-  return true;
-}
-
 // A phone already in portrait stays as it is. A wide canvas is copied into a live 9:16 frame so the file is vertical.
 function portraitCanvas(canvas) {
   const w = Number(canvas.width) || 0;

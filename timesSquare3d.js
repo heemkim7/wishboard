@@ -629,6 +629,7 @@ void main(){
     return { g, ring, icon, set(p) { g.visible = !!p; if (p) g.position.set(p.x, groundHeight(p.x, p.z), p.z); } };
   }
   const markers = { pickup: makeMarker(GO_HERE, '🙋', 40, true), drop: makeMarker(GO_HERE, '🏁', 25, true), way: makeMarker(GO_HERE, '📍', 70, false) };
+  const markerList = Object.values(markers); // step() animates them every frame
   const passenger = new THREE.Group();
   {
     const cloth = new THREE.MeshStandardMaterial({ color: '#c9a25a', roughness: 0.55 });
@@ -796,11 +797,13 @@ void main(){
   const remoteCars = [];
   function remoteFor(id) { return remotes.get(id)?.av || null; }
   const seeFrustum = new THREE.Frustum(), seeM = new THREE.Matrix4(), seeP = new THREE.Vector3();
+  const seenPeers = new Set(), UNSET = {};
   function syncRemotes(dt, t) {
     remoteCars.length = 0;
     frameSig = '';
     if (!net?.peers) { traffic?.setRemoteTaxis(remoteCars); return; }
-    const seen = new Set();
+    const seen = seenPeers;
+    seen.clear();
     seeFrustum.setFromProjectionMatrix(seeM.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
     for (const [id, peer] of net.peers) {
       if (!peer || id === net.id) continue;
@@ -812,15 +815,20 @@ void main(){
       seen.add(id);
       const col = COLOR_RE.test(peer.outfit || '') ? peer.outfit : colorFor(id);
       const kind = speciesId(peer.av);
-      const cosmetics = Array.isArray(peer.equip) ? peer.equip : (peer.equip && peer.equip !== 'taxi' ? String(peer.equip).split(',') : []);
       let r = remotes.get(id);
       if (!r) {
-        r = { av: avatars.create({ id, name: chars(peer.name || '익명', 12), color: col, species: kind }), x, z, y: groundHeight(x, z), yaw: 0, spd: 0 };
+        r = { av: avatars.create({ id, name: chars(peer.name || '익명', 12), color: col, species: kind }), x, z, y: groundHeight(x, z), yaw: 0, spd: 0, eqSrc: UNSET, eq: null, fr: '', nameSrc: UNSET, nm: '' };
         remotes.set(id, r);
       }
+      // Presence repeats a peer's equip and name every frame: the list and the cut name are made again only when they
+      // change (presence replaces them, never edits them in place). setEquip / setName ignore a value they already have.
+      const eqNew = r.eqSrc !== peer.equip;
+      if (eqNew) { r.eqSrc = peer.equip; r.eq = Array.isArray(peer.equip) ? peer.equip : (peer.equip && peer.equip !== 'taxi' ? String(peer.equip).split(',') : []); r.fr = equippedOf(r.eq, 'frame'); }
+      if (r.nameSrc !== peer.name) { r.nameSrc = peer.name; r.nm = chars(peer.name || '익명', 12); }
+      const cosmetics = r.eq;
       r.av.setSpecies(kind);
-      r.av.setEquip(cosmetics);
-      r.av.setName(chars(peer.name || '익명', 12));
+      if (eqNew) r.av.setEquip(cosmetics);
+      r.av.setName(r.nm);
       r.av.setColor(col);
       const px = r.x, pz = r.z;
       const wishX = (Number(s.vx) || 0) / 20, wishZ = (Number(s.vy) || 0) / 20, wish = Math.hypot(wishX, wishZ);
@@ -851,7 +859,7 @@ void main(){
       r.av.setMotion(inCar ? 0 : Math.min(r.spd, 9), !inCar && s.anim === 'sit' && r.spd < 0.3);
       r.av.update(dt, t);
       if (inCar) remoteCars.push({ x: r.x, z: r.z, yaw: r.yaw, v: r.spd, tint: cabTint(cosmetics) });
-      const fr = equippedOf(cosmetics, 'frame');
+      const fr = r.fr;
       if (fr && FRAME_FX[fr]) frameSig += id + '=' + fr + ';';
     }
     for (const [id, r] of remotes) if (!seen.has(id)) { r.av.dispose(); remotes.delete(id); }
@@ -1727,6 +1735,7 @@ void main(){
     }
   }
 
+  let lightKey = null; // the MAIN_TOP accent lightCol holds
   function step(dt, t, now) {
     clockT = t;
     screenTime.value = t;
@@ -1928,7 +1937,8 @@ void main(){
         const parked = traffic?.nearestTaxi(pos.x, pos.z, BALANCE.taxiParkedR, true);
         if (parked) nk = { kind: 'taxi', i: parked.i };
         else {
-          const si = TAXI_STANDS.findIndex(s => Math.hypot(s.x - pos.x, s.z - pos.z) < BALANCE.taxiStandR);
+          let si = -1;
+          for (let k = 0; k < TAXI_STANDS.length; k++) if (Math.hypot(TAXI_STANDS[k].x - pos.x, TAXI_STANDS[k].z - pos.z) < BALANCE.taxiStandR) { si = k; break; }
           if (si >= 0) {
             if (!traffic?.nearestTaxi(TAXI_STANDS[si].x, TAXI_STANDS[si].z, BALANCE.taxiStandCabR, true)) traffic?.callTaxi(TAXI_STANDS[si]);
             const cab = traffic?.nearestTaxi(TAXI_STANDS[si].x, TAXI_STANDS[si].z, BALANCE.taxiStandCabR, true);
@@ -1977,7 +1987,7 @@ void main(){
       setWaypoint(null);
       opts.onInteract?.('arrive', null, { x: at.x, z: at.z, driving: !!drive });
     }
-    for (const m of Object.values(markers)) if (m.g.visible) { m.icon.position.y = 6 + Math.sin(t * 2.4) * 0.4; m.ring.scale.setScalar(1 + Math.sin(t * 3) * 0.06); }
+    for (const m of markerList) if (m.g.visible) { m.icon.position.y = 6 + Math.sin(t * 2.4) * 0.4; m.ring.scale.setScalar(1 + Math.sin(t * 3) * 0.06); }
 
     syncRemotes(dt, t);
     stepWalkers(t);
@@ -2032,7 +2042,8 @@ void main(){
 
     const pulse = 0.85 + Math.sin(t * 1.7) * 0.15;
     mainLight.intensity = MAIN_I * pulse;
-    lightCol.set(boards.accentOf('MAIN_TOP'));
+    const accent = boards.accentOf('MAIN_TOP'); // a theme's hex string: parsed again only when it changes
+    if (accent !== lightKey) { lightKey = accent; lightCol.set(accent); }
     mainLight.color.lerp(lightCol, 0.05);
   }
 
@@ -2428,16 +2439,6 @@ void main(){
       stickerMap.set(id, kept);
       boards.setDecals(id, kept);
     }
-  }
-  function commitSticker(slot, glyph) {
-    if (!STICKER_GLYPHS.includes(glyph)) return false;
-    const list = stickerMap.get(slot) || [];
-    if (list.length >= 8) return false;
-    list.push({ g: glyph, c: list.length % 4 });
-    stickerMap.set(slot, list);
-    saveStickers();
-    boards.setDecals(slot, list);
-    return true;
   }
   function launchSticker(slot, glyph) {
     if (!STICKER_GLYPHS.includes(glyph)) return false;

@@ -9,9 +9,9 @@ import { BALANCE, slotName, josa, SLOT_IDS, PAY, scaledPay, bakeBase, danceBase,
 import { nextBallUntil, drawSpan } from './live.js';
 import { CHEER_PHRASES, EVENT_NAMES, allowedLink, blockedText, parseGuestHandover, statsFromCounts } from './plaza-account.js';
 import { renderCardPng } from './cardpng.js';
-import { WISH, WISH_ERR, cleanWish, cleanNick, wishFault, wishNickFault, ipNet, rankWishes, prizeFor, boardMix, wishShareText } from './wish.js';
+import { WISH, WISH_ERR, cleanWish, cleanNick, wishFault, wishNickFault, ipNet, rankWishes, prizeFor, boardMix, wishShareText, wishDay as kstDay } from './wish.js';
 import { ghostPacket } from './ts3d/walkers.js';
-import { LEAGUE, leagueBoard, leagueCut, weekEnds, botNick } from './league.js';
+import { LEAGUE, leagueBoard, leagueCut, weekEnds, botNick, leagueWeek as isoWeek } from './league.js';
 import { DARK, quietShift, darkNext, darkHours, darkText, litOf } from './dark.js';
 import { INVITE, invCode, newCode, inviteFault, inviteWaits, inviteOn, ipWide } from './invite.js';
 import { adTables, adIngest, adTenure, adRename, adForget, adReport } from './adreport.js';
@@ -1542,9 +1542,8 @@ export class Room extends DurableObject {
 // q5 VAPID web push (payload-less). Public key is public; the private JWK lives only in the Worker secret VAPID_PRIV.
 const VAPID_PUB = 'BLw-Ohwbu6DrhQF2m-FwsmMo41N8gYElXddgqaHosG5GHBCnsp1S7IkDL4GSMNcIxPBomsaVWDOVVuI4g3vn-Kw', PUSH_HOSTS = /^(fcm\.googleapis\.com|updates\.push\.services\.mozilla\.com|[\w.-]+\.notify\.windows\.com|web\.push\.apple\.com|[\w.-]+\.push\.apple\.com)$/;
 const PUSH_N = 40; // Workers Free: 50 subrequests per invocation
-const kstDay = (t = Date.now()) => new Date(t + 9 * 36e5).toISOString().slice(0, 10);
+// kstDay (YYYY-MM-DD in KST) is wish.js wishDay and isoWeek ('YYYYWww', KST) is league.js leagueWeek: one rule for the Worker and the browser.
 const dayShift = (day, n) => new Date(Date.parse(day) + n * 864e5).toISOString().slice(0, 10);
-const isoWeek = (t = Date.now()) => { const d = new Date(t + 9 * 36e5), w = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())), dn = (w.getUTCDay() + 6) % 7; w.setUTCDate(w.getUTCDate() - dn + 3); const y = w.getUTCFullYear(), f = new Date(Date.UTC(y, 0, 4)); return y + 'W' + String(1 + Math.round(((w - f) / 864e5 - 3 + ((f.getUTCDay() + 6) % 7)) / 7)).padStart(2, '0'); };
 const tribePoints = (mask) => { const m = Number(mask) || 0; return Math.min(7, (m & 1 ? 1 : 0) + (m & 2 ? 1 : 0) + (m & 4 ? 5 : 0)); };
 let VK = null;
 async function vapidAuth(env, endpoint) { if (!env.VAPID_PRIV) return null; if (!VK || VK.raw !== env.VAPID_PRIV) VK = { raw: env.VAPID_PRIV, k: await crypto.subtle.importKey('jwk', JSON.parse(env.VAPID_PRIV), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']) };

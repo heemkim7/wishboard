@@ -172,9 +172,23 @@ export function createAvatars({ scene, urls, models, first, height = 1.8 }) {
 }
 
 // Two-bone aim so the hands meet a world point. The Mixamo clip set has no prayer or cheer.
-const _p = new THREE.Vector3();
+// A held pose runs every frame for each avatar that holds it, so the vectors below are module temporaries, not new objects
+// per call. None outlives a call. pointY, foldArm and aimHand each write only their own temporaries, and read their
+// arguments first. holdPose builds its targets in _t1.._t5 and hands them to foldArm and aimHand.
 const _q = new THREE.Quaternion();
 const _qP = new THREE.Quaternion();
+const _qI = new THREE.Quaternion(); // _qP inverted
+const _qU = new THREE.Quaternion(); // pointY's turn
+const _qM = new THREE.Quaternion(); // the model's world rotation
+const _qW = new THREE.Quaternion(); // aimHand's world rotation
+const _mB = new THREE.Matrix4();
+const _cur = new THREE.Vector3(), _want = new THREE.Vector3(); // pointY
+const _bone = new THREE.Vector3(), _aim = new THREE.Vector3(); // foldArm
+const _hx = new THREE.Vector3(), _hy = new THREE.Vector3(), _hz = new THREE.Vector3(); // aimHand
+const _chest = new THREE.Vector3(), _headP = new THREE.Vector3(), _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _off = new THREE.Vector3();
+const _t1 = new THREE.Vector3(), _t2 = new THREE.Vector3(), _t3 = new THREE.Vector3(), _t4 = new THREE.Vector3(), _t5 = new THREE.Vector3();
+const POSE_UP = new THREE.Vector3(0, 1, 0.18); // read only
+const UPPER_ARM = { Left: 'LeftArm', Right: 'RightArm' }, FORE_ARM = { Left: 'LeftForeArm', Right: 'RightForeArm' };
 function poseBones(model) {
   if (!model.userData.poseBones) {
     const found = {};
@@ -191,28 +205,30 @@ function pointY(b, dir) {
   b.updateWorldMatrix(true, false);
   b.parent.getWorldQuaternion(_qP);
   b.getWorldQuaternion(_q);
-  const cur = new THREE.Vector3(0, 1, 0).applyQuaternion(_q);
-  const want = dir.clone().normalize();
-  if (cur.dot(want) < 0.999) _q.premultiply(new THREE.Quaternion().setFromUnitVectors(cur, want));
-  b.quaternion.copy(_qP.clone().invert()).multiply(_q);
+  const cur = _cur.set(0, 1, 0).applyQuaternion(_q);
+  const want = _want.copy(dir).normalize();
+  if (cur.dot(want) < 0.999) _q.premultiply(_qU.setFromUnitVectors(cur, want));
+  b.quaternion.copy(_qI.copy(_qP).invert()).multiply(_q);
 }
 function foldArm(model, side, elbowTarget, handTarget) {
   const bones = poseBones(model);
-  const upper = bones[side + 'Arm'];
-  const fore = bones[side + 'ForeArm'];
+  const upper = bones[UPPER_ARM[side]];
+  const fore = bones[FORE_ARM[side]];
   if (!upper || !fore) return;
-  pointY(upper, elbowTarget.clone().sub(boneAt(upper, new THREE.Vector3())));
-  pointY(fore, handTarget.clone().sub(boneAt(fore, new THREE.Vector3())));
+  pointY(upper, _aim.copy(elbowTarget).sub(boneAt(upper, _bone)));
+  pointY(fore, _aim.copy(handTarget).sub(boneAt(fore, _bone)));
 }
+const identityBone = (b) => { if (b.isBone) b.quaternion.identity(); };
 function aimHand(hand, fingerDir, palmDir) {
-  const y = fingerDir.clone().normalize();
-  const z = palmDir.clone().addScaledVector(y, -palmDir.dot(y)).normalize();
-  const x = new THREE.Vector3().crossVectors(y, z).normalize();
-  const worldQ = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
+  const y = _hy.copy(fingerDir).normalize();
+  const z = _hz.copy(palmDir).addScaledVector(y, -palmDir.dot(y)).normalize();
+  const x = _hx.crossVectors(y, z).normalize();
+  const worldQ = _qW.setFromRotationMatrix(_mB.makeBasis(x, y, z));
   hand.updateWorldMatrix(true, false);
   hand.parent.getWorldQuaternion(_qP);
-  hand.quaternion.copy(_qP.clone().invert()).multiply(worldQ);
-  hand.traverse((b) => { if (b.isBone && b !== hand) b.quaternion.identity(); });
+  hand.quaternion.copy(_qI.copy(_qP).invert()).multiply(worldQ);
+  // every bone under the hand (the fingers) back to rest; the hand itself keeps the aim
+  for (let i = 0; i < hand.children.length; i++) hand.children[i].traverse(identityBone);
 }
 function holdPose(model, pose, t = 1) {
   if (!model) return;
@@ -220,37 +236,38 @@ function holdPose(model, pose, t = 1) {
   const spine = bones.Spine2 || bones.Spine;
   const head = bones.Head;
   if (!spine || !head) return;
-  const chest = boneAt(spine, new THREE.Vector3());
-  const headP = boneAt(head, new THREE.Vector3());
+  const chest = boneAt(spine, _chest);
+  const headP = boneAt(head, _headP);
   model.updateWorldMatrix(true, false);
-  const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(model.getWorldQuaternion(new THREE.Quaternion()));
-  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(model.getWorldQuaternion(new THREE.Quaternion()));
-  const up = new THREE.Vector3(0, 1, 0.18);
+  model.getWorldQuaternion(_qM);
+  const fwd = _fwd.set(0, 0, 1).applyQuaternion(_qM);
+  const right = _right.set(1, 0, 0).applyQuaternion(_qM);
   if (pose === 'Pray') {
-    const meet = chest.clone().addScaledVector(fwd, 0.34).add(new THREE.Vector3(0, 0.08, 0));
-    const elbowL = chest.clone().addScaledVector(fwd, 0.06).addScaledVector(right, 0.24);
-    const elbowR = chest.clone().addScaledVector(fwd, 0.06).addScaledVector(right, -0.24);
+    const meet = _t1.copy(chest).addScaledVector(fwd, 0.34).add(_off.set(0, 0.08, 0));
+    const elbowL = _t2.copy(chest).addScaledVector(fwd, 0.06).addScaledVector(right, 0.24);
+    const elbowR = _t3.copy(chest).addScaledVector(fwd, 0.06).addScaledVector(right, -0.24);
     foldArm(model, 'Left', elbowL, meet);
     foldArm(model, 'Right', elbowR, meet);
-    if (bones.LeftHand) aimHand(bones.LeftHand, up, right.clone().multiplyScalar(-1));
-    if (bones.RightHand) aimHand(bones.RightHand, up, right);
+    if (bones.LeftHand) aimHand(bones.LeftHand, POSE_UP, _t4.copy(right).multiplyScalar(-1));
+    if (bones.RightHand) aimHand(bones.RightHand, POSE_UP, right);
   } else if (pose === 'Cheer') {
-    const leftT = headP.clone().add(new THREE.Vector3(0, 0.48, 0)).addScaledVector(right, 0.62).addScaledVector(fwd, -0.04);
-    const rightT = headP.clone().add(new THREE.Vector3(0, 0.48, 0)).addScaledVector(right, -0.62).addScaledVector(fwd, -0.04);
+    const leftT = _t1.copy(headP).add(_off.set(0, 0.48, 0)).addScaledVector(right, 0.62).addScaledVector(fwd, -0.04);
+    const rightT = _t2.copy(headP).add(_off.set(0, 0.48, 0)).addScaledVector(right, -0.62).addScaledVector(fwd, -0.04);
     foldArm(model, 'Left', leftT, leftT);
     foldArm(model, 'Right', rightT, rightT);
-    if (bones.LeftHand) aimHand(bones.LeftHand, right.clone().add(new THREE.Vector3(0, 1.2, 0)), fwd);
-    if (bones.RightHand) aimHand(bones.RightHand, right.clone().multiplyScalar(-1).add(new THREE.Vector3(0, 1.2, 0)), fwd);
+    if (bones.LeftHand) aimHand(bones.LeftHand, _t3.copy(right).add(_off.set(0, 1.2, 0)), fwd);
+    if (bones.RightHand) aimHand(bones.RightHand, _t3.copy(right).multiplyScalar(-1).add(_off.set(0, 1.2, 0)), fwd);
   } else if (pose === 'Throw') {
     // No throw clip in the GLB. Overhand: cock behind the head, then the hand leads forward and up.
     const u = Math.max(0, Math.min(1, t));
     const fire = u < 0.28 ? 0 : Math.min(1, (u - 0.28) / 0.3);
-    const elbow = headP.clone().addScaledVector(right, -0.34).addScaledVector(fwd, -0.22).add(new THREE.Vector3(0, 0.12, 0))
-      .lerp(headP.clone().addScaledVector(right, -0.08).addScaledVector(fwd, 0.26).add(new THREE.Vector3(0, 0.32, 0)), fire);
-    const hand = headP.clone().addScaledVector(right, -0.16).addScaledVector(fwd, -0.42).add(new THREE.Vector3(0, 0.04, 0))
-      .lerp(headP.clone().addScaledVector(fwd, 0.62).add(new THREE.Vector3(0, 0.72, 0)), fire);
+    // each .add(_off.set(...)) finishes before the next _off.set: the receiver of .lerp is evaluated before its argument
+    const elbow = _t1.copy(headP).addScaledVector(right, -0.34).addScaledVector(fwd, -0.22).add(_off.set(0, 0.12, 0))
+      .lerp(_t2.copy(headP).addScaledVector(right, -0.08).addScaledVector(fwd, 0.26).add(_off.set(0, 0.32, 0)), fire);
+    const hand = _t3.copy(headP).addScaledVector(right, -0.16).addScaledVector(fwd, -0.42).add(_off.set(0, 0.04, 0))
+      .lerp(_t4.copy(headP).addScaledVector(fwd, 0.62).add(_off.set(0, 0.72, 0)), fire);
     foldArm(model, 'Right', elbow, hand);
-    if (bones.RightHand) aimHand(bones.RightHand, fwd.clone().add(new THREE.Vector3(0, fire > 0.15 ? 1 : 0.25, 0)), right.clone().multiplyScalar(-1));
+    if (bones.RightHand) aimHand(bones.RightHand, _t2.copy(fwd).add(_off.set(0, fire > 0.15 ? 1 : 0.25, 0)), _t5.copy(right).multiplyScalar(-1));
   }
 }
 

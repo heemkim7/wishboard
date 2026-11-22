@@ -196,7 +196,6 @@ export function operatorFor(env) { const raw = env?.OPERATOR_INFO; if (raw !== O
 // The maintenance notice as this isolate knows it: at most OPS.maintTtl old (5 min; 15 min at budget hard), refreshed behind the response.
 // An isolate that never read it waits for its first read (OPS.maintWait at most). No METER binding: never on.
 let MAINT = { at: 0, v: null, p: null };
-export function maintNow() { return MAINT.v; }
 export async function maintFor(env, ctx, lvlCopy = () => 0) {
   if (!env?.METER) return null;
   const now = Date.now(), ttl = lvlCopy() >= 2 ? OPS.maintHardTtl : OPS.maintTtl;

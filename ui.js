@@ -3351,7 +3351,7 @@ export function createUI(root, hooks) {
           ...bars.map((b) => h('div', { title: `${md(b.day)} · ${b.before ? '기록 전' : b.n}`, style: { flex: '1', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', height: '100%', minWidth: '0' } },
             h('div', { style: { width: '100%', height: b.before ? '2px' : b.n ? `${Math.max(4, Math.round(b.n / top * 72))}px` : '2px', borderRadius: '3px 3px 0 0', background: b.before ? 'var(--surface-2)' : b.n ? 'var(--accent)' : 'var(--muted)' } }),
             h('small', { class: 'tnum', text: String(Number(b.day.slice(8, 10))), style: { fontSize: '12px', marginTop: '3px', color: 'var(--muted)', opacity: b.before ? '.4' : '1' } }))));
-        const kids = [table, chart, h('p', { class: 'note', text: `${md(new Date(Date.parse(r.since) + 9 * 36e5).toISOString().slice(0, 10))}부터 센 숫자예요. 막대는 하루의 택시 손님·응원·링크 방문을 더한 수예요.` }),
+        const kids = [table, chart, h('p', { class: 'note', text: `${md(kstDay(Date.parse(r.since)))}부터 센 숫자예요. 막대는 하루의 택시 손님·응원·링크 방문을 더한 수예요.` }),
           h('p', { class: 'note', text: '택시 손님은 이 전광판 앞에 내린 택시, 링크 방문은 코인이 들어간 방문, 반응한 사람은 그날 셋 중 하나라도 한 계정 수예요. 사람 수는 하루마다 따로 세어 더해요.' })];
         if (s.d14.views + s.d14.cheers + s.d14.clicks < AD.small) kids.unshift(h('div', { class: 'callout warn', text: '아직 본 사람이 적어요. 링크를 공유하면 늘어요' }));
         body.replaceChildren(...kids);

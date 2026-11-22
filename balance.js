@@ -181,12 +181,6 @@ export function askBid(board, boards, actorId, draft = '', now = Date.now()) {
   if (!self && !tagged) min = Math.ceil(min * 1.5);
   return min;
 }
-export function fareCredit(asked, revenge) {
-  const n = Math.min(25, Math.floor(Number(asked)));
-  if (!Number.isInteger(n) || n < 1) return 0;
-  return n * (revenge ? 2 : 1);
-}
-
 export const PAY = Object.freeze({
   bake: { miss: 0, good: 6, gold: 16, minS: 8, maxS: 40, perHour: 40, nearM: 12 },
   dance: { minS: 25, maxS: 40, perHour: 6, nearM: 8 },

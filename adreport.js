@@ -6,10 +6,10 @@
 //   adh(slot, holder, since)  whose tenure the rows belong to. A new holder starts from nothing, so nobody sees the previous holder's numbers.
 // These are game counts (accounts, not people or networks), not audited figures.
 import { SLOT_IDS } from './balance.js';
+import { wishDay as dayOf } from './wish.js'; // the KST day, YYYY-MM-DD
 
 export const AD = { keep: 35, days: 14, small: 10, items: 200, people: 400 };
 const SLOTS = new Set(SLOT_IDS);
-const dayOf = (t) => new Date(t + 9 * 36e5).toISOString().slice(0, 10);
 const shift = (day, n) => new Date(Date.parse(day) + n * 864e5).toISOString().slice(0, 10);
 const num = (v) => Math.min(100000, Math.max(0, Math.floor(Number(v)) || 0));
 const minute = (b) => Number.isInteger(b) && b > 0 ? b : 0;

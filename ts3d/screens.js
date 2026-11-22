@@ -527,26 +527,38 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     const min = askBid(d, rows, '', '');
     return min > 0 ? `지금 빼기 가능 · ${min.toLocaleString('ko-KR')}코인부터` : '지금 빼기 가능';
   }
+  // update()'s nearest-first list, its { b, d } rows, the position it measures with and its two sets are made once and
+  // reused every tick. Readers of lastNear (kingStep, fillNear, pinOn) take .b at once and keep no row.
+  const nearList = [], nearRows = [], nearAt = new THREE.Vector3(), hotSet = new Set(), seenCanvas = new Set();
+  const byDist = (a, b) => a.d - b.d;
+  const SHOW_HUES = [0xff3d4a, 0xffcf5a, 0x39f58a, 0x3fe6ff, 0xb84dff, 0xff7ad9];
   function update(dt, cam) {
     tickerTex.offset.x = (tickerTex.offset.x + dt * 0.035) % 1;
     liveAcc += dt;
     if (liveAcc < 0.08) return;
     liveAcc = 0;
     liveTick++;
-    const near = [];
+    const near = nearList;
+    near.length = 0;
     for (const b of boards.values()) {
       if (!b.mounts.length) continue;
-      const p = worldPos(b.slotId);
+      const p = worldPos(b.slotId, nearAt);
       const d = cam && p ? cam.distanceToSquared(p) : 0;
-      near.push({ b, d });
+      const row = nearRows[near.length] || (nearRows[near.length] = { b: null, d: 0 });
+      row.b = b; row.d = d;
+      near.push(row);
     }
-    near.sort((a, b) => a.d - b.d);
+    for (let i = near.length; i < nearRows.length; i++) nearRows[i].b = null; // no unmounted board kept alive by a spare row
+    near.sort(byDist);
     lastNear = near;
     if (kingDirty) kingStep();
     // The strip is a canvas redraw and a texture upload per board: LIVE_HOT boards, every LIVE_EVERY-th tick.
     const draw = liveTick % LIVE_EVERY === 0;
-    const hot = new Set(near.slice(0, LIVE_HOT).map((r) => r.b));
-    const seen = new Set();
+    const hot = hotSet;
+    hot.clear();
+    for (let i = 0; i < near.length && i < LIVE_HOT; i++) hot.add(near[i].b);
+    const seen = seenCanvas;
+    seen.clear();
     for (const b of boards.values()) {
       const on = hot.has(b);
       if (b.mat?.userData?.sweep) b.mat.userData.sweep.value = on ? 1 : 0;
@@ -577,8 +589,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
       }
       if (wishes.length || wishShown) wishTick();
       if (showMeshes[1]?.visible) {
-        const hues = [0xff3d4a, 0xffcf5a, 0x39f58a, 0x3fe6ff, 0xb84dff, 0xff7ad9];
-        showMeshes[1].material.color.set(hues[(liveTick / 8) % hues.length | 0]);
+        showMeshes[1].material.color.set(SHOW_HUES[(liveTick / 8) % SHOW_HUES.length | 0]);
       }
     }
     if (rimMoving.size) rimStep(); // after the 8-tick pass above, which sets every rim to its plain colour
