@@ -95,10 +95,8 @@ export function photoVerdicts(wait, rows, me, now = Date.now()) {
   return { wait: keep, told };
 }
 
-// KST calendar day, YYYY-MM-DD. The daily missions and the tutorial both count days this way.
-export function kstDay(ms = Date.now()) {
-  return new Date(ms + 9 * 36e5).toISOString().slice(0, 10);
-}
+// KST calendar day, YYYY-MM-DD. The daily missions and the tutorial both count days this way: wish.js wishDay, the one rule the Worker uses.
+export { wishDay as kstDay } from './wish.js';
 
 // Pass the kts_daily snapshot read before this session's attend(), which writes streak 1 for everyone.
 export function playedEarlierDay(before, day) {
