@@ -936,13 +936,23 @@ export function createUI(root, hooks) {
     newsText.replaceChildren(...item.text);
     newsEl.dataset.slot = slot;
     newsEl.classList.toggle('go', !!slot);
+    newsEl.classList.remove('crawl');
     newsEl.classList.add('show');
+    // A line longer than the bar crawls once from its start to its end (index.html .news.crawl, about 70px a second after
+    // a 1 s pause), and the bar stays up until its end has been read; with reduced motion it keeps the "…" and the 4.4 s.
+    const over = Math.ceil(newsText.scrollWidth - newsText.clientWidth);
+    const crawl = over > 2 && !matchMedia('(prefers-reduced-motion: reduce)').matches ? Math.min(8000, Math.max(1500, over * 14)) : 0;
+    if (crawl) {
+      newsText.style.setProperty('--crawl', `${-over}px`);
+      newsText.style.setProperty('--crawl-s', `${crawl / 1000}s`);
+      newsEl.classList.add('crawl');
+    }
     if (item.sound) sfx.news();
     setTimeout(() => {
       newsEl.classList.remove('show', 'go');
       newsEl.dataset.slot = '';
-      setTimeout(() => { newsBusy = false; pumpNews(); }, 600);
-    }, 4400);
+      setTimeout(() => { newsBusy = false; newsEl.classList.remove('crawl'); pumpNews(); }, 600);
+    }, Math.max(4400, 1000 + crawl + 1200));
   }
   function cooldownLeft() { return Math.max(0, coolUntil - performance.now()); }
   function armCooldown() { coolUntil = performance.now() + COOLDOWN; }
@@ -6154,9 +6164,14 @@ export function createUI(root, hooks) {
     const ss = String(s % 60).padStart(2, '0');
     const inDraw = lotBucket === Math.floor(Date.now() / 300000);
     const mine = inDraw && lotNum ? `내 번호 ${lotNum}` : '';
-    setIconText(ticketText, 'ticket', inDraw
-      ? `다음 추첨까지 ${mm}:${ss} · 이번 5분 응모함${mine ? ' · ' + mine : ''} · 1/15, 맞으면 25코인`
-      : `다음 추첨까지 ${mm}:${ss} · 택시 하차가 이번 5분의 1장 · 1/15, 맞으면 25코인`);
+    // In parts: the stylesheet drops .tail, then .odds, then .hk as the line gets narrower (index.html .stay-ticket), so
+    // the time is never the part that is cut.
+    const time = `추첨까지 ${mm}:${ss}`;
+    const tail = inDraw ? ` · 이번 5분 응모함${mine ? ' · ' + mine : ''}` : ' · 택시 하차가 이번 5분의 1장';
+    const key = `${time}|${tail}`;
+    if (ticketText.dataset.it === key) return;
+    ticketText.dataset.it = key;
+    ticketText.replaceChildren(icon('ticket'), ' ', h('span', { class: 'hk', text: '다음 ' }), time, h('span', { class: 'tail', text: tail }), h('span', { class: 'odds', text: ' · 1/15, 맞으면 25코인' }));
   }
   ticketEl.addEventListener('click', () => {
     const inDraw = lotBucket === Math.floor(Date.now() / 300000);
@@ -6221,19 +6236,27 @@ export function createUI(root, hooks) {
     if (!hooks.claimQuest?.(key)) note('광장에 연결되면 미션 보상이 들어와요', 'err');
   }
   let balloonHp = 0, balloonWait = 25000, balloonWaitAt = 0;
+  // The packet icon, then the text in its own span: on touch the button is a circle with the icon and the span is the
+  // count badge on its edge (index.html .stay-balloon .bn), so a phone gets the bare count, at most 999+.
+  function balloonText(text) {
+    const key = `packet|${text}`;
+    if (balloonEl.dataset.it === key) return;
+    balloonEl.dataset.it = key;
+    balloonEl.replaceChildren(icon('packet'), h('span', { class: 'bn', text }));
+  }
   function paintBalloon() {
     balloonEl.hidden = false;
     balloonEl.disabled = !(balloonHp > 0);
     if (balloonHp > 0) {
       const left = Math.ceil(balloonHp / 10);
-      setIconText(balloonEl, 'packet', coarse ? `${left}` : `${left}번 남음 · 터지면 코인`);
+      balloonText(coarse ? (left > 999 ? '999+' : `${left}`) : `${left}번 남음 · 터지면 코인`);
       balloonEl.title = `맞출 때마다 줄어요. 0이 되면 터지고 ${PAY.pouch.base}코인이 나와요`;
       balloonEl.setAttribute('aria-label', balloonEl.title);
     }
-    else if (!balloonWaitAt) setIconText(balloonEl, 'packet', '준비');
+    else if (!balloonWaitAt) balloonText('준비');
     else {
       const left = Math.max(0, Math.ceil((balloonWaitAt + (balloonWait || 25000) - Date.now()) / 1000));
-      setIconText(balloonEl, 'packet', `${left}초`);
+      balloonText(`${left}초`);
     }
   }
   setInterval(paintBalloon, 1000);

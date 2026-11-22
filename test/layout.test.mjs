@@ -68,7 +68,7 @@ describe('touch portrait', () => {
     // 390 x 780: the resting stick ends 36 + 104 = 140px up, the waypoint pill 142 + 38 = 180px up, toasts start at 228px
     const joy = rule(css, 'html.touch .joy');
     assert.ok(bottom >= px(joy, 'bottom') + px(joy, 'height') + 12);
-    const way = rule(media('(orientation: portrait)', '.waypill'), 'html.touch .waypill');
+    const way = rule(css, 'html.touch .waypill');
     assert.ok(bottom >= px(way, 'bottom') + 38 + 8);
     // one line of 12px text is 12 * 1.35 + 16 + 2 = 34.2px tall: its top stays under the toasts
     assert.ok(bottom + 34.2 <= px(rule(css, 'html.touch .toasts'), 'bottom'));
@@ -100,24 +100,133 @@ describe('touch portrait', () => {
   });
 });
 
+describe('touch bottom lane: the draw line (or a news line), the prompt and the waypoint pill are one stack', () => {
+  const ui = read('ui.js');
+  const slot = rule(css, 'html.touch .stay-ticket, html.touch .news');
+  const prompt = rule(css, 'html.touch .prompt');
+  const way = rule(css, 'html.touch .waypill');
+  const joy = rule(css, 'html.touch .joy');
+  const acts = rule(css, 'html.touch .acts');
+  const LAND = '(orientation: landscape) and (max-height: 520px)';
+  const land = media(LAND, 'html.touch .waypill, html.touch .stay-ticket, html.touch .news, html.touch .prompt');
+  const landWide = media(LAND + ' and (min-width: 641px)', '.prompt');
+  const landBlock = media(LAND, '.taxihud');
+  it('upright and on tablets the three share one lane between the resting stick and the right-hand buttons', () => {
+    for (const r of [slot, prompt, way]) {
+      assert.equal(px(r, 'left'), 122);
+      assert.equal(px(r, 'right'), 72);
+      assert.match(r, /margin: 0 auto;/);
+      assert.match(r, /top: auto;/);
+    }
+    for (const r of [slot, prompt]) {
+      assert.match(r, /width: auto;/);
+      assert.equal(px(r, 'max-width'), 440);
+    }
+    assert.match(way, /width: fit-content;/);
+    assert.match(prompt, /transform: translateY\(8px\) scale\(\.96\);/);
+    assert.match(rule(css, 'html.touch .prompt.show'), /transform: none;/);
+    assert.match(rule(css, 'html.touch .prompt button'), /width: 100%;/);
+    // 8px clear of the resting stick (104px, 10px in) and of the 52px edge column 12px from the right
+    assert.ok(px(slot, 'left') >= px(joy, 'left') + px(joy, 'width') + 8);
+    assert.ok(px(slot, 'right') >= px(acts, 'right') + 52 + 8);
+    // 390px: 196px wide, centred at 220px for all three (before: 168px and 168px at 195px, 202px at 219px)
+    assert.equal(390 - 122 - 72, 196);
+  });
+  it('from the bottom: the slot, the prompt 6px above it, the pill above the stick and a four-line prompt', () => {
+    assert.equal(px(slot, 'bottom'), 8);
+    assert.equal(px(slot, 'height'), 32);
+    assert.equal(px(prompt, 'bottom'), px(slot, 'bottom') + px(slot, 'height') + 6);
+    // the prompt is 6px padding, a 32px key cap or up to four 12px lines (about 15px each), 6px padding and a 1px border
+    const tallest = 6 + 4 * 15.5 + 6 + 2;
+    assert.ok(px(prompt, 'bottom') + tallest <= px(way, 'bottom') - 8);
+    assert.equal(px(way, 'bottom'), 142);
+    assert.ok(px(way, 'bottom') >= px(joy, 'bottom') + px(joy, 'height'));
+    // the news line is one line here (no kicker line), the same height as the draw line
+    assert.match(rule(css, 'html.touch .news .body small'), /display: none;/);
+    assert.match(rule(css, 'html.touch .news .body strong'), /line-height: 30px;/);
+    // the stick stays put while a news line shows: nothing moves the prompt or the pill
+    assert.equal(/#ui:has\(> \.news\.show\)[^{]*\.(prompt|waypill)/.test(css), false);
+  });
+  it('a phone on its side: right of the stick and left of the dock column, and from 641px on the toasts\' centre', () => {
+    const r = rule(land, 'html.touch .waypill, html.touch .stay-ticket, html.touch .news, html.touch .prompt');
+    // the stick is 88px wide there; the dock column is 52px wide, 76px from the right
+    assert.equal(px(rule(landBlock, 'html.touch .joy'), 'width'), 88);
+    assert.ok(px(r, 'left') >= 10 + 88 + 8);
+    assert.ok(px(r, 'right') >= px(rule(landBlock, 'html.touch .dock'), 'right') + 52 + 12);
+    assert.equal(px(rule(land, 'html.touch .waypill'), 'bottom'), 108);
+    // two prompt lines (46px) end 54px under the pill; the look-around hint is 8px above the pill
+    assert.ok(46 + 46 + 8 <= 108);
+    assert.ok(px(rule(landBlock, 'html.touch .coach'), 'bottom') >= 108 + 38 + 8);
+    const wide = rule(landWide, 'html.touch .waypill, html.touch .stay-ticket, html.touch .news, html.touch .prompt');
+    const toasts = rule(media(LAND, '.toasts'), 'html.touch .toasts');
+    const leftOf = (d) => d.match(/left: (calc\([^;]*\));/)[1];
+    assert.equal(leftOf(wide), leftOf(toasts));
+    assert.equal(leftOf(wide), leftOf(rule(landBlock, 'html.touch .coach')));
+    assert.equal(px(r, 'right'), px(toasts, 'right'));
+    assert.equal(px(r, 'right'), px(rule(landBlock, 'html.touch .coach'), 'right'));
+  });
+  it('the 화면만 보기 and 멍때리기 rules still name the stack pieces', () => {
+    assert.match(css, /#ui\.viewonly > :is\(\.hud-l, \.news, \.stay-ticket, \.prompt, \.waypill,/);
+    assert.match(css, /#ui\.lounging > \.news, #ui\.lounging > \.stay-ticket/);
+    // the slot is no longer emptied while driving: the taxi HUD is at the top on touch
+    assert.equal(css.includes('html.touch #ui:has(.taxihud:not([hidden])) .news'), false);
+    assert.match(css, /html\.touch #ui:has\(\.taxihud:not\(\[hidden\]\)\) \.waypill \{ display: none; \}/);
+  });
+  it('a news line longer than its bar crawls to its end and stays until it has been read', () => {
+    const pump = ui.slice(ui.indexOf('function pumpNews('), ui.indexOf('function cooldownLeft('));
+    assert.match(pump, /const over = Math\.ceil\(newsText\.scrollWidth - newsText\.clientWidth\);/);
+    assert.match(pump, /matchMedia\('\(prefers-reduced-motion: reduce\)'\)\.matches/);
+    assert.match(pump, /newsText\.style\.setProperty\('--crawl', `\$\{-over\}px`\);/);
+    assert.match(pump, /newsEl\.classList\.add\('crawl'\);/);
+    assert.match(pump, /\}, Math\.max\(4400, 1000 \+ crawl \+ 1200\)\);/);
+    assert.match(rule(css, '.news.crawl .body strong'), /animation: newsCrawl var\(--crawl-s, 3s\) linear 1s both;/);
+    assert.match(css, /@keyframes newsCrawl \{ from \{ transform: none; \} to \{ transform: translateX\(var\(--crawl, 0px\)\); \} \}/);
+    // the crawl starts after 1 s and leaves 1.2 s on the end: about 70px a second (14ms a pixel), 1.5 to 8 s
+    assert.match(pump, /Math\.min\(8000, Math\.max\(1500, over \* 14\)\)/);
+  });
+});
+
+describe('touch toasts and the pouch count', () => {
+  const ui = read('ui.js');
+  it('toasts stay clear of the right-hand buttons (the star line used to cover 멍때리기)', () => {
+    const t = rule(css, 'html.touch .toasts');
+    assert.match(t, /transform: none;/);
+    // upright: the dock and the pouch are 52px wide, 12px from the right
+    assert.ok(px(t, 'right') >= 12 + 52 + 8);
+    assert.equal(px(t, 'left'), px(t, 'right'));
+    assert.match(rule(css, 'html.touch .toast'), /max-width: 100%; word-break: keep-all;/);
+    // on its side: left of the dock column (76px from the right) and the pouch on top of it
+    const land = rule(media('(orientation: landscape) and (max-height: 520px)', '.toasts'), 'html.touch .toasts');
+    assert.ok(px(land, 'right') >= 76 + 52 + 12);
+  });
+  it('the pouch is an icon in its circle with the count as a badge on the edge, at most 999+', () => {
+    const paint = ui.slice(ui.indexOf('function balloonText('), ui.indexOf('setInterval(paintBalloon, 1000);'));
+    assert.match(paint, /balloonEl\.replaceChildren\(icon\('packet'\), h\('span', \{ class: 'bn', text \}\)\);/);
+    assert.match(paint, /balloonText\(coarse \? \(left > 999 \? '999\+' : `\$\{left\}`\) : `\$\{left\}번 남음 · 터지면 코인`\);/);
+    const bn = rule(css, 'html.touch .hud-r .stay-balloon .bn');
+    assert.match(bn, /position: absolute;/);
+    assert.ok(px(bn, 'top') < 0 && px(bn, 'right') < 0);
+    assert.match(bn, /white-space: nowrap;/);
+    assert.match(rule(css, 'html.touch .hud-r .stay-balloon:disabled .bn'), /background: var\(--surface-2\);/);
+    // the badge needs a positioned button where the phone rules do not fix it (tablets); the phone rules come later
+    assert.ok(css.indexOf('html.touch .hud-r .stay-balloon { position: relative; }') < css.indexOf('html.touch .hud-r .stay-balloon { position: fixed;'));
+    // on its side the badge (8px past the circle's right edge) stays clear of the edge column: 76 - 8 > 12 + 52
+    assert.ok(76 - 8 > 12 + 52);
+  });
+});
+
 describe('touch landscape on a phone (height up to 520px)', () => {
-  const land = media('(orientation: landscape) and (max-height: 520px)', '.stay-ticket');
+  const land = media('(orientation: landscape) and (max-height: 520px)', '.taxihud');
   // The left column: 14px in above 640px wide (10px at or under), at most min(240px, 40vw) wide.
   const leftCol = (vw) => (vw > 640 ? 14 : 10) + Math.min(240, vw * 0.4);
   const inset = (vw) => Math.min(240, vw * 0.4) + 26;
-  it('the ticker starts 12px past the identity card and ends before the folded tool row', () => {
-    const t = rule(land, 'html.touch .stay-ticket');
-    assert.match(t, /left: calc\(min\(240px, 40vw\) \+ 26px \+ var\(--safe-l\)\);/);
-    assert.match(t, /transform: none;/);
-    assert.match(t, /width: auto;/);
+  it('the columns right of the left column (taxi HUD, look-around hint, toasts) start 12px past the identity card', () => {
     assert.match(rule(land, 'html.touch .hud-l'), /max-width: min\(240px, 40vw\);/);
     for (const vw of [568, 640, 667, 740, 767]) assert.ok(inset(vw) - leftCol(vw) >= 12, String(vw));
-    // 667px: before, a 260px ticker centred at 333.5px started at 203.5px, 50.5px inside the card (which ends at 254px)
     assert.equal(leftCol(667), 254);
-    assert.equal(667 / 2 - 130, 203.5);
     assert.equal(inset(667), 266);
-    // the folded tool row is at most 5 x 36 + 8 = 188px wide, 8px from the right
-    assert.ok(px(t, 'right') >= 8 + 188 + 12);
+    const toasts = rule(media('(orientation: landscape) and (max-height: 520px)', '.toasts'), 'html.touch .toasts');
+    for (const r of [rule(land, 'html.touch .taxihud'), rule(land, 'html.touch .coach'), toasts]) assert.match(r, /left: calc\(min\(240px, 40vw\) \+ 26px \+ var\(--safe-l\)\);/);
   });
   it('while driving, the taxi HUD is between the left column and the right-hand buttons', () => {
     const t = rule(land, 'html.touch .taxihud');
@@ -150,9 +259,10 @@ describe('touch landscape on a phone (height up to 520px)', () => {
     // the look-around hint ends left of the dock column
     assert.ok(px(rule(land, 'html.touch .coach'), 'right') >= px(dock, 'right') + 52 + 12);
   });
-  it('a news line lifts the waypoint pill over it instead of lying on it', () => {
-    const news = rule(land, 'html.touch .news'), way = rule(land, 'html.touch #ui:has(> .news.show) .waypill');
-    assert.ok(px(way, 'bottom') >= px(news, 'bottom') + px(news, 'height') + 8);
+  it('the news line no longer moves the waypoint pill: it takes the draw line\'s slot', () => {
+    assert.equal(css.includes('#ui:has(> .news.show) .waypill'), false);
+    assert.equal(land.includes('.news'), false);
+    assert.equal(land.includes('.prompt'), false);
   });
   it('568-640px wide: while driving the taxi HUD takes the row under the identity card', () => {
     const narrow = media('(orientation: landscape) and (max-height: 520px) and (max-width: 640px)', '.taxihud');
@@ -216,30 +326,95 @@ describe('desktop windows', () => {
     // 771px: the dock starts at 128px, 166px inside the card
     assert.equal((771 - dockW) / 2, 128);
     const small = media('(max-width: 640px)', 'html:not(.touch) .help');
-    // under 641px the ticker (bottom 10px, 32px tall) and the news bar (bottom 50px, 40px tall) are along the bottom
-    assert.ok(px(rule(small, 'html:not(.touch) .help'), 'bottom') >= 50 + 40 + 12);
+    // under 641px the draw / news slot (10px up, 40px tall) and the waypoint pill (58px up, 38px tall) are along the bottom
+    const low = media('(max-width: 640px)', 'html:not(.touch) .waypill');
+    assert.ok(px(rule(small, 'html:not(.touch) .help'), 'bottom') >= px(rule(low, 'html:not(.touch) .waypill'), 'bottom') + 38 + 6);
   });
-  it('the waypoint pill gives the news bar its row: under it from 1090px, faded out at 820-1089px', () => {
-    const wide = media('(min-width: 820px)', '.news');
-    const news = rule(wide, 'html:not(.touch) .news');
-    assert.match(rule(wide, 'html:not(.touch) #ui:has(> .news.show) .waypill'), /opacity: 0;[^}]*pointer-events: none !important;/);
-    const top = media('(min-width: 1090px)', 'news.show');
-    const way = rule(top, 'html:not(.touch) #ui:has(> .news.show) .waypill');
-    assert.ok(px(way, 'top') >= px(news, 'top') + 46 + 8);
-    assert.match(way, /opacity: 1;/);
-  });
-  it('the news bar never shares a row with the tool row (14px to 60px from the top)', () => {
-    const toolBottom = 14 + 46;
-    const wide = media('(min-width: 820px)', '.news');
-    assert.ok(px(rule(wide, 'html:not(.touch) .news'), 'top') >= toolBottom + 8);
-    const mid = media('(min-width: 641px) and (max-width: 819px)', '.news');
-    assert.ok(px(rule(mid, 'html:not(.touch) .news'), 'top') >= 384 + 32 + 8); // under the ticker of that range
-    // 820-900px: the bar is centred 78px right of the middle, min(440, vw - 600) wide: right of the card, left of the minimap
-    for (const vw of [820, 860, 900]) {
-      const w = Math.min(440, vw - 600), cx = vw / 2 + 78;
-      assert.ok(cx - w / 2 >= IDENT_RIGHT + 12, String(vw));
-      assert.ok(cx + w / 2 <= vw - 14 - 184 - 12, String(vw));
+});
+
+describe('desktop top-centre column: the draw line, the news line and the waypoint pill on one axis', () => {
+  const IDENT_RIGHT = 14 + 340, TOOL_BOTTOM = 14 + 46, MAP_COL = 14 + 184;
+  const ticket = rule(css, '.stay-ticket'), news = rule(css, '.news'), way = rule(css, 'html:not(.touch) .waypill');
+  /** The box an absolutely placed rule with left, right, width: auto, max-width and auto margins gets at a viewport width. */
+  const box = (r, vw) => {
+    const l = px(r, 'left'), rr = px(r, 'right'), w = Math.min(px(r, 'max-width'), vw - l - rr);
+    return { l: l + (vw - l - rr - w) / 2, w };
+  };
+  it('from 820px the slot is one box under the top row, between the left column and the minimap column', () => {
+    for (const r of [ticket, news]) {
+      assert.match(r, /width: auto;/);
+      assert.match(r, /margin: 0 auto;/);
+      assert.equal(px(r, 'top'), 68);
+      assert.equal(px(r, 'height'), 40);
     }
+    assert.equal(px(ticket, 'left'), px(news, 'left'));
+    assert.equal(px(ticket, 'right'), px(news, 'right'));
+    assert.equal(px(ticket, 'max-width'), px(news, 'max-width'));
+    assert.ok(px(ticket, 'top') >= TOOL_BOTTOM + 8);
+    for (const vw of [820, 900, 1024, 1089, 1090, 1280, 1440, 1920]) {
+      const b = box(ticket, vw);
+      assert.ok(b.l >= IDENT_RIGHT + 12, String(vw));
+      assert.ok(b.l + b.w <= vw - MAP_COL - 12, String(vw));
+      // one centre for the slot and the pill: the middle of the band between the two columns (50% + 78px)
+      assert.equal(b.l + b.w / 2, vw / 2 + 78, String(vw));
+    }
+    // before: the ticker in the top row (366px … right 476px, centred) and the pill on the screen's centre, at 1440px
+    assert.equal(366 + (1440 - 366 - 476) / 2, 665);
+    assert.equal(1440 / 2 + 78, 798);
+  });
+  it('the waypoint pill is centred under the slot, as wide as its text, and no longer steps aside', () => {
+    assert.equal(px(way, 'left'), px(ticket, 'left'));
+    assert.equal(px(way, 'right'), px(ticket, 'right'));
+    assert.match(way, /width: fit-content;/);
+    assert.match(way, /margin: 0 auto;/);
+    assert.match(way, /transform: none;/);
+    assert.ok(px(way, 'top') >= px(ticket, 'top') + px(ticket, 'height') + 8);
+    assert.equal(/html:not\(\.touch\) #ui:has\(> \.news\.show\) \.waypill/.test(css), false);
+  });
+  it('641-819px: the slot and the pill are under the minimap column (it ends about 353px down), off the left column', () => {
+    const mid = media('(min-width: 641px) and (max-width: 819px)', '.waypill');
+    const slot = rule(mid, 'html:not(.touch) .stay-ticket, html:not(.touch) .news');
+    const pill = rule(mid, 'html:not(.touch) .waypill');
+    assert.ok(px(slot, 'top') >= 353 + 24);
+    assert.ok(px(pill, 'top') >= px(slot, 'top') + 40 + 8);
+    // the pill's box is the slot's column: same right edge, the left edge the slot's width further in
+    assert.match(slot, /width: min\(320px, calc\(100vw - 380px\)\);/);
+    assert.match(pill, /left: calc\(100% - 14px - var\(--safe-r\) - min\(320px, calc\(100vw - 380px\)\)\);/);
+    assert.equal(px(pill, 'right'), px(slot, 'right'));
+    for (const vw of [641, 720, 819]) assert.ok(vw - 14 - Math.min(320, vw - 380) >= IDENT_RIGHT + 12, String(vw));
+    // before: the pill (88 … 126px, centred, 136px) lay on the left column's second row at 720px
+    assert.ok(720 / 2 - 68 < IDENT_RIGHT);
+  });
+  it('the news line takes the draw line\'s slot and the draw line steps out while it shows', () => {
+    const m = css.match(/#ui:has\(> \.news\.show\) > \.stay-ticket \{([^}]*)\}/);
+    assert.ok(m, 'no rule that hides the draw line under a news line');
+    assert.match(m[1], /opacity: 0;/);
+    assert.match(m[1], /visibility: hidden;/);
+    assert.match(m[1], /pointer-events: none;/);
+    // it outranks #ui > .stay-ticket { pointer-events: auto }
+    assert.match(css, /#ui > \.stay-ticket, #ui > \.stay-balloon, #ui > \.stay-focus \{ pointer-events: auto; \}/);
+    // the news line only fades (a live region that stays in the page) and takes no taps until it shows a board
+    assert.match(rule(css, '.news'), /opacity: 0;[^}]*pointer-events: none;/);
+    assert.match(css, /#ui > \.news\.show\.go \{ pointer-events: auto; cursor: pointer; \}/);
+  });
+});
+
+describe('the draw line drops parts instead of cutting the time', () => {
+  const ui = read('ui.js');
+  it('ui.js writes it in parts, and a size container hides them in order', () => {
+    const paint = ui.slice(ui.indexOf('function paintTickets('), ui.indexOf('ticketEl.addEventListener('));
+    assert.match(paint, /h\('span', \{ class: 'hk', text: '다음 ' \}\), time, h\('span', \{ class: 'tail', text: tail \}\), h\('span', \{ class: 'odds', text: ' · 1\/15, 맞으면 25코인' \}\)/);
+    assert.match(paint, /const time = `추첨까지 \$\{mm\}:\$\{ss\}`;/);
+    assert.match(rule(css, '.stay-ticket'), /container: ticket \/ inline-size;/);
+    const at = (part) => Number(css.match(new RegExp('@container ticket \\(max-width: (\\d+)px\\) \\{ \\.stay-ticket \\.' + part + ' \\{ display: none; \\} \\}'))[1]);
+    // measured at 12px (Pretendard): icon + 다음 추첨까지 mm:ss 118px, the odds 111px, the middle part up to 144px
+    const head = 118, odds = 111, tail = 144;
+    assert.ok(at('tail') + 1 >= head + odds + tail);
+    assert.ok(at('odds') + 1 >= head + odds);
+    assert.ok(at('hk') + 1 >= head);
+    // a phone upright keeps the time: the lane is 166px at 360 (text area 144px), 126px at 320 (104px, without 다음)
+    assert.ok(166 - 22 > at('hk'));
+    assert.ok(head - 24 <= 126 - 22);
   });
 });
 
@@ -449,7 +624,7 @@ describe('compact phone HUD (a touch phone upright or on its side)', () => {
     // 116px from the top at 320px tall), so the eye moves left of the 56px map, level with its top
     const side = box.match(/@media \(orientation: landscape\) \{ html\.touch \.hud-r > \.view-btn \{ ([^}]*) \} \}/);
     assert.ok(side, 'no landscape rule for the eye');
-    const land = media('(orientation: landscape) and (max-height: 520px)', '.stay-ticket');
+    const land = media('(orientation: landscape) and (max-height: 520px)', '.taxihud');
     const mapW = px(rule(land, 'html.touch .minimap'), 'width');
     assert.equal(px(side[1], 'top'), px(rule(css, 'html.touch .tools'), 'height') + gap);
     assert.equal(px(side[1], 'right'), mapW + gap);
