@@ -66,7 +66,7 @@
     <input id="key" type="password" autocomplete="off" placeholder="ADMIN_KEY (Worker 시크릿)" />
     <button id="save" class="gold" type="button">열기</button>
   </div>
-  <section id="opsRoot" aria-label="오류 · 문의함 · 점검"></section><script type="module" src="./admin-ops.js?v=202611221326"></script>
+  <section id="opsRoot" aria-label="오류 · 문의함 · 점검"></section><script type="module" src="./admin-ops.js?v=202611221803"></script>
   <div class="bar">
     <input id="actor" type="text" placeholder="설정에 있는 계정 번호" />
     <input id="amt" type="number" min="1" max="1000000" value="10000" />
@@ -126,9 +126,9 @@
   <div class="msg" id="growMsg"></div>
   <div class="scroll"><table id="grow"></table></div>
 </main>
-<script type="module" src="./admin-ads.js?v=202611221326"></script>
+<script type="module" src="./admin-ads.js?v=202611221803"></script>
 <script type="module">
-import { GROW_STEPS, growDays, growSum, stepPct } from './growth.js?v=202611221326';
+import { GROW_STEPS, growDays, growSum, stepPct } from './growth.js?v=202611221803';
 import { kstDay } from './adsale.js'; // admin-ads.js loads the same module
 const $ = (id) => document.getElementById(id);
 const TABS = [['pending', '⏳ 검수 대기'], ['approved', '✅ 송출 중'], ['rejected', '거절함'], ['removed', '내림']];
