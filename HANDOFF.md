@@ -10,7 +10,7 @@
 | Git | **`main`에서 작업한다.** 2026-11-22에 주인이 "main으로 합쳐 줘"라고 해서 `main`을 `commercial-build`까지 앞으로 당겨(`59d054a..f44df4b`, 되감기 없음) GitHub `heemkim7/wishboard`에 올렸다. 2026-11-22 18시쯤 주인이 "푸시해 줘"라고 해서 5차 작업과 휴대폰 작은 HUD까지(`b8dc6f9..c1654e4`, 커밋 36개, 되감기 없음) 올렸고, 그 기록 커밋도 바로 올렸다. `commercial-build`는 그 직전(`c1ec486`)에 남아 있고 더 쓰지 않는다. `feat/hanriver-penthouse`는 실험이라 건드리지 않는다. |
 | 되돌리기 | 휴대폰 작은 HUD만 되돌리려면 `npx wrangler rollback e373c36e-7ecf-40c7-859f-551ecd81af3f`(5차 작업 빌드). 5차 작업만 되돌리려면 `npx wrangler rollback 256d7ee8-5737-4bf4-a839-8d56ad47d604`(4차 작업 빌드, 운영 DB 그대로 동작). 그보다 앞은 `npx wrangler rollback b9c3aa62-1528-42f0-bb30-946ce052a782`(3차 작업 빌드). 운영 DB는 새 마이그레이션이 적용된 채로 남는데, 3차 Worker도 새 DB에서 동작한다(배포 전 몇 분 동안 실제로 그 조합으로 돌았고 `/rt/world`·`/rt/config`가 정상이었다. 새 칸 20개는 옛 코드가 무시한다). 되돌린 뒤 `/rt/config`에 `invite: true`가 있는지 본다. |
 | Worker 시크릿 | `ADMIN_KEY` `FLUSH_KEY` `GUEST_KEY` `INVITE_ON`(=1, 친구 초대 켬) `VAPID_PRIV`. 값은 `.dev.vars`에만 있다. |
-| 운영 DB 마이그레이션 | **모두 적용됨**(2026-11-22, 주인이 "SQL 실행 후 배포"): `2026-11-21-mid.sql` 1~4부, `2026-11-22-forget-login.sql`, `2026-11-22-species.sql`, `2026-11-22-boards.sql`, `2026-11-22-coins.sql` 1부. 결과 줄은 모두 `applied = true`, 뒤 확인 조회: 종 CHECK 1~10, 거리 칸 50, 바닥가 31번 150·50번 250·51번 0, 무료 첫 칸 20, `tribe_roofs` 있음, 코인 트리거 2개, 새 표(`gone_logins` `starter_taken` `tribe_roofs`) RLS 켬, 로그인 수 2 그대로. **안 함**: 코인 2부(옛 미확인 가입 확인 처리, 대상 1개, 주인 결정), `2026-11-22-themes.sql`(운영 달력의 새 계절 키). 꾸미기 상점 `2026-11-22-shop.sql`은 2026-11-22 오후에 적용했다(주인이 "상점 SQL 실행", `applied = true`, 실서비스 상점 열림). |
+| 운영 DB 마이그레이션 | **모두 적용됨**(2026-11-22, 주인이 "SQL 실행 후 배포"): `2026-11-21-mid.sql` 1~4부, `2026-11-22-forget-login.sql`, `2026-11-22-species.sql`, `2026-11-22-boards.sql`, `2026-11-22-coins.sql` 1부. 결과 줄은 모두 `applied = true`, 뒤 확인 조회: 종 CHECK 1~10, 거리 칸 50, 바닥가 31번 150·50번 250·51번 0, 무료 첫 칸 20, `tribe_roofs` 있음, 코인 트리거 2개, 새 표(`gone_logins` `starter_taken` `tribe_roofs`) RLS 켬, 로그인 수 2 그대로. **안 함**: 코인 2부(옛 미확인 가입 확인 처리, 대상 1개; 2026-11-22 저녁 주인이 "다 테스트한 거라 안 해도 된다"고 해서 하지 않기로 함). 계절 테마 `2026-11-22-themes.sql`은 2026-11-22 저녁에 적용했다(주인이 "계절 테마 넣어줘", 붙인 글 SHA-256이 파일과 같음, 결과 `applied = true`; 운영에는 theme CHECK가 원래 없었고 함수는 다섯 가지 판이었다). 꾸미기 상점 `2026-11-22-shop.sql`은 2026-11-22 오후에 적용했다(주인이 "상점 SQL 실행", `applied = true`, 실서비스 상점 열림). |
 | Supabase 인증 설정 | Site URL `https://studio.wishboard.workers.dev`, Redirect URLs에 실서비스와 `http://localhost:8790/**`, 이메일 확인 끔, 구글 로그인 켬. |
 | 시험 계정 | 없다. 필요하면 로컬에서 아이디로 가입하고, 끝나면 탈퇴로 지운다. 4차 작업 중 로컬 확인으로 운영에 손님 지갑 몇 개(`브로드웨이곰22` 등)가 생겼다. |
 | 테스트 | `node --test test/*.test.mjs tools/account.test.mjs` → 1,174개, 1,167 통과, 실패 0, 건너뜀 7(jsQR 1, 마이그레이션 상태별 6). PGlite는 `%TEMP%\kts-pglite`에 깔려 있어 SQL 묶음이 실제로 돈다. |
@@ -41,16 +41,13 @@
 
 | 급 | 항목 | 내용 |
 | --- | --- | --- |
-| 상 | Cloudflare Workers 유료 요금제 + `PLAN=paid` | 무료는 하루 요청 10만 건. 출시 전에 권한다(`docs/monetize-readiness-2026-11-22.md` A). |
-| 중 | 운영 SQL | `2026-11-22-themes.sql`. 주인이 이름을 대서 맡기면 Chrome으로 실행. |
+| 상 | Cloudflare Workers 유료 요금제 + `PLAN=paid` | 무료는 하루 요청 10만 건. 주인 결정(2026-11-22 저녁): 아직 사람이 들어오지 않으니 **오픈 뒤에** 한다. |
 | 중 | 광고 판매 켜기 | 사업자 등록·통신판매업, `OPERATOR_INFO`, `ADS_PRICES`, `ADS_ON=1`, 약관의 광고 조항 법무 검토. |
 | 중 | 외부 가동 감시 | `/rt/health`를 1~5분마다(`"db":"ok"` 키워드). |
 | 중 | 유료 코인 충전 | 하지 않았다. 하려면 체크리스트 C(등급분류, 사행성·추첨 정리, 청소년 결제, 환불, PG)를 먼저. |
 | 중 | 공유 보너스 | 하루 300, 손님도 받음. 하한 580에 들어가지 않아 새 계정이 첫날 300을 보낼 수 있다. 줄이거나 계정만 받게 할지. |
 | 중 | 보내기 하한 580 | 너무 높은지(보내기는 '광고주에게 코인 보내기'와 소속 모금뿐). |
-| 중 | 코인 마이그레이션 2부 | 이메일 확인이 켜져 있던 동안의 미확인 옛 가입 1개를 확인 처리할지. |
 | 하 | 카카오톡 공유 | 보류. 다시 하면 `KAKAO_JS_KEY`를 Worker 시크릿으로. |
-| 하 | `tools/acorn-ui.mjs` `paren-check.mjs` `snippet.js` | 11-20 밤에 생긴 `ui.js` 문법 검사용 임시 스크립트(추적 안 됨). 지울지. |
 
 ### 주인이 직접 확인할 것 (실기기·실계정)
 
