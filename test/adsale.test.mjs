@@ -217,7 +217,7 @@ describe('the Worker: /rt/ads/*', { concurrency: false }, () => {
       const d = await (await H.get('/rt/ads/stats')).json();
       assert.equal(d.on, true);
       assert.deepEqual([d.prices.screen, d.prices.cheer, d.prices.sponsor9], [30000, null, null]);
-      assert.equal(d.counted, '게임이 센 수');
+      assert.equal(d.counted, '광장이 센 수');
       assert.equal(d.stats.sum, 69); // today and day -8 are outside the window
       assert.equal(d.stats.known, 3); assert.equal(d.stats.avg, 23);
       assert.equal(d.stats.days.length, 7);
@@ -332,7 +332,7 @@ describe('the Worker: /rt/ads/*', { concurrency: false }, () => {
       const rep = await H.get('/rt/ads/report/' + bk.tok);
       assert.equal(rep.status, 200); assert.match(rep.headers.get('content-type'), /text\/html/); assert.equal(rep.headers.get('x-robots-tag'), 'noindex');
       const html = await rep.text();
-      assert.match(html, /광고 리포트/); assert.match(html, /게임이 센 수/); assert.match(html, /보장된 노출이 아니에요/);
+      assert.match(html, /광고 리포트/); assert.match(html, /광장이 센 수/); assert.match(html, /보장된 노출이 아니에요/);
       const cells = (...a) => a.map((x) => '<td>' + x + '</td>').join(''); // day, visitors, clicks (all, linked, guests), seen (all, linked, guests)
       assert.ok(html.includes(cells(start, 0, 2, 0, 2, 1, 0, 1)), 'guests only');
       assert.ok(html.includes(cells(end, 0, 1, 0, 1, 1, 0, 1)));
@@ -421,7 +421,7 @@ describe('wiring and copy', () => {
     const ad = { p: at.map((i) => t.sections[i].p).join(' ') }, pr = p.sections.find((s) => s.h === '광고 문의');
     assert.ok(pr);
     assert.equal(t.sections.at(-1).h, '시행일'); assert.equal(p.sections.at(-1).h, '시행일'); assert.equal(at[2], t.sections.length - 2);
-    for (const s of ['광고 전용 화면', '거절하거나', '보장하지 않', '돌려드립니다', '날수만큼 나누어', '‘광고’ 표시', '전광판·토지·코인을 얻지 않습니다']) assert.ok(ad.p.includes(s), s);
+    for (const s of ['광고 전용 화면', '거절하거나', '보장하지 않', '돌려드립니다', '날수만큼 나누어', '‘광고’ 표시', '전광판·명당·응원 포인트를 얻지 않고', '광장이 센 수']) assert.ok(ad.p.includes(s), s);
     for (const s of ['회사 또는 이름', '이메일', '1년 뒤 지웁니다', '되돌릴 수 없는 값', '날짜별 합계']) assert.ok(pr.p.includes(s), s);
     for (const s of t.sections.concat(p.sections)) assert.equal(/[<>]/.test(s.p), false, s.h);
   });
@@ -437,7 +437,7 @@ describe('wiring and copy', () => {
     assert.equal(/따로 정한 내용에 따릅니다/.test(refund), false); // the old open-ended carve-out is gone
     const pr = policyDoc('privacy').sections.find((s) => s.h === '광고 문의').p;
     assert.match(pr, /광고나 홍보 메일을 보내는 데 쓰지 않습니다/); assert.match(pr, /기록은 5년/); assert.match(pr, /3년\(전자상거래법\)/); assert.match(pr, /5년\(국세기본법\)/); assert.match(pr, /만 14세 미만은 광고를 신청할 수 없습니다/);
-    assert.match(t.sections.find((s) => s.h === '코인').p, /돈이나 다른 재산을 받고 사고팔거나 빌려줄 수 없고/);
+    assert.match(t.sections.find((s) => s.h === '응원 포인트').p, /돈이나 다른 재산을 받고 사고팔거나 빌려줄 수 없고/); // 코인 became 응원 포인트 on 2026-11-23
     assert.match(t.sections.find((s) => s.h === '운영자').p, /호스팅 서비스는 Cloudflare, Inc\.가 제공합니다/);
   });
   it('/ads shows the refund rules, minors and the seller details before a request, and never calls an invoice a way to pay', () => {

@@ -1587,7 +1587,7 @@ export function createUI(root, hooks) {
   // Entering the plaza arms the guard after this click has finished (arrive() cleans the address bar first).
   const rawEnter = hooks.enter;
   if (typeof rawEnter === 'function') hooks.enter = (...args) => { const r = rawEnter(...args); setTimeout(() => backKeeper.arm(), 0); return r; };
-  const SHARE_TEXT = '붕어빵 구워 뉴욕 타임스퀘어 전광판과 건물을 차지하세요!';
+  const SHARE_TEXT = '생일 축하·응원·소원을 가상 타임스퀘어 전광판에 걸어 보세요!';
   function countShot() {
     return new Promise((resolve) => {
       // The count is for posing: the overlay lets touches through (the stylesheet's pointer-events: none), input is not
@@ -3805,7 +3805,7 @@ export function createUI(root, hooks) {
         h('div', { class: 'field' }, h('label', null, '실사 사진 (Wikimedia Commons)'), list),
         h('div', { class: 'field' }, h('label', null, '3D 에셋'),
           h('div', { class: 'credits' },
-            h('div', { class: 'c' }, h('b', { text: '쥐 · 고양이 · 곰' }), ' — 이 게임에서 만든 모델'),
+            h('div', { class: 'c' }, h('b', { text: '쥐 · 고양이 · 곰' }), ' — WISH BOARD를 위해 만든 모델'),
             h('div', { class: 'c' }, h('b', { text: '캐릭터 동작과 뼈대' }), ' — Adobe Mixamo (걷기·뛰기·춤 등 동작 열 가지)'),
             h('div', { class: 'c' }, h('b', { text: 'three.js' }), ' — MIT License'))),
       );
@@ -4717,9 +4717,9 @@ export function createUI(root, hooks) {
     g.fillStyle = '#1a1208';
     g.textAlign = 'center';
     g.font = '900 36px sans-serif';
-    wrapPaper(g, `속보: ${nick}, 뉴욕 타임스퀘어 명당 전광판 전격 점령!`, 540, 980, 960, 46);
+    wrapPaper(g, `속보: ${nick}, 가상 타임스퀘어 명당 전광판에 이름을 걸다!`, 540, 980, 960, 46);
     g.font = '700 24px sans-serif';
-    g.fillText('지금 게임을 열고 타임스퀘어에서 이 전광판을 확인하세요', 540, 1220);
+    g.fillText('지금 광장에 들어와 이 전광판을 확인하세요', 540, 1220);
     g.font = '600 20px sans-serif';
     g.fillText('https://studio.wishboard.workers.dev', 540, 1280);
     const a = document.createElement('a');

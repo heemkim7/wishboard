@@ -3596,7 +3596,7 @@ async function sendPushItems(env, items, drop) {
 // WAU: a wish's author. All 60 s per isolate, ≤300 keys; uploader and author ids stay in the Worker.
 const snapM = env => env.METER.get(env.METER.idFromName('snaps'));
 const SNX = new Map(), SNC = new Map(), WAU = new Map(), SNAP_HEX = /^[0-9a-f]{32}$/;
-const SITE = { title: 'WISH BOARD : 모두의 전광판', desc: '붕어빵 구워 뉴욕 타임스퀘어 전광판과 건물을 차지하세요!' }; // index.html's og:title / og:description
+const SITE = { title: 'WISH BOARD : 모두의 전광판', desc: '생일 축하·응원·소원을 가상 타임스퀘어 전광판에 걸어 보세요!' }; // index.html's og:title / og:description
 const memo = (m, key, v) => { if (m.size > 300) m.clear(); m.set(key, { at: Date.now(), v }); return v; };
 const memoHit = (m, key) => { const hit = m.get(key); return hit && Date.now() - hit.at < 60000 ? hit : null; };
 async function snapFor(env, k, r, owner) {

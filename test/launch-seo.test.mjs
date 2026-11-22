@@ -90,7 +90,7 @@ describe('index.html head', () => {
     assert.equal(ld.url, ORIGIN + '/');
     assert.equal(ld.name, meta('property', 'og:title'));
     assert.equal(ld.inLanguage, 'ko');
-    assert.equal(ld.applicationCategory, 'GameApplication');
+    assert.equal(ld.applicationCategory, 'LifestyleApplication'); // not a game since 2026-11-23 (docs/non-game-plan-2026-11-22.md)
     assert.deepEqual(ld.offers, { '@type': 'Offer', price: '0', priceCurrency: 'KRW' }); // free: no price is claimed beyond that
     assert.ok(blocks[0][1].length < 1200, 'minimal');
   });

@@ -219,7 +219,7 @@ describe('share pages', () => {
       const id = (await (await snap('', a.token)).json()).url.slice(-32);
       const html = await (await get('/rt/s/' + id)).text();
       assert.equal(metaOf(html, 'property', 'og:title'), 'WISH BOARD : 모두의 전광판');
-      assert.equal(metaOf(html, 'property', 'og:description'), '붕어빵 구워 뉴욕 타임스퀘어 전광판과 건물을 차지하세요!');
+      assert.equal(metaOf(html, 'property', 'og:description'), '생일 축하·응원·소원을 가상 타임스퀘어 전광판에 걸어 보세요!');
       assert.match(html, /content="0;url=\/"/);
       for (const bad of ['0'.repeat(32), 'zz', id + 'a', '%2E%2E%2Fsnap']) {
         const r = await get('/rt/s/' + bad); assert.equal(r.status, 302, bad); assert.equal(new URL(r.headers.get('location')).pathname, '/');
