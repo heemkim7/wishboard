@@ -26,6 +26,11 @@ export const DO_MODE = /^(studio(-qa)?\.(masilchapel|wishboard)|(masil|masilchap
 // v17 resilient reconnect: silent exponential backoff (0.8s→30s cap, forever); the solo popup only after FAIL_MS of continuous failure
 // while the page is visible and the device is online. Explicit server 'down' (budget) still stops at once.
 const DO_BASE = 800, DO_CAP = 30000, FAIL_MS = 60000, FAIL_N = 5;
+// v18 (2026-11-22 traffic audit): HIDE_MS out of sight closes a tab's sockets (rtPatch park). Budget hard waits for the 00:00 UTC reset,
+// spread over RESET_SPREAD, and a visible tab asks /rt/gate at most once per HARD_PROBE meanwhile (Net.hardDown).
+const HIDE_MS = 300000, HARD_PROBE = 900000, RESET_SPREAD = 60000;
+// ms from now to the next 00:00 UTC: the daily budget (Meter 'day', worker.js today()) starts again then.
+export const msToReset = (now) => { const d = new Date(now); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1) - now; };
 // Identity for the DO = verified Supabase JWT (guests use anonymous sign-in). Sent as a WebSocket subprotocol, never in the URL.
 const AUTH_LS = 'sb-yxddhpacuyaffaoutxjn-auth-token';
 const soon = (ms) => new Promise((r) => setTimeout(() => r(null), ms));
@@ -85,12 +90,16 @@ class DOChan {
   fire(type, ev, arg) { for (const [t, e, fn] of this.hs) if (t === type && (e === ev || e === '*')) try { fn(arg); } catch (x) { console.warn('[rt]', x); } }
   presenceState() { const o = {}; for (const k in this.st) o[k] = [this.st[k]]; return o; }
   subscribe(cb) { this.cb = cb || (() => { }); this.open(); return this; }
-  async open() { if (this.dead || this.opening || (this.ws && this.ws.readyState <= 1)) return; clearTimeout(this.rto); this.opening = true; let tok; try { tok = await doToken(this.rt.sb, this.tries >= 2); } finally { this.opening = false; } if (this.dead) return; if (!tok) return this.closed(null, true); const u = new URL('/rt/ws', location.href); u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:'; u.searchParams.set('topic', this.topic); if (this.rt.net?.room) u.searchParams.set('room', this.rt.net.room);
+  async open() { if (this.dead || this.parked || this.opening || (this.ws && this.ws.readyState <= 1)) return; clearTimeout(this.rto); if (this.rt.away?.()) { this.parked = true; this.rt.parked(); return; } this.opening = true;
+    // A fresh guest token (POST /rt/guest) only when the Worker refused this one (close 4001, badTok), or once per failure streak after FAIL_N
+    // against a Worker without 4001. It used to be every retry after the second, so a network blip renewed the token every 0.8–30 s.
+    const fresh = this.badTok || (this.tries >= FAIL_N && !this.freshTried); if (fresh) { this.badTok = false; this.freshTried = true; }
+    let tok; try { tok = await doToken(this.rt.sb, fresh); } finally { this.opening = false; } if (this.dead || this.parked) return; if (!tok) return this.closed(null, true); const u = new URL('/rt/ws', location.href); u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:'; u.searchParams.set('topic', this.topic); if (this.rt.net?.room) u.searchParams.set('room', this.rt.net.room);
     let ws; try { ws = this.ws = new WebSocket(u, ['masil2', 'at.' + tok]); } catch { return this.closed(null); }
-    ws.onmessage = e => this.msg(e.data); ws.onclose = () => this.closed(ws); ws.onerror = () => { };
+    ws.onmessage = e => this.msg(e.data); ws.onclose = (e) => this.closed(ws, false, e?.code); ws.onerror = () => { };
     clearInterval(this.pt); this.pt = setInterval(() => { if (ws.readyState === 1) ws.send('ping'); }, 25000); } // server auto-responds (free, no DO wake); stale after 75s
   msg(d) { if (d === 'pong') return; let m; try { m = JSON.parse(d); } catch { return; }
-    if (m.t === 'ok') { this.st = m.s || {}; this.state = 'joined'; this.tries = 0; this.failAt = 0; this.rt.ev(this, { ok: true, live: m.live, cap: m.cap }); this.rt.cfg(m); this._trS = 0; this.cb('SUBSCRIBED'); if (m.air && this.rt.net) this.rt.net.emit('air', m.air); if (Array.isArray(m.stk) && this.rt.net) this.rt.net.emit('stk', { all: m.stk }); if (Array.isArray(m.chr) && this.rt.net) this.rt.net.emit('cheer', { all: m.chr }); if (m.ball && this.rt.net) this.rt.net.emit('ball', m.ball); if ((m.fg != null || m.fv || m.rv) && this.rt.net) this.rt.net.emit('fever', { gauge: m.fg || 0, until: m.fv || 0, revenge: m.rv || 0, sync: true }); if (m.lot && this.rt.net) this.rt.net.emit('lot', { n: m.lot }); if (this.rt.net && (m.av != null || Array.isArray(m.equip))) this.rt.net.emit('profile', { av: m.av, equip: m.equip }); if (this.mine && !this._trS) this.raw({ t: 'tr', m: this.mine }); this.fire('presence', 'sync'); if (m.h && this.rt.net && this.topic === this.rt.net.topic) { const chat = []; for (const row of m.h) { if (row?.t === 'WORLD_UPDATE') this.rt.net.emit('world', { ...row, replay: true }); else if (row?.t === 'E') this.rt.net.emit('emoji', { id: row.k, e: row.e, replay: true }); else if (row?.t === 'GHOST') this.rt.net.emit('ghost', row); else chat.push(row); } if (chat.length) this.rt.net.emit('history', chat); } }
+    if (m.t === 'ok') { this.st = m.s || {}; this.state = 'joined'; this.tries = 0; this.failAt = 0; this.freshTried = false; this.rt.ev(this, { ok: true, live: m.live, cap: m.cap }); this.rt.cfg(m); this._trS = 0; this.cb('SUBSCRIBED'); if (m.air && this.rt.net) this.rt.net.emit('air', m.air); if (Array.isArray(m.stk) && this.rt.net) this.rt.net.emit('stk', { all: m.stk }); if (Array.isArray(m.chr) && this.rt.net) this.rt.net.emit('cheer', { all: m.chr }); if (m.ball && this.rt.net) this.rt.net.emit('ball', m.ball); if ((m.fg != null || m.fv || m.rv) && this.rt.net) this.rt.net.emit('fever', { gauge: m.fg || 0, until: m.fv || 0, revenge: m.rv || 0, sync: true }); if (m.lot && this.rt.net) this.rt.net.emit('lot', { n: m.lot }); if (this.rt.net && (m.av != null || Array.isArray(m.equip))) this.rt.net.emit('profile', { av: m.av, equip: m.equip }); if (this.mine && !this._trS) this.raw({ t: 'tr', m: this.mine }); this.fire('presence', 'sync'); if (m.h && this.rt.net && this.topic === this.rt.net.topic) { const chat = []; for (const row of m.h) { if (row?.t === 'WORLD_UPDATE') this.rt.net.emit('world', { ...row, replay: true }); else if (row?.t === 'E') this.rt.net.emit('emoji', { id: row.k, e: row.e, replay: true }); else if (row?.t === 'GHOST') this.rt.net.emit('ghost', row); else chat.push(row); } if (chat.length) this.rt.net.emit('history', chat); } }
     else if (m.t === 'wait') {
       if (this.rt.net?.bumpShard?.()) { this.dead = true; try { this.ws.close(); } catch { } return; }
       this.state = 'waiting'; this.rt.ev(this, { pos: m.pos, live: m.live, cap: m.cap });
@@ -100,7 +109,7 @@ class DOChan {
     else if (m.t === 'P' && Array.isArray(m.a)) { const [x, y, face, anim, fl, vx, vy] = m.a; this.fire('broadcast', 'pos', { type: 'broadcast', event: 'pos', payload: { id: m.k, x, y, face, anim, fl, vx, vy } }); }
     else if (m.t === 'b') this.fire('broadcast', m.e, { type: 'broadcast', event: m.e, payload: m.p });
     else if (m.t === 'cfg') this.rt.cfg(m);
-    else if (m.t === 'down') { this.dead = true; this.rt.down(this); }
+    else if (m.t === 'down') { this.dead = true; this.rt.down(this, true); } // budget hard: Net.hardDown waits for the daily reset
     else if (m.t === 'moved') this.moved = true; // this account joined another channel elsewhere (one room per account): the server closes this socket next
     else if (m.t === 'WORLD_UPDATE') { if (this.rt.net) this.rt.net.emit('world', m); }
     else if (m.t === 'WALLET_SYNC') { if (this.rt.net) this.rt.net.emit('wallet', m); }
@@ -115,25 +124,37 @@ class DOChan {
   send(o) { if (this.state !== 'joined') return Promise.resolve('error'); const p = o.payload; if (o.event === 'pos' && p) { this.raw({ t: 'p', a: [p.x, p.y, p.face, p.anim, p.fl, p.vx, p.vy] }); return Promise.resolve('ok'); } this.raw({ t: 'b', e: o.event, p: o.payload }); return Promise.resolve('ok'); }
   track(m) { this.mine = m; if (this.state === 'joined') { this._trS = 1; this.raw({ t: 'tr', m }); } return Promise.resolve('ok'); }
   untrack() { this.mine = null; this.raw({ t: 'ut' }); return Promise.resolve('ok'); }
-  closed(ws, noTok) { if (!noTok && ws && ws !== this.ws) return; clearInterval(this.pt); const was = this.state; this.state = 'closed'; this.st = {}; if (this.dead) return;
+  closed(ws, noTok, code) { if (!noTok && ws && ws !== this.ws) return; clearInterval(this.pt); if (code === 4001) this.badTok = true; const was = this.state; this.state = 'closed'; this.st = {}; if (this.dead) return;
     if (was === 'joined') { this.fire('presence', 'sync'); this.cb('CLOSED'); }
+    if (this.parked) { clearTimeout(this.rto); return; } // closed on purpose (hidden HIDE_MS): no retry and no failure count; kick() reopens when the tab is seen
     if (this.moved) { clearTimeout(this.rto); this.cb('CHANNEL_ERROR'); return; } // no retry timer, or two tabs would evict each other in a loop; kick() reopens when this tab is used again
     const n = this.tries++, now = Date.now(); if (!this.failAt) this.failAt = now;
     if (!this.downSent && n >= FAIL_N && now - this.failAt >= FAIL_MS && !document.hidden && navigator.onLine !== false) { this.downSent = true; this.cb('CHANNEL_ERROR'); this.rt.down(this); }
     const d = Math.min(DO_CAP, DO_BASE * 2 ** Math.min(n, 6)) * (0.8 + Math.random() * 0.4); // hidden tab: no faster than 30s (the browser throttles anyway)
     clearTimeout(this.rto); this.rto = setTimeout(() => this.open(), document.hidden ? Math.max(d, DO_CAP) : d); }
-  kick() { if (this.dead || this.state === 'joined' || this.opening || (this.ws && this.ws.readyState <= 1)) return; this.moved = false; this.tries = Math.min(this.tries, 1); clearTimeout(this.rto); this.open(); }
+  kick() { if (this.dead || this.state === 'joined' || this.opening || (this.ws && this.ws.readyState <= 1)) return; this.parked = false; this.moved = false; this.tries = Math.min(this.tries, 1); clearTimeout(this.rto); this.open(); }
   close() { this.dead = true; clearInterval(this.pt); clearTimeout(this.rto); try { this.ws?.close(1000); } catch { } }
+  // Out of sight HIDE_MS: a normal close (1000), which the room treats as a leave (its seat, presence and alarms go). Not dead: kick() reopens.
+  park() { if (this.dead || this.parked) return; this.parked = true; this.rt.parked(); clearTimeout(this.rto); clearInterval(this.pt); try { if (this.ws && this.ws.readyState <= 1) this.ws.close(1000, 'hidden'); } catch { } }
 }
 export function rtPatch(sb, net) { if (!DO_MODE || !sb || sb.__do) return sb; const chans = new Set(), base = { POS: Net.POS_MS, FAR: Net.FAR_MS };
-  const rt = { net, sb, ev(ch, g) { if (g.ok && ch.downSent) { ch.downSent = false; if (net) net.gateDown = false; } if (net && ch.topic === net.topic) { if (g.ok) net.emit('gate', { ok: true, live: g.live, cap: g.cap }); else { net.pos = g.pos; net.emit('gate', g); } } },
+  const rt = { net, sb, ev(ch, g) { if (g.ok && ch.downSent) { ch.downSent = false; if (net) net.gateDown = false; } if (g.ok && net && ch.topic === net.topic) { net.hardClear?.(); if (net.parked) { net.parked = 0; net.emit('unpark'); } } /* back in a room after a park (any room: a full one bumps to the next) */ if (net && ch.topic === net.topic) { if (g.ok) net.emit('gate', { ok: true, live: g.live, cap: g.cap }); else { net.pos = g.pos; net.emit('gate', g); } } },
     cfg(m) { Net.POS_MS = m.lean ? base.POS * 2 : base.POS; Net.FAR_MS = m.lean ? base.FAR * 2 : base.FAR; Net.LEAN = !!m.lean; }, // LEAN: the DO send rule's gap and keepalive (Net.tick)
-    down(ch) { if (net && (ch.topic === net.topic || !net.ch)) { net.gateDown = true; net.setStatus('offline'); net.emit('gate', { down: true }); } } };
+    down(ch, budget) { if (net && (ch.topic === net.topic || !net.ch)) { net.gateDown = true; net.setStatus('offline'); net.emit('gate', { down: true }); if (budget) net.hardDown(); } },
+    parked() { if (net) net.parked ||= Date.now(); },
+    away: () => document.hidden && hidAt > 0 && Date.now() - hidAt >= HIDE_MS - 2000 }; // a socket that would open now, out of sight that long, stays parked
   sb.channel = (t, c) => { const ch = new DOChan(rt, t, c); chans.add(ch); return ch; };
   sb.removeChannel = async ch => { ch?.close?.(); chans.delete(ch); return 'ok'; };
   sb.getChannels = () => [...chans]; sb.__do = true;
-  const kick = () => { if (!document.hidden) for (const c of chans) c.kick(); }; // back to foreground / network back: reconnect now, not after the backoff
-  document.addEventListener('visibilitychange', kick); addEventListener('online', kick); addEventListener('pageshow', kick); return sb; }
+  const kick = () => { if (document.hidden) return; for (const c of chans) c.kick(); net?.hardWake?.(); }; // back to foreground / network back: reconnect now, not after the backoff
+  // Hidden HIDE_MS (5 min): every socket parks. A desktop browser runs a hidden tab's 25 s ping late but under the room's 75 s stale limit, so a
+  // forgotten tab kept one of the room's 50 seats, the room's alarms and 멍때리기 coins for good. A phone locked for a minute keeps its socket.
+  // Seen again: kick() reopens through the usual path (a full room answers 'wait', and net.bumpShard tries rooms 2–8); main.js resyncs once.
+  let hideT = 0, hidAt = 0;
+  const park = () => { hideT = 0; if (!document.hidden || Date.now() - hidAt < HIDE_MS - 2000) return; for (const c of chans) c.park(); };
+  const seen = () => { clearTimeout(hideT); hideT = 0; if (document.hidden) { if (!hidAt) hidAt = Date.now(); hideT = setTimeout(park, Math.max(0, hidAt + HIDE_MS - Date.now())); } else { hidAt = 0; kick(); } };
+  if (document.hidden) seen();
+  document.addEventListener('visibilitychange', seen); addEventListener('online', kick); addEventListener('pageshow', kick); return sb; }
 
 export class Net {
   static GRID_ON = 30; static GRID_OFF = 20; /* grid cells only pay off in a crowd; below that one room channel = fewer joins */ static POS_MS = 1000; static FAR_MS = 2000; static NEAR = 1400; // 2Hz with a peer near, 1Hz otherwise (edge/far); 0 when idle/seated
@@ -169,7 +190,7 @@ export class Net {
           if (now - this._gfail >= FAIL_MS && !this.gateDown && !document.hidden) { this.gateDown = true; this.emit('gate', { down: true }); } // sustained failure only
           await new Promise(res => setTimeout(res, this.gateDown ? DO_CAP : 5000)); continue; }
         if (r.stale) continue;
-        if (r.full) { this.gateDown = true; this._gate = null; this.emit('gate', { down: true, full: true }); return false; }
+        if (r.full) { this.gateDown = true; this._gate = null; this.emit('gate', { down: true, full: true }); this.hardDown(); return false; }
         if (r.ok) { this.admitted = true; this.gateDown = false; if (this.lobbyMe) this.lobby(this.lobbyMe.dong, this.lobbyMe.name, this.lobbyMe.shard); this.emit('gate', { ok: true, live: r.live, cap: r.cap, lean: !!r.lean }); clearInterval(this._hb); if (!DO_MODE) this._hb = setInterval(() => this.gateHeart(), Net.GATE_BEAT); return true; }
         this.pos = r.pos; this.emit('gate', { pos: r.pos, live: r.live, cap: r.cap, guard: r.guard }); await new Promise(res => setTimeout(res, Net.GATE_POLL)); } })(); }
   // Heartbeat while admitted. If the server no longer holds our slot (expired after sleep/network loss) we drop Realtime and re-queue instead of silently over-filling.
@@ -179,6 +200,20 @@ export class Net {
     try { const body = JSON.stringify({ p_cid: id }), u = SUPA_URL + '/rest/v1/rpc/gate_leave'; // keepalive so a tab close still frees the slot at once
       fetch(u, { method: 'POST', keepalive: true, headers: { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY, 'Content-Type': 'application/json' }, body }).catch(() => { }); } catch { } }
   goSolo() { this.solo = true; this.emit('gate', { solo: true }); }
+  // Budget hard (the room said 'down', /rt/gate said full). The tab used to stay offline until reloaded, past the 00:00 UTC (09:00 KST) reset.
+  // Now it tries again at the reset, spread over RESET_SPREAD. Still full in the hour after this clock's reset (the server's clock may be behind,
+  // or the day was spent at once): again after 30 s, doubling to HARD_PROBE, ±20%. Any other time a visible tab also asks once per HARD_PROBE
+  // (±20%: a budget raised during the day); a hidden one asks when it is seen (hardWake). A try is the usual entry: /rt/gate, then the room.
+  hardDown(now = Date.now()) { clearTimeout(this._hardT); const left = msToReset(now), since = 864e5 - left, jit = () => 0.8 + Math.random() * 0.4;
+    const early = !!this.budgetDown && this.budgetDown < now - since && since < 3600000; if (!this.budgetDown) this.budgetDown = now;
+    this.hardN = early ? (this.hardN || 0) + 1 : 0;
+    const wait = early ? Math.min(HARD_PROBE, DO_CAP * 2 ** (this.hardN - 1)) * jit() : left + 3000 + Math.random() * RESET_SPREAD;
+    this._hardAt = now + Math.min(wait, HARD_PROBE * jit()); this._hardT = setTimeout(() => this.hardTry(), this._hardAt - now); }
+  hardTry() { clearTimeout(this._hardT); if (!this.budgetDown || this.solo || document.hidden) return; // hidden: hardWake tries when the tab is seen
+    this._hardAt = 0; this.gateDown = false; this.admitted = false; this._gate = null; const want = this.room || this._want || 'square';
+    this.leave(true).catch(() => { }).then(() => this.join(want, this.me)); }
+  hardWake() { if (this.budgetDown && this._hardAt && Date.now() >= this._hardAt) this.hardTry(); }
+  hardClear() { this.budgetDown = 0; this.hardN = 0; this._hardAt = 0; clearTimeout(this._hardT); } // in the room again
   bumpShard() {
     const n = (this.shard || 1) + 1;
     if (n > 8) return false;

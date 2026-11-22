@@ -645,7 +645,9 @@ function setLounge(on) {
   ui.note('전광판 관람을 켰어요. 캐릭터는 제자리에 있고 카메라만 8초마다 다음 전광판으로 가요. 20초마다 +2 · 움직이면 돌아와요.', 'ok');
   clearInterval(loungeTimer);
   loungeTimer = setInterval(() => {
-    if (!loungeOn) return;
+    // Nothing is watched in a hidden tab: no 관람 coin then (a background tab used to earn its 30 an hour). After 5 min hidden net.js
+    // also closes the socket (park), so the room has no seat that could be paid.
+    if (!loungeOn || document.hidden) return;
     if (!payBonus('lounge', PAY.lounge.base) && !loungeTold) { loungeTold = true; ui.note('광장에 연결되어야 관람 코인이 들어와요', 'err'); }
   }, PAY.lounge.gapMs);
 }
@@ -817,22 +819,44 @@ async function joinTribeLink() {
 
 async function refreshWallet() {
   const gen = ++walletGen;
+  walletReading += 1;
   try {
     const w = await net.wallet();
     if (gen !== walletGen) return;
-    const coins = Number(w.coins) || 0;
-    if (state.walletKnown && coins > state.confirmed) state.grants = takeGrants(state.grants, coins - state.confirmed);
-    const now = Date.now();
-    const kept = state.grants.filter(g => now - g.at < BALANCE.grantKeepMs);
-    if (kept.length < state.grants.length) ui.note('서버에 기록되지 않은 코인이 지갑에서 빠졌어요. 연결 표시가 초록색일 때 번 코인은 그대로 남아요', 'err');
-    state.grants = kept;
-    state.confirmed = coins;
-    state.vipTickets = Number(w.vip_tickets) || 0;
-    state.walletKnown = true;
-    state.pending = pendingSum();
-    ui.setWallet(state);
+    walletReadAt = Date.now();
+    applyWallet(Number(w.coins) || 0, Number(w.vip_tickets) || 0);
     return true;
-  } catch { return false; }
+  } catch { return false; } finally { walletReading -= 1; }
+}
+// A confirmed balance (a wallet read, or the one a coin flush pushed): coins shown ahead of it are taken off as it covers them. vip: null keeps the tickets.
+function applyWallet(coins, vip) {
+  if (state.walletKnown && coins > state.confirmed) state.grants = takeGrants(state.grants, coins - state.confirmed);
+  const now = Date.now();
+  const kept = state.grants.filter(g => now - g.at < BALANCE.grantKeepMs);
+  if (kept.length < state.grants.length) ui.note('서버에 기록되지 않은 코인이 지갑에서 빠졌어요. 연결 표시가 초록색일 때 번 코인은 그대로 남아요', 'err');
+  state.grants = kept;
+  state.confirmed = coins;
+  if (vip != null) state.vipTickets = vip;
+  state.walletKnown = true;
+  state.pending = pendingSum();
+  ui.setWallet(state);
+}
+// WALLET_SYNC after a coin flush carries the balance coin_batch wrote (c; migrations/2026-11-22-coin-balance.sql), so the wallet is not read
+// again (it was /rt/wallet, a Worker request and a Supabase read, after every flush: 60–120 an hour per earning player). It is still read when
+// the message has no c (an older Worker, coin_batch before that migration, a balance someone else's request moved), when the last read is
+// older than WALLET_CHECK_MS (a drift check: c covers coins only), and within SETTLE_GAP_MS of an HTTP answer that set the balance (a push
+// made before that answer may arrive after it).
+const WALLET_CHECK_MS = 600000, SETTLE_GAP_MS = 5000;
+let walletReadAt = 0, settledAt = 0, walletReading = 0;
+function walletPush(m) {
+  const c = Number(m?.c), now = Date.now();
+  if (m?.c == null || !Number.isSafeInteger(c) || c < 0 || now - walletReadAt > WALLET_CHECK_MS || now - settledAt < SETTLE_GAP_MS) { refreshWallet(); return; }
+  // A read still on its way may have been answered before this flush (it would take the coins back) or after a change the push does not
+  // know (a gift that waited on the flush's row): it is dropped, and in that rare overlap one fresh read follows.
+  const reading = walletReading > 0;
+  walletGen += 1;
+  applyWallet(c, null);
+  if (reading) refreshWallet();
 }
 
 function upsert(list, key, row) {
@@ -844,6 +868,7 @@ function upsert(list, key, row) {
 function settle(res) {
   if (res?.vip_tickets != null) state.vipTickets = Number(res.vip_tickets) || 0;
   if (res?.remaining_coins != null) {
+    settledAt = Date.now(); // a WALLET_SYNC balance in the next seconds may be older than this answer (walletPush)
     state.confirmed = Number(res.remaining_coins) || 0;
     state.grants = [];
     state.pending = 0;
@@ -1461,6 +1486,7 @@ async function sellCoins({ slot_id, amount }) {
   if (!Number.isInteger(n) || n < 10) return null;
   const res = await net.sellCoins({ slot_id, amount: n, nickname: state.nick });
   if (res?.remaining_coins != null) {
+    settledAt = Date.now(); // a WALLET_SYNC balance in the next seconds may be older than this answer (walletPush)
     state.confirmed = Number(res.remaining_coins) || 0;
     state.grants = [];
     state.pending = 0;
@@ -1502,7 +1528,7 @@ function bindTake() {
 }
 
 // ---- network events -----------------------------------------------------------------------
-net.on('wallet', () => refreshWallet());
+net.on('wallet', (m) => walletPush(m));
 const capTold = new Set();
 net.on('pay', (m) => {
   if (m?.why === 'pouchday') {
@@ -2290,6 +2316,9 @@ function seenIds() { const own = readJson(INBOX_SEEN_KEY, []); return [...(Array
 function syncInboxDot() {
   ui.setInboxDot?.(liveNews.length > 0 || inboxUnread(inboxRows.filter((row) => applyInboxPush(row) && !inboxHandled.has(Math.floor(Number(row.id)))), seenIds()) > 0);
 }
+// Back in the room after net.js closed the socket of a tab hidden 5 min (park): news meanwhile (taken, cheers) went to the inbox table instead
+// of this tab, so its rows are read once for the dot (one /rt/inbox per return). Wallet and world follow the 'online' resync.
+net.on('unpark', () => { loadInbox().then((rows) => { inboxRows = rows; syncInboxDot(); }).catch(() => {}); });
 // 다녀간 사이: once after entering, after the intro (and after a linked wish sheet closed), never for newcomers.
 // Rows come from ftue.js awayRows; ui queues the sheet until no other sheet, celebration or focus camera is up.
 async function showAway() {
@@ -2536,4 +2565,12 @@ setInterval(savePlace, 1000);
 window.addEventListener('pagehide', savePlace);
 window.addEventListener('beforeunload', savePlace);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') savePlace(); });
-setInterval(() => { if (net.status !== 'online' && !document.hidden) resync(); }, 60000);
+// While the socket is down a visible tab reads the wallet and the world every 60 s. At budget hard (net.budgetDown: the room said 'down' or
+// /rt/gate said full) only every HARD_SYNC_MS: hard means fewer requests, and net.js comes back by itself after the 00:00 UTC reset.
+const HARD_SYNC_MS = 300000;
+let downSyncAt = 0;
+setInterval(() => {
+  if (net.status === 'online' || document.hidden || (net.budgetDown && Date.now() - downSyncAt < HARD_SYNC_MS - 1000)) return;
+  downSyncAt = Date.now();
+  resync();
+}, 60000);

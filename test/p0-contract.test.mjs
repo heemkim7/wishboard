@@ -39,7 +39,10 @@ describe('phase 0 contracts', () => {
     assert.match(main, /오늘 다녀간 사람/);
     assert.match(main, /오늘 걸린 소원/);
     assert.match(main, /function resync\(\)/);
-    assert.match(main, /if \(net\.status !== 'online' && !document\.hidden\) resync\(\); \}, 60000\)/);
+    // The socket-down resync: every 60 s in a visible tab, as before. Since the 2026-11-22 traffic audit only every HARD_SYNC_MS (5 min) at
+    // budget hard (net.budgetDown), because hard means "fewer requests"; test/traffic-tabs.test.mjs runs the loop.
+    assert.match(main, /if \(net\.status === 'online' \|\| document\.hidden \|\| \(net\.budgetDown && Date\.now\(\) - downSyncAt < HARD_SYNC_MS - 1000\)\) return;\s*downSyncAt = Date\.now\(\);\s*resync\(\);\s*\}, 60000\)/);
+    assert.match(main, /const HARD_SYNC_MS = 300000;/);
     assert.match(bots, /chapelqa:square/);
     assert.match(bots, /localhost:8787/);
     assert.equal(bots.includes('wishboard.workers.dev'), false);
