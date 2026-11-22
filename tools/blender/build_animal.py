@@ -32,7 +32,8 @@
 #      1.5 units outside the torso and sleeves, with a collar roll and a hood flap.
 #      The arms are modelled ARM_DOWN degrees below the T-pose, because every clip has the arms down.
 #   3. Mesh it with surface nets (numpy), make it manifold with a voxel remesh, quad-remesh with QuadriFlow,
-#      keep the right half, snap the vertices back onto the exact field, cut edge loops along the material
+#      keep the right half, subdivide the few faces of the small thumb once, snap the vertices back onto the
+#      exact field, cut edge loops along the material
 #      borders (each colour region is a field too: muzzle, inner ear, eye patches, ear tips, dark legs...)
 #      and the hood crease, then mirror. Both sides are identical and the skin is one closed surface.
 #   4. Normals come from the gradient of the field, per region, so the low-poly skin shades like the smooth
@@ -480,12 +481,14 @@ def parts(p):
     yoke = rcone(q, (0.0, SH[1], SH[2] - 0.8), (11.5, SH[1], SH[2] - 0.3), 8.2, 7.2)   # round shoulders
     torso = smin(torso, yoke, 5.0)
     armcone = rcone(qa, (10.5, SH[1], SH[2] + 0.2), (WR[0] - 1.0, WR[1], WR[2] - 0.1), 5.6, 5.0)
-    # mitten: one pad for the four fingers (it bends at the knuckles) and a separate thumb on the thumb bones
-    # (as long as the rig's own fingers, so a raised hand shows past the big head)
+    # mitten: one pad for the four fingers (it bends at the knuckles) and a separate thumb on the thumb bones.
+    # The thumb is a short plush nub that sits close to the pad: it ends just past the rig's thumb tip and is a
+    # little fuller at the tip than at the root, so it stays round at this mesh size. That still reads in ThumbsUp
+    # and Wave; a thumb as long as the rig's fingers looked like a horn on the fist.
     mitten = ellipsoid(qa, (WR[0] + 8.6, WR[1] - 0.2, WR[2] - 0.4), (10.2, 7.4, 5.6))
     tdir = (TH1 - TH0) / np.linalg.norm(TH1 - TH0)
-    thumb = rcone(qa, TH0 - tdir * 1.0, TH1 + tdir * 5.5, 3.4, 3.0)     # longer than the bones: it has to show past the pad
-    arm_ = smin(smin(armcone, mitten, 2.5), thumb, 1.3)
+    thumb = rcone(qa, TH0 + tdir * 0.5, TH1 + tdir * 0.8, 2.4, 2.8)
+    arm_ = smin(smin(armcone, mitten, 2.5), thumb, 1.6)
     # the leg axis sits 1.5 outside the bone so thick legs still leave a gap a 2-unit mesh can resolve
     legcone = rcone(q, (HP[0] + 1.5, HP[1], HP[2] + 0.8), (AN[0] + 1.7, AN[1] - 0.4, AN[2] + 1.4), 9.3, 8.5)
     foot = ellipsoid(q, (AN[0] + 1.9, -5.0, 5.9), (9.2, 13.2, 6.5))
@@ -496,6 +499,7 @@ def parts(p):
     tail = POM(q) if POM else np.full(x.shape, 1e3)
     body = smin(body, tail, 1.2)
     d["body"] = body
+    d["thumb"] = thumb
     if BODY_REGIONS:
         d.update(BODY_REGIONS(q, z, xa, arm_, tail))
     d["fur"] = smin(head, body, 2.0)
@@ -715,6 +719,16 @@ def relax(bm, rounds=3, lam=0.5):
                 v.co.x = 0.0
         bm_project(bm, iters=3)
 
+# The thumb is the smallest form on the body and QuadriFlow gives it only a few quads, so its tip can come out as a
+# pyramid. One extra cut through the faces on and around it keeps it round (a few hundred more triangles in all).
+fc = np.array([f.calc_center_median()[:] for f in bm.faces])
+near = F("thumb")(fc) < 1.5
+n0 = len(bm.faces)
+bm.edges.index_update()
+cut = sorted({e for f, k in zip(bm.faces, near) if k for e in f.edges}, key=lambda e: e.index)   # fixed order: same file every build
+bmesh.ops.subdivide_edges(bm, edges=cut, cuts=1, use_grid_fill=True)
+onplane = {v for v in bm.verts if v.co.x == 0.0}        # the operator leaves the old vertex references invalid
+log("thumb: subdivided", int(near.sum()), "faces into", len(bm.faces) - n0 + int(near.sum()), "| seam", len(onplane))
 bm_project(bm)
 relax(bm)
 bm_project(bm)
