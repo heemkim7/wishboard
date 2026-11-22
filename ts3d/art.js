@@ -1037,7 +1037,7 @@ export function heartPath(g, x, y, r) {
 export function paintNameTag(canvas, name, color = '#3fe6ff', mine = false, theme = '') {
   const g = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height, k = H / 64;
-  const T = TAG_THEMES[theme] || null;
+  const T = Object.hasOwn(TAG_THEMES, theme) ? TAG_THEMES[theme] : null; // own keys only: a peer's 'constructor' is the plain pill
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.clearRect(0, 0, W, H);
   const text = chars(name || '익명', 12);
@@ -1170,7 +1170,7 @@ export function frameTone(fx, t) {
 /** The shop's preview of a frame: a small dark board with the frame around it. */
 export function paintFrameSwatch(canvas, id) {
   const g = canvas.getContext('2d');
-  const W = canvas.width, H = canvas.height, k = H / 64, fx = FRAME_FX[id];
+  const W = canvas.width, H = canvas.height, k = H / 64, fx = Object.hasOwn(FRAME_FX, id) ? FRAME_FX[id] : null;
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.clearRect(0, 0, W, H);
   const x = 10 * k, y = 8 * k, w = W - 20 * k, h = H - 16 * k;

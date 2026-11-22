@@ -5,7 +5,7 @@
 // Meter DO: daily (UTC) estimate of billed DO requests -> lean mode at 80%, solo (down) at 95% of the Free 100k/day.
 // Supabase keeps auth, DB and RPCs only. No timers in DOs (hibernation-friendly); alarms only while someone waits.
 import { DurableObject } from 'cloudflare:workers';
-import { BALANCE, slotName, josa, SLOT_IDS, PAY, scaledPay, bakeBase, danceBase, farePay, ballOpen, auctionClosed, stickerNext, chainBoost, buildingOf, cheerCount, STARTER_DEFAULT, starterList, EQUIP_MAX, OWNED_MAX } from './balance.js';
+import { BALANCE, slotName, josa, SLOT_IDS, PAY, scaledPay, bakeBase, danceBase, farePay, ballOpen, auctionClosed, stickerNext, chainBoost, buildingOf, cheerCount, STARTER_DEFAULT, starterList, EQUIP_MAX, OWNED_MAX, shopItem } from './balance.js';
 import { nextBallUntil, drawSpan } from './live.js';
 import { CHEER_PHRASES, EVENT_NAMES, allowedLink, blockedText, parseGuestHandover, statsFromCounts } from './plaza-account.js';
 import { renderCardPng } from './cardpng.js';
@@ -250,7 +250,7 @@ export class Meter extends DurableObject {
   adsAsk(ip, v, now) { this.adsI(); return adsDb.ask(this.ctx.storage.sql, ip, v, now); }
   adsAdmin(op, arg, now) { this.adsI(); return adsDb.admin(this.ctx.storage.sql, op, arg, now); }
   adsNow(now) { this.adsI(); return adsDb.now(this.ctx.storage.sql, now); }
-  adsHit(ids, kind, who, now) { this.adsI(); return adsDb.hit(this.ctx.storage.sql, ids, kind, who, now); }
+  adsHit(ids, kind, who, now, linked) { this.adsI(); return adsDb.hit(this.ctx.storage.sql, ids, kind, who, now, linked); }
   adsRead(tok) { this.adsI(); return adsDb.read(this.ctx.storage.sql, tok); }
   adsTal(d0, d1) { this.acInit(); return adsDb.tal(this.ctx.storage.sql, d0, d1); }
   profilePut(uid, av, equip, chose) {
@@ -280,6 +280,7 @@ export class Meter extends DurableObject {
   opsQ() { if (!this.oi) { this.oi = 1; ops.opsInit(this.ctx.storage.sql); } return this.ctx.storage.sql; }
   opsErrPut(r) { return ops.errPut(this.opsQ(), r); }
   opsErrList() { return ops.errList(this.opsQ()); }
+  opsErrAdmin() { return ops.errAdmin(this.opsQ()); }
   opsErrClear() { return ops.errClear(this.opsQ()); }
   opsSupPut(row, keys) { return ops.supPut(this.opsQ(), row, keys); }
   opsSupList(status) { return ops.supList(this.opsQ(), status); }
@@ -1512,7 +1513,7 @@ export class Room extends DurableObject {
         if (now - (a.bt || 0) > RELAY_MS) { a.bt = now; a.bn = 0; }
         if (++a.bn <= RELAY_N) { const P = { id: a.k }; for (const f of ['seed', 'i', 'r']) if (Number.isFinite(p[f])) P[f] = p[f]; this.bc({ t: 'b', e, p: P }, w); } } }
     else if (m.t === 'tr' && m.m && typeof m.m === 'object' && JSON.stringify(m.m).length < 1500) { const M = m.m, keep = ['name', 'outfit', 'av', 'equip', 'rank', 'fl', 'x', 'y', 'face', 'anim', 'st', 'seat', 'g', 'hair', 'dong', 'shard', 'act', 'at', 'seat_id', 'look', 'state', 'step', 'mode', 'joined_at'];
-      a.m = { id: a.k }; for (const f of keep) if (M[f] !== undefined) a.m[f] = M[f]; if (a.prof) { if (M.equip === 'taxi') a.m.seat = 'taxi'; a.m.av = a.prof.av; a.m.equip = a.prof.equip; } if (!a.welcomed && typeof M.name === 'string' && M.name.trim()) { a.welcomed = true; this.bc({ t: 'WELCOME', name: M.name.trim().slice(0, 16) }); } if (typeof a.m.name === 'string') a.m.name = a.m.name.slice(0, 12); a.m.fl = 0; a.fl = 0; this.save(w, a); if (a.q) this.bc({ t: 'pj', k: a.k, m: a.m }); }
+      a.m = { id: a.k }; for (const f of keep) if (M[f] !== undefined) a.m[f] = M[f]; if (a.prof) { if (M.equip === 'taxi') a.m.seat = 'taxi'; a.m.av = a.prof.av; a.m.equip = a.prof.equip; } else if (M.equip !== undefined) a.m.equip = peerEquip(M.equip); if (!a.welcomed && typeof M.name === 'string' && M.name.trim()) { a.welcomed = true; this.bc({ t: 'WELCOME', name: M.name.trim().slice(0, 16) }); } if (typeof a.m.name === 'string') a.m.name = a.m.name.slice(0, 12); a.m.fl = 0; a.fl = 0; this.save(w, a); if (a.q) this.bc({ t: 'pj', k: a.k, m: a.m }); }
     else if (m.t === 'ut') { a.m = null; this.save(w, a); if (a.q) this.leaveK(a.k, w); }
     this.scan(); this.meter(); }
   noteGhost(w) {
@@ -1625,6 +1626,9 @@ function levelOf(rep) {
   const n = Math.max(0, Math.floor(Number(rep) || 0));
   return Math.min(99, 1 + Math.floor(n / 10));
 }
+// What a socket with no database profile (a.prof) may show others as worn: '' and 'taxi' as the client sends them, else only the shop's
+// own ids (balance.js SHOP). Unknown ids ('constructor', '__proto__', anything made up) are dropped before they are relayed.
+function peerEquip(raw) { return raw === '' || raw === 'taxi' ? raw : equipList(raw).filter((id) => !!shopItem(id)); }
 // Cosmetic ids: at most `max` (EQUIP_MAX equipped, one per kind; OWNED_MAX for the locker, balance.js).
 function equipList(raw, max = EQUIP_MAX) {
   const src = Array.isArray(raw) ? raw : String(raw || '').split(',');
@@ -1751,7 +1755,7 @@ async function profileApi(req, env, u, ctx) {
 const fnMissing = (r) => !!r && !r.ok && (r.status === 404 || /PGRST202|Could not find the function/i.test(JSON.stringify(r.data ?? '')));
 const SHOP_KIND_RE = /^(hat|cab|frame|tag|ring|emote)$/;
 const SHOP_SOON = '꾸미기 상점은 곧 열려요.';
-const SHOP_ERR = { owned: '이미 가진 꾸미기예요.', coins: '코인이 부족해요.', item: '지금은 팔지 않는 꾸미기예요.', down: '지금은 살 수 없어요. 잠시 뒤에 다시 해 주세요.' };
+const SHOP_ERR = { owned: '이미 가진 꾸미기예요.', coins: '코인이 부족해요.', item: '지금은 팔지 않는 꾸미기예요.', price: '가격이 바뀌었어요. 다시 확인해 주세요.', down: '지금은 살 수 없어요. 잠시 뒤에 다시 해 주세요.' };
 let SHOP_C = { at: 0, ttl: 0, open: false, items: [], p: null };
 const COSM_MOVED = new Map(); // guest id -> when this isolate last asked move_cosmetics for it (the link route)
 const shopClosed = () => { SHOP_C = { at: Date.now(), ttl: 120000, open: false, items: [], p: null }; };
@@ -1794,10 +1798,17 @@ async function shopApi(req, env, ctx, u) {
   if (gapHit('shop:' + actor.id)) return J({ ok: false, code: 'busy', error: GAP_ERR }, 429);
   const settled = await settle(env, topic, actor.id);
   if (!settled.ok) return J({ ok: false, error: settled.error, pending: true }, 409);
-  const rpc = await supabaseRpc('buy_cosmetic', { p_key: env.FLUSH_KEY, p_actor_id: actor.id, p_cosmetic_id: id });
+  // price: what the sheet showed (its list may be this isolate's 10-minute copy). buy_cosmetic compares it with the live price in the same
+  // transaction and refuses a mismatch ('price', with the live price); an old page that sends none is charged the live price as before.
+  const shown = Number.isInteger(b.price) && b.price > 0 && b.price <= 1000000 ? b.price : null;
+  const rpc = await supabaseRpc('buy_cosmetic', { p_key: env.FLUSH_KEY, p_actor_id: actor.id, p_cosmetic_id: id, ...(shown ? { p_price: shown } : {}) });
   if (fnMissing(rpc)) { shopClosed(); return J({ ok: false, code: 'soon', error: SHOP_SOON }, 503); }
   if (!rpc.ok || !rpc.data || typeof rpc.data !== 'object') return J({ ok: false, code: 'down', error: SHOP_ERR.down }, 502);
   const d = rpc.data;
+  if (d.ok === false && d.error === 'price') {
+    SHOP_C = { ...SHOP_C, at: 0, p: null }; // this isolate reads the prices again on the next GET /rt/shop
+    return J({ ok: false, code: 'price', error: SHOP_ERR.price, price: Math.max(0, Math.floor(Number(d.price) || 0)) }, 409);
+  }
   if (d.ok === false) {
     const code = SHOP_ERR[d.error] ? String(d.error) : 'down';
     const need = code === 'coins' && Number(d.price) > 0 ? ` ${Number(d.price).toLocaleString('en-US')}코인이 필요해요.` : '';
@@ -3283,7 +3294,7 @@ async function cardPage(req, env, u) {
         if (png.length > 40000) return new Response('not found', { status: 404 });
         await meter.cardPut(key, png);
       }
-      return new Response(png, { headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=300' } });
+      return new Response(png, { headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=300', 'x-robots-tag': 'noindex' } });
     } catch { return new Response('not found', { status: 404 }); }
   }
   const shot = await snapFor(env, 'slot', parsed.slot, card.holder); // only the current holder's own shot
@@ -3299,7 +3310,8 @@ async function cardPage(req, env, u) {
     + '<meta property="og:url" content="' + esc(page) + '">'
     + '<meta http-equiv="refresh" content="0;url=' + esc(dest) + '">'
     + '</head><body><p><a href="' + esc(dest) + '">타임스퀘어에서 이 전광판 보기</a></p></body></html>';
-  return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+  // Not for search results (a player's name and line); link-preview crawlers still read the Open Graph tags (robots.txt allows /rt/card/).
+  return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex' } });
 }
 // Payload { body, url? } (the service worker defaults the title to 모두의 전광판). drop(endpoint) also forgets a gone endpoint in the 'push' instance.
 async function sendPushItems(env, items, drop) {
@@ -3402,13 +3414,13 @@ export default {
       const jpeg = await env.METER.get(env.METER.idFromName('snaps')).snapGet(snapId);
       if (!jpeg) return new Response('gone', { status: 404 });
       const bytes = jpeg instanceof ArrayBuffer ? jpeg : jpeg.buffer.slice(jpeg.byteOffset, jpeg.byteOffset + jpeg.byteLength);
-      return new Response(bytes, { headers: { 'content-type': 'image/jpeg', 'cache-control': 'public, max-age=86400' } });
+      return new Response(bytes, { headers: { 'content-type': 'image/jpeg', 'cache-control': 'public, max-age=86400', 'x-robots-tag': 'noindex' } }); // previews may fetch it, image search may not list it
     }
     if (u.pathname === '/rt/health') {
       if (req.method !== 'GET' && req.method !== 'HEAD') return J({ err: 'get' }, 405);
       return ops.opsHealth(req, env, ctx, { hasFlushKey: typeof env.FLUSH_KEY === 'string' && env.FLUSH_KEY.length > 0, hasGuestKey: typeof env.GUEST_KEY === 'string' && env.GUEST_KEY.length > 0, mode: 'DO' }, { lvl: () => lvlNow(env), lvlCopy: () => LVL.l }); // + db, budget, maint, build
     }
-    if (ops.OPS_PATHS.has(u.pathname)) return ops.opsApi(req, env, ctx, u, { lvl: () => lvlNow(env), lvlCopy: () => LVL.l, admin: () => adminOk(env, req), actor: () => resolveActor(env, tokenOf(req)), ipHash: () => ipHash(env, req) }); // /rt/err, /rt/support, their admin routes
+    if (ops.OPS_PATHS.has(u.pathname)) return ops.opsApi(req, env, ctx, u, { lvl: () => lvlNow(env), lvlCopy: () => LVL.l, admin: () => adminOk(env, req), actor: () => resolveActor(env, tokenOf(req)), ipHash: () => wishIp(env, req) }); // /rt/err, /rt/support, their admin routes (networks: IPv6 by /64)
     if (u.pathname === '/rt/ws') {
       if (req.headers.get('Upgrade') !== 'websocket') return new Response('websocket only', { status: 426 });
       const t = u.searchParams.get('topic') || ''; if (!PLAZA_TOPICS.includes(t)) return new Response('bad topic', { status: 400 }); // only the plaza's own channels may create a room
@@ -3436,7 +3448,7 @@ export default {
         const r = GATE.r, l = r.lvl, used = Math.round(r.n), gbs = Math.round(r.g);
         return J(l >= 2 ? { full: true, used, gbs } : { ok: true, cap: CAP, used, gbs, lean: l >= 1 }); } catch (e) { return J({ full: true, err: 1 }, 503); } }
     if (u.pathname === '/rt/sponsor' && req.method === 'GET') return J({ url: extUrl(env.SPONSOR_INQUIRY_URL) || '' });
-    if (u.pathname.startsWith('/rt/ads/') || u.pathname === '/rt/admin/ads' || u.pathname.startsWith('/rt/admin/ads/')) return adsApi(req, env, ctx, u, { adminOk, lvlNow, resolveActor, tokenOf, ipHash, // 광고 판매 (adsrv.js)
+    if (u.pathname.startsWith('/rt/ads/') || u.pathname === '/rt/admin/ads' || u.pathname.startsWith('/rt/admin/ads/')) return adsApi(req, env, ctx, u, { adminOk, lvlNow, resolveActor, tokenOf, ipHash: wishIp, // 광고 판매 (adsrv.js; networks: IPv6 by /64)
       dropWorld: async () => { PC.delete('world'); try { await caches.default.delete(new Request(WORLD_CACHE)); } catch { } } });
     if (u.pathname === '/rt/share-bonus' || u.pathname === '/rt/redeem-code') return promo(req, env, u);
     if (u.pathname === '/rt/report') return fileReport(req, env);

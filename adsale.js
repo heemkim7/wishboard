@@ -12,7 +12,12 @@ export const ADS = {
   daysMax: 30, // days one request may ask for
   bookMax: 90, // days one booking may run
   aheadDays: 180, // how far ahead a request may start
-  perIp: 5, perDay: 300, // requests per network per KST day, and in all per KST day
+  perIp: 5, // requests per network (IPv6 by /64) per KST day
+  perHour: 40, // requests in all per hour (KST clock hour): a flood stops the form for the rest of that hour, not for the day
+  hitIpMin: 60, hitActorMin: 10, // /rt/ads/click and /rt/ads/seen per network and per account per minute (per isolate; EVENT_RL / OPS_RL too)
+  reportMin: 20, // /rt/ads/report/<token> reads per network per minute that may reach the store (OPS_RL too)
+  reportTtl: 60000, reportKeep: 200, // a report read is reused for 60 s per isolate; at most this many tokens are held
+  nineLate: 180000, // a 9 pm sponsor's count is taken from 21:00:00 until this long after (a late "seen" report still counts)
   keepDays: 365, // a request (and the contact details in it) is deleted this long after it arrived
   listMax: 300, // requests the admin list shows
   nowDays: 3, // /rt/world carries bookings that run now or start within this many days
@@ -34,11 +39,12 @@ export const isAdScreen = (id) => AD_SCREEN_IDS.includes(String(id));
 export const adScreenName = (id) => AD_SCREENS.find((s) => s.id === id)?.name || (id === '*' ? '광고 화면 전체' : '');
 
 // Products. 'cheer' is the same booking as 'screen' with a birthday / cheer template. 'sponsor9': every ad screen at once
-// from 21:00:00 to 21:01:00 KST on each day of the booking (the claimable boards keep their own 9 pm 소원왕).
+// from 21:00:00 to 21:01:00 KST on each day of the booking (the claimable boards keep their own 9 pm 소원왕). In that minute a day
+// booking on any screen steps aside, and its clicks and sightings are not counted (adsrv.js hit).
 export const AD_PRODUCTS = {
-  screen: { name: '광고 화면 하루', unit: '1일', desc: '광고 화면 한 곳에 하루 종일(한국 시간 0시부터 24시까지).' },
-  cheer: { name: '생일·응원 패키지', unit: '1일', desc: '광고 화면 한 곳에 하루 종일, 생일·응원 문구 틀로.' },
-  sponsor9: { name: '밤 9시 60초 스폰서', unit: '1회', desc: '밤 9시 정각부터 60초 동안 광고 화면 다섯 곳 모두에.' },
+  screen: { name: '광고 화면 하루', unit: '1일', desc: '광고 화면 한 곳에 하루 종일(한국 시간 0시부터 24시까지). 밤 9시 스폰서가 있는 날은 21시부터 60초 동안 스폰서 광고가 대신 나가요.' },
+  cheer: { name: '생일·응원 패키지', unit: '1일', desc: '광고 화면 한 곳에 하루 종일, 생일·응원 문구 틀로. 밤 9시 스폰서가 있는 날은 21시부터 60초 동안 스폰서 광고가 대신 나가요.' },
+  sponsor9: { name: '밤 9시 60초 스폰서', unit: '1회', desc: '잡은 날마다 한국 시간 밤 9시 정각부터 60초 동안 광고 화면 다섯 곳 모두를 차지해요(그 화면의 하루 광고 대신).' },
 };
 export const AD_PRODUCT_IDS = Object.keys(AD_PRODUCTS);
 export const AD_TEMPLATES = {
@@ -86,7 +92,11 @@ export const dayStart = (d) => Date.parse(d + 'T00:00:00+09:00');
 export const kstRange = (start, end) => ({ a: dayStart(start), b: dayStart(end) + 864e5 });
 export const daysBetween = (start, end) => Math.round((Date.parse(end + 'T00:00:00Z') - Date.parse(start + 'T00:00:00Z')) / 864e5) + 1;
 /** True from 21:00:00.000 to 21:00:59.999 KST. */
-export const nineOn = (now) => { const m = (((now + 9 * 36e5) % 864e5) + 864e5) % 864e5; return m >= 21 * 36e5 && m < 21 * 36e5 + 60000; };
+export const nineOn = (now) => { const s = nineSince(now); return s >= 0 && s < 60000; };
+/** Milliseconds since 21:00:00.000 KST today (negative before it). nineSince(now) in [0, ADS.nineLate): a sponsor's count still lands. */
+export const nineSince = (now) => (((now + 9 * 36e5) % 864e5) + 864e5) % 864e5 - 21 * 36e5;
+/** The KST clock hour, 'YYYY-MM-DDTHH' (sorts after its own day's 'YYYY-MM-DD', before the next day's). */
+export const kstHour = (t = Date.now()) => new Date(t + 9 * 36e5).toISOString().slice(0, 13);
 
 // ---- links ---------------------------------------------------------------------------------------------------------
 // An advertiser's link: like allowedLink (https, at most 200 characters) but any public host, since the operator reviews

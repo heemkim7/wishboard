@@ -3,13 +3,15 @@
 // the Meter methods in worker.js hand their SQL handle to the store functions below. Every DO call here goes through the env worker.js passes
 // in, which is the tallied one, so it counts in the daily budget. At budget hard the two write paths (/rt/err, /rt/support) make no DO call.
 import { ERR, SUP, SUPPORT_TEXT, body, errRow, line, maintOf, operatorOf, pathOf, scrub, stackOf, supportFault, supportKind, BUILD_RE } from './opsrules.js';
+import { ipNet } from './wish.js'; // per-network limits: IPv4 as is, IPv6 by its /64
 
 export const OPS = {
-  errMax: 300, // error groups kept (newest last-seen first)
-  supMax: 500, // inquiries kept (newest first)
+  errMax: 300, // error groups kept; when full the least recently seen group goes and okv 'err_evicted' counts it for the admin
+  supMax: 500, // inquiries kept; when full handled ones go (oldest first), open ones never: a new inquiry is refused ('full') instead
   errBytes: 4096, supBytes: 8192, // request body caps
   supHour: 3, // inquiries per hour per account
-  supHourIp: 10, // inquiries per hour per network (mobile carriers put many players behind one address)
+  supHourIp: 10, // inquiries per hour per network (IPv6 by /64; mobile carriers put many players behind one address)
+  supHourAll: 120, // inquiries per hour in all, so a flood from many networks cannot fill the store with open ones
   doneKeep: 365 * 864e5, // a handled inquiry (its e-mail with it) goes within a year
   rlKeep: 3600e3,
   ipMin: 20, // per isolate, per IP and route, per minute: the fallback when the OPS_RL binding is missing
@@ -40,29 +42,42 @@ export function errPut(q, r, now = Date.now()) {
   if (old) q.exec('update oerr set n = n + ?, last = ?, stack = ?, builds = ?, page = ?, ua = ?, tier = ?, touch = ? where h = ?', n, now, r.stack || '', JSON.stringify(builds), r.page || '', r.ua || '', r.tier || '', r.touch ? 1 : 0, r.h);
   else q.exec('insert into oerr values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', r.h, r.kind, r.msg, r.src || '', n, now, now, r.stack || '', JSON.stringify(builds), r.page || '', r.ua || '', r.tier || '', r.touch ? 1 : 0);
   const c = Number(q.exec('select count(*) as c from oerr').one().c) || 0;
-  if (c > OPS.errMax) q.exec('delete from oerr where h in (select h from oerr order by last asc limit ?)', c - OPS.errMax);
+  if (c > OPS.errMax) {
+    const n = c - OPS.errMax;
+    q.exec('delete from oerr where h in (select h from oerr order by last asc limit ?)', n);
+    q.exec("insert into okv(k, v) values('err_evicted', ?) on conflict(k) do update set v = cast(cast(v as integer) + ? as text)", String(n), n);
+  }
   return { ok: true };
 }
+// Groups dropped to make room since the last clear, so the admin sees that the store overflowed.
+export function errEvicted(q) { return Number(q.exec("select v from okv where k = 'err_evicted'").toArray()[0]?.v) || 0; }
+export function errAdmin(q) { return { items: errList(q), evicted: errEvicted(q) }; }
 export function errList(q) {
   return q.exec('select * from oerr order by last desc limit ?', OPS.errMax).toArray().map((r) => {
     let builds = []; try { builds = JSON.parse(r.builds); } catch { builds = []; }
     return { h: r.h, kind: r.kind, msg: r.msg, src: r.src, n: Number(r.n), first: Number(r.first), last: Number(r.last), stack: r.stack, builds, page: r.page, ua: r.ua, tier: r.tier, touch: Number(r.touch) };
   });
 }
-export function errClear(q) { const n = Number(q.exec('select count(*) as c from oerr').one().c) || 0; q.exec('delete from oerr'); return { ok: true, cleared: n }; }
+export function errClear(q) { const n = Number(q.exec('select count(*) as c from oerr').one().c) || 0; q.exec('delete from oerr'); q.exec("delete from okv where k = 'err_evicted'"); return { ok: true, cleared: n }; }
 function supPrune(q, now) {
   q.exec("delete from osup where status = 'done' and done_at < ?", now - OPS.doneKeep);
   q.exec('delete from orl where at < ?', now - OPS.rlKeep);
 }
-// The hourly limit and the write in one call, so two tabs cannot both pass. keys: 'i:<ip hash>' (OPS.supHourIp an hour) and, with an
-// account, 'a:<actor id>' (OPS.supHour an hour).
+// The hourly limits and the write in one call, so two tabs cannot both pass. keys: 'i:<network hash>' (OPS.supHourIp an hour) and, with an
+// account, 'a:<actor id>' (OPS.supHour an hour); every inquiry also counts under 'g' (OPS.supHourAll an hour in all). Room is made by
+// dropping handled inquiries, oldest first. One nobody has handled is never dropped: with OPS.supMax open ones a new one is refused.
+const SUP_ALL = 'g';
 export function supPut(q, row, keys, now = Date.now()) {
   supPrune(q, now);
-  for (const k of keys) if ((Number(q.exec('select count(*) as c from orl where k = ? and at > ?', k, now - OPS.rlKeep).one().c) || 0) >= (k.startsWith('i:') ? OPS.supHourIp : OPS.supHour)) return { ok: false, code: 'rate' };
-  for (const k of keys) q.exec('insert into orl(k, at) values(?, ?)', k, now);
+  const used = (k) => Number(q.exec('select count(*) as c from orl where k = ? and at > ?', k, now - OPS.rlKeep).one().c) || 0;
+  for (const k of keys) if (used(k) >= (k.startsWith('i:') ? OPS.supHourIp : OPS.supHour)) return { ok: false, code: 'rate' };
+  if (used(SUP_ALL) >= OPS.supHourAll) return { ok: false, code: 'many' };
+  const count = () => Number(q.exec('select count(*) as c from osup').one().c) || 0;
+  let c = count();
+  if (c >= OPS.supMax) { q.exec("delete from osup where id in (select id from osup where status = 'done' order by at asc limit ?)", c - OPS.supMax + 1); c = count(); }
+  if (c >= OPS.supMax) return { ok: false, code: 'full' };
+  for (const k of keys.concat(SUP_ALL)) q.exec('insert into orl(k, at) values(?, ?)', k, now);
   q.exec("insert into osup values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', null)", row.id, now, row.kind, row.body, row.email || '', row.actor || '', row.nick || '', row.build || '', row.page || '', row.dev || '');
-  const c = Number(q.exec('select count(*) as c from osup').one().c) || 0;
-  if (c > OPS.supMax) q.exec('delete from osup where id in (select id from osup order by at asc limit ?)', c - OPS.supMax);
   return { ok: true, id: row.id };
 }
 export function supList(q, status = 'open', now = Date.now()) {
@@ -77,22 +92,29 @@ export function supMark(q, id, status, now = Date.now()) {
   const w = q.exec('update osup set status = ?, done_at = ? where id = ?', status, status === 'done' ? now : null, String(id || '')).rowsWritten;
   return { ok: w > 0 };
 }
-export function maintGet(q) { const r = q.exec("select v from okv where k = 'maint'").toArray()[0]; if (!r) return null; try { return JSON.parse(r.v); } catch { return null; } }
+// Read by every isolate about once every 5 minutes (maintFor), so it also does the store's upkeep: rate rows older than an hour and inquiries
+// handled more than a year ago go here even when nobody writes an inquiry (the privacy policy's retention holds without a cron or alarm).
+export function maintGet(q) { supPrune(q, Date.now()); const r = q.exec("select v from okv where k = 'maint'").toArray()[0]; if (!r) return null; try { return JSON.parse(r.v); } catch { return null; } }
 export function maintPut(q, m) { const v = maintOf(m) ? { on: true, ...maintOf(m), at: Date.now() } : { on: false, at: Date.now() }; q.exec("insert into okv(k, v) values('maint', ?) on conflict(k) do update set v = excluded.v", JSON.stringify(v)); return v; }
 
 // ---- per-isolate helpers ---------------------------------------------------------------------------------------------------------
-const IPC = new Map(); // 'route|ip' -> { at, n }: the per-minute fallback limit
+const IPC = new Map(); // 'route|network' (or 'route|key') -> { at, n }: the per-minute fallback limit
 function ipMem(key, max = OPS.ipMin, now = Date.now()) {
   const hit = IPC.get(key);
   if (!hit || now - hit.at >= 60000 || now < hit.at) { if (IPC.size >= 5000) IPC.clear(); IPC.set(key, { at: now, n: 1 }); return true; }
   hit.n++; return hit.n <= max;
 }
-// The Workers Rate Limiting binding OPS_RL (wrangler.jsonc) when there is one, and the isolate's own count either way.
-export async function opsRate(env, req, route) {
-  const ip = req.headers.get('cf-connecting-ip') || 'x';
-  if (!ipMem(route + '|' + ip)) return false;
-  const rl = env.OPS_RL; if (!rl) return true;
-  try { return (await rl.limit({ key: route + ':' + ip })).success !== false; } catch { return true; }
+// The Workers Rate Limiting binding OPS_RL (wrangler.jsonc) when there is one, and the isolate's own count either way. Keyed by the network
+// (wish.js ipNet: IPv4 as is, IPv6 by its /64, so one phone cannot walk through its own /64). max: the isolate's count per minute; rl:
+// another binding (adsrv.js passes EVENT_RL for the plaza's ad counts, which many players behind one address send).
+export async function opsRate(env, req, route, max = OPS.ipMin, rl = env?.OPS_RL) {
+  return opsRateKey(env, route, ipNet(req.headers.get('cf-connecting-ip') || ''), max, rl);
+}
+// The same for any key (an account id): the isolate's count per minute, then the binding.
+export async function opsRateKey(env, route, key, max = OPS.ipMin, rl = env?.OPS_RL) {
+  if (!ipMem(route + '|' + key, max)) return false;
+  if (!rl) return true;
+  try { return (await rl.limit({ key: route + ':' + key })).success !== false; } catch { return true; }
 }
 async function hex16(s) { const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))); let h = ''; for (const b of d.slice(0, 8)) h += b.toString(16).padStart(2, '0'); return h; }
 export const errKey = (r) => hex16(r.kind + '\n' + r.msg + '\n' + r.src);
@@ -148,12 +170,12 @@ export async function opsApi(req, env, ctx, u, deps) {
     };
     const keys = ['i:' + ip].concat(row.actor ? ['a:' + row.actor] : []);
     let res = null; try { res = await opsM(env).opsSupPut(row, keys); } catch { return no('down', 502); }
-    if (res?.ok !== true) return no(res?.code === 'rate' ? 'rate' : 'down', res?.code === 'rate' ? 429 : 502);
+    if (res?.ok !== true) { const c = ['rate', 'many', 'full'].includes(res?.code) ? res.code : 'down'; return no(c, c === 'down' ? 502 : 429); }
     return J({ ok: true, id: res.id });
   }
   // Admin: x-admin-key, the same check as every other /rt/admin route.
   if (!deps.admin()) return J({ err: 'admin' }, 401);
-  if (p === '/rt/admin/errors') { if (req.method !== 'GET') return J({ err: 'get' }, 405); return J({ ok: true, items: await opsM(env).opsErrList() }); }
+  if (p === '/rt/admin/errors') { if (req.method !== 'GET') return J({ err: 'get' }, 405); const r = await opsM(env).opsErrAdmin(); return J({ ok: true, items: r.items, evicted: r.evicted }); }
   if (p === '/rt/admin/errors/clear') { if (req.method !== 'POST') return J({ err: 'post' }, 405); SAME.clear(); return J(await opsM(env).opsErrClear()); }
   if (p === '/rt/admin/support') {
     if (req.method === 'GET') { const s = u.searchParams.get('status'); return J(await opsM(env).opsSupList(s === 'done' || s === 'all' ? s : 'open')); }

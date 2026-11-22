@@ -860,7 +860,7 @@ void main(){
       r.av.update(dt, t);
       if (inCar) remoteCars.push({ x: r.x, z: r.z, yaw: r.yaw, v: r.spd, tint: cabTint(cosmetics) });
       const fr = r.fr;
-      if (fr && FRAME_FX[fr]) frameSig += id + '=' + fr + ';';
+      if (fr && Object.hasOwn(FRAME_FX, fr)) frameSig += id + '=' + fr + ';';
     }
     for (const [id, r] of remotes) if (!seen.has(id)) { r.av.dispose(); remotes.delete(id); }
     traffic?.setRemoteTaxis(remoteCars);
@@ -1119,7 +1119,7 @@ void main(){
     const myFrame = equippedOf(myEquip, 'frame');
     for (const [id, b] of boards.boards) {
       const holder = String(b.data?.holder_id || '');
-      const fx = FRAME_FX[holder && holder === mine ? myFrame : holder ? peerFrame.get(holder) || '' : ''];
+      const fid = holder && holder === mine ? myFrame : holder ? peerFrame.get(holder) || '' : '', fx = Object.hasOwn(FRAME_FX, fid) ? FRAME_FX[fid] : null;
       boards.setRim(id, fx ? fx.color : '', fx ? fx.anim : '');
     }
   }

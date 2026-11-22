@@ -3866,10 +3866,18 @@ export function createUI(root, hooks) {
         }
         busy = t.id; armed = ''; paint();
         try {
-          if (t.act === 'buy') { await hooks.buyCosmetic(t.id); note(`${josa(t.label, '을', '를')} 샀어요. 바로 장착했어요`, 'ok'); }
+          if (t.act === 'buy') { await hooks.buyCosmetic(t.id, t.price); note(`${josa(t.label, '을', '를')} 샀어요. 바로 장착했어요`, 'ok'); }
           else if (t.act === 'wear') await hooks.wear(t.id);
           else if (t.act === 'off') await hooks.unwear(t.kind);
-        } catch (e) { note(e?.message || '지금은 살 수 없어요', 'err'); }
+        } catch (e) {
+          note(e?.message || '지금은 살 수 없어요', 'err');
+          if (e?.code === 'price') { // the price changed since the list was read: read it again, with the live price the refusal carried for this item
+            const live = Math.floor(Number(e.data?.price)) || 0;
+            const r = await Promise.resolve(hooks.shop?.()).catch(() => null);
+            const items = (Array.isArray(r?.items) ? r.items : shop.items).map((it) => (it?.id === t.id && live > 0 ? { ...it, price: live } : it));
+            shop = { open: r ? !!r.open : shop.open, items, ready: true };
+          }
+        }
         busy = '';
         if (sheet === me) { const b = me.box.querySelector('h2 .badge'); if (b) b.textContent = `${money(wallet.confirmed + wallet.pending)} 코인`; paint(); }
       };

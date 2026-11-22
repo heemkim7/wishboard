@@ -434,9 +434,9 @@ class Avatar {
     if (next.join(',') === this.cosmetics.join(',')) return; // a peer's presence repeats its list every frame
     this.cosmetics = next;
     this.syncHat();
-    const theme = next.find((id) => TAG_THEMES[id]) || '';
+    const theme = next.find((id) => Object.hasOwn(TAG_THEMES, id)) || ''; // own keys only: ids come from peers
     if (theme !== this.tagTheme) { this.tagTheme = theme; this.paintTag(); }
-    this.syncRingFx(next.find((id) => RING_FX[id]) || '');
+    this.syncRingFx(next.find((id) => Object.hasOwn(RING_FX, id)) || '');
   }
 
   // The shop's foot-ring effect: a flat painted square under the avatar (anyone's, so others see it), in place of the local plain ring.
@@ -597,7 +597,7 @@ class Avatar {
       this.ring.scale.set(p, 1, p);
     }
     if (this.fx) {
-      const look = RING_FX[this.fxId], p = 1 + Math.sin(t * 3.2) * 0.04;
+      const look = Object.hasOwn(RING_FX, this.fxId) ? RING_FX[this.fxId] : null, p = 1 + Math.sin(t * 3.2) * 0.04;
       this.fx.scale.set(p, 1, p);
       this.fx.rotation.y = (t * (look?.spin || 0) * Math.PI * 2) % (Math.PI * 2);
       if (look?.twinkle) this.fx.material.opacity = 0.7 + 0.3 * Math.abs(Math.sin(t * 4.1));

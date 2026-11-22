@@ -221,6 +221,23 @@ describe('POST /rt/err', { concurrency: false }, () => {
       const list = M.opsErrList(); assert.equal(list.length, 300); assert.equal(list[0].msg, 'm304'); assert.equal(list.some((x) => x.msg === 'm0'), false);
     } finally { done(); }
   });
+  it('a full store drops the least recently seen group (not one that just came again) and counts it for the admin; a clear resets the count', async () => {
+    const { clock, done } = setup();
+    try {
+      const env = makeEnv(), M = env.meter('ops').do, { get, post } = harness(env);
+      const put = (i) => { clock.add(1); M.opsErrPut({ h: 'h' + i, kind: 'client', msg: 'm' + i, src: '', n: 1, stack: '', build: '', page: '/', ua: '', tier: '', touch: 0 }); };
+      for (let i = 0; i < 300; i++) put(i);
+      assert.equal((await (await get('/rt/admin/errors', { admin: ADMIN })).json()).evicted, 0);
+      put(0); // the oldest group is seen again: now the newest
+      put(300); put(301);
+      const e = await (await get('/rt/admin/errors', { admin: ADMIN })).json();
+      assert.equal(e.items.length, 300); assert.equal(e.evicted, 2);
+      assert.deepEqual(['m0', 'm1', 'm2', 'm300'].map((m) => e.items.some((x) => x.msg === m)), [true, false, false, true]);
+      assert.match(read('admin-ops.js'), /const evicted = Math\.max\(0, Number\(d\.evicted\) \|\| 0\)/);
+      assert.deepEqual(await (await post('/rt/admin/errors/clear', {}, { admin: ADMIN })).json(), { ok: true, cleared: 300 });
+      assert.equal((await (await get('/rt/admin/errors', { admin: ADMIN })).json()).evicted, 0);
+    } finally { done(); }
+  });
   it('at budget hard a report is dropped without a DO call', async () => {
     const { clock, done } = setup();
     try {
@@ -280,15 +297,71 @@ describe('POST /rt/support', { concurrency: false }, () => {
       assert.deepEqual(log.filter((x) => x.startsWith('ops.')), []);
     } finally { done(); }
   });
-  it('keeps the newest 500 and drops handled ones a year after they were handled', async () => {
+  const ROW = (id) => ({ id, kind: 'etc', body: 'b ' + id, email: '', actor: '', nick: '', build: '', page: '/', dev: '' });
+  it('keeps up to 500: handled ones make room (oldest first), an open one is never dropped (a new one is refused instead), handled ones go a year later', async () => {
     const { clock, done } = setup();
     try {
       const env = makeEnv(), M = env.meter('ops').do;
-      for (let i = 0; i < 505; i++) { clock.add(1); M.opsSupPut({ id: 'id' + i, kind: 'etc', body: 'b' + i, email: '', actor: '', nick: '', build: '', page: '/', dev: '' }, []); }
-      let l = M.opsSupList('all'); assert.equal(l.items.length, 500); assert.equal(l.items[0].id, 'id504'); assert.equal(l.open, 500);
-      assert.equal(M.opsSupMark('id504', 'done').ok, true); assert.equal(M.opsSupMark('nope', 'done').ok, false); assert.equal(M.opsSupMark('id504', 'weird').ok, false);
-      assert.equal(M.opsSupList('done').items.length, 1); assert.equal(M.opsSupList('open').open, 499);
-      clock.add(366 * 864e5); l = M.opsSupList('all'); assert.equal(l.items.length, 499); assert.equal(l.items.some((x) => x.id === 'id504'), false);
+      for (let i = 0; i < 500; i++) { clock.add(31000); assert.equal(M.opsSupPut(ROW('id' + i), ['i:n' + i]).ok, true, String(i)); } // 31 s apart: under 120 an hour
+      clock.add(31000);
+      assert.deepEqual(M.opsSupPut(ROW('id500'), ['i:x']), { ok: false, code: 'full' }, 'a flood never pushes out an inquiry nobody has read');
+      let l = M.opsSupList('all'); assert.equal(l.items.length, 500); assert.equal(l.items[0].id, 'id499'); assert.equal(l.open, 500);
+      assert.equal(opsRows(env, 'orl').filter((x) => x.k === 'i:x').length, 0, 'a refused inquiry uses up no limit');
+      assert.equal(M.opsSupMark('id499', 'done').ok, true); assert.equal(M.opsSupMark('nope', 'done').ok, false); assert.equal(M.opsSupMark('id499', 'weird').ok, false);
+      assert.equal(M.opsSupMark('id10', 'done').ok, true);
+      assert.equal(M.opsSupPut(ROW('id500'), ['i:x']).ok, true, 'a handled one makes room');
+      l = M.opsSupList('all'); assert.equal(l.items.length, 500); assert.equal(l.items.some((x) => x.id === 'id10'), false, 'the oldest handled one went');
+      assert.equal(l.items.some((x) => x.id === 'id0'), true, 'the oldest open one stays'); assert.equal(l.open, 499);
+      assert.equal(M.opsSupPut(ROW('id501'), ['i:y']).ok, true); // id499 (handled) makes room
+      assert.equal(M.opsSupList('done').items.length, 0); assert.equal(M.opsSupList('open').open, 500);
+      assert.equal(M.opsSupPut(ROW('id502'), ['i:z']).code, 'full');
+      assert.equal(M.opsSupMark('id0', 'done').ok, true);
+      clock.add(366 * 864e5); l = M.opsSupList('all'); assert.equal(l.items.length, 499); assert.equal(l.items.some((x) => x.id === 'id0'), false, 'handled a year ago: gone');
+    } finally { done(); }
+  });
+  it('120 an hour in all, whatever the network; the route answers 429 in Korean for that and for a full store, with no write', async () => {
+    const { clock, done } = setup();
+    try {
+      const env = makeEnv(), M = env.meter('ops').do, { post } = harness(env);
+      for (let i = 0; i < 120; i++) { clock.add(1000); assert.equal(M.opsSupPut(ROW('g' + i), ['i:n' + i]).ok, true, String(i)); }
+      assert.deepEqual(M.opsSupPut(ROW('g120'), ['i:fresh']), { ok: false, code: 'many' });
+      const r = await post('/rt/support', OK, { ip: '8.8.4.4' });
+      assert.equal(r.status, 429); assert.deepEqual(await r.json(), { ok: false, code: 'many', error: R.SUPPORT_TEXT.many });
+      assert.match(R.SUPPORT_TEXT.many, /몰려/); assert.match(R.SUPPORT_TEXT.full, /받을 수 없어요/);
+      clock.add(3600e3);
+      assert.equal(M.opsSupPut(ROW('g121'), ['i:fresh']).ok, true, 'an hour later');
+      assert.equal(opsRows(env, 'osup').length, 121);
+    } finally { done(); }
+  });
+  it('limits by network: IPv6 addresses in one /64 share the hourly 10, another /64 does not; the per-minute count and OPS_RL key on the /64', async () => {
+    const { done } = setup();
+    try {
+      const env = makeEnv(), { post } = harness(env);
+      for (let i = 0; i < 10; i++) assert.equal((await post('/rt/support', OK, { ip: '2001:db8:aa:1::' + (i + 1).toString(16) })).status, 200, String(i));
+      const same = await post('/rt/support', OK, { ip: '2001:DB8:AA:1:ffff:1:2:3' });
+      assert.equal(same.status, 429); assert.equal((await same.json()).code, 'rate');
+      assert.equal((await post('/rt/support', OK, { ip: '2001:db8:aa:2::1' })).status, 200, 'the next /64 is another network');
+      const keys = []; env.OPS_RL = { async limit({ key }) { keys.push(key); return { success: true }; } };
+      await post('/rt/err', ERR_BODY, { ip: '2001:db8:aa:3:1:2:3:4' });
+      await post('/rt/err', { ...ERR_BODY, m: 'other' }, { ip: '9.8.7.6' });
+      assert.deepEqual(keys, ['err:2001:db8:aa:3::/64', 'err:9.8.7.6']);
+      let last = 0; delete env.OPS_RL;
+      for (let i = 0; i < 21; i++) last = (await post('/rt/err', { ...ERR_BODY, m: 'v6 ' + i }, { ip: '2001:db8:bb:1::' + (i + 1).toString(16) })).status;
+      assert.equal(last, 429, 'one /64 walking its addresses is one network for the per-minute count');
+    } finally { done(); }
+  });
+  it('the maintenance read (every isolate, every 5 minutes) also prunes rate rows past an hour and inquiries handled over a year ago', async () => {
+    const { clock, done } = setup();
+    try {
+      const env = makeEnv(), M = env.meter('ops').do;
+      assert.equal(M.opsSupPut(ROW('m1'), ['i:a', 'a:guest:x']).ok, true);
+      assert.equal(M.opsSupPut(ROW('m2'), ['i:b']).ok, true);
+      assert.equal(M.opsSupMark('m1', 'done').ok, true);
+      assert.equal(opsRows(env, 'orl').length, 5);
+      clock.add(3600e3 + 1); M.opsMaintGet();
+      assert.equal(opsRows(env, 'orl').length, 0, 'an hour later, with no inquiry written');
+      clock.add(366 * 864e5); M.opsMaintGet();
+      assert.deepEqual(opsRows(env, 'osup').map((x) => x.id), ['m2'], 'the handled one is gone, the open one stays');
     } finally { done(); }
   });
 });

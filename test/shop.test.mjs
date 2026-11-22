@@ -137,10 +137,32 @@ describe('the cosmetic painters (ts3d/art.js)', () => {
     assert.equal(ART.frameTone(null, 1), '');
   });
 
+  it('ids from peers that name Object.prototype keys (constructor, __proto__, toString) paint the plain looks and never throw', () => {
+    const bare = fakeCanvas(256, 64); ART.paintNameTag(bare, '네온', '#ff3d9a', false);
+    const frameX = fakeCanvas(128, 64); ART.paintFrameSwatch(frameX, 'frame_x');
+    for (const id of ['constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf', 'isPrototypeOf']) {
+      const tag = fakeCanvas(256, 64);
+      assert.doesNotThrow(() => ART.paintNameTag(tag, '네온', '#ff3d9a', false, id), id);
+      assert.deepEqual(tag.calls, bare.calls, id + ': the plain name tag');
+      const fr = fakeCanvas(128, 64);
+      assert.doesNotThrow(() => ART.paintFrameSwatch(fr, id), id);
+      assert.deepEqual(fr.calls, frameX.calls, id + ': the plain frame swatch');
+      const ring = fakeCanvas(256, 256);
+      assert.doesNotThrow(() => ART.paintRingFx(ring, id), id);
+      assert.deepEqual(ring.calls.filter((c) => c[0] === 'stroke' || c[0] === 'fill'), [], id + ': no ring effect');
+    }
+    // Every lookup of these tables by an id goes through Object.hasOwn (the render loop and the Room's peers send any string).
+    for (const f of ['ts3d/art.js', 'ts3d/avatars.js', 'timesSquare3d.js']) {
+      for (const line of read(f).split('\n')) for (const t of ['TAG_THEMES', 'RING_FX', 'FRAME_FX']) {
+        if (line.includes(t + '[')) assert.ok(line.includes(`Object.hasOwn(${t}, `), f + ': ' + line.trim());
+      }
+    }
+  });
+
   it('the plaza wires each kind for everyone: tag and ring on any avatar, the cab tint for remote cabs, frames of holders in the room', () => {
     const av = read('ts3d/avatars.js'), ts = read('timesSquare3d.js'), tr = read('ts3d/traffic.js'), sc = read('ts3d/screens.js');
     assert.match(av, /paintNameTag\(this\.tagCanvas, this\.name, this\.color, this\.local, this\.tagTheme\)/);
-    assert.match(av, /this\.syncRingFx\(next\.find\(\(id\) => RING_FX\[id\]\) \|\| ''\)/);
+    assert.match(av, /this\.syncRingFx\(next\.find\(\(id\) => Object\.hasOwn\(RING_FX, id\)\) \|\| ''\)/);
     assert.match(av, /if \(next\.join\(','\) === this\.cosmetics\.join\(','\)\) return;/); // a peer's list every frame rebuilds nothing
     assert.match(ts, /remoteCars\.push\(\{ x: r\.x, z: r\.z, yaw: r\.yaw, v: r\.spd, tint: cabTint\(cosmetics\) \}\)/);
     assert.match(ts, /traffic\?\.setCabTint\(i, cabTint\(myEquip\)\)/);
@@ -204,8 +226,9 @@ function memDb(state) {
     shop_list: 1, buy_cosmetic: 1, unequip_cosmetic: 1, move_cosmetics: 1,
   };
   const after = {
-    shop_list() { return { ok: true, items: SHOP.map(({ id, kind, price }) => ({ id, kind, price })) }; },
+    shop_list() { return { ok: true, items: SHOP.map(({ id, kind }) => ({ id, kind, price: prices.get(id) })) }; },
     buy_cosmetic(a) { const k = kinds.get(a.p_cosmetic_id), p = prices.get(a.p_cosmetic_id); if (!k) return { ok: false, error: 'item' };
+      if (a.p_price != null && a.p_price !== p) return { ok: false, error: 'price', price: p };
       if (!wallets.has(a.p_actor_id)) return { ok: false, error: 'coins', coins: 0, price: p };
       const b = box(a.p_actor_id), c = wallets.get(a.p_actor_id); if (b.has(a.p_cosmetic_id)) return { ok: false, error: 'owned', coins: c };
       if (c < p) return { ok: false, error: 'coins', coins: c, price: p };
@@ -215,7 +238,7 @@ function memDb(state) {
     move_cosmetics() { return { ok: true, moved: 0 }; },
   };
   return {
-    wallets, inv, grant: (a, id) => box(a).set(id, false),
+    wallets, inv, prices, grant: (a, id) => box(a).set(id, false),
     async rpc(name, a) {
       if (a.p_key !== KEY) return json({ message: 'Unauthorized worker key' }, 400);
       if (after[name]) return state.migrated ? json(after[name](a)) : json(MISSING, 404);
@@ -339,6 +362,58 @@ describe('the Worker before and after the shop migration (JS model)', { concurre
       assert.equal((await s.post('/rt/shop/buy', { cosmetic_id: 'cab_pink', topic: 'chapel:square' }, 'bad')).status, 401);
     } finally { s.done(); }
   });
+
+  it('a price shown from an older list buys nothing: refused as price with the live one, nothing charged, the next list is read again', async () => {
+    const state = { rpcs: [], migrated: true }, db = memDb(state), s = await scene(db, state);
+    try {
+      const g = await s.guest(); db.wallets.set(g.id, 5000);
+      const gold = async () => (await s.get('/rt/shop')).body.items.find((it) => it.id === 'tag_gold').price;
+      assert.equal(await gold(), 500);
+      db.prices.set('tag_gold', 650); // the operator raises it; this isolate's list still says 500 for up to 10 minutes
+      state.rpcs.length = 0;
+      assert.equal(await gold(), 500); assert.deepEqual(state.rpcs, [], 'the cached list');
+      const r = await s.post('/rt/shop/buy', { cosmetic_id: 'tag_gold', topic: 'chapel:square', price: 500 }, g.token);
+      assert.deepEqual(r, { status: 409, body: { ok: false, code: 'price', error: '가격이 바뀌었어요. 다시 확인해 주세요.', price: 650 } });
+      assert.equal(db.wallets.get(g.id), 5000, 'nothing charged');
+      assert.equal(db.inv.get(g.id)?.has('tag_gold') || false, false, 'nothing given');
+      state.rpcs.length = 0;
+      assert.equal(await gold(), 650, 'the sheet refreshes and this isolate asks the database again');
+      assert.deepEqual(state.rpcs, ['shop_list']);
+      s.clock.add(4000);
+      const ok = await s.post('/rt/shop/buy', { cosmetic_id: 'tag_gold', topic: 'chapel:square', price: 650 }, g.token);
+      assert.equal(ok.status, 200); assert.equal(ok.body.remaining_coins, 4350);
+      // A page from before this change sends no price: charged the database's price, as before.
+      s.clock.add(4000);
+      assert.equal((await s.buy(g, 'ring_heart')).body.price, 800);
+      // A price that is not a whole positive number is not passed on (and so not compared).
+      s.clock.add(4000);
+      assert.equal((await s.post('/rt/shop/buy', { cosmetic_id: 'cab_pink', topic: 'chapel:square', price: '1' }, g.token)).status, 200);
+      // The sheet: the price it showed goes with the buy, a refusal 'price' reads the list again.
+      const ui = read('ui.js'), main = read('main.js');
+      assert.match(ui, /await hooks\.buyCosmetic\(t\.id, t\.price\)/);
+      assert.match(ui, /if \(e\?\.code === 'price'\)/);
+      assert.match(main, /net\._plazaPost\('\/rt\/shop\/buy', \{ cosmetic_id: id, \.\.\.\(Number\.isInteger\(price\) && price > 0 \? \{ price \} : \{\}\) \}\)/);
+      assert.match(read('net.js'), /throw Object\.assign\(new Error\(data\.error \|\| data\.err \|\| '요청을 처리하지 못했습니다\.'\), \{ code: data\.code \|\| '', data \}\)/);
+    } finally { s.done(); }
+  });
+});
+
+describe('the Room relays only known cosmetics for a socket with no database profile', { concurrency: false }, () => {
+  it("drops 'constructor', '__proto__' and made-up ids from a presence's equip; keeps the shop's ids, '' and 'taxi'", async () => {
+    const env = makeEnv(), room = env.room('chapel:square').do;
+    const ws = { sent: [], send(x) { this.sent.push(String(x)); }, close() {}, serializeAttachment() {}, deserializeAttachment() { return null; } };
+    ws.a = { k: 'guest:peer', q: true, v2: true, fl: 0, lob: false, t: Date.now(), ls: Date.now(), m: { x: 1500, y: 1500, fl: 0, name: '손님' } };
+    room.socks().set(ws, ws.a);
+    const tr = async (equip) => { ws.a.ls = Date.now(); room.socks().set(ws, ws.a); await room.webSocketMessage(ws, JSON.stringify({ t: 'tr', m: { name: '손님', x: 1500, y: 1500, equip } })); return room.socks().get(ws).m.equip; };
+    assert.deepEqual(await tr(['constructor', 'tag_gold', '__proto__', 'toString', 'ring_fake', 'hat_ribbon']), ['tag_gold', 'hat_ribbon']);
+    assert.deepEqual(await tr('constructor,__proto__'), []);
+    assert.deepEqual(await tr({ constructor: 1 }), []);
+    assert.equal(await tr('taxi'), 'taxi');
+    assert.equal(await tr(''), '');
+    // With a profile from the database the Room keeps using that one.
+    ws.a.prof = { av: 2, equip: ['cab_pink'] };
+    assert.deepEqual(await tr(['constructor']), ['cab_pink']);
+  });
 });
 
 describe('the presence lists', () => {
@@ -417,6 +492,20 @@ describe('the shop migration in PGlite (schema before it, then the file)', { ski
     assert.deepEqual((await d.pg.query("SELECT delta::int, reason, ref FROM public.coin_ledger WHERE actor_id = 'guest:a'")).rows, [{ delta: -500, reason: 'shop', ref: 'tag_gold' }]);
     assert.deepEqual(await buy('guest:a', 'tag_gold'), { ok: false, error: 'owned', coins: 700 });
     assert.equal(await d.coins('guest:a'), 700);
+  });
+
+  it('buy with the price the player was shown: another price buys nothing; the same price, or none, buys', async () => {
+    const buy = (a, id, p_price) => d.call('buy_cosmetic', { p_key: KEY, p_actor_id: a, p_cosmetic_id: id, ...(p_price === undefined ? {} : { p_price }) });
+    await d.pg.query("INSERT INTO public.wallets (actor_id, coins) VALUES ('guest:p', 3000)");
+    assert.deepEqual(await buy('guest:p', 'tag_neon', 600), { ok: false, error: 'price', price: 700 });
+    assert.equal(await d.coins('guest:p'), 3000);
+    assert.equal((await d.one("SELECT count(*)::int n FROM public.coin_ledger WHERE actor_id = 'guest:p'")).n, 0);
+    assert.equal((await buy('guest:p', 'tag_neon', 700)).ok, true);
+    assert.equal((await buy('guest:p', 'ring_heart', null)).ok, true, 'null is no price shown');
+    assert.equal((await buy('guest:p', 'cab_pink')).ok, true, 'three arguments still work (the Worker sends three when the page sent no price)');
+    assert.equal(await d.coins('guest:p'), 3000 - 700 - 800 - 900);
+    assert.equal((await d.one("SELECT count(*)::int n FROM pg_proc WHERE proname = 'buy_cosmetic'")).n, 1, 'one buy_cosmetic: the three-argument draft is gone');
+    assert.match(read(MIG), /DROP FUNCTION IF EXISTS public\.buy_cosmetic\(TEXT, TEXT, TEXT\);/);
   });
 
   it('two buys of one item at once: one wins, the other is owned, the wallet is charged once', async () => {

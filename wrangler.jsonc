@@ -25,9 +25,10 @@
   "ratelimits": [
     // new guests minted by POST /rt/guest (renewals and handovers are not counted)
     { "name": "GUEST_RL", "namespace_id": "4701", "simple": { "limit": 10, "period": 60 } },
-    // POST /rt/event
+    // POST /rt/event (and the plaza's ad counts, POST /rt/ads/click and /rt/ads/seen: key 'adhit:<network>')
     { "name": "EVENT_RL", "namespace_id": "4702", "simple": { "limit": 600, "period": 60 } },
-    // POST /rt/err, POST /rt/support, GET /rt/health (ops.js opsRate; one key per route and IP)
+    // POST /rt/err, POST /rt/support, GET /rt/health, POST /rt/ads/request, GET /rt/ads/report/* (ops.js opsRate; one key per route and
+    // network, IPv6 by /64), and the ad counts per account ('adact:<account>')
     { "name": "OPS_RL", "namespace_id": "4711", "simple": { "limit": 20, "period": 60 } }
   ],
   "migrations": [

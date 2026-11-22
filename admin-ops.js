@@ -41,7 +41,9 @@ function renderTabs() {
 async function loadErrors() {
   const d = await api('/rt/admin/errors');
   const items = Array.isArray(d.items) ? d.items : [];
-  say(items.length ? `${items.length}종류 · 합 ${items.reduce((s, x) => s + (Number(x.n) || 0), 0)}번` : '모인 오류가 없어요.');
+  const evicted = Math.max(0, Number(d.evicted) || 0); // groups dropped to make room (the least recently seen first) since the last clear
+  say((items.length ? `${items.length}종류 · 합 ${items.reduce((s, x) => s + (Number(x.n) || 0), 0)}번` : '모인 오류가 없어요.')
+    + (evicted ? ` · 자리가 모자라 오래 안 보인 ${evicted}종류를 지웠어요(마지막으로 지운 뒤부터).` : ''), evicted > 0);
   const clear = el('button', { type: 'button', class: 'no', text: '모두 지우기', onclick: async () => {
     if (!confirm('모은 오류를 모두 지울까요? 되돌릴 수 없어요.')) return;
     clear.disabled = true;

@@ -11,7 +11,8 @@
 --     2. cosmetics.price 열(코인, 비어 있으면 상점에서 안 판다)을 더하고 13종을 넣는다. 리본 모자 400, 노란 택시 800, 연속 테두리 600은
 --        출석으로도 계속 받고 상점에서도 산다(grant_via는 attend7 그대로). balance.js SHOP과 같은 숫자다.
 --     3. coin_ledger의 reason CHECK에 'shop'을 더한다. 있던 값(손으로 더한 것이 있어도)은 그대로 둔다.
---     4. 새 함수 넷: shop_list(파는 것과 가격), buy_cosmetic(한 트랜잭션에서 지갑을 잠그고, 이미 가졌는지·코인이 되는지 보고, 코인을 빼고
+--     4. 새 함수 넷: shop_list(파는 것과 가격), buy_cosmetic(화면에 보인 가격 p_price가 오면 DB 가격과 같은지 먼저 보고(다르면 'price'로 사지 않음),
+--        인자 셋짜리 예전 초안이 있으면 지우고 넷짜리로 만든다. 한 트랜잭션에서 지갑을 잠그고, 이미 가졌는지·코인이 되는지 보고, 코인을 빼고
 --        장부에 'shop'으로 적고, 보관함에 넣고 그 종류로 장착), unequip_cosmetic(그 종류를 벗기), move_cosmetics(게스트가 계정을 연결할 때
 --        게스트 보관함을 계정으로 옮김). 모두 Worker 키(FLUSH_KEY)를 검사하는 SECURITY DEFINER다.
 --     5. profile_read가 장착 목록을 4개가 아니라 6개, 보관함을 12개가 아니라 16개까지 준다. 함수의 다른 줄은 건드리지 않는다
@@ -111,8 +112,10 @@ END;
 $$;
 
 -- One purchase, all or nothing: the wallet row is locked first, so two buys of one account run one after the other and the second sees the
--- first one's item (owned). The price is the database's. The bought item is equipped in its kind.
-CREATE OR REPLACE FUNCTION public.buy_cosmetic(p_key TEXT, p_actor_id TEXT, p_cosmetic_id TEXT)
+-- first one's item (owned). The price is the database's. The bought item is equipped in its kind. p_price: the price the player was shown;
+-- when given and not the database's, nothing is bought ('price', with the database's price), so a list cached for a while never overcharges.
+DROP FUNCTION IF EXISTS public.buy_cosmetic(TEXT, TEXT, TEXT);
+CREATE OR REPLACE FUNCTION public.buy_cosmetic(p_key TEXT, p_actor_id TEXT, p_cosmetic_id TEXT, p_price INT DEFAULT NULL)
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -131,6 +134,9 @@ BEGIN
   SELECT kind, price INTO v_kind, v_price FROM public.cosmetics WHERE id = p_cosmetic_id;
   IF v_kind IS NULL OR v_price IS NULL OR v_price <= 0 THEN
     RETURN jsonb_build_object('ok', false, 'error', 'item');
+  END IF;
+  IF p_price IS NOT NULL AND p_price <> v_price THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'price', 'price', v_price);
   END IF;
   SELECT coins INTO v_coins FROM public.wallets WHERE actor_id = p_actor_id FOR UPDATE;
   IF NOT FOUND THEN
@@ -212,11 +218,11 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION public.shop_list(TEXT) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.buy_cosmetic(TEXT, TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.buy_cosmetic(TEXT, TEXT, TEXT, INT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.unequip_cosmetic(TEXT, TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.move_cosmetics(TEXT, TEXT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.shop_list(TEXT) TO anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.buy_cosmetic(TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.buy_cosmetic(TEXT, TEXT, TEXT, INT) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.unequip_cosmetic(TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.move_cosmetics(TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
 
@@ -256,6 +262,6 @@ FROM
     WHERE conrelid = 'public.coin_ledger'::regclass AND contype = 'c' AND pg_get_constraintdef(oid) ILIKE '%reason%') l,
   (SELECT count(*)::int AS n FROM public.cosmetics WHERE price IS NOT NULL) p,
   (SELECT count(*)::int AS n, count(*) FILTER (WHERE prosecdef)::int AS definer FROM pg_proc
-    WHERE oid IN (to_regprocedure('public.shop_list(text)'), to_regprocedure('public.buy_cosmetic(text,text,text)'),
+    WHERE oid IN (to_regprocedure('public.shop_list(text)'), to_regprocedure('public.buy_cosmetic(text,text,text,integer)'),
       to_regprocedure('public.unequip_cosmetic(text,text,text)'), to_regprocedure('public.move_cosmetics(text,text,text)'))) f,
   (SELECT max(prosrc) AS src FROM pg_proc WHERE oid = to_regprocedure('public.profile_read(text,text)')) r;

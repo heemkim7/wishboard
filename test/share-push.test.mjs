@@ -264,6 +264,25 @@ describe('share pages', () => {
     } finally { done(); }
   });
 
+  it('card pages and snapshot images say noindex (X-Robots-Tag) and keep their Open Graph tags; robots.txt still lets previews in', async () => {
+    const { done, state } = setup();
+    try {
+      const env = makeEnv(), { guest, snap, get } = harness(env), a = await guest();
+      state.boards = [board('STREET_16', a.id)];
+      const url = (await (await snap('?slot=STREET_16', a.token)).json()).url, id = url.slice(-32);
+      const card = await get('/rt/card/STREET_16');
+      assert.equal(card.status, 200); assert.equal(card.headers.get('x-robots-tag'), 'noindex');
+      const html = await card.text();
+      assert.equal(metaOf(html, 'property', 'og:image'), 'https://sq.example/rt/snap/' + id);
+      assert.ok(metaOf(html, 'property', 'og:title'));
+      const img = await get('/rt/snap/' + id);
+      assert.equal(img.status, 200); assert.equal(img.headers.get('content-type'), 'image/jpeg'); assert.equal(img.headers.get('x-robots-tag'), 'noindex');
+      const robots = readFileSync(new URL('../robots.txt', import.meta.url), 'utf8').replace(/\r/g, '');
+      for (const p of ['/rt/card/', '/rt/snap/']) assert.match(robots, new RegExp('^Allow: ' + p.replace(/\//g, '\\/') + '$', 'm'));
+      assert.match(readFileSync(new URL('../worker.js', import.meta.url), 'utf8'), /'content-type': 'image\/png', 'cache-control': 'public, max-age=300', 'x-robots-tag': 'noindex'/);
+    } finally { done(); }
+  });
+
   it('wish page ignores snapshots tagged by anyone but the author', async () => {
     const { clock, done } = setup();
     try {

@@ -22,7 +22,8 @@ const box = h('section', { id: 'adsAdmin' },
   h('h2', {}, '📺 광고 판매 ', h('button', { type: 'button', id: 'adsLoad', text: '새로고침' })),
   h('p', { class: 'sub', text: '광고 전용 화면(AD_1~AD_5)의 신청·검토·일정입니다. 점령 칸·코인과 따로이고 결제는 계좌이체·세금계산서로 직접 받습니다. 문구를 승인해야 일정을 잡을 수 있고, 한 화면에 겹치는 일정은 저장되지 않습니다. 날짜는 한국 시간, 끝 날짜까지 포함입니다. 리포트 링크는 광고주에게 보내는 읽기 전용 주소이고 개인정보가 없습니다.' }),
   h('div', { class: 'msg', id: 'adsMsg' }),
-  h('h2', { text: '일정' }), h('div', { class: 'scroll' }, h('table', { id: 'adsBook' })),
+  h('h2', { text: '일정' }), h('p', { class: 'sub', text: '클릭·화면 봄은 합계와 함께 연결된 계정과 게스트를 나눠 보입니다. 게스트는 누구나 새로 만들 수 있어 게스트 숫자는 약한 수치입니다. 밤 9시 스폰서가 도는 60초에는 하루 광고의 클릭·화면 봄을 세지 않습니다.' }),
+  h('div', { class: 'scroll' }, h('table', { id: 'adsBook' })),
   h('h2', { text: '신청' }), h('div', { class: 'hits', id: 'adsReq' }));
 (document.querySelector('main') || document.body).append(box);
 
@@ -37,6 +38,8 @@ async function api(path, body) {
   return d;
 }
 
+// A count as its total with linked accounts and guests apart (guest counts are weaker: anyone can make a guest).
+const split = (all, linked) => { const n = Math.max(0, Number(all) || 0), u = Math.min(n, Math.max(0, Number(linked) || 0)); return `${n} (계정 ${u} · 게스트 ${n - u})`; };
 function bookings(list) {
   const head = h('tr', {}, ...['화면', '상품', '날짜', '상태', '문구', '링크 클릭', '화면 봄(표본)', '리포트', ''].map((t) => h('th', { text: t })));
   const rows = list.map((b) => {
@@ -45,7 +48,7 @@ function bookings(list) {
     const cancel = b.st === 'live' ? h('button', { type: 'button', class: 'no', text: '취소', onclick: async () => { if (!confirm('이 일정을 취소할까요? 광장에서 바로 내려갑니다.')) return; try { await api('/rt/admin/ads/cancel', { id: b.id }); say('일정을 취소했어요.'); load(); } catch (e) { say(e.message, true); } } }) : null;
     const state = b.st === 'cancelled' ? '취소' : b.b <= Date.now() ? '끝남' : b.a <= Date.now() ? '송출 중' : '예정';
     return h('tr', {}, h('td', { text: adScreenName(b.s) || b.s }), h('td', { text: AD_PRODUCTS[b.p]?.name || b.p }), h('td', { text: `${b.start} ~ ${b.end}` }), h('td', { text: state }),
-      h('td', { text: (b.l || []).filter(Boolean).join(' / ') }), h('td', { text: String(b.c || 0) }), h('td', { text: String(b.v || 0) }),
+      h('td', { text: (b.l || []).filter(Boolean).join(' / ') }), h('td', { text: split(b.c, b.cu) }), h('td', { text: split(b.v, b.vu) }),
       h('td', {}, h('a', { href: url, target: '_blank', rel: 'noopener', text: '열기' }), ' ', copy), h('td', {}, cancel));
   });
   $('adsBook').replaceChildren(head, ...(rows.length ? rows : [h('tr', {}, h('td', { colspan: 9, text: '잡힌 일정이 없어요.' }))]));
