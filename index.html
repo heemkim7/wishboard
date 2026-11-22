@@ -956,6 +956,23 @@ visualViewport?.addEventListener('scroll', fitVV);
     html.touch .dock { right: calc(12px + var(--safe-r)); bottom: calc(150px + var(--safe-b)); left: auto; }
     html.touch .hud-r .stay-balloon { position: fixed; right: calc(12px + var(--safe-r)); bottom: calc(274px + var(--safe-b)); top: auto; left: auto; width: 52px; height: 52px; max-width: 52px; margin: 0; z-index: 7; border-radius: 50%; padding: 0; }
   }
+  /* Touch: the action panel has a '동작' row (four named buttons) and a '리액션' grid, and the two dock circles carry a
+     small caption ('멍때리기', '동작'): as bare icons the actions were not found on a phone. */
+  html.touch .reacts { grid-template-columns: repeat(4, 44px); }
+  html.touch .reacts button { width: 44px; height: 44px; font-size: 20px; }
+  html.touch .reacts .rh { grid-column: 1 / -1; margin: 2px 2px 0; font: 700 11px/1.2 var(--font); color: var(--text-2); }
+  html.touch .reacts button.emote { width: 44px; height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 0; }
+  html.touch .reacts button.emote .e { font-size: 18px; min-height: 0; }
+  html.touch .reacts button.emote .l { display: block; font-size: 10px; line-height: 1.1; font-weight: 700; color: var(--text); white-space: nowrap; letter-spacing: -.02em; }
+  html.touch .reacts button.emote .k { display: none; }
+  html.touch .dock button.emote.more, html.touch .dock button.stay-lounge-btn { flex-direction: column; gap: 1px; }
+  html.touch .dock button.emote.more .l, html.touch .dock button.stay-lounge-btn .l { display: block; font-size: 9px; line-height: 1; font-weight: 700; color: var(--text-2); white-space: nowrap; letter-spacing: -.03em; }
+  /* A phone on its side has little height: eight narrower columns, each action two columns wide. */
+  @media (orientation: landscape) and (max-height: 520px) {
+    html.touch .reacts { grid-template-columns: repeat(8, 40px); }
+    html.touch .reacts button { width: 40px; height: 40px; font-size: 18px; }
+    html.touch .reacts button.emote { width: auto; height: 46px; grid-column: span 2; }
+  }
   html.touch .liveboard .rows .rank:nth-child(n + 4) { display: none; }
   html.touch .liveboard { padding: 8px 10px; }
   html.touch .liveboard .feedhead { margin-top: 0; padding-top: 0; border-top: 0; }

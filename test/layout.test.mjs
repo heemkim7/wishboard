@@ -80,6 +80,17 @@ describe('touch portrait', () => {
     assert.equal(px(rule(narrow, 'html.touch .coach'), 'font-size'), 11);
     assert.match(read('ui.js'), /class: 'coach', role: 'status', hidden: true, text: '끌어서 둘러보기 · 두 손가락으로 확대'/);
   });
+  it('on a phone the four actions are a named row in the panel, and the dock circles carry captions', () => {
+    const ui = read('ui.js');
+    assert.match(ui, /reactPanel\.prepend\(h\('p', \{ class: 'rh', text: '동작' \}\), \.\.\.dock\.querySelectorAll\('\.emote:not\(\.more\)'\), h\('p', \{ class: 'rh', text: '리액션' \}\)\);/);
+    assert.match(ui, /if \(cap\) cap\.textContent = '동작';/);
+    assert.match(css, /html\.touch \.reacts button\.emote \.l \{ display: block;/);
+    assert.match(css, /html\.touch \.dock button\.emote\.more \.l, html\.touch \.dock button\.stay-lounge-btn \.l \{ display: block;/);
+    // the caption rule comes after the rules that hid dock labels on touch
+    assert.ok(css.indexOf('html.touch .dock button.emote.more .l') > css.indexOf('html.touch .dock .stay-lounge-btn .l { display: none; }'));
+    // portrait: four 44px columns; 4 x 44 + 3 x 4 gaps + 12 padding = 200px, 8px from the right of a 320px phone
+    assert.ok(8 + 4 * 44 + 3 * 4 + 12 < 320 - 76);
+  });
   it('every dock button is 52 x 52: the old 48px rules for the more and lounge buttons are gone', () => {
     assert.equal(css.includes('html.touch .dock .emote.more'), false);
     assert.equal(/html\.touch \.dock \.stay-lounge-btn \{ width: 48px/.test(css), false);

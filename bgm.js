@@ -1,5 +1,6 @@
-// Background music made in the browser: three original loops (plaza, drive, night) played by WebAudio oscillators and
-// one noise buffer. No audio files: audio.js tries assets/audio/<id>.ogg first (none are shipped) and hands the track
+// Background music made in the browser: four original loops (plaza, drive, night, and lounge for 멍때리기) played by
+// WebAudio oscillators and one noise buffer. lounge is not one of audio.js's tracks: ui.js lays it over the current track
+// while the player sits in the lounge (over('lounge')) and takes it off again (over(null)). No audio files: audio.js tries assets/audio/<id>.ogg first (none are shipped) and hands the track
 // to this synth when the file fails. ui.js owns the AudioContext and binds the synth with bindMusic().
 //
 // Everything is scheduled a little ahead (LOOK seconds) on the context clock, so a suspended context (page hidden,
@@ -33,6 +34,16 @@ export const TRACKS = Object.freeze({
     scale: [69, 72, 74, 76, 79, 81],
     kick: [[0, 4, 8, 12]], snare: [4, 12], hat: [2, 6, 10, 14], openHat: [14],
     bassSteps: [[0, 2], [2, 2], [4, 2], [6, 2], [8, 2], [10, 2], [12, 2], [14, 2]], keys: 'pad', arp: 2, leadDensity: 0.18, leadSteps: [0, 3, 6, 8, 12],
+  }),
+  // 멍때리기 (the lounge seat by the TKTS steps): slow, warm and quiet. Cmaj9 Am9 Dm9 G13, two bars each, soft keys
+  // under a low cutoff, a brushed kick and a faint rim, slow bell notes. No hat on every eighth: it should not tick.
+  lounge: Object.freeze({
+    bpm: 68, swing: 0.2, cutoff: 1500, barsPerChord: 2,
+    chords: [[48, 52, 55, 59, 62], [45, 48, 52, 55, 59], [50, 53, 57, 60, 64], [43, 47, 53, 57, 64]],
+    bass: [36, 33, 38, 31],
+    scale: [67, 69, 71, 72, 74, 76, 79],
+    kick: [[0, 10], [0, 7, 10]], snare: [8], hat: [4, 12], openHat: [],
+    bassSteps: [[0, 12], [14, 2]], keys: 'hold', arp: null, leadDensity: 0.18, leadSteps: [2, 6, 11, 14], soft: true,
   }),
   // The ball drop / evening event: C G Am F, claps, bells.
   night: Object.freeze({
@@ -86,6 +97,8 @@ export function leadBar(id, bar) {
 export function createBgm(getCtx, getDest, { setTimer = setInterval, clearTimer = clearInterval } = {}) {
   let ctx = null, bus = null, tone = null, echo = null, noise = null;
   let track = null, id = '', timer = 0, step = 0, bar = 0, next = 0;
+  // base: the track audio.js asked for; overId: a track laid over it (the lounge) until over(null).
+  let base = '', overId = '';
   let ducked = false, playing = false, stopAt = 0;
 
   function ensure() {
@@ -154,9 +167,9 @@ export function createBgm(getCtx, getDest, { setTimer = setInterval, clearTimer 
     osc(type, midiHz(midi), t, end, g, detune);
     return g;
   }
-  function kick(t) {
+  function kick(t, soft = 1) {
     const g = ctx.createGain();
-    const end = env(g, t, 0.34, 0.004, 0, 0.26);
+    const end = env(g, t, 0.34 * soft, 0.004, 0, 0.26);
     g.connect(bus);
     const o = osc('sine', 130, t, end, g);
     o.frequency.exponentialRampToValueAtTime(46, t + 0.11);
@@ -182,22 +195,23 @@ export function createBgm(getCtx, getDest, { setTimer = setInterval, clearTimer 
     const chord = T.chords[Math.floor(bar / T.barsPerChord) % T.chords.length];
     const root = T.bass[Math.floor(bar / T.barsPerChord) % T.bass.length];
     const kicks = T.kick[bar % T.kick.length];
-    if (kicks.includes(inBar)) kick(t);
-    if (T.snare.includes(inBar)) hiss(t, 'bandpass', id === 'plaza' ? 1500 : 1900, id === 'plaza' ? 0.07 : 0.1, id === 'plaza' ? 0.12 : 0.16, 0.9);
+    const soft = T.soft ? 0.45 : 1;
+    if (kicks.includes(inBar)) kick(t, soft);
+    if (T.snare.includes(inBar)) hiss(t, 'bandpass', T.soft ? 2600 : id === 'plaza' ? 1500 : 1900, (id === 'plaza' ? 0.07 : 0.1) * soft, T.soft ? 0.05 : id === 'plaza' ? 0.12 : 0.16, 0.9);
     if (T.hat.includes(inBar)) {
       const open = T.openHat.includes(inBar);
-      hiss(t, 'highpass', 7200, (inBar % 4 === 0 ? 0.022 : 0.032) * (id === 'plaza' ? 0.8 : 1), open ? 0.14 : 0.035);
+      hiss(t, 'highpass', 7200, (inBar % 4 === 0 ? 0.022 : 0.032) * (id === 'plaza' ? 0.8 : 1) * soft, open ? 0.14 : 0.035);
     }
     for (const [at, len] of T.bassSteps) {
       if (at !== inBar) continue;
       const oct = id === 'drive' && (inBar / 2) % 2 === 1 ? 12 : 0;
-      voice('sine', root + oct, t, 0.16, 0.01, len * sx * 0.55, len * sx * 0.4);
-      voice('triangle', root + 12 + oct, t, 0.025, 0.01, len * sx * 0.3, len * sx * 0.4);
+      voice('sine', root + oct, t, 0.16 * (T.soft ? 0.8 : 1), 0.01, len * sx * 0.55, len * sx * 0.4);
+      if (!T.soft) voice('triangle', root + 12 + oct, t, 0.025, 0.01, len * sx * 0.3, len * sx * 0.4);
     }
     if (inBar === 0) {
       const barSec = 16 * sx;
       if (T.keys === 'hold' && bar % T.barsPerChord === 0) {
-        for (const n of chord) voice('triangle', n, t, 0.028, 0.05, barSec * T.barsPerChord * 0.55, barSec * 0.6, bus, (n % 3) * 3 - 3);
+        for (const n of chord) voice('triangle', n, t, T.soft ? 0.022 : 0.028, T.soft ? 0.12 : 0.05, barSec * T.barsPerChord * 0.55, barSec * 0.6, bus, (n % 3) * 3 - 3);
       } else if (T.keys === 'pad') {
         for (const n of chord) voice('sawtooth', n, t, 0.012, 0.35, barSec * 0.45, barSec * 0.4, bus, (n % 2) * 6 - 3);
       }
@@ -246,8 +260,7 @@ export function createBgm(getCtx, getDest, { setTimer = setInterval, clearTimer 
     stopAt = 0;
   }
 
-  return {
-    start(name) {
+  function play(name) {
       const T = TRACKS[name];
       if (!T) return false;
       if (!ensure()) return false;
@@ -273,8 +286,25 @@ export function createBgm(getCtx, getDest, { setTimer = setInterval, clearTimer 
       playing = true;
       tick();
       return true;
+  }
+
+  return {
+    start(name) {
+      if (!TRACKS[name]) return false;
+      base = name;
+      if (overId) return true; // the lounge goes on; this one plays when it ends
+      return play(name);
+    },
+    // Lay a track over the current one (name), or take it off and go back to the current one (null).
+    over(name) {
+      overId = name && TRACKS[name] ? name : '';
+      if (overId) return play(overId);
+      if (base) return play(base);
+      this.stop();
+      return false;
     },
     stop() {
+      overId = '';
       if (!track) return;
       ramp(0.0001, 0.5);
       stopAt = (ctx?.currentTime || 0) + 0.55;

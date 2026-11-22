@@ -41,13 +41,14 @@ function clock() {
 }
 
 describe('bgm.js tracks', () => {
-  it('has one synth loop for every track audio.js knows', () => {
-    assert.deepEqual(Object.keys(TRACKS).sort(), [...MUSIC].sort());
+  it('has one synth loop for every track audio.js knows, plus the lounge', () => {
+    assert.deepEqual(Object.keys(TRACKS).sort(), [...MUSIC, 'lounge'].sort());
+    assert.equal(MUSIC.includes('lounge'), false); // ui.js lays it over the current track; no file is asked for
     for (const [id, t] of Object.entries(TRACKS)) {
-      assert.ok(t.bpm >= 70 && t.bpm <= 130, id);
+      assert.ok(t.bpm >= 60 && t.bpm <= 130, id);
       assert.equal(t.chords.length, t.bass.length, id);
       for (const c of t.chords) for (const n of c) assert.ok(n >= 36 && n <= 84, id + ' chord range');
-      assert.ok(stepSeconds(t) > 0.1 && stepSeconds(t) < 0.2, id);
+      assert.ok(stepSeconds(t) > 0.1 && stepSeconds(t) < 0.25, id);
       assert.ok(loopBars(t) >= 4 && loopBars(t) <= 8, id);
     }
   });
@@ -93,6 +94,24 @@ describe('createBgm', () => {
     assert.equal(c.live, 0, 'the timer ends once the fade is over');
     assert.equal(bgm.track, '');
   });
+  it('lays the lounge over the current track and goes back to it; a new track asked meanwhile waits', () => {
+    const ctx = fakeCtx();
+    const c = clock();
+    const bgm = createBgm(() => ctx, () => ctx.destination, c);
+    bgm.start('plaza');
+    bgm.over('lounge');
+    assert.equal(bgm.track, 'lounge');
+    bgm.start('night'); // the ball opens while the player sits: the lounge goes on
+    assert.equal(bgm.track, 'lounge');
+    bgm.over(null);
+    assert.equal(bgm.track, 'night');
+    assert.equal(c.live, 1);
+    bgm.stop(); // sound off ends the overlay too
+    bgm.over(null);
+    assert.equal(bgm.playing, false);
+    assert.equal(bgm.over('nope'), true); // an unknown name is no overlay: back to the base track
+    assert.equal(bgm.track, 'night');
+  });
   it('switches tracks on one timer, does nothing without a context, and ducks to silence', () => {
     const ctx = fakeCtx();
     const c = clock();
@@ -129,7 +148,9 @@ describe('audio.js hands a missing track to the synth', () => {
     const ui = read('ui.js');
     assert.match(ui, /createBgm\(\(\) => \(soundOn \? ac\(\) : null\), \(\) => audio\.master\)/);
     assert.match(ui, /bindMusic\(bgm\)/);
-    assert.match(ui, /duckMusic\(true\); \/\/ the lounge chords/);
+    assert.match(ui, /lofi = true;\n\s+bgm\.over\('lounge'\);/);
+    assert.match(ui, /lofi = false;\n\s+bgm\.over\(null\);/);
+    assert.doesNotMatch(ui, /const chords = \[\[220, 261\.6, 329\.6\]/); // the old humming sine chords
     assert.match(ui, /danceBus = dest; duckMusic\(true\);/);
     assert.match(read('index.html') + read('ui.js'), /bgm\.js\?v=/);
   });

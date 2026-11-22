@@ -233,24 +233,19 @@ export function createUI(root, hooks) {
     if (hidden) audio.ctx.suspend?.().catch?.(() => {});
     else if (soundOn) audio.ctx.resume?.().catch?.(() => {});
   });
-  let lofi = null;
+  let lofi = false;
+  // 멍때리기 plays bgm.js's lounge track over the square's track (it used to be three low sine tones gliding between
+  // chords, which sounded like a hum), and the square's track comes back when the player gets up.
   function lofiStart() {
-    if (!soundOn) return;
-    const ctx = ac();
-    if (!ctx || lofi) return;
-    const g = ctx.createGain();
-    g.gain.value = 0.045;
-    g.connect(audio.master);
-    const oscs = [0, 1, 2].map(() => { const o = ctx.createOscillator(); o.type = 'sine'; const og = ctx.createGain(); og.gain.value = 0.5; o.connect(og); og.connect(g); o.start(); return o; });
-    const chords = [[220, 261.6, 329.6], [174.6, 220, 261.6], [196, 246.9, 293.7], [164.8, 196, 246.9]];
-    let i = 0;
-    const play = () => { const c = chords[i++ % chords.length]; oscs.forEach((o, k) => o.frequency.setTargetAtTime(c[k] / 2, ctx.currentTime, 0.12)); };
-    play();
-    const timer = setInterval(play, 3200);
-    duckMusic(true); // the lounge chords replace the track while they play
-    lofi = { stop() { clearInterval(timer); oscs.forEach((o) => { try { o.stop(); } catch { /* already stopped */ } }); g.disconnect(); lofi = null; duckMusic(false); } };
+    if (!soundOn || lofi) return;
+    lofi = true;
+    bgm.over('lounge');
   }
-  function lofiStop() { lofi?.stop(); }
+  function lofiStop() {
+    if (!lofi) return;
+    lofi = false;
+    bgm.over(null);
+  }
   let city = null;
   function cityStop() { city?.stop(); }
   function cityStart() {
@@ -466,9 +461,16 @@ export function createUI(root, hooks) {
   root.append(dock);
   const reactPanel = h('div', { class: 'glass reacts', hidden: true, role: 'menu', 'aria-label': '리액션 이모지' },
     ...REACTIONS.map((r, i) => h('button', { type: 'button', text: r.g, 'aria-label': r.g, onclick: () => { hooks.reactEmoji(i); toggleReacts(false); } })));
+  // Touch: the four actions (1-4 on a keyboard) live in this panel, under a '동작' heading with their names, above the
+  // '리액션' emoji. The dock button says '동작' too: as bare line icons in the first emoji row they were not found.
   if (coarse) {
-    reactPanel.prepend(...dock.querySelectorAll('.emote:not(.more)'));
+    reactPanel.prepend(h('p', { class: 'rh', text: '동작' }), ...dock.querySelectorAll('.emote:not(.more)'), h('p', { class: 'rh', text: '리액션' }));
     dock.querySelector('.sep')?.remove();
+    moreBtn.title = '동작 · 리액션';
+    moreBtn.setAttribute('aria-label', '동작 · 리액션');
+    const cap = moreBtn.querySelector('.l');
+    if (cap) cap.textContent = '동작';
+    reactPanel.setAttribute('aria-label', '동작 · 리액션');
   }
   root.append(reactPanel);
   document.addEventListener('pointerdown', (e) => {
