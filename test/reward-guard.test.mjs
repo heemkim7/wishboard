@@ -161,7 +161,7 @@ function fakeNet(state, db) {
 }
 let clockBase = Date.parse('2033-03-01T03:00:00Z'), kid = 0, seq = 0;
 const utcDay = () => new Date().toISOString().slice(0, 10);
-const setUsed = (env, n) => env.meter('day').sql.db.prepare('insert into d values(?, ?) on conflict(day) do update set n = excluded.n').run(utcDay(), n);
+const setUsed = (env, n) => env.meter('day').sql.db.prepare('insert into d(day, n) values(?, ?) on conflict(day) do update set n = excluded.n').run(utcDay(), n);
 async function scene(db, extra = {}) {
   clockBase += 10 * 864e5; let t = clockBase; const origNow = Date.now, origFetch = globalThis.fetch, state = { rpcs: [], verifies: [], verify: null, action: '' };
   Date.now = () => t; globalThis.fetch = fakeNet(state, db); globalThis.caches = { default: { async match() {}, async put() {}, async delete() { return true; } } };
