@@ -267,7 +267,7 @@
 - 누적 순위의 `보러가기`는 그 사람의 켜진 칸을 먼저 보고, 없으면 꺼진 칸으로 카메라를 옮긴다. 주간 리그 줄은 계정 id가 없어 칸으로 가지 않는다(`주간 리그` › `화면`).
 - 시점 집중 중에는 상호작용 프롬프트가 시점 해제 버튼을 가리지 않는다.
 - 첫 붕어빵 보상 뒤 튜토리얼은 무료 첫 칸 목록의 첫 빈 칸으로 길안내한다. 튜토리얼이 시작하는 조건은 출석 여부가 아니라 이번 입장 전의 `kts_daily`다(아래 `처음 1분`).
-- 서비스 워커 `sw.js?v=9`는 `/assets/*`만 캐시하고, 캐시 이름은 그 `?v=` 값이다. HTML·JS는 캐시하지 않는다. JS 모듈 주소 규칙은 아래 `모듈 주소`다. 한 모듈을 두 주소로 부르면 두 번 실행되어 상태(전광판 시계 등)가 두 벌이 된다.
+- 서비스 워커 `sw.js?v=10`(2026-11-22 저녁 엄지 모델 교체로 9→10)은 `/assets/*`만 캐시하고, 캐시 이름은 그 `?v=` 값이다. HTML·JS는 캐시하지 않는다. JS 모듈 주소 규칙은 아래 `모듈 주소`다. 한 모듈을 두 주소로 부르면 두 번 실행되어 상태(전광판 시계 등)가 두 벌이 된다.
 
 ## 겹쳐 뜨는 화면
 
@@ -515,7 +515,7 @@
 
 - 브라우저 전용 모듈은 모두 `./x.js?v=<빌드 id>`로, 빌드 id 하나로 부른다. 기준은 `index.html`의 `main.js?v=` 값이고 지금은 `202611221326`다. `index.html`의 `<script src>`도 같다.
 - Worker도 번들하는 모듈(`worker.js`에서 정적 import로 닿는 것)은 어디서든 쿼리 없이 부른다. 지금은 `adreport.js`, `balance.js`, `cardpng.js`, `dark.js`, `invite.js`, `league.js`, `live.js`, `plaza-account.js`, `ts3d/walkers.js`, `wish.js`다(`tools/stamp.mjs` `workerModules`가 `worker.js`의 import에서 찾는다). 이 모듈들 안의 import도 쿼리가 없다. `qr.js`, `growth.js`, `inbox.js`, `share.js`, `ts3d/loadplan.js`, `interact.js`, `bgm.js`(배경음악 합성), `ts3d/bowtie.js`(전광판 배치), `errlog.js`, `install.js`, `recap.js`, `adspage.js`, `admin-ops.js`, `admin-ads.js`, `mailcode.js`(이메일 확인 코드)는 브라우저 전용이라 `?v=`로 부른다. 5차에 더한 Worker 번들 모듈은 `ops.js`, `opsrules.js`, `adsrv.js`, `adsale.js`다(쿼리 없음). `ads.html`도 `tools/stamp.mjs`가 고친다.
-- `sw.js`(`?v=9`, 손으로 관리)와 `vendor/`는 이 규칙 밖이다. `index.html`이 `/sw.js?v=9`를 등록한다.
+- `sw.js`(`?v=10`, 손으로 관리)와 `vendor/`는 이 규칙 밖이다. `index.html`이 `/sw.js?v=10`을 등록한다. `assets/`의 파일을 같은 이름으로 바꿀 때는 이 숫자를 올려야 다시 온 사람도 새 파일을 받는다.
 - HTML 페이지(`index.html`, `admin.html`) 안의 인라인 모듈 스크립트의 import도 같은 규칙으로 `tools/stamp.mjs`가 고친다(`admin.html`의 `./growth.js?v=`).
 - import를 더하거나 바꾸거나 브라우저 모듈을 고쳐 내보낼 때는 `node tools/stamp.mjs`를 돌린다. 모든 import를 지금 KST 시각으로 만든 새 빌드 id로 고쳐 쓰고, Worker 번들 모듈은 쿼리를 뗀다. `node tools/stamp.mjs --check`는 아무것도 바꾸지 않고 어긋난 파일이 있으면 1로 끝난다.
 
