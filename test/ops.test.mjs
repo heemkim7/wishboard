@@ -83,7 +83,7 @@ function setup() {
   return { clock, state, done: () => { Date.now = origNow; globalThis.fetch = origFetch; ops.opsReset(); } };
 }
 const utcDay = () => new Date().toISOString().slice(0, 10);
-const setUsed = (env, n) => env.meter('day').sql.db.prepare('insert into d values(?, ?) on conflict(day) do update set n = excluded.n').run(utcDay(), n);
+const setUsed = (env, n) => env.meter('day').sql.db.prepare('insert into d(day, n) values(?, ?) on conflict(day) do update set n = excluded.n').run(utcDay(), n);
 const opsRows = (env, table) => env.meter('ops').sql.db.prepare('select * from ' + table).all();
 const ERR_BODY = { m: 'TypeError: x is undefined', s: 'https://studio.wishboard.workers.dev/ui.js?v=202611221134:12:34', k: 'at f (https://studio.wishboard.workers.dev/ui.js?v=202611221134:12:34)\nat g (https://studio.wishboard.workers.dev/main.js?v=202611221134:5:6)', b: '202611221134', p: '/', q: 'low', t: 1, ua: 'chrome/android' };
 

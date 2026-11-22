@@ -247,7 +247,7 @@ async function scene(db, extra = {}) {
 }
 const utcDay = () => new Date().toISOString().slice(0, 10); // Meter.add keys its row by new Date() (the real clock, not the mocked Date.now)
 const dayN = (env) => env.meter('day').sql.db.prepare('select n from d where day = ?').get(utcDay())?.n || 0;
-const setUsed = (env, n) => env.meter('day').sql.db.prepare('insert into d values(?, ?) on conflict(day) do update set n = excluded.n').run(utcDay(), n);
+const setUsed = (env, n) => env.meter('day').sql.db.prepare('insert into d(day, n) values(?, ?) on conflict(day) do update set n = excluded.n').run(utcDay(), n);
 const LINK_HARD = { ok: false, err: 'busy', error: '지금은 광장이 붐벼서 계정을 연결하지 못했어요. 잠시 뒤에 새로고침해 주세요.' };
 const GONE = { ok: false, err: 'gone', error: '탈퇴한 계정이에요. 다시 로그인해 주세요.' };
 
