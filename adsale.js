@@ -41,7 +41,6 @@ export const adScreenName = (id) => AD_SCREENS.find((s) => s.id === id)?.name ||
 // Products. 'cheer' is the same booking as 'screen' with a birthday / cheer template. 'sponsor9': every ad screen at once
 // from 21:00:00 to 21:01:00 KST on each day of the booking (the claimable boards keep their own 9 pm 소원왕). In that minute a day
 // booking on any screen steps aside, and its clicks and sightings are not counted (adsrv.js hit).
-export const AD_NINE_NOTE = '밤 9시 60초 스폰서가 잡힌 날에는 한국 시간 21시 정각부터 60초 동안 스폰서 광고가 광고 화면 다섯 곳 모두에 나가고, 그동안 하루 광고는 잠시 쉬어요(그 60초의 클릭과 화면 봄은 세지 않아요).';
 export const AD_PRODUCTS = {
   screen: { name: '광고 화면 하루', unit: '1일', desc: '광고 화면 한 곳에 하루 종일(한국 시간 0시부터 24시까지). 밤 9시 스폰서가 있는 날은 21시부터 60초 동안 스폰서 광고가 대신 나가요.' },
   cheer: { name: '생일·응원 패키지', unit: '1일', desc: '광고 화면 한 곳에 하루 종일, 생일·응원 문구 틀로. 밤 9시 스폰서가 있는 날은 21시부터 60초 동안 스폰서 광고가 대신 나가요.' },
