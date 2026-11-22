@@ -21,36 +21,68 @@ import { adsApi, adsDb, adsWorld } from './adsrv.js';
 // v16 cost pass: ping 25s (client) / STALE 75s, idle scan alarm 60s, meter report 60s, compact pos ('p'/'P'), nearby fanout, event ring + world cache, HMAC guest tokens.
 const CAP = 50, MEM = 0.125, LEAN = 0.8, HARD = 0.95, STALE = 75000, SCAN = 5000, IDLE_SCAN = 60000, REP = 60000;
 const NEAR_R = 1600, FAR_MS = 3000, HIST_N = 10, PRAY_TTL = 15;
-// Budget guard. Default = Workers Free daily limits (safe on Free). Only if the Worker var PLAN === 'paid' are paid-plan
-// cost-safety budgets used (overridable with BUDGET_REQ_DAY / BUDGET_GBS_DAY vars). This never changes the account plan.
-const FREE = { DAY: 100000, GBS: 13000 }, PAID = { DAY: 30e6, GBS: 3e6 };
+// Budget guard. Default = Workers Free daily limits (safe on Free). Only if the Worker var PLAN === 'paid' are paid-plan cost-safety budgets used
+// (overridable with BUDGET_REQ_DAY / BUDGET_GBS_DAY / BUDGET_ROWS_DAY / BUDGET_READS_DAY / BUDGET_WREQ_DAY vars). This never changes the account plan.
+// DAY: DO requests. GBS: Room wall time. ROWS / READS: SQLite rows written / read in every DO (Free 100k / 5M a day; rows written are the first free
+// limit players reach). WREQ: Worker invocations (Free 100k a day). The level is the highest of the five fractions.
+// PAID ROWS 2e6 a day: at most 60M in a 30-day month, 10M past the 50M included = $10. PAID WREQ 1.5e6: at most 45M, 35M past the 10M included
+// = $10.50 (the 400-player ceiling is about 1.15M a day). PAID READS 1e9: at most 30B against 25B included = $5.
+const FREE = { DAY: 100000, GBS: 13000, ROWS: 100000, READS: 5e6, WREQ: 100000 }, PAID = { DAY: 30e6, GBS: 3e6, ROWS: 2e6, READS: 1e9, WREQ: 1.5e6 };
 let BUD = FREE;
-const budget = env => { const p = env && env.PLAN === 'paid' ? PAID : FREE; BUD = { DAY: +(env && env.BUDGET_REQ_DAY) || p.DAY, GBS: +(env && env.BUDGET_GBS_DAY) || p.GBS }; return BUD; };
-const lvlOf = (n, g = 0) => { const f = Math.max(n / BUD.DAY, g / BUD.GBS); return f >= HARD ? 2 : f >= LEAN ? 1 : 0; };
-const today = () => new Date().toISOString().slice(0, 10);
-// Budget tally: DO calls the Worker makes for HTTP routes, summed per isolate and added to 'day' at most once per TALLY_MS (a /rt/gate read that comes
-// first carries it too). Not counted here: Meter.add (it counts its own call) and the /rt/ws upgrade (the Room counts the connection). A tail lost with
-// the isolate is accepted; a failed add is not retried, so nothing is counted twice. LVL is the level the last add answered, at most LVL_TTL old.
-const TALLY_MS = 25000, LVL_TTL = 60000, FLUSH_DEAD = 10000, CTX = Symbol('ctx');
-let TALLY = { n: 0, at: 0, p: null, pAt: 0 }, LVL = { l: 0, at: 0 };
+const budget = env => { const p = env && env.PLAN === 'paid' ? PAID : FREE, v = k => { const x = +(env && env['BUDGET_' + k + '_DAY']); return x > 0 ? x : 0; };
+  BUD = { DAY: v('REQ') || p.DAY, GBS: v('GBS') || p.GBS, ROWS: v('ROWS') || p.ROWS, READS: v('READS') || p.READS, WREQ: v('WREQ') || p.WREQ }; return BUD; };
+// n DO requests, g GB-s, w rows written, r rows read, q Worker requests (today's 'day' row).
+const lvlOf = (n, g = 0, w = 0, r = 0, q = 0) => { const f = Math.max(n / BUD.DAY, g / BUD.GBS, w / BUD.ROWS, r / BUD.READS, q / BUD.WREQ); return f >= HARD ? 2 : f >= LEAN ? 1 : 0; };
+const today = () => new Date().toISOString().slice(0, 10); // UTC: Cloudflare's daily free limits reset at 00:00 UTC
+// SQLite rows: every DO wraps its ctx (rowsCtx) so that each sql.exec cursor is kept to the end of the turn (one microtask) and then its own
+// rowsWritten / rowsRead, the numbers Cloudflare bills, go into the DO's box R (rowsFold). A write is complete at exec; a cursor still being read
+// after an await counts what it had read by then. setAlarm and deleteAlarm add one row written each (the pricing page bills setAlarm as one row,
+// and a delete is a write). The DOs use no key-value storage API. Everything else on ctx and storage passes through, bound to the real object.
+// R.on runs after each fold (the Meter's rowsDue, the Room's keep), so rows a later continuation writes (an alarm set after an await) are seen too.
+const ROWS_MIN = 20, ROWS_IDLE = 600000, WREQ_PAD = 1.05;
+const rowsBox = () => ({ w: 0, r: 0, c: [], due: false, on: null });
+function rowsFold(R) { const c = R.c; if (!c.length) return; R.c = []; for (const x of c) { try { R.w += Number(x.rowsWritten) || 0; R.r += Number(x.rowsRead) || 0; } catch { /* a closed cursor */ } } }
+function rowsTake(R) { rowsFold(R); const o = { w: R.w, r: R.r }; R.w = 0; R.r = 0; return o; }
+function rowsCtx(ctx, R) {
+  const B = new WeakMap(), pass = (t, k) => { const v = Reflect.get(t, k); if (typeof v !== 'function') return v; let b = B.get(v); if (!b) B.set(v, b = v.bind(t)); return b; };
+  const soon = () => { if (!R.due) { R.due = true; queueMicrotask(() => { R.due = false; rowsFold(R); try { R.on?.(); } catch { /* the next turn tries again */ } }); } };
+  const seen = c => { if (c && typeof c === 'object') { R.c.push(c); soon(); } return c; };
+  const W = new WeakMap(), wrap = (o, get) => { if (!o || typeof o !== 'object') return o; let p = W.get(o); if (!p) W.set(o, p = new Proxy(o, { get })); return p; };
+  const sqlGet = (t, k) => { if (k !== 'exec') return pass(t, k); let e = B.get(t); if (!e) B.set(t, e = (...a) => seen(Reflect.apply(t.exec, t, a))); return e; };
+  const stGet = (t, k) => { if (k === 'sql') return wrap(Reflect.get(t, k), sqlGet); const v = pass(t, k); return (k === 'setAlarm' || k === 'deleteAlarm') && typeof v === 'function' ? (...a) => { R.w++; soon(); return v(...a); } : v; };
+  return new Proxy(ctx, { get: (t, k) => (k === 'storage' ? wrap(Reflect.get(t, k), stGet) : pass(t, k)) });
+}
+// A room with no socket hands what it counted back on its response to an internal request: x-pend = DO calls, rows written, rows read.
+const pendOf = res => { const h = String(res?.headers?.get?.('x-pend') || ''); if (!h) return null; const v = h.split(',').map(x => { x = Number(x); return x > 0 && x < 1e7 ? x : 0; }); return v.length === 3 ? v : null; };
+// Budget tally, per isolate: n DO calls the Worker makes for HTTP routes, q Worker invocations (every fetch and scheduled; static assets do not run
+// the Worker, a path no asset matches does), w / r the rows empty rooms handed back (x-pend). Added to 'day' at most once per TALLY_MS (a /rt/gate
+// read that comes first carries it too). q alone goes out once WREQ_MIN have piled up (not at hard) or its oldest is WREQ_IDLE old, so an isolate
+// that makes no DO call adds at most one call per WREQ_MIN requests. Not counted in n: Meter.add (it counts its own call) and the /rt/ws upgrade
+// (the Room counts the connection). A tail lost with the isolate is accepted (for q, the Meter adds WREQ_PAD); a failed add is not retried, so
+// nothing is counted twice. LVL is the level the last add answered, at most LVL_TTL old.
+const TALLY_MS = 25000, LVL_TTL = 60000, FLUSH_DEAD = 10000, WREQ_MIN = 250, WREQ_IDLE = 600000, CTX = Symbol('ctx');
+let TALLY = { n: 0, at: 0, p: null, pAt: 0, q: 0, q0: 0, w: 0, r: 0 }, LVL = { l: 0, at: 0 };
 const stale = (at, ms, now = Date.now()) => now - at >= ms || now < at;
 const upgrade = r => /^websocket$/i.test(String(r?.headers?.get?.('Upgrade') || ''));
+const wreqOne = () => { if (!TALLY.q++) TALLY.q0 = Date.now(); };
+const tallyDue = (now = Date.now()) => ((TALLY.n > 0 || TALLY.w > 0 || TALLY.r > 0 || (TALLY.q >= WREQ_MIN && LVL.l < 2)) && stale(TALLY.at, TALLY_MS, now)) || (TALLY.q > 0 && stale(TALLY.q0, WREQ_IDLE, now));
+const pendTally = p => (p && typeof p.then === 'function' ? p.then(res => { const v = pendOf(res); if (v) { TALLY.n += v[0]; TALLY.w += v[1]; TALLY.r += v[2]; } return res; }) : p);
 // Every function handed out runs on the real stub (never with the Proxy as receiver). Not counted: add (counts itself), the /rt/ws upgrade, symbol keys.
-// Non-functions and then pass through untouched.
+// Non-functions and then pass through untouched. A fetch answer is the same Response, read for x-pend on the way.
 const tallyStub = s => new Proxy(s, { get(t, k) { const v = Reflect.get(t, k); if (typeof v !== 'function' || k === 'then') return v;
-  return (...a) => { if (typeof k === 'string' && k !== 'add' && !(k === 'fetch' && upgrade(a[0]))) TALLY.n++; return Reflect.apply(v, t, a); }; } });
+  return (...a) => { if (typeof k === 'string' && k !== 'add' && !(k === 'fetch' && upgrade(a[0]))) TALLY.n++; const p = Reflect.apply(v, t, a); return k === 'fetch' ? pendTally(p) : p; }; } });
 const tallyNs = ns => ns && new Proxy(ns, { get(t, k) { const v = Reflect.get(t, k); if (typeof v !== 'function') return v;
   return k === 'get' || k === 'getByName' ? (...a) => tallyStub(Reflect.apply(v, t, a)) : k === 'jurisdiction' ? (...a) => tallyNs(Reflect.apply(v, t, a)) : (...a) => Reflect.apply(v, t, a); } });
-// One add carrying the pending count; it sets LVL. A throw drops the taken count (never re-added) and keeps the old level until LVL_TTL (fail open).
-async function tallyAdd(env) { const n = TALLY.n; TALLY.n = 0; TALLY.at = Date.now();
-  try { const r = await env.METER.get(env.METER.idFromName('day')).add(n); LVL = { l: Number(r?.lvl) || 0, at: Date.now() }; return r; } catch (e) { LVL.at = Date.now(); throw e; } }
+// One add carrying the pending counts; it sets LVL. A throw drops the taken counts (never re-added) and keeps the old level until LVL_TTL (fail open).
+async function tallyAdd(env) { const T = TALLY, n = T.n, x = { w: T.w, r: T.r, q: T.q }; T.n = 0; T.w = 0; T.r = 0; T.q = 0; T.q0 = 0; T.at = Date.now();
+  try { const r = await env.METER.get(env.METER.idFromName('day')).add(n, 0, x); LVL = { l: Number(r?.lvl) || 0, at: Date.now() }; return r; } catch (e) { LVL.at = Date.now(); throw e; } }
 // Starts an add in this request's waitUntil, or null while another request's add is in flight. One older than FLUSH_DEAD (its request may have been
 // cancelled) is forgotten, so a lost promise never blocks later requests.
 function tallyFlush(env, ctx) { const now = Date.now(); if (TALLY.p && !stale(TALLY.pAt, FLUSH_DEAD, now)) return null;
   const p = TALLY.p = tallyAdd(env).catch(() => null).finally(() => { if (TALLY.p === p) TALLY.p = null; }); TALLY.pAt = now; try { ctx?.waitUntil?.(p); } catch { } return p; }
 // The env every HTTP route sees: inherits every binding from the runtime env (no Proxy over it), with own counting METER / ROOM and env[CTX] = this
 // request's ctx and the add it started. Durable Objects and scheduled keep the raw env. The count of earlier requests goes out once TALLY_MS has passed.
-function tallied(env, ctx) { const me = { ctx, own: TALLY.n > 0 && stale(TALLY.at, TALLY_MS) ? tallyFlush(env, ctx) : null };
+function tallied(env, ctx) { const me = { ctx, own: tallyDue() ? tallyFlush(env, ctx) : null };
   return Object.create(env, { METER: { value: tallyNs(env.METER), enumerable: true }, ROOM: { value: tallyNs(env.ROOM), enumerable: true }, [CTX]: { value: me } }); }
 // The level the wish, share and push routes obey, without a DO call per request: once LVL_TTL old, this request refreshes it with its own add
 // (carrying the tally). It never waits on another request's add: while one is in flight the current level stands.
@@ -115,9 +147,29 @@ const posOf = A => { const n = v => (typeof v === 'number' && isFinite(v) ? Math
   return [n(A[0]), n(A[1]), sv(A[2]), sv(A[3]), (typeof A[4] === 'number' && isFinite(A[4])) ? A[4] : sv(A[4]), n(A[5]), n(A[6])]; };
 
 export class Meter extends DurableObject {
-  constructor(ctx, env) { super(ctx, env); this.env = env; this.sq = new Map(); ctx.storage.sql.exec('create table if not exists d(day text primary key, n real)'); ctx.storage.sql.exec('create table if not exists g(day text primary key, s real)'); }
-  add(n, gbs = 0) { budget(this.env); const d = today(); if (gbs) this.ctx.storage.sql.exec('insert into g values(?,?) on conflict(day) do update set s = s + excluded.s', d, gbs); this.ctx.storage.sql.exec('insert into d values(?,?) on conflict(day) do update set n = n + excluded.n', d, n + 1);
-    const t = this.ctx.storage.sql.exec('select n from d where day = ?', d).one().n, g = [...this.ctx.storage.sql.exec('select s from g where day = ?', d)][0]?.s || 0; return { n: t, g, lvl: lvlOf(t, g) }; }  // q5 group weekly attendance (one DO instance 'grp'): one count per guest per KST day, top 10 per ISO week. Old day keys pruned.
+  constructor(ctx, env) { super(ctx, env); this.env = env; this.sq = new Map(); this.rows = rowsBox(); this.ctx = rowsCtx(ctx, this.rows); this.rows.on = () => this.rowsDue(); this.repAt = Date.now(); this.rowsLvl = 0;
+    this.ctx.storage.sql.exec('create table if not exists d(day text primary key, n real)'); this.ctx.storage.sql.exec('create table if not exists g(day text primary key, s real)'); }
+  // 'day': one upsert of today's row (UTC, when Cloudflare's free limits reset). n DO requests (+1 for this call), s GB-s, w / r rows written / read,
+  // q Worker requests (times WREQ_PAD: what an isolate had not sent dies with it). The rows this instance itself wrote and read go in with the next
+  // add. GB-s used to go to table g: today's g row (written before the s column) still counts. One row written per add (two before).
+  add(n, gbs = 0, x = null) { budget(this.env); this.isDay = 1; const q = this.ctx.storage.sql, d = today(), num = v => { v = Number(v); return v > 0 && v < 1e9 ? v : 0; };
+    if (!this.dx) { this.dx = 1; for (const c of ['s', 'w', 'r', 'q']) try { q.exec(`alter table d add column ${c} real not null default 0`); } catch { /* already there */ } }
+    const own = rowsTake(this.rows);
+    q.exec('insert into d(day, n, s, w, r, q) values(?, ?, ?, ?, ?, ?) on conflict(day) do update set n = n + excluded.n, s = s + excluded.s, w = w + excluded.w, r = r + excluded.r, q = q + excluded.q',
+      d, num(n) + 1, num(gbs), num(x?.w) + own.w, num(x?.r) + own.r, num(x?.q) * WREQ_PAD);
+    const t = q.exec('select n, s, w, r, q from d where day = ?', d).one(), g = (Number(t.s) || 0) + (Number(q.exec('select s from g where day = ?', d).toArray()[0]?.s) || 0);
+    const w = Number(t.w) || 0, r = Number(t.r) || 0, wq = Number(t.q) || 0;
+    return { n: t.n, g, w, r, q: wq, lvl: lvlOf(t.n, g, w, r, wq) }; }
+  // Any other instance sends what it wrote and read to 'day' in one add (which counts that call too), checked after each turn that ran SQL: at most
+  // once per REP with ROWS_MIN written (or ROWS_MIN * 50 read) waiting, otherwise once ROWS_IDLE old; at hard only once ROWS_IDLE old. Never a call
+  // per write. An instance evicted from memory loses what it held (under ROWS_MIN, or under ROWS_IDLE of a trickle).
+  rowsDue(now = Date.now()) { const R = this.rows; if (this.isDay || !(R.w || R.r)) return; if (this.ctx.id?.name === 'day') return;
+    const gap = now - this.repAt, big = R.w >= ROWS_MIN || R.r >= ROWS_MIN * 50;
+    if (!(gap >= ROWS_IDLE || gap < 0 || (big && gap >= REP && this.rowsLvl < 2))) return;
+    const M = this.env?.METER; if (!M) return; this.repAt = now; const x = rowsTake(R);
+    try { Promise.resolve(M.get(M.idFromName('day')).add(0, 0, x)).then(r => { this.rowsLvl = Number(r?.lvl) || 0; }, () => { }); } catch { /* counted rows are dropped, never sent twice */ } }
+  rowsOut() { this.repAt = Date.now(); return rowsTake(this.rows); } // for an add this instance makes anyway (the dark alarm)
+  // q5 group weekly attendance (one DO instance 'grp'): one count per guest per KST day, top 10 per ISO week. Old day keys pruned.
   grpInit() { if (this.gi) return; this.gi = 1; const q = this.ctx.storage.sql; q.exec('create table if not exists gw(w text, c text, n integer, primary key(w,c))'); q.exec('create table if not exists gu(d text, s text, primary key(d,s))'); q.exec('create table if not exists ps(e text primary key, k text, at integer, sent integer default 0)'); }
   grpAdd(c, sub, d, w) { this.grpInit(); const q = this.ctx.storage.sql; if (q.exec('insert or ignore into gu values(?,?)', d, sub).rowsWritten < 1) return { dup: 1 };
     q.exec('insert into gw values(?,?,1) on conflict(w,c) do update set n = n + 1', w, c); if (Math.random() < 0.02) { q.exec('delete from gu where d < ?', d); } return { ok: 1 }; }
@@ -205,7 +257,7 @@ export class Meter extends DurableObject {
   // budget ('day'); at the hard level nothing is sent or marked and the alarm is held for DARK.retryMs.
   async alarm() { const q = this.ctx.storage.sql; let rows; try { rows = q.exec('select slot, uid, lit, pre, out from dk').toArray(); } catch { return; } this.dkInit();
     const now = Date.now(), due = rows.map(r => ({ r, n: darkNext(r) })).filter(x => x.n && x.n.at <= now).sort((x, y) => x.n.at - y.n.at).slice(0, DARK.passMax).map(x => x.r);
-    if (due.length) { let lvl = 0; try { lvl = Number((await this.env.METER.get(this.env.METER.idFromName('day')).add(1 + due.length))?.lvl) || 0; } catch { /* unknown: send */ }
+    if (due.length) { let lvl = 0; try { lvl = Number((await this.env.METER.get(this.env.METER.idFromName('day')).add(1 + due.length, 0, this.rowsOut()))?.lvl) || 0; } catch { /* unknown: send */ }
       if (lvl >= 2) { q.exec("insert into dkx(k, v) values('hold', ?) on conflict(k) do update set v = excluded.v", now + DARK.retryMs); await this.ctx.storage.setAlarm(now + DARK.retryMs); return; }
       q.exec("delete from dkx where k = 'hold'"); try { await this.dkFire(due, now); } catch { /* each flag is written before its send */ } }
     await this.dkArm(Date.now()); }
@@ -761,8 +813,36 @@ export class Meter extends DurableObject {
 
 export class Room extends DurableObject {
   constructor(ctx, env) { super(ctx, env); this.env = env; budget(env); this.S = null; this.msgs = 0; this.conns = 0; this.lastRep = 0; this.lastScan = 0; this.lvl = 0; this.hist = null; this.room = null; this.out = new Map();
+    this.rows = rowsBox(); this.ctx = rowsCtx(ctx, this.rows); this.pdW = null; this.pdKey = ''; this.rows.on = () => this.keep();
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong')); }
-  socks() { if (!this.S) { this.S = new Map(); for (const w of this.ctx.getWebSockets()) { const a = w.deserializeAttachment(); if (a) { a.fl = 0; if (a.m) a.m.fl = 0; this.S.set(w, a); } } } return this.S; }
+  socks() { if (!this.S) { this.S = new Map(); const pd = []; for (const w of this.ctx.getWebSockets()) { const a = w.deserializeAttachment(); if (a) { a.fl = 0; if (a.m) a.m.fl = 0; if (a.pd) pd.push([w, a]); this.S.set(w, a); } } if (pd.length) this.pdBack(pd); } return this.S; }
+  // Counts not yet reported (msgs, conns, rows) ride on one open socket's attachment (pd: msgs, conns, rows written, rows read, when) so that
+  // hibernation does not drop them: no storage row, no DO call. A woken room takes them back here (the newest copy if two sockets carry one) and
+  // sends them with its first report. keep() rewrites the copy when they change (messages in steps of 20, their billing ratio; reads in steps of
+  // 50). With no socket left nothing can carry them: the last close reports at once (gone), and an internal request to an empty room hands them
+  // back on its response (x-pend, fetch).
+  pdBack(list) { list.sort((x, y) => (Number(y[1].pd?.[4]) || 0) - (Number(x[1].pd?.[4]) || 0)); const [w, a] = list[0], p = a.pd;
+    for (const [x, b] of list.slice(1)) { delete b.pd; this.save(x, b); }
+    this.pdW = w; this.pdKey = ''; if (!Array.isArray(p)) return; const n = i => { const v = Number(p[i]); return v > 0 && v < 1e7 ? v : 0; };
+    this.msgs += n(0); this.conns += n(1); this.rows.w += n(2); this.rows.r += n(3); }
+  keep() { const S = this.S; if (!S) return; const R = this.rows; rowsFold(R); let w = this.pdW;
+    if (!w || !S.has(w)) { w = this.pdW = S.keys().next().value || null; this.pdKey = ''; if (!w) return; }
+    const a = S.get(w), any = this.msgs || this.conns || R.w || R.r, key = any ? [Math.floor(this.msgs / 20), this.conns, R.w, Math.floor(R.r / 50)].join() : '0';
+    if (key === this.pdKey) return; this.pdKey = key;
+    if (any) a.pd = [this.msgs, this.conns, R.w, R.r, Date.now()]; else if (a.pd) delete a.pd; else return;
+    this.save(w, a); }
+  // The room's last socket went: what is counted cannot ride anywhere, so it goes out now. Not worth a call (dropped): under one billed request of
+  // messages (20) and under 50 rows read with nothing else.
+  worth() { const R = this.rows; rowsFold(R); return this.msgs >= 20 || this.conns > 0 || R.w > 0 || R.r >= 50; }
+  lastOut() { if (this.worth()) this.meter(true); }
+  settle() { if (this.socks().size) this.keep(); else this.lastOut(); }
+  // Every request but a WebSocket upgrade (which reports through meter()): with a socket the counts ride on it (keep); in an empty room they go back
+  // on the response as x-pend (DO calls, rows written, rows read) for the caller's tally, reset only once the header is on.
+  async fetch(req) { const res = await this.route(req); if (res && res.status !== 101 && !upgrade(req)) { try { this.handBack(res); } catch { /* kept for the next report */ } } return res; }
+  handBack(res) { if (this.socks().size) return this.keep(); const R = this.rows; rowsFold(R); const n = this.msgs / 20 + this.conns; if (!(n || R.w || R.r)) return;
+    res.headers.set('x-pend', [n, R.w, R.r].join()); this.msgs = 0; this.conns = 0; R.w = 0; R.r = 0; }
+  // A response from another room (cheer copies) may carry that room's x-pend: it joins this room's counts.
+  pendIn(res) { const v = pendOf(res); if (!v) return; this.conns += v[0]; this.rows.w += v[1]; this.rows.r += v[2]; this.keep(); }
   save(w, a) { try { w.serializeAttachment(a); } catch { } }
   adm() { let n = 0; for (const a of this.socks().values()) if (a.q) n++; return n; }
   waiters() { return [...this.socks()].filter(([, a]) => !a.q).sort((x, y) => x[1].t - y[1].t); }
@@ -771,7 +851,7 @@ export class Room extends DurableObject {
   // event ring (world updates, reactions) kept in DO memory and replayed to a joining socket
   async loadHist(room) { if (this.hist || !room) return this.hist || []; this.room = room; this.hist = []; return this.hist; }
   pushEv(ev) { if (!this.hist) this.hist = []; this.hist.push(ev); if (this.hist.length > HIST_N) this.hist.shift(); }
-  async fetch(req) {
+  async route(req) {
     const u = new URL(req.url);
     if (u.pathname === '/flush') return this.httpFlush(req);
     if (u.pathname === '/score') return this.httpScore(req);
@@ -849,9 +929,11 @@ export class Room extends DurableObject {
     }
     if (next !== prev) agSet(q, 'room', 'ball', day, next);
   }
-  async alarm() { this.tapDb(); this.conns++; /* the alarm is a billed request too */ this.scan(true); this.meter(true); await this.drawDue(); if (this.tapN && Date.now() - (this.tapAt || 0) >= FLUSH_MS - 1000) await this.flush(); if (this.adDirty && Date.now() - (this.adFlushAt || 0) > 30000) await this.flushAds(); if (!this.tapN && Date.now() - (this.ibAt || 0) > 30000 && this.ibWait()) await this.flushInbox(); try { await this.flushTribeScores(); } catch { /* scores retry on the next alarm */ }
+  // An empty room (or one the stale scan empties) reports once, at the end (settle), with everything the alarm did; a room with sockets as before.
+  async alarm() { this.alarmAt = Date.now(); this.tapDb(); this.conns++; /* the alarm is a billed request too */ this.scan(true); if (this.socks().size) this.meter(true); await this.drawDue(); if (this.tapN && Date.now() - (this.tapAt || 0) >= FLUSH_MS - 1000) await this.flush(); if (this.adDirty && Date.now() - (this.adFlushAt || 0) > 30000) await this.flushAds(); if (!this.tapN && Date.now() - (this.ibAt || 0) > 30000 && this.ibWait()) await this.flushInbox(); try { await this.flushTribeScores(); } catch { /* scores retry on the next alarm */ }
     if (this.socks().size) { try { this.noteBall(); } catch { /* the next scan retries the ball */ } }
-    if (this.waiters().length || this.tapN) await this.ctx.storage.setAlarm(Date.now() + (this.waiters().length ? SCAN : FLUSH_MS)); else if (this.socks().size) await this.ctx.storage.setAlarm(Date.now() + IDLE_SCAN); }
+    if (this.waiters().length || this.tapN) await this.ctx.storage.setAlarm(Date.now() + (this.waiters().length ? SCAN : FLUSH_MS)); else if (this.socks().size) await this.ctx.storage.setAlarm(Date.now() + IDLE_SCAN);
+    this.alarmAt = 0; this.settle(); } // what the alarm did after its report rides on a socket, or goes out now from an empty room
   // Bungeo-ppang coins: 2s per actor, ≤15 per mine, summed in DO SQLite (survives hibernation) with tapN in memory.
   // alarm()/arm() still key off tapN: flush on FLUSH_N accepted mines or the FLUSH_MS alarm.
   tapDb() { if (this._tdb) return; const q = this.ctx.storage.sql;
@@ -1474,7 +1556,7 @@ export class Room extends DurableObject {
   shareCheer(slot, phrase) {
     const names = squareTopics(this.topicName || 'chapel:square');
     const mine = this.topicName || names[0];
-    const send = (name, body) => { this.conns++; return this.env.ROOM.get(this.env.ROOM.idFromName(name)).fetch(new Request('https://room.internal/chr', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })).then((r) => r.json()).catch(() => null); }; // conns: one DO call per shard
+    const send = (name, body) => { this.conns++; return this.env.ROOM.get(this.env.ROOM.idFromName(name)).fetch(new Request('https://room.internal/chr', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })).then((r) => { this.pendIn(r); return r.json(); }).catch(() => null); }; // conns: one DO call per shard (plus what an empty shard hands back)
     if (mine === names[0]) {
       const n = this.chrAdd(slot);
       this.announceCheer(slot, n, phrase);
@@ -1527,13 +1609,17 @@ export class Room extends DurableObject {
   scan(force) { const now = Date.now(); if (!force && now - this.lastScan < SCAN) return; this.lastScan = now;
     for (const [w, a] of [...this.socks()]) { const ar = this.ctx.getWebSocketAutoResponseTimestamp(w)?.getTime() || 0;
       if (now - Math.max(a.ls, ar, a.t) > STALE) { try { w.close(4000, 'stale'); } catch { } this.gone(w); } } }
-  meter(force) { const now = Date.now(); if (!force && now - this.lastRep < REP) return; this.lastRep = now;
-    const n = this.msgs / 20 + this.conns, awake = this.lastRep0 ? Math.min(now - this.lastRep0, 2 * REP) / 1000 : 1; this.lastRep0 = now; this.msgs = 0; this.conns = 0;
-    this.env.METER.get(this.env.METER.idFromName('day')).add(n, awake * MEM).then(r => this.setLvl(r.lvl)).catch(() => { }); }
+  // Report (every REP, or forced by the alarm and the last close) or keep the counts on a socket. The rows this room wrote and read go with it.
+  // A forced report with nothing new within a second of the last one is skipped (an alarm whose scan just closed the last socket).
+  meter(force) { this.socks(); const now = Date.now(), R = this.rows;
+    if (force ? !this.worth() && now - this.lastRep < 1000 : now - this.lastRep < REP) return this.keep(); this.lastRep = now;
+    const n = this.msgs / 20 + this.conns, awake = this.lastRep0 ? Math.min(now - this.lastRep0, 2 * REP) / 1000 : 1, x = rowsTake(R); this.lastRep0 = now; this.msgs = 0; this.conns = 0;
+    this.env.METER.get(this.env.METER.idFromName('day')).add(n, awake * MEM, x).then(r => this.setLvl(r.lvl)).catch(() => { }); this.keep(); }
   setLvl(l) { if (l === this.lvl) return; this.lvl = l; this.bc({ t: 'cfg', lean: l >= 1 });
     if (l >= 2) for (const w of this.socks().keys()) { this.tx(w, { t: 'down' }); try { w.close(4002, 'budget'); } catch { } } }
   leaveK(k, skip) { for (const [w, a] of this.socks()) if (w !== skip && a.q && a.k === k && a.m) return; this.bc({ t: 'pl', k }); }
-  gone(w) { const a = this.socks().get(w); if (!a) return; this.socks().delete(w); if (a.q) { if (a.m) this.leaveK(a.k, w); this.promote(); } else this.waitMsgs(); }
+  gone(w) { const a = this.socks().get(w); if (!a) return; this.socks().delete(w); if (a.q) { if (a.m) this.leaveK(a.k, w); this.promote(); } else this.waitMsgs();
+    if (!this.S.size) { if (!(Date.now() - (this.alarmAt || 0) < 30000)) this.lastOut(); } else if (w === this.pdW) this.keep(); } // an alarm reports at its end; the counts a closed carrier held move to another socket
   // position relay: same floor + within NEAR_R gets every update; far/unknown peers get at most one per FAR_MS per sender (+ every stop),
   // so ghosts never drift far. v2 sockets get the compact form {t:'P',k,a:[x,y,face,anim,fl,vx,vy]}, legacy sockets the old {t:'b',e:'pos',p}.
   relayPos(w, a, P) { if (Array.isArray(P)) P[4] = 0; const [x, y, face, anim, fl, vx, vy] = P, now = Date.now(); a.fl = 0; a.m = Object.assign(a.m || {}, { x, y, face, anim, fl: 0 });
@@ -3055,7 +3141,7 @@ async function photos(req, env, ctx, u) {
     const today = kstDay(), n = Math.min(90, Math.max(1, Math.floor(Number(u.searchParams.get('days'))) || 14));
     try {
       const days = await env.METER.get(env.METER.idFromName('ev')).evStats(today, n);
-      return J({ ok: true, today, days: days.map(d => ({ ...d, ...statsFromCounts(d.events) })), tally: { pending: TALLY.n, flushAgeMs: TALLY.at ? Date.now() - TALLY.at : -1, lvl: LVL.l } }); // this isolate's budget tally, numbers only
+      return J({ ok: true, today, days: days.map(d => ({ ...d, ...statsFromCounts(d.events) })), tally: { pending: TALLY.n, wreq: TALLY.q, rows: TALLY.w, flushAgeMs: TALLY.at ? Date.now() - TALLY.at : -1, lvl: LVL.l } }); // this isolate's budget tally, numbers only
     } catch { return J({ err: 'meter' }, 503); }
   }
   if (u.pathname === '/rt/admin/reports' && req.method === 'GET') {
@@ -3551,7 +3637,7 @@ async function snapPage(req, env, u) {
 }
 export default {
   async fetch(req, env, ctx) {
-    budget(env); env = tallied(env, ctx);
+    budget(env); wreqOne(); env = tallied(env, ctx); // wreqOne: this invocation is one Worker request in the daily budget
     // A throw anywhere below (a DO fetch that throws reaches here too) is kept as an error group of kind 'server' and answers 500.
     try { return await (async () => {
     const u = new URL(req.url);
@@ -3612,8 +3698,8 @@ export default {
       HERE.set(t, { at: Date.now(), v: live }); return J({ live });
     }
     if (u.pathname === '/rt/gate') { try { const now = Date.now(); if (!GATE.r || now - GATE.at > GATE_TTL) { GATE = { at: now, r: await tallyAdd(env) }; }
-        const r = GATE.r, l = r.lvl, used = Math.round(r.n), gbs = Math.round(r.g);
-        return J(l >= 2 ? { full: true, used, gbs } : { ok: true, cap: CAP, used, gbs, lean: l >= 1 }); } catch (e) { return J({ full: true, err: 1 }, 503); } }
+        const r = GATE.r, l = r.lvl, used = Math.round(r.n), gbs = Math.round(r.g), more = { rows: Math.round(Number(r.w) || 0), reads: Math.round(Number(r.r) || 0), wreq: Math.round(Number(r.q) || 0) }; // today (UTC): rows written / read, Worker requests
+        return J(l >= 2 ? { full: true, used, gbs, ...more } : { ok: true, cap: CAP, used, gbs, lean: l >= 1, ...more }); } catch (e) { return J({ full: true, err: 1 }, 503); } }
     if (u.pathname === '/rt/sponsor' && req.method === 'GET') return J({ url: extUrl(env.SPONSOR_INQUIRY_URL) || '' });
     if (u.pathname.startsWith('/rt/ads/') || u.pathname === '/rt/admin/ads' || u.pathname.startsWith('/rt/admin/ads/')) return adsApi(req, env, ctx, u, { adminOk, lvlNow, resolveActor, tokenOf, ipHash: wishIp, // 광고 판매 (adsrv.js; networks: IPv6 by /64)
       dropWorld: async () => { PC.delete('world'); try { await caches.default.delete(new Request(WORLD_CACHE)); } catch { } } });
@@ -3674,6 +3760,7 @@ export default {
   // Paid plan only. Free returns before any push work. Dark boards and unread taken/cheer, at most PUSH_N.
 // 50 11 * * * is 20:50 KST (ball inbox). 0 12 * * * is 21:00 KST (Sunday roof). 5 * * * * stays the hourly pass.
 async scheduled(ev, env, ctx) {
+  wreqOne(); // a cron run is an invocation too; it goes out with this isolate's next fetch
   if (env.PLAN !== 'paid') return;
   const cron = String(ev?.cron || '');
   if (cron === '50 11 * * *') {

@@ -180,7 +180,7 @@ async function scene(db, installed) {
   return { clock: { add: (ms) => { t += ms; } }, state, env, call, post, get, guest, user, coins, earn, link, withdraw, config, raw, drain, probes, marks, done: () => { Date.now = origNow; globalThis.fetch = origFetch; console.warn = origWarn; } };
 }
 const utcDay = () => new Date().toISOString().slice(0, 10);
-const setUsed = (env, n) => env.meter('day').sql.db.prepare('insert into d values(?, ?) on conflict(day) do update set n = excluded.n').run(utcDay(), n);
+const setUsed = (env, n) => env.meter('day').sql.db.prepare('insert into d(day, n) values(?, ?) on conflict(day) do update set n = excluded.n').run(utcDay(), n);
 
 // ---- before the migration ---------------------------------------------------------------------------------------------------------------------
 describe('withdrawal before the migration: forget_login is not in the database', { concurrency: false }, () => {

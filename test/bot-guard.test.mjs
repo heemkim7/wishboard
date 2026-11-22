@@ -105,7 +105,7 @@ function harness(env) {
   return { call, post, mint, guest, get };
 }
 const utcDay = () => new Date().toISOString().slice(0, 10);
-const setUsed = (env, n) => env.meter('day').sql.db.prepare('insert into d values(?, ?) on conflict(day) do update set n = excluded.n').run(utcDay(), n);
+const setUsed = (env, n) => env.meter('day').sql.db.prepare('insert into d(day, n) values(?, ?) on conflict(day) do update set n = excluded.n').run(utcDay(), n);
 const limiter = (allow = () => true) => { const keys = [], rl = { keys, allow: true, async limit({ key }) { keys.push(key); return { success: rl.allow && !!allow(key, keys) }; } }; return rl; };
 const ON = { TURNSTILE_SITE: SITE, TURNSTILE_SECRET: SECRET };
 const HUMAN_NO = { err: 'human', code: 'human', site: SITE, error: '사람인지 확인하지 못했어요. 다시 시도해 주세요.' };

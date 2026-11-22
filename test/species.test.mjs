@@ -216,7 +216,7 @@ async function scene(migrated) {
   // A socket opening in a room reads the profile this way (Room.loadProf: the registry's five-minute copy, else the database and then the registry).
   const roomAv = async (id, topic = 'chapel:square') => (await env.room(topic).do.loadProf(id))?.av;
   const forget = (id) => { env.meter('acct').do._prof?.delete(id); }; // the five-minute copy runs out
-  const hard = async () => { env.meter('day').sql.db.prepare('insert into d values(?, ?) on conflict(day) do update set n = excluded.n').run(utcDay(), 96000); t += 61000; await call('/rt/wishes'); };
+  const hard = async () => { env.meter('day').sql.db.prepare('insert into d(day, n) values(?, ?) on conflict(day) do update set n = excluded.n').run(utcDay(), 96000); t += 61000; await call('/rt/wishes'); };
   return { state, db, env, call, clock: { add: (ms) => { t += ms; } }, guest, profile, pick, held, roomAv, forget, hard, done: () => { Date.now = origNow; globalThis.fetch = origFetch; } };
 }
 
