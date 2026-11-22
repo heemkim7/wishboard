@@ -1095,6 +1095,10 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .tool-wish .wish-dot { position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--live); outline: 2px solid var(--bg); pointer-events: none; }
   .tool-wish .wish-dot[hidden] { display: none; }
   #boot #bootWish { color: var(--text); overflow-wrap: anywhere; }
+  /* 계절 소원 테마 (seasons.js): the boot card line and the header on top of the wish sheet, both in the season's neon accent. */
+  #boot #bootSeason { color: var(--season, var(--text)); font-weight: 700; overflow-wrap: anywhere; }
+  .sheet.wish .wish-season { margin: 0 0 10px; padding: 8px 12px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--season, #ffb020) 55%, transparent); background: color-mix(in srgb, var(--season, #ffb020) 12%, transparent); color: var(--text); font: 700 14px/1.4 var(--font); overflow-wrap: anywhere; }
+  .sheet.wish .wish-season[hidden] { display: none; }
   .sheet.wish h3 { margin: 16px 0 8px; font: 800 15px/1.3 var(--font); }
   .sheet.wish .btn { height: auto; min-height: 44px; padding: 8px 16px; white-space: normal; text-align: center; justify-content: center; line-height: 1.3; }
   .sheet.wish .wish-go { width: 100%; margin-top: 10px; font-size: 15px; }
@@ -1287,7 +1291,7 @@ const CLARITY_ID = '';
     <div class="badge">NEW YORK WISH SQUARE</div>
     <h1>모두의 전광판</h1>
     <div class="tag">내 소원을 타임스퀘어에 거세요.<br>자랑하고, 응원하고, 명당은 빼앗으세요.</div>
-    <div class="bootlive" id="bootLive"><div id="bootWish" hidden></div><div id="bootKing">👑 지금 메인 타워의 소원: 확인 중…</div><div id="bootStat">빈 자리와 오늘 다녀간 사람을 세는 중…</div></div>
+    <div class="bootlive" id="bootLive"><div id="bootSeason" hidden></div><div id="bootWish" hidden></div><div id="bootKing">👑 지금 메인 타워의 소원: 확인 중…</div><div id="bootStat">빈 자리와 오늘 다녀간 사람을 세는 중…</div></div>
     <div class="prog" aria-hidden="true"><i id="bootBar"></i></div>
     <div class="msg" id="bootMsg">타임스퀘어로 이동하는 중…</div>
     <div class="enter" id="bootEnter" hidden></div>

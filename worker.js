@@ -15,6 +15,7 @@ import { LEAGUE, leagueBoard, leagueCut, weekEnds, botNick } from './league.js';
 import { DARK, quietShift, darkNext, darkHours, darkText, litOf } from './dark.js';
 import { INVITE, invCode, newCode, inviteFault, inviteWaits, inviteOn, ipWide } from './invite.js';
 import { adTables, adIngest, adTenure, adRename, adForget, adReport } from './adreport.js';
+import { OPS_THEME_KEYS } from './seasons.js';
 import * as ops from './ops.js'; // 운영 장치: error reports, 문의하기, operator details, maintenance, /rt/health extras
 import { adsApi, adsDb, adsWorld } from './adsrv.js';
 // v16 cost pass: ping 25s (client) / STALE 75s, idle scan alarm 60s, meter report 60s, compact pos ('p'/'P'), nearby fanout, event ring + world cache, HMAC guest tokens.
@@ -2651,7 +2652,7 @@ function jpegClean(u8) {
   const out = new Uint8Array(keep.reduce((a, p) => a + p.length, 0)); let o = 0; for (const p of keep) { out.set(p, o); o += p.length; }
   return { bytes: out, w, h };
 }
-const OPS_THEMES = new Set(['csat', 'xmas', 'newyear', 'seollal', 'valentine']);
+const OPS_THEMES = new Set(OPS_THEME_KEYS); // seasons.js: the eight seasonal themes and 'none'. The database only takes the last four after migrations/2026-11-22-themes.sql (before it, upsert_ops_event answers 'theme').
 function isoDay(v) {
   const s = String(v || '');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return '';

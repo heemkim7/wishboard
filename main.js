@@ -18,6 +18,7 @@ import { saveClip, dropParams } from './share.js?v=202611221134';
 import { ftueDue, crowdFacts, kstDay, lockCelebration, startFtue, wishAutoOpen, wishBootLine, awayRows, inboxUnread, seenAdd, liveKey, liveSeenAdd } from './ftue.js?v=202611221134';
 import { photoVerdicts } from './ftue.js?v=202611221134';
 import { WISH, cleanWish } from './wish.js';
+import { seasonFor, seasonPreview } from './seasons.js';
 import { applyInboxPush, loadInbox, readInbox, liveOnly, handledRead, liveSeeable } from './inbox.js?v=202611221134';
 import { openTribe, pledge, sendCheer } from './tribe.js?v=202611221134';
 import { applyOps, ballNotice, sessionEndPlan, nineBanner, kingMinute, clockSkew, clock, nowMs } from './live.js';
@@ -65,6 +66,10 @@ const WISH_ID = (() => {
   return WISH_RE.test(w) ? w : '';
 })();
 let bootData = null, bootHere = null, deepWish = null, deepDay = '';
+// 계절 소원 테마 (seasons.js): the KST day's theme, with the ops calendar's theme for today (/rt/world `ops.theme`) laid over the built-in table.
+// ?season=<key> only previews a theme's look in this browser ('none' for no theme); it sends and stores nothing.
+const SEASON_PREVIEW = seasonPreview(location.search);
+const seasonNow = (ops) => seasonFor(kstDay(), SEASON_PREVIEW ?? ops?.theme);
 // First screen: only what the server reported. A count that is missing or zero is left out, and with no answer the box is hidden.
 function paintBootLive(data, here) {
   bootData = data;
@@ -73,13 +78,16 @@ function paintBootLive(data, here) {
   const king = document.getElementById('bootKing');
   const stat = document.getElementById('bootStat');
   const wishEl = document.getElementById('bootWish');
+  const seasonEl = document.getElementById('bootSeason');
   if (!box || !king || !stat) return;
+  const season = seasonNow(data?.ops);
+  if (seasonEl) { seasonEl.textContent = season?.boot || ''; seasonEl.hidden = !season?.boot; seasonEl.style.setProperty('--season', season?.accent || ''); }
   // 오늘의 소원: the linked wish, else yesterday's winner, else today's count from its threshold (ftue.js wishBootLine).
   const wishLine = wishBootLine({ deep: deepWish, ...(data?.wish ?? { board: [], king: null, count: 0 }), day: deepDay || kstDay(), focus: !!FOCUS });
   if (wishEl) { wishEl.textContent = wishLine.text; wishEl.hidden = !wishLine.text; }
   ui.boot?.label?.(wishLine.enter);
   if (!Array.isArray(data?.billboards)) {
-    box.hidden = !wishLine.text;
+    box.hidden = !wishLine.text && !season?.boot;
     king.hidden = true;
     stat.hidden = true;
     return;
@@ -1079,7 +1087,8 @@ function applyPlaza(remote) {
   if (typeof remote.roof === 'string') state.roof = remote.roof;
   applyWishWorld(remote.wish);
   const opsCopy = applyOps(remote.ops);
-  state.ops = opsCopy ? { copy: opsCopy } : null;
+  state.ops = opsCopy ? { copy: opsCopy, theme: String(remote.ops.theme || '') } : null;
+  applySeason();
   if (opsCopy) ui.setNextLine(opsCopy);
   for (const row of state.billboards) {
     if (state.cheers[row.slot_id]) row.cheers = state.cheers[row.slot_id];
@@ -1133,7 +1142,17 @@ const wishRow = (w) => (w && typeof w === 'object' && WISH_RE.test(String(w.id |
   ? { ...w, id: String(w.id), nick: chars(w.nick, 16), txt: cleanWish(w.txt), hearts: Math.max(0, Math.floor(Number(w.hearts) || 0)) }
   : null);
 const wishRows = (list, max) => (Array.isArray(list) ? list : []).map(wishRow).filter(Boolean).slice(0, max);
+// The season is worked out again wherever the wish state is repainted (also after 0시 KST, wishStale), and told only when its key changes.
+let seasonKeyNow = '';
+function applySeason() {
+  const s = seasonNow(state.ops);
+  const key = s?.key || '';
+  state.season = key;
+  ui.setSeason?.(s);
+  if (world && key !== seasonKeyNow) { seasonKeyNow = key; world.setSeason?.(key); }
+}
 function paintWish() {
+  applySeason();
   world?.setWishes?.(state.wish.board.map((w) => ({ id: w.id, nick: w.nick, txt: w.txt, hearts: w.hearts })));
   ui.setWish?.(state.wish);
 }

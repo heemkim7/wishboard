@@ -3209,7 +3209,7 @@ CREATE TABLE IF NOT EXISTS public.ops_events (
   id TEXT PRIMARY KEY,
   starts_on DATE NOT NULL,
   ends_on DATE NOT NULL,
-  theme TEXT NOT NULL CHECK (theme IN ('csat','xmas','newyear','seollal','valentine')),
+  theme TEXT NOT NULL CHECK (theme IN ('csat','xmas','newyear','seollal','valentine','chuseok','pepero','children','none')),
   title TEXT NOT NULL,
   copy TEXT NOT NULL
 );
@@ -3269,7 +3269,7 @@ BEGIN
   IF p_id IS NULL OR p_id = '' OR char_length(p_id) > 40 THEN
     RETURN jsonb_build_object('ok', false, 'error', 'id');
   END IF;
-  IF p_theme NOT IN ('csat', 'xmas', 'newyear', 'seollal', 'valentine') THEN
+  IF p_theme NOT IN ('csat', 'xmas', 'newyear', 'seollal', 'valentine', 'chuseok', 'pepero', 'children', 'none') THEN
     RETURN jsonb_build_object('ok', false, 'error', 'theme');
   END IF;
   IF p_starts IS NULL OR p_ends IS NULL OR p_ends < p_starts THEN

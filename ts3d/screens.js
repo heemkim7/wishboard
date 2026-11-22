@@ -8,6 +8,7 @@ import { floorOf, live, SLOT_RE, isLateSlot } from '../balance.js';
 import { auctionClosed } from '../balance.js';
 import { nowMs, kingCovers } from '../live.js';
 import { ADS, adView, adWorld, linkHost } from '../adsale.js';
+import { SEASONS } from '../seasons.js';
 
 export const screenTime = { value: 0 };
 // Highest linear luminance a screen pixel may reach (see screenMaterial): just under the default bloom threshold.
@@ -156,6 +157,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   const CLAIM = SLOT_RE;
   let air = null;
   let opsLine = '';
+  let season = null; // 계절 소원 테마 (seasons.js SEASONS[key]): only the wish cards wear it; null on a day with no theme
   function airOn() { return !!(air && air.until > Date.now()); }
   // 밤 9시 소원왕 (setKing, main.js decides the minute): claimable boards outside the main tower show yesterday's top wish
   // full-face. A live takeover wins. Entering and leaving repaint at most kingBudget boards per 0.08 s tick, nearest first.
@@ -244,7 +246,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   // The card replaces only the artwork; b.data (the notice), decals and the click target stay as they are.
   function paintCard(b) {
     b.wishMsg = wishStrip(b.slotId, b.row, towerOpen);
-    paintWish(b.canvas, b.wish, { strip: b.wishMsg, dark: !!b.row?.holder_id, wide: b.tier === 'S' });
+    paintWish(b.canvas, b.wish, { strip: b.wishMsg, dark: !!b.row?.holder_id, wide: b.tier === 'S', season });
     b.wishFontOk = wishFontsOk.has(fontKey(b.wish));
     remember(b.canvas);
     applyOverlay(b);
@@ -431,6 +433,13 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     if (next === opsLine) return;
     opsLine = next;
     for (const b of boards.values()) set(b.slotId, {}, false);
+  }
+  /** key: a seasons.js key, or '' for no theme. A change repaints the wish cards on show (never the notices, photos or ads). */
+  function setSeason(key) {
+    const next = SEASONS[key] || null;
+    if (next === season) return;
+    season = next;
+    for (const b of boards.values()) if (b.wish && !b.shared) paintCard(b);
   }
   function setTicker(text) {
     paintTicker(tickerCanvas, text);
@@ -706,7 +715,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     }
   }
 
-  return { boards, ensure, mount, unmount, set, expire, get: (id) => boards.get(id), worldPos, face, setTicker, setOps, repaintAll, update, accentOf, tickerCanvas, watchShow, setShow, setAir, setKing, setDecals, setWishes, pinWish, decalsOf: (id) => (boards.get(id)?.decals || []).slice(), setRim };
+  return { boards, ensure, mount, unmount, set, expire, get: (id) => boards.get(id), worldPos, face, setTicker, setOps, setSeason, repaintAll, update, accentOf, tickerCanvas, watchShow, setShow, setAir, setKing, setDecals, setWishes, pinWish, decalsOf: (id) => (boards.get(id)?.decals || []).slice(), setRim };
 }
 
 // ---- ad-only screens AD_1..AD_5 (adsale.js) -------------------------------------------------------------------------

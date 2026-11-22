@@ -1188,6 +1188,7 @@ void main(){
   let paintRoof = (name) => { paintRoof.pending = String(name || '').slice(0, 16); };
   function updateWorld(state) {
     boards.setOps?.(state?.ops?.copy || '');
+    boards.setSeason?.(state?.season || '');
     for (const row of state?.billboards || []) if (row?.slot_id && isSlotId(row.slot_id)) updateBillboardTexture(row.slot_id, row, false);
     for (const row of state?.plots || []) if (row?.plot_id) applyPlot(row, false);
     syncChains(state?.billboards);
@@ -2764,6 +2765,7 @@ void main(){
     setTicker(text) { boards.setTicker(text); },
     // 오늘의 소원 on every screen that is not live: list is 0–24 {id, nick, txt, hearts}; [] or missing turns it off.
     setWishes(list) { boards.setWishes(list); },
+    setSeason(key) { boards.setSeason(key); },
     // 광고 화면: /rt/world's `ads`; what a screen shows ({ id, kind, ad }); the bookings this sampled session had in view.
     setAds(v) { adScreens.set(v); },
     adInfo: (id) => adScreens.info(id),
