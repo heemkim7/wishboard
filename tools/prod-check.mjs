@@ -155,6 +155,13 @@ async function main() {
     if (fault) bad++;
     console.log(`[seo] ${p.padEnd(22)} -> ${r.status} ${r.type.split(';')[0]}${fault ? '  <-- ' + fault : ''}`);
   }
+  // The advertising page (상6) is linked as /ads from the house ad on the ad screens: ads.html itself, and its stats endpoint answers.
+  if (fs.existsSync('ads.html')) {
+    const ad = await get('/ads'); const okAd = ad.status === 200 && /html/.test(ad.type) && sha(ad.buf) === sha(fs.readFileSync('ads.html'));
+    const st = await get('/rt/ads/stats'); let on = null; try { on = JSON.parse(st.buf.toString('utf8')).on; } catch { on = null; }
+    if (!okAd || st.status !== 200 || typeof on !== 'boolean') bad++;
+    console.log(`[ads]  /ads -> ${ad.status} ${ad.type.split(';')[0]}${okAd ? '' : '  <-- not ads.html'} · /rt/ads/stats -> ${st.status} on=${on}`);
+  }
   console.log(bad ? `\n${bad} problem(s)` : '\nno problems');
   process.exit(bad ? 1 : 0);
 }
