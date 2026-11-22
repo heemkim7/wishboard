@@ -331,6 +331,7 @@ const ui = createUI(document.getElementById('ui'), {
   syncCrown: () => paintCrown(),
   league: () => state.league,
   loadLeague: () => loadLeague(),
+  recap: () => net.recap(), // last week's league row for the Monday card (recap.js): one request a week, made by ui.js
   interact: () => world?.interact(),
   enter: (p) => enter(p),
   wishData: () => state.wish,
@@ -885,6 +886,7 @@ async function claim(payload) {
     // The profile pull that reports starter use comes later; without this the free-slot toast would offer a second one.
     if (mode === 'starter') state.starterUsed = true;
     if (mode !== 'edit') celebrateClaim(res.data.slot_id || payload?.slot_id, mode === 'starter' || mode === 'claim');
+    if (mode === 'starter' || mode === 'claim') ui.noteClaim?.(); // the week's record (recap.js) and the home-screen card (install.js)
     ui.promptLink?.('own');
     if (res.fever != null) world?.setFever?.(res.fever);
   }

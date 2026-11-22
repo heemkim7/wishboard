@@ -7,13 +7,15 @@ import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newco
 import { WISH, WISH_ERR, cleanWish, wishRejected, wishShareText } from './wish.js';
 import { botNick, leagueLine, leagueWeek, liveSig } from './league.js';
 import { backFields, returnGap } from './growth.js?v=202611221134';
+import { A2HS_KEY, VISITS_KEY, bumpVisits, isStandalone, isIosSafari, installMode, installDue, INSTALL_COPY } from './install.js?v=202611221134';
+import { RECAP_KEY, RECAP_SHOWN_KEY, noteDay, noteHeld, noteHearts, noteClaim as recapClaim, recapDue, recapLines, recapShareText, weekOf } from './recap.js?v=202611221134';
 import { nineSlot, nowMs } from './live.js';
 import { cardUrl, vipShareLink, composeWishShot, kakaoFeed, kakaoSend, loadKakao, invited } from './share.js?v=202611221134';
 import { inviteView } from './invite.js';
 import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611221134';
 import { EMOTES, REACTIONS, AVATAR_COLORS, AVATAR_COLOR_NAMES, SPECIES } from './ts3d/avatars.js?v=202611221134';
 import { trackEvent, statsOff, statsGpc, setStatsOff } from './analytics.js?v=202611221134';
-import { CHEER_PHRASES, accountLabel, allowedLink, blockedText, linkedActor } from './plaza-account.js';
+import { CHEER_PHRASES, SITE, accountLabel, allowedLink, blockedText, linkedActor } from './plaza-account.js';
 import { policyDoc } from './legal.js?v=202611221134';
 import { subscribePush, resendPush } from './push.js?v=202611221134';
 import { bindSfx, bindMusic, duckMusic, play, setSound, haptic, musicVisible } from './audio.js?v=202611221134';
@@ -1778,6 +1780,9 @@ export function createUI(root, hooks) {
       saveDay(d);
     }
     if (d.streak > 0) todayBtn.textContent = `미션 · ${d.streak}일`;
+    store(VISITS_KEY, bumpVisits(recall(VISITS_KEY, null), d.day)); // days visited, for the home-screen card (install.js)
+    wkNoteDay(d.streak); // and the week's record for the Monday card (recap.js)
+    a2hs.enteredAt = Date.now();
     if (d.back > 0 && !d.backSent) { d.backSent = 1; saveDay(d); if (gap) trackEvent('return_visit', { gap }); } // once per KST day across tabs, only for a browser that attended on an earlier day
   }
   // Attendance and finished missions pay over the room socket. A reward is marked paid only once its send went out,
@@ -2373,6 +2378,7 @@ export function createUI(root, hooks) {
         if (sendBtn) sendBtn.disabled = false;
         if (!res?.ok) { showErr(res?.error || '소원을 걸지 못했어요. 잠시 뒤 다시 해 주세요.'); return; }
         trackEvent('wish_post', { fresh: res.fresh ? 1 : 0, from });
+        a2hs.act.wish = true;
         editing = false;
         justPosted = !!res.fresh;
         if (res.fresh) { postedFresh = true; sfx.cash(); showResult('소원을 걸었어요', '빈 전광판에 차례로 떠요'); }
@@ -4629,6 +4635,128 @@ export function createUI(root, hooks) {
     paintRow();
     return row;
   }
+  // ---- 주간 기록 (recap.js): what this browser saw of the week, kept in kts_wk. Written only when something changed.
+  const wkWrite = (next) => { if (next) store(RECAP_KEY, next); };
+  function wkNoteDay(streak) { wkWrite(noteDay(recall(RECAP_KEY, null), kstDay(), streak)); }
+  let wkAt = 0;
+  // Every few seconds, from the 1 s tick: how many boards I hold and the hearts on my wish, as they stand.
+  function wkTick(now) {
+    if (!entered || now - wkAt < 5000) return;
+    wkAt = now;
+    const raw = recall(RECAP_KEY, null);
+    if (hooks.actorId?.() && world.billboards.length) wkWrite(noteHeld(raw, myBoards().length));
+    wkWrite(noteHearts(recall(RECAP_KEY, null), hooks.wishData?.()?.mine));
+  }
+
+  // ---- 홈 화면 추가 (install.js): one small card per browser, ever, from the 2nd day of visiting, after something meaningful happened in this visit.
+  // Never over a sheet, a celebration or anything else screenBusy() knows; it steps aside while one is up and comes back when the screen is free.
+  const a2hs = { act: { wish: false, claim: false }, enteredAt: 0, el: null, free: 0, shownMs: 0 };
+  const A2HS_SHOW_MS = 25000; // not answered in this long: it goes away on its own (the offer is spent)
+  const installNow = () => installMode({ standalone: isStandalone(), event: window.__ktsInstall, ios: isIosSafari(navigator.userAgent, navigator.maxTouchPoints) });
+  // True while something that came first (a queued 다녀간 사이, push offer, account prompt, last week's card) or the screen itself is in the way.
+  const homeBusy = () => screenBusy() || !!awayWant || !!pushQueued || Date.now() < pushHoldUntil || linkWant || !!recapCard.rec || recapCard.state === 'fetching';
+  function closeHome(how) {
+    if (!a2hs.el) return;
+    a2hs.el.remove();
+    a2hs.el = null;
+    if (how) trackEvent('install_prompt', { how });
+  }
+  function openHome(mode) {
+    store(A2HS_KEY, Date.now()); // shown = spent, whatever the player does with it
+    const done = (how) => closeHome(how);
+    const body = mode === 'ios'
+      ? h('div', { class: 'a2hs-steps' }, h('p', { class: 'a2hs-t', text: INSTALL_COPY.title }), h('ol', null, ...INSTALL_COPY.iosSteps.map((s) => h('li', { text: s }))))
+      : h('p', { class: 'a2hs-t', text: INSTALL_COPY.title });
+    const add = mode === 'ios'
+      ? h('button', { class: 'btn gold', type: 'button', text: INSTALL_COPY.iosOk, onclick: () => done('ios_ok') })
+      : h('button', { class: 'btn gold', type: 'button', text: INSTALL_COPY.add, onclick: async (e) => {
+        e.currentTarget.disabled = true;
+        const ev = window.__ktsInstall;
+        window.__ktsInstall = null; // a captured event can be prompted once
+        let outcome = '';
+        try { await ev.prompt(); outcome = (await ev.userChoice)?.outcome || ''; } catch { outcome = ''; }
+        done(outcome === 'accepted' ? 'accept' : 'dismiss');
+      } });
+    const el = h('div', { class: 'glass a2hs', role: 'region', 'aria-label': '홈 화면에 추가' }, body,
+      h('div', { class: 'a2hs-act' }, add, mode === 'ios' ? null : h('button', { class: 'a2hs-later', type: 'button', text: INSTALL_COPY.later, onclick: () => done('later') })));
+    document.body.append(el);
+    a2hs.el = el;
+    a2hs.shownMs = 0;
+    trackEvent('install_prompt', { how: mode === 'ios' ? 'ios' : 'shown' });
+  }
+  function pumpHome(now) {
+    if (!entered) return;
+    if (!a2hs.enteredAt) a2hs.enteredAt = Date.now();
+    const busy = homeBusy();
+    if (a2hs.el) {
+      a2hs.el.hidden = busy; // a sheet came up: the card waits behind it, it never sits on top
+      if (!busy && (a2hs.shownMs += 1000) >= A2HS_SHOW_MS) closeHome('timeout');
+      return;
+    }
+    // quiet for 3 ticks first, so it never lands on the moment a sheet or a celebration just closed
+    a2hs.free = busy ? 0 : a2hs.free + 1;
+    if (a2hs.free < 3) return;
+    const mode = installNow();
+    if (installDue({ mode, done: recall(A2HS_KEY, 0), visits: recall(VISITS_KEY, null), act: a2hs.act, playMs: Date.now() - a2hs.enteredAt, busy, newbie: !!newbieOn })) openHome(mode);
+  }
+
+  // ---- 주간 돌아보기 (recap.js): the first entry of a KST ISO week, for a browser that was active last week. One request (GET /rt/recap) per week, made
+  // only when the card is about to open, and its answer (or its failure) is kept in kts_wk_me so a reload does not ask again.
+  const RECAP_ME_KEY = 'kts_wk_me', RECAP_WAIT_MS = 10000, RECAP_DROP_MS = 10 * 60e3;
+  const recapCard = { state: '', rec: null, me: null, free: 0, since: 0 };
+  async function recapFetch(week) {
+    const kept = recall(RECAP_ME_KEY, null);
+    if (kept && kept.week === week) return kept.me || null;
+    let me = null;
+    try { me = await Promise.race([Promise.resolve(hooks.recap?.()), new Promise((r) => setTimeout(() => r(null), 6000))]); } catch { me = null; }
+    store(RECAP_ME_KEY, { week, me: me || null });
+    return me || null;
+  }
+  function openRecap(rec, me) {
+    store(RECAP_SHOWN_KEY, weekOf());
+    trackEvent('week_recap', { how: 'shown' });
+    openSheet(['trophy', '지난주 돌아보기'], null, (host) => {
+      const rows = recapLines(rec, me);
+      const box = h('div');
+      host.append(
+        h('p', { class: 'note', text: me && me.rank >= 1 ? '지난주 이렇게 보냈어요' : '지난주 다녀가신 기록이에요' }),
+        h('div', { class: 'recap-list' }, ...rows.map((r) => h('div', { class: 'recap-row' }, h('span', { text: r.label }), h('b', { class: 'tnum', text: r.value })))),
+        h('button', { class: 'btn gold', type: 'button', text: '공유하기', onclick: (e) => busyTap(e.currentTarget, async () => {
+          const how = await sendLink({ kind: 'recap', text: recapShareText(rec, me), url: SITE, native: true, into: box });
+          if (how && how !== 'cancel' && how !== 'busy') trackEvent('week_recap', { how: 'share' });
+        }) }),
+        box,
+        h('button', { class: 'btn ghost', type: 'button', text: '닫기', onclick: () => backSheet() }),
+      );
+    }, true, 'recap');
+  }
+  function pumpRecap() {
+    if (!entered || recapCard.state === 'done') return;
+    if (!recapCard.state) {
+      if (Date.now() - a2hs.enteredAt < RECAP_WAIT_MS) return; // 다녀간 사이 and the intro go first
+      // A newcomer's week is not "last week's"; whether this is one is known once the plaza list is in.
+      if (newbieOn === null) return;
+      const rec = recapDue({ raw: recall(RECAP_KEY, null), shown: recall(RECAP_SHOWN_KEY, ''), newbie: !!newbieOn });
+      if (!rec) { recapCard.state = 'done'; return; }
+      recapCard.state = 'wait'; recapCard.rec = rec; recapCard.since = Date.now();
+    }
+    if (recapCard.state === 'wait') {
+      if (Date.now() - recapCard.since > RECAP_DROP_MS) { recapCard.state = 'done'; recapCard.rec = null; return; }
+      const busy = screenBusy() || !!awayWant || !!pushQueued || Date.now() < pushHoldUntil || linkWant;
+      recapCard.free = busy ? 0 : recapCard.free + 1;
+      if (recapCard.free < 3) return;
+      recapCard.state = 'fetching';
+      recapFetch(weekOf()).then((me) => { recapCard.me = me; recapCard.state = 'ready'; });
+      return;
+    }
+    if (recapCard.state === 'ready') {
+      if (Date.now() - recapCard.since > RECAP_DROP_MS) { recapCard.state = 'done'; recapCard.rec = null; return; }
+      if (screenBusy() || awayWant) return; // the player did something meanwhile: it waits (the answer is kept, no second request)
+      const { rec, me } = recapCard;
+      recapCard.state = 'done'; recapCard.rec = null;
+      openRecap(rec, me);
+    }
+  }
   // 다녀간 사이 (main.js builds the rows with ftue.js awayRows). Queued like the push offer; it goes first.
   function openAway(rows, onClose) {
     if (!Array.isArray(rows) || !rows.length) return;
@@ -5540,7 +5668,7 @@ export function createUI(root, hooks) {
   }
 
   // ---------------------------------------------------------------- loop & keys
-  let last = performance.now(), mapAt = 0, hudAt = 0, rankAt = 0;
+  let last = performance.now(), mapAt = 0, hudAt = 0, rankAt = 0, homeAt = 0;
   function frame(now) {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
@@ -5553,6 +5681,7 @@ export function createUI(root, hooks) {
     if (now - mapAt > 125 && !document.hidden) { mapAt = now; drawMini(hooks.minimap?.()); }
     if (now - hudAt > 66 && !document.hidden) { hudAt = now; renderHud(hooks.hud?.()); }
     if (now - rankAt > 1000 && !document.hidden) { rankAt = now; paintLive(); renderGoal(); maybeStarterToast(); payDue(); pumpLink(now); pumpTaken(now); if (pushQueued) maybeOfferPush(); }
+    if (now - homeAt > 1000 && !document.hidden) { homeAt = now; wkTick(now); pumpRecap(); pumpHome(now); } // the week record, last week's card, the home-screen card
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
@@ -5763,6 +5892,8 @@ export function createUI(root, hooks) {
     // A board of mine was taken (socket TAKE): queued as a tappable notice, see queueTaken.
     taken(ev) { queueTaken(ev); },
     closeSheets: () => closeSheet(),
+    // A board of mine was just claimed (main.js): the week's record and the home-screen card's "something meaningful".
+    noteClaim() { a2hs.act.claim = true; wkWrite(recapClaim(recall(RECAP_KEY, null))); },
     showDraw(win, hit, pay, lot) {
       const mine = Math.floor(Number(lot));
       const who = mine >= 1 && mine <= 15 ? `내 번호 ${mine} · ` : '';
