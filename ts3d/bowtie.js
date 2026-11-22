@@ -2,8 +2,8 @@
 // numbers. No three.js: timesq.js mounts what planBowtie returns, and test/board-place.test.mjs runs the same plan on
 // the real map (assets/nyc/manhattan.bin) to check that no face overlaps another or sits inside a building.
 // Everything here is a pure function of the map, so every client puts every board in the same place.
-import { TILE } from './nyc.js?v=202611221059';
-import { LAYOUT, PLAZA_CENTER, groundHeight } from './layout.js?v=202611221059';
+import { TILE } from './nyc.js?v=202611221134';
+import { LAYOUT, PLAZA_CENTER, groundHeight } from './layout.js?v=202611221134';
 
 export const STREET_OLD = 30; // STREET_1..30: chosen by distance to the street axis (unchanged since launch, but for the ones in MOVED)
 export const STREET_NEW = 20; // STREET_31..50: the core of the bowtie, picked by planBowtie below

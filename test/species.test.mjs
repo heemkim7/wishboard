@@ -70,8 +70,8 @@ describe('the species table', () => {
     const ui = read('ui.js'), html = read('index.html');
     const pick = ui.slice(ui.indexOf('function speciesPicker('), ui.indexOf('function colorPicker('));
     assert.match(pick, /for \(const s of SPECIES\)/);
-    assert.match(pick, /h\('img', \{ src: s\.thumb, alt: '', width: 36, height: 36, loading: 'lazy'/);
-    assert.match(pick, /addEventListener\('error', \(\) => pic\.replaceWith\(glyph\(s\)\)/);
+    assert.match(pick, /h\('img', \{ src: s\.thumb, alt: '', width: 56, height: 56, loading: 'lazy'/);
+    assert.match(pick, /addEventListener\('error', \(\) => box\.replaceWith\(glyph\(s\)\)/);
     assert.match(pick, /'aria-pressed': String\(s\.id === current\)/);
     assert.match(pick, /setAttribute\('aria-pressed', String\(other === b\)\)/);
     assert.match(pick, /h\('span', \{ class: 'lbl', text: s\.label \}\)/);
@@ -82,6 +82,33 @@ describe('the species table', () => {
     assert.ok(tile >= 44, `tile ${tile} px`);
     // The HUD avatar glyph reads the same table.
     assert.match(ui, /avatarEl\.textContent = \(SPECIES\.find\(\(s\) => s\.id === hooks\.species\(\)\) \|\| SPECIES\[0\]\)\.glyph;/);
+  });
+
+  it('the hoodie colour shows in the picker: sixteen named colours, bright ones for newcomers, a mask per species', async () => {
+    const { AVATAR_COLORS, AVATAR_COLOR_NAMES, STARTER_COLORS, SPECIES } = await import('../ts3d/avatars.js');
+    assert.equal(AVATAR_COLORS.length, 16);
+    assert.equal(new Set(AVATAR_COLORS).size, 16);
+    for (const c of AVATAR_COLORS) { assert.match(c, /^#[0-9a-f]{6}$/); assert.ok(AVATAR_COLOR_NAMES[c], c); }
+    // the eight from before stay, so a saved colour is still one of the swatches
+    for (const c of ['#ff3d9a', '#3fe6ff', '#ffcf5a', '#39f58a', '#b84dff', '#ff6a3d', '#f4f6ff', '#4d7cff']) assert.ok(AVATAR_COLORS.includes(c), c);
+    // newcomers never start white, brown or charcoal
+    for (const c of ['#f4f6ff', '#8b5a3c', '#2b2f3a']) assert.equal(STARTER_COLORS.includes(c), false, c);
+    assert.ok(STARTER_COLORS.length >= 12);
+    assert.match(read('main.js'), /STARTER_COLORS\[Math\.floor\(Math\.random\(\) \* STARTER_COLORS\.length\)\]/);
+    assert.match(read('timesSquare3d.js'), /colorFor = \(id\) => STARTER_COLORS\[/);
+    // every species has a hoodie mask next to its thumbnail, a small white-with-alpha PNG
+    for (const s of SPECIES) {
+      assert.equal(s.hood, s.thumb.replace(/\.png$/, '-hood.png'));
+      const buf = readFileSync(new URL('..' + s.hood, import.meta.url));
+      assert.equal(buf.toString('latin1', 1, 4), 'PNG');
+      assert.ok(buf.length < 4000, s.hood);
+    }
+    // the picker multiplies the chosen colour through the mask, and the colour row repaints it
+    const ui = read('ui.js'), html = read('index.html');
+    assert.match(ui, /h\('i', \{ class: 'hood', 'aria-hidden': 'true', style: \{ webkitMaskImage: `url\(\$\{s\.hood\}\)`, maskImage: `url\(\$\{s\.hood\}\)` \} \}\)/);
+    assert.match(ui, /h\('label', null, '옷 색', h\('span', \{ text: '후드티 · 발밑 링 · 이름표 점' \}\)\), colorPicker\(color, \(c\) => \{ color = c; grid\?\.style\.setProperty\('--c', c\); \}\)\)/);
+    assert.doesNotMatch(ui, /캐릭터 색이 아니라/);
+    assert.match(html, /\.species-grid \.pic \.hood \{[^}]*background: var\(--c, transparent\); mix-blend-mode: multiply;/);
   });
 
   it('the service worker precaches nothing: models and thumbnails are cached as they are fetched, by URL', () => {

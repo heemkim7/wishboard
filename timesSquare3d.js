@@ -9,29 +9,29 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { toNetUnits, fromNetUnits } from './net.js?v=202611221059';
+import { toNetUnits, fromNetUnits } from './net.js?v=202611221134';
 import { walkerPoints } from './ts3d/walkers.js';
-import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, SKIP_ZONES, NO_PROPS, NO_TREES, FAR_CLUSTERS, LANDMARKS, groundHeight, onStairs, fountainSpot } from './ts3d/layout.js?v=202611221059';
+import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, SKIP_ZONES, NO_PROPS, NO_TREES, FAR_CLUSTERS, LANDMARKS, groundHeight, onStairs, fountainSpot } from './ts3d/layout.js?v=202611221134';
 import { BALANCE, PAY, chainsOf, slotName } from './balance.js';
 import { isSlotId, STREET_N } from './balance.js';
-import { kitMaterials } from './ts3d/kit.js?v=202611221059';
-import { createReflection } from './ts3d/ground.js?v=202611221059';
-import { createBoards, screenTime } from './ts3d/screens.js?v=202611221059';
-import { loadNYC, ROAD } from './ts3d/nyc.js?v=202611221059';
-import { createWorld, FAR_LAYER } from './ts3d/world.js?v=202611221059';
-import { createTraffic } from './ts3d/traffic.js?v=202611221059';
-import { buildTimesSquare } from './ts3d/timesq.js?v=202611221059';
-import { claimRockefeller, buildRockefeller } from './ts3d/rockefeller.js?v=202611221059';
-import { claimIcons, buildIcons } from './ts3d/icons.js?v=202611221059';
-import { buildLandmarks } from './ts3d/landmarks.js?v=202611221059';
-import { createAvatars, EMOTES, REACTIONS, AVATAR_COLORS, speciesId } from './ts3d/avatars.js?v=202611221059';
-import { seesAvatar, prefetchDelay, prefetchIds } from './ts3d/loadplan.js?v=202611221059';
-import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, paintLabel, fontsReady, chars, hashStr } from './ts3d/art.js?v=202611221059';
-import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=202611221059';
-import { taxiExit, EXIT_SLOW, nextOfferDelay, fareWait } from './interact.js?v=202611221059';
-import { RETURN_MS, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, portraitFov, fitDistance, reverseTime, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange, boardVantage, facesBlock } from './camrig.js?v=202611221059';
+import { kitMaterials } from './ts3d/kit.js?v=202611221134';
+import { createReflection } from './ts3d/ground.js?v=202611221134';
+import { createBoards, screenTime } from './ts3d/screens.js?v=202611221134';
+import { loadNYC, ROAD } from './ts3d/nyc.js?v=202611221134';
+import { createWorld, FAR_LAYER } from './ts3d/world.js?v=202611221134';
+import { createTraffic } from './ts3d/traffic.js?v=202611221134';
+import { buildTimesSquare } from './ts3d/timesq.js?v=202611221134';
+import { claimRockefeller, buildRockefeller } from './ts3d/rockefeller.js?v=202611221134';
+import { claimIcons, buildIcons } from './ts3d/icons.js?v=202611221134';
+import { buildLandmarks } from './ts3d/landmarks.js?v=202611221134';
+import { createAvatars, EMOTES, REACTIONS, AVATAR_COLORS, STARTER_COLORS, speciesId } from './ts3d/avatars.js?v=202611221134';
+import { seesAvatar, prefetchDelay, prefetchIds } from './ts3d/loadplan.js?v=202611221134';
+import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, paintLabel, fontsReady, chars, hashStr } from './ts3d/art.js?v=202611221134';
+import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=202611221134';
+import { taxiExit, EXIT_SLOW, nextOfferDelay, fareWait } from './interact.js?v=202611221134';
+import { RETURN_MS, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, portraitFov, fitDistance, reverseTime, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange, boardVantage, facesBlock } from './camrig.js?v=202611221134';
 
-export { paintBillboard, THEMES, LAYOUT, PLOT_SLOTS, groundHeight, EMOTES, AVATAR_COLORS, taxiTrainMult, applyTaxiHardHit };
+export { paintBillboard, THEMES, LAYOUT, PLOT_SLOTS, groundHeight, EMOTES, AVATAR_COLORS, STARTER_COLORS, taxiTrainMult, applyTaxiHardHit };
 export const PLAZA = LAYOUT;
 const STICKER_GLYPHS = ['🔥부럽다!', '👑성지순례', '💖하트폭탄', '👀내자리찜'];
 
@@ -63,7 +63,7 @@ export function detectQuality() {
   if ((navigator.deviceMemory || 8) <= 4 || (navigator.hardwareConcurrency || 8) <= 4) return 'medium';
   return 'high';
 }
-export const colorFor = (id) => AVATAR_COLORS[hashStr(id) % AVATAR_COLORS.length];
+export const colorFor = (id) => STARTER_COLORS[hashStr(id) % STARTER_COLORS.length];
 
 // NeutralToneMapping pulls the darkest channel of a dim colour toward zero (its toe), so a dark sRGB target fed in
 // directly comes out darker and more saturated. This returns the linear pre-tone-map colour that shows as `hex`
@@ -272,7 +272,7 @@ void main(){
   const vel = new THREE.Vector3();
   let yaw = Number.isFinite(pos0.yaw) ? pos0.yaw : LAYOUT.spawn.yaw, animSpeed = 0, sitTimer = 0, inputEnabled = true, dancing = false, danceAt = 0;
   let name = chars(opts.name || '네온손님', 16);
-  let color = COLOR_RE.test(opts.color || '') ? opts.color : AVATAR_COLORS[0];
+  let color = COLOR_RE.test(opts.color || '') ? opts.color : STARTER_COLORS[0];
   let species = speciesId(opts.species);
   let myEquip = [];
   const me = avatars.create({ id: 'me', name, color, local: true, species });

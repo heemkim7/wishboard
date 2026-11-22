@@ -5,8 +5,8 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
-import { makeCanvas, paintNameTag, paintBubble } from './art.js?v=202611221059';
-import { MODEL_URL, modelFor } from './loadplan.js?v=202611221059';
+import { makeCanvas, paintNameTag, paintBubble } from './art.js?v=202611221134';
+import { MODEL_URL, modelFor } from './loadplan.js?v=202611221134';
 
 const LOOPS = new Set(['Idle', 'Walking', 'Running', 'Dance', 'Sitting', 'Standing']);
 export const EMOTES = {
@@ -23,19 +23,39 @@ export const REACTIONS = [
   { g: '💯', anim: 'ThumbsUp' }, { g: '❤️' }, { g: '💖', anim: 'Yes' }, { g: '🎉', anim: 'Jump' }, { g: '✨' }, { g: '🐟', anim: 'ThumbsUp' },
   { g: '🍜' }, { g: '🎶', anim: 'Dance' }, { g: '🗽', anim: 'Wave' }, { g: '🚕' }, { g: '💸', anim: 'Yes' }, { g: '😴', anim: 'No' },
 ];
-export const AVATAR_COLORS = ['#ff3d9a', '#3fe6ff', '#ffcf5a', '#39f58a', '#b84dff', '#ff6a3d', '#f4f6ff', '#4d7cff'];
-// thumb: the picker's tile picture (ui.js speciesPicker); the glyph stands in while it is missing or fails.
+// Hoodie colours: the player's one colour paints the hoodie (material Main), the foot ring and the name-tag dot. Sixteen, in
+// picker order; the eight from before (pink, sky, amber, green, purple, orange, white, blue) are all still here, so a saved one
+// stays valid. Any #rrggbb is accepted by the server; this list is what the picker offers.
+export const AVATAR_COLOR_NAMES = Object.freeze({
+  '#ff3d9a': '핑크', '#ffa3c7': '연분홍', '#ff4a4a': '빨강', '#ff6a3d': '주황', '#ffcf5a': '호박', '#ffe94a': '노랑',
+  '#9cff57': '연두', '#39f58a': '초록', '#2dd4bf': '청록', '#3fe6ff': '하늘', '#4d7cff': '파랑', '#b84dff': '보라',
+  '#c9a7ff': '라벤더', '#8b5a3c': '갈색', '#2b2f3a': '먹색', '#f4f6ff': '흰색',
+});
+export const AVATAR_COLORS = Object.freeze(Object.keys(AVATAR_COLOR_NAMES));
+// A newcomer's random colour, and a peer's when its presence has none: bright ones only. White, brown and charcoal are
+// there to choose, but on a white rabbit or at night they read as "no colour".
+export const STARTER_COLORS = Object.freeze(AVATAR_COLORS.filter((c) => !['#f4f6ff', '#8b5a3c', '#2b2f3a'].includes(c)));
+// The foot ring glows (additive): a dark colour is lifted to at least 62% lightness first so the ring still shows.
+export function ringTone(color) {
+  const c = new THREE.Color(color);
+  const hsl = { h: 0, s: 0, l: 0 };
+  c.getHSL(hsl);
+  if (hsl.l < 0.62) c.setHSL(hsl.h, hsl.s, 0.62);
+  return c.multiplyScalar(2.2);
+}
+// thumb: the picker's tile picture (ui.js speciesPicker); the glyph stands in while it is missing or fails. hood: the hoodie's
+// coverage in the same frame (tools/blender/render_animal.py --hoods): the picker multiplies the chosen colour through it.
 export const SPECIES = [
-  { id: 1, label: '쥐', glyph: '🐭', thumb: '/assets/avatars/mouse.png' },
-  { id: 2, label: '고양이', glyph: '🐱', thumb: '/assets/avatars/cat.png' },
-  { id: 3, label: '곰', glyph: '🐻', thumb: '/assets/avatars/bear.png' },
-  { id: 4, label: '토끼', glyph: '🐰', thumb: '/assets/avatars/rabbit.png' },
-  { id: 5, label: '강아지', glyph: '🐶', thumb: '/assets/avatars/puppy.png' },
-  { id: 6, label: '판다', glyph: '🐼', thumb: '/assets/avatars/panda.png' },
-  { id: 7, label: '여우', glyph: '🦊', thumb: '/assets/avatars/fox.png' },
-  { id: 8, label: '펭귄', glyph: '🐧', thumb: '/assets/avatars/penguin.png' },
-  { id: 9, label: '햄스터', glyph: '🐹', thumb: '/assets/avatars/hamster.png' },
-  { id: 10, label: '호랑이', glyph: '🐯', thumb: '/assets/avatars/tiger.png' },
+  { id: 1, label: '쥐', glyph: '🐭', thumb: '/assets/avatars/mouse.png', hood: '/assets/avatars/mouse-hood.png' },
+  { id: 2, label: '고양이', glyph: '🐱', thumb: '/assets/avatars/cat.png', hood: '/assets/avatars/cat-hood.png' },
+  { id: 3, label: '곰', glyph: '🐻', thumb: '/assets/avatars/bear.png', hood: '/assets/avatars/bear-hood.png' },
+  { id: 4, label: '토끼', glyph: '🐰', thumb: '/assets/avatars/rabbit.png', hood: '/assets/avatars/rabbit-hood.png' },
+  { id: 5, label: '강아지', glyph: '🐶', thumb: '/assets/avatars/puppy.png', hood: '/assets/avatars/puppy-hood.png' },
+  { id: 6, label: '판다', glyph: '🐼', thumb: '/assets/avatars/panda.png', hood: '/assets/avatars/panda-hood.png' },
+  { id: 7, label: '여우', glyph: '🦊', thumb: '/assets/avatars/fox.png', hood: '/assets/avatars/fox-hood.png' },
+  { id: 8, label: '펭귄', glyph: '🐧', thumb: '/assets/avatars/penguin.png', hood: '/assets/avatars/penguin-hood.png' },
+  { id: 9, label: '햄스터', glyph: '🐹', thumb: '/assets/avatars/hamster.png', hood: '/assets/avatars/hamster-hood.png' },
+  { id: 10, label: '호랑이', glyph: '🐯', thumb: '/assets/avatars/tiger.png', hood: '/assets/avatars/tiger-hood.png' },
 ];
 export const SPECIES_MAX = 10;
 // Any input to a species id: an integer 1..SPECIES_MAX, anything else (0, 11, 2.5, '7a', null) is the mouse.
@@ -252,7 +272,7 @@ class Avatar {
       // pulls it a few centimetres toward the camera at the follow camera's low angle, more than this ring's 2 cm of
       // height above the plaza: without an offset of its own the ring failed the depth test and vanished. -6 keeps it in
       // front of every ground layer; renderOrder 1 draws it after the dark shadow blob so the blob cannot dim it.
-      this.ringMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(this.color).multiplyScalar(2.2), transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -12 });
+      this.ringMat = new THREE.MeshBasicMaterial({ color: ringTone(this.color), transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -12 });
       this.ring = new THREE.Mesh(sys.ringGeo, this.ringMat);
       this.ring.position.y = 0.035;
       this.ring.renderOrder = 1;
@@ -494,7 +514,7 @@ class Avatar {
     if (!color || color === this.color) return;
     this.color = color;
     this.mainMat?.color.set(color);
-    this.ringMat?.color.set(color).multiplyScalar(2.2);
+    this.ringMat?.color.copy(ringTone(color));
     this.paintTag();
   }
 

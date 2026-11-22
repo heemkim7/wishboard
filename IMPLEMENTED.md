@@ -20,6 +20,8 @@
 - 스폰은 타임스퀘어 남쪽 보행 광장. 빨간 계단, 원 타임스퀘어 쪽 메인 타워, 붕어빵 포차, 황금 ATM, K-POP 스테이지, 택시가 있다.
 - 분양 건물은 클라이언트 `PLOT_SLOTS` 18필지다. `POST /rt/buy-plot`도 1~18만 받는다. 단계 0 빈 땅, 1 텐트, 2 포차, 3 네온 가게, 4 타워. 빈 땅 간판 문구는 서버 `sign_text`다. 비어 있으면 `분양 대기중`처럼 그 값이 간판에 나온다. 1단계 이상은 `sign_text` 또는 주인 이름이다.
 - 아바타 종은 프레즌스 `av`이고 10종이다(`ts3d/avatars.js` `SPECIES`, 그 밖의 값은 1). `1` 쥐 🐭, `2` 고양이 🐱, `3` 곰 🐻, `4` 토끼 🐰, `5` 강아지(시바풍) 🐶, `6` 판다 🐼, `7` 여우 🦊, `8` 펭귄 🐧, `9` 햄스터 🐹, `10` 호랑이 🐯. 모두 이 게임용으로 새로 만든 일반 동물이다(기존 캐릭터·브랜드를 본뜨지 않았다). 클립 이름은 같다 (`Idle`, `Walking`, `Running`, `Dance`, `Sitting`, `Wave`, `Jump`, `ThumbsUp`, `Yes`, `No`). 이름표 색은 재질 이름 `Main`만 칠한다. 모든 종의 `Main`은 후드티이고, 털·주둥이·눈·귀 안쪽·무늬는 그 이름이 아니어야 한다. 모델을 언제 받는지는 아래 `첫 로딩`이다.
+- **옷 색**(2026-11-22): 플레이어의 색 하나가 후드티(재질 `Main`), 발밑 링, 이름표 점을 칠한다. 고르기는 16색이다(`ts3d/avatars.js` `AVATAR_COLORS`/`AVATAR_COLOR_NAMES`: 핑크, 연분홍, 빨강, 주황, 호박, 노랑, 연두, 초록, 청록, 하늘, 파랑, 보라, 라벤더, 갈색, 먹색, 흰색). 예전 8색은 모두 남아 있어 저장된 색은 그대로 쓰인다. 서버는 어떤 `#rrggbb`도 받는다(`set_ring_color`). 새로 온 사람의 무작위 색과, 프레즌스에 색이 없는 사람의 대신 색(`colorFor`)은 흰색·갈색·먹색을 뺀 13색(`STARTER_COLORS`)에서 고른다. 예전에는 8색 중 흰색이 무작위로 걸리면 흰 후드티라 옷 색이 없는 것처럼 보였다. 발밑 링은 빛을 더하는 재질이라 어두운 색은 밝기 62%까지 올려 그린다(`ringTone`).
+- 프로필 시트의 색 줄은 `옷 색`(`후드티 · 발밑 링 · 이름표 점`)이다. 예전 문구 `발밑 링 색 — 캐릭터 색이 아니라, 발밑 동그라미입니다`는 Blender 캐릭터(후드티가 색을 따른다)와 맞지 않았다. 색을 고르면 바로 위 캐릭터 타일 열 개의 후드티가 그 색으로 바뀐다: 종마다 썸네일과 같은 프레임의 후드티 마스크 `assets/avatars/<종>-hood.png`(흰색 + 알파, 장당 약 1KB, `render_animal.py --avatars <폴더> --hoods-only`로 만든다)를 CSS `mask-image`로 쓰고, 그 위에 고른 색을 `mix-blend-mode: multiply`로 곱한다(그리드의 `--c`). 저장 전에는 게임 속 캐릭터는 바뀌지 않는다.
 - 캐릭터 고르기(`🤖 내 캐릭터`)는 5칸×2줄 타일이다. 타일마다 `assets/avatars/<종>.png`(160×160 팔레트 PNG, 6~8KB, Blender로 같은 각도·조명에서 렌더) 썸네일과 이름이 있고, 그림을 못 받으면 이모지로 대신한다. 고른 칸은 `aria-pressed`다. 320px 폭에서도 옆으로 넘치지 않는다(타일 약 48×67px).
 - 채널은 `chapel:square`부터 `chapel:square-8`. 같은 세계 데이터를 보고, 사람만 방이 다르다. 웹드라이버가 켜진 브라우저는 `chapelqa:`로 간다.
 - 품질은 기기 따라 `high` / `medium` / `low`. `?q=`로 강제할 수 있다. 설정에서 바꾼 품질은 새로고침 후 적용되고, 화면에 그 문구가 있다. `low`에서는 가까운 전광판 3개의 하단 띠만 0.16초마다 다시 그린다(그 외 단계는 10개, 0.08초).
@@ -470,7 +472,7 @@
 
 한 모듈은 한 주소로만 부른다. 브라우저도 Worker 번들러도 `x.js`와 `x.js?v=1`을 다른 모듈로 본다. `tools/stamp.mjs`가 고치고 `test/cachebust.test.mjs`가 막는다.
 
-- 브라우저 전용 모듈은 모두 `./x.js?v=<빌드 id>`로, 빌드 id 하나로 부른다. 기준은 `index.html`의 `main.js?v=` 값이고 지금은 `202611221059`다. `index.html`의 `<script src>`도 같다.
+- 브라우저 전용 모듈은 모두 `./x.js?v=<빌드 id>`로, 빌드 id 하나로 부른다. 기준은 `index.html`의 `main.js?v=` 값이고 지금은 `202611221134`다. `index.html`의 `<script src>`도 같다.
 - Worker도 번들하는 모듈(`worker.js`에서 정적 import로 닿는 것)은 어디서든 쿼리 없이 부른다. 지금은 `adreport.js`, `balance.js`, `cardpng.js`, `dark.js`, `invite.js`, `league.js`, `live.js`, `plaza-account.js`, `ts3d/walkers.js`, `wish.js`다(`tools/stamp.mjs` `workerModules`가 `worker.js`의 import에서 찾는다). 이 모듈들 안의 import도 쿼리가 없다. `qr.js`, `growth.js`, `inbox.js`, `share.js`, `ts3d/loadplan.js`, `interact.js`, `bgm.js`(배경음악 합성), `ts3d/bowtie.js`(전광판 배치)는 브라우저 전용이라 `?v=`로 부른다.
 - `sw.js`(`?v=9`, 손으로 관리)와 `vendor/`는 이 규칙 밖이다. `index.html`이 `/sw.js?v=9`를 등록한다.
 - HTML 페이지(`index.html`, `admin.html`) 안의 인라인 모듈 스크립트의 import도 같은 규칙으로 `tools/stamp.mjs`가 고친다(`admin.html`의 `./growth.js?v=`).

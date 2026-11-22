@@ -4,7 +4,7 @@
 #
 #   blender --background --factory-startup --python tools/blender/render_animal.py -- assets/models/BearToy.glb <outdir> [prefix] [--wire] [--only a,b]
 #   blender --background --factory-startup --python tools/blender/render_animal.py -- --lineup assets/models/MouseToy.glb assets/models/CatToy.glb assets/models/BearToy.glb <outdir> lineup
-#   blender --background --factory-startup --python tools/blender/render_animal.py -- --avatars assets/avatars [--models <dir>] [--sheet <png>]
+#   blender --background --factory-startup --python tools/blender/render_animal.py -- --avatars assets/avatars [--models <dir>] [--sheet <png>] [--hoods | --hoods-only]
 #
 # --avatars writes the character-picker thumbnails <key>.png (mouse, cat, bear, rabbit, puppy, panda, fox, penguin,
 # hamster, tiger; this one mode writes into the repository): 160x160, transparent, head and shoulders in a front
@@ -12,6 +12,9 @@
 # for all ten. Each is rendered at twice the size, averaged down and written as a 256-colour palette PNG (about 20 KB).
 # It also writes contact sheets of the ten (default %TEMP%/kts-avatars/sheet.png, and sheet_64.png at picker size).
 # --models reads the GLBs from another folder (default assets/models).
+# --hoods also writes <key>-hood.png: the hoodie's coverage in the same frame (white, alpha = how much of the pixel is
+# hoodie; arms, head and drawstrings in front of it cut it out). The picker multiplies the player's colour through it,
+# so a thumbnail shows the colour the hoodie will be in the game. --hoods-only writes only those (thumbnails untouched).
 #
 # It renders the exported GLB itself (not the build scene), so what you see is what the game loads.
 # The rest pose is the T-pose; the arms were modelled 40 degrees down, so the T-pose shows a stretched underarm. Judge the pose shots.
@@ -172,6 +175,10 @@ def render_avatars():
         r.image_settings.file_format, r.image_settings.color_mode, r.image_settings.color_depth = "PNG", "RGBA", "8"
         sc.view_settings.view_transform, sc.view_settings.look = "Standard", "None"
         tmp = os.path.join(os.path.dirname(sheet), "_big_%s.png" % key)
+        if HOODS:
+            hood_mask(key, out_dir, tmp, S, SS)
+            if HOODS_ONLY:
+                continue
         r.filepath = tmp
         bpy.ops.render.render(write_still=True)
         img = bpy.data.images.load(tmp)
@@ -191,6 +198,8 @@ def render_avatars():
         tiles[key] = q
         bpy.data.images.remove(img)
         os.remove(tmp)
+    if HOODS_ONLY:
+        return
     # contact sheets: the ten on a dark and on a light ground, at full size and at picker size
     def comp(t, bg):
         a = t[..., 3:4] / 255.0
@@ -208,6 +217,48 @@ def render_avatars():
     im.save()
     print("SHEET", sheet)
 
+def hood_mask(key, out_dir, tmp, S, SS):
+    """Render the open scene once more with the hoodie (Main) emitting white and every other material emitting black, then
+    put the materials back. Coverage = the premultiplied red channel, averaged down like the thumbnail."""
+    saved = []
+    for m in bpy.data.materials:
+        if not m.use_nodes:
+            continue
+        nt = m.node_tree
+        out = next((n for n in nt.nodes if n.type == "OUTPUT_MATERIAL"), None)
+        if out is None:
+            continue
+        old = [l.from_socket for l in out.inputs["Surface"].links]
+        em = nt.nodes.new("ShaderNodeEmission")
+        em.inputs["Color"].default_value = (1, 1, 1, 1) if m.name.split(".")[0] == "Main" else (0, 0, 0, 1)
+        em.inputs["Strength"].default_value = 1.0
+        nt.links.new(em.outputs["Emission"], out.inputs["Surface"])
+        saved.append((nt, out, em, old))
+    r = bpy.context.scene.render
+    r.filepath = tmp
+    bpy.ops.render.render(write_still=True)
+    img = bpy.data.images.load(tmp)
+    px = np.empty(S * SS * S * SS * 4, np.float32)
+    img.pixels.foreach_get(px)
+    px = px.reshape(S * SS, S * SS, 4)[::-1]
+    cov = (px[..., 0] * px[..., 3]).reshape(S, SS, S, SS).mean((1, 3))     # emission is 1.0 under the Standard view
+    a = np.clip(np.round(np.clip(cov, 0, 1) * 255), 0, 255).astype(np.uint8)
+    a[a < 6] = 0
+    rgba = np.zeros((S, S, 4), np.uint8)
+    rgba[..., :3] = 255
+    rgba[..., 3] = a
+    rgba[a == 0] = 0
+    path = os.path.join(out_dir, key + "-hood.png")
+    print("HOOD", key, write_png(path, quantize(rgba, 64)), "bytes", path)
+    bpy.data.images.remove(img)
+    os.remove(tmp)
+    for nt, out, em, old in saved:
+        nt.nodes.remove(em)
+        for sock in old:
+            nt.links.new(sock, out.inputs["Surface"])
+
+HOODS = "--hoods" in argv or "--hoods-only" in argv
+HOODS_ONLY = "--hoods-only" in argv
 AVATAR_FRAME = (1.06, Vector((-0.02, 0.0, 1.035)))    # frame height and aim (m): chest to just above the rabbit's ear tips
 AVATAR_PITCH = 7.0
 if "--avatars" in argv:

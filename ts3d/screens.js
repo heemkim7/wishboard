@@ -1,8 +1,8 @@
 // LED billboard screens: shader-animated materials, curved screens with bezels and
 // scrolling news tickers, and the slot registry (MAIN_*, SUB_1A..4B, STREET_1..50, PLOT_1..18).
 import * as THREE from 'three';
-import { Kit, arcSlab } from './kit.js?v=202611221059';
-import { THEMES, makeCanvas, paintBillboard, paintTicker, fontsReady, tierOf, boardPhoto, photoReady, SANS, roundRect, chars, paintWish, wishOrd, wishRotates, wishStrip, cleanWishes, sameWishes, rowUntil, wishPlan, wishRelist, wishFontTargets, wishPinPlan, freshWish, wishSettled, WISH_CYCLE, WISH_CYCLE_LOW, WISH_BUDGET, WISH_BUDGET_LOW, WISH_NOW, WISH_DROPS } from './art.js?v=202611221059';
+import { Kit, arcSlab } from './kit.js?v=202611221134';
+import { THEMES, makeCanvas, paintBillboard, paintTicker, fontsReady, tierOf, boardPhoto, photoReady, SANS, roundRect, chars, paintWish, wishOrd, wishRotates, wishStrip, cleanWishes, sameWishes, rowUntil, wishPlan, wishRelist, wishFontTargets, wishPinPlan, freshWish, wishSettled, WISH_CYCLE, WISH_CYCLE_LOW, WISH_BUDGET, WISH_BUDGET_LOW, WISH_NOW, WISH_DROPS } from './art.js?v=202611221134';
 import { askBid } from '../balance.js';
 import { floorOf, live, SLOT_RE, isLateSlot } from '../balance.js';
 import { auctionClosed } from '../balance.js';

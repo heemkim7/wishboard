@@ -223,7 +223,7 @@ describe('avatar system downloads lazily', async () => {
     av.want(3);
     assert.deepEqual(calls.map((c) => c.url), [MODEL_URL[3]]);
     const ui = readFileSync(new URL('../ui.js', import.meta.url), 'utf8');
-    assert.match(ui, /speciesPicker\(species, \(id\) => \{ species = id; hooks\.wantSpecies\?\.\(id\); \}\)/);
+    assert.match(ui, /speciesPicker\(species, \(id\) => \{ species = id; hooks\.wantSpecies\?\.\(id\); \}, color\)/);
     assert.doesNotMatch(ui, /prefetchModels/);
   });
 

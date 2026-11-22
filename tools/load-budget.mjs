@@ -33,7 +33,7 @@ export const RULES = [
   [/^icons\/coin\.jpg$/, 'boot'], // wallet icon, built with the HUD
   [/^assets\/times-square\/\$\{name\}\.env\.jpg$/, 'boot', () => ENV_PHOTOS.map((n) => clean(envPhotoUrl(n)))],
   [/^assets\/models\/[A-Z][a-z]+Toy\.glb$/, (lit, ctx) => (lit === clean(MODEL_URL[ctx.species]) ? 'boot' : ctx.peers.has(lit) ? 'first' : 'later')],
-  [/^assets\/avatars\/[a-z]+\.png$/, 'later'], // character picker tiles (ts3d/avatars.js SPECIES thumb), only in the profile sheet
+  [/^assets\/avatars\/[a-z]+(-hood)?\.png$/, 'later'], // character picker tiles and their hoodie masks (ts3d/avatars.js SPECIES thumb, hood), only in the profile sheet
   [/^assets\/audio\/(sfx\/)?$/, 'first', () => []], // 'assets/audio/' + id + '.ogg': no such files in the repo, the browser gets 404s
   [/^icons\/(lot|tent|pocha|shop|tower)\.jpg$/, 'later'],
   [/^icons\/board\.jpg$/, 'later'],

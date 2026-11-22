@@ -1,29 +1,29 @@
 // Plaza UI: glass HUD, wallet, news wire, emote dock, prompts, bungeo-ppang timing game, K-POP rhythm game,
 // taxi HUD, city map + minimap, billboard / plot / ATM / settings / credits sheets, onboarding, touch controls, SFX.
-import { paintBillboard, paintNeonSign, THEMES, makeCanvas, chars, fontsReady, tierOf, boardPhoto, photoReady } from './ts3d/art.js?v=202611221059';
-import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, LANDMARKS } from './ts3d/layout.js?v=202611221059';
+import { paintBillboard, paintNeonSign, THEMES, makeCanvas, chars, fontsReady, tierOf, boardPhoto, photoReady } from './ts3d/art.js?v=202611221134';
+import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, LANDMARKS } from './ts3d/layout.js?v=202611221134';
 import { BALANCE, PAY, askBid, auctionClosed, buildingOf, chainBoost, floorOf, nextChainFace, slotName, josa, STREET_N, SLOT_SOON, slotOpen } from './balance.js';
-import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, tutorialTap, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611221059';
+import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, tutorialTap, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611221134';
 import { WISH, WISH_ERR, cleanWish, wishRejected, wishShareText } from './wish.js';
 import { botNick, leagueLine, leagueWeek, liveSig } from './league.js';
-import { backFields, returnGap } from './growth.js?v=202611221059';
+import { backFields, returnGap } from './growth.js?v=202611221134';
 import { nineSlot, nowMs } from './live.js';
-import { cardUrl, vipShareLink, composeWishShot, kakaoFeed, kakaoSend, loadKakao, invited } from './share.js?v=202611221059';
+import { cardUrl, vipShareLink, composeWishShot, kakaoFeed, kakaoSend, loadKakao, invited } from './share.js?v=202611221134';
 import { inviteView } from './invite.js';
-import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611221059';
-import { EMOTES, REACTIONS, AVATAR_COLORS, SPECIES } from './ts3d/avatars.js?v=202611221059';
-import { trackEvent, statsOff, statsGpc, setStatsOff } from './analytics.js?v=202611221059';
+import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611221134';
+import { EMOTES, REACTIONS, AVATAR_COLORS, AVATAR_COLOR_NAMES, SPECIES } from './ts3d/avatars.js?v=202611221134';
+import { trackEvent, statsOff, statsGpc, setStatsOff } from './analytics.js?v=202611221134';
 import { CHEER_PHRASES, accountLabel, allowedLink, blockedText, linkedActor } from './plaza-account.js';
-import { policyDoc } from './legal.js?v=202611221059';
-import { subscribePush, resendPush } from './push.js?v=202611221059';
-import { bindSfx, bindMusic, duckMusic, play, setSound, haptic, musicVisible } from './audio.js?v=202611221059';
-import { createBgm } from './bgm.js?v=202611221059';
-import { stickVec, isTouchUI, STICK_W, STICK_H, STICK_THROW, STICK_ENGAGE, bakeFlip, bakeBest, BAKE_FLIPS, BAKE_ROUND_MS } from './interact.js?v=202611221059';
+import { policyDoc } from './legal.js?v=202611221134';
+import { subscribePush, resendPush } from './push.js?v=202611221134';
+import { bindSfx, bindMusic, duckMusic, play, setSound, haptic, musicVisible } from './audio.js?v=202611221134';
+import { createBgm } from './bgm.js?v=202611221134';
+import { stickVec, isTouchUI, STICK_W, STICK_H, STICK_THROW, STICK_ENGAGE, bakeFlip, bakeBest, BAKE_FLIPS, BAKE_ROUND_MS } from './interact.js?v=202611221134';
 import { AD, AD_TEMPLATES, adSums, adBars } from './adreport.js';
-import { qrEncode, paintQr } from './qr.js?v=202611221059';
-import { icon } from './uiicons.js?v=202611221059';
-import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, proofOffers, proofPlan, TOAST } from './overlay.js?v=202611221059';
-import { linesFault, LINES_ERR, airAsk } from './ftue.js?v=202611221059'; // the board-line and takeover checks
+import { qrEncode, paintQr } from './qr.js?v=202611221134';
+import { icon } from './uiicons.js?v=202611221134';
+import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, proofOffers, proofPlan, TOAST } from './overlay.js?v=202611221134';
+import { linesFault, LINES_ERR, airAsk } from './ftue.js?v=202611221134'; // the board-line and takeover checks
 
 const LEVELS = [
   { src: 'icons/lot.jpg', t: '빈 땅' },
@@ -3692,12 +3692,21 @@ export function createUI(root, hooks) {
   }
 
   // Ten tiles, five a row (index.html .species-grid): the species' thumbnail, or its glyph while the picture is missing or fails, and its name.
-  function speciesPicker(current, onPick) {
+  // The hoodie in each thumbnail wears `color` (the grid's --c, set again by the colour row): the colour multiplied through the
+  // species' hoodie mask (SPECIES[].hood), the same hoodie the game paints.
+  function speciesPicker(current, onPick, color) {
     const wrap = h('div', { class: 'species-grid', role: 'group', 'aria-label': '캐릭터' });
+    if (color) wrap.style.setProperty('--c', color);
     const glyph = (s) => h('span', { class: 'glyph', 'aria-hidden': 'true', text: s.glyph });
     for (const s of SPECIES) {
-      const pic = s.thumb ? h('img', { src: s.thumb, alt: '', width: 36, height: 36, loading: 'lazy', decoding: 'async' }) : glyph(s);
-      if (s.thumb) pic.addEventListener('error', () => pic.replaceWith(glyph(s)), { once: true });
+      let pic = glyph(s);
+      if (s.thumb) {
+        const img = h('img', { src: s.thumb, alt: '', width: 56, height: 56, loading: 'lazy', decoding: 'async' });
+        const hood = s.hood ? h('i', { class: 'hood', 'aria-hidden': 'true', style: { webkitMaskImage: `url(${s.hood})`, maskImage: `url(${s.hood})` } }) : null;
+        const box = h('span', { class: 'pic' }, img, hood);
+        img.addEventListener('error', () => box.replaceWith(glyph(s)), { once: true });
+        pic = box;
+      }
       const b = h('button', { type: 'button', class: s.id === current ? 'on' : '', 'aria-pressed': String(s.id === current), onclick: () => {
         for (const other of wrap.children) { other.classList.toggle('on', other === b); other.setAttribute('aria-pressed', String(other === b)); }
         onPick(s.id);
@@ -3708,9 +3717,10 @@ export function createUI(root, hooks) {
   }
 
   function colorPicker(current, onPick) {
-    const wrap = h('div', { class: 'colors' });
+    const wrap = h('div', { class: 'colors', role: 'group', 'aria-label': '옷 색' });
     for (const c of AVATAR_COLORS) {
-      const b = h('button', { type: 'button', class: `swatch${c === current ? ' on' : ''}`, style: { background: c, color: c, width: '38px', height: '38px' }, 'aria-label': c, onclick: () => { for (const s of wrap.children) s.classList.toggle('on', s === b); onPick(c); } });
+      const name = AVATAR_COLOR_NAMES[c] || c;
+      const b = h('button', { type: 'button', class: `swatch${c === current ? ' on' : ''}`, style: { background: c, color: c, width: '38px', height: '38px' }, 'aria-label': name, title: name, 'aria-pressed': String(c === current), onclick: () => { for (const s of wrap.children) { s.classList.toggle('on', s === b); s.setAttribute('aria-pressed', String(s === b)); } onPick(c); } });
       wrap.append(b);
     }
     return wrap;
@@ -3743,9 +3753,10 @@ export function createUI(root, hooks) {
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save.click(); });
       const fields = [
         h('div', { class: 'field' }, h('label', null, '닉네임'), input),
-        h('div', { class: 'field' }, h('label', null, '발밑 링 색', h('span', { text: '캐릭터 색이 아니라, 발밑 동그라미입니다' })), colorPicker(color, (c) => { color = c; })),
+        h('div', { class: 'field' }, h('label', null, '옷 색', h('span', { text: '후드티 · 발밑 링 · 이름표 점' })), colorPicker(color, (c) => { color = c; grid?.style.setProperty('--c', c); })),
       ];
-      if (SPECIES.length > 1) fields.splice(1, 0, h('div', { class: 'field' }, h('label', null, '캐릭터'), speciesPicker(species, (id) => { species = id; hooks.wantSpecies?.(id); })));
+      const grid = SPECIES.length > 1 ? speciesPicker(species, (id) => { species = id; hooks.wantSpecies?.(id); }, color) : null;
+      if (grid) fields.splice(1, 0, h('div', { class: 'field' }, h('label', null, '캐릭터'), grid));
       const prof = hooks.profile?.() || { level: 1, reputation: 0, equip: [], owned: [] };
       const equipped = new Set(Array.isArray(prof.equip) ? prof.equip : []);
       const owned = new Set(Array.isArray(prof.owned) ? prof.owned : []);
