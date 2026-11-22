@@ -4,8 +4,12 @@
 // The widget runs without showing anything (appearance interaction-only). A small card appears only while Cloudflare wants a tap, and after a
 // failure, with a retry that reloads the page (a brand-new visitor has nothing to lose there). After a failure the page does not ask Cloudflare
 // again by itself: every later token request gets '' at once, so a reconnect loop cannot keep starting challenges.
+// The coin rewards (net.js humanCall: the held link reward, the share bonus, a VIP code) ask for tokens of their own action. Those are quiet: on a
+// failure the card goes away and the caller says what happened; they never set the guest's failed state, and the guest's never stops them (each
+// is asked by the player, or once per link). One widget at a time per page: a second action waits for the first to finish.
 export const TS_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'; // straight from Cloudflare: never proxied or cached
 export const HUMAN_ACTION = 'guest'; // worker.js checks the token's action
+export const HUMAN_ACTIONS = Object.freeze(['guest', 'link', 'bonus', 'code']); // worker.js: HUMAN_ACTION, and humanGate's for the rewards
 export const HUMAN_TEXT = Object.freeze({
   tap: '사람인지 잠깐 확인할게요. 아래 상자를 눌러 주세요.',
   human: '사람인지 확인하지 못했어요. 네트워크를 확인하고 다시 시도해 주세요.',
@@ -13,8 +17,8 @@ export const HUMAN_TEXT = Object.freeze({
   rate: '새 손님이 잠깐 몰렸어요. 1분쯤 뒤에 다시 시도해 주세요.',
 });
 export const HUMAN_MS = Object.freeze({ load: 8000, run: 30000, tap: 180000 });
-const STATE = new WeakMap(); // window -> { load, run, failed, card }
-const stateOf = (win) => { let s = STATE.get(win); if (!s) { s = { load: null, run: null, failed: false, card: null }; STATE.set(win, s); } return s; };
+const STATE = new WeakMap(); // window -> { load, runs (action -> its check), tail (the last check, so they never overlap), failed, card }
+const stateOf = (win) => { let s = STATE.get(win); if (!s) { s = { load: null, runs: new Map(), tail: Promise.resolve(), failed: false, card: null }; STATE.set(win, s); } return s; };
 const env = (o = {}) => ({ doc: o.doc ?? (typeof document === 'undefined' ? null : document), win: o.win ?? (typeof window === 'undefined' ? null : window), ms: { ...HUMAN_MS, ...(o.ms || {}) } });
 
 // The Turnstile API object, or null when the script cannot be loaded (blocked, offline, LOAD ms without an answer). One <script> per page.
@@ -69,16 +73,17 @@ export function humanSay(code, opts = {}) {
   else show(c, text, { text: '닫기', click: () => hide(c) });
 }
 
-// A Turnstile token for `site` (action 'guest'), or '' when there is none to be had. One check at a time per page; parallel callers share it.
+// A Turnstile token for `site`, or '' when there is none to be had. opts.action: one of HUMAN_ACTIONS (default 'guest'). One check at a time per
+// page; parallel callers of the same action share it.
 export function humanToken(site, opts = {}) {
-  const { doc, win, ms } = env(opts);
+  const { doc, win, ms } = env(opts), action = HUMAN_ACTIONS.includes(opts.action) ? opts.action : HUMAN_ACTION, guest = action === HUMAN_ACTION;
   if (!site || !doc || !win) return Promise.resolve('');
   const st = stateOf(win);
-  if (st.failed) { humanSay('human', { doc, win }); return Promise.resolve(''); }
-  if (st.run) return st.run;
-  st.run = (async () => {
+  if (guest && st.failed) { humanSay('human', { doc, win }); return Promise.resolve(''); }
+  if (st.runs.has(action)) return st.runs.get(action);
+  const run = st.tail.then(async () => {
     const ts = await loadTurnstile({ doc, win, ms });
-    if (!ts) { humanSay('human', { doc, win }); return ''; }
+    if (!ts) { if (guest) humanSay('human', { doc, win }); return ''; }
     const c = cardOf(doc, st);
     const tok = await new Promise((resolve) => {
       let done = false, id = null, timer = 0;
@@ -86,7 +91,7 @@ export function humanToken(site, opts = {}) {
       timer = setTimeout(() => end(''), ms.run);
       try {
         id = ts.render(c.host, {
-          sitekey: site, action: HUMAN_ACTION, appearance: 'interaction-only', retry: 'never', 'refresh-expired': 'never',
+          sitekey: site, action, appearance: 'interaction-only', retry: 'never', 'refresh-expired': 'never',
           size: Number(win.innerWidth) > 0 && Number(win.innerWidth) < 360 ? 'compact' : 'normal', // the 300 px box does not fit a 320 px phone
           callback: (t) => end(String(t || '')),
           'error-callback': () => { end(''); return true; }, // handled: the card says it
@@ -96,8 +101,9 @@ export function humanToken(site, opts = {}) {
         });
       } catch { end(''); }
     });
-    if (tok) hide(c); else humanSay('human', { doc, win });
+    if (tok || !guest) hide(c); else humanSay('human', { doc, win });
     return tok;
-  })().finally(() => { st.run = null; });
-  return st.run;
+  }).catch(() => '').finally(() => { if (st.runs.get(action) === run) st.runs.delete(action); });
+  st.runs.set(action, run); st.tail = run;
+  return run;
 }

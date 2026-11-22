@@ -1,6 +1,7 @@
 // Times Square K-점령전 — app wiring: realtime net (DO), 3D world, UI, wallet, world state, star shower.
 import { errlogCtx } from './errlog.js?v=202611222045'; // first: its error listeners are on before any other module runs
 import { Net, CDN, guestToken } from './net.js?v=202611222045';
+import { humanCall } from './net.js?v=202611222045'; // the coin rewards' human check while Turnstile is on (docs/bot-protection.md)
 import { createTimesSquare, STARTER_COLORS, taxiTrainMult } from './timesSquare3d.js?v=202611222045';
 import { speciesId } from './ts3d/avatars.js?v=202611222045';
 import { equip, unequip, loadShop, loadProfile, profileSpecies, saveColor, saveNick, saveSpecies, setSpecies } from './profile.js?v=202611222045';
@@ -404,8 +405,8 @@ const ui = createUI(document.getElementById('ui'), {
   slotCard: (id) => world?.slotCard(id),
   frameBillboard: (slot) => { const ok = world?.frameBillboard?.(slot); if (ok) focusedSlot = String(slot || ''); return ok; },
   giftPop: (slot) => world?.giftPop?.(slot),
-  shareBonus: async () => { const r = await net.shareBonus(); refreshWallet(); return r; },
-  redeemCode: async (code) => { const r = await net.redeemCode(code); refreshWallet(); return r; },
+  shareBonus: async () => { const r = await humanCall('bonus', (ts) => net.shareBonus(ts)); refreshWallet(); return r; }, // a token first only while Turnstile is on
+  redeemCode: async (code) => { const r = await humanCall('code', (ts) => net.redeemCode(code, ts)); refreshWallet(); return r; },
   sponsorUrl: () => net.sponsorUrl(),
   minimap: () => world?.minimap(),
   hud: () => world?.hud(),
@@ -1934,8 +1935,25 @@ async function finishLink(session, fresh, echo = false) {
   // again: the server's answer on the one link after a withdrawal (no reward, and the guest's start coins stayed out). Said that once.
   else if (merged?.again) ui.note('계정을 연결했어요. 예전에 탈퇴한 계정이라 연결 보상 300코인은 다시 주지 않아요', 'ok');
   else if (fresh && !failed) ui.note('계정을 연결했어요', 'ok'); // after a failed merge the error toast stands alone
+  if (merged?.held > 0 && !echo) claimLinkReward(user, merged.held); // not waited for: the link is done, the reward follows
   await rejoin();
   return merged;
+}
+// Turnstile on: the server moved everything but held the link reward for a human check (merge answer `held`). Claimed right away without a word;
+// a refusal keeps it on the server, and the toast's tap or the next boot (whose link replay says `held` again) tries once more.
+let rewardRun = null;
+function claimLinkReward(user, held) {
+  if (rewardRun) return rewardRun;
+  return rewardRun = (async () => {
+    try {
+      const r = await humanCall('link', (ts) => net.linkReward(ts));
+      if (sessionUser !== user) return;
+      if (r?.amount > 0) { ui.note(`연결 보상 +${r.amount}코인`, 'ok'); try { await refreshWallet(); } catch { /* paints on the next sync */ } }
+    } catch (e) {
+      if (sessionUser !== user) return;
+      ui.note(e?.code === 'human' ? e.message : `연결 보상 ${held}코인을 지금은 넣지 못했어요. 잠시 뒤에 눌러서 다시 받아 주세요.`, 'err', () => claimLinkReward(user, held));
+    }
+  })().finally(() => { rewardRun = null; });
 }
 async function bootAccount() {
   const q = new URLSearchParams(location.search);
