@@ -18,6 +18,10 @@ const CLIPS = ['Idle', 'Walking', 'Running', 'Dance', 'Sitting', 'Wave', 'Jump',
 // the game tints; Fur, Muzzle, Eye and Accent keep the colours in the file.
 const TOY = ['Accent', 'Eye', 'Fur', 'Main', 'Muzzle'];
 const MATERIALS = Object.fromEntries(Object.keys(MODEL_URL).map((id) => [id, TOY]));
+// The seven later species leave out a material they do not use and may add Patch (panda black, fox ear tips, tiger marks).
+// Main (the hoodie, tinted), Fur, Muzzle and Eye are in every file; nothing outside this list is.
+const MATERIAL_SET = new Set([...TOY, 'Patch']);
+const MATERIAL_MUST = ['Eye', 'Fur', 'Main', 'Muzzle'];
 // The ten species' models; the ones not built yet (another task adds them) are skipped until their file is in assets/models.
 const IDS = Object.keys(MODEL_URL).map(Number);
 const onDisk = (id) => existsSync(new URL('..' + MODEL_URL[id], import.meta.url));
@@ -98,7 +102,11 @@ describe('avatar models', () => {
       const { size, json, bin } = glb(id);
       const clips = json.animations.map((a) => a.name);
       for (const c of CLIPS) assert.ok(clips.includes(c), c);
-      assert.deepEqual(json.materials.map((m) => m.name).sort(), MATERIALS[id]);
+      const mats = json.materials.map((m) => m.name).sort();
+      if (id <= 3) assert.deepEqual(mats, MATERIALS[id]);
+      for (const m of MATERIAL_MUST) assert.ok(mats.includes(m), m);
+      for (const m of mats) assert.ok(MATERIAL_SET.has(m), m);
+      assert.equal(new Set(mats).size, mats.length);
       assert.equal(json.skins.length, 1);
       assert.equal(json.skins[0].joints.length, 46);
       assert.deepEqual(json.skins[0].joints.map((j) => json.nodes[j].name).sort(), JOINTS);
