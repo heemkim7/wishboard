@@ -634,7 +634,8 @@ describe('Google sign-in keeps the game tab', () => {
     const login = between(ui, '  function openLogin(', '  function handoverMoved(');
     assert.match(login, /google\.disabled = !!loginView\.wait;/);
     assert.match(login, /'구글 창에서 계속하세요…'/);
-    assert.doesNotMatch(login, /\bnote\(/); // every message of this sheet is inline
+    // Every message of this sheet is inline; the one toast is for an id sign-in that failed after the player closed the sheet.
+    assert.equal((login.match(/\bnote\(/g) || []).length, 1); assert.match(login, /if \(sheet !== me\) note\(text, 'err'\);/);
     assert.match(login, /h\('form', \{ class: 'login-form'/);
     assert.match(login, /autocomplete: 'username', autocapitalize: 'off'/);
     assert.match(login, /enterkeyhint: 'next'/);

@@ -118,7 +118,7 @@ const REAL = ['profile_read', 'coin_batch', 'spend_plaza', 'grant_coins', 'merge
 async function pgDb() {
   const db = await pgRaw(read('schema.sql'));
   return {
-    db,
+    db, pg: true,
     async rpc(name, a) { if (!REAL.includes(name)) return { ok: true }; const keys = Object.keys(a);
       const sql = 'SELECT public.' + name + '(' + keys.map((k, i) => k + ' => $' + (i + 1) + (k === 'p_items' ? '::jsonb' : '')).join(', ') + ') AS r';
       return (await db.query(sql, keys.map((k) => (k === 'p_items' ? JSON.stringify(a[k]) : a[k])))).rows[0].r; },
@@ -165,7 +165,7 @@ async function scene(db, installed) {
   state.jwks = [{ ...(await crypto.subtle.exportKey('jwk', pair.publicKey)), kid: k }];
   const enc = (o) => Buffer.from(JSON.stringify(o)).toString('base64url'), head = enc({ alg: 'ES256', kid: k });
   // A signed-in account with a login row; email: the e-mail claim of its token (none: a sign-in without one).
-  const user = async (email) => { const uuid = 'f0e1d2c3-0000-4000-8000-' + String(++seq).padStart(12, '0'), claims = enc({ sub: uuid, exp: Math.floor(t / 1000) + 86400, iss: 'https://yxddhpacuyaffaoutxjn.supabase.co/auth/v1', aud: 'authenticated', ...(email ? { email } : {}) });
+  const user = async (email) => { const uuid = 'f0e1d2c3-0000-4000-8000-' + String(++seq).padStart(12, '0'), claims = enc({ sub: uuid, iat: Math.floor(t / 1000), exp: Math.floor(t / 1000) + 86400, iss: 'https://yxddhpacuyaffaoutxjn.supabase.co/auth/v1', aud: 'authenticated', ...(email ? { email } : {}) });
     await db.addLogin(uuid, email);
     return { uuid, id: 'user:' + uuid, token: head + '.' + claims + '.' + Buffer.from(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, pair.privateKey, Buffer.from(head + '.' + claims))).toString('base64url') }; };
   const coins = async (id) => (await db.wallet(id))?.coins ?? null;
@@ -289,9 +289,9 @@ function after(label, makeDb, skip) {
         assert.equal(JSON.stringify(marks).includes('@'), false); assert.equal(JSON.stringify(marks).includes(a.uuid), false);
         // Signs up again with the same Google account or e-mail: a new id (written differently, as providers do).
         const b = await s.user('same.person@EXAMPLE.com'); assert.notEqual(b.id, a.id);
-        const g = await s.guest(); await s.earn(g.id, 25);
-        const r = await s.link(b, g); // the database pays 300 and moves 125
-        assert.equal(r.bonus, 0); assert.equal(r.coins, 25); assert.equal(await s.coins(b.id), 25);
+        const g = await s.guest(); await s.earn(g.id, 65); // 100 + its hello 40 + 25 it really earned
+        const r = await s.link(b, g); // before coins.sql the database pays 300 and the Worker takes 440 back; after it, the database pays nothing and leaves 140 out
+        assert.equal(r.bonus, 0); assert.equal(r.again, true); assert.equal(r.coins, 25); assert.equal(await s.coins(b.id), 25);
         // Somebody else, and a sign-in whose token has no e-mail at all: first links.
         const c = await s.user('someone.else@example.com'); assert.equal((await s.link(c, await s.guest())).bonus, 300); assert.equal(await s.coins(c.id), 400);
         const d = await s.user(); assert.equal((await s.link(d, await s.guest())).bonus, 300);
@@ -300,14 +300,26 @@ function after(label, makeDb, skip) {
       } finally { s.done(); }
     });
 
-    it('budget level hard: no mark is written or read, the login is still deleted (it is not a Durable Object call)', async () => {
+    it('budget level hard: the mark is still written (one acct call), and the login is still deleted', async () => {
       const s = await scene(db, true);
       try {
         const a = await s.user('hard.day@example.com'); await s.link(a, await s.guest());
         setUsed(s.env, 96000); s.clock.add(61000); assert.equal((await (await s.get('/rt/wishes')).json()).busy, true);
         const log = spyDo(s.env);
         assert.deepEqual((await s.withdraw(a)).body, { ok: true, login: 'deleted' }); assert.equal(await db.hasLogin(a.uuid), false);
-        assert.deepEqual(log.filter((x) => /^acct\.(gone|st)/.test(x)), []); assert.deepEqual(s.marks(), []);
+        assert.deepEqual(log.filter((x) => /^acct\.(gone|st)/.test(x)), ['acct.goneSet']); assert.equal(s.marks().length, 2);
+      } finally { s.done(); }
+    });
+
+    it('after the withdrawal its token (still valid for up to an hour) gets no wallet back in the database and moves no coins', async () => {
+      const s = await scene(db, true);
+      try {
+        const a = await s.user('token.after@example.com'); await s.link(a, await s.guest());
+        s.clock.add(5000); assert.deepEqual((await s.withdraw(a)).body, { ok: true, login: 'deleted' });
+        const prof = await s.get('/rt/profile', a.token);
+        if (db.pg) { assert.equal(prof.status, 502); assert.equal(await s.coins(a.id), null); await s.earn(a.id, 300); assert.equal(await s.coins(a.id), null); } // wallets_need_login: no login, no row
+        const g = await s.guest(), res = await s.post('/rt/auth/merge', { guest_id: g.id, guest_token: g.token, nickname: '' }, a.token);
+        assert.equal(res.status, 401); assert.equal((await res.json()).err, 'gone'); assert.equal(await s.coins(g.id), 100);
       } finally { s.done(); }
     });
   });

@@ -107,12 +107,32 @@ export function gaParams(params) {
   return out;
 }
 
+// 방문 통계 보내지 않기 (settings): this browser sends nothing to Google Analytics. index.html reads the same key (and the browser's Global
+// Privacy Control signal) before it adds the Google tag, so an opted-out page never requests it. Turned on mid-visit, the tag already on the
+// page is told to stop (GA's own ga-disable-<id> flag) and no event goes out from here; turned off again, the tag loads on the next visit.
+// The game's own first-party events (/rt/event, for the operator's visitor and funnel counts) are not Google and are not affected.
+export const STATS_OFF_KEY = 'kts_stats_off';
+export function statsGpc() {
+  try { return typeof navigator !== 'undefined' && navigator.globalPrivacyControl === true; } catch { return false; }
+}
+export function statsOff() {
+  if (statsGpc()) return true;
+  try { return localStorage.getItem(STATS_OFF_KEY) === '1'; } catch { return false; }
+}
+// -> whether it is off now (GPC keeps it off whatever is stored).
+export function setStatsOff(off) {
+  try { if (off) localStorage.setItem(STATS_OFF_KEY, '1'); else localStorage.removeItem(STATS_OFF_KEY); } catch { /* storage blocked: this visit only */ }
+  const id = typeof window !== 'undefined' ? window.KTS_GA_ID : '';
+  if (id) { try { window['ga-disable-' + id] = !!off || statsGpc(); } catch { /* not ours to set */ } }
+  return !!off || statsGpc();
+}
+
 export function trackEvent(eventName, params) {
   const name = String(eventName || '');
   const extra = params && typeof params === 'object' ? params : {};
   try {
     const ga = gaName(name);
-    if (ga && typeof window.gtag === 'function') window.gtag('event', ga, gaParams(extra));
+    if (ga && typeof window.gtag === 'function' && !statsOff()) window.gtag('event', ga, gaParams(extra));
     if (typeof window.clarity === 'function') window.clarity('event', name);
   } catch { /* analytics must not break play */ }
   if (!MAJOR.has(name)) return;

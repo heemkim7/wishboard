@@ -210,7 +210,10 @@ export function authErrorText(e) {
   const all = m + ' ' + code;
   if (code === 'invalid_credentials' || /invalid login credentials/i.test(m)) return '아이디 또는 비밀번호가 맞지 않아요';
   if (code === 'user_already_exists' || code === 'email_exists' || /already registered|already been registered/i.test(m)) return '이미 가입한 아이디예요. 로그인해 주세요.';
+  if (code === 'same_password' || /should be different from the old password/i.test(m)) return '지금 비밀번호와 같아요. 다른 비밀번호를 적어 주세요.';
   if (code === 'weak_password' || /password should|weak.?password|password.*at least/i.test(m)) return '비밀번호는 6자 이상이어야 해요';
+  if (code === 'reauthentication_needed' || /reauthentication/i.test(m)) return '보안을 위해 로그아웃한 뒤 다시 로그인하고 바꿔 주세요.';
+  if (code === 'session_not_found' || /auth session missing/i.test(m)) return '로그인이 끝나 있어요. 다시 로그인한 뒤 바꿔 주세요.';
   if (status === 429 || /rate.?limit|too many requests|for security purposes/i.test(all)) return '요청이 너무 많아요. 잠시 뒤에 다시 해 주세요.';
   if (e?.name === 'AuthRetryableFetchError' || /failed to fetch|networkerror|network request failed|load failed|fetch failed/i.test(m)) return '네트워크에 연결하지 못했어요. 연결을 확인하고 다시 해 주세요.';
   if (code === 'email_not_confirmed' || /email not confirmed/i.test(m)) return '메일 확인이 끝나지 않은 계정이에요';

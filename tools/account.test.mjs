@@ -190,7 +190,7 @@ assert.equal(heads.length, 2);
 assert.equal(heads.filter((h) => h.includes('p_caption_y')).length, 1);
 assert.match(schema, /v_protect_mins := v_protect_mins \+ 5/);
 assert.doesNotMatch(schema, /v_protect_mins \+ 3/);
-assert.match(schema, /link_bonus = false/);
+assert.match(schema, /IF NOT v_user\.link_bonus AND NOT v_again THEN/); // the +300 once per account, and never again after a withdrawal
 assert.match(schema, /CREATE OR REPLACE FUNCTION public\.merge_guest_account/);
 assert.match(schema, /CREATE OR REPLACE FUNCTION public\.withdraw_account/);
 

@@ -439,6 +439,9 @@ describe('SQL in PGlite', { skip: PGlite ? false : 'PGlite not installed (see th
     // Then the ten species (test/species.test.mjs runs it in both states): the profiles CHECK and save_species.
     const species = (await old.exec(read('migrations/2026-11-22-species.sql'))).at(-1).rows;
     assert.equal(species.length, 1); assert.equal(species[0].applied, true, species[0].note);
+    // And the coin guard (test/coins-migration.test.mjs runs it with auth.users and checks what it does).
+    const coins = (await old.exec(read('migrations/2026-11-22-coins.sql'))).at(-1).rows;
+    assert.equal(coins.length, 1); assert.equal(coins[0].applied, true, coins[0].note);
     const neu = await fresh(read('schema.sql'));
     const checks = async (d) => (await d.query("SELECT conname, pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid = 'public.profiles'::regclass AND contype = 'c' ORDER BY 1")).rows;
     assert.deepEqual(await checks(old), await checks(neu));
