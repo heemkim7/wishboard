@@ -436,6 +436,9 @@ describe('SQL in PGlite', { skip: PGlite ? false : 'PGlite not installed (see th
     // the function exists but cannot delete: not applied.
     const forget = (await old.exec(read('migrations/2026-11-22-forget-login.sql'))).at(-1).rows;
     assert.equal(forget.length, 1); assert.equal(forget[0].applied, false); assert.match(forget[0].note, /함수는 있지만 지우지 못합니다/);
+    // And the coin guard (test/coins-migration.test.mjs runs it with auth.users and checks what it does).
+    const coins = (await old.exec(read('migrations/2026-11-22-coins.sql'))).at(-1).rows;
+    assert.equal(coins.length, 1); assert.equal(coins[0].applied, true, coins[0].note);
     const neu = await fresh(read('schema.sql'));
     const [a, b] = [await shape(old), await shape(neu)];
     assert.deepEqual(a.cols, b.cols);

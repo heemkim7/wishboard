@@ -314,6 +314,7 @@ describe('times square plaza', { concurrency: false }, () => {
       const u = String(url);
       calls.push({ url: u, body: opt?.body });
       const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json' } });
+      if (u.includes('/.well-known/jwks.json')) return json({ keys: world.jwks || [] });
       if (u.includes('/rest/v1/billboards')) return json(world.boards);
       if (u.includes('/rest/v1/plots')) return json(world.plots);
       if (u.includes('/rest/v1/wallets')) return json(u.includes('spent=gt.0') ? world.ranks : world.wallet ? [world.wallet] : []); // world.wallet: the caller's row, once it has one
@@ -446,13 +447,21 @@ describe('times square plaza', { concurrency: false }, () => {
       assert.equal(syncs(bystander), 0);
       assert.equal(msgs(evicted).filter(m => m.t === 'TAKE').at(-1).victim, 'guest:evicted');
       assert.equal(msgs(landlord).filter(m => m.t === 'WORLD_UPDATE').at(-1).data.slot_id, 'PLOT_3');
-      // A guest sends only coins above its starting 100 (test/merge-guard.test.mjs): no row yet means nothing to send.
-      const sell = () => call('/rt/sell-coins', { method: 'POST', headers: auth, body: JSON.stringify({ topic: 'chapel:square', slot_id: 'PLOT_3', amount: 10, nickname: '까마귀' }) });
+      // A guest sends nothing, with no row or with coins (test/merge-guard.test.mjs); an account sends what it holds above 400.
+      const sell = (headers = auth) => call('/rt/sell-coins', { method: 'POST', headers, body: JSON.stringify({ topic: 'chapel:square', slot_id: 'PLOT_3', amount: 10, nickname: '까마귀' }) });
       const early = await sell();
       assert.equal(early.status, 400); assert.equal((await early.json()).code, 'starter');
-      assert.equal(calls.some(c => c.url.includes('sell_coins_to_advertiser')), false);
       world.wallet = { coins: 140 };
-      const sold = await sell();
+      const still = await sell();
+      assert.equal(still.status, 400); assert.equal((await still.json()).code, 'starter');
+      assert.equal(calls.some(c => c.url.includes('sell_coins_to_advertiser')), false);
+      const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+      world.jwks = [{ ...(await crypto.subtle.exportKey('jwk', pair.publicKey)), kid: 'plaza-sell-kid' }];
+      const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url'), head = b64({ alg: 'ES256', kid: 'plaza-sell-kid' });
+      const claims = b64({ sub: '22222222-3333-4444-5555-666666666666', iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 600, iss: 'https://yxddhpacuyaffaoutxjn.supabase.co/auth/v1', aud: 'authenticated' });
+      const userTok = head + '.' + claims + '.' + Buffer.from(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, pair.privateKey, Buffer.from(head + '.' + claims))).toString('base64url');
+      world.wallet = { coins: 450 };
+      const sold = await sell({ authorization: 'Bearer ' + userTok, 'content-type': 'application/json' });
       assert.equal(sold.status, 200);
       const soldBody = await sold.json();
       assert.equal(soldBody.buyer_name, '건물주');

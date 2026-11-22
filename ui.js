@@ -12,7 +12,7 @@ import { cardUrl, vipShareLink, composeWishShot, kakaoFeed, kakaoSend, loadKakao
 import { inviteView } from './invite.js';
 import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611212346';
 import { EMOTES, REACTIONS, AVATAR_COLORS, SPECIES } from './ts3d/avatars.js?v=202611212346';
-import { trackEvent } from './analytics.js?v=202611212346';
+import { trackEvent, statsOff, statsGpc, setStatsOff } from './analytics.js?v=202611212346';
 import { CHEER_PHRASES, accountLabel, allowedLink, blockedText, linkedActor } from './plaza-account.js';
 import { policyDoc } from './legal.js?v=202611212346';
 import { subscribePush, resendPush } from './push.js?v=202611212346';
@@ -2196,6 +2196,7 @@ export function createUI(root, hooks) {
   }
   function openInboxSheet() {
     openSheet('받은 소식', null, (host) => {
+      sheet.inbox = true; // forgetActor closes it: its rows are the old actor's
       const box = h('div');
       host.append(box);
       box.append(h('p', { class: 'note', text: '소식을 불러오는 중…' }));
@@ -3452,7 +3453,9 @@ export function createUI(root, hooks) {
       for (const b of buyers) pick.append(h('option', { value: b.slot_id, text: `${b.holder_name || '익명'} · ${slotName(b.slot_id)}` }));
       const sellBox = buyers.length
         ? h('div', { class: 'field' }, h('label', null, '광고주에게 코인 보내기', h('span', { text: '정산된 코인 · 10 / 20 / 50' })),
-          h('p', { class: 'note', text: '고른 전광판 주인의 지갑으로 내 코인이 그대로 넘어갑니다. 되돌려 받는 금액은 없어요.' }), pick,
+          h('p', { class: 'note', text: '고른 전광판 주인의 지갑으로 내 코인이 그대로 넘어갑니다. 되돌려 받는 금액은 없어요.' }),
+          // The send floor (worker.js floored): what the server will refuse, said before the player taps.
+          h('p', { class: 'note', text: hooks.isGuest?.() ? '손님은 코인을 보낼 수 없어요. 계정을 연결하면 처음 받은 400코인(시작 100 + 연결 보상 300)보다 더 모은 만큼 보낼 수 있어요.' : '처음 받은 400코인(시작 100 + 연결 보상 300)보다 더 모은 만큼만 보낼 수 있어요.' }), pick,
           h('div', { class: 'steps', style: { marginTop: '8px' } }, ...[10, 20, 50].map((n) => {
             const btn = h('button', { class: 'btn ghost', type: 'button', text: `${n}코인 보내기` });
             btn.addEventListener('click', async () => {
@@ -4075,9 +4078,11 @@ export function createUI(root, hooks) {
       const agree = h('input', { type: 'checkbox', 'aria-label': '만 14세 이상이며 약관과 개인정보처리방침에 동의' });
       const agreeRow = h('label', { class: 'agree' }, agree, h('span', null, '만 14세 이상이며 ', legal.link('terms', '[이용약관]'), '과 ', legal.link('privacy', '[개인정보처리방침]'), '에 동의합니다.'));
       const formErr = h('p', { class: 'note login-err', role: 'alert', hidden: true });
+      // An id has no mailbox behind it (…@id.wishboard.dev), and the game has no reset by e-mail: said before the account is made.
+      const idWarn = h('p', { class: 'note', hidden: true, text: '아이디로 만든 계정은 비밀번호를 잊으면 되찾을 수 없어요. 구글로 연결하면 그럴 걱정이 없어요.' });
       const submit = h('button', { class: 'btn gold cta', type: 'submit', text: '로그인' });
       const swap = h('button', { class: 'btn ghost', type: 'button', text: '처음이면 가입' });
-      const form = h('form', { class: 'login-form', novalidate: true }, id, pw, agreeRow, formErr, submit);
+      const form = h('form', { class: 'login-form', novalidate: true }, id, pw, agreeRow, idWarn, formErr, submit);
       const fail = (text) => { formErr.textContent = text || ''; formErr.hidden = !text; };
       const sync = () => {
         const up = mode === 'up';
@@ -4085,6 +4090,7 @@ export function createUI(root, hooks) {
         submit.disabled = busy;
         swap.textContent = up ? '이미 계정이 있어요' : '처음이면 가입';
         agreeRow.hidden = !up;
+        idWarn.hidden = !up;
         pw.autocomplete = up ? 'new-password' : 'current-password';
       };
       agree.addEventListener('change', () => { if (agree.checked) fail(''); });
@@ -4102,7 +4108,9 @@ export function createUI(root, hooks) {
           await hooks.passwordAuth?.(mode, id.value, pw.value);
           if (sheet === me) closeSheet();
         } catch (err) {
-          fail(err?.message || '로그인에 실패했어요');
+          const text = err?.message || '로그인에 실패했어요';
+          fail(text);
+          if (sheet !== me) note(text, 'err'); // the player closed the sheet while it was out: its line would never be read
         } finally {
           busy = false;
           sync();
@@ -5242,6 +5250,43 @@ export function createUI(root, hooks) {
     }, false, 'map');
   }
 
+  // 방문 통계 보내지 않기: Google Analytics off for this browser (analytics.js; index.html then never adds the tag). The browser's Global Privacy
+  // Control signal turns it off too, and then the box cannot be unticked here.
+  function statsField() {
+    const gpc = statsGpc();
+    const box = h('input', { type: 'checkbox', checked: statsOff(), disabled: gpc, 'aria-label': '방문 통계 보내지 않기' });
+    const said = h('p', { class: 'note', role: 'status', text: gpc ? '브라우저의 개인정보 보호 신호(GPC)를 따라 보내지 않아요.' : '켜 두면 이 브라우저에서는 Google 애널리틱스를 불러오지 않아요.' });
+    box.addEventListener('change', () => {
+      const off = setStatsOff(box.checked);
+      said.textContent = off ? '이제 이 브라우저에서는 방문 통계를 보내지 않아요.' : '다음 방문부터 방문 통계를 다시 보내요.';
+    });
+    return h('div', { class: 'field' }, h('label', { class: 'agree' }, box, h('span', null, '방문 통계 보내지 않기')), said);
+  }
+  // 비밀번호 바꾸기 for a signed-in password account: the new one twice, then hooks.changePassword (net.js: auth.updateUser on this session).
+  function passwordFold() {
+    const open = h('button', { class: 'btn ghost', type: 'button', text: '비밀번호 바꾸기' });
+    const pw = h('input', { class: 'input', type: 'password', maxLength: 72, placeholder: '새 비밀번호 (6자 이상)', autocomplete: 'new-password', 'aria-label': '새 비밀번호' });
+    const pw2 = h('input', { class: 'input', type: 'password', maxLength: 72, placeholder: '새 비밀번호 한 번 더', autocomplete: 'new-password', 'aria-label': '새 비밀번호 확인' });
+    const go = h('button', { class: 'btn', type: 'submit', text: '바꾸기' });
+    const err = h('p', { class: 'note login-err', role: 'alert', hidden: true });
+    const form = h('form', { class: 'login-form', novalidate: true, hidden: true }, pw, pw2, err, go);
+    const fail = (text) => { err.textContent = text || ''; err.hidden = !text; };
+    open.addEventListener('click', () => { form.hidden = !form.hidden; fail(''); if (!form.hidden) pw.focus(); });
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (go.disabled) return;
+      if (pw.value.length < 6) { fail('비밀번호는 6자 이상이어야 해요'); pw.focus(); return; }
+      if (pw.value !== pw2.value) { fail('두 비밀번호가 달라요'); pw2.focus(); return; }
+      go.disabled = true; fail('');
+      try {
+        await hooks.changePassword?.(pw.value);
+        pw.value = ''; pw2.value = ''; form.hidden = true;
+        note('비밀번호를 바꿨어요. 다음 로그인부터 새 비밀번호를 쓰세요', 'ok');
+      } catch (x) { fail(x?.message || '비밀번호를 바꾸지 못했어요'); }
+      go.disabled = false;
+    });
+    return h('div', null, open, form);
+  }
   function openSettings() {
     openSheet(['gear', '설정'], null, (host) => {
       const s = hooks.settings();
@@ -5296,7 +5341,11 @@ export function createUI(root, hooks) {
             no.disabled = false;
           }
         });
-        account.append(out, ask, h('button', { type: 'button', class: 'linkbtn', text: '[회원 탈퇴 및 데이터 초기화]', onclick: () => openWithdraw() }));
+        account.append(out, ask);
+        // An id (or e-mail) and password account: a new password for the signed-in session (Supabase updateUser). An id account has no mailbox,
+        // so this is the only way to change it; a forgotten one cannot be reset.
+        if (hooks.passwordAccount?.()) account.append(passwordFold());
+        account.append(h('button', { type: 'button', class: 'linkbtn', text: '[회원 탈퇴 및 데이터 초기화]', onclick: () => openWithdraw() }));
       } else if (hooks.isGuest?.()) {
         account.append(
           h('button', { class: 'btn', type: 'button', text: '계정 연결 · 로그인 (+300)', onclick: () => openLogin() }),
@@ -5316,6 +5365,7 @@ export function createUI(root, hooks) {
         h('button', { class: 'btn gold', type: 'button', text: '알림', onclick: () => openPushSheet() }),
         h('button', { class: 'btn ghost', type: 'button', text: '받은 소식', onclick: () => openInboxSheet() }),
         h('button', { class: 'btn ghost', type: 'button', text: '이번 주 코드', onclick: () => openCodeSheet() }),
+        statsField(),
         h('p', { class: 'note' }, '지도 © ', h('a', { href: 'https://www.openstreetmap.org/copyright', target: '_blank', rel: 'noopener', text: 'OpenStreetMap' }), ' · ', h('button', { type: 'button', class: 'linkbtn', text: '사진·캐릭터 라이선스', onclick: () => openCredits() })),
         policyLinks(),
       );
@@ -5755,6 +5805,8 @@ export function createUI(root, hooks) {
       store('kts_taken', []);
       takenWant.length = 0;
       takenSeen.clear();
+      inboxBtn.hidden = true; // 받은 소식 and its 🔔 were the old actor's (main.js forgetActor drops the rows)
+      if (sheet?.inbox) closeSheet();
     },
     promptLink,
     openLogin,

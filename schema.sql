@@ -324,7 +324,7 @@ BEGIN
   VALUES (p_actor_id, left(COALESCE(p_nickname, '네온손님'), 16), 100)
   ON CONFLICT (actor_id) DO NOTHING;
   SELECT * INTO v_seller FROM public.wallets WHERE actor_id = p_actor_id FOR UPDATE;
-  IF v_seller.coins < p_amount THEN
+  IF NOT FOUND OR v_seller.coins < p_amount THEN
     RETURN jsonb_build_object('ok', false, 'error', '팔 코인이 부족해요.');
   END IF;
   UPDATE public.wallets SET coins = coins - p_amount, nickname = left(p_nickname, 16), updated_at = now()
@@ -1394,7 +1394,103 @@ $$;
 REVOKE ALL ON FUNCTION public.spend_plaza(TEXT, TEXT, INT, INT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.spend_plaza(TEXT, TEXT, INT, INT) TO anon, authenticated, service_role;
 
--- Move a guest wallet onto a Supabase user once. +300 is gated by wallets.link_bonus.
+-- ============================================================================
+-- Coin guard in the database (migrations/2026-11-22-coins.sql adds all of this to production).
+-- gone_logins: accounts that withdrew, as salted hashes of the account id and of its login e-mail, never the raw values. The salt
+--   (app_secrets GONE_SALT) is made once, here, and never leaves the database. It has nothing to do with the Worker's keys, so rotating
+--   GUEST_KEY or FLUSH_KEY forgets no withdrawal. A trigger writes the marks whenever a user: wallet row is deleted (withdraw_account).
+-- starter_taken: per guest, how many of its arrival coins (the starting 100 and the hello bonus 40, 140 in all) links have already
+--   moved into an account (0..140, only grows). merge_guest_account reads and writes it in the same transaction as the move.
+-- wallets_need_login: no wallet row for a signed-in id whose login is gone, so a withdrawn account's token (it lives up to an hour)
+--   cannot make itself a fresh 100-coin wallet.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS public.gone_logins (
+  h TEXT PRIMARY KEY,
+  at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE public.gone_logins ENABLE ROW LEVEL SECURITY;
+CREATE TABLE IF NOT EXISTS public.starter_taken (
+  guest_id TEXT PRIMARY KEY,
+  taken INT NOT NULL DEFAULT 0 CHECK (taken BETWEEN 0 AND 140),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE public.starter_taken ENABLE ROW LEVEL SECURITY;
+INSERT INTO public.app_secrets (key_name, key_value)
+VALUES ('GONE_SALT', replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', ''))
+ON CONFLICT (key_name) DO NOTHING;
+
+-- A withdrawal mark: 32 hex characters of SHA-256 over the salt, the kind ('id' or 'mail') and the value. NULL without a value.
+CREATE OR REPLACE FUNCTION public.gone_hash(p_kind TEXT, p_value TEXT)
+RETURNS TEXT
+LANGUAGE sql
+STABLE
+SET search_path = public
+AS $$
+  SELECT CASE WHEN COALESCE(p_value, '') = '' OR s.salt IS NULL THEN NULL
+    ELSE left(encode(sha256(convert_to(s.salt || ':' || p_kind || ':' || p_value, 'UTF8')), 'hex'), 32) END
+  FROM (SELECT (SELECT key_value FROM public.app_secrets WHERE key_name = 'GONE_SALT') AS salt) s;
+$$;
+REVOKE ALL ON FUNCTION public.gone_hash(TEXT, TEXT) FROM PUBLIC, anon, authenticated, service_role;
+
+-- A deleted user: wallet row (withdraw_account) leaves its marks: the id, and the login e-mail while auth.users still has it
+-- (forget_login runs after withdraw_account). A second withdrawal moves `at` forward.
+CREATE OR REPLACE FUNCTION public.wallets_gone_mark()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_mail TEXT;
+BEGIN
+  IF OLD.actor_id LIKE 'user:%' THEN
+    IF to_regclass('auth.users') IS NOT NULL AND OLD.actor_id ~ '^user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+      SELECT lower(email) INTO v_mail FROM auth.users WHERE id = substr(OLD.actor_id, 6)::uuid;
+    END IF;
+    INSERT INTO public.gone_logins (h, at)
+    SELECT k, now() FROM unnest(ARRAY[public.gone_hash('id', OLD.actor_id), public.gone_hash('mail', v_mail)]) AS k
+    WHERE k IS NOT NULL
+    ON CONFLICT (h) DO UPDATE SET at = now();
+  END IF;
+  RETURN OLD;
+END;
+$$;
+DROP TRIGGER IF EXISTS wallets_gone_mark ON public.wallets;
+CREATE TRIGGER wallets_gone_mark AFTER DELETE ON public.wallets FOR EACH ROW EXECUTE FUNCTION public.wallets_gone_mark();
+
+-- No wallet row for a signed-in id with no login. After forget_login deleted a login, its access token still works for up to an hour,
+-- and every wallet INSERT (profile_read, coin_batch, claim_billboard, a link, ...) would have made a fresh 100-coin wallet for it.
+-- Such an INSERT is skipped (the row is not made), so a coin flush for it adds nothing and a function that then finds no wallet
+-- refuses as it does for any missing wallet. A database without auth.users (a test database) checks nothing.
+CREATE OR REPLACE FUNCTION public.wallets_need_login()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NEW.actor_id LIKE 'user:%' AND to_regclass('auth.users') IS NOT NULL THEN
+    IF NEW.actor_id !~ '^user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+      RETURN NULL;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM auth.users WHERE id = substr(NEW.actor_id, 6)::uuid) THEN
+      RETURN NULL;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS wallets_need_login ON public.wallets;
+CREATE TRIGGER wallets_need_login BEFORE INSERT ON public.wallets FOR EACH ROW EXECUTE FUNCTION public.wallets_need_login();
+
+-- Move a guest wallet onto a Supabase user, and keep the coins nobody earned out of it, in this one transaction.
+-- Every guest wallet starts with 100 coins and the hello bonus pays 40 on arrival: 140 "arrival coins". The account's first link
+-- (link_bonus still false and no withdrawal mark) moves everything and pays +300 once; the guest's arrival coins are spoken for with
+-- it. Every later link moves only what the guest holds above the arrival coins it has not moved yet (starter_taken), so a guest
+-- that spent them moves only its earnings. An account that withdrew before (gone_logins: its id or its login e-mail) gets no
+-- second +300, its link counts as a later one, and the answer says again = true. Spending in between cannot slip through: the move
+-- and the take-back are one step. The account never ends below what it had before the call.
+-- guard = 2 tells the Worker the database did all of this (it keeps its own take-back only for the older function).
 CREATE OR REPLACE FUNCTION public.merge_guest_account(
   p_key TEXT,
   p_user_id TEXT,
@@ -1408,10 +1504,15 @@ SET search_path = public
 AS $$
 DECLARE
   v_secret TEXT;
+  v_user public.wallets%ROWTYPE;
   v_guest public.wallets%ROWTYPE;
-  v_had_guest BOOLEAN := FALSE;
   v_moved BIGINT := 0;
+  v_back BIGINT := 0;
   v_bonus INT := 0;
+  v_taken INT := 0;
+  v_again BOOLEAN := false;
+  v_mail TEXT;
+  v_name TEXT := left(COALESCE(p_nickname, ''), 16);
   v_coins BIGINT;
   v_nick TEXT;
 BEGIN
@@ -1419,72 +1520,76 @@ BEGIN
   IF v_secret IS NULL OR p_key IS DISTINCT FROM v_secret THEN
     RAISE EXCEPTION 'Unauthorized worker key';
   END IF;
-  IF p_user_id !~ '^user:[A-Za-z0-9_-]{8,80}$' THEN
-    RETURN jsonb_build_object('ok', false, 'error', '계정 정보가 올바르지 않습니다.');
+  IF p_user_id IS NULL OR p_user_id !~ '^user:[A-Za-z0-9_-]{8,80}$' THEN
+    RETURN jsonb_build_object('ok', false, 'error', '계정 정보가 올바르지 않습니다.', 'guard', 2);
   END IF;
-  IF p_guest_id !~ '^guest:g-[0-9a-f-]{36}$' THEN
-    RETURN jsonb_build_object('ok', false, 'error', '게스트 정보가 올바르지 않습니다.');
-  END IF;
-  IF p_user_id = p_guest_id THEN
-    RETURN jsonb_build_object('ok', false, 'error', '같은 계정입니다.');
+  IF p_guest_id IS NULL OR p_guest_id !~ '^guest:g-[0-9a-f-]{36}$' THEN
+    RETURN jsonb_build_object('ok', false, 'error', '게스트 정보가 올바르지 않습니다.', 'guard', 2);
   END IF;
 
   INSERT INTO public.wallets (actor_id, nickname, coins, linked, link_bonus)
   VALUES (p_user_id, '네온손님', 0, true, false)
   ON CONFLICT (actor_id) DO NOTHING;
-
-  PERFORM 1 FROM public.wallets WHERE actor_id = p_user_id FOR UPDATE;
-  SELECT * INTO v_guest FROM public.wallets WHERE actor_id = p_guest_id FOR UPDATE;
-  v_had_guest := FOUND;
-
-  IF v_had_guest AND v_guest.coins > 0 THEN
-    UPDATE public.wallets
-    SET coins = 0, updated_at = now()
-    WHERE actor_id = p_guest_id AND coins = v_guest.coins;
-    IF FOUND THEN
-      v_moved := v_guest.coins;
-      UPDATE public.wallets
-      SET coins = coins + v_moved, updated_at = now()
-      WHERE actor_id = p_user_id;
-    END IF;
+  SELECT * INTO v_user FROM public.wallets WHERE actor_id = p_user_id FOR UPDATE;
+  IF NOT FOUND THEN
+    -- wallets_need_login skipped the row: this id has no login any more (a withdrawal deleted it). Nothing moves.
+    RETURN jsonb_build_object('ok', false, 'error', '로그인 정보를 찾지 못했어요. 다시 로그인해 주세요.', 'guard', 2);
   END IF;
+  SELECT * INTO v_guest FROM public.wallets WHERE actor_id = p_guest_id FOR UPDATE;
+  IF FOUND AND v_guest.coins > 0 THEN
+    v_moved := v_guest.coins;
+    UPDATE public.wallets SET coins = 0, updated_at = now() WHERE actor_id = p_guest_id;
+  END IF;
+
+  INSERT INTO public.starter_taken (guest_id) VALUES (p_guest_id) ON CONFLICT (guest_id) DO NOTHING;
+  SELECT taken INTO v_taken FROM public.starter_taken WHERE guest_id = p_guest_id FOR UPDATE;
+
+  IF NOT v_user.link_bonus THEN
+    IF to_regclass('auth.users') IS NOT NULL AND p_user_id ~ '^user:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+      SELECT lower(email) INTO v_mail FROM auth.users WHERE id = substr(p_user_id, 6)::uuid;
+    END IF;
+    v_again := EXISTS (
+      SELECT 1 FROM public.gone_logins
+      WHERE h = public.gone_hash('id', p_user_id) OR h = public.gone_hash('mail', v_mail)
+    );
+  END IF;
+
+  IF NOT v_user.link_bonus AND NOT v_again THEN
+    -- The account's first link: everything moves and +300 once. This guest's arrival coins are spoken for with it.
+    v_bonus := 300;
+    v_taken := 140;
+  ELSE
+    -- A later link, or the first one of an account that withdrew before: the arrival coins not moved yet stay out.
+    v_back := LEAST(v_moved, GREATEST(0, 140 - v_taken));
+    v_taken := v_taken + v_back;
+  END IF;
+  UPDATE public.starter_taken SET taken = v_taken, updated_at = now() WHERE guest_id = p_guest_id;
 
   UPDATE public.wallets
-  SET coins = coins + 300,
+  SET coins = coins + v_moved - v_back + v_bonus,
       link_bonus = true,
       linked = true,
-      nickname = CASE
-        WHEN coalesce(nullif(left(coalesce(p_nickname, ''), 16), ''), '') <> '' THEN left(p_nickname, 16)
-        ELSE nickname
-      END,
+      nickname = CASE WHEN v_name <> '' THEN v_name ELSE nickname END,
       updated_at = now()
-  WHERE actor_id = p_user_id AND link_bonus = false;
-  IF FOUND THEN
-    v_bonus := 300;
-  ELSE
-    UPDATE public.wallets
-    SET linked = true,
-        nickname = CASE
-          WHEN coalesce(nullif(left(coalesce(p_nickname, ''), 16), ''), '') <> '' THEN left(p_nickname, 16)
-          ELSE nickname
-        END,
-        updated_at = now()
-    WHERE actor_id = p_user_id;
-  END IF;
+  WHERE actor_id = p_user_id
+  RETURNING coins, nickname INTO v_coins, v_nick;
 
   UPDATE public.billboards SET holder_id = p_user_id, updated_at = now() WHERE holder_id = p_guest_id;
   UPDATE public.plots SET owner_id = p_user_id, updated_at = now() WHERE owner_id = p_guest_id;
   UPDATE public.billboard_photos SET actor_id = p_user_id WHERE actor_id = p_guest_id;
 
-  SELECT coins, nickname INTO v_coins, v_nick FROM public.wallets WHERE actor_id = p_user_id;
+  -- No 'moved' key: a Worker that still runs its own take-back reads its absence as "nothing to take back", so the two never stack.
   RETURN jsonb_build_object(
     'ok', true,
     'actor_id', p_user_id,
     'coins', v_coins,
     'bonus', v_bonus,
-    'moved', v_moved,
+    'moved_in', v_moved,
+    'back', v_back,
+    'again', v_again,
     'nickname', v_nick,
-    'linked', true
+    'linked', true,
+    'guard', 2
   );
 END;
 $$;

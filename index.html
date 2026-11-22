@@ -1127,7 +1127,14 @@ visualViewport?.addEventListener('scroll', fitVV);
 const GA_MEASUREMENT_ID = 'G-ZHXT5BEQ4J';
 const CLARITY_ID = '';
 (function () {
-  if (GA_MEASUREMENT_ID && GA_MEASUREMENT_ID !== 'G-XXXXXXXXXX') {
+  window.KTS_GA_ID = GA_MEASUREMENT_ID; // analytics.js setStatsOff: the id GA's own ga-disable-<id> flag is named after
+  // 방문 통계 보내지 않기 (the settings sheet, analytics.js STATS_OFF_KEY) or the browser's Global Privacy Control signal: no Google tag at all,
+  // not even a dataLayer, so nothing is requested from Google on this visit.
+  let statsOff = false;
+  try { statsOff = navigator.globalPrivacyControl === true; } catch { /* no navigator */ }
+  try { if (localStorage.getItem('kts_stats_off') === '1') statsOff = true; } catch { /* storage blocked: the setting cannot have been saved */ }
+  if (statsOff) window['ga-disable-' + GA_MEASUREMENT_ID] = true;
+  else if (GA_MEASUREMENT_ID && GA_MEASUREMENT_ID !== 'G-XXXXXXXXXX') {
     window.dataLayer = window.dataLayer || [];
     window.gtag = function () { window.dataLayer.push(arguments); };
     window.gtag('js', new Date());

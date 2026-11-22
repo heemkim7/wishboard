@@ -241,6 +241,9 @@ const ui = createUI(document.getElementById('ui'), {
   authEnv,
   oauth: (provider) => startOAuth(provider), // synchronous up to window.open: call it straight from the click
   passwordAuth: (kind, id, password) => passwordSign(kind, id, password),
+  // An id or e-mail sign-in (Supabase's 'email' provider), not Google: it has a password of its own to change.
+  passwordAccount: () => !!sessionUser && (sessionUser.app_metadata?.provider === 'email' || /@id\.wishboard\.dev$/i.test(sessionUser.email || '')),
+  changePassword: async (password) => { try { await net.changePassword(password); } catch (e) { throw new Error(authMessage(e)); } },
   withdraw: () => withdrawAccount(),
   forgetKnown: () => net.forget === true, // what the boot config said about the login being deleted on withdrawal
   forgetLogin: () => net.forgetLogin(), // asked again when the withdrawal sheet opens
@@ -1831,6 +1834,8 @@ async function finishLink(session, fresh, echo = false) {
   try { await refreshWorld(); } catch { /* boards refresh on the next poll */ }
   if (fresh && !echo) trackEvent('auth_login_success', { method: user.app_metadata?.provider || 'email' });
   if (merged?.bonus) ui.note(`계정을 연결했어요. +${merged.bonus}코인`, 'ok');
+  // again: the server's answer on the one link after a withdrawal (no reward, and the guest's start coins stayed out). Said that once.
+  else if (merged?.again) ui.note('계정을 연결했어요. 예전에 탈퇴한 계정이라 시작 코인과 연결 보상은 다시 붙지 않아요', 'ok');
   else if (fresh && !failed) ui.note('계정을 연결했어요', 'ok'); // after a failed merge the error toast stands alone
   await rejoin();
   return merged;
@@ -2032,8 +2037,10 @@ function forgetActor() {
   state.invite = null;
   state.league = null;
   state.starterUsed = null;
+  inboxRows = []; inboxHandled = new Set(); liveNews = []; // 받은 소식 and its 🔔 dot were the old actor's: the next actor's list is read afresh
   ui.setWallet(state);
   ui.forgetActor?.();
+  ui.setInboxDot?.(false);
 }
 // The new guest another window stored after its sign-out: a stored guest with a token that is not `old` (the one this window's
 // account had merged). That window removes the old one first and stores the new one a moment later: up to 3 s of waiting.
