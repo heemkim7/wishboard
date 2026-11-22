@@ -11,6 +11,7 @@ migrations
 worker.js
 ops.js
 adsrv.js
+giftsrv.js
 wrangler.jsonc
 cf_release.py
 schema.sql

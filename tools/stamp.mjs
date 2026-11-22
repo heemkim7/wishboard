@@ -13,11 +13,13 @@ import { fileURLToPath } from 'node:url';
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const JS_IMPORT = /(\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(['"])(\.{1,2}\/[^'"?\s]+\.js)(\?v=[^'"]*)?\2/g;
 const HTML_SRC = /(<script\b[^>]*\bsrc=)(['"])((?:\.{1,2}\/)?[^'"?\s:]+\.js)(\?v=[^'"]*)?\2/g;
+// <link rel="modulepreload" href="/x.js?v=BUILD">: the same URL the import will ask for, or the preload is a second copy (gift.html).
+const HTML_PRELOAD = /(<link\b[^>]*\brel=["']modulepreload["'][^>]*\bhref=)(['"])((?:\.{1,2}\/)?[^'"?\s:]+\.js)(\?v=[^'"]*)?\2/g;
 
 const posix = (p) => p.split(path.sep).join('/');
 
 export function browserFiles(root = ROOT) {
-  const top = fs.readdirSync(root).filter((f) => (f.endsWith('.js') && f !== 'worker.js' && f !== 'sw.js') || f === 'index.html' || f === 'admin.html' || f === 'ads.html');
+  const top = fs.readdirSync(root).filter((f) => (f.endsWith('.js') && f !== 'worker.js' && f !== 'sw.js') || f === 'index.html' || f === 'admin.html' || f === 'ads.html' || f === 'gift.html');
   const scene = fs.existsSync(path.join(root, 'ts3d')) ? fs.readdirSync(path.join(root, 'ts3d')).filter((f) => f.endsWith('.js')).map((f) => 'ts3d/' + f) : [];
   return top.concat(scene).sort();
 }
@@ -54,7 +56,7 @@ export function importsOf(file, root = ROOT) {
 }
 
 // An HTML page loads modules two ways: <script src> and imports inside an inline module script.
-function patternsFor(file) { return file.endsWith('.html') ? [HTML_SRC, JS_IMPORT] : [JS_IMPORT]; }
+function patternsFor(file) { return file.endsWith('.html') ? [HTML_SRC, HTML_PRELOAD, JS_IMPORT] : [JS_IMPORT]; }
 
 export function stamp(build, { root = ROOT, write = true } = {}) {
   const shared = workerModules(root);

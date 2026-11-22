@@ -16,6 +16,7 @@ import { adoptHandover, allowedLink, blockedText, handoverHref, isAndroid, isInA
 import { authErrorText, cleanAddress, externalRoutes, oauthErrorText, oauthMessage, oauthReturn, sessionDrift, OAUTH_ACK, OAUTH_CHANNEL } from './plaza-account.js';
 import { invCode, inviteFrom, inviteView } from './invite.js';
 import { saveClip, dropParams } from './share.js?v=202611222045';
+import { mountGift } from './gift.js?v=202611222045';
 import { ftueDue, crowdFacts, kstDay, lockCelebration, startFtue, wishAutoOpen, wishBootLine, awayRows, inboxUnread, seenAdd, liveKey, liveSeenAdd } from './ftue.js?v=202611222045';
 import { photoVerdicts } from './ftue.js?v=202611222045';
 import { WISH, cleanWish } from './wish.js';
@@ -198,6 +199,7 @@ const INBOX_SEEN_KEY = 'kts_inbox_seen', WISH_SEEN_KEY = 'kts_wish_seen', WISH_P
 function readJson(key, dflt) { try { const v = JSON.parse(recall(key) || 'null'); return v ?? dflt; } catch { return dflt; } }
 let focusedSlot = '', inboxRows = [], inboxHandled = new Set(), liveNews = [];
 let introDone = () => {};
+let giftUi = null; // gift.js mountGift, once the world and ui exist
 const introReady = new Promise((resolve) => { introDone = resolve; });
 let linkWishDone = () => {};
 const linkWishClosed = new Promise((resolve) => { linkWishDone = resolve; });
@@ -369,6 +371,7 @@ const ui = createUI(document.getElementById('ui'), {
     // Used once: a reload must not replay the gift toast or the focus camera (?tribe= goes after joinTribeLink).
     dropDeep(['focus', 'gift', 'ref']);
     dropDeep(['inv']); // already kept at load (kts_inv_from)
+    if (giftUi?.arrive()) return; // ?gb=<id>: that gift board (and &rec=1: its 15-second video), instead of the intro
     if (!FOCUS) {
       world?.playIntro();
       // Mark the tutorial before ui's enter handler runs maybeStarterToast, so the two do not compete.
@@ -564,6 +567,7 @@ world = createTimesSquare(document.getElementById('view'), {
 window.G.world = world;
 window.G.ui = ui;
 errlogCtx({ tier: String(world?.quality || '') });
+giftUi = mountGift({ world, ui, whenBuilt, introDone: () => introDone() }); // 선물 전광판: the 🎁 button, ?gb= links, the 15-second video (gift.js)
 
 let ftueApi = null;
 let ftueArmed = false;
@@ -1129,6 +1133,7 @@ function applyPlaza(remote) {
   ui.setWorld(state);
   world.updateWorld(state);
   world.setAds?.(remote.ads); // 광고 화면 (adsale.js adWorld checks it; a missing key is off and empty)
+  if (giftUi) giftUi.apply(remote.gifts); else world.setGifts?.(remote.gifts); // 선물 전광판 up now (a missing key is none)
   world.setMonopoly?.(!!monopolyOf(state.billboards));
   markMine();
   paintCrown();

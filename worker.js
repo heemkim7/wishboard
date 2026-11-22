@@ -18,6 +18,7 @@ import { adTables, adIngest, adTenure, adRename, adForget, adReport } from './ad
 import { OPS_THEME_KEYS } from './seasons.js';
 import * as ops from './ops.js'; // 운영 장치: error reports, 문의하기, operator details, maintenance, /rt/health extras
 import { adsApi, adsDb, adsWorld } from './adsrv.js';
+import { giftApi, giftDb, giftPath, giftPage, giftWorld, giftMove, giftForget } from './giftsrv.js'; // 선물 전광판 (docs/gift-board.md)
 // v16 cost pass: ping 25s (client) / STALE 75s, idle scan alarm 60s, meter report 60s, compact pos ('p'/'P'), nearby fanout, event ring + world cache, HMAC guest tokens.
 const CAP = 50, MEM = 0.125, LEAN = 0.8, HARD = 0.95, STALE = 75000, SCAN = 5000, IDLE_SCAN = 60000, REP = 60000;
 const NEAR_R = 1600, FAR_MS = 3000, HIST_N = 10, PRAY_TTL = 15;
@@ -210,6 +211,23 @@ export class Meter extends DurableObject {
   adMove(from, to) { this.adI(); return adRename(this.ctx.storage.sql, from, to); }
   adForget(uid) { this.adI(); return adForget(this.ctx.storage.sql, uid); }
   adRead(slot, holder) { this.adI(); return adReport(this.ctx.storage.sql, slot, holder); }
+  // 선물 전광판 (giftsrv.js): instance 'gift' keeps the boards, their 롤링페이퍼 lines, visitors, daily counts and limits.
+  giftI() { if (!this.giftOk) { this.giftOk = 1; giftDb.tables(this.ctx.storage.sql); } return this.ctx.storage.sql; }
+  giftMake(o, now) { return giftDb.make(this.giftI(), o, now); }
+  giftGet(id, now) { return giftDb.get(this.giftI(), id, now); }
+  giftPaper(id, o, now) { return giftDb.paper(this.giftI(), id, o, now); }
+  giftSeen(items, now) { return giftDb.seen(this.giftI(), items, now); }
+  giftInterest(id, uid, act, t, consent, now) { return giftDb.interest(this.giftI(), id, uid, act, t, consent, now); }
+  giftVidAsk(id, uid, ip, now) { return giftDb.vidAsk(this.giftI(), id, uid, ip, now); }
+  giftVidSet(id, uid, meta, now) { return giftDb.vidSet(this.giftI(), id, uid, meta, now); }
+  giftCardPut(id, uid, bytes, now) { return giftDb.cardPut(this.giftI(), id, uid, bytes, now); }
+  giftCardGet(id) { return giftDb.cardGet(this.giftI(), id); }
+  giftReport(id, m, ip, now) { return giftDb.report(this.giftI(), id, m, ip, now); }
+  giftDel(id, uid) { return giftDb.del(this.giftI(), id, uid); }
+  giftLive(now) { return giftDb.live(this.giftI(), now); } // pruning runs on giftMake and the admin list, which hand the gone ids to R2
+  giftMove(from, to) { return giftDb.move(this.giftI(), from, to); }
+  giftForget(uid) { return giftDb.forget(this.giftI(), uid); }
+  giftAdmin(op, arg, now) { return giftDb.admin(this.giftI(), op, arg, now); }
   snapFor(k, r, u) { this.snapInit(); if (!u) return null; const x = this.ctx.storage.sql.exec('select x.id from snx x join snap s on s.id = x.id where x.k = ? and x.r = ? and x.u = ? order by x.at desc limit 1', String(k), String(r), String(u)).toArray()[0]; return x ? String(x.id) : null; }
   // Immediate push (instance 'push', new tables). pss: up to 3 subscriptions per actor, keyed by endpoint (a browser belongs to its latest subscriber).
   // psg: last notice per (actor, kind), the minimum gap. Endpoints and actor ids never leave the Worker.
@@ -1741,6 +1759,7 @@ function pushText(row) {
   if (row?.kind === 'wish') { const n = Math.floor(Number(row.n)) || 0; return n <= 1 ? '내 소원에 첫 하트가 왔어요' : `내 소원이 하트 ${n}개를 받았어요`; }
   if (row?.kind === 'wishwin') return `어제 소원이 ${Math.max(1, Math.floor(Number(row.rank)) || 1)}위였어요. +${Math.max(0, Math.floor(Number(row.prize)) || 0)}코인이 들어왔어요`;
   if (row?.kind === 'invite') return `초대한 친구가 소원을 걸었어요. +${Math.max(0, Math.floor(Number(row.amount)) || 0)}코인이 들어왔어요`;
+  if (row?.kind === 'giftopen') return /^\(광고\) /.test(String(row.text || '')) ? clip(row.text, 90) : ''; // 선물 전광판 "열리면 알림": advertising, labelled (giftsrv.js)
   return '';
 }
 // Where a notification click lands (same origin, validated ids only); '' leaves it to the service worker's default '/'.
@@ -1748,6 +1767,7 @@ function pushUrl(row) {
   const slot = String(row?.slot_id || ''), wid = String(row?.wid || '');
   if ((row?.kind === 'taken' || row?.kind === 'dark') && SLOT_RE.test(slot)) return '/?focus=' + slot;
   if ((row?.kind === 'wish' || row?.kind === 'wishwin') && WISH_ID.test(wid)) return '/?wish=' + wid;
+  if (row?.kind === 'giftopen') return '/gift';
   return '';
 }
 // Avatar species, presence field av: 1..SPECIES_MAX (ts3d/avatars.js SPECIES), anything else is 1 (the mouse).
@@ -2100,6 +2120,8 @@ const HUMAN_BAD = new Set(['missing-input-response', 'invalid-input-response', '
 // bonus ('bonus') and a VIP code ('code') need a fresh check of their own action while Turnstile is on; off, nothing is asked. -> null to go on,
 // or the answer: 403 { code:'human', site } with no token or one Cloudflare refused (the page gets a token and asks once more, as for a new
 // guest), 503 busy when siteverify cannot judge it: never paid unverified, the reward is still there to be had later.
+// What giftsrv.js gets from here (the env it is handed is the tallied one, so its DO calls count in the daily budget).
+const giftKit = () => ({ adminOk, lvlNow, resolveActor, tokenOf, ipHash: wishIp, humanGate, actOk, pushNow });
 async function humanGate(env, req, b, action) {
   const site = humanSite(env); if (!site) return null;
   const no = () => J({ ok: false, err: 'human', code: 'human', site, error: HUMAN_ERR.human }, 403);
@@ -2134,7 +2156,7 @@ function queueTaken(env, ctx, victim, fromName, slotId) {
 }
 // Immediate web push without the cron. Subscriptions live in the Meter instance 'push' (filled by /rt/push), because Supabase push_subs cannot be read
 // per actor with the publishable key. One notice per (actor, kind) per PUSH_GAP; everything runs in waitUntil and never touches the triggering response.
-const PUSH_GAP = { taken: 60000, wish: 600000, wishwin: 60000, dark: 1, invite: 60000 }, WISH_PUSH_AT = [1, 3, 5, 10, 20, 30, 50, 100]; // dark: no gap, each notice is once per (slot, lit_until) already
+const PUSH_GAP = { taken: 60000, wish: 600000, wishwin: 60000, dark: 1, invite: 60000, giftopen: 864e5 }, WISH_PUSH_AT = [1, 3, 5, 10, 20, 30, 50, 100]; // dark: no gap, each notice is once per (slot, lit_until) already
 const pushM = env => env.METER.get(env.METER.idFromName('push'));
 function pushNow(env, ctx, actorId, note) {
   if (!env?.VAPID_PRIV || !actorId || !PUSH_GAP[note?.kind]) return Promise.resolve();
@@ -2167,7 +2189,7 @@ function evProps(p) { const o = {}; let n = 0; if (p && typeof p === 'object') f
 // today = { visitors, wishes } for the boot screen comes from the account registry: one DO call per cache refill (15 s), never per request.
 async function readWorld(env) {
   const h = { apikey: ANON, accept: 'application/json' };
-  const [bs, ps, rs, tally, live, wish, league, ads] = await Promise.all([
+  const [bs, ps, rs, tally, live, wish, league, ads, gifts] = await Promise.all([
     fetch(SUPA + '/rest/v1/billboards?select=*&slot_id=in.(' + SLOT_IDS.join(',') + ')&order=slot_id.asc', { headers: h }),
     fetch(SUPA + '/rest/v1/plots?select=*&order=plot_id.asc', { headers: h }),
     fetch(SUPA + '/rest/v1/wallets?select=actor_id, nickname, spent, linked&spent=gt.0&order=spent.desc&limit=60', { headers: h }), // 60: room for the 네온봇N rows filtered out below
@@ -2176,6 +2198,7 @@ async function readWorld(env) {
     lvlNow(env).then(l => l >= 2 ? (WWLAST.day === kstDay() ? WWLAST.v : null) : wishM(env).wWorld(kstDay()).then(v => { WWLAST = { day: kstDay(), v }; return v; })).catch(() => null), // budget hard: the last copy, no wish-DO call
     Promise.resolve().then(() => leagueWorld(env)).catch(() => null),
     Promise.resolve().then(() => adsWorld(env, { lvlNow })).catch(() => null), // the ad screens' bookings (adsrv.js): one 'ads' DO call per isolate per minute at most
+    Promise.resolve().then(() => giftWorld(env, { lvlNow })).catch(() => null), // 선물 전광판 on the plaza now (giftsrv.js): one 'gift' DO call per isolate per 2 minutes at most (5 while none is up)
   ]);
   if (!bs.ok || !ps.ok) return { err: 'upstream ' + (bs.ok ? ps.status : bs.status) };
   const [billboards, plots, ranks] = await Promise.all([bs.json(), ps.json(), rs.ok ? rs.json() : null]);
@@ -2186,6 +2209,7 @@ async function readWorld(env) {
   if (row && typeof row.roof === 'string') world.roof = row.roof;
   const ww = wishWorld(wish); if (ww.count || ww.board.length || ww.king) world.wish = ww; // left out while empty or failing: clients read a missing key as { board: [], king: null, count: 0 }
   if (ads) world.ads = ads; // { on, list }: left out while ADS_ON is off and nothing is booked
+  if (gifts?.length) world.gifts = gifts; // [{ id, to, from, occ, msg, th, scr, a, b, n }]: left out while none is up
   if (league?.top?.length) world.league = { week: league.week, top: league.top.map(r => ({ nick: clip(r.nick, 16), spent: Math.max(0, Math.floor(Number(r.spent)) || 0) })) }; // also left out while empty
   return { body: JSON.stringify(world), world, ranked: Array.isArray(ranks) };
 }
@@ -3457,7 +3481,7 @@ async function accountApi(req, env, ctx, u) {
   // Pushes to the user: id reach the guest's browsers, and the guest's board shots stay the holder's own (card page, share-page title).
   // The guest's wish, hearts, reports and unpaid prizes become the user's (wMove), so mine, the one-wish-a-day rule and the prize follow the person.
   ctx.waitUntil(Promise.resolve().then(() => Promise.all([pushM(env).psMove(guestId, actor.id), snapM(env).snapMove(guestId, actor.id).then(() => { SNX.clear(); SNC.clear(); }),
-    wishM(env).wMove(guestId, actor.id).then(() => { WISHC.at = 0; WONE.clear(); WAU.clear(); }), darkM(env).dkMove(guestId, actor.id), lgM(env).lgMove(guestId, actor.id).then(lgDrop), invM(env).ivMove(guestId, actor.id)])).catch(() => { })); // the invite code, counts and pending rewards too
+    wishM(env).wMove(guestId, actor.id).then(() => { WISHC.at = 0; WONE.clear(); WAU.clear(); }), darkM(env).dkMove(guestId, actor.id), lgM(env).lgMove(guestId, actor.id).then(lgDrop), invM(env).ivMove(guestId, actor.id), giftMove(env, guestId, actor.id)])).catch(() => { })); // the invite code, counts and pending rewards too; 선물 전광판 boards
   // The guest's cosmetics (bought or from attendance) go with it (move_cosmetics, migrations/2026-11-22-shop.sql; before it the call is a 404).
   // Once per guest per isolate in 10 minutes: a replay of the same link asks nothing extra (the move is idempotent anyway).
   if (!(COSM_MOVED.get(guestId) > Date.now() - 600000)) { if (COSM_MOVED.size >= 2000) COSM_MOVED.clear(); COSM_MOVED.set(guestId, Date.now());
@@ -3491,6 +3515,7 @@ async function forgetActor(env, uid) {
     await Promise.all((r?.e || []).map(e => supabaseRpc('push_unsubscribe', { p_key: env.FLUSH_KEY || '', p_actor_id: id, p_endpoint: e }).catch(() => null))); };
   await Promise.all(ids.map(id => Promise.all([dropSubs(id), wishM(env).wForget(id), snapM(env).snapForget(id), darkM(env).dkForget(id), lgM(env).lgForget(id), invM(env).ivForget(id)].map(p => p.catch(() => null)))));
   await Promise.all(ids.map(id => adM(env).adForget(id).catch(() => null))); // the board reports of their tenures go too
+  await Promise.all(ids.map(id => giftForget(env, id))); // 선물 전광판 they made: boards, lines, videos
   WISHC.at = 0; WONE.clear(); WAU.clear(); SNX.clear(); SNC.clear(); PC.delete('world'); lgDrop();
   try { await caches.default.delete(new Request(WORLD_CACHE)); } catch { }
 }
@@ -3716,6 +3741,8 @@ export default {
     if (u.pathname === '/rt/sponsor' && req.method === 'GET') return J({ url: extUrl(env.SPONSOR_INQUIRY_URL) || '' });
     if (u.pathname.startsWith('/rt/ads/') || u.pathname === '/rt/admin/ads' || u.pathname.startsWith('/rt/admin/ads/')) return adsApi(req, env, ctx, u, { adminOk, lvlNow, resolveActor, tokenOf, ipHash: wishIp, // 광고 판매 (adsrv.js; networks: IPv6 by /64)
       dropWorld: async () => { PC.delete('world'); try { await caches.default.delete(new Request(WORLD_CACHE)); } catch { } } });
+    if (giftPath(u.pathname)) return giftApi(req, env, ctx, u, giftKit(env, req)); // 선물 전광판 (giftsrv.js; networks: IPv6 by /64)
+    if (u.pathname.startsWith('/g/')) return giftPage(req, env, ctx, u, giftKit(env, req)); // its recipient page: no room, no 3D
     if (u.pathname === '/rt/share-bonus' || u.pathname === '/rt/redeem-code' || u.pathname === '/rt/link-reward') return promo(req, env, u);
     if (u.pathname === '/rt/report') return fileReport(req, env);
     if (u.pathname.startsWith('/rt/card/')) return cardPage(req, env, u);

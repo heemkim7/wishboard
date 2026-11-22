@@ -83,7 +83,7 @@ describe('client: human.js tokens for the rewards', () => {
     assert.equal(await human.humanToken(SITE, { ...p, action: 'bonus' }), 'T2'); assert.equal(p.win.turnstile.renders[1].action, 'bonus');
     assert.equal(await human.humanToken(SITE, { ...p, action: 'code' }), 'T3'); assert.equal(p.win.turnstile.renders[2].action, 'code');
     assert.equal(await human.humanToken(SITE, { ...p, action: 'login' }), 'T4'); assert.equal(p.win.turnstile.renders[3].action, 'guest');
-    assert.deepEqual(human.HUMAN_ACTIONS, ['guest', 'link', 'bonus', 'code']); assert.equal(p.doc.scripts.length, 1, 'one script for all of them');
+    assert.deepEqual(human.HUMAN_ACTIONS, ['guest', 'link', 'bonus', 'code', 'gift', 'gmsg', 'gvid']); assert.equal(p.doc.scripts.length, 1, 'one script for all of them'); // gift*: giftsrv.js
     assert.deepEqual(p.win.turnstile.removed, ['w1', 'w2', 'w3', 'w4']);
   });
   it('a reward check that fails is quiet: no card, no reload button, and it neither sets nor obeys the guest failure', async () => {
