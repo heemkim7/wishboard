@@ -5044,12 +5044,17 @@ export function createUI(root, hooks) {
     syncBack();
     return true;
   }
+  const SHARE_ACCOUNT = '계정을 연결하면 공유 보너스 300코인을 받을 수 있어요'; // worker.js SHARE_ACCOUNT, the 403 code 'account' answer
   function openVip() {
     trackEvent('vip_modal_open');
     promptLink('vip');
     openSheet(['crown', 'VIP 패스트트랙'], 'SPONSOR', (host) => {
       const code = h('input', { class: 'input', maxLength: 32, placeholder: '8자리 스폰서 코드', 'aria-label': '스폰서 코드' });
-      const share = h('button', { class: 'btn gold', type: 'button', text: '링크 복사하고 +300' });
+      // The share bonus is for accounts (POST /rt/share-bonus answers a guest 403 code 'account'). A guest sees that, a button to the account
+      // sheet, and a plain share button that asks for no bonus.
+      const shareGuest = accountView.ready && accountView.guest && !accountView.linked;
+      const share = h('button', { class: shareGuest ? 'btn ghost' : 'btn gold', type: 'button', text: shareGuest ? '링크만 공유하기' : '링크 복사하고 +300' });
+      const shareLink = shareGuest ? h('button', { class: 'btn gold', type: 'button', text: '계정 연결하고 받기', onclick: () => openLogin() }) : null;
       const shareBox = h('div', { class: 'manual-copy', hidden: true });
       share.addEventListener('click', async () => {
         if (share.disabled) return;
@@ -5065,11 +5070,16 @@ export function createUI(root, hooks) {
           if (how === 'manual') note('복사가 안 돼서 보너스는 넣지 않았어요. 아래 링크를 길게 눌러 복사해 보내 주세요.', 'err');
           return;
         }
+        if (shareGuest) { share.disabled = false; note(SHARE_ACCOUNT, 'ok', () => openLogin()); return; } // sent, and no bonus asked for
         if (how === 'copied') note('링크를 복사했어요', 'ok');
         try {
           const r = await hooks.shareBonus?.();
           note(r?.coins != null ? `공유 보너스 +300 · 잔액 ${r.coins}` : '공유 보너스를 넣었어요', 'ok');
-        } catch (e) { note(e?.message || '오늘은 이미 받았거나, 아직 입장 전이에요', 'err'); share.disabled = false; }
+        } catch (e) {
+          share.disabled = false;
+          if (e?.code === 'account') note(SHARE_ACCOUNT, 'err', () => openLogin()); // the server sees a guest (an anonymous sign-in too): tap to link
+          else note(e?.message || '오늘은 이미 받았거나, 아직 입장 전이에요', 'err');
+        }
       });
       const redeem = h('button', { class: 'btn ghost', type: 'button', text: '코드 사용' });
       const me = sheet; // a late answer must not close a sheet opened after this one
@@ -5097,7 +5107,9 @@ export function createUI(root, hooks) {
       host.append(
         h('div', { class: 'hub' },
           vipLink,
-          h('div', { class: 'vipcard' }, h('h4', null, ...withIcon('gift', '친구에게 링크 공유하고 +300')), h('p', { text: '하루 한 번. 오늘 내 소원이나 내 전광판 링크를 보내면 코인이 바로 들어옵니다.' }), share, shareBox),
+          h('div', { class: 'vipcard' }, h('h4', null, ...withIcon('gift', '친구에게 링크 공유하고 +300')),
+            h('p', { text: shareGuest ? `${SHARE_ACCOUNT} 하루 한 번, 오늘 내 소원이나 내 전광판 링크를 보내면 바로 들어옵니다.` : '계정 전용, 하루 한 번. 오늘 내 소원이나 내 전광판 링크를 보내면 코인이 바로 들어옵니다.' }),
+            shareLink, share, shareBox),
           h('div', { class: 'vipcard' }, h('h4', null, ...withIcon('key', 'VIP 스폰서 코드')), h('p', { text: '코드가 맞으면 10,000코인이 충전됩니다. 메인 타워는 3,000부터 점령할 수 있어요.' }), code, redeem),
           h('div', { class: 'vipcard' }, h('h4', null, ...withIcon('briefcase', '스폰서 안내')), h('p', { text: '현금 결제는 없어요. 안내 페이지만 엽니다.' }), ask, askNote),
           airBar(),

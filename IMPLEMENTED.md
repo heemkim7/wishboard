@@ -88,11 +88,12 @@
 - **탈퇴 뒤 재가입.** 같은 이메일·구글 계정으로 다시 가입하면 연결 보상 300이 다시 붙지 않고 손님의 도착 코인 140도 옮기지 않는다. 마이그레이션 뒤에는 계정 지갑이 0으로 시작하므로 0코인이고, 전에는 연결 전에 계정 지갑이 생겼으면 그 100이 남을 수 있다. 연결 응답의 `again: true`로 한 번 `계정을 연결했어요. 예전에 탈퇴한 계정이라 연결 보상 300코인은 다시 주지 않아요`를 보인다. 마이그레이션 전 `acct` `stFirst` 호출이 실패하면 표시가 없는 것처럼 300을 다시 준다(전과 같다).
 - **예산 hard에서는 닫는다.** 보내기·모금은 503 `{ code:'busy', error:'지금은 광장이 붐벼요. 잠시 뒤에 다시 해 주세요.' }`(DO·방·잔액 읽기 없음), 임대 호출이 실패해도 같다. 연결은 503 `지금은 광장이 붐벼서 계정을 연결하지 못했어요. 잠시 뒤에 새로고침해 주세요.`다. 마이그레이션 뒤(`mergeProbe`, RPC 하나)에도 연결 보상을 아직 받지 않았거나 그것을 읽지 못하면 같은 503이다(마이그레이션 전 탈퇴는 `acct` 표시로만 알 수 있어서). 공유 보너스(`/rt/share-bonus`)와 코드 입력(`/rt/redeem-code`)도 hard이거나 `acct` 호출이 실패하면 503 `busy`다. 코드는 쓴 기록을 `acct`에 계정+코드마다 한 줄(SHA-256 키) 남겨 다른 isolate에서 다시 받지 못한다(`Meter.codeTake`/`codeGive`, 지급이 실패하면 되돌린다). 예전에는 isolate 메모리(`PROMO`)뿐이라 isolate마다 다시 받을 수 있었다. 탈퇴 표시는 hard에서도 적는다(DO 1회). 다른 경로는 그대로 DO 호출을 줄인다.
 - **`GUEST_KEY` 바꾸기.** 마이그레이션 전의 탈퇴 표시는 `GUEST_KEY`로 해시한 `acct` 표시뿐이라, 키를 바꾸면 읽히지 않는다. 순서는 코인 마이그레이션을 먼저 돌리고(뒤의 탈퇴는 DB `gone_logins`에 남는다), 그다음 키를 바꾼다(`worker.js`의 주석). 마이그레이션 전 탈퇴는 계속 `acct` 표시로 본다.
-- **공유 보너스**의 금액(하루 300)과 받는 사람(손님 포함)은 바꾸지 않았다. IP마다 하루 한 번이라 같은 IP의 손님 여럿을 이어 붙여도 더 생기지 않는다. 하한 580에 들어가지 않으므로 새 계정이 첫날 300을 보낼 수는 있다. IP를 돌리면 계정 농사와 같은 수준이라 남은 제품 결정이다.
+- **공유 보너스는 계정만(2026-11-22, 주인 결정 "로그인했을 때만").** 금액은 하루 300 그대로다. 손님과 익명 로그인(`guestLike`)은 DO 호출과 RPC 전에 403 `{ ok:false, code:'account', error:'계정을 연결하면 공유 보너스 300코인을 받을 수 있어요.' }`이고 아무것도 세지 않는다(같은 네트워크의 계정은 그날 받을 수 있다). 계정마다, 네트워크마다(IPv4 그대로, IPv6는 /64) KST 하루 한 번이다. 하한 580에 들어가지 않으므로 새 계정이 첫날 300을 보낼 수는 있다. 네트워크를 돌려 가며 계정을 만드는 농사는 남는다(`docs/bot-protection.md`).
 - **아이디 계정 비밀번호.** 아이디 가입 칸(가입 모드에서만)에 `아이디 계정은 비밀번호를 잊으면 찾을 수 없어요. 구글로 연결하면 잃어버릴 걱정이 없어요`류의 경고가 있다. 비밀번호로 로그인한 계정은 설정에 `비밀번호 바꾸기`가 있다(`net.changePassword` → `auth.updateUser({ password })`, 새 키 없음). 같은 비밀번호, 재인증 필요, 세션 없음은 한국어 문구다. Supabase의 "Secure password change"가 켜져 있으면 다시 로그인한 뒤 바꾸라고 안내한다.
 - **로그아웃**은 받은 소식 줄과 속보, 🔔 점과 버튼도 지우고 열려 있던 받은 소식 시트를 닫는다(`forgetActor`). 아이디 로그인 중 시트를 닫으면 그 오류가 토스트로 나온다.
 - **약관과 개인정보처리방침(`legal.js`, 시행일 2026-11-22).** 구글 로그인은 이메일·프로필 이름·프로필 사진 주소를 Supabase 인증에 저장하고 게임 화면에는 쓰지 않는다고 적었다. 방문 통계(GA4)는 기본으로 켜져 있고, 설정의 `방문 통계 보내지 않기`(localStorage `kts_stats_off`)를 켜거나 브라우저가 `navigator.globalPrivacyControl === true`이면 `index.html`이 GA 태그와 `dataLayer`를 넣지 않는다. 이미 켜진 페이지에서 끄면 `analytics.js`가 이벤트를 보내지 않고 `ga-disable-<id>`를 세운다. 이용약관의 탈퇴 조항은 로그인 정보·연결된 로그인·세션까지 지운다고 고쳤고, 보내기 하한과 아이디 비밀번호 문장을 더했다.
-- 공유 보너스 300코인은 그와 별개다. `POST /rt/share-bonus`. KST 하루 한 번, 계정과 IP 둘 다 막는다. 하루 한 번 기록은 Meter `acct`의 `prm` 표에 둔다(계정 id와 IP 해시, KST 날짜별. 지난 날짜는 다음 요청 때 지운다. `promoTake` / `promoGive`). 지급이 실패하면 그날 기록을 돌려준다. 일일 예산 hard이거나 호출이 실패하면 전처럼 isolate 메모리만 쓴다.
+- 공유 보너스 300코인은 그와 별개다. `POST /rt/share-bonus`. 계정만(위). KST 하루 한 번, 계정과 네트워크(IPv6는 /64) 둘 다 막는다. 하루 한 번 기록은 Meter `acct`의 `prm` 표에 둔다(계정 id와 네트워크 해시, KST 날짜별. 지난 날짜는 다음 요청 때 지운다. `promoTake` / `promoGive`). 지급이 실패하면 그날 기록을 돌려준다. 일일 예산 hard이거나 호출이 실패하면 503 `busy`다(위 `예산 hard에서는 닫는다`).
+  - 화면(VIP 시트, `openVip`): 손님(`accountView`가 손님이고 연결 전)에게는 `계정을 연결하면 공유 보너스 300코인을 받을 수 있어요. 하루 한 번, …` 문구, `계정 연결하고 받기`(로그인 시트), 보너스를 묻지 않는 `링크만 공유하기`가 보인다. 링크를 보낸 뒤에는 같은 문구의 토스트이고 누르면 로그인 시트다. 계정에게는 전처럼 `링크 복사하고 +300`이고 문구 앞에 `계정 전용`이 붙는다. 서버가 `code: 'account'`로 거절하면(익명 로그인 등) 같은 문구의 눌리는 토스트다(`net.authed`가 오류에 `code`를 붙인다).
 - `GET /rt/profile`은 level, reputation, species, equip, owned, color, starter, streak, attend_last를 준다. 입장 후 이 값으로 출석 일수와 무료 칸 사용 여부를 맞춘다. 오늘 이미 출석한 날에는 0코인 PAY를 보내지 않고, 프로필의 `attend_last`가 오늘이면 버튼이 `미션 · N일`이 된다.
 - 약관·개인정보는 설정, 가입, `?policy=terms|privacy`에 있다.
 
@@ -135,7 +136,7 @@
   - Worker는 `starter_slot_list(p_key)`(`FLUSH_KEY`, 틀리면 예외)로 목록을 읽는다(`starterSlots(env)`, 캐시 `STARTER_C`). 받은 목록은 isolate마다 10분 쓴다. 함수가 없거나, 실패하거나, 1.5초 안에 답이 없거나, 목록에 거리 칸이 하나도 없으면 마지막으로 받은 좋은 목록을 그대로 두고(한 번도 없었으면 기본 네 칸) 60초 뒤에 다시 묻는다. 같은 때 들어온 요청은 묻기 하나를 같이 기다린다.
   - `GET /rt/config`의 `starter`가 이 목록이다. Supabase를 기다리지 않는다. 지금 캐시의 목록(없으면 기본 네 칸)을 바로 주고, 캐시가 지났으면 `ctx.waitUntil`로 새로 묻는다. 기본 네 칸은 12칸의 일부라서 늦은 목록을 줘도 없는 무료 칸을 권하지 않는다.
   - 무료 모드 `/rt/claim-billboard`: 입찰 0 검사 다음에 칸을 본다. 데이터베이스에서 받은 목록이 있으면(`good`) 그 목록에 없는 칸은 400 `무료 칸은 계정당 한 번이고, 비어 있는 거리 칸만 돼요`이고 Supabase를 부르지 않는다. 받은 목록이 없으면 `^STREET_\d+$` 모양만 보고 `claim_billboard`가 정한다(거절은 `starter`, 같은 문구).
-  - 같은 IP KST 하루 3회는 Meter `acct`의 `sipTake(hash, day, 3)` 한 번으로 세고 늘린다(DO가 한 번에 한 호출만 돌리므로 동시에 보내도 3회를 넘지 못한다). 문구 검사를 지난 뒤, `claim_billboard`를 부르기 직전에 잡고, 그 호출이 실패하거나 거절되거나 네트워크 예외로 던지면 `sipGive`로 돌려준다. 저장은 `ag` 표 `sip` 줄이다. `sipGet`/`sipAdd`는 남아 있으나 이 길에서는 쓰지 않는다.
+  - 같은 네트워크(IPv4 그대로, IPv6는 /64, 2026-11-22 전에는 주소 그대로) KST 하루 3회는 Meter `acct`의 `sipTake(hash, day, 3)` 한 번으로 세고 늘린다(DO가 한 번에 한 호출만 돌리므로 동시에 보내도 3회를 넘지 못한다). 문구 검사를 지난 뒤, `claim_billboard`를 부르기 직전에 잡고, 그 호출이 실패하거나 거절되거나 네트워크 예외로 던지면 `sipGive`로 돌려준다. 저장은 `ag` 표 `sip` 줄이다. `sipGet`/`sipAdd`는 남아 있으나 이 길에서는 쓰지 않는다.
   - 화면: `balance.js`의 `BALANCE.starterSlots`는 getter다. 서버 목록이 있으면 그것, 없으면 `STARTER_DEFAULT`(기본 네 칸)다. `net.js` `loadConfig`가 `/rt/config`의 `starter`를 `setStarterSlots`로 넣는다. 거리 칸 id만, 겹치지 않게, 순서대로 받고(`starterList`), 30개를 넘거나 맞는 것이 없으면 기본 네 칸으로 돌아간다. `loadConfig`는 Supabase CDN을 기다리지 않고 `init` 처음에 시작한다. 무료 칸 토스트, 다음 목표, 점령 마법사, 튜토리얼 길안내는 모두 이 getter를 지나고 목록의 첫 빈 칸(포차에서 가장 가까운 빈 칸)을 고른다. `claimWizard`의 `free`/`mode`/`payload`도 만들 때가 아니라 읽을 때 getter를 본다.
 - 점령 창 구역: 꿀자리, 메인/코너, 중심가, 입문, 내 것. 칸 이름은 `비어 있음`, `불 꺼짐`, `불 꺼짐 · 이름`, `내 것`, 주인 이름이다. `만료`라고 쓰지 않는다. 꺼진 칸도 저장된 세 줄이 편집 칸에 채워진다. 광장 화면은 꺼진 칸의 안내면에 주인의 세 줄 대신 `불 꺼짐` / `주인이 다시 켤 수 있어요` / `N 코인부터`를, 빈칸에는 칸 이름과 최소가 안내를 그린다. 오늘의 소원이 있으면 켜진 주인이 없는 칸은 이 안내면과 소원 카드를 번갈아 보인다(아래 `오늘의 소원` › `전광판에 도는 소원`). 배지는 켜짐 `LIVE`, 꺼짐 `꺼짐`, 빈칸 `빈칸`, 소원 카드 `소원`이다.
 - 빼앗기 배너는 화면 아래 얇은 줄이다. 문구는 `지금 빼기 가능 · N코인부터`다. 소원 글자를 가리면 안 된다.
@@ -229,7 +230,7 @@
 | 링크 클릭 | 15. 칸·하루 1, 하루 5칸 |
 | 계정 연결 | 300, 계정 1회 |
 | 공유 촬영 | 5, 하루 1 |
-| 공유 링크 | 300, 위 계정 연결과 별도. 하루 1회, Meter `acct`에 기록(hard에서는 isolate 메모리) |
+| 공유 링크 | 300, 계정만(손님은 403 `account`). 위 계정 연결과 별도. 하루 1회, 계정·네트워크마다 Meter `acct`에 기록(hard나 호출 실패는 503 `busy`) |
 | 친구 초대 | 100 + 100. `INVITE_ON`이 `1`일 때만, 아래 `친구 초대` 규칙 |
 
 택시 요금 횟수는 Room이 센다. 시각 기준 한 시간 칸(`floor(now / 3600000)`, ag 키 `hr:fare`, 다른 반복 수입과 같은 칸)에 15번(`PAY.fare.perHour`)까지 준다. 16번째 하차는 `{ t:'PAY', kind:'fare', amount:0, why:'cap' }`이고, 태운 손님 수와 40초 간격은 쓴 것으로 친다. 다음 시간 칸이면 다시 준다. 코인이 실제로 들어간 요금만 센다(코인 상한으로 0이 된 하차는 세지 않는다). 방을 옮기면 ag 줄과 같이 옮겨진다. 클라이언트는 `cap`을 세션에 한 번 `이번 시간에 받을 수 있는 코인을 다 받았어요` 토스트로 보이고 기다리지 않는다(요금은 보내고 끝이다).
@@ -414,7 +415,7 @@
 
 - `GET /rt/health` `/rt/config` `/rt/gate` `/rt/world` `/rt/here` `/rt/wallet` `/rt/profile` `/rt/inbox` `/rt/sponsor` `/rt/push/key` `/rt/wishes` `/rt/grp` `/rt/league` `/rt/ad-report` `/rt/invite` `/rt/card/<slot>` `/rt/w/<id>` `/rt/s/<id>` `/rt/snap/<id>`
 - `POST /rt/guest` `/rt/claim-billboard` `/rt/buy-plot` `/rt/sell-coins` `/rt/spend` `/rt/flush-wallet` `/rt/billboard-photo` `/rt/share-bonus` `/rt/redeem-code` `/rt/relight` `/rt/event` `/rt/auth/merge` `/rt/auth/withdraw` `/rt/report` `/rt/tribe` `/rt/tribe/pledge` `/rt/inbox/read` `/rt/push` `/rt/profile` `/rt/equip` `/rt/grp` `/rt/snap` `/rt/wish` `/rt/wish/heart` `/rt/wish/report` `/rt/invite` `/rt/admin/wish`. `DELETE /rt/push`.
-- `GET /rt/config`는 `{ url, key, starter }`다. `starter`는 무료 첫 칸 목록(`전광판`), `KAKAO_JS_KEY`가 `[\w-]{16,80}` 모양일 때만 `kakao`(`카카오톡 공유(키 필요)`), `INVITE_ON`이 `1`일 때만 `invite: true`(`친구 초대`)가 더 붙는다. Supabase를 기다리지 않는다. GET이 아니면 405.
+- `GET /rt/config`는 `{ url, key, starter }`다. `starter`는 무료 첫 칸 목록(`전광판`), `KAKAO_JS_KEY`가 `[\w-]{16,80}` 모양일 때만 `kakao`(`카카오톡 공유(키 필요)`), `INVITE_ON`이 `1`일 때만 `invite: true`(`친구 초대`), `TURNSTILE_SITE`와 `TURNSTILE_SECRET`이 둘 다 있을 때만 `turnstile`(사이트 키, `봇 막기`)이 더 붙는다. Supabase를 기다리지 않는다. GET이 아니면 405.
 - 웹소켓 `/rt/ws`. 위치 `v2: {t:'P', k, a:[x,y,...]}`. 같은 층, `NEAR_R` 1600 안을 우선하고 먼 피어는 `FAR_MS`. `net.js` 데드레커닝 1.15초.
 - 일일 예산 80% lean, 95% hard. `/rt/gate`가 막히면 입장을 줄인다. 무엇을 세고 단계마다 무엇을 줄이는지는 아래 `일일 예산과 단계`다.
 - 데이터는 Supabase `wishboard` (`yxddhpacuyaffaoutxjn`, 서울). 스키마 원본은 `schema.sql`. 채플 DB `masil-chapel-seoul`은 쓰지 않는다.
@@ -440,12 +441,29 @@
   - `GET /rt/wishes`는 소원 DO를 부르지 않는다. 그날의 익명 목록 사본(`WISHC`, 나이는 보지 않는다)이 있으면 그것, 없으면 빈 목록(`top` `recent` `given` `yesterday` 빈 배열, `mine: null`, `left: 0`, `count: 0`)에 `busy: true`를 붙여 준다. 토큰이 있어도 같다(`mine`은 모른다). `?id=`는 isolate의 소원 하나 캐시에 그 소원이 있을 때만 `focus`가 붙는다.
   - `/rt/world`의 `wish`는 isolate가 마지막으로 받은 `wWorld` 답(`WWLAST`, 같은 KST 날)이고, 없으면 키가 없다. `league`도 isolate의 마지막 사본이다.
   - 소원 하나(`wishOne`: 공유 페이지 `/rt/w/<id>`, 사진 페이지 `/rt/s/<id>`의 소원 맥락, `?id=`)는 isolate 캐시(`WONE`)에 있으면 나이와 상관없이 그것을 쓰고, 없으면 없는 소원으로 본다(`/rt/w/<id>`는 `/`로 302). 작성자 확인(`wishAuthor`)도 캐시에 없으면 묻지 않아서 공유 페이지 그림은 `/og.jpg`다.
+  - `POST /rt/event`는 이벤트 DO를 부르지 않고 `{ ok:true, kept:false }`다(`봇 막기`).
   - 소원 상금 정산을 하지 않는다. 레벨이 95% 밑으로 내려간 뒤 첫 `GET /rt/wishes` 또는 `POST /rt/wish`가 정산한다(isolate마다 하루 한 번 규칙 그대로).
   - `/rt/claim-billboard`(모든 모드)과 `announce`(불 켜기 `/rt/relight`, 사진 올리기, 관리자 사진 승인, 운영자 내리기)는 방 샤드에 `WORLD_UPDATE`·`/sync`를 보내지 않는다. 레벨이 정해질 때 방이 모든 소켓을 닫았기 때문이다. isolate 월드 사본은 그대로 새로 채운다. 점령 응답의 `broadcast`는 `false`다. 점령의 자기 방 `/sync`·`/fever`는 그대로다.
   - 응원은 칸 줄을 읽기 전에 `cap`이고, 답례도 칸 줄을 읽기 전에 막힌다(`같이 보기` › `응원과 주인`). `/rt/league`는 토큰 없는 캐시 사본이나 503 `busy`, 소속 정산은 건너뛴다(`주간 리그`, `소속 정산`). 친구 초대는 `GET /rt/invite` `{ ok:true, busy:true }`, `POST /rt/invite` 503 `busy`이고 다시 내보내기와 대기 줄 정산도 하지 않는다(`친구 초대`). 불 꺼지기 전 알림은 30분 뒤로 미룬다(`불 꺼지기 전 알림`).
   - 화면: 소원 목록 응답에 `busy: true`가 있으면 `state.wish.busy`가 되고, 🌠 시트는 내 소원 자리에 `지금은 광장이 붐벼요. 잠시 뒤에 다시 해 주세요.` 한 줄만 보인다(입력 칸·고쳐 쓰기 없음). 하트 버튼은 막히고 남은 하트 줄은 숨는다. 🌠의 빨간 점도 붙지 않는다. 다음 목록 응답에 `busy`가 없으면 원래대로 돌아간다.
 - 레벨을 보지 않는 것: 관리자 소원 경로(`/rt/admin/wish`, `/rt/admin/wishes`), 사진 공유 페이지(`/rt/s/<id>`)의 사진 맥락(`snaps`), 사진 읽기(`/rt/snap/<id>`), `/rt/push` 구독·해지. 이들은 hard에서도 그대로 DO를 부른다. 리그·리포트의 지출 기록도 그대로 한다. 80%·95% 문턱과 FREE/PAID 숫자, 방의 `setLvl`은 그대로다.
-- 일부러 남긴 것: 토큰 경로(리그, 리포트, 소원, 초대, 이벤트, 공유 페이지)는 모두 IP마다 같은 `EVENT_RL` 한 통(1분 600회)을 나눠 쓴다. `/rt/snap/<id>` 사진 읽기는 제한 없이 요청마다 `snaps` DO를 부른다(응답은 `max-age=86400`). 탈퇴 전에 방의 `ibq`에 쌓인 그 계정 앞 우편 줄은 지우지 않고 다음 flush에 그대로 보낸다.
+- 일부러 남긴 것: 토큰 경로(리그, 리포트, 소원, 초대, 이벤트, 공유 페이지)는 모두 IP마다 같은 `EVENT_RL` 한 통(1분 600회)을 나눠 쓴다. `/rt/snap/<id>` 사진 읽기는 `EVENT_RL`을 지난 요청마다 `snaps` DO를 부른다(응답은 `max-age=86400`. 2026-11-22 전에는 제한이 없었다). 탈퇴 전에 방의 `ibq`에 쌓인 그 계정 앞 우편 줄은 지우지 않고 다음 flush에 그대로 보낸다.
+
+## 봇 막기
+
+장치마다의 표, 남은 빈틈, 주인이 할 일(Turnstile 켜기)은 `docs/bot-protection.md`다.
+
+- 새 손님(`POST /rt/guest`에 자기 토큰도 넘김 표도 없는 것, `guestMint`)은 이 순서로 본다. 다시 받기와 넘김은 그대로이고 세지 않는다.
+  1. Turnstile이 켜져 있고(`TURNSTILE_SITE`와 `TURNSTILE_SECRET`이 둘 다 있을 때, `humanSite`) 토큰(`ts`)이 없으면 바로 403 `{ err:'human', code:'human', site, error:'사람인지 확인하지 못했어요. 다시 시도해 주세요.' }`. 아무것도 세지 않는다(화면이 확인을 돌려 다시 묻기 때문에 새 손님 하나가 `GUEST_RL`을 한 번만 쓴다).
+  2. `GUEST_RL` 1분 10개. 키는 네트워크다(IPv4 그대로, IPv6는 /64, `ipNet`). 전에는 주소 그대로라 IPv6 한 줄에서 주소를 바꿔 가며 끝없이 만들 수 있었다.
+  3. Turnstile 확인. `siteverify`에 `secret`, `response`, `remoteip`를 JSON으로 보낸다(3초). `success`이고 `action`이 `guest`(또는 없음)여야 한다. 토큰 쪽 거절(`missing-input-response`, `invalid-input-response`, `timeout-or-duplicate`, `bad-request`, 어떤 상태 코드든)과 그냥 실패는 같은 403. 우리 쪽에서 판단을 못 받은 경우(닿지 않음, 5xx, JSON 아님, `internal-error`, `missing-input-secret`, `invalid-input-secret`)는 들여보내되 `console.warn`을 남기고 더 좁게 막는다: 네트워크마다 이 isolate에서 1분 3개(`GUEST_OPEN_MIN`, 넘으면 429 `rate`), 하루 10개(`GUEST_OPEN_DAY`, 아래 `gmt`의 `o:` 줄). Cloudflare 장애나 시크릿 오타 하나로 새로 오는 모든 사람이 막히지 않게 하려는 것이다.
+  4. 네트워크마다 KST 하루 100개(`GUEST_DAY`. Worker 변수 `GUEST_DAY`로 바꾸고 `0`이면 끈다). Meter `acct`의 `gmt` 표(`mintTake`, 키는 네트워크 해시 `g:`, 지난 날짜는 지운다)에 한 번의 호출로 모든 키를 본 뒤 센다(예산에 센다). 넘으면 429 `{ err:'day', code:'day', error:'오늘 이 인터넷 연결에서 새 손님이 너무 많이 들어왔어요. 계정이 있으면 로그인하거나 내일 다시 와 주세요.' }`, `retry-after: 3600`. 예산 hard이거나 그 호출이 실패하면 묻지 않고 들여보낸다(`GUEST_RL`은 그대로).
+- 화면(`net.js` `guestToken`): 403 `human`이면 `human.js`를 그때 처음 불러(`?v=`가 붙은 동적 import) Turnstile을 보이지 않게 한 번 돌리고(스크립트 `https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit`, `appearance: 'interaction-only'`, `action: 'guest'`, `retry: 'never'`), 받은 토큰을 `ts`로 붙여 다시 묻는다. 동시에 온 토큰 요청은 같은 확인 하나를 기다린다(`MINT`). 사이트 키는 403 답의 `site`, 없으면 `/rt/config`의 `turnstile`(`HUMAN.site`)이다. 상자를 눌러야 할 때만 화면 아래 카드(`#kts-human`)가 `사람인지 잠깐 확인할게요. 아래 상자를 눌러 주세요.`로 보인다(3분 기다린다. 아니면 30초). 실패하면(스크립트가 막힘, 위젯 오류·만료, 서버가 토큰을 거절) `사람인지 확인하지 못했어요. 네트워크를 확인하고 다시 시도해 주세요.`와 `다시 시도`(새로고침)이고, 그 페이지는 스스로 다시 확인하지 않는다. 하루 한도(`day`)는 그 문구와 `닫기`이고 그 페이지는 10분 동안 새 손님을 묻지 않는다(`HUMAN.until`). 1분 한도(`rate`)는 전처럼 조용하다. 스위치가 꺼져 있으면 `human.js`도 Cloudflare 스크립트도 받지 않는다. 손님이 없으면 전처럼 혼자 모드다(Supabase 익명 가입은 운영 프로젝트에서 꺼져 있다).
+- 계정마다의 한도 `ACT_RL`(1분 60, 키가 계정 id라서 PC방·학교처럼 한 주소를 나눠 쓰는 사람끼리 막지 않는다): 소켓 입장(`ws:`, 방에 가기 전 429), 광장 쓰기(`plaza:`: 점령·분양·코인 보내기·`/rt/spend`·`/rt/flush-wallet`. 모두 방 정산부터 부른다), 그 밖의 쓰기(`misc:`: `/rt/push`, `/rt/report`, `/rt/inbox/read`, `/rt/profile`·`/rt/equip` POST, `/rt/snap` 올리기, `/rt/grp` POST). 넘으면 429 `{ ok:false, code:'rate', error:'요청이 너무 잦아요. 1분 뒤에 다시 해 주세요.' }`, `retry-after: 60`(소켓은 본문 `rate`). DO 호출 전이다. 바인딩이 없으면(테스트) 막지 않는다. 입장 때의 프로필 읽기(GET)는 한도가 없다.
+- 방(Room DO): 한 계정이 한 방에 소켓 3개까지(`SOCK_PER`, `crowd`). 넷째가 들어오면 가장 오래된 것에 `{ t:'moved' }`를 보내고 4005로 닫는다(그 탭은 다시 쓸 때 붙는다). 한 소켓이 10초에 120개(`FLOOD_N`)를 넘게 보내면 4008로 닫고, 그 계정은 60초 동안 그 방에 못 들어온다(429 `flood`, 방 메모리 `fban`). 리액션 `E`는 소켓마다 10초 30개, 프레즌스 `tr`은 10초 20개까지만 퍼뜨리고 넘친 것은 버린다. 패킷 모양, 위치 릴레이(`NEAR_R`·`FAR_MS`), 핑, 알람, 하이버네이션은 그대로다. 넘친 메시지도 들어온 메시지라 예산에는 센다.
+- `GET /rt/snap/<id>`는 DO 전에 `EVENT_RL`을 탄다(넘으면 429). `POST /rt/event`는 예산 hard에서 DO를 부르지 않는다.
+- 무료 첫 칸 하루 3번(`sipTake`)과 공유 보너스의 주소 키도 이제 네트워크(IPv6 /64) 해시다(`ipHash`). 배포한 날은 키가 바뀌어 그날 한 번 더 받을 수 있다.
+- 남은 것: Workers Free의 하루 요청 10만은 Worker가 거절한 요청도 센다. 주소를 많이 가진 봇이 요청만 퍼부으면 Worker 안에서는 막을 수 없다. 사용자 도메인을 붙이고 WAF 속도 제한 규칙을 두면 Worker 앞에서 막힌다(`docs/bot-protection.md`).
 
 ## 데이터베이스 마이그레이션
 
@@ -652,7 +670,7 @@
 - 저장·복사·공유가 되면 하루 한 번 공유 촬영 5코인(`shot`)을 요청하고 알림 제안 `share`를 줄 세운다.
 - 내 소원 공유(`친구에게 하트 부탁하기`): 내 소원을 가까운 전광판에 올리고(`pinWish`) 0.9초 뒤 찍어, 위쪽 1/3에 `🌠 오늘의 소원`, 글(두 줄까지), `— 이름`을 그린 그림(`composeWishShot`, 800B~900KB가 되는 JPEG 품질을 0.9부터 내려 찾는다. 못 찾으면 글 없는 원본)을 `?wish=`로 올린다. 4초 안에 `page`가 오지 않거나 실패하면 그림 없는 `/rt/w/<id>`를 건넨다. 만든 `page`는 이 탭에서 10분 동안 다시 쓰고, 한 번에 하나만 올린다. 제목·글은 `wishShareText`(`{이름}님의 소원`, `"글" — 하트 하나만 눌러 주세요`). 소원 공유에는 코인이 없다.
 - 초대 링크(`초대 문구 복사하기`, `초대 링크 복사`)는 `/rt/card/<slot>`이다. 선물이면 `?gift=1`이 붙는다.
-- VIP 시트의 `링크 복사하고 +300`: 건네는 링크는 오늘 내 소원(가려지지 않은 것) `/rt/w/<id>`, 없으면 켜진 내 칸의 `/rt/card/<slot>`, 없으면 사이트 주소다(`vipShareLink`). 공유 시트로 보냈거나 클립보드에 들어간 뒤에만 `POST /rt/share-bonus`를 부른다. 직접 복사 칸으로 떨어지면 보너스를 요청하지 않고 그렇게 알린다.
+- VIP 시트의 `링크 복사하고 +300`: 건네는 링크는 오늘 내 소원(가려지지 않은 것) `/rt/w/<id>`, 없으면 켜진 내 칸의 `/rt/card/<slot>`, 없으면 사이트 주소다(`vipShareLink`). 공유 시트로 보냈거나 클립보드에 들어간 뒤에만 `POST /rt/share-bonus`를 부른다. 직접 복사 칸으로 떨어지면 보너스를 요청하지 않고 그렇게 알린다. 계정만 부른다. 손님의 버튼은 `링크만 공유하기`이고 보낸 뒤 `계정을 연결하면 공유 보너스 300코인을 받을 수 있어요` 토스트(누르면 로그인 시트)다(`계정` › 공유 보너스).
 - 쓰고 난 링크 값은 주소창에서 지운다. `focus`, `gift`, `ref`는 도착 때, `tribe`는 가입이 된 뒤, `wish`는 입장해서 소원 시트로 갈 때, `inv`는 입장할 때. 새로고침이 같은 장면을 다시 틀지 않는다.
 - 분석 이벤트 `share_link`(`kind`: `shot`, `wish`, `vip`, `invite`, `how`: `native`, `copy`, `manual`, `kakao`). 초대 문구가 복사되면 `share_send`도 남는다.
 
@@ -863,7 +881,7 @@ node tools/prod-e2e.mjs https://studio.wishboard.workers.dev
 | 단계 | 하는 것 |
 | --- | --- |
 | `admin` | `/rt/admin/stats`(`x-admin-key`, 200 `ok:true`가 아니면 중단), `/rt/health`(시크릿 둘), `/rt/gate`(열려 있고 `lean`이 아니어야 한다, 아니면 중단) |
-| `guests` | `POST /rt/guest`로 셋을 만든다. `GUEST_RL`(IP당 분 10개)에 걸리면 `retry-after`만큼 기다린다 |
+| `guests` | `POST /rt/guest`로 셋을 만든다. `GUEST_RL`(네트워크당 분 10개)에 걸리면 `retry-after`만큼 기다린다. Turnstile이 켜져 있으면(403 `human`) 또는 그 네트워크의 하루 한도(429 `day`)면 기다리지 않고 멈춘다. 상태 파일의 살아 있는 게스트는 다시 받기라 상관없다 |
 | `enter` | 셋 다 `net.js`처럼 `wss://…/rt/ws?topic=chapel:square&room=square`, 하위 프로토콜 `masil2`와 `at.<토큰>`으로 연다. `ok`를 기다리고 25초마다 `ping`. `main.js`처럼 `{t:'BONUS', kind:'hello'}`를 보내 hello `PAY` 40을 받는다(앞선 실행에서 받았으면 두 번 오지 않는지 본다). `/rt/flush-wallet`로 정산하고 `/rt/wallet`의 `exists`를 본다. `tr`(프레즌스)는 보내지 않아 광장에 아바타가 서지 않는다 |
 | `coins` | 게스트 1의 지갑이 1000코인보다 적을 때만 `POST /rt/admin/coins {actor_id, amount:3000}`. 지갑이 그만큼 는다. 다시 돌릴 때 운영자 지급이 쌓이지 않는다. `WALLET_SYNC`는 있으면 PASS, 없으면 SKIP |
 | `wish` | 게스트 3의 링크·전화번호 소원이 `link`로 거절되고 그날 소원이 남는지. 게스트 1이 `소원 점검 중이에요 🌠`를 올리고, 바로 고치면 `soon`, 방에 `WISH`, `mine`·`recent`, 게스트 2의 하트(하트 1, `left` 1 감소), 두 번째 하트 `dup`, 자기 하트 `own`, `?id=`의 `focus`, `/rt/world` `wish.board` |

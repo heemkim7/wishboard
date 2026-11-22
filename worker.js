@@ -95,6 +95,11 @@ const MINE_GAP = 2000, MINE_CAP = 15, GAP_EARLY = 400;
 const AD_PAY = 15, AD_DAY = 5; // link visit: once per account per board per KST day, AD_DAY boards a day
 const MOVE_N = 8, MOVE_MS = 30000; // room moves per account: 8 in a row (a full queue bumps through square-2..8), then one per 30 s
 const RELAY = ['take', 'react', 'jump'], RELAY_N = 30, RELAY_MS = 10000; // client broadcasts the game uses, numbers only; 30 per 10 s per socket
+// Bot protection in a room (docs/bot-protection.md). SOCK_PER: sockets one account may hold in one room (its oldest goes, told 'moved', when a
+// newer one joins). FLOOD_N: messages one socket may send in FLOOD_MS (the game sends a few a second at most); past that the socket is closed
+// (4008) and the account cannot join this room for FLOOD_BAN. Reactions (E) are broadcast at most RELAY_N per RELAY_MS, presence (tr) TR_N.
+const SOCK_PER = 3, FLOOD_N = 120, FLOOD_MS = 10000, FLOOD_BAN = 60000, TR_N = 20;
+const burst = (a, f, n, now = Date.now()) => { const t = a[f + 't'] || 0; if (now - t > RELAY_MS || now < t) { a[f + 't'] = now; a[f + 'n'] = 0; } a[f + 'n'] = (a[f + 'n'] || 0) + 1; return a[f + 'n'] <= n; };
 const EV_STEP = { page_landing: 1, enter_square: 2, first_coin: 4, board_claim: 8 }, EV_RET = [1, 7, 30], EV_KEEP = 14;
 // Growth funnel steps (admin 성장 퍼널), one bit each: landing, entered, posted a wish, shared a link, arrived by a shared link, came back on a later day.
 const EV_GROW = { page_landing: 1, enter_square: 2, wish_post: 4, wish_share: 8, share_link: 8, share_send: 8, wish_land: 16, focus_enter: 16, return_visit: 32 };
@@ -420,6 +425,16 @@ export class Meter extends DurableObject {
     q.exec('delete from prm where d < ?', d); const hit = ks.filter(k => q.exec('select 1 from prm where k = ? and d = ?', k, d).toArray()[0]); if (hit.length) return hit; // -> the keys already used today
     for (const k of ks) q.exec('insert or ignore into prm(k, d) values(?, ?)', k, d); return true; }
   promoGive(keys, day) { this.promoInit(); for (const k of (Array.isArray(keys) ? keys : []).slice(0, 4)) this.ctx.storage.sql.exec('delete from prm where k = ? and d = ?', String(k || '').slice(0, 120), String(day || '')); return true; }
+  // New guests per network and KST day (instance 'acct', table gmt; bot protection, worker.js guestMint). keys: [[key, cap], ...], every one
+  // checked and then every one counted, in one call, so parallel mints cannot pass a cap together. -> true, or the first key already at its cap
+  // (nothing counted). Older days go on every take.
+  mintInit() { if (this.mtOk) return; this.mtOk = 1; this.ctx.storage.sql.exec('create table if not exists gmt(k text, d text, n integer not null, primary key(k, d))'); }
+  mintTake(keys, day) { this.mintInit(); const q = this.ctx.storage.sql, d = String(day || '');
+    const ks = (Array.isArray(keys) ? keys : []).slice(0, 4).map((x) => [String(x?.[0] || '').slice(0, 40), Math.floor(Number(x?.[1])) || 0]).filter(([k, c]) => k && c > 0); if (!d || !ks.length) return false;
+    q.exec('delete from gmt where d < ?', d);
+    for (const [k, c] of ks) { const r = q.exec('select n from gmt where k = ? and d = ?', k, d).toArray()[0]; if (r && Number(r.n) >= c) return k; }
+    for (const [k] of ks) q.exec('insert into gmt(k, d, n) values(?, ?, 1) on conflict(k, d) do update set n = n + 1', k, d);
+    return true; }
   cardInit() { if (this.ci) return; this.ci = 1; this.ctx.storage.sql.exec('create table if not exists cards(k text primary key, png blob, at integer)'); }
   cardGet(key) { this.cardInit(); const row = this.ctx.storage.sql.exec('select png from cards where k = ?', String(key || '')).toArray()[0]; return row?.png || null; }
   cardPut(key, bytes) { this.cardInit(); const png = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []); if (png.byteLength > 40000) return { ok: false };
@@ -758,16 +773,25 @@ export class Room extends DurableObject {
     if (u.pathname === '/fever') return this.httpFever(req);
     const topic = u.searchParams.get('topic') || '', k = req.headers.get('x-uid') || ''; if (topic) this.topicName = topic; if (!k) return new Response('auth', { status: 401 });
     if (this.lvl >= 2) return new Response('down', { status: 503 });
+    if (this.banned(k)) return new Response('flood', { status: 429, headers: { 'retry-after': '60' } });
     const sf = await this.sit(k, topic); if (sf < 0) return new Response('moved', { status: 429 });
     const room = (u.searchParams.get('room') || '').slice(0, 48), v2 = req.headers.get('x-v2') === '1';
     const prof = await this.loadProf(k);
     const [c, s] = Object.values(new WebSocketPair()); this.ctx.acceptWebSocket(s);
     const a = { k, an: req.headers.get('x-anon') === '1', m: null, q: false, t: Date.now() + Math.random(), ls: Date.now(), lob: /lobby$/.test(topic), v2, fl: 0, sf, prof };
-    this.socks().set(s, a); this.conns++;
+    this.crowd(k); this.socks().set(s, a); this.conns++;
     if (v2 && room && /^[\w:-]{1,48}$/.test(room) && !a.lob && /^chapel(qa)?:/.test(topic)) await this.loadHist(room);
     if (a.lob || this.adm() < CAP) this.admit(s, a); else { this.save(s, a); this.waitMsgs(); }
     this.arm(); this.meter(); return new Response(null, { status: 101, webSocket: c, headers: { 'Sec-WebSocket-Protocol': v2 ? 'masil2' : 'masil' } });
   }
+  // Before an account's new socket is added: its oldest ones go so that it holds at most SOCK_PER here (told 'moved': the tab waits to be used again).
+  crowd(k) { const mine = [...this.socks()].filter(([, b]) => b.k === k).sort((x, y) => x[1].t - y[1].t);
+    for (const [w] of mine.slice(0, Math.max(0, mine.length - (SOCK_PER - 1)))) { this.tx(w, { t: 'moved' }); try { w.close(4005, 'many'); } catch { } this.gone(w); } }
+  banned(k, now = Date.now()) { const until = this.fban?.get(k) || 0; if (until && until <= now) this.fban.delete(k); return until > now; }
+  // One socket past FLOOD_N in FLOOD_MS: closed, and its account kept out of this room for FLOOD_BAN. -> true when the message is dropped.
+  flood(w, a, now = Date.now()) { if (now - (a.ft || 0) >= FLOOD_MS || now < (a.ft || 0)) { a.ft = now; a.fn = 0; } if (++a.fn <= FLOOD_N) return false;
+    if (!this.fban) this.fban = new Map(); if (this.fban.size >= 500) this.fban.clear(); this.fban.set(a.k, now + FLOOD_BAN);
+    try { w.close(4008, 'flood'); } catch { } this.gone(w); return true; }
   admit(w, a) { a.q = true; a.fl = 0; if (a.m) a.m.fl = 0; this.save(w, a); const st = {}; for (const b of this.socks().values()) if (b.q && b.m) { b.fl = 0; b.m.fl = 0; st[b.k] = b.m; }
     const o = { t: 'ok', s: st, cap: a.lob ? 0 : CAP, live: this.adm(), lean: this.lvl >= 1 }; if (a.prof) { o.av = a.prof.av; o.equip = a.prof.equip; } try { const fg = this.gateAt('fg|' + a.k), fv = this.gateAt('fv|' + a.k), rv = this.gateAt('rev|' + a.k); if (fg) o.fg = fg; if (fv > Date.now()) o.fv = fv; if (rv > Date.now()) o.rv = rv; const lot = agGet(this.ctx.storage.sql, a.k, 'lot:' + Math.floor(Date.now() / 300000), ''); if (lot >= 1 && lot <= 15) o.lot = lot; } catch { /* the gauge follows the next fare */ } const ghosts = this.ghostJoin(); if (a.v2 && this.hist) o.h = ghosts.length ? this.hist.concat(ghosts) : this.hist; else if (ghosts.length) o.h = ghosts; if (this.airShow && this.airShow.until > Date.now()) o.air = this.airShow; o.stk = this.stkAll(); o.chr = this.chrAll(); o.ball = this.ballFrame(); this.tx(w, o); }
   waitMsgs() { const ws = this.waiters(), live = this.adm(); ws.forEach(([w], i) => this.tx(w, { t: 'wait', pos: i + 1, live, cap: CAP })); }
@@ -1492,6 +1516,7 @@ export class Room extends DurableObject {
       if (b.v2) this.tx(x2, sc ||= JSON.stringify({ t: 'P', k: a.k, a: [x, y, face, anim, fl, vx, vy] }));
       else this.tx(x2, sl ||= JSON.stringify({ t: 'b', e: 'pos', p: { id: a.k, x, y, face, anim, fl, vx, vy } })); } }
   async webSocketMessage(w, msg) { this.msgs++; const a = this.socks().get(w); if (!a || typeof msg !== 'string' || msg.length > 4000) return; a.ls = Date.now();
+    if (this.flood(w, a, a.ls)) return;
     let m; try { m = JSON.parse(msg); } catch { return; }
     if (m.t === 'p' && a.q && Array.isArray(m.a) && m.a.length <= 8) this.relayPos(w, a, posOf(m.a));
     else if (m.t === 'MINE' && a.q) { const gained = this.addMine(a, m.amount, m.nick); this.tx(w, gained > 0 ? { t: 'PAY', kind: 'mine', amount: gained } : { t: 'PAY', kind: 'mine', amount: 0, why: gained < 0 ? 'soon' : 'cap' }); }
@@ -1506,13 +1531,13 @@ export class Room extends DurableObject {
     else if (m.t === 'FEVER' && a.q) { this.tx(w, { t: 'FEVER', until: this.startFever(a.k) }); }
     else if (m.t === 'REV' && a.q) { const until = this.startRevenge(a.k); this.tx(w, { t: 'REV', until: until || 0 }); }
     else if (m.t === 'ADCLICK' && a.q) this.adClick(w, a, m.nick, String(m.slot || ''));
-    else if (m.t === 'E' && a.q) { const e = m.e; if (Number.isInteger(e) && e >= 1 && e <= 4) { this.bc({ t: 'E', k: a.k, e }, w); this.pushEv({ t: 'E', k: a.k, e }); } }
+    else if (m.t === 'E' && a.q) { const e = m.e; if (Number.isInteger(e) && e >= 1 && e <= 4 && burst(a, 'xe', RELAY_N)) { this.bc({ t: 'E', k: a.k, e }, w); this.pushEv({ t: 'E', k: a.k, e }); } }
     else if (m.t === 'b' && a.q) { const e = String(m.e || ''), p = m.p && typeof m.p === 'object' ? m.p : {}, now = Date.now();
       if (e === 'pos') this.relayPos(w, a, posOf([p.x, p.y, p.face, p.anim, p.fl, p.vx, p.vy]));
       else if (RELAY.includes(e)) { // no free text: only the game's own broadcasts, numeric fields, identity from the verified token, RELAY_N per RELAY_MS
         if (now - (a.bt || 0) > RELAY_MS) { a.bt = now; a.bn = 0; }
         if (++a.bn <= RELAY_N) { const P = { id: a.k }; for (const f of ['seed', 'i', 'r']) if (Number.isFinite(p[f])) P[f] = p[f]; this.bc({ t: 'b', e, p: P }, w); } } }
-    else if (m.t === 'tr' && m.m && typeof m.m === 'object' && JSON.stringify(m.m).length < 1500) { const M = m.m, keep = ['name', 'outfit', 'av', 'equip', 'rank', 'fl', 'x', 'y', 'face', 'anim', 'st', 'seat', 'g', 'hair', 'dong', 'shard', 'act', 'at', 'seat_id', 'look', 'state', 'step', 'mode', 'joined_at'];
+    else if (m.t === 'tr' && m.m && typeof m.m === 'object' && JSON.stringify(m.m).length < 1500 && burst(a, 'xr', TR_N)) { const M = m.m, keep = ['name', 'outfit', 'av', 'equip', 'rank', 'fl', 'x', 'y', 'face', 'anim', 'st', 'seat', 'g', 'hair', 'dong', 'shard', 'act', 'at', 'seat_id', 'look', 'state', 'step', 'mode', 'joined_at'];
       a.m = { id: a.k }; for (const f of keep) if (M[f] !== undefined) a.m[f] = M[f]; if (a.prof) { if (M.equip === 'taxi') a.m.seat = 'taxi'; a.m.av = a.prof.av; a.m.equip = a.prof.equip; } else if (M.equip !== undefined) a.m.equip = peerEquip(M.equip); if (!a.welcomed && typeof M.name === 'string' && M.name.trim()) { a.welcomed = true; this.bc({ t: 'WELCOME', name: M.name.trim().slice(0, 16) }); } if (typeof a.m.name === 'string') a.m.name = a.m.name.slice(0, 12); a.m.fl = 0; a.fl = 0; this.save(w, a); if (a.q) this.bc({ t: 'pj', k: a.k, m: a.m }); }
     else if (m.t === 'ut') { a.m = null; this.save(w, a); if (a.q) this.leaveK(a.k, w); }
     this.scan(); this.meter(); }
@@ -1663,6 +1688,7 @@ const loginGone = (rpc) => !!rpc?.ok && rpc.data?.ok === false && rpc.data.error
 async function profileApi(req, env, u, ctx) {
   const actor = await resolveActor(env, tokenOf(req));
   if (!actor) return J({ err: 'auth' }, 401);
+  if (req.method === 'POST' && !(await actOk(env, 'misc', actor.id))) return actNo();
   if (u.pathname === '/rt/profile' && req.method === 'GET') {
     const rpc = await supabaseRpc('profile_read', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id });
     if (loginGone(rpc)) return J({ ok: false, err: 'gone', error: GONE_ERR }, 401); // a withdrawn account's token: no wallet, no profile (migrations/2026-11-22-coins.sql)
@@ -1828,6 +1854,7 @@ async function inboxList(req, env) {
 async function inboxRead(req, env) {
   if (req.method !== 'POST') return J({ err: 'post' }, 405);
   const actor = await resolveActor(env, tokenOf(req)); if (!actor) return J({ err: 'auth' }, 401);
+  if (!(await actOk(env, 'misc', actor.id))) return actNo();
   const b = await readJson(req); if (!b || !Array.isArray(b.ids)) return J({ err: 'ids' }, 400);
   const ids = b.ids.map((n) => Math.floor(Number(n))).filter((n) => Number.isInteger(n) && n > 0).slice(0, 50);
   const rpc = await supabaseRpc('inbox_read', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_ids: ids });
@@ -1891,8 +1918,10 @@ function cachedBoard(slot) {
 }
 async function readJson(req) { const n = Number(req.headers.get('content-length') || 0); if (n > 10000) return null; try { const b = await req.json(); return b && typeof b === 'object' ? b : null; } catch { return null; } }
 const acct = env => env.METER.get(env.METER.idFromName('acct'));
+// The client's network (wish.js ipNet: IPv4 as is, IPv6 by its /64, so one phone cannot walk through its own /64), hashed with GUEST_KEY. Free
+// starter claims (sipTake), the share bonus's address key and the new-guest day count use it; the raw address is never stored.
 async function ipHash(env, req) {
-  const ip = req.headers.get('cf-connecting-ip') || 'x';
+  const ip = ipNet(req.headers.get('cf-connecting-ip') || '');
   const dig = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(ip + String(env.GUEST_KEY || ''))));
   let hex = '';
   for (const b of dig) hex += b.toString(16).padStart(2, '0');
@@ -1901,6 +1930,60 @@ async function ipHash(env, req) {
 // Workers Rate Limiting binding (wrangler.jsonc "ratelimits"), keyed by client IP. Counts are per Cloudflare location and approximate. No binding (tests) = no limit.
 async function rateOk(rl, req) { return rateKey(rl, req.headers.get('cf-connecting-ip') || 'x'); }
 async function rateKey(rl, key) { if (!rl) return true; try { return (await rl.limit({ key })).success !== false; } catch { return true; } }
+// ---- Bot protection (docs/bot-protection.md) ------------------------------------------------------------------------------------------
+// ACT_RL (wrangler.jsonc): per account, not per address, so a PC방 or a school behind one address never runs into it. One key per group:
+// 'ws:' socket joins, 'plaza:' the plaza's writes (each asks the room to settle first), 'misc:' the other writes that call a DO or an RPC.
+const ACT_ERR = '요청이 너무 잦아요. 1분 뒤에 다시 해 주세요.';
+const actOk = (env, group, id) => rateKey(env.ACT_RL, group + ':' + id);
+const actNo = () => J({ ok: false, code: 'rate', error: ACT_ERR }, 429, { 'retry-after': '60' });
+// New guests (POST /rt/guest without the guest's own token or a handover ticket). Cheapest check first:
+//  0. Turnstile switched on and no token at all: 403 { err:'human', code:'human', site } at once, nothing counted (the page runs the check and
+//     asks again with it, so a new visitor uses one GUEST_RL count, not two).
+//  1. GUEST_RL, 10 a minute per network.
+//  2. Turnstile, only when both TURNSTILE_SITE (public) and TURNSTILE_SECRET are set (humanSite). The token the page got (b.ts) is checked at
+//     siteverify. One Cloudflare refuses: the same 403 and nothing is minted. When siteverify cannot
+//     answer for us (unreachable, 5xx, internal-error, or it refuses our own secret) the person is let in rather than every new visitor locked out
+//     by an outage or a typo, but under tighter limits: GUEST_OPEN_MIN a minute per network in this isolate and GUEST_OPEN_DAY a day per network.
+//  3. GUEST_DAY new guests per network and KST day, counted in the 'acct' instance (mintTake: one tallied DO call per new guest). Budget hard, or
+//     that call failing: not asked (GUEST_RL still holds). env GUEST_DAY overrides the number; 0 turns the day count off.
+const HUMAN_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify', HUMAN_MS = 3000, HUMAN_ACTION = 'guest';
+const GUEST_DAY = 100, GUEST_OPEN_DAY = 10, GUEST_OPEN_MIN = 3;
+const HUMAN_ERR = { human: '사람인지 확인하지 못했어요. 다시 시도해 주세요.', day: '오늘 이 인터넷 연결에서 새 손님이 너무 많이 들어왔어요. 계정이 있으면 로그인하거나 내일 다시 와 주세요.' };
+export const humanSite = (env) => { const s = String(env?.TURNSTILE_SITE || '').trim(); return /^[\w-]{10,100}$/.test(s) && String(env?.TURNSTILE_SECRET || '').trim() ? s : ''; };
+const guestDay = (env) => { const v = env?.GUEST_DAY; if (v === undefined || v === null || String(v).trim() === '') return GUEST_DAY; const n = Math.floor(Number(v)); return Number.isFinite(n) && n >= 0 ? n : GUEST_DAY; };
+const OPEN_AT = new Map(); // network -> { at, n }: mints let in while siteverify could not answer, per minute in this isolate
+function openMint(net, now = Date.now()) { const hit = OPEN_AT.get(net); if (!hit || now - hit.at >= 60000 || now < hit.at) { if (OPEN_AT.size >= 5000) OPEN_AT.clear(); OPEN_AT.set(net, { at: now, n: 1 }); return true; } return ++hit.n <= GUEST_OPEN_MIN; }
+// -> 'yes' (a person), 'no' (refused: no token, a bad, spent or expired one, another action), 'open' (siteverify could not judge it for us).
+export async function humanCheck(env, token, ip) {
+  const t = typeof token === 'string' ? token.trim() : '';
+  if (!t || t.length > 2048) return 'no';
+  let r; try { r = await fetch(HUMAN_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ secret: String(env.TURNSTILE_SECRET || '').trim(), response: t, ...(ip ? { remoteip: ip } : {}) }), signal: AbortSignal.timeout(HUMAN_MS) }); }
+  catch { console.warn('turnstile siteverify unreachable'); return 'open'; }
+  let d = null; try { d = await r.json(); } catch { d = null; }
+  if (d?.success === true) return !d.action || d.action === HUMAN_ACTION ? 'yes' : 'no';
+  const codes = Array.isArray(d?.['error-codes']) ? d['error-codes'].map(String) : [];
+  if (codes.some((c) => HUMAN_BAD.has(c))) return 'no'; // the visitor's token, whatever the status: never let in on these
+  if (!r.ok || !d || codes.some((c) => HUMAN_OURS.has(c))) { console.warn('turnstile siteverify ' + r.status + ' ' + codes.join(',')); return 'open'; }
+  return 'no';
+}
+const HUMAN_BAD = new Set(['missing-input-response', 'invalid-input-response', 'timeout-or-duplicate', 'bad-request']), HUMAN_OURS = new Set(['internal-error', 'missing-input-secret', 'invalid-input-secret']);
+async function guestMint(req, env, b) {
+  const raw = req.headers.get('cf-connecting-ip') || '', net = ipNet(raw), site = humanSite(env), no = () => J({ err: 'human', code: 'human', site, error: HUMAN_ERR.human }, 403);
+  if (site && !(typeof b?.ts === 'string' && b.ts.trim())) return no();
+  if (!(await rateKey(env.GUEST_RL, net))) return J({ err: 'rate' }, 429, { 'retry-after': '60' });
+  const judged = site ? await humanCheck(env, b.ts, raw) : 'off';
+  if (judged === 'no') return no();
+  if (judged === 'open' && !openMint(net)) return J({ err: 'rate' }, 429, { 'retry-after': '60' });
+  const cap = guestDay(env);
+  if ((cap > 0 || judged === 'open') && !(await budgetHard(env))) {
+    const h = await ipHash(env, req), keys = [], day = kstDay();
+    if (cap > 0) keys.push(['g:' + h, cap]);
+    if (judged === 'open') keys.push(['o:' + h, GUEST_OPEN_DAY]);
+    let got = true; try { got = await acct(env).mintTake(keys, day); } catch { got = true; } // the count cannot be asked: open, GUEST_RL still holds
+    if (got !== true) return J({ err: 'day', code: 'day', error: HUMAN_ERR.day }, 429, { 'retry-after': '3600' });
+  }
+  return J(await guestSign(env, 'g-' + crypto.randomUUID()));
+}
 // WALLET_SYNC to one account, in the room it sits in (two DO calls). For balances moved by somebody else's request.
 async function nudge(env, uid) { try { const room = await acct(env).roomOf(uid); if (room) await env.ROOM.get(env.ROOM.idFromName(room)).fetch(new Request('https://room.internal/sync', { method: 'POST', headers: { 'x-uid': uid } })); } catch { } }
 function queueTaken(env, ctx, victim, fromName, slotId) {
@@ -2010,20 +2093,23 @@ async function settle(env, topic, actorId) {
   if (!res.ok || data.ok === false) return { ok: false, error: data.error || '미정산 코인을 반영하지 못했습니다. 잠시 후 다시 시도해 주세요.', pending: true };
   return { ok: true, pending: data.pending || 0, flushed: data.flushed || 0 };
 }
-// Share bonus: once a KST day per account and per address. The record is in the 'acct' instance (promoTake, the address as ipHash, never raw) and
-// PROMO is this isolate's copy, checked first (it only refuses sooner, it never lets a claim through). Budget hard, or that call failing: refused
-// ("잠시 뒤에 다시", code busy), because this isolate's copy alone would let every other isolate pay the 300 again. Redeem codes: one use per
-// account and code for good, recorded in 'acct' (codeTake, the pair hashed); closed the same way when it cannot be asked.
-// Open product question, left as it is: the share bonus is 300 a day and any actor (guests too) can claim it.
+// Share bonus: accounts only (owner decision 2026-11-22, "로그인했을 때만"). A guest or an anonymous sign-in (guestLike) is refused first, before
+// any DO call or RPC: 403 { code:'account' }, which the screen turns into the account-link prompt. Then once a KST day per account and per
+// network (IPv6 by its /64). The record is in the 'acct' instance (promoTake, the network as ipHash, never raw) and PROMO is this isolate's copy,
+// checked first (it only refuses sooner, it never lets a claim through). Budget hard, or that call failing: refused ("잠시 뒤에 다시", code busy),
+// because this isolate's copy alone would let every other isolate pay the 300 again. Redeem codes: one use per account and code for good, recorded
+// in 'acct' (codeTake, the pair hashed); closed the same way when it cannot be asked.
 const PROMO = new Map(), PROMO_BUSY = '지금은 광장이 붐벼요. 잠시 뒤에 다시 해 주세요.';
+export const SHARE_ACCOUNT = '계정을 연결하면 공유 보너스 300코인을 받을 수 있어요.';
 async function promo(req, env, u) {
   if (req.method !== 'POST') return J({ err: 'post' }, 405);
   const actor = await resolveActor(env, tokenOf(req));
   if (!actor) return J({ err: 'auth' }, 401);
   const day = kstDay();
-  const ip = req.headers.get('cf-connecting-ip') || 'x';
+  const ip = ipNet(req.headers.get('cf-connecting-ip') || '');
   const busy = () => J({ ok: false, code: 'busy', error: PROMO_BUSY }, 503);
   if (u.pathname === '/rt/share-bonus') {
+    if (guestLike(actor)) return J({ ok: false, code: 'account', error: SHARE_ACCOUNT }, 403);
     const ak = 's:' + actor.id + ':' + day, ik = 'i:' + ip + ':' + day;
     const had = () => J({ ok: false, error: '오늘은 이미 공유 보너스를 받았어요.' }, 400);
     if (PROMO.get(ak) || PROMO.get(ik)) return had();
@@ -2418,6 +2504,7 @@ async function plaza(req, env, ctx, u) {
   }
   if (req.method !== 'POST') return J({ err: 'post' }, 405);
   const actor = await resolveActor(env, tokenOf(req)); if (!actor) return J({ err: 'auth' }, 401);
+  if (!(await actOk(env, 'plaza', actor.id))) return actNo(); // every write below asks the room to settle first: a loop of them is bounded per account
   const b = await readJson(req); if (!b) return J({ err: 'json' }, 400);
   const topic = typeof b.topic === 'string' ? b.topic : '';
   if (!PLAZA_TOPICS.includes(topic)) return J({ ok: false, error: '광장 접속 정보가 없습니다. 다시 입장한 뒤 시도해 주세요.', pending: true }, 400);
@@ -3007,6 +3094,7 @@ async function fileReport(req, env) {
   if (req.method !== 'POST') return J({ err: 'post' }, 405);
   const actor = await resolveActor(env, tokenOf(req));
   if (!actor) return J({ err: 'auth' }, 401);
+  if (!(await actOk(env, 'misc', actor.id))) return actNo();
   const b = await readJson(req);
   if (!b) return J({ err: 'json' }, 400);
   const slot = String(b.slot || '');
@@ -3110,7 +3198,7 @@ async function accountApi(req, env, ctx, u) {
     // the response; the withdrawal sheet asks with ?forget=1 and waits for the probe (1.5 s at most), so it never promises more than will happen.
     const asked = forgetProbe(env); if (u.searchParams.get('forget') === '1') await asked; else ctx?.waitUntil?.(asked);
     const maint = await ops.maintFor(env, ctx, () => LVL.l), operator = ops.operatorFor(env); // maint: the isolate's copy (one DO call a minute at most); operator: OPERATOR_INFO
-    return J({ ...(/^[\w-]{16,80}$/.test(kakao) ? { url: SUPA, key: ANON, kakao, starter: STARTER_C.list } : { url: SUPA, key: ANON, starter: STARTER_C.list }), ...(inviteOn(env) ? { invite: true } : {}), ...(FORGET_C.yes ? { forget: true } : {}), ...(maint ? { maint } : {}), ...(operator ? { operator } : {}) }); // invite: the master switch INVITE_ON
+    return J({ ...(/^[\w-]{16,80}$/.test(kakao) ? { url: SUPA, key: ANON, kakao, starter: STARTER_C.list } : { url: SUPA, key: ANON, starter: STARTER_C.list }), ...(inviteOn(env) ? { invite: true } : {}), ...(FORGET_C.yes ? { forget: true } : {}), ...(maint ? { maint } : {}), ...(operator ? { operator } : {}), ...(humanSite(env) ? { turnstile: humanSite(env) } : {}) }); // invite: the master switch INVITE_ON; turnstile: the public site key, only with both Turnstile switches set
   }
   if (u.pathname === '/rt/event') {
     if (req.method !== 'POST') return J({ err: 'post' }, 405);
@@ -3118,6 +3206,7 @@ async function accountApi(req, env, ctx, u) {
     const name = String(b?.name || '');
     if (!EVENT_NAMES.includes(name)) return J({ err: 'event' }, 400);
     if (!(await rateOk(env.EVENT_RL, req))) return J({ err: 'rate' }, 429);
+    if (await budgetHard(env)) return J({ ok: true, kept: false }); // budget hard: the funnel count is dropped, no DO call
     // The account is whoever the bearer token proves (guest or user), never a client-sent id. page_landing may arrive without one; its session ties it in.
     const actor = await resolveActor(env, tokenOf(req)), sid = /^[\w-]{8,40}$/.test(String(b.sid || '')) ? String(b.sid) : '';
     try { await env.METER.get(env.METER.idFromName('ev')).evAdd(name, kstDay(), sid, actor ? actor.id : '', evProps(b.p)); }
@@ -3394,6 +3483,7 @@ export default {
     if (u.pathname === '/rt/snap' && req.method === 'POST') {
       if (await lvlNow(env) >= 2) return wishNo('busy', 503);
       const actor = await resolveActor(env, tokenOf(req)); if (!actor) return J({ err: 'auth' }, 401);
+      if (!(await actOk(env, 'misc', actor.id))) return actNo();
       const buf = await req.arrayBuffer();
       if (buf.byteLength < 800 || buf.byteLength > 900000) return J({ err: 'size' }, 400);
       const u8 = new Uint8Array(buf);
@@ -3411,6 +3501,7 @@ export default {
     if (u.pathname.startsWith('/rt/s/')) return snapPage(req, env, u);
     const snapId = u.pathname.startsWith('/rt/snap/') ? u.pathname.slice('/rt/snap/'.length) : '';
     if (snapId && /^[0-9a-f]{32}$/.test(snapId) && req.method === 'GET') {
+      if (!(await rateOk(env.EVENT_RL, req))) return new Response('rate', { status: 429, headers: { 'retry-after': '60' } }); // random ids must not reach the DO unthrottled
       const jpeg = await env.METER.get(env.METER.idFromName('snaps')).snapGet(snapId);
       if (!jpeg) return new Response('gone', { status: 404 });
       const bytes = jpeg instanceof ArrayBuffer ? jpeg : jpeg.buffer.slice(jpeg.byteOffset, jpeg.byteOffset + jpeg.byteLength);
@@ -3426,15 +3517,16 @@ export default {
       const t = u.searchParams.get('topic') || ''; if (!PLAZA_TOPICS.includes(t)) return new Response('bad topic', { status: 400 }); // only the plaza's own channels may create a room
       const pr = (req.headers.get('Sec-WebSocket-Protocol') || '').split(',').map(x => x.trim()), at = (pr.find(x => x.startsWith('at.')) || '').slice(3), v2 = pr.includes('masil2');
       const actor = await resolveActor(env, at); if (!actor) return new Response('unauthorized', { status: 401 });
+      if (!(await actOk(env, 'ws', actor.id))) return new Response('rate', { status: 429, headers: { 'retry-after': '60' } }); // joins per account a minute (ACT_RL), before the room
       const h = new Headers(req.headers); h.set('x-uid', actor.id); h.set('x-anon', (actor.guest || actor.anon) ? '1' : '0'); h.set('x-v2', v2 ? '1' : '0');
       return env.ROOM.get(env.ROOM.idFromName(t)).fetch(new Request(req, { headers: h }));
     }
     if (u.pathname === '/rt/guest') { if (req.method !== 'POST') return J({ err: 'post' }, 405); if (!env.GUEST_KEY) return J({ err: 'no guest key' }, 503);
-      // An existing guest is re-issued only against proof: a handover ticket (b.h) or its own token (b.t, renewal). Anything else mints a new guest, limited per client IP.
+      // An existing guest is re-issued only against proof: a handover ticket (b.h) or its own token (b.t, renewal). Anything else mints a new guest (guestMint).
       const b = await readJson(req) || {};
       const own = (typeof b.h === 'string' && await ticketVerify(env, b.h)) || (typeof b.t === 'string' && await guestVerify(env, b.t, 180 * 86400)) || null;
-      if (!own && !(await rateOk(env.GUEST_RL, req))) return J({ err: 'rate' }, 429, { 'retry-after': '60' });
-      return J(await guestSign(env, own ? own.s : 'g-' + crypto.randomUUID())); }
+      if (own) return J(await guestSign(env, own.s));
+      return guestMint(req, env, b); } // bot protection: GUEST_RL per network, Turnstile when switched on, a day count per network
     if (u.pathname === '/rt/handover') { if (req.method !== 'POST') return J({ err: 'post' }, 405);
       const actor = await resolveActor(env, tokenOf(req)); if (!actor?.guest) return J({ err: 'auth' }, 401);
       const exp = Math.floor(Date.now() / 1000) + TICKET_S; return J({ ticket: await seal(env, 'h1', { s: actor.sub, e: exp }), exp }); }
@@ -3471,6 +3563,7 @@ export default {
       if (typeof b.t === 'string') { const G = await guestVerify(env, b.t).catch(() => null); if (G) sub = G.s; }
       if (!sub) { const actor = await resolveActor(env, tokenOf(req)); if (actor) sub = actor.id; }
       if (!sub) return J({ err: 'auth' }, 401);
+      if (!(await actOk(env, 'misc', sub))) return actNo();
       const r = await M.grpAdd(b.c, sub, kstDay(), isoWeek()); GRP.at = 0; return J({ ok: true, dup: !!r.dup }); }
     if (u.pathname === '/rt/profile' || u.pathname === '/rt/equip') return profileApi(req, env, u, ctx);
     if (u.pathname === '/rt/shop' || u.pathname === '/rt/shop/buy') return shopApi(req, env, ctx, u);
@@ -3479,6 +3572,7 @@ export default {
     if (u.pathname === '/rt/push/key') return J({ k: VAPID_PUB }, 200, { 'cache-control': 'public, max-age=3600' });
     if (u.pathname === '/rt/push') {
       const actor = await resolveActor(env, tokenOf(req)); if (!actor) return J({ err: 'auth' }, 401);
+      if (!(await actOk(env, 'misc', actor.id))) return actNo();
       let b = null; try { b = await req.json(); } catch { b = null; }
       const endpoint = req.method === 'DELETE' ? b?.e : b?.s?.endpoint;
       if (!pushHostOk(endpoint)) return J({ err: 'endpoint' }, 400);

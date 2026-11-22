@@ -37,12 +37,26 @@ export async function doToken(sb, fresh) { try { const c = (window.G?.net?.sb ||
 // v16 guest identity: HMAC token from /rt/guest, cached in localStorage and renewed (same id) before it expires.
 // g.ticket = a handover ticket adopted from another browser's link (plaza-account.js adoptHandover): the server swaps it for that guest's token,
 // and only then does this browser's own guest get replaced. A guest id alone is never enough.
+// Bot protection (docs/bot-protection.md): when the Worker has Turnstile switched on, a NEW guest is minted only with a human check. Its 403
+// { err:'human', site } makes this page run the check once (human.js, loaded only then) and ask again with the token (ts). Renewals and handovers
+// never need it. HUMAN.site is the key /rt/config gave (loadConfig); run / say are replaced in tests. HUMAN.until: after the day cap (429 day)
+// this page makes no new guest for 10 minutes, so a reconnect loop neither repeats the request nor the card.
+export const HUMAN = { site: '', until: 0, run: (site) => import('./human.js?v=202611221803').then((m) => m.humanToken(site)).catch(() => ''), say: (code) => import('./human.js?v=202611221803').then((m) => m.humanSay(code)).catch(() => { }) };
+let MINT = null; // the one human-checked mint in flight: token requests that arrive meanwhile wait for it instead of starting their own check
+const guestPost = async (body) => { const r = await fetch('/rt/guest', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); return { r, d: await r.json().catch(() => null) }; };
+function humanMint(body, site) {
+  if (!MINT) MINT = (async () => { const ts = site ? await HUMAN.run(site) : ''; if (!ts) return null; const { r, d } = await guestPost({ ...body, ts }); if (r.ok && d?.token) return d;
+    if (d?.err === 'day') HUMAN.until = Date.now() + 600000; HUMAN.say(d?.err === 'day' ? 'day' : d?.err === 'rate' ? 'rate' : 'human'); return null; })().catch(() => null).finally(() => { MINT = null; });
+  return MINT; }
 export async function guestToken(fresh) { let g = null; try { g = JSON.parse(localStorage.getItem(GT_LS) || 'null'); } catch { }
   const live = g?.token && g.exp * 1000 > Date.now();
   if (!fresh && !g?.ticket && live && g.exp * 1000 > Date.now() + 86400000) return g;
   const body = {}; if (g?.token) body.t = g.token; if (g?.ticket) body.h = g.ticket;
-  try { const r = await fetch('/rt/guest', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); if (!r.ok) return live ? g : null;
-    const n = await r.json(); if (!n?.token) return live ? g : null; localStorage.setItem(GT_LS, JSON.stringify(n)); return n; } catch { return live ? g : null; } }
+  if (!body.t && !body.h && Date.now() < HUMAN.until) return null;
+  try { const { r, d } = await guestPost(body); let n = d;
+    if (r.status === 403 && d?.err === 'human') n = await humanMint(body, String(d.site || HUMAN.site || ''));
+    else if (!r.ok) { if (d?.err === 'day') { HUMAN.until = Date.now() + 600000; HUMAN.say('day'); } return live ? g : null; }
+    if (!n?.token) return live ? g : null; localStorage.setItem(GT_LS, JSON.stringify(n)); return n; } catch { return live ? g : null; } }
 class DOChan {
   constructor(rt, topic, cfg) { this.rt = rt; this.topic = topic; this.key = cfg?.config?.presence?.key || ('w' + Math.random().toString(36).slice(2, 10)); this.hs = []; this.st = {}; this.state = 'closed'; this.mine = null; this.tries = 0; }
   on(type, f, fn) { this.hs.push([type, f?.event, fn]); return this; }
@@ -226,7 +240,7 @@ export class Net {
   async leaveLobby() { if (this.lb) { const c = this.lb; this.lb = null; this.lbKey = null; try { await c.untrack(); await this.sb.removeChannel(c); } catch { } } this.counts = {}; }
   // ---- prayer wall (RLS: public rows readable; writes only via rate-limited security-definer RPCs)
   secret() { let s = localStorage.getItem('maeul_secret'); if (!s) { s = Array.from(crypto.getRandomValues(new Uint8Array(18)), b => b.toString(16).padStart(2, '0')).join(''); localStorage.setItem('maeul_secret', s); } return s; }
-  async loadConfig() { try { const r = await fetch('/rt/config', { cache: 'no-store' }); if (r.ok) { const j = await r.json(); setStarterSlots(j?.starter); this.forget = j?.forget === true; /* a withdrawal also deletes the login */ this.inviteOn = j?.invite === true; /* 친구 초대 master switch */ this.maint = j?.maint && typeof j.maint === 'object' ? j.maint : null; /* 점검 notice */ this.operator = j?.operator && typeof j.operator === 'object' ? j.operator : null; /* OPERATOR_INFO */this.kakao = kakaoOf(j); if (typeof j?.url === 'string' && j.url.startsWith('https://') && typeof j?.key === 'string' && j.key && !/service_role/i.test(j.key)) return { url: j.url, key: j.key }; } } catch { } finally { this.kakaoKey(); this.kakaoSet(this.kakao || ''); } return { url: SUPA_URL, key: SUPA_KEY }; }
+  async loadConfig() { try { const r = await fetch('/rt/config', { cache: 'no-store' }); if (r.ok) { const j = await r.json(); setStarterSlots(j?.starter); this.forget = j?.forget === true; /* a withdrawal also deletes the login */ this.inviteOn = j?.invite === true; /* 친구 초대 master switch */ this.maint = j?.maint && typeof j.maint === 'object' ? j.maint : null; /* 점검 notice */ this.operator = j?.operator && typeof j.operator === 'object' ? j.operator : null; /* OPERATOR_INFO */this.kakao = kakaoOf(j); HUMAN.site = typeof j?.turnstile === 'string' && /^[\w-]{10,100}$/.test(j.turnstile) ? j.turnstile : ''; /* bot protection: Turnstile is on */ if (typeof j?.url === 'string' && j.url.startsWith('https://') && typeof j?.key === 'string' && j.key && !/service_role/i.test(j.key)) return { url: j.url, key: j.key }; } } catch { } finally { this.kakaoKey(); this.kakaoSet(this.kakao || ''); } return { url: SUPA_URL, key: SUPA_KEY }; }
   // The Kakao key loadConfig kept from that one /rt/config answer ('' without one). Waits for it; never a request of its own.
   kakaoKey() { if (!this.kakaoP) this.kakaoP = new Promise((r) => { this.kakaoSet = r; }); return this.kakaoP; }
   async currentSession() { try { const s = await this.sb?.auth?.getSession(); return s?.data?.session || null; } catch { return null; } }
@@ -302,7 +316,7 @@ export class Net {
   // The holder's own board report (GET /rt/ad-report). Throws with the server's Korean error; 8 s cap.
   async adReport(slot) { const tok = await doToken(this.sb); if (!tok) throw new Error('입장한 뒤에 볼 수 있어요'); const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined; let r; try { r = await fetch('/rt/ad-report?slot=' + encodeURIComponent(String(slot || '')), { cache: 'no-store', headers: { authorization: 'Bearer ' + tok }, signal }); } catch { throw new Error('리포트를 불러오지 못했어요. 잠시 뒤 다시 해 주세요.'); } const data = await r.json().catch(() => ({})); if (!r.ok || data.ok !== true) throw new Error(data.error && data.error !== 'rate' ? data.error : '리포트를 불러오지 못했어요. 잠시 뒤 다시 해 주세요.'); return data; }
   async sponsorUrl() { const r = await fetch('/rt/sponsor', { cache: 'no-store' }); const d = await r.json().catch(() => ({})); return d.url || ''; }
-  async authed(path, payload) { const tok = await doToken(this.sb); if (!tok) throw new Error('입장한 뒤에 사용할 수 있어요'); const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + tok }, body: JSON.stringify(payload || {}) }); const data = await r.json().catch(() => ({})); if (!r.ok || data.ok === false) throw new Error(data.error || data.err || '요청을 처리하지 못했습니다.'); return data; }
+  async authed(path, payload) { const tok = await doToken(this.sb); if (!tok) throw new Error('입장한 뒤에 사용할 수 있어요'); const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + tok }, body: JSON.stringify(payload || {}) }); const data = await r.json().catch(() => ({})); if (!r.ok || data.ok === false) throw Object.assign(new Error(data.error || data.err || '요청을 처리하지 못했습니다.'), { code: data.code || '' }); return data; } // code: e.g. 'account' (the share bonus is for accounts)
   async submitBillboardPhoto(payload) { return this._plazaPost('/rt/billboard-photo', payload); }
   async _plazaPost(path, payload) { const tok = await doToken(this.sb); if (!tok) throw new Error('auth'); const body = { ...(payload || {}) }; if (!body.topic) body.topic = this.topic || (NS + 'square'); if (!body.nickname && !body.nick) body.nickname = this.me?.name || ''; const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + tok }, body: JSON.stringify(body) }); const data = await r.json().catch(() => ({})); if (!r.ok || data.ok === false) throw Object.assign(new Error(data.error || data.err || '요청을 처리하지 못했습니다.'), { code: data.code || '', data }); return data; }
   async prayers(dong) { if (DO_MODE) return this.world(); if (!this.sb) throw new Error('offline'); const [pub, mine] = await Promise.all([
