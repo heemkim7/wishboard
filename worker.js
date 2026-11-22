@@ -352,7 +352,12 @@ export class Meter extends DurableObject {
   // link reward again; a mark is how the Worker knows that link is not a first one. h: one hash or a list.
   goneList(h) { return [...new Set((Array.isArray(h) ? h : [h]).map(x => String(x || '').slice(0, 64)).filter(Boolean))].slice(0, 4); }
   // `at` is the latest withdrawal of that key (a login that was kept can withdraw again).
-  goneSet(h) { this.stInit(); const ks = this.goneList(h); for (const k of ks) this.ctx.storage.sql.exec('insert into gone(h, at) values(?, ?) on conflict(h) do update set at = max(at, excluded.at)', k, Date.now()); return ks.length > 0; }
+  // uid: the account's own id, whose species choice held for it (profilePut `held`) and cached profile go with it (no extra call).
+  goneSet(h, uid) {
+    this.stInit(); const ks = this.goneList(h); for (const k of ks) this.ctx.storage.sql.exec('insert into gone(h, at) values(?, ?) on conflict(h) do update set at = max(at, excluded.at)', k, Date.now());
+    if (uid) { const id = String(uid); this._prof?.delete(id); try { this.ctx.storage.sql.exec('delete from held where uid = ?', id); } catch { /* no held table yet */ } }
+    return ks.length > 0;
+  }
   // Did this account withdraw after its token was issued (iat, seconds)? A login deleted by the withdrawal leaves its access token working for up
   // to an hour; such a token moves no coins. A token without iat, or a sign-in after the withdrawal (a login that was kept, or a new id with the
   // same e-mail), is not held back. iat has whole seconds, so a token from the very second of the withdrawal counts as after it.
@@ -2160,7 +2165,8 @@ function tribeSettle(env, ctx, now = Date.now()) {
 // transferable: sell_coins_to_advertiser and pledge_tribe only refuse an amount larger than the balance (row lock, coins >= 0), so before this a
 // new guest, or a brand-new account, could hand its gift coins to a board holder or a tribe. A guest (any actor that is not a signed-in account,
 // and an anonymous sign-in) sends and pledges nothing at all; the refusal says that linking an account opens it. A signed-in account keeps
-// SEND_FLOOR (400 = the starting 100 + the link reward 300): the Worker reads its settled balance and refuses an amount that would leave less.
+// SEND_FLOOR (440 = the starting 100 + the hello bonus 40 + the link reward 300: every gift a new account gets, so a fresh ID account has
+// nothing to hand on): the Worker reads its settled balance and refuses an amount that would leave less.
 // Read and spend are two steps, so one account spends through here one at a time: SENDING within this isolate (an entry older than SEND_HOLD is
 // dead) and a lease in the 'acct' instance across isolates. The balance is read once before the lease, so a refusal costs no Durable Object call,
 // and once more under it. The lease call also refuses a token issued before the account withdrew (goneSince). Closed when it cannot be checked:
@@ -2168,10 +2174,10 @@ function tribeSettle(env, ctx, now = Date.now()) {
 // LINKING / linkHold: a link that is about to move coins holds the account's sends until its take-back is done (see takeBack), and is itself
 // refused while a send is under way. Several links of one account may run together.
 const SENDING = new Map(), LINKING = new Map(), SEND_HOLD = 15000, SEND_BUSY = '앞선 코인 보내기가 끝난 뒤에 다시 해 주세요.';
-const SEND_FLOOR = 400; // STARTER_COINS + the link reward (300)
+const SEND_FLOOR = 440; // ARRIVAL (STARTER_COINS 100 + PAY.hello 40) + LINK_REWARD 300, the same BACK_MAX the link take-back uses (declared further down)
 const COIN_HARD = '지금은 광장이 붐벼요. 잠시 뒤에 다시 해 주세요.', GONE_ERR = '탈퇴한 계정이에요. 다시 로그인해 주세요.';
-const SEND_TEXT = { guest: '손님은 코인을 보낼 수 없어요. 계정을 연결하면 보낼 수 있어요.', floor: '처음 받은 400코인(시작 100 + 연결 보상 300)은 보낼 수 없어요. 그보다 더 모은 만큼만 보낼 수 있어요.', down: '판매를 처리하지 못했습니다.' };
-const PLEDGE_TEXT = { guest: '손님은 모금할 수 없어요. 계정을 연결하면 모금할 수 있어요.', floor: '처음 받은 400코인(시작 100 + 연결 보상 300)은 모금할 수 없어요. 그보다 더 모은 만큼만 모금할 수 있어요.', down: '모금하지 못했어요.' };
+const SEND_TEXT = { guest: '손님은 코인을 보낼 수 없어요. 계정을 연결하면 보낼 수 있어요.', floor: '처음 받은 440코인(시작 100 + 첫 방문 40 + 연결 보상 300)은 보낼 수 없어요. 그보다 더 모은 만큼만 보낼 수 있어요.', down: '판매를 처리하지 못했습니다.' };
+const PLEDGE_TEXT = { guest: '손님은 모금할 수 없어요. 계정을 연결하면 모금할 수 있어요.', floor: '처음 받은 440코인(시작 100 + 첫 방문 40 + 연결 보상 300)은 모금할 수 없어요. 그보다 더 모은 만큼만 모금할 수 있어요.', down: '모금하지 못했어요.' };
 const guestLike = (actor) => !String(actor?.id || '').startsWith('user:') || !!actor?.anon;
 const sendingHere = (uid, now = Date.now()) => { const t = SENDING.get(uid) || 0; return now >= t && now - t < SEND_HOLD; };
 const linkingHere = (uid, now = Date.now()) => { const l = LINKING.get(uid); return !!l && l.n > 0 && now >= l.at && now - l.at < SEND_HOLD; };
@@ -2967,7 +2973,7 @@ async function accountApi(req, env, ctx, u) {
     // Supabase Auth has no route for a user to delete itself. Before the migration the function is missing (404): the withdrawal still stands
     // and the answer says the login was kept, as it does when the function refuses, fails, or finds no row. Kept running if the client goes away.
     const rest = (async () => {
-      try { await acct(env).goneSet(await goneKeys(env, actor)); } catch { /* the withdrawal itself is done */ }
+      try { await acct(env).goneSet(await goneKeys(env, actor), actor.id); } catch { /* the withdrawal itself is done */ }
       const f = await supabaseRpc('forget_login', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id }).catch(() => ({ ok: false, status: 0, data: { message: 'no answer' } }));
       if (f.status === 404) forgetSeen(false); else if (f.ok && f.data && typeof f.data.ok === 'boolean') forgetSeen(true);
       if (f.ok && f.data?.ok === true && Number(f.data.deleted) >= 1) return 'deleted';

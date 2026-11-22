@@ -70,7 +70,7 @@ describe('개인정보처리방침과 이용약관', () => {
     assert.match(quit, /로그인 정보\(계정, 연결된 소셜 로그인, 로그인 세션\)도 지웁니다/);
     assert.doesNotMatch(quit, /지갑 연결과 전광판·토지 소유만 지우고/);
     assert.match(quit, /시작 코인과 연결 보상은 다시 주지 않습니다/);
-    assert.match(terms, /계정만 할 수 있고, 처음 받은 400코인\(시작 100 \+ 연결 보상 300\)보다 더 모은 만큼만 보낼 수 있습니다/);
+    assert.match(terms, /계정만 할 수 있고, 처음 받은 440코인\(시작 100 \+ 첫 방문 40 \+ 연결 보상 300\)보다 더 모은 만큼만 보낼 수 있습니다/);
     assert.match(terms, /아이디로 만든 계정은 비밀번호를 잊으면 되찾을 수 없습니다/);
     assert.equal(/Google/.test(terms), false);
   });
@@ -117,6 +117,6 @@ describe('account screens of this round', () => {
     assert.match(between(ui, '  function openInboxSheet() {', '\n  }\n'), /sheet\.inbox = true;/);
   });
   it('the wallet sheet says the send floor before the player taps', () => {
-    assert.match(ui, /hooks\.isGuest\?\.\(\) \? '손님은 코인을 보낼 수 없어요\. 계정을 연결하면 처음 받은 400코인\(시작 100 \+ 연결 보상 300\)보다 더 모은 만큼 보낼 수 있어요\.' : '처음 받은 400코인\(시작 100 \+ 연결 보상 300\)보다 더 모은 만큼만 보낼 수 있어요\.'/);
+    assert.match(ui, /hooks\.isGuest\?\.\(\) \? '손님은 코인을 보낼 수 없어요\. 계정을 연결하면 처음 받은 440코인\(시작 100 \+ 첫 방문 40 \+ 연결 보상 300\)보다 더 모은 만큼 보낼 수 있어요\.' : '처음 받은 440코인\(시작 100 \+ 첫 방문 40 \+ 연결 보상 300\)보다 더 모은 만큼만 보낼 수 있어요\.'/);
   });
 });
