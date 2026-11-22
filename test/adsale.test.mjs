@@ -352,13 +352,13 @@ describe('the Worker: /rt/ads/*', { concurrency: false }, () => {
     const { clock, done } = setup();
     try {
       const env = makeEnv({ ADS_ON: '1' }), H = harness(env), t0 = Date.now();
-      adsWorldDrop(); // another test's copy of the bookings (the isolate's 60 s memo)
+      adsWorldDrop(); // another test's copy of the bookings (the isolate's 5 min memo)
       const w0 = await (await H.get('/rt/world')).json();
       assert.deepEqual(w0.ads, { on: 1, list: [] });
       const id = (await (await H.post('/rt/ads/request', FORM(t0))).json()).id;
       await H.admin('/rt/admin/ads/edit', { id, approve: true });
       await H.admin('/rt/admin/ads/book', { rq: id, screen: 'AD_2', start: day(t0, 0), end: day(t0, 0) });
-      env.ADS_ON = '0'; clock.add(61000); // past the isolate's world (15 s) and ad (60 s) copies
+      env.ADS_ON = '0'; clock.add(301000); // past the isolate's world (15 s) and ad (5 min) copies
       const w1 = await (await H.get('/rt/world')).json();
       assert.equal(w1.ads.on, 0);
       assert.equal(w1.ads.list.length, 1); // the operator's booking still shows

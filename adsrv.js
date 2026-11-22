@@ -98,7 +98,7 @@ export const adsDb = {
     return { ok: false, error: 'op' };
   },
   // Live bookings that run now or start within ADS.nowDays, the public copy only.
-  // Asked about once a minute (adsWorld), so it also drops yesterday's per-network and per-account rows (ad_rate, ad_who).
+  // Asked about once every 5 minutes per isolate (adsWorld), so it also drops yesterday's per-network and per-account rows (ad_rate, ad_who).
   now(q, now = Date.now()) {
     const d = kstDay(now);
     q.exec('delete from ad_rate where d < ?', d);
@@ -136,12 +136,12 @@ export const adsDb = {
 };
 
 // ---- the ad part of /rt/world ----------------------------------------------------------------------------------------
-// One DO call per isolate per minute at most (the world itself is cached 15 s); at the hard budget level the last copy.
+// One DO call per isolate per 5 minutes at most (the world itself is cached 15 s; a booking made now reaches other isolates within 5 min); at the hard budget level the last copy.
 // null (the key is left out) while the switch is off and nothing is booked.
 const NOW = { at: 0, v: null };
 export async function adsWorld(env, k) {
   const now = Date.now(), on = adsOn(env) ? 1 : 0;
-  if (!NOW.v || now - NOW.at >= 60000) {
+  if (!NOW.v || now - NOW.at >= 300000) {
     let hard = false; try { hard = (await k.lvlNow(env)) >= 2; } catch { hard = false; }
     if (!hard || !NOW.v) { try { NOW.v = await adsM(env).adsNow(now); NOW.at = now; } catch { if (!NOW.v) return on ? { on, list: [] } : null; } }
   }
