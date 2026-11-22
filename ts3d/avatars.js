@@ -5,8 +5,10 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeCanvas, paintNameTag, paintBubble, paintRingFx, TAG_THEMES, RING_FX, RING_FX_SIZE } from './art.js?v=202611221803';
 import { MODEL_URL, modelFor } from './loadplan.js?v=202611221803';
+import { GESTURES, REACTIONS, gestureWeight, pulses, ease } from './gestures.js?v=202611221803';
 
 const LOOPS = new Set(['Idle', 'Walking', 'Running', 'Dance', 'Sitting', 'Standing']);
 export const EMOTES = {
@@ -15,14 +17,9 @@ export const EMOTES = {
   3: { anim: 'Cheer', glyph: '🙌', label: '만세' },
   4: { anim: 'Dance', glyph: '💃', label: 'K-댄스', hold: 6 },
 };
-// Quick reactions: a bubble over the head (plus a short gesture), sent to others as a 'react' broadcast by index.
-// Glyphs stay within Emoji 11 so Windows 10's Segoe UI Emoji can draw them.
-export const REACTIONS = [
-  { g: '👋', anim: 'Wave' }, { g: '😂', anim: 'Yes' }, { g: '😍', anim: 'Yes' }, { g: '😎' }, { g: '🥳', anim: 'Jump' }, { g: '😭', anim: 'No' },
-  { g: '😮' }, { g: '🤔', anim: 'No' }, { g: '👍', anim: 'ThumbsUp' }, { g: '👏', anim: 'Yes' }, { g: '🙌', anim: 'Jump' }, { g: '🔥' },
-  { g: '💯', anim: 'ThumbsUp' }, { g: '❤️' }, { g: '💖', anim: 'Yes' }, { g: '🎉', anim: 'Jump' }, { g: '✨' }, { g: '🐟', anim: 'ThumbsUp' },
-  { g: '🍜' }, { g: '🎶', anim: 'Dance' }, { g: '🗽', anim: 'Wave' }, { g: '🚕' }, { g: '💸', anim: 'Yes' }, { g: '😴', anim: 'No' },
-];
+// Quick reactions (24 glyphs, each with its own gesture) live in ts3d/gestures.js with the gesture table; sent to others
+// as a 'react' broadcast by index, so every client plays the same gesture.
+export { REACTIONS };
 // Hoodie colours: the player's one colour paints the hoodie (material Main), the foot ring and the name-tag dot. Sixteen, in
 // picker order; the eight from before (pink, sky, amber, green, purple, orange, white, blue) are all still here, so a saved one
 // stays valid. Any #rrggbb is accepted by the server; this list is what the picker offers.
@@ -110,6 +107,10 @@ export function createAvatars({ scene, urls, models, first, height = 1.8 }) {
     }
     return t;
   };
+  // Gesture props (ts3d/gestures.js `prop`): built the first time any avatar needs one, shared by all (each avatar holds
+  // its own Object3D clones of the same geometry and materials).
+  let props = null;
+  sys.props = () => (props ||= buildProps());
 
   function prepare(id, gltf) {
     const model = gltf.scene;
@@ -171,6 +172,55 @@ export function createAvatars({ scene, urls, models, first, height = 1.8 }) {
   return { create, sys, prefetch, want: loadId, get ready() { return sys.species.size > 0; } };
 }
 
+// The things a gesture holds. Each kind has a part per hand (L, R), in the hand's frame as aimHand leaves it: +Y along
+// the fingers, +Z out of the palm, metres. `fly` parts hang under the avatar's holder (the bills that fly off).
+// A few hundred triangles in all; geometry and materials are shared by every avatar.
+function buildProps() {
+  const std = (color, o) => new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0, ...o });
+  const part = (geo, mat, x = 0, y = 0, z = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); return m; };
+  const group = (...kids) => { const g = new THREE.Group(); g.add(...kids); return g; };
+  // 붕어빵: a flat golden body with a tail fin, lying across the palm
+  const crust = std('#e8a346', { roughness: 0.5, emissive: '#5a3008', emissiveIntensity: 0.5 });
+  const body = new THREE.SphereGeometry(1, 12, 8).scale(0.12, 0.07, 0.034);
+  const tail = new THREE.ConeGeometry(0.06, 0.09, 4).rotateZ(-Math.PI / 2).scale(1, 1, 0.35).translate(-0.155, 0, 0);
+  const fin = new THREE.ConeGeometry(0.028, 0.05, 3).scale(1, 1, 0.4).translate(0.015, 0.075, 0);
+  const fishGeo = mergeGeometries([body.toNonIndexed(), tail.toNonIndexed(), fin.toNonIndexed()]);
+  const fishEye = new THREE.SphereGeometry(0.008, 6, 4);
+  const dark = std('#3a2414', { roughness: 0.4 });
+  const fish = group(part(fishGeo, crust), part(fishEye, dark, 0.08, 0.018, 0.031), part(fishEye, dark, 0.08, 0.018, -0.031));
+  fish.position.set(0, 0.08, 0.045);
+  // 라면: a red bowl of noodles on the left palm, chopsticks in the right hand
+  const bowlGeo = new THREE.LatheGeometry([[0, 0], [0.06, 0], [0.095, 0.02], [0.12, 0.06], [0.13, 0.088], [0.123, 0.09]].map(([x, y]) => new THREE.Vector2(x, y)), 14).rotateX(Math.PI / 2);
+  const noodleGeo = new THREE.CircleGeometry(0.118, 14).translate(0, 0, 0.075);
+  const bowl = group(part(bowlGeo, std('#e0442f', { roughness: 0.35, side: THREE.DoubleSide, emissive: '#3a0800' })), part(noodleGeo, std('#f6d77e', { roughness: 0.8, emissive: '#4a3a10' })));
+  bowl.position.set(0, 0.06, 0.035);
+  const stickGeo = new THREE.CylinderGeometry(0.005, 0.008, 0.3, 5);
+  const wood = std('#e2bd82', { roughness: 0.5 });
+  const sticks = group(part(stickGeo, wood, -0.01, 0, 0), part(stickGeo, wood, 0.01, 0, 0));
+  sticks.position.set(0, 0.14, 0.03);
+  // 횃불: a gold handle and cup with a glowing flame, along the fingers (the arm holds it straight up)
+  const gold = std('#e0a83a', { metalness: 0.6, roughness: 0.35, emissive: '#4a2c00' });
+  const flameMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.4, 1.3, 0.35) });
+  const torch = group(
+    part(new THREE.CylinderGeometry(0.028, 0.02, 0.3, 6), gold, 0, 0.06, 0),
+    part(new THREE.CylinderGeometry(0.065, 0.035, 0.06, 8), gold, 0, 0.24, 0),
+    part(new THREE.ConeGeometry(0.058, 0.18, 6), flameMat, 0, 0.36, 0),
+  );
+  torch.position.set(0, 0.04, 0.035);
+  // 돈: a stack of bills on the left palm, five bills that fly off the right hand
+  const bill = std('#86d97f', { roughness: 0.7, side: THREE.DoubleSide, emissive: '#123a10' });
+  const stack = part(new THREE.BoxGeometry(0.17, 0.085, 0.04), bill, 0, 0.06, 0.04);
+  const billGeo = new THREE.PlaneGeometry(0.17, 0.085);
+  const fly = new THREE.Group();
+  for (let i = 0; i < 5; i++) fly.add(part(billGeo, bill));
+  return {
+    fish: { R: fish },
+    noodles: { L: bowl, R: sticks },
+    torch: { R: torch },
+    money: { L: stack, fly },
+  };
+}
+
 // Two-bone aim so the hands meet a world point. The Mixamo clip set has no prayer or cheer.
 // A held pose runs every frame for each avatar that holds it, so the vectors below are module temporaries, not new objects
 // per call. None outlives a call. pointY, foldArm and aimHand each write only their own temporaries, and read their
@@ -189,6 +239,28 @@ const _chest = new THREE.Vector3(), _headP = new THREE.Vector3(), _fwd = new THR
 const _t1 = new THREE.Vector3(), _t2 = new THREE.Vector3(), _t3 = new THREE.Vector3(), _t4 = new THREE.Vector3(), _t5 = new THREE.Vector3();
 const POSE_UP = new THREE.Vector3(0, 1, 0.18); // read only
 const UPPER_ARM = { Left: 'LeftArm', Right: 'RightArm' }, FORE_ARM = { Left: 'LeftForeArm', Right: 'RightForeArm' };
+// The reaction poses (POSES below) work in a frame of model axes and two body anchors, all module temporaries too:
+// _fwd forward, _right the character's left (model +X), UP; the chest (Spine2) and head anchors carried through bend().
+const HAND = { Left: 'LeftHand', Right: 'RightHand' }, THUMB = { Left: 'LeftHandThumb1', Right: 'RightHandThumb1' };
+const SIDES = ['Left', 'Right'];
+const TAU = Math.PI * 2;
+const UP = new THREE.Vector3(0, 1, 0); // read only
+const _c0 = new THREE.Vector3(), _h0 = new THREE.Vector3(); // chest and head before the bends
+const _mC = new THREE.Matrix4(), _mH = new THREE.Matrix4(); // chest and head: before the bends inverted, then before → after
+const _sh = new THREE.Vector3(), _el = new THREE.Vector3(), _wr = new THREE.Vector3(), _n = new THREE.Vector3(), _pole = new THREE.Vector3(); // reach
+const _d1 = new THREE.Vector3(), _d2 = new THREE.Vector3(); // handTo
+const _t6 = new THREE.Vector3(), _t7 = new THREE.Vector3();
+// The bones a pose may turn. Their clip rotations are kept (per avatar) before the pose: with a weight under 1 each
+// bone ends between the two (slerp), so a gesture blends in and out instead of snapping, and the next frame puts the kept
+// rotations back before the mixer runs (Avatar.unpose). The mixer only writes a bone whose clip value changed since its
+// last write, so without that a held clip key would keep last frame's pose and the bends would pile up.
+const BLEND = ['Spine', 'Spine1', 'Spine2', 'Neck', 'Head'];
+for (const s of SIDES) BLEND.push(s + 'Shoulder', s + 'Arm', s + 'ForeArm', s + 'Hand', s + 'HandThumb1', s + 'HandThumb2', s + 'HandThumb3', s + 'HandMiddle1');
+const _qB = new THREE.Quaternion();
+// What a pose asks of the avatar besides bones, read by Avatar.update right after holdPose: hop (holder up, m), step
+// (model forward, m), spin (model turn, rad) and fly (seconds into the flying bills, -1 none).
+const POSE_FX = { hop: 0, step: 0, spin: 0, fly: -1 };
+const _propScale = new THREE.Vector3();
 function poseBones(model) {
   if (!model.userData.poseBones) {
     const found = {};
@@ -230,19 +302,324 @@ function aimHand(hand, fingerDir, palmDir) {
   // every bone under the hand (the fingers) back to rest; the hand itself keeps the aim
   for (let i = 0; i < hand.children.length; i++) hand.children[i].traverse(identityBone);
 }
-function holdPose(model, pose, t = 1) {
-  if (!model) return;
+// ---- reaction poses (ts3d/gestures.js REACTIONS) -------------------------------------------------------------------
+// Turn a bone about the model's axes on top of what the clip gave it this frame: pitch > 0 bows forward, roll > 0 tilts
+// toward the character's left, yaw > 0 turns to the left (radians).
+function bend(b, pitch, roll = 0, yaw = 0) {
+  if (!b) return;
+  b.parent.getWorldQuaternion(_qP);
+  b.getWorldQuaternion(_q);
+  if (pitch) _q.premultiply(_qU.setFromAxisAngle(_right, pitch));
+  if (roll) _q.premultiply(_qU.setFromAxisAngle(_fwd, -roll));
+  if (yaw) _q.premultiply(_qU.setFromAxisAngle(UP, yaw));
+  b.quaternion.copy(_qI.copy(_qP).invert()).multiply(_q);
+}
+// After the bends: how far the chest and head anchors moved (before → after), so cp/hp follow a bowed or leaning body.
+let _chestB = null, _headB = null;
+function settle() {
+  _chestB.updateWorldMatrix(true, false);
+  _mC.premultiply(_chestB.matrixWorld);
+  _headB.updateWorldMatrix(true, false);
+  _mH.premultiply(_headB.matrixWorld);
+}
+// A point x (character's left) / y (up) / z (forward) metres from the chest or the head as they stood before the bends.
+function cp(out, x, y, z) { return out.copy(_c0).addScaledVector(_right, x).addScaledVector(UP, y).addScaledVector(_fwd, z).applyMatrix4(_mC); }
+function hp(out, x, y, z) { return out.copy(_h0).addScaledVector(_right, x).addScaledVector(UP, y).addScaledVector(_fwd, z).applyMatrix4(_mH); }
+// Two-bone reach: the wrist goes to `target` (or as near as the arm allows), the elbow bends toward the pole. The pole is
+// in model axes with x mirrored per side (x > 0 is outward), like every arm and hand number below.
+function reach(B, side, target, px, py, pz) {
+  const upper = B[UPPER_ARM[side]], fore = B[FORE_ARM[side]], hand = B[HAND[side]];
+  if (!upper || !fore || !hand) return;
+  const sg = side === 'Left' ? 1 : -1;
+  boneAt(upper, _sh);
+  const a = boneAt(fore, _el).distanceTo(_sh), b = boneAt(hand, _wr).distanceTo(_el);
+  _n.copy(target).sub(_sh);
+  const d = Math.min(a + b - 1e-4, Math.max(Math.abs(a - b) + 1e-4, _n.length()));
+  _n.normalize();
+  _pole.copy(_right).multiplyScalar(px * sg).addScaledVector(UP, py).addScaledVector(_fwd, pz);
+  _pole.addScaledVector(_n, -_pole.dot(_n));
+  if (_pole.lengthSq() < 1e-8) _pole.copy(_fwd).addScaledVector(_n, -_fwd.dot(_n));
+  _pole.normalize();
+  const cosA = (a * a + d * d - b * b) / (2 * a * d), sinA = Math.sqrt(Math.max(0, 1 - cosA * cosA));
+  _el.copy(_sh).addScaledVector(_n, a * cosA).addScaledVector(_pole, a * sinA);
+  _wr.copy(_sh).addScaledVector(_n, d);
+  pointY(upper, _aim.copy(_el).sub(_sh));
+  pointY(fore, _aim.copy(_wr).sub(boneAt(fore, _bone)));
+}
+function armC(B, side, x, y, z, px, py, pz) { reach(B, side, cp(_t6, side === 'Left' ? x : -x, y, z), px, py, pz); }
+function armH(B, side, x, y, z, px, py, pz) { reach(B, side, hp(_t6, side === 'Left' ? x : -x, y, z), px, py, pz); }
+// Fingers along (fx, fy, fz), palm facing (px, py, pz), x outward.
+function handTo(B, side, fx, fy, fz, px, py, pz) {
+  const h = B[HAND[side]];
+  if (!h) return;
+  const sg = side === 'Left' ? 1 : -1;
+  aimHand(h, _d1.copy(_right).multiplyScalar(fx * sg).addScaledVector(UP, fy).addScaledVector(_fwd, fz), _d2.copy(_right).multiplyScalar(px * sg).addScaledVector(UP, py).addScaledVector(_fwd, pz));
+}
+// The mitten's thumb along (x, y, z), x outward (after handTo, which puts the fingers back to rest).
+function thumbTo(B, side, x, y, z) {
+  if (B[THUMB[side]]) pointY(B[THUMB[side]], _d1.copy(_right).multiplyScalar(side === 'Left' ? x : -x).addScaledVector(UP, y).addScaledVector(_fwd, z));
+}
+
+// One function per gesture: s is seconds since it began (the weight blends it in and out, see holdPose). Each bends the
+// spine and head first, then settle(), then places the arms on the moved body. Numbers are metres and radians; the toy
+// body is the same in every species (only heads differ), so one set fits all ten.
+const POSES = {
+  // The head is most of the toy's height and the arms reach about 0.37 m, so hands near the face hide behind it from the
+  // front: the poses below keep the hands in front of the chest, beside the jaw, or well out to the sides.
+  Laugh(B, s) {
+    const ha = pulses(s, 0.15, 1.95, 9), slap = pulses(s, 0.2, 1.9, 4);
+    bend(B.Spine, -0.14, 0.06 * Math.sin(s * 3));
+    bend(B.Spine1, -0.1 - 0.08 * ha);
+    bend(B.Head, -0.3 - 0.1 * ha);
+    settle();
+    armC(B, 'Left', 0.1, -0.17, 0.22, 1, -0.6, 0);
+    handTo(B, 'Left', -0.8, 0.35, 0.2, 0, 0, -1);
+    armC(B, 'Right', 0.26, -0.3 + 0.16 * slap, 0.14, 1, 0, -0.4);
+    handTo(B, 'Right', 0.1, -1, 0.3, -1, 0, 0);
+    POSE_FX.hop = 0.03 * ha;
+  },
+  Smitten(B, s) {
+    const sway = Math.sin(s * 4.6);
+    bend(B.Spine, 0, 0.08 * sway);
+    bend(B.Spine2, 0.03, 0.04 * sway);
+    bend(B.Head, 0.04, 0.2 * sway);
+    settle();
+    for (let k = 0; k < 2; k++) {
+      cp(_t1, 0.06 * sway + (k ? -0.045 : 0.045), 0.16, 0.3);
+      reach(B, SIDES[k], _t1, 1, -1, 0);
+      handTo(B, SIDES[k], -0.2, 0.75, 0.6, -1, 0, 0);
+    }
+    POSE_FX.hop = 0.03 * Math.abs(sway);
+  },
+  Cool(B, s) {
+    const nod = pulses(s, 1.0, 1.6, 1);
+    bend(B.Spine, -0.08, 0, 0.14);
+    bend(B.Spine2, -0.04);
+    bend(B.Head, -0.12 + 0.2 * nod, 0.14, -0.1);
+    settle();
+    armC(B, 'Left', -0.11, 0.0, 0.22, 1, -0.4, 0);
+    handTo(B, 'Left', -1, 0.1, -0.3, 0, 0, -1);
+    armC(B, 'Right', -0.11, 0.05, 0.17, 1, -0.4, 0);
+    handTo(B, 'Right', -1, 0.1, -0.3, 0, 0, -1);
+  },
+  Party(B, s) {
+    const beat = pulses(s, 0.2, 1.95, 4);
+    bend(B.Spine, 0, 0.05 * Math.sin(s * 7));
+    bend(B.Head, -0.06 + 0.12 * beat);
+    settle();
+    for (let k = 0; k < 2; k++) {
+      armC(B, SIDES[k], 0.48, 0.18 + 0.12 * beat, 0.2, 1, -1, 0);
+      handTo(B, SIDES[k], -0.6, 0.25, 0.3, 0, 1, 0);
+    }
+    POSE_FX.hop = 0.06 * beat;
+  },
+  Sob(B, s) {
+    const heave = pulses(s, 0.3, 2.2, 7), rub = Math.sin(s * 10);
+    bend(B.Spine, 0.1);
+    bend(B.Spine1, 0.06 + 0.05 * heave);
+    bend(B.Head, 0.12 + 0.06 * heave, 0.07 * Math.sin(s * 9));
+    settle();
+    for (let k = 0; k < 2; k++) {
+      armH(B, SIDES[k], 0.29, -0.04 + (k ? -0.035 : 0.035) * rub, 0.22, 1, -1, 0);
+      handTo(B, SIDES[k], -0.45, 1, 0.15, -0.6, 0, -0.8);
+    }
+  },
+  Gasp(B, s) {
+    const jolt = ease(s, 0, 0.18), shake = 0.012 * Math.sin(s * 30) * (1 - ease(s, 0.6, 1.2));
+    bend(B.Spine, -0.12 * jolt);
+    bend(B.Head, -0.12 * jolt + shake);
+    settle();
+    for (let k = 0; k < 2; k++) {
+      armC(B, SIDES[k], 0.42, 0.16, 0.18, 1, -1, -0.2);
+      handTo(B, SIDES[k], 0.35, 1, 0.1, 0, 0, 1);
+    }
+    POSE_FX.step = -0.14 * jolt * (1 - ease(s, 1.0, 1.55));
+    POSE_FX.hop = 0.06 * pulses(s, 0, 0.32, 1);
+  },
+  Think(B, s) {
+    const tap = 0.015 * pulses(s, 0.7, 2.1, 3);
+    bend(B.Spine, 0, 0.04);
+    bend(B.Head, -0.05, -0.18, 0.12);
+    settle();
+    reach(B, 'Right', hp(_t1, -0.03, -0.06 + tap, 0.28), 1, -1, 0);
+    handTo(B, 'Right', -0.3, 1, 0.3, -0.2, 0, -1);
+    armC(B, 'Left', -0.06, -0.06, 0.2, 1, -1, 0);
+    handTo(B, 'Left', -1, 0.1, 0, 0, 1, 0);
+  },
+  Clap(B, s) {
+    const gap = s < 0.2 ? 0.12 : 0.012 + 0.11 * (0.5 + 0.5 * Math.cos((s - 0.2) * 3.2 * TAU));
+    bend(B.Head, 0.08);
+    settle();
+    for (let k = 0; k < 2; k++) {
+      armC(B, SIDES[k], gap / 2 + 0.035, -0.04, 0.24, 1, -1, 0);
+      handTo(B, SIDES[k], -0.25, 0.7, 0.6, -1, 0, 0);
+    }
+  },
+  Hooray(B, s) {
+    const pump = pulses(s, 0.15, 1.8, 2);
+    bend(B.Spine, -0.04);
+    bend(B.Head, -0.12);
+    settle();
+    for (let k = 0; k < 2; k++) {
+      armC(B, SIDES[k], 0.5, 0.22 + 0.14 * pump, 0.05, 1, 0, -0.3);
+      handTo(B, SIDES[k], 0.5, 1, 0, 0, 0, 1);
+    }
+    POSE_FX.hop = 0.07 * pump;
+  },
+  FistPump(B, s) {
+    const p = pulses(s, 0.2, 1.75, 3);
+    bend(B.Spine, 0.05 * p, 0, -0.1);
+    bend(B.Head, 0.1 * p);
+    settle();
+    armC(B, 'Right', 0.48, 0.04 + 0.3 * p, 0.18, 1, -0.4, 0);
+    handTo(B, 'Right', -0.2, 1, 0.2, -1, 0, 0);
+    armC(B, 'Left', 0.2, -0.24, 0.12, 1, 0, -0.5);
+    handTo(B, 'Left', 0, -0.2, 1, -1, 0, 0);
+    POSE_FX.hop = 0.035 * p;
+  },
+  Hundred(B, s) {
+    const push = pulses(s, 0.25, 1.7, 2);
+    bend(B.Spine, 0.06 * push);
+    bend(B.Head, 0.08 * push);
+    settle();
+    for (let k = 0; k < 2; k++) {
+      armC(B, SIDES[k], 0.13, 0.04, 0.27 + 0.08 * push, 1, -1, 0);
+      handTo(B, SIDES[k], -1, 0, 0.15, 0, 0, -1);
+      thumbTo(B, SIDES[k], 0, 1, 0);
+    }
+  },
+  BigHeart(B, s) {
+    const sway = Math.sin(s * 4);
+    bend(B.Spine, 0, 0.06 * sway);
+    bend(B.Head, 0, 0.08 * sway);
+    settle();
+    for (let k = 0; k < 2; k++) {
+      armH(B, SIDES[k], 0.46, 0.14, 0.14, 1, 0.5, 0);
+      handTo(B, SIDES[k], -0.6, 1, 0, -1, 0, 0);
+    }
+  },
+  SmallHeart(B, s) {
+    // a hand heart held out in front of the chest: wrists apart, fingertips together on top, thumbs together below;
+    // pushed out twice
+    const push = pulses(s, 0.3, 1.9, 2);
+    bend(B.Spine, 0.05 * push);
+    bend(B.Head, 0.06, 0.16);
+    settle();
+    for (let k = 0; k < 2; k++) {
+      armC(B, SIDES[k], 0.1, 0.0, 0.3 + 0.06 * push, 1, -1, 0);
+      handTo(B, SIDES[k], -0.8, 0.6, 0.15, 0, 0, -1);
+      thumbTo(B, SIDES[k], -0.6, -1, 0.1);
+    }
+  },
+  CheerJump(B) {
+    bend(B.Head, -0.1);
+    settle();
+    for (let k = 0; k < 2; k++) {
+      armC(B, SIDES[k], 0.5, 0.34, 0.05, 1, 0, -0.3);
+      handTo(B, SIDES[k], 0.5, 1, 0, 0, 0, 1);
+    }
+  },
+  Twirl(B, s) {
+    bend(B.Head, -0.08);
+    settle();
+    for (let k = 0; k < 2; k++) {
+      armC(B, SIDES[k], 0.5, 0.12, 0.02, 0, -1, -0.3);
+      handTo(B, SIDES[k], 1, 0.3, 0, 0, -1, 0.2);
+    }
+    POSE_FX.spin = TAU * ease(s, 0.15, 1.35);
+    POSE_FX.hop = 0.05 * pulses(s, 0.15, 1.35, 1);
+  },
+  FishBread(B, s) {
+    const toMouth = ease(s, 0.85, 1.2), bite = pulses(s, 1.25, 2.35, 2);
+    bend(B.Head, 0.12 * bite - 0.08 * (1 - toMouth), -0.12 * (1 - toMouth));
+    settle();
+    cp(_t1, -0.42, 0.22, 0.24).lerp(hp(_t2, -0.15 + 0.04 * bite, -0.1, 0.3 + 0.03 * bite), toMouth);
+    reach(B, 'Right', _t1, 1, -1, 0);
+    handTo(B, 'Right', -0.2, 1, 0, 0, 0, 1);
+    armC(B, 'Left', 0.1, -0.14, 0.22, 1, -0.6, 0);
+    handTo(B, 'Left', -0.8, 0.35, 0.2, 0, 0, -1);
+  },
+  Noodles(B, s) {
+    const lift = pulses(s, 0.35, 2.3, 2);
+    bend(B.Spine, 0.08);
+    bend(B.Head, 0.15 + 0.08 * lift);
+    settle();
+    armC(B, 'Left', 0.05, -0.07, 0.3, 1, -1, 0);
+    handTo(B, 'Left', -0.5, 0, 1, 0, 1, 0);
+    cp(_t1, -0.12, 0.08, 0.3).lerp(hp(_t2, -0.12, -0.1, 0.3), lift);
+    reach(B, 'Right', _t1, 1, -1, 0);
+    handTo(B, 'Right', -0.4 - 0.2 * lift, -0.8 + 1.5 * lift, 0.5 - 0.2 * lift, 0, 1 - lift, -lift);
+  },
+  Torch(B, s) {
+    bend(B.Spine, -0.04, 0.03 * Math.sin(s * 2));
+    bend(B.Head, -0.12);
+    settle();
+    armC(B, 'Right', 0.5, 0.36, 0.08, 1, 0, -0.3);
+    handTo(B, 'Right', 0, 1, 0, -1, 0, 0);
+    armC(B, 'Left', 0.0, 0.02, 0.24, 1, -1, 0);
+    handTo(B, 'Left', -1, 0.4, 0, 0, 0, -1);
+  },
+  Taxi(B, s) {
+    const lean = ease(s, 0.1, 0.4);
+    // leans toward the street on the raised side, the other hand on the hip
+    bend(B.Spine, 0.04 * lean, -0.14 * lean, -0.12 * lean);
+    bend(B.Head, -0.05, 0.08 * lean, -0.15 * lean);
+    settle();
+    armC(B, 'Right', 0.5, 0.36, 0.12, 1, 0, -0.3);
+    handTo(B, 'Right', -0.6 * Math.sin(s * 13), 1, 0.1, 0, 0, 1);
+    armC(B, 'Left', 0.24, -0.22, 0.02, 1, 0.3, -0.6);
+    handTo(B, 'Left', -0.3, -1, 0.2, -1, 0, 0);
+    POSE_FX.hop = 0.03 * lean;
+  },
+  MoneyRain(B, s) {
+    const f = pulses(s, 0.2, 1.45, 5);
+    bend(B.Spine, 0, 0, -0.1);
+    bend(B.Head, 0.04);
+    settle();
+    armC(B, 'Left', 0.12, -0.02, 0.26, 1, -1, 0);
+    handTo(B, 'Left', -0.4, 0, 1, 0, 1, 0);
+    cp(_t1, 0.0, 0.03, 0.28).lerp(cp(_t2, -0.38, 0.16, 0.3), f);
+    reach(B, 'Right', _t1, 1, -1, 0);
+    handTo(B, 'Right', -1 + 1.3 * f, 0.3, 1, 0, 1 - 0.7 * f, 0.3 * f);
+    POSE_FX.fly = s;
+  },
+  Doze(B, s) {
+    const droop = ease(s, 0, 1.1) * (1 - ease(s, 1.15, 1.3)) + 0.8 * ease(s, 1.45, 2.3), jerk = pulses(s, 1.15, 1.6, 1);
+    bend(B.Spine, 0.1 * droop);
+    bend(B.Spine1, 0.05 * droop);
+    bend(B.Head, 0.45 * droop - 0.1 * jerk, 0.1 * droop);
+  },
+};
+
+// Lay a held pose over the clip's pose this frame. t: 0..1 through the gesture, s: seconds since it began, w: its
+// weight (gestures.js gestureWeight), kept: one quaternion per BLEND bone, filled with the clip's rotations. Writes
+// POSE_FX for the caller; true when it turned bones (kept is then valid).
+function holdPose(model, pose, t, s, w, kept) {
+  POSE_FX.hop = pose === 'Throw' ? Math.sin(Math.min(1, t * 1.2) * Math.PI) * 0.75 : 0;
+  POSE_FX.step = 0;
+  POSE_FX.spin = 0;
+  POSE_FX.fly = -1;
+  if (!model || !(w > 0)) return false;
   const bones = poseBones(model);
   const spine = bones.Spine2 || bones.Spine;
   const head = bones.Head;
-  if (!spine || !head) return;
+  if (!spine || !head) return false;
+  for (let i = 0; i < BLEND.length; i++) { const b = bones[BLEND[i]]; if (b) kept[i].copy(b.quaternion); }
   const chest = boneAt(spine, _chest);
   const headP = boneAt(head, _headP);
   model.updateWorldMatrix(true, false);
   model.getWorldQuaternion(_qM);
   const fwd = _fwd.set(0, 0, 1).applyQuaternion(_qM);
   const right = _right.set(1, 0, 0).applyQuaternion(_qM);
-  if (pose === 'Pray') {
+  if (Object.hasOwn(POSES, pose)) {
+    _chestB = spine;
+    _headB = head;
+    _c0.copy(chest);
+    _mC.copy(spine.matrixWorld).invert();
+    _h0.copy(headP);
+    _mH.copy(head.matrixWorld).invert();
+    POSES[pose](bones, s);
+  } else if (pose === 'Pray') {
     const meet = _t1.copy(chest).addScaledVector(fwd, 0.34).add(_off.set(0, 0.08, 0));
     const elbowL = _t2.copy(chest).addScaledVector(fwd, 0.06).addScaledVector(right, 0.24);
     const elbowR = _t3.copy(chest).addScaledVector(fwd, 0.06).addScaledVector(right, -0.24);
@@ -269,6 +646,24 @@ function holdPose(model, pose, t = 1) {
     foldArm(model, 'Right', elbow, hand);
     if (bones.RightHand) aimHand(bones.RightHand, _t2.copy(fwd).add(_off.set(0, fire > 0.15 ? 1 : 0.25, 0)), _t5.copy(right).multiplyScalar(-1));
   }
+  if (w < 1) for (let i = 0; i < BLEND.length; i++) { const b = bones[BLEND[i]]; if (b) { _qB.copy(b.quaternion); b.quaternion.copy(kept[i]).slerp(_qB, w); } }
+  POSE_FX.hop *= w;
+  POSE_FX.step *= w;
+  return true;
+}
+
+// MoneyRain's bills: one leaves the right hand at each of the five flicks, arcs out and down, spinning, and shrinks away
+// before the gesture ends. Holder space (the avatar's facing); s < 0 hides them.
+function flyBills(group, s) {
+  group.visible = s >= 0;
+  for (let i = 0; i < group.children.length; i++) {
+    const b = group.children[i], a = s - (0.325 + i * 0.25);
+    b.visible = s >= 0 && a >= 0 && a <= 0.85;
+    if (!b.visible) continue;
+    b.position.set(-0.36 - (0.35 + 0.2 * (i % 3)) * a, 0.95 + (1.5 + 0.25 * (i % 2)) * a - 1.6 * a * a, 0.36 + (0.9 + 0.15 * ((i + 1) % 3)) * a);
+    b.rotation.set(a * 7 + i, a * 5, a * 3);
+    b.scale.setScalar(Math.max(0.01, Math.min(1, a / 0.08, (0.85 - a) / 0.2)));
+  }
 }
 
 class Avatar {
@@ -291,8 +686,14 @@ class Avatar {
     this.base = 'Idle';
     this.current = null;
     this.emoteAction = null;
+    this.emoteStops = false; // the playing clip is a reaction gesture: moving ends it
     this.pose = '';
+    this.poseAt = 0;
     this.poseUntil = 0;
+    this.propSet = null; // gesture props on this model: kind -> [{ obj, key, base }]
+    this.propKind = '';
+    this.kept = null; // the clip's rotations of the BLEND bones under the last held pose (holdPose)
+    this.keptOn = false;
     this.danceUntil = 0;
     this.speed = 0;
     const shadow = new THREE.Mesh(sys.shadowGeo, sys.shadowMat);
@@ -345,6 +746,10 @@ class Avatar {
 
   detachModel() {
     if (!this.model) return;
+    this.endPose();
+    this.keptOn = false;
+    for (const kind in this.propSet || {}) for (const p of this.propSet[kind]) p.obj.removeFromParent(); // shared geometry: nothing to dispose
+    this.propSet = null;
     this.mixer?.stopAllAction();
     this.holder.remove(this.model);
     if (this.fallback) this.model.traverse((o) => { o.geometry?.dispose(); o.material?.dispose?.(); });
@@ -510,12 +915,16 @@ class Avatar {
   /** speed in m/s; sitting picks the seated loop. */
   setMotion(speed, sitting = false) {
     this.speed = speed;
-    if (speed > 0.35 && this.pose !== 'Throw') this.pose = '';
+    // Moving ends a held pose (not the pouch throw) and a reaction clip; a jump or the dock's clips play out as before.
+    const moving = speed > 0.35;
+    if (moving && this.pose && !GESTURES[this.pose]?.keep) this.endPose();
+    const stop = moving && this.emoteStops && !!this.emoteAction;
+    if (stop) { this.emoteAction = null; this.emoteStops = false; }
     const now = performance.now();
-    let base = sitting ? 'Sitting' : speed > 4.3 ? 'Running' : speed > 0.35 ? 'Walking' : 'Idle';
+    let base = sitting ? 'Sitting' : speed > 4.3 ? 'Running' : moving ? 'Walking' : 'Idle';
     if (base === 'Idle' && this.danceUntil > now) base = 'Dance';
     else if (base !== 'Idle') this.danceUntil = 0;
-    if (base !== this.base) {
+    if (base !== this.base || stop) {
       this.base = base;
       if (!this.emoteAction) this.fadeTo(base, base === 'Idle' ? 0.35 : 0.2);
     }
@@ -525,15 +934,13 @@ class Avatar {
     }
   }
 
+  // name: a GESTURES key (ts3d/gestures.js: the reactions, Pray, Cheer, Throw) or a clip (Jump, Dance with hold seconds).
   emote(name, hold = 0) {
-    if (name === 'Pray' || name === 'Cheer' || name === 'Throw') {
-      this.pose = name;
-      this.poseUntil = performance.now() + (name === 'Throw' ? 980 : 2400);
-      this.emoteAction = null;
-      if (this.current && this.actions?.Idle && this.speed <= 0.35) this.fadeTo('Idle', 0.15);
-      return;
-    }
-    this.pose = '';
+    const g = Object.hasOwn(GESTURES, name) ? GESTURES[name] : null;
+    if (g?.dance) { name = g.clip; hold = g.ms / 1000; }
+    else if (g) { this.gesture(name, g); return; }
+    this.endPose();
+    this.emoteStops = false;
     if (name === 'Dance') {
       this.danceUntil = performance.now() + (hold || 6) * 1000;
       if (this.speed <= 0.35) {
@@ -546,8 +953,94 @@ class Avatar {
     const pick = name === 'Jump' && this.speed > 0.35 && this.actions?.WalkJump ? 'WalkJump' : name;
     const action = this.actions?.[pick];
     if (!action) return;
+    action.setLoop(THREE.LoopOnce, 1);
     this.emoteAction = action;
     this.fadeTo(pick, 0.18, true);
+  }
+
+  // A gesture from the table: its clip (once, `reps` times, at `rate`) and/or its pose for `ms`. A pose alone keeps the
+  // base loop under it (idle, sitting); a dance stops for it.
+  gesture(name, g) {
+    const now = performance.now();
+    this.endPose();
+    if (g.pose) {
+      this.pose = name;
+      this.poseAt = now;
+      this.poseUntil = now + g.ms;
+    }
+    this.emoteStops = false;
+    const action = g.clip ? this.actions?.[g.clip] : null;
+    if (action) {
+      action.setLoop(g.reps > 1 ? THREE.LoopRepeat : THREE.LoopOnce, g.reps || 1);
+      this.emoteAction = action;
+      this.emoteStops = !g.keep;
+      this.fadeTo(g.clip, 0.18, true);
+      action.setEffectiveTimeScale(g.rate || 1);
+      return;
+    }
+    this.emoteAction = null;
+    if (this.base === 'Dance') { this.base = 'Idle'; this.danceUntil = 0; }
+    const want = this.speed > 0.35 ? '' : this.base;
+    if (want && this.current && this.actions?.[want] && this.current !== this.actions[want]) this.fadeTo(want, 0.15);
+  }
+
+  // The clip's rotations back on the bones the last held pose turned (before the mixer runs, and when a pose ends).
+  unpose() {
+    if (!this.keptOn) return;
+    this.keptOn = false;
+    if (!this.model || this.fallback) return;
+    const B = poseBones(this.model);
+    for (let i = 0; i < BLEND.length; i++) { const b = B[BLEND[i]]; if (b) b.quaternion.copy(this.kept[i]); }
+  }
+
+  // Ends the held pose now: the body, hop, step and turn back to the clip, props hidden.
+  endPose() {
+    if (this.propKind) this.hideProp();
+    this.unpose();
+    if (!this.pose) return;
+    this.pose = '';
+    this.holder.position.y = 0;
+    if (this.model && !this.fallback) { this.model.position.z = 0; this.model.rotation.y = 0; }
+  }
+
+  // The gesture's prop parts, made for this model the first time: hand parts under the hand bone (scaled back to metres),
+  // the flying bills under the holder. w: the gesture's weight (the prop pops in and out with it), s: its seconds.
+  showProp(kind, w, s) {
+    if (!this.model || this.fallback) return;
+    if (this.propKind && this.propKind !== kind) this.hideProp();
+    let set = this.propSet?.[kind];
+    if (!set) {
+      const src = this.sys.props()[kind];
+      if (!src) return;
+      const bones = poseBones(this.model);
+      set = [];
+      for (const key of Object.keys(src)) {
+        const obj = src[key].clone();
+        if (key === 'fly') { this.holder.add(obj); set.push({ obj, key, base: 1 }); continue; }
+        const hand = bones[key === 'L' ? 'LeftHand' : 'RightHand'];
+        if (!hand) continue;
+        const wrap = new THREE.Group();
+        const base = 1 / (hand.getWorldScale(_propScale).x || 1);
+        wrap.add(obj);
+        hand.add(wrap);
+        set.push({ obj: wrap, key, base });
+      }
+      (this.propSet ||= {})[kind] = set;
+    }
+    this.propKind = kind;
+    const k = Math.min(1, w * 1.6);
+    for (let i = 0; i < set.length; i++) {
+      const p = set[i];
+      if (p.key === 'fly') { flyBills(p.obj, POSE_FX.fly); continue; }
+      p.obj.visible = k > 0.01;
+      p.obj.scale.setScalar(p.base * Math.max(0.01, k));
+    }
+    if (kind === 'torch') { const flame = set[0]?.obj.children[0]?.children[2]; if (flame) flame.scale.set(1 + 0.12 * Math.sin(s * 23), 1 + 0.2 * Math.sin(s * 17), 1 + 0.12 * Math.sin(s * 19)); }
+  }
+
+  hideProp() {
+    for (const p of this.propSet?.[this.propKind] || []) p.obj.visible = false;
+    this.propKind = '';
   }
 
   say(glyph) {
@@ -572,15 +1065,19 @@ class Avatar {
   }
 
   update(dt, t) {
+    this.unpose();
     this.mixer?.update(dt);
-    if (this.pose && performance.now() > this.poseUntil) this.pose = '';
-    if (this.pose === 'Throw') {
-      const u = 1 - Math.max(0, (this.poseUntil - performance.now()) / 980);
-      this.holder.position.y = Math.sin(Math.min(1, u * 1.2) * Math.PI) * 0.75;
-      holdPose(this.model, 'Throw', u);
-    } else {
-      if (this.holder.position.y) this.holder.position.y = 0;
-      if (this.pose) holdPose(this.model, this.pose, 1);
+    const now = performance.now();
+    if (this.pose && now > this.poseUntil) this.endPose();
+    if (this.pose) {
+      const g = GESTURES[this.pose], len = Math.max(1, this.poseUntil - this.poseAt), s = (now - this.poseAt) / 1000;
+      const w = gestureWeight(s, len / 1000, g);
+      this.kept ||= BLEND.map(() => new THREE.Quaternion());
+      this.keptOn = holdPose(this.model, this.pose, Math.min(1, (now - this.poseAt) / len), s, w, this.kept);
+      const seated = this.base === 'Sitting' && this.pose !== 'Throw'; // a seated avatar gestures without hopping, stepping or turning
+      this.holder.position.y = seated ? 0 : POSE_FX.hop;
+      if (this.model && !this.fallback) { this.model.position.z = seated ? 0 : POSE_FX.step; this.model.rotation.y = seated ? 0 : POSE_FX.spin; }
+      if (g.prop) this.showProp(g.prop, w, s);
     }
     if (this.fallback) this.model.position.y = this.speed > 0.35 ? Math.abs(Math.sin(t * 9)) * 0.08 : Math.sin(t * 2) * 0.02;
     if (this.bubble.visible) {
