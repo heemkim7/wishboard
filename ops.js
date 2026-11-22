@@ -11,7 +11,8 @@ export const OPS = {
   errBytes: 4096, supBytes: 8192, // request body caps
   supHour: 3, // inquiries per hour per account
   supHourIp: 10, // inquiries per hour per network (IPv6 by /64; mobile carriers put many players behind one address)
-  supHourAll: 120, // inquiries per hour in all, so a flood from many networks cannot fill the store with open ones
+  supHourAll: 120, // guest inquiries per hour in all, so a flood from many networks cannot fill the store with open ones
+  supLinkedExtra: 200, // room above supMax that only linked accounts (user:, not anonymous) can use, so a guest flood cannot shut them out
   doneKeep: 365 * 864e5, // a handled inquiry (its e-mail with it) goes within a year
   rlKeep: 3600e3,
   ipMin: 20, // per isolate, per IP and route, per minute: the fallback when the OPS_RL binding is missing
@@ -71,12 +72,13 @@ export function supPut(q, row, keys, now = Date.now()) {
   supPrune(q, now);
   const used = (k) => Number(q.exec('select count(*) as c from orl where k = ? and at > ?', k, now - OPS.rlKeep).one().c) || 0;
   for (const k of keys) if (used(k) >= (k.startsWith('i:') ? OPS.supHourIp : OPS.supHour)) return { ok: false, code: 'rate' };
-  if (used(SUP_ALL) >= OPS.supHourAll) return { ok: false, code: 'many' };
+  const linked = row.linked === true;
+  if (!linked && used(SUP_ALL) >= OPS.supHourAll) return { ok: false, code: 'many' };
   const count = () => Number(q.exec('select count(*) as c from osup').one().c) || 0;
   let c = count();
   if (c >= OPS.supMax) { q.exec("delete from osup where id in (select id from osup where status = 'done' order by at asc limit ?)", c - OPS.supMax + 1); c = count(); }
-  if (c >= OPS.supMax) return { ok: false, code: 'full' };
-  for (const k of keys.concat(SUP_ALL)) q.exec('insert into orl(k, at) values(?, ?)', k, now);
+  if (c >= OPS.supMax + (linked ? OPS.supLinkedExtra : 0)) return { ok: false, code: 'full' };
+  for (const k of linked ? keys : keys.concat(SUP_ALL)) q.exec('insert into orl(k, at) values(?, ?)', k, now);
   q.exec("insert into osup values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', null)", row.id, now, row.kind, row.body, row.email || '', row.actor || '', row.nick || '', row.build || '', row.page || '', row.dev || '');
   return { ok: true, id: row.id };
 }
@@ -165,7 +167,7 @@ export async function opsApi(req, env, ctx, u, deps) {
     const row = {
       id: crypto.randomUUID().replace(/-/g, '').slice(0, 12),
       kind: supportKind(b.kind), body: body(b.text), email: String(b.email || '').trim(),
-      actor: actor?.id ? String(actor.id) : '', nick: line(b.nick, SUP.nick),
+      actor: actor?.id ? String(actor.id) : '', nick: line(b.nick, SUP.nick), linked: !!actor?.id && String(actor.id).startsWith('user:') && !actor.anon && !actor.guest,
       build: BUILD_RE.test(String(b.build || '')) ? String(b.build) : '', page: pathOf(b.page), dev: DEV.has(b.dev) ? b.dev : '',
     };
     const keys = ['i:' + ip].concat(row.actor ? ['a:' + row.actor] : []);

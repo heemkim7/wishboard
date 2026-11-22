@@ -1114,7 +1114,9 @@ const adSent = new Set();
 let adSending = false;
 async function sendAdSeen(ids, retry) {
   if (!ids.length) return;
-  try { await net._plazaPost('/rt/ads/seen', { b: ids }); for (const id of ids) adSent.add(id); }
+  // A 204 (no count: this Worker isolate does not know the booking yet) and the ids in `keep` (a day booking reported in the
+  // 9 pm sponsor minute) stay unsent and go again next round; everything else was counted or was already counted today.
+  try { const r = await net._plazaPost('/rt/ads/seen', { b: ids }); if (typeof r?.n !== 'number') return; const keep = new Set(Array.isArray(r.keep) ? r.keep : []); for (const id of ids) if (!keep.has(id)) adSent.add(id); }
   catch { if (retry) { await sleep(20000); await sendAdSeen(ids.filter((id) => !adSent.has(id)), false); } }
 }
 setInterval(() => {

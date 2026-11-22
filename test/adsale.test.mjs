@@ -516,6 +516,12 @@ describe('review fixes: limits before DO calls, guest and linked counts, the 9 p
     } finally { done(); }
   });
 
+  it('a day booking reported in the sponsor minute is handed back in keep, and counted when it comes again after it', () => {
+    const src = readFileSync(new URL('../adsrv.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+    assert.match(src, /if \(b\.p === 'sponsor9' \? !late : preempt\) \{ if \(b\.p !== 'sponsor9'\) keep\.push\(b\.id\); continue; \}/);
+    assert.match(src, /return \{ ok: true, n, keep \};/);
+    assert.match(src, /\.\.\.\(Array\.isArray\(r\?\.keep\) && r\.keep\.length \? \{ keep: r\.keep\.map\(String\) \} : \{\}\)/);
+  });
   it('the 9 pm minute: a sponsor counts from 21:00:00 until 21:03:00 KST (late reports too); the day booking it covers is not counted in its minute', async () => {
     const { clock, done } = setup();
     try {
@@ -541,7 +547,8 @@ describe('review fixes: limits before DO calls, guest and linked counts, the 9 p
       assert.equal(await hit('/rt/ads/click', sc.id, g[3]), 1, 'no live sponsor: the day booking counts in that minute');
       // the client marks ids as reported only once a report went through, and tries a failed one once more
       const m = read('main.js');
-      assert.match(m, /try \{ await net\._plazaPost\('\/rt\/ads\/seen', \{ b: ids \}\); for \(const id of ids\) adSent\.add\(id\); \}/);
+      // only ids the Worker counted (or had already counted) are marked; a 204 or the ids in `keep` go again next round
+      assert.match(m, /try \{ const r = await net\._plazaPost\('\/rt\/ads\/seen', \{ b: ids \}\); if \(typeof r\?\.n !== 'number'\) return; const keep = new Set\(Array\.isArray\(r\.keep\) \? r\.keep : \[\]\); for \(const id of ids\) if \(!keep\.has\(id\)\) adSent\.add\(id\); \}/);
       assert.match(m, /catch \{ if \(retry\) \{ await sleep\(20000\); await sendAdSeen\(ids\.filter\(\(id\) => !adSent\.has\(id\)\), false\); \} \}/);
       assert.doesNotMatch(m, /for \(const id of ids\) adSent\.add\(id\);\n\s*net\._plazaPost/);
     } finally { done(); }

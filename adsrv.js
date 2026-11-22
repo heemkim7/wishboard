@@ -119,7 +119,7 @@ export const adsDb = {
   // sponsor9 booking runs, a day booking is off the screens and is not counted. linked: the account is a linked one (user:, not a guest),
   // also counted in ad_dayu. -> how many were counted.
   hit(q, ids, kind, who, now = Date.now(), linked = false) {
-    const d = kstDay(now), k = kind === 'c' ? 'c' : 'v', u = String(who || '').slice(0, 32); let n = 0;
+    const d = kstDay(now), k = kind === 'c' ? 'c' : 'v', u = String(who || '').slice(0, 32); let n = 0; const keep = [];
     if (!u) return { ok: false, n };
     if (Math.random() < 0.05) q.exec('delete from ad_who where d < ?', d);
     const s9 = nineSince(now), late = s9 >= 0 && s9 < ADS.nineLate;
@@ -127,12 +127,12 @@ export const adsDb = {
     for (const id of (Array.isArray(ids) ? ids : [ids]).slice(0, 6)) {
       const b = bookOf(q.exec("select * from ad_book where id = ? and st = 'live'", String(id)).toArray()[0]);
       if (!b || now < b.a || now >= b.b) continue;
-      if (b.p === 'sponsor9' ? !late : preempt) continue;
+      if (b.p === 'sponsor9' ? !late : preempt) { if (b.p !== 'sponsor9') keep.push(b.id); continue; } // reported in the sponsor minute: the client sends it again next round
       if (q.exec('insert or ignore into ad_who(bk, d, k, u) values(?, ?, ?, ?)', b.id, d, k, u).rowsWritten < 1) continue;
       for (const t of linked === true ? ['ad_day', 'ad_dayu'] : ['ad_day']) q.exec(`insert into ${t}(bk, d, ${k}) values(?, ?, 1) on conflict(bk, d) do update set ${k} = ${k} + 1`, b.id, d);
       n++;
     }
-    return { ok: true, n };
+    return { ok: true, n, keep };
   },
   // The report behind a token: the booking and its days, no request, contact or account data.
   read(q, tok) {
@@ -238,7 +238,7 @@ export async function adsApi(req, env, ctx, u, k) {
     if (!known.length) return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
     const linked = !actor.guest && !actor.anon && String(actor.id).startsWith('user:');
     let r = null; try { r = await adsM(env).adsHit(known, p === '/rt/ads/click' ? 'c' : 'v', await who(actor), now, linked); } catch { r = null; }
-    return J({ ok: !!r?.ok, n: Number(r?.n) || 0 });
+    return J({ ok: !!r?.ok, n: Number(r?.n) || 0, ...(Array.isArray(r?.keep) && r.keep.length ? { keep: r.keep.map(String) } : {}) });
   }
   if (p.startsWith('/rt/ads/report/')) {
     if (req.method !== 'GET' && req.method !== 'HEAD') return new Response('method', { status: 405 });

@@ -3874,8 +3874,9 @@ export function createUI(root, hooks) {
           if (e?.code === 'price') { // the price changed since the list was read: read it again, with the live price the refusal carried for this item
             const live = Math.floor(Number(e.data?.price)) || 0;
             const r = await Promise.resolve(hooks.shop?.()).catch(() => null);
-            const items = (Array.isArray(r?.items) ? r.items : shop.items).map((it) => (it?.id === t.id && live > 0 ? { ...it, price: live } : it));
-            shop = { open: r ? !!r.open : shop.open, items, ready: true };
+            const fresh = Array.isArray(r?.items) && r.items.length > 0; // a failed reload comes back empty: keep what was shown
+            const items = (fresh ? r.items : shop.items).map((it) => (it?.id === t.id && live > 0 ? { ...it, price: live } : it));
+            shop = { open: fresh ? !!r.open : shop.open, items, ready: true };
           }
         }
         busy = '';

@@ -333,6 +333,19 @@ describe('POST /rt/support', { concurrency: false }, () => {
       assert.equal(opsRows(env, 'osup').length, 121);
     } finally { done(); }
   });
+  it('a guest flood that uses up the hourly 120 and fills the store does not shut out a linked account', async () => {
+    const { clock, done } = setup();
+    try {
+      const env = makeEnv(), M = env.meter('ops').do;
+      for (let i = 0; i < 120; i++) { clock.add(1000); M.opsSupPut(ROW('g' + i), ['i:n' + i]); }
+      assert.deepEqual(M.opsSupPut(ROW('g120'), ['i:fresh']), { ok: false, code: 'many' });
+      // a linked account (user:, not anonymous) is held only by its own limits
+      assert.equal(M.opsSupPut({ ...ROW('u1'), actor: 'user:abc', linked: true }, ['i:fresh2', 'a:user:abc']).ok, true);
+      // and the 500 open slots: a linked inquiry still fits above them (OPS.supLinkedExtra)
+      const ops = await import('../ops.js');
+      assert.ok(ops.OPS.supLinkedExtra >= 100);
+    } finally { done(); }
+  });
   it('limits by network: IPv6 addresses in one /64 share the hourly 10, another /64 does not; the per-minute count and OPS_RL key on the /64', async () => {
     const { done } = setup();
     try {
