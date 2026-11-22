@@ -609,8 +609,10 @@ function suite(label, makeDb, skip) {
       const s = await scene(db);
       try {
         const owner = await s.linked(), u = await s.rich(160), g = await s.guest(); await db.hold('STREET_23', owner.id); // u: 740
-        let open; const gate = new Promise((r) => { open = r; }); s.state.before = (name) => (name === 'merge_guest_account' ? gate : null); // the merge RPC is on its way
-        const linking = s.link(u, g); await new Promise((r) => setTimeout(r, 20));
+        let open, at = false; const gate = new Promise((r) => { open = r; }); s.state.before = (name) => (name === 'merge_guest_account' ? ((at = true), gate) : null); // the merge RPC is on its way
+        // Wait until the RPC is really at its gate: a fixed 20 ms was too short when the whole suite runs at once.
+        const linking = s.link(u, g); for (let i = 0; i < 200 && !at; i++) await new Promise((r) => setTimeout(r, 10));
+        assert.ok(at, 'the merge RPC reached its gate');
         if (!A) assert.equal(s.lease(u.id), 1); else assert.equal(s.lease(u.id), 0); // after: the database does the move and its take-back in one step
         const during = await Promise.all([50, 50].map((n) => s.quick('/rt/sell-coins', { topic: 'chapel:square', slot_id: 'STREET_23', amount: n, nickname: '손님' }, u.token)));
         for (const r of during) { assert.equal(r.status, 410); assert.equal(r.body.code, 'off'); }
