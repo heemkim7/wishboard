@@ -1,20 +1,29 @@
-# Builds the three avatar models of the game: MouseToy.glb, CatToy.glb, BearToy.glb.
+# Builds the ten avatar models of the game:
+#   1 MouseToy.glb  2 CatToy.glb  3 BearToy.glb  4 RabbitToy.glb  5 PuppyToy.glb
+#   6 PandaToy.glb  7 FoxToy.glb  8 PenguinToy.glb  9 HamsterToy.glb  10 TigerToy.glb
+# (the number is the presence field `av`). Mouse, cat and bear are live and cached by URL: rebuild them only into
+# a folder outside the repository (to compare), never over the committed files. The script refuses to overwrite
+# them in assets/models (and "all" skips them there) unless ANIMAL_OVERWRITE_LIVE=1.
 #
 # Needs: Blender 4.5 LTS (uses its glTF importer/exporter, voxel remesh and QuadriFlow). Nothing else.
 # Run from anywhere:
 #   "C:/Program Files/Blender Foundation/Blender 4.5/blender.exe" --background --factory-startup
-#       --python tools/blender/build_animal.py -- all            (or: mouse, cat, bear)
+#       --python tools/blender/build_animal.py -- all            (or one key: mouse, cat, bear, rabbit, puppy, panda,
+#                                                                  fox, penguin, hamster, tiger; or "new" for the last seven)
 #   optional second argument: an output folder (default assets/models)
 # Reads:    tools/blender/src/Mousey.glb  - the Mixamo armature (46 joints) and its ten clips; the mouse mesh in it is discarded
-# Writes:   assets/models/<Mouse|Cat|Bear>Toy.glb - one skinned mesh, materials Fur, Main (hoodie, tinted by the game),
-#           Muzzle, Eye, Accent; the ten clips Idle, Walking, Running, Dance, Sitting, Wave, Jump, ThumbsUp, Yes, No
-#           with their keys thinned (see KEY_TOL_DEG). About 10k triangles and 0.75-0.8 MB each, no textures.
+# Writes:   assets/models/<Species>Toy.glb - one skinned mesh, materials Fur, Main (hoodie, tinted by the game),
+#           Muzzle, Eye, Accent and, for panda, fox and tiger, Patch (dark marks); a material a species does
+#           not use is left out of its file. The ten clips Idle, Walking, Running, Dance, Sitting, Wave, Jump,
+#           ThumbsUp, Yes, No with their keys thinned (see KEY_TOL_DEG). About 10k triangles and 0.75-0.85 MB each,
+#           no textures. One species takes about half a minute; "all" runs them one after another.
 # Check:    node tools/blender/inspect_glb.mjs assets/models/BearToy.glb --anims
 #           node tools/blender/compare_rig.mjs tools/blender/src/Mousey.glb assets/models/BearToy.glb
 # Look:     blender --background --factory-startup --python tools/blender/render_animal.py -- assets/models/BearToy.glb <folder outside the repo>
+# Picker:   blender --background --factory-startup --python tools/blender/render_animal.py -- --avatars assets/avatars
 #
-# One body and hoodie for all three; the head block, ears, muzzle, tail, face details and colours come
-# from the species table.
+# One body and hoodie for all ten; the head block, ears, muzzle, tail, face details, colour regions and colours
+# come from the species table.
 #
 # How it works
 #   1. Import Mousey.glb at 30 fps, throw the mouse mesh away, keep the armature and its 10 actions.
@@ -24,14 +33,17 @@
 #      The arms are modelled ARM_DOWN degrees below the T-pose, because every clip has the arms down.
 #   3. Mesh it with surface nets (numpy), make it manifold with a voxel remesh, quad-remesh with QuadriFlow,
 #      keep the right half, snap the vertices back onto the exact field, cut edge loops along the material
-#      borders and the hood crease, then mirror. Both sides are identical and the skin is one closed surface.
+#      borders (each colour region is a field too: muzzle, inner ear, eye patches, ear tips, dark legs...)
+#      and the hood crease, then mirror. Both sides are identical and the skin is one closed surface.
 #   4. Normals come from the gradient of the field, per region, so the low-poly skin shades like the smooth
 #      form and hem, cuffs, muzzle and hood edge are crisp.
 #   5. Skin with Blender's automatic (bone heat) weights against a copy of the armature posed the same
 #      ARM_DOWN degrees, fix the weights in numpy, then un-pose every vertex back to the real T rest pose
 #      with the inverse of its own blended bone matrix. In the game the mesh is therefore exactly the
 #      designed surface when the upper arm is ARM_DOWN degrees down, and only stretches in the T-pose.
-#   6. Eyes, nose, mouth, drawstrings and the long tails are small closed shells in the same mesh. Export.
+#      The head (with its ears, however long) rides the head bone rigidly, so ears never shear.
+#   6. Eyes, nose or beak, mouth, drawstrings, the tiger's stripes (thin painted-on ribbons) and the long tails
+#      are small closed shells in the same mesh. Tails ride the hip bone rigidly. Export.
 import bpy, bmesh, os, sys, math, time, subprocess
 import numpy as np
 from mathutils import Vector, Matrix, kdtree
@@ -41,13 +53,21 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 WHICH = (argv[0] if argv else "all").lower()
 OUT_DIR = os.path.abspath(argv[1]) if len(argv) > 1 else os.path.join(REPO, "assets", "models")
-if WHICH == "all":
-    for name in ("mouse", "cat", "bear"):
+ALL = ("mouse", "cat", "bear", "rabbit", "puppy", "panda", "fox", "penguin", "hamster", "tiger")
+LIVE = ALL[:3]           # shipped before the others; players cache these files by URL
+GUARD = os.path.normcase(OUT_DIR) == os.path.normcase(os.path.join(REPO, "assets", "models")) and os.environ.get("ANIMAL_OVERWRITE_LIVE") != "1"
+if WHICH in ("all", "new"):
+    for name in (ALL if WHICH == "all" else ALL[3:]):
+        if GUARD and name in LIVE:
+            print("skipping", name, "- its committed GLB is live (build it into another folder to compare)")
+            continue
         subprocess.run([bpy.app.binary_path, "--background", "--factory-startup", "--python", os.path.abspath(__file__), "--", name, OUT_DIR], check=True)
     sys.exit(0)
 
 SRC = os.path.join(HERE, "src", "Mousey.glb")
 OUT = os.path.join(OUT_DIR, WHICH.capitalize() + "Toy.glb")
+if GUARD and WHICH in LIVE and os.path.exists(OUT):
+    raise SystemExit(OUT + " is live and cached by URL: build it into another folder, or set ANIMAL_OVERWRITE_LIVE=1")
 T0 = time.time()
 
 def log(*a):
@@ -90,9 +110,90 @@ SPECIES = {
         nose=dict(z=93.3, r=(2.4, 1.8, 1.6), mat="Accent", sink=0.45),
         mouth=dict(style="cat", w=4.6, z=90.3, d=1.6, top=92.0),
     ),
+    # ---- the seven added later. Optional keys: patch (colour of the extra "Patch" material), regions (colour regions
+    # in priority order, see REGIONS), bbox_z (top of the meshing box), eye_ring, brows, stripes, mouth=None.
+    "rabbit": dict(
+        fur=(0.86, 0.84, 0.82),        # very light warm grey-white
+        muzzle=(1.00, 1.00, 1.00),     # muzzle, eye glints, drawstrings
+        accent=(0.93, 0.42, 0.52),     # pink: inner ears, nose
+        eye=(14.2, 97.2),
+        nose=dict(z=93.2, r=(2.5, 1.9, 1.7), mat="Accent", sink=0.45),
+        mouth=dict(style="cat", w=4.0, z=90.3, d=1.5, top=92.0),
+        bbox_z=158.0,
+    ),
+    "puppy": dict(
+        fur=(0.80, 0.38, 0.12),        # shiba: warm caramel
+        muzzle=(1.00, 0.90, 0.74),     # cream: muzzle, cheeks, inner ears, brow dots, tail tip
+        accent=(0.92, 0.45, 0.47),     # (unused)
+        eye=(14.6, 97.4),
+        nose=dict(z=94.4, r=(3.6, 2.5, 2.3), mat="Eye", sink=0.55),
+        mouth=dict(style="cat", w=4.6, z=90.0, d=1.7, top=92.2),
+        regions=[("muzzle_region", "Muzzle"), ("ear_region", "Muzzle")],
+        brows=[(8.6, 106.2, (2.1, 1.5, 0.7))],
+    ),
+    "panda": dict(
+        fur=(0.90, 0.90, 0.88),        # white
+        muzzle=(1.00, 0.98, 0.95),     # muzzle, eye rings, glints, drawstrings
+        accent=(0.92, 0.45, 0.47),     # (unused)
+        patch=(0.018, 0.018, 0.022),   # black: ears, eye patches, arms below the cuff, legs below the hem
+        eye=(14.6, 97.0),
+        nose=dict(z=94.4, r=(3.4, 2.4, 2.1), mat="Eye", sink=0.55),
+        mouth=dict(style="smile", w=4.6, z=89.9, d=1.8, top=92.3),
+        regions=[("patch_region", "Patch"), ("muzzle_region", "Muzzle")],
+        body_regions=[("limb_region", "Patch")],
+        eye_ring=(5.0, 6.0, 1.35),
+    ),
+    "fox": dict(
+        fur=(0.90, 0.32, 0.07),        # fox orange
+        muzzle=(1.00, 0.97, 0.92),     # white: muzzle and cheeks, inner ears, tail tip
+        accent=(0.92, 0.45, 0.47),     # (unused)
+        patch=(0.10, 0.045, 0.03),     # dark brown ear tips
+        eye=(14.4, 97.4),
+        nose=dict(z=93.0, r=(2.6, 1.9, 1.8), mat="Eye", sink=0.45),
+        mouth=dict(style="smile", w=3.6, z=88.6, d=1.4, top=91.2),
+        regions=[("patch_region", "Patch"), ("muzzle_region", "Muzzle"), ("ear_region", "Muzzle")],
+        bbox_z=146.0,
+    ),
+    "penguin": dict(
+        fur=(0.030, 0.040, 0.085),     # dark navy
+        muzzle=(1.00, 1.00, 1.00),     # white face mask, glints, drawstrings
+        accent=(1.00, 0.40, 0.04),     # orange: beak and feet
+        eye=(11.8, 97.0),
+        nose=dict(z=91.6, r=(4.6, 3.0, 3.4), mat="Accent", sink=0.30),    # the beak
+        mouth=None,
+        regions=[("muzzle_region", "Muzzle")],
+        body_regions=[("feet_region", "Accent")],
+    ),
+    "hamster": dict(
+        fur=(0.95, 0.50, 0.13),        # golden
+        muzzle=(1.00, 0.97, 0.92),     # white: muzzle and cheeks
+        accent=(0.93, 0.45, 0.50),     # pink: inner ears, nose
+        eye=(13.4, 98.4),
+        nose=dict(z=93.6, r=(2.2, 1.7, 1.6), mat="Accent", sink=0.45),
+        mouth=dict(style="cat", w=3.6, z=90.6, d=1.4, top=92.4),
+    ),
+    "tiger": dict(
+        fur=(0.98, 0.42, 0.06),        # tiger orange
+        muzzle=(1.00, 0.96, 0.88),     # white: muzzle and cheeks, inner ears
+        accent=(0.93, 0.45, 0.50),     # pink nose
+        patch=(0.035, 0.025, 0.022),   # stripes, backs of the ears, tail rings
+        eye=(14.8, 97.2),
+        nose=dict(z=93.8, r=(3.0, 2.1, 1.9), mat="Accent", sink=0.5),
+        mouth=dict(style="cat", w=4.8, z=90.2, d=1.7, top=92.3),
+        regions=[("patch_region", "Patch"), ("muzzle_region", "Muzzle"), ("ear_region", "Muzzle")],
+        # painted-on stripes: (x, z) control points on the front of the head and the half-width; wide at the first point,
+        # pointed at the last; mirrored unless on the middle line
+        stripes=[
+            ([(0.0, 123.5), (0.0, 119.0), (0.0, 114.5)], 2.0),          # forehead: one down the middle...
+            ([(10.5, 121.5), (7.6, 118.2), (5.6, 114.2)], 1.7),         # ...and a slanted one each side
+            ([(16.5, 117.0), (12.4, 114.2), (10.0, 110.8)], 1.45),
+            ([(28.2, 97.0), (24.8, 95.4), (21.8, 94.6)], 1.65),         # cheeks: two from the side inwards
+            ([(28.0, 90.0), (25.0, 89.2), (22.4, 89.4)], 1.5),
+        ],
+    ),
 }
 if WHICH not in SPECIES:
-    raise SystemExit("species must be one of: mouse, cat, bear, all")
+    raise SystemExit("species must be one of: " + ", ".join(SPECIES) + ", all, new")
 SP = SPECIES[WHICH]
 MAIN_GREY = (0.86, 0.86, 0.86)         # hoodie: neutral light grey, the game multiplies in the player colour
 EYE_DARK = (0.035, 0.022, 0.02)
@@ -182,8 +283,11 @@ def arm_space(q):
     return out
 
 # ------------------------------------------------------------------ head blocks (everything is for +X and evaluated at |x|)
-MUZZLE_C = {"bear": (0.0, -25.0, 91.5), "mouse": (0.0, -26.0, 91.5), "cat": (0.0, -24.5, 91.0)}[WHICH]
-TAIL_C = np.array([0.0, 19.2, 44.0])     # bear only: a pom-pom sitting on the hoodie
+MUZZLE_C = {"bear": (0.0, -25.0, 91.5), "mouse": (0.0, -26.0, 91.5), "cat": (0.0, -24.5, 91.0),
+            "rabbit": (0.0, -24.5, 91.5), "puppy": (0.0, -25.0, 90.6), "panda": (0.0, -25.0, 91.5),
+            "fox": (0.0, -25.5, 90.2), "penguin": (0.0, -25.0, 91.5), "hamster": (0.0, -24.5, 91.6),
+            "tiger": (0.0, -25.0, 91.2)}[WHICH]
+TAIL_C = np.array([0.0, 19.2, 44.0])     # bear: a pom-pom sitting on the hoodie
 
 def head_bear(q):
     skull = ellipsoid(q, (0, -1.5, 100.5), (29.0, 26.5, 26.0))
@@ -232,8 +336,132 @@ def head_cat(q):
                 muzzle_region=ellipsoid(q, np.array(MUZZLE_C) + (0, -1.0, -0.2), (10.5, 8.0, 7.3)),
                 ear_region=inner - 0.7)
 
-HEAD = {"bear": head_bear, "mouse": head_mouse, "cat": head_cat}[WHICH]
-HAS_POM = WHICH == "bear"
+def flat_cone(q, a, b, ra, rb, flat, y0):
+    """Rounded cone flattened front to back by `flat` about the plane y = y0 (give a and b with y = y0)."""
+    s = np.array(q, copy=True)
+    s[..., 1] = y0 + (q[..., 1] - y0) * flat
+    return rcone(s, a, b, ra, rb) / flat
+
+def head_rabbit(q):
+    skull = ellipsoid(q, (0, -1.5, 100.0), (27.5, 25.5, 25.0))
+    cheeks = ellipsoid(q, (0, -3.0, 93.5), (27.5, 23.5, 17.5))
+    head = smin(skull, cheeks, 6.0)
+    # long upright ears, widest in the middle, flattened front to back and splayed a little; a pink dish in front
+    a, m, b = (9.6, 3.0, 115.5), (12.8, 3.0, 132.0), (15.4, 3.0, 145.0)
+    ear = smin(flat_cone(q, a, m, 5.4, 7.3, 1.9, 3.0), flat_cone(q, m, b, 7.3, 5.2, 1.9, 3.0), 2.5)
+    inner = smin(rcone(q, (10.4, -3.0, 120.0), (12.9, -3.0, 132.0), 3.0, 4.4),
+                 rcone(q, (12.9, -3.0, 132.0), (14.8, -2.6, 142.0), 4.4, 2.6), 2.0)
+    ear = smax(ear, -inner, 1.0)
+    head = smin(head, ear, 3.0)
+    head = smin(head, ellipsoid(q, MUZZLE_C, (9.0, 6.0, 6.5)), 3.0)
+    return dict(head=head,
+                muzzle_region=ellipsoid(q, np.array(MUZZLE_C) + (0, -1.0, -0.2), (10.0, 8.0, 7.3)),
+                ear_region=inner - 0.6)
+
+def head_puppy(q):
+    skull = ellipsoid(q, (0, -1.5, 100.0), (29.0, 26.0, 24.5))
+    cheeks = ellipsoid(q, (0, -3.0, 93.0), (29.5, 24.0, 17.5))
+    head = smin(skull, cheeks, 6.0)
+    # triangular upright ears, a little forward, cream inside
+    ear = flat_cone(q, (16.0, 1.0, 111.5), (21.0, 1.0, 130.0), 11.5, 2.6, 1.7, 1.0)
+    inner = rcone(q, (17.6, -5.2, 117.0), (20.6, -2.4, 127.0), 6.2, 1.3)
+    ear = smax(ear, -inner, 1.0)
+    head = smin(head, ear, 3.0)
+    head = smin(head, ellipsoid(q, MUZZLE_C, (10.5, 7.5, 7.0)), 3.0)
+    # the cream mask: muzzle plus the lower cheeks
+    mz = ellipsoid(q, np.array(MUZZLE_C) + (0, -1.0, -0.2), (11.5, 9.0, 8.0))
+    cheek = ellipsoid(q, (13.0, -19.0, 87.0), (10.0, 10.0, 6.0))
+    return dict(head=head, muzzle_region=smin(mz, cheek, 3.0), ear_region=np.maximum(inner - 0.7, 1.0 - smin(skull, cheeks, 6.0)))
+
+def head_panda(q):
+    skull = ellipsoid(q, (0, -1.5, 100.5), (29.0, 26.5, 26.0))
+    jowl = ellipsoid(q, (0, -3.0, 94.5), (28.5, 24.5, 18.5))
+    head = smin(skull, jowl, 6.0)
+    ear_c = np.array([20.5, 2.0, 122.0])
+    ear = ellipsoid(q, ear_c, (9.0, 6.8, 9.0))
+    head = smin(head, ear, 3.5)
+    head = smin(head, ellipsoid(q, MUZZLE_C, (10.5, 6.5, 7.5)), 3.0)
+    # black: the round ears (down to where they leave the skull) and tilted eye patches, low and outwards
+    ears = np.maximum(ellipsoid(q, ear_c, (10.8, 8.6, 10.8)), 0.6 - skull)
+    patch = ellipsoid(q, (15.8, -21.5, 95.2), (7.3, 9.0, 9.2), rot_y(-28))
+    return dict(head=head,
+                muzzle_region=ellipsoid(q, np.array(MUZZLE_C) + (0, -1.0, -0.2), (11.5, 8.5, 8.5)),
+                patch_region=np.minimum(ears, patch))
+
+def head_fox(q):
+    skull = ellipsoid(q, (0, -1.5, 99.5), (29.0, 26.0, 24.5))
+    cheeks = ellipsoid(q, (0, -3.0, 92.5), (30.5, 24.0, 17.0))
+    head = smin(skull, cheeks, 6.0)
+    # big pointed ears with dark tips, white inside
+    a, b = np.array([15.0, 1.5, 110.0]), np.array([25.0, 1.5, 137.0])
+    ear = flat_cone(q, a, b, 13.0, 2.4, 1.7, 1.5)
+    inner = rcone(q, (17.2, -5.4, 116.5), (23.4, -2.6, 131.5), 7.2, 1.3)
+    ear = smax(ear, -inner, 1.0)
+    head = smin(head, ear, 3.0)
+    head = smin(head, ellipsoid(q, MUZZLE_C, (9.0, 8.0, 6.5)), 3.5)       # a pointed snout
+    L = float(np.linalg.norm(b - a)); u = (b - a) / L
+    tip = np.maximum(ear - 1.5, L * 0.66 - (q - a) @ u)
+    mz = ellipsoid(q, np.array(MUZZLE_C) + (0, -1.2, -0.3), (10.0, 9.5, 7.5))
+    cheek = ellipsoid(q, (13.5, -17.5, 88.0), (12.5, 11.0, 7.0))
+    return dict(head=head, muzzle_region=smin(mz, cheek, 3.0), ear_region=np.maximum(inner - 0.7, 1.0 - smin(skull, cheeks, 6.0)), patch_region=tip)
+
+def head_penguin(q):
+    skull = ellipsoid(q, (0, -1.5, 100.5), (28.0, 26.0, 26.5))
+    jowl = ellipsoid(q, (0, -3.0, 94.0), (27.0, 24.0, 18.5))
+    head = smin(skull, jowl, 6.0)
+    # no ears, no muzzle bump: a white heart-shaped face mask round the eyes and beak
+    lobe = ellipsoid(q, (9.0, -21.0, 97.5), (10.0, 10.0, 11.5))
+    chin = ellipsoid(q, (0, -21.0, 88.5), (14.5, 10.0, 9.0))
+    return dict(head=head, muzzle_region=smin(lobe, chin, 4.0))
+
+def head_hamster(q):
+    skull = ellipsoid(q, (0, -1.0, 100.5), (27.0, 25.5, 24.5))
+    jowl = ellipsoid(q, (0, -2.5, 93.5), (28.0, 24.0, 17.5))
+    head = smin(skull, jowl, 6.0)
+    puff = ellipsoid(q, (17.5, -9.5, 89.0), (14.5, 13.0, 12.5))           # round, chubby cheek pouches
+    head = smin(head, puff, 5.0)
+    ear_c = np.array([18.0, 2.5, 120.0]); dish = ear_c + (0, -6.0, 0.5)    # small round ears
+    ear = ellipsoid(q, ear_c, (7.2, 5.2, 7.2))
+    ear = smax(ear, -sphere(q, dish, 4.6), 1.2)
+    head = smin(head, ear, 3.0)
+    head = smin(head, ellipsoid(q, MUZZLE_C, (7.5, 5.5, 5.8)), 3.0)
+    white = smin(smin(ellipsoid(q, np.array(MUZZLE_C) + (0, -1.0, -0.4), (8.5, 8.0, 7.0)),        # muzzle, cheeks and chin
+                      ellipsoid(q, (17.0, -13.5, 86.5), (15.0, 13.5, 10.5)), 4.0),             # in one piece
+                 ellipsoid(q, (0, -16.0, 84.5), (15.0, 12.0, 7.5)), 4.0)
+    return dict(head=head, muzzle_region=white, ear_region=sphere(q, dish, 5.0))
+
+def head_tiger(q):
+    skull = ellipsoid(q, (0, -1.5, 100.0), (29.5, 26.5, 25.0))
+    cheeks = ellipsoid(q, (0, -3.0, 93.0), (30.5, 24.0, 17.5))
+    head = smin(skull, cheeks, 6.0)
+    ear_c = np.array([20.5, 1.5, 120.5]); dish = ear_c + (0, -8.0, 0.5)    # round ears: white inside, dark back
+    ear = ellipsoid(q, ear_c, (9.4, 6.8, 9.4))
+    ear = smax(ear, -sphere(q, dish, 6.0), 1.5)
+    head = smin(head, ear, 3.5)
+    head = smin(head, ellipsoid(q, MUZZLE_C, (11.0, 7.0, 7.5)), 3.0)
+    back = np.maximum(np.maximum(ellipsoid(q, ear_c, (10.8, 8.4, 10.8)), (ear_c[1] + 0.8) - q[..., 1]), 0.6 - skull)
+    white = smin(ellipsoid(q, np.array(MUZZLE_C) + (0, -1.0, -0.2), (12.0, 9.0, 8.6)),
+                 ellipsoid(q, (13.5, -18.5, 87.5), (11.5, 10.5, 7.0)), 3.0)
+    return dict(head=head, muzzle_region=white, ear_region=sphere(q, dish, 6.5), patch_region=back)
+
+HEAD = {"bear": head_bear, "mouse": head_mouse, "cat": head_cat, "rabbit": head_rabbit, "puppy": head_puppy,
+        "panda": head_panda, "fox": head_fox, "penguin": head_penguin, "hamster": head_hamster, "tiger": head_tiger}[WHICH]
+# short tails that are part of the skin (they poke out through a snug hole in the hoodie); long ones are shells, below
+POM = {"bear": lambda q: sphere(q, TAIL_C, 5.0),
+       "rabbit": lambda q: sphere(q, (0.0, 19.6, 44.0), 6.2),                         # round cotton tail
+       "panda": lambda q: sphere(q, (0.0, 18.8, 43.5), 5.0),
+       "hamster": lambda q: sphere(q, (0.0, 16.8, 41.0), 3.4),                        # tiny
+       "penguin": lambda q: rcone(q, (0.0, 14.5, 39.5), (0.0, 23.0, 34.5), 5.2, 1.8),  # short and pointed
+       }.get(WHICH)
+# colour regions on the body (below the hem and past the cuffs): fields < 0 inside, like the head regions
+BODY_REGIONS = {
+    "panda": lambda q, z, xa, arm_, tail: dict(limb_region=np.minimum(np.maximum(z - 44.0, 0.3 - tail),
+                                                                      np.maximum((CUFF_X - 1.5) - xa, arm_ - 4.0))),
+    "penguin": lambda q, z, xa, arm_, tail: dict(feet_region=z - 10.0),
+}.get(WHICH)
+# faces take the first region they are inside (the hoodie always wins); edge loops are cut along each border in this order
+REGIONS = SP.get("regions", [("muzzle_region", "Muzzle"), ("ear_region", "Accent")])
+BODY_REGION_MATS = SP.get("body_regions", [])
 
 def parts(p):
     """All component distances at points p (N,3), in the modelled pose. Units are the armature's (about cm)."""
@@ -265,9 +493,11 @@ def parts(p):
     leg = smax(leg, -0.3 - z, 1.2)                       # flat sole just under z = 0, like the mouse (-0.34)
     body = smin(torso, arm_, 3.5)
     body = smin(body, leg, 5.0)
-    tail = sphere(q, TAIL_C, 5.0) if HAS_POM else np.full(x.shape, 1e3)
+    tail = POM(q) if POM else np.full(x.shape, 1e3)
     body = smin(body, tail, 1.2)
     d["body"] = body
+    if BODY_REGIONS:
+        d.update(BODY_REGIONS(q, z, xa, arm_, tail))
     d["fur"] = smin(head, body, 2.0)
     # ---- hoodie: torso and sleeves grown outwards, flaring a little at hem and cuffs
     torso_c = torso - (CLOTH_T + 1.3 * (1 - sstep(HEM_Z, HEM_Z + 10.0, z)))
@@ -366,7 +596,7 @@ def surface_nets(fn, lo, hi, h):
         quads.append(q)
     return verts, np.concatenate(quads)
 
-V, Q = surface_nets(total, (-58.0, -42.0, -4.0), (58.0, 30.0, 140.0), GRID)
+V, Q = surface_nets(total, (-58.0, -42.0, -4.0), (58.0, 30.0, SP.get("bbox_z", 140.0)), GRID)
 V = project(V, iters=4)
 log("dense mesh", len(V), "verts", len(Q), "quads")
 
@@ -540,9 +770,12 @@ def contour_cut(bm, fn, snap=0.24, mask=None):
 
 cloth_minus_fur = lambda p: (lambda d: d["cloth"] - d["fur"])(parts(p))
 hood_minus_body = lambda p: (lambda d: d["cloth_b"] - d["cloth_a"])(parts(p))
+fur_minus_cloth = lambda p: (lambda d: d["fur"] - d["cloth"])(parts(p))
 contour_cut(bm, cloth_minus_fur)
-contour_cut(bm, F("muzzle_region"))
-contour_cut(bm, F("ear_region"))
+for name, _ in REGIONS:                       # mouse, cat, bear: muzzle_region, then ear_region
+    contour_cut(bm, F(name))
+for name, _ in BODY_REGION_MATS:              # only on the fur: the borders lie under the hem and cuffs
+    contour_cut(bm, F(name), mask=fur_minus_cloth)
 contour_cut(bm, hood_minus_body, mask=cloth_minus_fur)
 bmesh.ops.triangulate(bm, faces=[f for f in bm.faces if len(f.verts) > 4])
 
@@ -574,6 +807,8 @@ MATS = {
     "Eye": material("Eye", EYE_DARK, 0.18),
     "Accent": material("Accent", SP["accent"], 0.60),
 }
+if "patch" in SP:
+    MATS["Patch"] = material("Patch", SP["patch"], 0.62)
 SLOT = {n: i for i, n in enumerate(MATS)}
 for m in MATS.values():
     body.data.materials.append(m)
@@ -582,8 +817,12 @@ bm.faces.ensure_lookup_table()
 cent = np.array([f.calc_center_median()[:] for f in bm.faces])
 dc = parts(cent)
 is_cloth = dc["cloth"] < dc["fur"]
-for f, c, m, e in zip(bm.faces, is_cloth, dc["muzzle_region"] < 0, dc["ear_region"] < 0):
-    f.material_index = SLOT["Main"] if c else SLOT["Muzzle"] if m else SLOT["Accent"] if e else SLOT["Fur"]
+paint = np.full(len(cent), SLOT["Fur"])
+for name, mat in reversed(REGIONS + BODY_REGION_MATS):     # the first region in the list wins
+    paint[dc[name] < 0] = SLOT[mat]
+paint[is_cloth] = SLOT["Main"]
+for f, k in zip(bm.faces, paint):
+    f.material_index = int(k)
     f.smooth = True
 bm.to_mesh(body.data)
 bm.free()
@@ -775,9 +1014,11 @@ def tube(name, pts, radius, mat, sides=5):
     bm.faces.new(rings[0][::-1]); bm.faces.new(rings[-1])
     return finish(name, bm, mat)
 
-def tail_tube(name, keys, r0, r1, mats, tip_from=2.0, sides=8, rings=18):
+def tail_tube(name, keys, r0, r1, mats, tip_from=2.0, sides=8, rings=18, radius=None, band=None):
     """A free-standing tail: a smooth curve through the key points, tapering from r0 to r1, round tip.
-    mats = (main material, tip material); rings past tip_from (0..1 along the tail) take the tip material."""
+    mats = (main material, tip material); rings past tip_from (0..1 along the tail) take the tip material.
+    radius(u) and band(u) (u = 0..1 along the tail) override the straight taper and the tip rule: a bushy tail,
+    a ringed tail. With radius, r1 must be radius(1)."""
     P = [np.array(k, float) for k in keys]
     P = [P[0] * 2 - P[1]] + P + [P[-1] * 2 - P[-2]]
     pts = []
@@ -793,7 +1034,7 @@ def tail_tube(name, keys, r0, r1, mats, tip_from=2.0, sides=8, rings=18):
         tan = Vector(pts[min(i + 1, rings - 1)] - pts[max(i - 1, 0)]).normalized()
         nrm = (nrm - tan * nrm.dot(tan)).normalized()          # parallel transport keeps the rings from twisting
         bin_ = tan.cross(nrm)
-        r = r0 + (r1 - r0) * i / (rings - 1)
+        r = r0 + (r1 - r0) * i / (rings - 1) if radius is None else radius(i / (rings - 1))
         loops.append([bm.verts.new(Vector(p) + (nrm * math.cos(k * 2 * math.pi / sides) + bin_ * math.sin(k * 2 * math.pi / sides)) * r) for k in range(sides)])
     tan = Vector(pts[-1] - pts[-2]).normalized()
     cap = [bm.verts.new(Vector(pts[-1]) + tan * r1 * 0.55 + (v.co - Vector(pts[-1])) * 0.62) for v in loops[-1]]
@@ -802,12 +1043,42 @@ def tail_tube(name, keys, r0, r1, mats, tip_from=2.0, sides=8, rings=18):
     for i, (a, b) in enumerate(zip(loops, loops[1:])):
         for k in range(sides):
             f = bm.faces.new((a[k], a[(k + 1) % sides], b[(k + 1) % sides], b[k]))
-            f.material_index = 1 if i / (rings - 1) >= tip_from else 0
+            u = i / (rings - 1)
+            f.material_index = int(band(u)) if band else 1 if u >= tip_from else 0
     for k in range(sides):
         f = bm.faces.new((cap[k], cap[(k + 1) % sides], tipv))
-        f.material_index = 1 if tip_from <= 1.0 else 0
+        f.material_index = int(band(1.0)) if band else 1 if tip_from <= 1.0 else 0
     bm.faces.new(loops[0][::-1])
     return finish(name, bm, list(mats))
+
+def ribbon(name, xz, half_w, mat, thick=0.5, sides=6, n=9):
+    """A painted-on stripe: a thin flat shell along the front surface through the (x, z) points, wide at the
+    first point and pointed at the last. Half of it is buried, so it reads as paint with a soft edge."""
+    P = [np.array(k, float) for k in xz]
+    P = [P[0] * 2 - P[1]] + P + [P[-1] * 2 - P[-2]]
+    pts, nrms = [], []
+    for i in range(n):
+        u = i / (n - 1) * (len(xz) - 1)
+        k = min(int(u), len(xz) - 2); f = u - k
+        p0, p1, p2, p3 = P[k], P[k + 1], P[k + 2], P[k + 3]
+        x, z = 0.5 * ((2 * p1) + (-p0 + p2) * f + (2 * p0 - 5 * p1 + 4 * p2 - p3) * f * f + (-p0 + 3 * p1 - 3 * p2 + p3) * f ** 3)
+        pt, nr = surface_hit(x, z)
+        pts.append(Vector(pt)); nrms.append(Vector(nr))
+    bm = bmesh.new()
+    rings = []
+    for i, (p, nr) in enumerate(zip(pts, nrms)):
+        u = i / (n - 1)
+        tan = (pts[min(i + 1, n - 1)] - pts[max(i - 1, 0)]).normalized()
+        side = tan.cross(nr).normalized()
+        w = half_w * max(0.10, math.sin(math.pi * (0.28 + 0.72 * u)))
+        c = p + nr * 0.05
+        rings.append([bm.verts.new(c + side * (math.cos(a) * w) + nr * (math.sin(a) * thick))
+                      for a in (k * 2 * math.pi / sides for k in range(sides))])
+    for r0, r1 in zip(rings, rings[1:]):
+        for k in range(sides):
+            bm.faces.new((r0[k], r0[(k + 1) % sides], r1[(k + 1) % sides], r1[k]))
+    bm.faces.new(rings[0][::-1]); bm.faces.new(rings[-1])
+    return finish(name, bm, mat)
 
 head_parts, body_parts, hip_parts = [], [], []
 EX, EZ = SP["eye"]
@@ -821,7 +1092,7 @@ pt, n = surface_hit(0.0, NO["z"])
 head_parts.append(blob("Nose", pt, n, NO["r"], MATS[NO["mat"]], segs=(18, 8), sink=NO["sink"]))
 MO = SP["mouth"]
 mouth = []
-for k in range(11):
+for k in (range(11) if MO else ()):
     u = -1 + 2 * k / 10
     if MO["style"] == "cat":      # two small arcs meeting under the nose
         xs, zs = MO["w"] * u, MO["z"] - MO["d"] * math.sin(math.pi * abs(u)) ** 0.8
@@ -830,13 +1101,25 @@ for k in range(11):
         xs, zs = MO["w"] * math.sin(ang), MO["z"] - MO["d"] * (math.cos(ang) - math.cos(math.radians(58)))
     p, n = surface_hit(xs, zs)
     mouth.append(p + n * 0.05)
-head_parts.append(tube("Mouth", mouth, 0.42, MATS["Eye"]))
-mid_z = MO["z"] if MO["style"] == "cat" else MO["z"] - MO["d"] * (1 - math.cos(math.radians(58))) - 0.2
-philtrum = []
-for k in range(3):
-    p, n = surface_hit(0.0, MO["top"] + (mid_z - MO["top"]) * k / 2)
-    philtrum.append(p + n * 0.05)
-head_parts.append(tube("Philtrum", philtrum, 0.42, MATS["Eye"]))
+if MO:      # the penguin has a beak instead
+    head_parts.append(tube("Mouth", mouth, 0.42, MATS["Eye"]))
+    mid_z = MO["z"] if MO["style"] == "cat" else MO["z"] - MO["d"] * (1 - math.cos(math.radians(58))) - 0.2
+    philtrum = []
+    for k in range(3):
+        p, n = surface_hit(0.0, MO["top"] + (mid_z - MO["top"]) * k / 2)
+        philtrum.append(p + n * 0.05)
+    head_parts.append(tube("Philtrum", philtrum, 0.42, MATS["Eye"]))
+if "eye_ring" in SP:      # panda: a white ring keeps the eyes readable inside the black patches
+    for sx in (1, -1):
+        pt, n = surface_hit(sx * EX, EZ)
+        head_parts.append(blob("EyeRing", pt, n, SP["eye_ring"], MATS["Muzzle"], segs=(20, 8), sink=0.62))
+for bx, bz, br in SP.get("brows", []):      # shiba: cream dots above the eyes
+    for sx in (1, -1):
+        pt, n = surface_hit(sx * bx, bz)
+        head_parts.append(blob("Brow", pt, n, br, MATS["Muzzle"], segs=(12, 6), sink=0.45))
+for xz, hw in SP.get("stripes", []):     # tiger
+    for sx in ((1,) if all(abs(x) < 1e-6 for x, _ in xz) else (1, -1)):
+        head_parts.append(ribbon("Stripe", [(sx * x, z) for x, z in xz], hw, MATS["Patch"]))
 
 # hoodie drawstrings: two short cords with a knot, the cheapest thing that says "hoodie" from the front
 for sx in (1, -1):
@@ -854,6 +1137,18 @@ if WHICH == "mouse":      # long and thin, trailing low with the tip turned up
 elif WHICH == "cat":      # thick, standing up behind the back in a curve, pale tip
     hip_parts.append(tail_tube("Tail", [(0, 9, 32.5), (0, 20, 32), (0.5, 28, 36), (2, 32.5, 45), (4, 33.5, 54), (7, 32, 62.5), (10.5, 29, 69), (14, 25.5, 73)],
                                4.4, 3.5, (MATS["Fur"], MATS["Muzzle"]), tip_from=0.78, sides=9, rings=20))
+elif WHICH == "puppy":    # shiba: up from the rump and curled over onto the back, cream tip
+    hip_parts.append(tail_tube("Tail", [(0, 9, 33), (0, 18, 32.5), (1, 26.5, 35), (2, 32, 42), (3, 31, 50), (3.5, 25.5, 53.5), (3.5, 20.5, 50), (3, 20.5, 44.5)],
+                               5.0, 3.4, (MATS["Fur"], MATS["Muzzle"]), tip_from=0.74, sides=9, rings=22))
+elif WHICH == "fox":      # big and bushy, sweeping out and up, white tip
+    hip_parts.append(tail_tube("Tail", [(0, 9, 33), (1, 18, 31.5), (3, 27.5, 34), (6, 34.5, 41), (9, 38, 50), (11, 37.5, 59), (12, 33.5, 67)],
+                               3.4, 3.4, (MATS["Fur"], MATS["Muzzle"]), tip_from=0.8, sides=10, rings=22,
+                               radius=lambda u: 3.4 + 7.6 * math.sin(math.pi * u ** 1.3)))
+elif WHICH == "tiger":    # like the cat's, with dark rings and a dark tip
+    rings_at = ((0.36, 0.44), (0.54, 0.62), (0.72, 0.80))
+    hip_parts.append(tail_tube("Tail", [(0, 9, 32.5), (0, 20, 32), (0.5, 28, 36), (2, 32.5, 45), (4, 33.5, 54), (7, 32, 62.5), (10.5, 29, 69), (14, 25.5, 73)],
+                               4.3, 3.5, (MATS["Fur"], MATS["Patch"]), sides=9, rings=24,
+                               band=lambda u: u >= 0.9 or any(a <= u < b for a, b in rings_at)))
 
 for ob in head_parts:
     ob.vertex_groups.new(name="mixamorigHead").add(list(range(len(ob.data.vertices))), 1.0, "REPLACE")
