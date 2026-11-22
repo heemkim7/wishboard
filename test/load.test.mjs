@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { register } from 'node:module';
 import { describe, it } from 'node:test';
 import { loadBudget, BUDGET } from '../tools/load-budget.mjs';
-import { MODEL_URL, ENV_PHOTOS, envPhotoUrl, modelFor, seesAvatar, SEE_R, prefetchDelay, PREFETCH_MS } from '../ts3d/loadplan.js';
+import { MODEL_URL, ENV_PHOTOS, envPhotoUrl, modelFor, seesAvatar, SEE_R, prefetchDelay, PREFETCH_MS, prefetchIds, PREFETCH_MAX } from '../ts3d/loadplan.js';
 
 // avatars.js imports 'three' through the page's import map; map it to the vendored copy for this process.
 const VENDOR = new URL('../vendor/three/', import.meta.url).href;
@@ -17,7 +17,10 @@ const CLIPS = ['Idle', 'Walking', 'Running', 'Dance', 'Sitting', 'Wave', 'Jump',
 // The three toys from tools/blender/build_animal.py share one material list. `Main` is the hoodie, the only material
 // the game tints; Fur, Muzzle, Eye and Accent keep the colours in the file.
 const TOY = ['Accent', 'Eye', 'Fur', 'Main', 'Muzzle'];
-const MATERIALS = { 1: TOY, 2: TOY, 3: TOY };
+const MATERIALS = Object.fromEntries(Object.keys(MODEL_URL).map((id) => [id, TOY]));
+// The ten species' models; the ones not built yet (another task adds them) are skipped until their file is in assets/models.
+const IDS = Object.keys(MODEL_URL).map(Number);
+const onDisk = (id) => existsSync(new URL('..' + MODEL_URL[id], import.meta.url));
 const JOINTS = ['Hips', 'Spine', 'Spine1', 'Spine2', 'Neck', 'Head',
   ...['Left', 'Right'].flatMap((s) => [`${s}Shoulder`, `${s}Arm`, `${s}ForeArm`, `${s}Hand`, `${s}UpLeg`, `${s}Leg`, `${s}Foot`, `${s}ToeBase`,
     ...['Thumb', 'Index', 'Middle', 'Ring'].flatMap((f) => [1, 2, 3].map((i) => `${s}Hand${f}${i}`))])]
@@ -40,7 +43,7 @@ function webpSize(buf) {
 }
 
 describe('first load budget', () => {
-  for (const species of [1, 2, 3]) {
+  for (const species of IDS.filter(onDisk)) {
     it(`a phone (low tier, species ${species}) enters after at most ${BUDGET.boot / 1e6} MB and has the first minute within ${BUDGET.first / 1e6} MB`, () => {
       const r = loadBudget({ quality: 'low', species });
       assert.deepEqual(r.unclassified, []);
@@ -80,14 +83,18 @@ describe('first load budget', () => {
 });
 
 describe('avatar models', () => {
-  it('are the three toy files, and the old ones are gone from the served folder', () => {
-    assert.deepEqual(MODEL_URL, { 1: '/assets/models/MouseToy.glb', 2: '/assets/models/CatToy.glb', 3: '/assets/models/BearToy.glb' });
+  it('are the ten toy files, and the old ones are gone from the served folder', () => {
+    assert.deepEqual(MODEL_URL, {
+      1: '/assets/models/MouseToy.glb', 2: '/assets/models/CatToy.glb', 3: '/assets/models/BearToy.glb', 4: '/assets/models/RabbitToy.glb', 5: '/assets/models/PuppyToy.glb',
+      6: '/assets/models/PandaToy.glb', 7: '/assets/models/FoxToy.glb', 8: '/assets/models/PenguinToy.glb', 9: '/assets/models/HamsterToy.glb', 10: '/assets/models/TigerToy.glb',
+    });
+    for (const id of [1, 2, 3]) assert.ok(onDisk(id), MODEL_URL[id]);
     for (const old of ['Mousey.glb', 'Cat.glb', 'Bear.glb']) assert.equal(existsSync(new URL('../assets/models/' + old, import.meta.url)), false, old);
     // The Mixamo armature and clips the build script starts from live under tools/, which is not served.
     assert.equal(existsSync(new URL('../tools/blender/src/Mousey.glb', import.meta.url)), true);
   });
-  for (const id of [1, 2, 3]) {
-    it(`${MODEL_URL[id]} keeps clips, materials and joints and needs no decoder`, () => {
+  for (const id of IDS) {
+    it(`${MODEL_URL[id]} keeps clips, materials and joints and needs no decoder`, { skip: onDisk(id) ? false : 'not built yet' }, () => {
       const { size, json, bin } = glb(id);
       const clips = json.animations.map((a) => a.name);
       for (const c of CLIPS) assert.ok(clips.includes(c), c);
@@ -110,7 +117,7 @@ describe('avatar models', () => {
     });
   }
   it('tints the hoodie of every species: one neutral grey Main primitive each, and avatars.js renames nothing', () => {
-    for (const id of [1, 2, 3]) {
+    for (const id of IDS.filter(onDisk)) {
       const { json } = glb(id);
       const main = json.materials.findIndex((m) => m.name === 'Main');
       assert.equal(json.meshes.flatMap((m) => m.primitives).filter((p) => p.material === main).length, 1, MODEL_URL[id]);
@@ -141,6 +148,13 @@ describe('what to fetch when', () => {
     assert.equal(seesAvatar(SEE_R + 1, true), false);
     assert.equal(seesAvatar(10, false), false);
     assert.equal(seesAvatar(NaN, true), false);
+  });
+  it('prefetches only species the room wears, most worn first, a few at most, never loaded, failed or unknown ones', () => {
+    assert.deepEqual(prefetchIds([]), []);
+    assert.deepEqual(prefetchIds([7, 7, 4, 10, 4, 7, 2]), [7, 4, 2].slice(0, PREFETCH_MAX));
+    assert.deepEqual(prefetchIds([5, 5, 6, 6, 6, 8, 9], { loaded: new Map([[6, {}]]), missing: S(8) }), [5, 9]);
+    assert.deepEqual(prefetchIds([0, 11, 'x', null, 2.5, -1]), []);
+    assert.ok(PREFETCH_MAX >= 1 && PREFETCH_MAX < IDS.length);
   });
   it('prefetches the other species a minute after entering, never on low or Save-Data', () => {
     assert.equal(prefetchDelay({ quality: 'high' }), PREFETCH_MS);
@@ -188,6 +202,8 @@ describe('avatar system downloads lazily', async () => {
     assert.equal(bear.fallback, false);
     assert.equal(bear.modelSpecies, 3);
     av.prefetch();
+    assert.deepEqual(calls, [], 'no blind prefetch of every species');
+    av.prefetch([1, 3]);
     assert.deepEqual(calls.map((c) => c.url), [MODEL_URL[1]]);
   });
 

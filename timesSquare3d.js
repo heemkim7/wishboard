@@ -24,7 +24,7 @@ import { claimRockefeller, buildRockefeller } from './ts3d/rockefeller.js?v=2026
 import { claimIcons, buildIcons } from './ts3d/icons.js?v=202611212346';
 import { buildLandmarks } from './ts3d/landmarks.js?v=202611212346';
 import { createAvatars, EMOTES, REACTIONS, AVATAR_COLORS, speciesId } from './ts3d/avatars.js?v=202611212346';
-import { seesAvatar, prefetchDelay } from './ts3d/loadplan.js?v=202611212346';
+import { seesAvatar, prefetchDelay, prefetchIds } from './ts3d/loadplan.js?v=202611212346';
 import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, paintLabel, fontsReady, chars, hashStr } from './ts3d/art.js?v=202611212346';
 import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=202611212346';
 import { taxiExit, EXIT_SLOW, nextOfferDelay, fareWait } from './interact.js?v=202611212346';
@@ -2637,12 +2637,14 @@ void main(){
     setSpecies(id) { species = speciesId(id); me.setSpecies(species); netState.av = species; },
     // A species picked in the character sheet: start its download now so saving swaps sooner.
     wantSpecies(id) { avatars.want(speciesId(id)); },
-    // After entering: fetch the other species while idle, a minute later (skipped on low tier and Save-Data).
+    // After entering: a minute later, while idle, fetch the species the room's other players wear (most worn first, a few at
+    // most), so a peer walking into view already has its body. Skipped on low tier and Save-Data; on-sight want() covers the rest.
     prefetchAvatars() {
       const ms = prefetchDelay({ quality, saveData: !!navigator.connection?.saveData });
       if (ms == null || prefetchArmed) return;
       prefetchArmed = true;
-      setTimeout(() => (window.requestIdleCallback || ((f) => setTimeout(f, 0)))(() => avatars.prefetch(), { timeout: 15000 }), ms);
+      const run = () => avatars.prefetch(prefetchIds([...remotes.values()].map((r) => r.av.species), { loaded: avatars.sys.species, missing: avatars.sys.missing }));
+      setTimeout(() => (window.requestIdleCallback || ((f) => setTimeout(f, 0)))(run, { timeout: 15000 }), ms);
     },
     setEquip(ids) {
       myEquip = (Array.isArray(ids) ? ids : []).map((id) => String(id || '')).filter((id) => id && id !== 'taxi').slice(0, 4);

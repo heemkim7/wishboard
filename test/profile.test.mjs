@@ -3,10 +3,12 @@ import { readFileSync } from 'node:fs';
 import { it } from 'node:test';
 import { setSpecies } from '../profile.js';
 
-it('keeps species inside 1..3 and names the equip RPC', () => {
+it('keeps species inside 1..10 and names the equip RPC', () => {
   assert.equal(setSpecies(2), 2);
   assert.equal(setSpecies(3), 3);
-  assert.equal(setSpecies(9), 1);
+  assert.equal(setSpecies(9), 9);
+  assert.equal(setSpecies(10), 10);
+  assert.equal(setSpecies(11), 1);
   assert.equal(setSpecies(0), 1);
   const sql = readFileSync(new URL('../schema.sql', import.meta.url), 'utf8');
   assert.match(sql, /FUNCTION public\.equip_cosmetic\(p_key TEXT, p_actor_id TEXT, p_cosmetic_id TEXT\)/);

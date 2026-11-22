@@ -3677,10 +3677,17 @@ export function createUI(root, hooks) {
     }, true);
   }
 
+  // Ten tiles, five a row (index.html .species-grid): the species' thumbnail, or its glyph while the picture is missing or fails, and its name.
   function speciesPicker(current, onPick) {
-    const wrap = h('div', { class: 'species' });
+    const wrap = h('div', { class: 'species-grid', role: 'group', 'aria-label': '캐릭터' });
+    const glyph = (s) => h('span', { class: 'glyph', 'aria-hidden': 'true', text: s.glyph });
     for (const s of SPECIES) {
-      const b = h('button', { type: 'button', class: s.id === current ? 'on' : '', text: `${s.glyph} ${s.label}`, onclick: () => { for (const other of wrap.children) other.classList.toggle('on', other === b); onPick(s.id); } });
+      const pic = s.thumb ? h('img', { src: s.thumb, alt: '', width: 36, height: 36, loading: 'lazy', decoding: 'async' }) : glyph(s);
+      if (s.thumb) pic.addEventListener('error', () => pic.replaceWith(glyph(s)), { once: true });
+      const b = h('button', { type: 'button', class: s.id === current ? 'on' : '', 'aria-pressed': String(s.id === current), onclick: () => {
+        for (const other of wrap.children) { other.classList.toggle('on', other === b); other.setAttribute('aria-pressed', String(other === b)); }
+        onPick(s.id);
+      } }, pic, h('span', { class: 'lbl', text: s.label }));
       wrap.append(b);
     }
     return wrap;

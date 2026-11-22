@@ -2,7 +2,7 @@
 import { Net, CDN, guestToken } from './net.js?v=202611212346';
 import { createTimesSquare, AVATAR_COLORS, taxiTrainMult } from './timesSquare3d.js?v=202611212346';
 import { speciesId } from './ts3d/avatars.js?v=202611212346';
-import { equip, loadProfile, saveColor, saveNick, saveSpecies, setSpecies } from './profile.js?v=202611212346';
+import { equip, loadProfile, profileSpecies, saveColor, saveNick, saveSpecies, setSpecies } from './profile.js?v=202611212346';
 import { starSpot, insideLoop } from './ts3d/layout.js?v=202611212346';
 import { createUI } from './ui.js?v=202611212346';
 import { haptic, startMusic } from './audio.js?v=202611212346';
@@ -2202,7 +2202,7 @@ async function pullProfile() {
       equip: Array.isArray(p.equip) ? p.equip.slice(0, 4) : [],
       owned: Array.isArray(p.owned) ? p.owned.slice(0, 12) : [],
     };
-    state.species = setSpecies(p.species);
+    state.species = profileSpecies(p, state.species);
     keep(SPECIES_KEY, String(state.species));
     if (isColor(p.color)) {
       state.color = p.color;
