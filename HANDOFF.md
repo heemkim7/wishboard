@@ -6,8 +6,8 @@
 
 | 무엇 | 상태 |
 | --- | --- |
-| 실서비스 | https://studio.wishboard.workers.dev, Worker `studio` 버전 `256d7ee8-5737-4bf4-a839-8d56ad47d604`(2026-11-22 11:11 KST 배포, 4차 작업, 커밋 `9018ab5`, 빌드 id `202611221059`). 배포 뒤 공개 파일 122개가 커밋과 같았고 숨길 경로는 모두 404, `/rt/world` 81칸, 새 손님의 코인 보내기는 `손님은 코인을 보낼 수 없어요…`로 거절(새 서버 코드 확인). |
-| Git | `commercial-build`, 빌드 id `202611221059`. GitHub `heemkim7/wishboard`에 푸시함(2026-11-22, `aef1e9f..38ab22d`, 주인이 "푸시해 줘"). `main`은 한참 뒤(`59d054a`)이고 합치지 않았다. |
+| 실서비스 | https://studio.wishboard.workers.dev, Worker `studio` 버전 `256d7ee8-5737-4bf4-a839-8d56ad47d604`(2026-11-22 11:11 KST 배포, 4차 작업, 커밋 `9018ab5`, 빌드 id `202611221059`). 그 뒤의 옷 색 16색(`f44df4b`, 빌드 id `202611221134`)은 **아직 배포하지 않았다**. 배포 뒤 공개 파일 122개가 커밋과 같았고 숨길 경로는 모두 404, `/rt/world` 81칸, 새 손님의 코인 보내기는 `손님은 코인을 보낼 수 없어요…`로 거절(새 서버 코드 확인). |
+| Git | **`main`에서 작업한다.** 2026-11-22에 주인이 "main으로 합쳐 줘"라고 해서 `main`을 `commercial-build`까지 앞으로 당겨(`59d054a..f44df4b`, 되감기 없음) GitHub `heemkim7/wishboard`에 올렸다. `commercial-build`는 그 직전(`c1ec486`)에 남아 있고 더 쓰지 않는다. `feat/hanriver-penthouse`는 실험이라 건드리지 않는다. |
 | 되돌리기 | `npx wrangler rollback b9c3aa62-1528-42f0-bb30-946ce052a782`(3차 작업 빌드). 운영 DB는 새 마이그레이션이 적용된 채로 남는데, 3차 Worker도 새 DB에서 동작한다(배포 전 몇 분 동안 실제로 그 조합으로 돌았고 `/rt/world`·`/rt/config`가 정상이었다. 새 칸 20개는 옛 코드가 무시한다). 되돌린 뒤 `/rt/config`에 `invite: true`가 있는지 본다. |
 | Worker 시크릿 | `ADMIN_KEY` `FLUSH_KEY` `GUEST_KEY` `INVITE_ON`(=1, 친구 초대 켬) `VAPID_PRIV`. 값은 `.dev.vars`에만 있다. |
 | 운영 DB 마이그레이션 | **모두 적용됨**(2026-11-22, 주인이 "SQL 실행 후 배포"): `2026-11-21-mid.sql` 1~4부, `2026-11-22-forget-login.sql`, `2026-11-22-species.sql`, `2026-11-22-boards.sql`, `2026-11-22-coins.sql` 1부. 결과 줄은 모두 `applied = true`, 뒤 확인 조회: 종 CHECK 1~10, 거리 칸 50, 바닥가 31번 150·50번 250·51번 0, 무료 첫 칸 20, `tribe_roofs` 있음, 코인 트리거 2개, 새 표(`gone_logins` `starter_taken` `tribe_roofs`) RLS 켬, 로그인 수 2 그대로. **안 함**: 코인 2부(옛 미확인 가입 확인 처리, 대상 1개, 주인 결정). |
