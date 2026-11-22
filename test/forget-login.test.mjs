@@ -199,7 +199,7 @@ describe('withdrawal before the migration: forget_login is not in the database',
       s.clock.add(600001); await s.raw('/rt/config'); assert.equal(s.state.slowDone, 0); await s.drain(); assert.equal(s.state.slowDone, 1);
       s.clock.add(600001); await s.raw('/rt/config?forget=1'); assert.equal(s.state.slowDone, 2); await s.drain(); assert.equal(s.probes(), 4);
       s.state.slow = null;
-      assert.deepEqual(log, []); // no Durable Object call for any of it
+      assert.deepEqual(log.filter((x) => x !== 'ops.opsMaintGet'), []); // no Durable Object call for any of it (but the maintenance notice, ops.js: once a minute per isolate)
       assert.deepEqual([...new Set(s.state.rpcs.filter((x) => x.startsWith('forget_login')))], ['forget_login probe']); assert.equal(UUID.test('probe'), false); // only ever with an id no account can have
     } finally { s.done(); }
   });
@@ -251,7 +251,7 @@ function after(label, makeDb, skip) {
         assert.equal((await s.config('?forget=1')).forget, true); // the remembered no of the tests above is days old: asked now, and waited for
         assert.equal((await s.config()).forget, true);
         s.clock.add(3600000); assert.equal((await s.config()).forget, true); s.state.installed = false; assert.equal((await s.config('?forget=1')).forget, true);
-        assert.ok(s.probes() - n0 <= 1); assert.deepEqual(log, []);
+        assert.ok(s.probes() - n0 <= 1); assert.deepEqual(log.filter((x) => x !== 'ops.opsMaintGet'), []); // the maintenance notice (ops.js) is the only DO read, once a minute per isolate
       } finally { s.done(); }
     });
 

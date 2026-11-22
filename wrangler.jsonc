@@ -26,7 +26,9 @@
     // new guests minted by POST /rt/guest (renewals and handovers are not counted)
     { "name": "GUEST_RL", "namespace_id": "4701", "simple": { "limit": 10, "period": 60 } },
     // POST /rt/event
-    { "name": "EVENT_RL", "namespace_id": "4702", "simple": { "limit": 600, "period": 60 } }
+    { "name": "EVENT_RL", "namespace_id": "4702", "simple": { "limit": 600, "period": 60 } },
+    // POST /rt/err, POST /rt/support, GET /rt/health (ops.js opsRate; one key per route and IP)
+    { "name": "OPS_RL", "namespace_id": "4711", "simple": { "limit": 20, "period": 60 } }
   ],
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Meter", "Room"] }
