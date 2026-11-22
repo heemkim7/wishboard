@@ -236,7 +236,7 @@ const ui = createUI(document.getElementById('ui'), {
   wear: (id) => wear(id),
   unwear: (kind) => unwear(kind),
   shop: () => loadShop(),
-  buyCosmetic: (id) => buyCosmetic(id),
+  buyCosmetic: (id, price) => buyCosmetic(id, price),
   hasSession: () => !!recall(NICK_KEY),
   actorId: () => net.id,
   isGuest: () => accountReady && !sessionUser,
@@ -1101,12 +1101,20 @@ function openAdLink(ad) {
   try { window.open(ad.u, '_blank', 'noopener,noreferrer'); } catch { /* blocked: nothing to count */ return; }
   net._plazaPost('/rt/ads/click', { b: ad.id }).catch(() => { });
 }
+// An id counts as reported only once the Worker took the report; a failed one is tried once more 20 s later, then waits for the next round.
 const adSent = new Set();
+let adSending = false;
+async function sendAdSeen(ids, retry) {
+  if (!ids.length) return;
+  try { await net._plazaPost('/rt/ads/seen', { b: ids }); for (const id of ids) adSent.add(id); }
+  catch { if (retry) { await sleep(20000); await sendAdSeen(ids.filter((id) => !adSent.has(id)), false); } }
+}
 setInterval(() => {
+  if (adSending) return;
   const ids = (world?.adSeen?.() || []).filter((id) => !adSent.has(id)).slice(0, 6);
   if (!ids.length) return;
-  for (const id of ids) adSent.add(id);
-  net._plazaPost('/rt/ads/seen', { b: ids }).catch(() => { });
+  adSending = true;
+  sendAdSeen(ids, true).finally(() => { adSending = false; });
 }, 120000);
 
 async function refreshWorld() {
@@ -2314,8 +2322,9 @@ async function unwear(kind) {
 }
 // 꾸미기 상점: the database charges its own price and equips what was bought. The room's pending coins are settled on the way (like every
 // spend), so the answer's remaining_coins is the whole wallet. Not a league spend (no leagueSoon). Throws the server's line on a refusal.
-async function buyCosmetic(id) {
-  const res = await net._plazaPost('/rt/shop/buy', { cosmetic_id: id });
+// price: the one the sheet showed; the database refuses the buy when its price is another (code 'price', the live price in e.data.price).
+async function buyCosmetic(id, price) {
+  const res = await net._plazaPost('/rt/shop/buy', { cosmetic_id: id, ...(Number.isInteger(price) && price > 0 ? { price } : {}) });
   settle(res);
   await pullProfile();
   return res;

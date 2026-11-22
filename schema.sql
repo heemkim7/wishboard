@@ -2231,7 +2231,9 @@ $$;
 
 -- One purchase, all or nothing: the wallet row is locked first, so two buys of one account run one after the other and the second sees the
 -- first one's item (owned). The price is the database's. The bought item is equipped in its kind. Not counted in wallets.spent or the league.
-CREATE OR REPLACE FUNCTION public.buy_cosmetic(p_key TEXT, p_actor_id TEXT, p_cosmetic_id TEXT)
+-- p_price: the price the player was shown; when given and not the database's, nothing is bought ('price', with the database's price).
+DROP FUNCTION IF EXISTS public.buy_cosmetic(TEXT, TEXT, TEXT);
+CREATE OR REPLACE FUNCTION public.buy_cosmetic(p_key TEXT, p_actor_id TEXT, p_cosmetic_id TEXT, p_price INT DEFAULT NULL)
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -2250,6 +2252,9 @@ BEGIN
   SELECT kind, price INTO v_kind, v_price FROM public.cosmetics WHERE id = p_cosmetic_id;
   IF v_kind IS NULL OR v_price IS NULL OR v_price <= 0 THEN
     RETURN jsonb_build_object('ok', false, 'error', 'item');
+  END IF;
+  IF p_price IS NOT NULL AND p_price <> v_price THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'price', 'price', v_price);
   END IF;
   SELECT coins INTO v_coins FROM public.wallets WHERE actor_id = p_actor_id FOR UPDATE;
   IF NOT FOUND THEN
@@ -2331,11 +2336,11 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION public.shop_list(TEXT) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.buy_cosmetic(TEXT, TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.buy_cosmetic(TEXT, TEXT, TEXT, INT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.unequip_cosmetic(TEXT, TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.move_cosmetics(TEXT, TEXT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.shop_list(TEXT) TO anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.buy_cosmetic(TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.buy_cosmetic(TEXT, TEXT, TEXT, INT) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.unequip_cosmetic(TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.move_cosmetics(TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
 

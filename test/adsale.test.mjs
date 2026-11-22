@@ -17,7 +17,7 @@ globalThis.WebSocketRequestResponsePair = class { constructor(req, res) { this.r
 const { Room, Meter } = await import('../worker.js');
 const worker = (await import('../worker.js')).default;
 const S = await import('../adsale.js');
-const { adsOn, reportHtml, adsWorldDrop } = await import('../adsrv.js');
+const { adsOn, reportHtml, adsWorldDrop, adsWorld, adsDb, ADS_ERR } = await import('../adsrv.js');
 const { policyDoc } = await import('../legal.js');
 const { SLOT_IDS, SLOT_RE } = await import('../balance.js');
 const read = (p) => readFileSync(new URL('../' + p, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -50,7 +50,7 @@ function makeEnv(extra = {}) {
   return env;
 }
 const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json' } });
-const fakeNet = (state) => async (url) => { const u = String(url); state.calls.push(u); if (u.includes('/rest/v1/') && !u.includes('/rpc/')) return json([]); if (u.includes('/rpc/')) return json({ ok: true }); return new Response('missing', { status: 404 }); };
+const fakeNet = (state) => async (url) => { const u = String(url); state.calls.push(u); if (u.includes('/.well-known/jwks.json')) return json({ keys: state.jwks || [] }); if (u.includes('/rest/v1/') && !u.includes('/rpc/')) return json([]); if (u.includes('/rpc/')) return json({ ok: true }); return new Response('missing', { status: 404 }); };
 let clockBase = Date.parse('2027-09-01T03:00:00Z'); // 12:00 KST
 function setup() {
   clockBase += 400 * 864e5; let t = clockBase; const origNow = Date.now, origFetch = globalThis.fetch, state = { calls: [] };
@@ -320,7 +320,7 @@ describe('the Worker: /rt/ads/*', { concurrency: false }, () => {
       // clicks and sightings: a token is needed; before the booking starts nothing counts; then once per account per day
       const g1 = await H.guest(), g2 = await H.guest(), auth = (t) => ({ authorization: 'Bearer ' + t });
       assert.equal((await H.post('/rt/ads/click', { b: bk.id })).status, 401);
-      assert.equal((await (await H.post('/rt/ads/click', { b: bk.id }, auth(g1))).json()).n, 0); // not started
+      assert.equal((await H.post('/rt/ads/click', { b: bk.id }, auth(g1))).status, 204); // not started: no DO call either
       clock.to(S.dayStart(start) + 3600e3);
       for (let i = 0; i < 3; i++) await H.post('/rt/ads/click', { b: bk.id }, auth(g1));
       assert.equal((await (await H.post('/rt/ads/click', { b: bk.id }, auth(g2))).json()).n, 1);
@@ -333,8 +333,9 @@ describe('the Worker: /rt/ads/*', { concurrency: false }, () => {
       assert.equal(rep.status, 200); assert.match(rep.headers.get('content-type'), /text\/html/); assert.equal(rep.headers.get('x-robots-tag'), 'noindex');
       const html = await rep.text();
       assert.match(html, /광고 리포트/); assert.match(html, /게임이 센 수/); assert.match(html, /보장된 노출이 아니에요/);
-      assert.match(html, new RegExp('<td>' + start + '</td><td>0</td><td>2</td><td>1</td>'));
-      assert.match(html, new RegExp('<td>' + end + '</td><td>0</td><td>1</td><td>1</td>'));
+      const cells = (...a) => a.map((x) => '<td>' + x + '</td>').join(''); // day, visitors, clicks (all, linked, guests), seen (all, linked, guests)
+      assert.ok(html.includes(cells(start, 0, 2, 0, 2, 1, 0, 1)), 'guests only');
+      assert.ok(html.includes(cells(end, 0, 1, 0, 1, 1, 0, 1)));
       for (const secret of ['owner@shop.co.kr', '꽃집 하루<', '010-1234-5678', 'guest:', id]) assert.equal(html.includes(secret), false, secret);
       assert.equal((await H.get('/rt/ads/report/' + bk.tok.slice(0, 31) + '0')).status, 404);
       assert.equal((await H.get('/rt/ads/report/' + bk.id)).status, 404);
@@ -421,5 +422,184 @@ describe('wiring and copy', () => {
     for (const s of ['광고 전용 화면', '거절하거나', '보장하지 않', '돌려드립니다', '날수만큼 나누어', '‘광고’ 표시', '전광판·토지·코인을 얻지 않습니다']) assert.ok(ad.p.includes(s), s);
     for (const s of ['회사 또는 이름', '이메일', '1년 뒤 지웁니다', '되돌릴 수 없는 값', '날짜별 합계']) assert.ok(pr.p.includes(s), s);
     for (const s of t.sections.concat(p.sections)) assert.equal(/[<>]/.test(s.p), false, s.h);
+  });
+  it('the 9 pm sponsor is said to take all five screens for 60 seconds at 21:00 KST on its days, in the products and the terms', () => {
+    const ad = policyDoc('terms').sections.find((s) => s.h === '광고 서비스').p;
+    assert.ok(ad.includes('한국 시간 21시 정각부터 60초 동안 광고 화면 다섯 곳 모두를 차지'), ad);
+    assert.ok(ad.includes('링크 클릭과 화면 봄도 세지 않습니다'));
+    assert.match(S.AD_PRODUCTS.sponsor9.desc, /밤 9시 정각부터 60초 동안 광고 화면 다섯 곳 모두/);
+    for (const k of ['screen', 'cheer']) assert.match(S.AD_PRODUCTS[k].desc, /밤 9시 스폰서가 있는 날은 21시부터 60초 동안 스폰서 광고가 대신 나가요/, k);
+    assert.ok(policyDoc('privacy').sections.find((s) => s.h === '광고 문의').p.includes('연결된 계정과 게스트를 나눈 수'));
+  });
+});
+
+// ---- the fixes after the fifth-round review ---------------------------------------------------------------------------------------
+function spyDo(env) {
+  const log = [];
+  for (const ns of [env.METER, env.ROOM]) { const real = ns.get; ns.get = (name) => { const s = real(name); return new Proxy(s, { get: (t, k) => typeof t[k] === 'function' ? (...a) => { if (name !== 'day') log.push(name + '.' + String(k)); return t[k](...a); } : t[k] }); }; }
+  return log;
+}
+async function userToken(state, clock, sub) {
+  const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  state.jwks = [{ ...(await crypto.subtle.exportKey('jwk', pair.publicKey)), kid: 'adsale-kid' }];
+  const enc = (o) => Buffer.from(JSON.stringify(o)).toString('base64url'), head = enc({ alg: 'ES256', kid: 'adsale-kid' });
+  const claims = enc({ sub, exp: Math.floor(clock.now() / 1000) + 36000, iss: 'https://yxddhpacuyaffaoutxjn.supabase.co/auth/v1', aud: 'authenticated' });
+  return head + '.' + claims + '.' + Buffer.from(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, pair.privateKey, Buffer.from(head + '.' + claims))).toString('base64url');
+}
+const randTok = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+// A request approved and booked by the admin: the booking.
+async function booked(H, t0, { product = 'screen', screen = 'AD_1', start = day(t0, 0), end = day(t0, 1), ip = '1.1.1.1' } = {}) {
+  const id = (await (await H.post('/rt/ads/request', FORM(t0, { product }), { 'cf-connecting-ip': ip })).json()).id;
+  await H.admin('/rt/admin/ads/edit', { id, approve: true });
+  return (await (await H.admin('/rt/admin/ads/book', { rq: id, product, screen, start, end })).json()).booking;
+}
+
+describe('review fixes: limits before DO calls, guest and linked counts, the 9 pm minute, the report cache, the hard level', { concurrency: false }, () => {
+  it('a request: a per-network count before any DO call, 5 a day per network (IPv6 by /64), 40 an hour in all (then the next hour opens)', async () => {
+    const { clock, done } = setup();
+    try {
+      const env = makeEnv({ ADS_ON: '1' }), H = harness(env), log = spyDo(env), asks = () => log.filter((x) => x === 'ads.adsAsk').length;
+      let last = null;
+      for (let i = 0; i < 21; i++) last = await H.post('/rt/ads/request', FORM(Date.now()), { 'cf-connecting-ip': '5.5.5.5' });
+      assert.equal(last.status, 429); assert.deepEqual(await last.json(), { ok: false, code: 'rate', error: ADS_ERR.fast });
+      assert.equal(asks(), 20, 'the 21st in a minute never reached the store');
+      clock.add(61000);
+      // one /64 is one network: five a day across its addresses
+      for (let i = 1; i <= 5; i++) assert.equal((await H.post('/rt/ads/request', FORM(Date.now()), { 'cf-connecting-ip': '2001:db8:5:1::' + i })).status, 200, String(i));
+      const v6 = await H.post('/rt/ads/request', FORM(Date.now()), { 'cf-connecting-ip': '2001:db8:5:1:abcd:1:2:3' });
+      assert.equal(v6.status, 429); assert.equal((await v6.json()).code, 'rate');
+      assert.equal((await H.post('/rt/ads/request', FORM(Date.now()), { 'cf-connecting-ip': '2001:db8:5:2::1' })).status, 200, 'the next /64');
+      // 5 (5.5.5.5) + 5 + 1 so far this hour; 29 more networks make 40, the 41st waits for the next hour
+      for (let i = 0; i < 29; i++) assert.equal((await H.post('/rt/ads/request', FORM(Date.now()), { 'cf-connecting-ip': '10.0.1.' + i })).status, 200, String(i));
+      const full = await H.post('/rt/ads/request', FORM(Date.now()), { 'cf-connecting-ip': '10.0.2.1' });
+      assert.equal(full.status, 429); assert.deepEqual(await full.json(), { ok: false, code: 'hour', error: ADS_ERR.hour }); assert.equal(full.headers.get('retry-after'), '3600');
+      clock.add(3600e3);
+      assert.equal((await H.post('/rt/ads/request', FORM(Date.now()), { 'cf-connecting-ip': '10.0.2.1' })).status, 200, 'a flood blocks an hour, not the day');
+      assert.equal(S.ADS.perHour, 40); assert.equal('perDay' in S.ADS, false);
+    } finally { done(); }
+  });
+
+  it('clicks and sightings: limited per network and per account before the store, unknown or idle ids make no DO call, linked accounts apart from guests', async () => {
+    const { state, clock, done } = setup();
+    try {
+      const env = makeEnv({ ADS_ON: '1' }), H = harness(env), t0 = Date.now(), auth = (t) => ({ authorization: 'Bearer ' + t });
+      adsWorldDrop();
+      const bk = await booked(H, t0);
+      const g = await H.guest(), u = await userToken(state, clock, 'aaaaaaaa-0000-4000-8000-00000000000a');
+      await H.get('/rt/world'); // this isolate learns the bookings
+      const log = spyDo(env), hits = () => log.filter((x) => x === 'ads.adsHit').length;
+      const r0 = await H.post('/rt/ads/click', { b: 'abcdefabcdef' }, auth(g));
+      assert.equal(r0.status, 204); assert.equal(hits(), 0, 'an id no running booking has: no DO call');
+      assert.equal((await (await H.post('/rt/ads/click', { b: bk.id }, auth(g))).json()).n, 1);
+      assert.equal((await (await H.post('/rt/ads/click', { b: bk.id }, auth(u))).json()).n, 1);
+      assert.equal((await (await H.post('/rt/ads/seen', { b: [bk.id] }, auth(u))).json()).n, 1);
+      assert.equal((await (await H.post('/rt/ads/seen', { b: [bk.id] }, auth(g))).json()).n, 1);
+      assert.equal(hits(), 4);
+      const row = env.meter('ads').sql.db.prepare('select c, v from ad_dayu where bk = ?').get(bk.id);
+      assert.deepEqual({ ...row }, { c: 1, v: 1 }, 'the linked account, apart');
+      const b = (await (await H.admin('/rt/admin/ads')).json()).bookings.find((x) => x.id === bk.id);
+      assert.deepEqual([b.c, b.cu, b.v, b.vu], [2, 1, 2, 1]);
+      const html = await (await H.get('/rt/ads/report/' + bk.tok)).text();
+      assert.ok(html.includes('<td>' + day(t0, 0) + '</td><td>0</td><td>2</td><td>1</td><td>1</td><td>2</td><td>1</td><td>1</td>'));
+      assert.match(html, /계정 1 · 게스트 1/); assert.match(html, /게스트 숫자는 계정 숫자보다 약한/);
+      // per account: 10 a minute (g has sent 3), then 429 before the store
+      for (let i = 0; i < 7; i++) assert.notEqual((await H.post('/rt/ads/seen', { b: [bk.id] }, auth(g))).status, 429, String(i));
+      const n0 = hits(), over = await H.post('/rt/ads/seen', { b: [bk.id] }, auth(g));
+      assert.equal(over.status, 429); assert.equal(hits(), n0);
+      // per network: 60 a minute, whichever accounts send them
+      clock.add(61000);
+      const many = []; for (let i = 0; i < 7; i++) many.push(await H.guest());
+      let last = 0, sent = 0;
+      for (const t of many) for (let i = 0; i < 9 && sent < 61; i++, sent++) last = (await H.post('/rt/ads/click', { b: 'abcdefabcdef' }, { ...auth(t), 'cf-connecting-ip': '6.6.6.6' })).status;
+      assert.equal(last, 429, 'the 61st from one network in a minute');
+      assert.match(read('adsrv.js'), /opsRate\(env, req, 'adhit', ADS\.hitIpMin, env\.EVENT_RL\)/);
+    } finally { done(); }
+  });
+
+  it('the 9 pm minute: a sponsor counts from 21:00:00 until 21:03:00 KST (late reports too); the day booking it covers is not counted in its minute', async () => {
+    const { clock, done } = setup();
+    try {
+      const env = makeEnv({ ADS_ON: '1' }), H = harness(env), t0 = Date.now(), auth = (t) => ({ authorization: 'Bearer ' + t });
+      adsWorldDrop();
+      const sp = await booked(H, t0, { product: 'sponsor9', screen: '*', start: day(t0, 0), end: day(t0, 0) });
+      const sc = await booked(H, t0, { screen: 'AD_2', start: day(t0, 0), end: day(t0, 0), ip: '1.1.1.2' });
+      const nine = S.dayStart(day(t0, 0)) + 21 * 3600e3, g = [await H.guest(), await H.guest(), await H.guest(), await H.guest()];
+      const hit = async (p, id, t) => { const r = await H.post(p, { b: [id] }, auth(t)); return r.status === 204 ? 'none' : (await r.json()).n; };
+      clock.to(nine - 60000); await H.get('/rt/world');
+      assert.equal(await hit('/rt/ads/click', sp.id, g[0]), 0, '20:59: the sponsor is not on yet');
+      clock.to(nine + 30000);
+      assert.equal(await hit('/rt/ads/click', sc.id, g[0]), 0, '21:00:30: the day booking is off the screens');
+      assert.equal(await hit('/rt/ads/click', sp.id, g[0]), 1);
+      clock.to(nine + 150000);
+      assert.equal(await hit('/rt/ads/seen', sp.id, g[1]), 1, '21:02:30: a late "seen" report still lands');
+      assert.equal(await hit('/rt/ads/seen', sc.id, g[1]), 1, 'after the minute the day booking counts again');
+      clock.to(nine + 180000);
+      assert.equal(await hit('/rt/ads/seen', sp.id, g[2]), 0, '21:03:00: too late');
+      // the minute of a cancelled sponsor does not take the screen
+      assert.equal((await H.admin('/rt/admin/ads/cancel', { id: sp.id })).status, 200);
+      clock.to(S.dayStart(day(t0, 0)) + 21 * 3600e3 + 20000);
+      assert.equal(await hit('/rt/ads/click', sc.id, g[3]), 1, 'no live sponsor: the day booking counts in that minute');
+      // the client marks ids as reported only once a report went through, and tries a failed one once more
+      const m = read('main.js');
+      assert.match(m, /try \{ await net\._plazaPost\('\/rt\/ads\/seen', \{ b: ids \}\); for \(const id of ids\) adSent\.add\(id\); \}/);
+      assert.match(m, /catch \{ if \(retry\) \{ await sleep\(20000\); await sendAdSeen\(ids\.filter\(\(id\) => !adSent\.has\(id\)\), false\); \} \}/);
+      assert.doesNotMatch(m, /for \(const id of ids\) adSent\.add\(id\);\n\s*net\._plazaPost/);
+    } finally { done(); }
+  });
+
+  it('the report page: one read per token per minute per isolate, a per-network limit before the store, at hard a static page with no DO call', async () => {
+    const { clock, done } = setup();
+    try {
+      const env = makeEnv({ ADS_ON: '1' }), H = harness(env), t0 = Date.now(), ip = { 'cf-connecting-ip': '3.3.3.3' };
+      const bk = await booked(H, t0);
+      const log = spyDo(env), reads = () => log.filter((x) => x === 'ads.adsRead' || x === 'acct.adsTal').length;
+      assert.equal((await H.get('/rt/ads/report/' + bk.tok, ip)).status, 200); assert.equal(reads(), 2);
+      assert.equal((await H.get('/rt/ads/report/' + bk.tok, ip)).status, 200); assert.equal(reads(), 2, 'a refresh within a minute costs nothing');
+      const junk = randTok();
+      assert.equal((await H.get('/rt/ads/report/' + junk, ip)).status, 404); assert.equal((await H.get('/rt/ads/report/' + junk, ip)).status, 404);
+      assert.equal(reads(), 3, 'an unknown token is remembered too');
+      for (let i = 0; i < 18; i++) await H.get('/rt/ads/report/' + randTok(), ip); // 19 reads of the store from 3.3.3.3 this minute... plus the first = 20
+      const n = reads(), over = await H.get('/rt/ads/report/' + randTok(), ip);
+      assert.equal(over.status, 429); assert.equal(reads(), n); assert.match(await over.text(), /잠시 뒤에 다시 열어 주세요/);
+      assert.equal(over.headers.get('cache-control'), 'no-store');
+      assert.equal((await H.get('/rt/ads/report/' + bk.tok, { 'cf-connecting-ip': '3.3.3.4' })).status, 200, 'cached: no limit spent');
+      // hard: no DO call; a token read before still shows, a new one gets the static page
+      env.BUDGET_REQ_DAY = '1'; clock.add(61000);
+      const before = reads();
+      const busy = await H.get('/rt/ads/report/' + randTok(), { 'cf-connecting-ip': '3.3.3.5' });
+      assert.equal(busy.status, 503); assert.match(await busy.text(), /잠시 뒤에 다시/);
+      const old = await H.get('/rt/ads/report/' + bk.tok, { 'cf-connecting-ip': '3.3.3.5' });
+      assert.equal(old.status, 200); assert.match(await old.text(), /광고 리포트/);
+      assert.equal(reads(), before, 'no DO call at hard');
+      delete env.BUDGET_REQ_DAY; clock.add(61000);
+      assert.equal((await H.get('/rt/ads/report/' + bk.tok, { 'cf-connecting-ip': '3.3.3.6' })).status, 200); assert.equal(reads(), before + 2, 'read again after the minute');
+      assert.ok(S.ADS.reportKeep <= 500 && S.ADS.reportTtl === 60000);
+    } finally { done(); }
+  });
+
+  it('the ad part of /rt/world: at hard with no copy no DO call and a 5-minute pause; a failed read pauses a minute, not every world read', async () => {
+    const { clock, done } = setup();
+    try {
+      let lvl = 2, fail = false; const calls = [];
+      const env = { ADS_ON: '1', METER: { idFromName: (n) => n, get: () => ({ adsNow: async () => { calls.push(Date.now()); if (fail) throw new Error('down'); return []; } }) } }, k = { lvlNow: async () => lvl };
+      adsWorldDrop();
+      assert.deepEqual(await adsWorld(env, k), { on: 1, list: [] }); assert.equal(calls.length, 0);
+      assert.equal(await adsWorld({ ...env, ADS_ON: '0' }, k), null);
+      lvl = 0; await adsWorld(env, k); assert.equal(calls.length, 0, 'the pause holds after the level drops');
+      clock.add(300001); await adsWorld(env, k); assert.equal(calls.length, 1);
+      adsWorldDrop(); fail = true;
+      assert.deepEqual(await adsWorld(env, k), { on: 1, list: [] }); assert.equal(calls.length, 2);
+      await adsWorld(env, k); clock.add(30000); await adsWorld(env, k); assert.equal(calls.length, 2, 'no retry on every world read');
+      clock.add(31000); fail = false; await adsWorld(env, k); assert.equal(calls.length, 3, 'tried again after a minute');
+    } finally { done(); }
+  });
+
+  it('the store prunes requests older than a year on the 5-minute world read, with no new request and no alarm', () => {
+    const sql = sqliteStorage(), now = Date.parse('2030-03-01T03:00:00Z');
+    adsDb.tables(sql);
+    sql.exec("insert into ad_req(id, at, ip, st, j) values('old', ?, '', 'new', '{}')", now - 366 * 864e5);
+    sql.exec("insert into ad_req(id, at, ip, st, j) values('new', ?, '', 'new', '{}')", now - 10 * 864e5);
+    adsDb.now(sql, now);
+    assert.deepEqual(sql.db.prepare('select id from ad_req').all().map((r) => r.id), ['new']);
   });
 });
