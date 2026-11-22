@@ -13,6 +13,7 @@ import { toNetUnits, fromNetUnits } from './net.js?v=202611212346';
 import { walkerPoints } from './ts3d/walkers.js';
 import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, SKIP_ZONES, NO_PROPS, NO_TREES, FAR_CLUSTERS, LANDMARKS, groundHeight, onStairs, fountainSpot } from './ts3d/layout.js?v=202611212346';
 import { BALANCE, PAY, chainsOf, slotName } from './balance.js';
+import { isSlotId, STREET_N } from './balance.js';
 import { kitMaterials } from './ts3d/kit.js?v=202611212346';
 import { createReflection } from './ts3d/ground.js?v=202611212346';
 import { createBoards, screenTime } from './ts3d/screens.js?v=202611212346';
@@ -28,7 +29,7 @@ import { seesAvatar, prefetchDelay, prefetchIds } from './ts3d/loadplan.js?v=202
 import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, paintLabel, fontsReady, chars, hashStr } from './ts3d/art.js?v=202611212346';
 import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=202611212346';
 import { taxiExit, EXIT_SLOW, nextOfferDelay, fareWait } from './interact.js?v=202611212346';
-import { RETURN_MS, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, portraitFov, fitDistance, reverseTime, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange } from './camrig.js?v=202611212346';
+import { RETURN_MS, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, portraitFov, fitDistance, reverseTime, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange, boardVantage, facesBlock } from './camrig.js?v=202611212346';
 
 export { paintBillboard, THEMES, LAYOUT, PLOT_SLOTS, groundHeight, EMOTES, AVATAR_COLORS, taxiTrainMult, applyTaxiHardHit };
 export const PLAZA = LAYOUT;
@@ -1171,7 +1172,7 @@ void main(){
   let paintRoof = (name) => { paintRoof.pending = String(name || '').slice(0, 16); };
   function updateWorld(state) {
     boards.setOps?.(state?.ops?.copy || '');
-    for (const row of state?.billboards || []) if (row?.slot_id && /^(MAIN_(UP|TOP|MID|BOT|LOW)|SUB_[1-4][AB]|STREET_([1-9]|[12]\d|30)|PLOT_([1-9]|1[0-8]))$/.test(row.slot_id)) updateBillboardTexture(row.slot_id, row, false);
+    for (const row of state?.billboards || []) if (row?.slot_id && isSlotId(row.slot_id)) updateBillboardTexture(row.slot_id, row, false);
     for (const row of state?.plots || []) if (row?.plot_id) applyPlot(row, false);
     syncChains(state?.billboards);
     if (typeof state?.roof === 'string') paintRoof(state.roof);
@@ -1344,7 +1345,8 @@ void main(){
   // `level`: camera at the board's own height (the straight-on photo frame) instead of the low street view.
   // `clear`: a scripted camera will sit at `cam`. It stands at `dist`, or farther when the whole face would not be in
   // the frame from there (camrig.js frameDistance: the mount's real width and height, this frame's aspect and the FOV
-  // the frame settles on, at most FRAME.max), and it is pulled in when a building stands between it and the board.
+  // the frame settles on, at most FRAME.max). When a building stands between, camrig.js boardVantage turns the camera
+  // along the street and lifts it until it sees the face again, and pulls it in as far as it must.
   function slotPose(slotId, dist, clear = false, level = false) {
     const p = boards.worldPos(slotId);
     if (!p) return null;
@@ -1355,29 +1357,35 @@ void main(){
     f.y = 0;
     if (f.lengthSq() < 1e-4) f.set(0, 0, 1);
     f.normalize();
-    if (clear) {
-      const face = boards.face(slotId);
-      if (face) dist = boardRange(dist, frameDistance({ w: face.w, h: face.h, aspect: camera.aspect, vfov: portraitFov(camera.aspect, baseFov) }));
-    }
+    const face = clear ? boards.face(slotId) : null;
+    const vfov = portraitFov(camera.aspect, baseFov);
     const look = p.clone();
     const cam = new THREE.Vector3();
-    const place = (d) => {
-      cam.copy(p).addScaledVector(f, d);
-      if (!level) cam.y = Math.max(look.y * 0.42 + 1.8, groundHeight(cam.x, cam.z) + 1.6);
-    };
-    place(dist);
-    if (clear && nyc && dist > 2.5) {
+    let fov = 0; // 0: the frame's own FOV; more when the vantage had to open the lens
+    if (face && nyc) {
       // Walls are only loaded around the player; load the ones around this board (as taxiCanSit does) before testing.
-      // The ray starts 2.5 m out so the board's own wall never counts.
       nyc.ensureSolid(p.x, p.z, 60);
-      const sx = p.x + f.x * 2.5, sz = p.z + f.z * 2.5, sy = look.y + (cam.y - look.y) * (2.5 / dist);
-      const fit = shortenFocus(dist, nyc.rayBlock(sx, sy, sz, cam.x, cam.y, cam.z));
-      if (fit < dist) place(fit);
+      // The other boards within reach stand in the way too (a neighbour's frame in front of a turned view).
+      const others = [];
+      for (const b of boards.boards.values()) {
+        if (b.slotId === slotId || !b.mounts.length) continue;
+        const o = boards.face(b.slotId);
+        if (o && o.pos.distanceToSquared(p) < 6400) others.push(o);
+      }
+      const hitFace = facesBlock(others);
+      const block = (ax, ay, az, bx, by, bz) => Math.min(nyc.rayBlock(ax, ay, az, bx, by, bz), hitFace(ax, ay, az, bx, by, bz));
+      const v = boardVantage({ face: { x: p.x, y: p.y, z: p.z, nx: f.x, nz: f.z, w: face.w, h: face.h }, dist, aspect: camera.aspect, vfov, block, ground: groundHeight, level });
+      cam.set(v.x, v.y, v.z);
+      if (v.fov > vfov + 0.5) fov = v.fov;
+    } else {
+      if (face) dist = boardRange(dist, frameDistance({ w: face.w, h: face.h, aspect: camera.aspect, vfov }));
+      cam.copy(p).addScaledVector(f, dist);
+      if (!level) cam.y = Math.max(look.y * 0.42 + 1.8, groundHeight(cam.x, cam.z) + 1.6);
     }
-    return { look, cam, front: { x: p.x + f.x * 9, z: p.z + f.z * 9 }, board: boards.get(slotId)?.data || null, slot: slotId };
+    return { look, cam, fov, front: { x: p.x + f.x * 9, z: p.z + f.z * 9 }, board: boards.get(slotId)?.data || null, slot: slotId };
   }
   const AD_IDS = ['MAIN_TOP', 'MAIN_MID', 'MAIN_BOT', 'SUB_1A', 'SUB_1B', 'SUB_2A', 'SUB_2B', 'SUB_3A', 'SUB_3B', 'SUB_4A', 'SUB_4B'];
-  for (let i = 1; i <= 30; i++) AD_IDS.push('STREET_' + i);
+  for (let i = 1; i <= STREET_N; i++) AD_IDS.push('STREET_' + i);
   for (let i = 1; i <= 18; i++) AD_IDS.push('PLOT_' + i);
   // Every claimable board, for the proximity prompt. A board that is not on the map yet is simply not a candidate;
   // front points are cached per mount (a lot's board is mounted again when the lot levels up).
@@ -1484,7 +1492,7 @@ void main(){
     cineL0.copy(viewLook);
     cineTo.copy(cam);
     cineL1.copy(look);
-    cine = { t0: performance.now(), dur: o.dur || 700, back: false, until: o.until || 0, pin: !!o.pin };
+    cine = { t0: performance.now(), dur: o.dur || 700, back: false, until: o.until || 0, pin: !!o.pin, fov: o.fov || 0 };
   }
   /**
    * The one way out of a scripted camera: movement, a tap, Escape, a timed hold running out, 시점 해제, the lounge
@@ -1521,7 +1529,7 @@ void main(){
     const pose = slotPose(slotId, 18, true);
     if (!pose) return null;
     if (hidMe) { hidMe = false; me.root.visible = true; }
-    startCine(pose.cam, pose.look, { dur: 700, until: o.hold ? performance.now() + o.hold : 0 });
+    startCine(pose.cam, pose.look, { dur: 700, until: o.hold ? performance.now() + o.hold : 0, fov: pose.fov });
     // Fireworks around the board, and only when asked (a claim): a plain 보기 leaves it clear. When boards.set already
     // set them off for this claim, this call adds nothing.
     if (o.celebrate) celebrateBoard(slotId, '#ffcf5a');
@@ -1561,7 +1569,7 @@ void main(){
       const pose = watchPortrait ? framePose(id) : slotPose(id, 18, true);
       if (!pose) continue;
       const first = !cine || cine.back;
-      startCine(pose.cam, pose.look, { dur: first ? 1100 : 1800 });
+      startCine(pose.cam, pose.look, { dur: first ? 1100 : 1800, fov: pose.fov });
       // A low arc keeps the glide above the street furniture between two boards.
       cine.arc = first ? 0 : Math.min(14, cineFrom.distanceTo(cineTo) * 0.12);
       if (first) opts.onFocus?.(true);
@@ -1776,7 +1784,8 @@ void main(){
     follow.lerp(tmp, 1 - Math.exp(-dt * (drive ? 10 : 14)));
     camera.position.copy(camWant).add(tmp2.subVectors(follow, prevFollow));
     // FOV: wider in a portrait frame, wider again with speed in a taxi; every change (rotation, getting out) is eased.
-    const fovGoal = portraitFov(camera.aspect, baseFov) + (drive ? clamp(Math.abs(drive.v) / 30, 0, 1) * 10 : 0);
+    // A board camera that had to open the lens to fit the face (boardVantage) holds that FOV until it heads back.
+    const fovGoal = (cine && !cine.back && cine.fov) || portraitFov(camera.aspect, baseFov) + (drive ? clamp(Math.abs(drive.v) / 30, 0, 1) * 10 : 0);
     if (Math.abs(camera.fov - fovGoal) > 0.05) { camera.fov += (fovGoal - camera.fov) * (1 - Math.exp(-dt * (drive ? 4 : 6))); camera.updateProjectionMatrix(); }
     const driveCam = drive ? driveCamera({ v: drive.v, reverseT }) : null;
     if (drive && !orbiting && now - orbitEnd > 1500 && driveCam.swing) {

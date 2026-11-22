@@ -70,7 +70,7 @@ describe('rotation schedule', () => {
   it('is deterministic for a slot and a time', () => {
     for (const id of ['MAIN_UP', 'STREET_7', 'PLOT_18']) assert.equal(wishStep(wishOrd(id), t0, WISH_CYCLE), wishStep(wishOrd(id), t0, WISH_CYCLE));
     assert.equal(wishOrd('STREET_7'), wishOrd('STREET_7'));
-    assert.equal(new Set(SLOT_IDS.map(wishOrd)).size, 61);
+    assert.equal(new Set(SLOT_IDS.map(wishOrd)).size, 81);
   });
   it('spends the wish share of each cycle in the wish phase (even steps)', () => {
     for (const cyc of [WISH_CYCLE, WISH_CYCLE_LOW]) {
@@ -166,12 +166,12 @@ describe('repaint scheduler', () => {
     assert.equal(wishPick(since, rank, 0, 6, out), 0);
   });
   // Drives the same pure functions screens.js runs: wishRelist on every list change, wishPlan on every tick.
-  // 61 mounted idle boards, nearest-first order = slot order (camera parked: the worst case for nearest-first).
+  // 81 mounted idle boards, nearest-first order = slot order (camera parked: the worst case for nearest-first).
   // canvas[i] is what board i last painted (screens.js paint(): a marked board paints the notice).
   function harness(cyc, budget) {
     const states = SLOT_IDS.map((id) => ({ wish: null, wishKey: -1, wishPin: 0, wishDue: 0, wishDrop: false, wishFontOk: false, wishOrd: wishOrd(id) }));
     const n = states.length, oks = new Array(n), out = [], served = new Array(n).fill(0), canvas = new Array(n).fill(null);
-    const cfg = { list: [], now: 0, cyc, budget, drops: WISH_DROPS, since: new Array(64), rank: new Array(64), who: new Array(64), pick: [], delta: 0 };
+    const cfg = { list: [], now: 0, cyc, budget, drops: WISH_DROPS, since: new Array(96), rank: new Array(96), who: new Array(96), pick: [], delta: 0 };
     const h = { states, canvas, served, maxLag: 0, maxTick: 0, maxCall: 0, shown: 0 };
     const paintAll = (k) => { for (let j = 0; j < k; j++) { const s = states[out[j]]; canvas[out[j]] = s.wishDrop ? null : s.wish; } };
     h.relist = (list) => {
@@ -204,8 +204,8 @@ describe('repaint scheduler', () => {
       const off = Math.floor((t / 60000) % 7) === 3;
       if (off !== wasOff) { h.relist(off ? [] : list); wasOff = off; offAt = t; }
       h.tick(t);
-      // An emptied list clears every card within ceil((61 - WISH_NOW) / WISH_DROPS) ticks.
-      if (off && t - offAt >= Math.ceil((61 - WISH_NOW) / WISH_DROPS) * WISH_TICK_MS) assert.equal(h.shown, 0, 'a card survived an empty list');
+      // An emptied list clears every card within ceil((81 - WISH_NOW) / WISH_DROPS) ticks.
+      if (off && t - offAt >= Math.ceil((81 - WISH_NOW) / WISH_DROPS) * WISH_TICK_MS) assert.equal(h.shown, 0, 'a card survived an empty list');
     }
     return { maxLag: h.maxLag, maxPer: h.maxTick, maxCall: h.maxCall, minServed: Math.min(...h.served) };
   }

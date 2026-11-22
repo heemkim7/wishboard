@@ -1,4 +1,4 @@
-import { SLOT_IDS } from './balance.js';
+import { SLOT_IDS, SLOT_RE } from './balance.js';
 import { SITE } from './plaza-account.js';
 import { withInvite } from './invite.js';
 
@@ -18,7 +18,7 @@ export function cardUrl(slot, opts = {}) {
 }
 
 // POST /rt/snap context: which board or wish the picture shows. The server keeps it only for that board's holder / that wish's author.
-const SNAP_SLOT = /^(MAIN_(UP|TOP|MID|BOT|LOW)|SUB_[1-4][AB]|STREET_([1-9]|[12]\d|30)|PLOT_([1-9]|1[0-8]))$/;
+const SNAP_SLOT = SLOT_RE;
 const WISH_ID = /^[0-9a-z]{10}$/;
 export function snapQuery(ctx) {
   const slot = String(ctx?.slot || '');

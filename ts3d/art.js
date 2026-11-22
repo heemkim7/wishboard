@@ -435,7 +435,7 @@ export function paintBillboard(canvas, data = {}, opts = {}) {
     const mode = opts.photo ? 'quiet' : 'soft';
     const maxC = W * 0.62;
     const label = vacant
-      ? (auctionClosed(data.slot_id, nowMs()) ? '밤 9시에 10분만 열려요' : '빈 자리 · 지금 걸 수 있어요')
+      ? (data.soon ? '곧 열려요' : auctionClosed(data.slot_id, nowMs()) ? '밤 9시에 10분만 열려요' : '빈 자리 · 지금 걸 수 있어요')
       : data.holder_id === 'air' ? '전광판 장악' : th.title ? (th.sub ? `${th.title} · ${th.sub}` : th.title) : tierName(data.slot_id);
     chipY += pill(g, pad, chipY, label, accent, cs, maxC, mode).h + 10 * k;
     if (badge) chipY += pill(g, pad, chipY, badge.label, badge.color, cs, maxC, 'quiet').h + 10 * k;
@@ -1186,21 +1186,21 @@ export function fontsReady(text = '타임스퀘어 붕어빵 전광판 점령 �
 export const WISH_CYCLE = Object.freeze({ wish: 9000, rest: 5000 });
 export const WISH_CYCLE_LOW = Object.freeze({ wish: 15000, rest: 9000 });
 // The repaint cadence (screens.js update(): every 8th 0.08 s tick) and the canvases repainted per tick for rotation.
-// Demand with all 61 boards idle: 61 * 2 flips per cycle = 5.58 per tick (normal, 14 s), 3.25 (low, 24 s); supply 7 / 4.
-export const WISH_TICK_MS = 640, WISH_BUDGET = 7, WISH_BUDGET_LOW = 4;
+// Demand with all 81 boards idle: 81 * 2 flips per cycle = 7.41 per tick (normal, 14 s), 4.32 (low, 24 s); supply 8 / 5.
+export const WISH_TICK_MS = 640, WISH_BUDGET = 8, WISH_BUDGET_LOW = 5;
 // Boards ranked among the nearest WISH_NEAR jump the queue by WISH_NEAR_MS; everyone else is first come, first served.
 // The nearest WISH_START boards show a card at once when wishes (re)appear; the rest wait for their own next wish phase.
 export const WISH_NEAR = 10, WISH_NEAR_MS = 1280, WISH_PINS = 4, WISH_START = 4;
 // After the first (possibly empty) list, this long with nothing non-empty and the next new wish counts as freshly posted.
 export const WISH_SETTLE_MS = 8000;
 const WISH_MAX_CP = 24, WISH_ONE_LINE = 12, WISH_SLOTS = SLOT_IDS.length;
-// Phase lane: (order * 11) mod 61, so neighbours sit 11/61 of a cycle apart (no two flip within 2 s of each other).
-const WISH_STRIDE = 11;
+// Phase lane: (order * 13) mod 81, so neighbours sit 13/81 of a cycle apart (no two flip within 2 s of each other).
+const WISH_STRIDE = 13;
 const WISH_ORD = new Map(SLOT_IDS.map((id, i) => [id, i]));
 const WISH_CTRL = /[\u0000-\u001f\u007f-\u009f]/g;
 const WISH_INVIS = /[​‌‎‏‪-‮⁠-⁤⁦-⁩﻿]/g;
 
-/** Stable order of a claimable slot (0..60); other ids hash into the same range. */
+/** Stable order of a claimable slot (0..80); other ids hash into the same range. */
 export function wishOrd(slotId) {
   const i = WISH_ORD.get(String(slotId));
   return i ?? hashStr(slotId) % WISH_SLOTS;
@@ -1214,8 +1214,8 @@ export function wishStep(ord, ms, cyc = WISH_CYCLE) {
   return c * 2 + (u - c * P < cyc.wish ? 0 : 1);
 }
 /** Which of n wishes a slot shows during a step (-1 when there are none).
- *  idx = ord + C where C = cycle + floor(11*ord/61) is the cycle counted on the unwrapped lane 11*ord/61. Adjacent ords
- *  differ by 11/61 of a cycle on that unwrapped lane, which is less than the notice share (5/14, 8/20), so whenever both are
+ *  idx = ord + C where C = cycle + floor(13*ord/81) is the cycle counted on the unwrapped lane 13*ord/81. Adjacent ords
+ *  differ by 13/81 of a cycle on that unwrapped lane, which is less than the notice share (5/14, 8/20), so whenever both are
  *  in the wish phase they are in the same C and their indices differ by exactly 1: never the same wish for n >= 2. */
 export function wishIndex(ord, step, n) {
   return n > 0 ? (ord + Math.floor(step / 2) + Math.floor(ord * WISH_STRIDE / WISH_SLOTS)) % n : -1;
@@ -1244,7 +1244,7 @@ export function wishStrip(slotId, row, mainOpen) {
 /** What a board needs this tick. 'drop': its card must go now (not allowed to rotate, or nothing to show) — never budgeted.
  *  'reset': not allowed and nothing shown. 'none': step already painted. 'quiet': notice phase and the notice is up.
  *  'due': a repaint for the new step, served by wishPick. A board that has painted nothing yet (key -1: first list, or after
- *  a drop) and is not among the nearest waits quietly for its own next wish phase, so a (re)start is no 61-board burst. */
+ *  a drop) and is not among the nearest waits quietly for its own next wish phase, so a (re)start is no 81-board burst. */
 export function wishWork(hasWish, ok, step, key, near = true) {
   if (!ok) return hasWish ? 'drop' : 'reset';
   if (step === key) return 'none';

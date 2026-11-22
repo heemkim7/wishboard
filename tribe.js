@@ -1,7 +1,9 @@
+import { isSlotId } from './balance.js';
+
 export function pledge(slot, amount) {
   const n = Math.floor(Number(amount));
   if (n !== 10 && n !== 20 && n !== 50) return null;
-  if (!/^(MAIN_(UP|TOP|MID|BOT|LOW)|SUB_[1-4][AB]|STREET_([1-9]|[12]\d|30)|PLOT_([1-9]|1[0-8]))$/.test(String(slot || ''))) return null;
+  if (!isSlotId(String(slot || ''))) return null;
   return { slot: String(slot), amount: n };
 }
 

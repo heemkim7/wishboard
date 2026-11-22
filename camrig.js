@@ -90,6 +90,92 @@ export function boardRange(dist, fit, max = FRAME.max) {
   const far = Math.max(FRAME.near, f * FRAME.loose);
   return Math.max(Math.min(d, far), Math.min(f, max));
 }
+/**
+ * Range from which a w x h face seen `yaw` radians off its normal fits the frame: the near edge is the one that
+ * matters (it is wider and taller on screen than the far one). yaw 0 is frameDistance.
+ */
+export function angledFit({ w = 0, h = 0, aspect = 1, vfov = 55, margin = FRAME.margin, yaw = 0 } = {}) {
+  const tv = Math.tan((clamp(num(vfov, 55), 10, 150) * Math.PI) / 360) * (1 - 2 * clamp(num(margin), 0, 0.4));
+  const th = tv * (num(aspect) > 0 ? num(aspect) : 1);
+  const c = Math.abs(Math.cos(num(yaw))), s = Math.abs(Math.sin(num(yaw)));
+  const hw = Math.max(0, num(w)) / 2, hh = Math.max(0, num(h)) / 2;
+  return Math.max((hw * c) / th, hh / tv) + hw * s;
+}
+// ---- a clear vantage on a board ----------------------------------------------------------------------------
+// The scripted board camera stands in front of the face. When a building is in the way (a face on a narrow street, or
+// one a portrait frame needs 40 m for), it looks for a better spot: turned up to 72° along the street, raised to the
+// face's height or above it, and with the lens opened by up to `widen` degrees, keeping the one that sees the most of
+// the face with the least cut. Buildings and the other boards' faces both count as in the way (facesBlock). A clear
+// straight shot is taken at once, so a board that framed well before frames exactly as before (same spot, same FOV).
+export const VANTAGE = { yaws: [0, 15, -15, 30, -30, 45, -45, 60, -60, 72, -72], start: 2.5, widen: 12, snug: 0.92 };
+/**
+ * face: { x, y, z, nx, nz, w, h } (centre, horizontal unit normal, size in m). dist: the caller's own range.
+ * aspect, vfov (deg): the frame. block(ax, ay, az, bx, by, bz): clear fraction of that segment (1 = clear; nyc.rayBlock).
+ * ground(x, z): floor height. level: the camera at the face's own height (the straight-on photo frame).
+ * Returns { x, y, z, dist, yaw, fov, fit, seen }: fov the vertical FOV to frame it with (vfov unless it had to open up);
+ * fit 1 = the whole face in that frame with the margin (0.84 = edge to edge); seen = the share of seven points on the
+ * face (centre, the four corners and the two side edges, 4% in) with nothing between them and the camera.
+ */
+export function boardVantage({ face, dist = 18, aspect = 1, vfov = 55, block = () => 1, ground = () => 0, level = false } = {}) {
+  const f = face || {};
+  const fx = num(f.x), fy = num(f.y), fz = num(f.z), w = Math.max(0, num(f.w)), h = Math.max(0, num(f.h));
+  let nx = num(f.nx), nz = num(f.nz, 1);
+  const nl = Math.hypot(nx, nz) || 1; nx /= nl; nz /= nl;
+  const rx = nz, rz = -nx; // the face's right, on the ground
+  const pts = [[0, 0], [-0.46, -0.4], [0.46, -0.4], [-0.46, 0.4], [0.46, 0.4], [-0.46, 0], [0.46, 0]].map(([u, v]) => [fx + rx * u * w + nx * 0.6, fy + v * h, fz + rz * u * w + nz * 0.6]);
+  const S = VANTAGE.start, v0 = clamp(num(vfov, 55), 10, 150);
+  let best = null;
+  for (const deg of VANTAGE.yaws) {
+    const a = (deg * Math.PI) / 180, ca = Math.cos(a), sa = Math.sin(a);
+    const dx = nx * ca - nz * sa, dz = nx * sa + nz * ca;
+    const need = angledFit({ w, h, aspect, vfov: v0, yaw: a });
+    const d = boardRange(dist, need);
+    const gx = fx + dx * d, gz = fz + dz * d;
+    const low = level ? fy : Math.max(fy * 0.42 + 1.8, num(ground(gx, gz)) + 1.6);
+    for (const [k, y0] of [low, fy, fy + 0.35 * d, fy + 0.8 * d].entries()) {
+      if (k === 1 && Math.abs(y0 - low) < 0.5) continue; // level is the low one already
+      const sy = fy + (y0 - fy) * (S / d);
+      const clear = d > S ? num(block(fx + dx * S, sy, fz + dz * S, gx, y0, gz), 1) : 1;
+      const stand = shortenFocus(d, clear, { start: S });
+      const cx = fx + dx * stand, cz = fz + dz * stand;
+      const cy = k === 0 && !level ? Math.max(fy * 0.42 + 1.8, num(ground(cx, cz)) + 1.6) : y0;
+      let n = 0;
+      for (const [px, py, pz] of pts) if (!(num(block(px, py, pz, cx, cy, cz), 1) < 0.999)) n++;
+      const seen = n / pts.length;
+      // Pulled in short of the fit: open the lens a degree at a time until the face is snug again (or `widen` is used up).
+      let fov = v0, fit = need > 0 ? Math.min(1, stand / need) : 1;
+      while (fit < VANTAGE.snug && fov < v0 + VANTAGE.widen) { fov++; fit = Math.min(1, stand / angledFit({ w, h, aspect, vfov: fov, yaw: a })); }
+      // A turned view shows the face narrower and lets a neighbour's frame in: it has to see clearly more to win.
+      const score = seen * fit - 0.08 * (Math.abs(deg) / 60) - 0.03 * k - 0.02 * ((fov - v0) / VANTAGE.widen);
+      const c = { x: cx, y: cy, z: cz, dist: stand, yaw: a, fov, fit, seen, score };
+      if (!best || score > best.score + 1e-9) best = c;
+      // A clear straight shot from far enough back: the same pose as before this search existed.
+      if (deg === 0 && k === 0 && seen === 1 && stand >= Math.min(need, FRAME.max) - 1e-6) return c;
+    }
+  }
+  return best;
+}
+
+/**
+ * A block() for boardVantage from other boards' faces: the clear fraction of a segment before it passes through one of
+ * them. faces: [{ pos, right, up, normal, w, h }] (screens.js face(): vectors with x, y, z; unit right / up / normal).
+ */
+export function facesBlock(faces) {
+  const list = (faces || []).filter((f) => f && f.pos && f.normal && f.right && f.up);
+  return (ax, ay, az, bx, by, bz) => {
+    const dx = bx - ax, dy = by - ay, dz = bz - az;
+    let best = 1;
+    for (const f of list) {
+      const n = f.normal, den = dx * n.x + dy * n.y + dz * n.z;
+      if (Math.abs(den) < 1e-9) continue;
+      const t = ((f.pos.x - ax) * n.x + (f.pos.y - ay) * n.y + (f.pos.z - az) * n.z) / den;
+      if (!(t > 0 && t < best)) continue;
+      const px = ax + dx * t - f.pos.x, py = ay + dy * t - f.pos.y, pz = az + dz * t - f.pos.z;
+      if (Math.abs(px * f.right.x + py * f.right.y + pz * f.right.z) <= f.w / 2 && Math.abs(px * f.up.x + py * f.up.y + pz * f.up.z) <= f.h / 2) best = t;
+    }
+    return best;
+  };
+}
 
 // ---- driving camera ------------------------------------------------------------------------------------------
 export const DRIVE_CAM = { swingMin: 3, reverseHold: 1.2 };

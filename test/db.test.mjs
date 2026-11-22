@@ -21,13 +21,16 @@ globalThis.WebSocketRequestResponsePair = class { constructor(req, res) { this.r
 
 const { Room, Meter } = await import('../worker.js');
 const worker = (await import('../worker.js')).default;
-const { BALANCE, STARTER_DEFAULT, starterList, setStarterSlots } = await import('../balance.js');
+const { BALANCE, STARTER_DEFAULT, starterList, setStarterSlots, SLOT_SOON } = await import('../balance.js');
 const { claimWizard } = await import('../ftue.js');
 
 const read = (p) => readFileSync(new URL('../' + p, import.meta.url), 'utf8').replace(/\r\n/g, '\n'); // a Windows checkout has CRLF
 const MIGRATION = 'migrations/2026-11-21-mid.sql';
 const CLEANUP = 'migrations/2026-11-21-cleanup-preview.sql';
 const TWELVE = ['STREET_20', 'STREET_23', 'STREET_28', 'STREET_19', 'STREET_27', 'STREET_16', 'STREET_22', 'STREET_7', 'STREET_11', 'STREET_9', 'STREET_8', 'STREET_10'];
+// migrations/2026-11-22-boards.sql: the twelve, then the eight new core faces nearest the bakery walk (test/boards.test.mjs).
+const BOARDS = 'migrations/2026-11-22-boards.sql';
+const TWENTY = [...TWELVE, 'STREET_32', 'STREET_37', 'STREET_31', 'STREET_44', 'STREET_43', 'STREET_36', 'STREET_33', 'STREET_45'];
 const CLAIM_SIG = 'public.claim_billboard(text,text,text,text,bigint,text,text,text,text,text,text,text,integer,text)';
 
 // The last CREATE OR REPLACE of a function wins in Postgres; take that one, from its head to the closing $$.
@@ -58,7 +61,7 @@ describe('starter list in balance.js', () => {
     assert.equal(open.mode, 'claim');
   });
   it('takes only main-street ids from the server, once each, in order', () => {
-    assert.deepEqual(starterList(['STREET_20', 'MAIN_TOP', 'SUB_1A', 'PLOT_3', 'STREET_31', 'STREET_20', 7, 'STREET_9']), ['STREET_20', 'STREET_9']);
+    assert.deepEqual(starterList(['STREET_20', 'MAIN_TOP', 'SUB_1A', 'PLOT_3', 'STREET_51', 'STREET_20', 7, 'STREET_9', 'STREET_40']), ['STREET_20', 'STREET_9', 'STREET_40']);
     for (const bad of [null, undefined, 'STREET_8', {}, [], ['MAIN_TOP'], Array(31).fill('STREET_1')]) assert.equal(starterList(bad), null);
     setStarterSlots(['PLOT_1']);
     assert.equal(BALANCE.starterSlots, STARTER_DEFAULT);
@@ -117,6 +120,7 @@ function fakeNet(state) {
     if (u.includes('/rpc/claim_billboard')) {
       const a = JSON.parse(opt.body);
       if (state.throwClaim) throw new TypeError('network down');
+      if (state.claimErr) return json({ ok: false, error: state.claimErr });
       if (a.p_mode === 'starter' && !state.db.includes(a.p_slot_id)) return json({ ok: false, error: 'starter' });
       return json({ ok: true, billboard: { slot_id: a.p_slot_id, holder_id: a.p_actor_id, holder_name: a.p_nickname, line1: a.p_line1 }, remaining_coins: 100 });
     }
@@ -247,6 +251,25 @@ describe('worker starter list', { concurrency: false }, () => {
       assert.equal(claims(h).length, 3);
     } finally { h.done(); }
   });
+  it('a board on the map without a database row yet (STREET_31..50 before the boards migration) is refused as "곧 열려요"', async () => {
+    const h = setup(TWELVE, TWELVE);
+    try {
+      const token = await helloGuest(h);
+      const paid = (slot) => h.call('/rt/claim-billboard', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body: JSON.stringify({ topic: 'chapel:square', slot_id: slot, bid: 197, line1: '첫 칸', nickname: '새' }) });
+      for (const err of ['그 전광판은 점령할 수 없습니다.', '존재하지 않는 전광판 슬롯입니다.']) { // the old slot_floor(), and a missing row
+        h.state.claimErr = err;
+        const r = await paid('STREET_40');
+        assert.equal(r.status, 400);
+        assert.equal((await r.json()).error, SLOT_SOON);
+      }
+      h.state.claimErr = '최소 197 코인 이상 입찰해야 합니다.'; // any other refusal is passed on as before
+      assert.equal((await (await paid('STREET_40')).json()).error, '최소 197 코인 이상 입찰해야 합니다.');
+      h.state.claimErr = null;
+      assert.equal((await paid('STREET_51')).status, 400); // not a board: refused in the Worker
+      assert.equal(claims(h).filter((a) => a.p_slot_id === 'STREET_51').length, 0);
+      assert.equal((await paid('STREET_40')).status, 200); // after the migration: an ordinary street board
+    } finally { h.done(); }
+  });
   it('/rt/inbox passes the read flag through when the database sends it, and leaves it out otherwise', async () => {
     const h = setup(TWELVE);
     try {
@@ -263,11 +286,14 @@ describe('worker starter list', { concurrency: false }, () => {
 describe('SQL files', () => {
   const schema = read('schema.sql'), mig = read(MIGRATION), clean = read(CLEANUP);
   it('the migration restates only the small functions, with exactly the schema.sql text, and patches the big ones in place', () => {
-    for (const name of ['starter_slots', 'starter_slot_list', 'award_tribe_roof']) {
+    for (const name of ['starter_slot_list', 'award_tribe_roof']) {
       const a = fnBlock(schema, name), b = fnBlock(mig, name);
       assert.ok(a && b, name);
       assert.equal(b, a, name);
     }
+    // its twelve-slot list was superseded by the boards migration, which restates the twenty exactly as schema.sql has them
+    assert.deepEqual(/ARRAY\[([^\]]+)\]/.exec(fnBlock(mig, 'starter_slots'))[1].match(/STREET_\d+/g), TWELVE);
+    for (const name of ['starter_slots', 'starter_slot_list', 'slot_floor']) assert.equal(fnBlock(read(BOARDS), name), fnBlock(schema, name), name);
     for (const name of ['claim_billboard', 'withdraw_account', 'inbox_list']) assert.equal(mig.includes('CREATE OR REPLACE FUNCTION public.' + name), false, name);
     assert.match(fnBlock(schema, 'claim_billboard'), /NOT \(p_slot_id = ANY \(public\.starter_slots\(\)\)\)/);
     assert.equal(schema.includes("'STREET_8','STREET_9','STREET_10','STREET_11'"), false);
@@ -297,7 +323,7 @@ describe('SQL files', () => {
   });
   it('the database list and the Worker fallback agree on the old four', () => {
     const list = /ARRAY\[([^\]]+)\]/.exec(fnBlock(schema, 'starter_slots'))[1].match(/STREET_\d+/g);
-    assert.deepEqual(list, TWELVE);
+    assert.deepEqual(list, TWENTY);
     for (const id of STARTER_DEFAULT) assert.ok(list.includes(id), id);
     assert.deepEqual(starterList(list), list);
   });
@@ -345,9 +371,9 @@ describe('SQL in PGlite', { skip: PGlite ? false : 'PGlite not installed (see th
   let db;
   before(async () => { db = await fresh(read('schema.sql')); });
 
-  it('starter_slot_list answers the 12 slots with the worker key and refuses any other key', async () => {
+  it('starter_slot_list answers the 20 slots with the worker key and refuses any other key', async () => {
     const r = (await db.query('SELECT public.starter_slot_list($1) AS r', [KEY])).rows[0].r;
-    assert.deepEqual(r, { ok: true, slots: TWELVE });
+    assert.deepEqual(r, { ok: true, slots: TWENTY });
     await assert.rejects(db.query('SELECT public.starter_slot_list($1)', ['wrong']), /Unauthorized worker key/);
     assert.equal((await db.query("SELECT provolatile FROM pg_proc WHERE proname = 'starter_slots'")).rows[0].provolatile, 'i');
   });
@@ -442,6 +468,9 @@ describe('SQL in PGlite', { skip: PGlite ? false : 'PGlite not installed (see th
     // And the coin guard (test/coins-migration.test.mjs runs it with auth.users and checks what it does).
     const coins = (await old.exec(read('migrations/2026-11-22-coins.sql'))).at(-1).rows;
     assert.equal(coins.length, 1); assert.equal(coins[0].applied, true, coins[0].note);
+    // And the twenty new street boards (test/boards.test.mjs runs it on its own, before and after).
+    const boards = (await old.exec(read(BOARDS))).at(-1).rows;
+    assert.equal(boards.length, 1); assert.equal(boards[0].applied, true, boards[0].note);
     const neu = await fresh(read('schema.sql'));
     const checks = async (d) => (await d.query("SELECT conname, pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid = 'public.profiles'::regclass AND contype = 'c' ORDER BY 1")).rows;
     assert.deepEqual(await checks(old), await checks(neu));

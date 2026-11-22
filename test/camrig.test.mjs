@@ -157,7 +157,8 @@ describe('on-foot follow and field of view', () => {
     const w = read('timesSquare3d.js');
     const exit = w.slice(w.indexOf('function exitTaxi()'), w.indexOf('function interact()'));
     assert.equal(/camera\.fov\s*=/.test(exit), false);
-    assert.match(w, /const fovGoal = portraitFov\(camera\.aspect, baseFov\) \+ \(drive \? /);
+    // a board camera that opened the lens (boardVantage) holds that FOV until it heads back, then the same ease
+    assert.match(w, /const fovGoal = \(cine && !cine\.back && cine\.fov\) \|\| portraitFov\(camera\.aspect, baseFov\) \+ \(drive \? /);
     assert.match(w, /followYawRate\(\{ f: input\.f, r: input\.r, idleMs: now - orbitEnd, dragging: orbiting \}\)/);
   });
 });
@@ -204,7 +205,9 @@ describe('camera collision', () => {
     assert.equal(shortenFocus(18, 0), 6);
     assert.equal(shortenFocus(5, 0), 5); // never pushed out past the asked distance
     const w = read('timesSquare3d.js');
-    assert.match(w, /shortenFocus\(dist, nyc\.rayBlock\(/);
+    // the board camera does it inside camrig.js boardVantage, with the map's own ray test (test/boards.test.mjs runs it on the map)
+    assert.match(read('camrig.js'), /const stand = shortenFocus\(d, clear, \{ start: S \}\);/);
+    assert.match(w, /Math\.min\(nyc\.rayBlock\(ax, ay, az, bx, by, bz\), hitFace\(ax, ay, az, bx, by, bz\)\)/);
     assert.match(w, /const pose = slotPose\(slotId, 18, true\);/);
   });
 });
@@ -447,9 +450,13 @@ describe('framing a board', () => {
   it('every scripted board camera goes through it with the mount\'s real size and the settled FOV', () => {
     const w = read('timesSquare3d.js');
     const pose = w.slice(w.indexOf('function slotPose('), w.indexOf('const AD_IDS'));
-    assert.match(pose, /if \(clear\) \{\n\s+const face = boards\.face\(slotId\);\n\s+if \(face\) dist = boardRange\(dist, frameDistance\(\{ w: face\.w, h: face\.h, aspect: camera\.aspect, vfov: portraitFov\(camera\.aspect, baseFov\) \}\)\);/);
-    // the fit comes before the wall test, so a building in the way still pulls the camera in
-    assert.ok(pose.indexOf('boardRange(') < pose.indexOf('shortenFocus('));
+    assert.match(pose, /const face = clear \? boards\.face\(slotId\) : null;\n\s+const vfov = portraitFov\(camera\.aspect, baseFov\);/);
+    // with the map: boardVantage fits the face (boardRange, then the wall test); without it yet, the plain fit
+    assert.match(pose, /boardVantage\(\{ face: \{ x: p\.x, y: p\.y, z: p\.z, nx: f\.x, nz: f\.z, w: face\.w, h: face\.h \}, dist, aspect: camera\.aspect, vfov,/);
+    assert.match(pose, /if \(face\) dist = boardRange\(dist, frameDistance\(\{ w: face\.w, h: face\.h, aspect: camera\.aspect, vfov \}\)\);/);
+    const v = read('camrig.js');
+    const fn = v.slice(v.indexOf('export function boardVantage('), v.indexOf('// ---- driving camera'));
+    assert.ok(fn.indexOf('boardRange(') > 0 && fn.indexOf('boardRange(') < fn.indexOf('shortenFocus('));
     assert.equal(/camera\.fov/.test(pose), false); // not the FOV in mid-ease
     // focus / claim, lounge (both orientations) and the photo frame all ask with clear = true
     assert.match(w, /const pose = slotPose\(slotId, 18, true\);/);
@@ -665,7 +672,7 @@ describe('deep link and lounge wiring', () => {
   it('the lounge tour chains board to board and refuses in a taxi', () => {
     const w = read('timesSquare3d.js');
     const tour = w.slice(w.indexOf('function tourNext()'), w.indexOf('function taxiCanSit('));
-    assert.match(tour, /startCine\(pose\.cam, pose\.look, \{ dur: first \? 1100 : 1800 \}\);/);
+    assert.match(tour, /startCine\(pose\.cam, pose\.look, \{ dur: first \? 1100 : 1800, fov: pose\.fov \}\);/);
     assert.equal(/until/.test(tour), false); // no timed return between boards
     assert.match(w, /startLounge\(\) \{\n\s+if \(drive\) \{ tell\('운전 중에는 내린 뒤에 볼 수 있어요'\); return false; \}/);
     const main = read('main.js');

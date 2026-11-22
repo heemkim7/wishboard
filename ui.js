@@ -2,7 +2,7 @@
 // taxi HUD, city map + minimap, billboard / plot / ATM / settings / credits sheets, onboarding, touch controls, SFX.
 import { paintBillboard, paintNeonSign, THEMES, makeCanvas, chars, fontsReady, tierOf, boardPhoto, photoReady } from './ts3d/art.js?v=202611212346';
 import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, LANDMARKS } from './ts3d/layout.js?v=202611212346';
-import { BALANCE, PAY, askBid, auctionClosed, buildingOf, chainBoost, floorOf, nextChainFace, slotName, josa } from './balance.js';
+import { BALANCE, PAY, askBid, auctionClosed, buildingOf, chainBoost, floorOf, nextChainFace, slotName, josa, STREET_N, SLOT_SOON, slotOpen } from './balance.js';
 import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, tutorialTap, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611212346';
 import { WISH, WISH_ERR, cleanWish, wishRejected, wishShareText } from './wish.js';
 import { botNick, leagueLine, leagueWeek, liveSig } from './league.js';
@@ -921,8 +921,9 @@ export function createUI(root, hooks) {
     if (!near) return;
     const left = cooldownLeft();
     // A board in front of the player: the world sends the line for its state (빈 전광판 / {이름}님의 전광판 / 내 전광판).
+    // A board on the map whose row is not in the database yet (STREET_31..50 before the migration) says so.
     const p = near.kind === 'board'
-      ? (Array.isArray(near.p) ? near.p : ['전광판 열기', slotName(near.id), '전광판'])
+      ? (!slotOpen(world.billboards, near.id) ? ['곧 열리는 전광판', slotName(near.id), '보기'] : Array.isArray(near.p) ? near.p : ['전광판 열기', slotName(near.id), '전광판'])
       : near.kind === 'crowd'
       ? (near.n
         ? [`같이 함성 · 옆 ${near.n}명`, left > 0 ? `다음 함성까지 ${(left / 1000).toFixed(0)}초` : '옆 사람과 같이', '함성']
@@ -2657,13 +2658,14 @@ export function createUI(root, hooks) {
         if (!badgeEl) return;
         const b = boardById(slot);
         const mineLive = !!(b?.holder_id && b.holder_id === hooks.actorId() && boardActive(b));
-        badgeEl.textContent = !mineLive && auctionClosed(slot, nowMs()) ? '9시 오픈' : !b?.holder_id ? '빈칸' : !boardActive(b) ? '불 꺼짐' : '방송 중';
+        badgeEl.textContent = !slotOpen(world.billboards, slot) ? '곧 열림' : !mineLive && auctionClosed(slot, nowMs()) ? '9시 오픈' : !b?.holder_id ? '빈칸' : !boardActive(b) ? '불 꺼짐' : '방송 중';
       };
       const canvas = makeCanvas(1024, 576);
       const seg = h('div', { class: 'seg' });
       const slotOption = (id) => {
         const b = boardById(id);
         const mineRow = b?.holder_id && b.holder_id === hooks.actorId();
+        if (!slotOpen(world.billboards, id)) return `${slotName(id)} · 곧 열려요`;
         const who = !b?.holder_id ? '비어 있음' : !boardActive(b) ? (mineRow ? '불 꺼짐' : `불 꺼짐 · ${b.holder_name || '익명'}`) : mineRow ? '내 것' : (b.holder_name || '점령');
         return `${slotName(id)} · ${who}`;
       };
@@ -2916,6 +2918,13 @@ export function createUI(root, hooks) {
       let placing = false; // a claim, edit or tribe claim is out: one request per tap
       const refreshBid = () => {
         paintBadge();
+        if (!slotOpen(world.billboards, slot)) {
+          go.disabled = true;
+          tribeGo.disabled = true;
+          setIconText(go, '', '곧 열려요');
+          balance.replaceChildren(h('span', { text: SLOT_SOON }));
+          return;
+        }
         const b = boardById(slot) || { slot_id: slot };
         const min = minBid(b, world.billboards, hooks.actorId?.(), [lines[0].value, lines[1].value, lines[2].value].join('\n'));
         const bid = Math.floor(Number(bidIn.value) || 0);
@@ -3012,7 +3021,7 @@ export function createUI(root, hooks) {
       let syncStickers = () => {};
       let stickers;
       const towerIds = ['MAIN_UP', 'MAIN_TOP', 'MAIN_MID', 'MAIN_BOT', 'MAIN_LOW', 'SUB_1A', 'SUB_1B', 'SUB_2A', 'SUB_2B', 'SUB_3A', 'SUB_3B', 'SUB_4A', 'SUB_4B'];
-      const hotIds = Array.from({ length: 30 }, (_, i) => 'STREET_' + (i + 1));
+      const hotIds = Array.from({ length: STREET_N }, (_, i) => 'STREET_' + (i + 1));
       const cheapIds = Array.from({ length: 18 }, (_, i) => 'PLOT_' + (i + 1));
       const tipsEl = h('div', { class: 'rows' });
       const pickNote = h('p', { class: 'note', text: '위에 보이는 이름은 이 전광판의 지금 주인입니다. 핸드폰과 컴퓨터가 다른 계정이면, 컴퓨터에서 점령한 이름이 여기 그대로 보입니다.' });
@@ -3021,6 +3030,7 @@ export function createUI(root, hooks) {
         const have = wallet.confirmed + wallet.pending;
         const scored = [];
         for (const id of [...towerIds, ...hotIds, ...cheapIds]) {
+          if (!slotOpen(world.billboards, id)) continue;
           const b = boardById(id);
           const left = protectedLeft(b);
           const min = minBid(b || { slot_id: id }, world.billboards, me);
@@ -3041,7 +3051,7 @@ export function createUI(root, hooks) {
       const showZone = (zone, focus) => {
         for (const b of seg.children) b.classList.toggle('on', b.dataset.tier === zone);
         const mineIds = myBoards().map((b) => b.slot_id);
-        const ids = zone === 'pick' ? tips() : zone === 'tower' ? towerIds : zone === 'hot' ? hotIds : zone === 'cheap' ? cheapIds : mineIds;
+        const ids = (zone === 'pick' ? tips() : zone === 'tower' ? towerIds : zone === 'hot' ? hotIds : zone === 'cheap' ? cheapIds : mineIds).filter((id) => slotOpen(world.billboards, id));
         const list = ids.length ? ids.slice() : ['MAIN_TOP'];
         if (focus && !list.includes(focus)) list.unshift(focus);
         const next = focus && list.includes(focus) ? focus : list.includes(slot) ? slot : list[0];
@@ -3123,6 +3133,7 @@ export function createUI(root, hooks) {
       const placeBoard = async (mode) => {
         if (placing) return;
         hush();
+        if (!slotOpen(world.billboards, slot)) { say(goErr, SLOT_SOON); return; }
         const b = boardById(slot) || { slot_id: slot };
         if (mode !== 'tribe' && b.holder_id === hooks.actorId?.() && !boardActive(b)) {
           say(goErr, '불 켜기로 다시 72시간을 이을 수 있어요');
