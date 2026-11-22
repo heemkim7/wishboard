@@ -7,7 +7,7 @@ import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newco
 import { WISH, WISH_ERR, cleanWish, wishRejected, wishShareText } from './wish.js';
 import { botNick, leagueLine, leagueWeek, liveSig } from './league.js';
 import { backFields, returnGap } from './growth.js?v=202611222045';
-import { A2HS_KEY, VISITS_KEY, bumpVisits, isStandalone, isIosSafari, installMode, installDue, INSTALL_COPY } from './install.js?v=202611222045';
+import { A2HS_KEY, VISITS_KEY, bumpVisits, isStandalone, isIosSafari, installMode, installDue, INSTALL_COPY, INSTALL_CRAMPED_Q } from './install.js?v=202611222045';
 import { RECAP_KEY, RECAP_SHOWN_KEY, noteDay, noteHeld, noteHearts, noteClaim as recapClaim, recapDue, recapLines, recapShareText, weekOf } from './recap.js?v=202611222045';
 import { nineSlot, nowMs } from './live.js';
 import { cardUrl, vipShareLink, composeWishShot, kakaoFeed, kakaoSend, loadKakao, invited } from './share.js?v=202611222045';
@@ -566,7 +566,8 @@ export function createUI(root, hooks) {
   const sponsorLink = h('button', { class: 'btn ghost link', type: 'button', text: '작성자 링크' });
   const sponsorActs = h('div', { class: 'row' }, sponsorLink);
   const sponsorEl = h('div', { class: 'glass sponsor', hidden: true }, sponsorTitle, sponsorBody, phraseRow, sponsorPay, sponsorActs);
-  root.append(sponsorEl);
+  // A desktop window keeps it over the dock; on touch it joins the floating stack below (index.html "The floating stack").
+  if (!coarse) root.append(sponsorEl);
   let sponsorTimer = 0;
   function hideSponsor() { sponsorEl.hidden = true; document.body.classList.remove('has-sponsor'); clearTimeout(sponsorTimer); }
   function showSponsor(ev) {
@@ -598,6 +599,10 @@ export function createUI(root, hooks) {
 
   const toasts = h('div', { class: 'toasts', 'aria-live': 'polite' });
   document.body.append(toasts);
+  // Touch: a board's card (the focus link's 소원 주인 card, a taxi drop-off) is a piece of the floating stack, so it stays
+  // clear of the dock, the pouch and the action buttons, and the toasts climb over it (it used to be 148px up, 8-16px in
+  // from both edges, over 멍때리기, 동작 and the pouch).
+  if (coarse) toasts.prepend(sponsorEl);
 
   const needle = h('div', { class: 'needle' });
   // One bake = BAKE_FLIPS flips, one per BAKE_ROUND_MS (interact.js); the best flip is the session's result.
@@ -710,9 +715,11 @@ export function createUI(root, hooks) {
     window.addEventListener('pointermove', (ev) => { if (ev.pointerType === 'mouse' && jp == null) joyZone.style.pointerEvents = 'none'; }, { passive: true });
     window.addEventListener('pointerdown', (ev) => { if (ev.pointerType !== 'mouse') joyZone.style.pointerEvents = ''; }, { passive: true, capture: true });
   }
-  // One-time coach line for touch: how to look around, until the first drag on the city (kts_coach).
-  const coachEl = h('div', { class: 'coach', role: 'status', hidden: true, text: '끌어서 둘러보기 · 두 손가락으로 확대' });
-  if (coarse) root.append(coachEl);
+  // One-time coach line for touch: how to look around, until the first drag on the city (kts_coach). It is the bottom of the
+  // floating stack (the toasts' column, index.html "The floating stack"); its two halves are spans so a narrow column can
+  // set them as two lines without the dot.
+  const coachEl = h('div', { class: 'coach', role: 'status', hidden: true }, h('span', { text: '끌어서 둘러보기' }), h('span', { class: 'sep', text: ' · ' }), h('span', { text: '두 손가락으로 확대' }));
+  if (coarse) toasts.prepend(coachEl);
   let coachTimer = 0;
   function coachDone() {
     clearTimeout(coachTimer);
@@ -909,8 +916,11 @@ export function createUI(root, hooks) {
       say, click ? h('i', { class: 'go', 'aria-hidden': 'true' }, icon('chevronRight')) : null);
     if (click) t.addEventListener('click', () => { t.remove(); click(); });
     toasts.append(t);
-    // Over three: the oldest plain one goes first, so a tappable notice is not pushed out by a burst of coin lines.
-    while (toasts.children.length > 3) ([...toasts.children].find((c) => c !== t && !c.classList.contains('hit')) || toasts.firstChild).remove();
+    // Over three: the oldest plain one goes first, so a tappable notice is not pushed out by a burst of coin lines. Only
+    // toasts count: the cards in the same column (hint, far-board card, 홈 화면 추가, lottery result, a board's card) are not
+    // theirs to drop.
+    const shown = () => [...toasts.children].filter((c) => c.classList.contains('toast'));
+    for (let list = shown(); list.length > 3; list = shown()) (list.find((c) => c !== t && !c.classList.contains('hit')) || list[0]).remove();
     setTimeout(() => { if (!t.isConnected) return; t.classList.add('out'); setTimeout(() => t.remove(), 320); }, Number(opts?.ms) > 0 ? Number(opts.ms) : toastMs(say, !!click));
     return t;
   }
@@ -1019,7 +1029,7 @@ export function createUI(root, hooks) {
         act('보기', () => hooks.focusShot?.(slot)),
         cheerBtn,
         act(state === 'mine' ? '수정' : '걸기', () => (state === 'mine' ? openAd(slot) : openBillboard(slot)), 'go')));
-    root.append(el);
+    toasts.prepend(el); // the bottom of the floating stack: toasts go above it, never on it
     farEl = el;
     requestAnimationFrame(() => el.classList.add('show'));
     farTimer = setTimeout(hideFar, 4000);
@@ -1040,7 +1050,7 @@ export function createUI(root, hooks) {
     const el = h('div', { class: 'farcard adcard', role: 'status' },
       h('div', { class: 'where' }, h('b', {}, h('span', { class: 'adtag', text: '광고' }), document.createTextNode(' ' + title)), h('span', { text: sub })),
       h('div', { class: 'far-acts' }, ...acts));
-    root.append(el);
+    toasts.prepend(el);
     farEl = el;
     requestAnimationFrame(() => el.classList.add('show'));
     farTimer = setTimeout(hideFar, 6000);
@@ -4965,11 +4975,15 @@ export function createUI(root, hooks) {
 
   // ---- 홈 화면 추가 (install.js): one small card per browser, ever, from the 2nd day of visiting, after something meaningful happened in this visit.
   // Never over a sheet, a celebration or anything else screenBusy() knows; it steps aside while one is up and comes back when the screen is free.
-  const a2hs = { act: { wish: false, claim: false }, enteredAt: 0, el: null, free: 0, shownMs: 0 };
+  const a2hs = { act: { wish: false, claim: false }, enteredAt: 0, el: null, mode: '', free: 0, shownMs: 0 };
   const A2HS_SHOW_MS = 25000; // not answered in this long: it goes away on its own (the offer is spent)
   const installNow = () => installMode({ standalone: isStandalone(), event: window.__ktsInstall, ios: isIosSafari(navigator.userAgent, navigator.maxTouchPoints) });
   // True while something that came first (a queued 다녀간 사이, push offer, account prompt, last week's card) or the screen itself is in the way.
   const homeBusy = () => screenBusy() || !!awayWant || !!pushQueued || Date.now() < pushHoldUntil || linkWant || !!recapCard.rec || recapCard.state === 'fetching';
+  // A touch screen too short for this card above the bottom-centre controls, or a phone on its side (install.js
+  // INSTALL_CRAMPED_Q): it waits like it does for a sheet, and shows once there is room.
+  const homeCramped = { ios: matchMedia(INSTALL_CRAMPED_Q.ios), prompt: matchMedia(INSTALL_CRAMPED_Q.prompt) };
+  const homeNoRoom = (mode) => coarse && !!mode && homeCramped[mode === 'ios' ? 'ios' : 'prompt'].matches;
   function closeHome(how) {
     if (!a2hs.el) return;
     a2hs.el.remove();
@@ -4994,15 +5008,17 @@ export function createUI(root, hooks) {
       } });
     const el = h('div', { class: 'glass a2hs', role: 'region', 'aria-label': '홈 화면에 추가' }, body,
       h('div', { class: 'a2hs-act' }, add, mode === 'ios' ? null : h('button', { class: 'a2hs-later', type: 'button', text: INSTALL_COPY.later, onclick: () => done('later') })));
-    document.body.append(el);
+    toasts.prepend(el); // in the floating stack, under the toasts (index.html .a2hs)
     a2hs.el = el;
+    a2hs.mode = mode;
     a2hs.shownMs = 0;
     trackEvent('install_prompt', { how: mode === 'ios' ? 'ios' : 'shown' });
   }
   function pumpHome(now) {
     if (!entered) return;
     if (!a2hs.enteredAt) a2hs.enteredAt = Date.now();
-    const busy = homeBusy();
+    const mode = a2hs.el ? a2hs.mode : installNow();
+    const busy = homeBusy() || homeNoRoom(mode);
     if (a2hs.el) {
       a2hs.el.hidden = busy; // a sheet came up: the card waits behind it, it never sits on top
       if (!busy && (a2hs.shownMs += 1000) >= A2HS_SHOW_MS) closeHome('timeout');
@@ -5011,7 +5027,6 @@ export function createUI(root, hooks) {
     // quiet for 3 ticks first, so it never lands on the moment a sheet or a celebration just closed
     a2hs.free = busy ? 0 : a2hs.free + 1;
     if (a2hs.free < 3) return;
-    const mode = installNow();
     if (installDue({ mode, done: recall(A2HS_KEY, 0), visits: recall(VISITS_KEY, null), act: a2hs.act, playMs: Date.now() - a2hs.enteredAt, busy, newbie: !!newbieOn })) openHome(mode);
   }
 
@@ -6305,7 +6320,9 @@ export function createUI(root, hooks) {
       if (newbieOn && tutorialOn && !(hit && pay > 0)) return;
       const line = hit && pay > 0 ? `${who}${win}번, 맞았어요! +${pay} 코인` : `${who}이번 추첨 번호 ${win}`;
       const el = h('div', { class: 'stay-draw' }, ...withIcon('ticket', line));
-      root.append(el);
+      // In the floating stack, above the bottom-centre controls and clear of the side columns (index.html .stay-draw). As a
+      // banner 42% down the screen it lay on the left column of a desktop window under 1188px, and on a phone on the pouch.
+      toasts.append(el);
       setTimeout(() => el.remove(), 6500);
     },
     balloon(hp, wait) {
