@@ -2100,7 +2100,7 @@ async function settle(env, topic, actorId) {
 // because this isolate's copy alone would let every other isolate pay the 300 again. Redeem codes: one use per account and code for good, recorded
 // in 'acct' (codeTake, the pair hashed); closed the same way when it cannot be asked.
 const PROMO = new Map(), PROMO_BUSY = '지금은 광장이 붐벼요. 잠시 뒤에 다시 해 주세요.';
-export const SHARE_ACCOUNT = '계정을 연결하면 공유 보너스 300코인을 받을 수 있어요.';
+const SHARE_ACCOUNT = '계정을 연결하면 공유 보너스 300코인을 받을 수 있어요.'; // not exported: workerd takes every named export of the main module as an entrypoint and refuses to start on a string
 async function promo(req, env, u) {
   if (req.method !== 'POST') return J({ err: 'post' }, 405);
   const actor = await resolveActor(env, tokenOf(req));

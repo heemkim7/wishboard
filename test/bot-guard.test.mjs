@@ -31,6 +31,17 @@ const { GT_LS } = await import('../plaza-account.js');
 const human = await import('../human.js');
 const read = (p) => readFileSync(new URL('../' + p, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 
+describe('worker.js exports', () => {
+  // workerd treats every named export of the Worker's main module as an entrypoint ("Incorrect type for map entry ...: the provided value
+  // is not of type 'function or ExportedHandler'") and the Worker does not start. Only functions and classes may be exported.
+  it('are only functions or classes, plus the default handler', () => {
+    for (const [k, v] of Object.entries(W)) {
+      if (k === 'default') { assert.equal(typeof v?.fetch, 'function'); continue; }
+      assert.equal(typeof v, 'function', k + ' is exported as a ' + typeof v);
+    }
+  });
+});
+
 function sqliteStorage() {
   const db = new DatabaseSync(':memory:');
   return {
