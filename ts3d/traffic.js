@@ -189,7 +189,10 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
   const beamTex = new THREE.CanvasTexture(paintHeadlight(makeCanvas(64, 256)));
   const beams = mk(new THREE.PlaneGeometry(2.8, 9).rotateX(-Math.PI / 2).translate(0, 0.05, 6.7), new THREE.MeshBasicMaterial({ map: beamTex, color: new THREE.Color(0.5, 0.46, 0.38), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }), total);
   beams.layers.set(GROUND_LAYER);
-  const slotOf = (i) => (i < N_TAXI ? { parts: taxiParts, k: i } : i < N_AI ? { parts: carParts, k: i - N_TAXI } : { parts: taxiParts, k: i - N_AI + N_TAXI });
+  const slotAt = (i) => (i < N_TAXI ? { parts: taxiParts, k: i } : i < N_AI ? { parts: carParts, k: i - N_TAXI } : { parts: taxiParts, k: i - N_AI + N_TAXI });
+  // place / hide / paintCab run for every vehicle every frame: the { parts, k } of each slot is built once (read only).
+  const SLOTS = Array.from({ length: total }, (_, i) => slotAt(i));
+  const slotOf = (i) => SLOTS[i] || slotAt(i);
   const WHEELS = [[-0.86, 1.45], [0.86, 1.45], [-0.86, -1.45], [0.86, -1.45]];
   const tq = new THREE.Quaternion(), wq = new THREE.Quaternion(), tm = new THREE.Matrix4(), wm = new THREE.Matrix4();
   const tv = new THREE.Vector3(), wv = new THREE.Vector3(), XA = new THREE.Vector3(1, 0, 0);
@@ -232,7 +235,9 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
     return (k + 0.5) * (usable / 2) / per;
   }
   function pose(c) {
-    const [ax, az, bx, bz] = segEnds(c);
+    // segEnds(c) without its array: pose runs for every moving car every frame
+    const p = c.seg, a = c.dir > 0 ? p : p + 1, b = c.dir > 0 ? p + 1 : p;
+    const ax = R.xs[a], az = R.zs[a], bx = R.xs[b], bz = R.zs[b];
     const dx = bx - ax, dz = bz - az, L = Math.hypot(dx, dz) || 1;
     const fx = dx / L, fz = dz / L;
     c.L = L; c.fx = fx; c.fz = fz;
@@ -360,15 +365,17 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
   }
   const BASE = { Red: new THREE.Color(1, 0.08, 0.06), Yellow: new THREE.Color(1, 0.6, 0.05), Green: new THREE.Color(0.1, 1, 0.5) };
   let phase = 'nsG';
+  const SIG_ON = 3.4, SIG_OFF = 0.05;
+  // [green, yellow, red] lamp materials per axis (painted every frame, so no closure or key strings per call)
+  const SIG_NS = [sigMats.nsGreen, sigMats.nsYellow, sigMats.nsRed], SIG_EW = [sigMats.ewGreen, sigMats.ewYellow, sigMats.ewRed];
+  function lightAxis(m, green, yellow) {
+    m[0].color.copy(BASE.Green).multiplyScalar(green ? SIG_ON : SIG_OFF);
+    m[1].color.copy(BASE.Yellow).multiplyScalar(yellow ? SIG_ON : SIG_OFF);
+    m[2].color.copy(BASE.Red).multiplyScalar(!green && !yellow ? SIG_ON : SIG_OFF);
+  }
   function paintSignals() {
-    const ON = 3.4, OFF = 0.05;
-    const light = (grp, green, yellow) => {
-      sigMats[grp + 'Green'].color.copy(BASE.Green).multiplyScalar(green ? ON : OFF);
-      sigMats[grp + 'Yellow'].color.copy(BASE.Yellow).multiplyScalar(yellow ? ON : OFF);
-      sigMats[grp + 'Red'].color.copy(BASE.Red).multiplyScalar(!green && !yellow ? ON : OFF);
-    };
-    light('ns', phase === 'nsG', phase === 'nsY');
-    light('ew', phase === 'ewG', phase === 'ewY');
+    lightAxis(SIG_NS, phase === 'nsG', phase === 'nsY');
+    lightAxis(SIG_EW, phase === 'ewG', phase === 'ewY');
   }
 
   // ---- simulation ----------------------------------------------------------------------------------------------
@@ -489,7 +496,8 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
       place(i, rc.x, rc.z, rc.yaw, rc.spin);
       paintCab(i, rc.tint || (rc.yellow ? TAXI_YELLOW : ''));
     }
-    for (const p of [...taxiParts, ...carParts]) p.instanceMatrix.needsUpdate = true;
+    for (const p of taxiParts) p.instanceMatrix.needsUpdate = true;
+    for (const p of carParts) p.instanceMatrix.needsUpdate = true;
     wheels.instanceMatrix.needsUpdate = true;
     beams.instanceMatrix.needsUpdate = true;
   }
@@ -578,26 +586,33 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
     for (let k = 0; k < n; k++) { list[k].spin = remoteList[k]?.spin || 0; remoteList[k] = list[k]; }
     remoteList.length = n;
   }
+  // The point collide is pushing (colX, colZ) and its radius: pushCar moves it. collide runs a few times a frame, so the
+  // car test is one function over these instead of a closure (and an axle array) per call.
+  let colX = 0, colZ = 0, colR = 0;
+  const AXLES = [1.3, -1.3];
+  function pushCar(cx, cz, yaw) {
+    const fx = Math.sin(yaw), fz = Math.cos(yaw);
+    for (let j = 0; j < AXLES.length; j++) {
+      const s = AXLES[j];
+      const qx = cx + fx * s, qz = cz + fz * s;
+      const dx = colX - qx, dz = colZ - qz, rr = colR + 1.0, d2 = dx * dx + dz * dz;
+      if (d2 >= rr * rr || d2 < 1e-8) continue;
+      const d = Math.sqrt(d2);
+      colX = qx + (dx / d) * rr;
+      colZ = qz + (dz / d) * rr;
+    }
+  }
   /** Pushes a circle out of every car except the one being driven. */
   function collide(x, z, r) {
-    const test = (cx, cz, yaw) => {
-      const fx = Math.sin(yaw), fz = Math.cos(yaw);
-      for (const s of [1.3, -1.3]) {
-        const qx = cx + fx * s, qz = cz + fz * s;
-        const dx = x - qx, dz = z - qz, rr = r + 1.0, d2 = dx * dx + dz * dz;
-        if (d2 >= rr * rr || d2 < 1e-8) continue;
-        const d = Math.sqrt(d2);
-        x = qx + (dx / d) * rr;
-        z = qz + (dz / d) * rr;
-      }
-    };
+    colX = x; colZ = z; colR = r;
     for (const c of veh) {
       if (c.mode === 'off' || c.mode === 'driven') continue;
       const cx = c.mode === 'ai' ? c.rx : c.x, cz = c.mode === 'ai' ? c.rz : c.z;
-      if (Math.abs(cx - x) > 6 || Math.abs(cz - z) > 6) continue;
-      test(cx, cz, c.mode === 'ai' ? c.ryaw : c.yaw);
+      if (Math.abs(cx - colX) > 6 || Math.abs(cz - colZ) > 6) continue;
+      pushCar(cx, cz, c.mode === 'ai' ? c.ryaw : c.yaw);
     }
-    for (const rc of remoteList) if (Math.abs(rc.x - x) < 6 && Math.abs(rc.z - z) < 6) test(rc.x, rc.z, rc.yaw);
+    for (const rc of remoteList) if (Math.abs(rc.x - colX) < 6 && Math.abs(rc.z - colZ) < 6) pushCar(rc.x, rc.z, rc.yaw);
+    x = colX; z = colZ;
     for (const p of sigPoles) {
       const dx = x - p.x, dz = z - p.z, rr = r + 0.22, d2 = dx * dx + dz * dz;
       if (d2 >= rr * rr || d2 < 1e-8) continue;

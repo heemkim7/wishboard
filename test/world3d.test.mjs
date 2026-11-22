@@ -56,7 +56,8 @@ describe('per-frame work', () => {
     const s = read('ts3d/screens.js');
     assert.match(s, /const LIVE_HOT = quality === 'low' \? 3 : 10, LIVE_EVERY = quality === 'low' \? 2 : 1;/);
     assert.match(s, /const draw = liveTick % LIVE_EVERY === 0;/);
-    assert.match(s, /const hot = new Set\(near\.slice\(0, LIVE_HOT\)\.map\(\(r\) => r\.b\)\);/);
+    // hot: the LIVE_HOT nearest boards (one reused set, refilled from the sorted list each tick)
+    assert.match(s, /hot\.clear\(\);\n    for \(let i = 0; i < near\.length && i < LIVE_HOT; i\+\+\) hot\.add\(near\[i\]\.b\);/);
     assert.match(s, /if \(!draw \|\| !on \|\| b\.shared \|\| seen\.has\(b\.canvas\)\) continue;/);
     // the 0.08 s tick itself is unchanged, so the wish and king cadences (every 8th tick, kingBudget per tick) are too
     assert.match(s, /if \(liveAcc < 0\.08\) return;/);
@@ -76,6 +77,45 @@ describe('per-frame work', () => {
     const end = w.slice(w.indexOf('function endCine('), w.indexOf('function focusSlot('));
     assert.match(end, /lounge = false;/);
     assert.match(end, /if \(wasLounge\) opts\.onLoungeEnd\?\.\(\);/);
+  });
+});
+
+// The per-frame paths keep no new three.js objects, arrays or closures of their own (measured before / after in the
+// 2026-11-22 하3 report; these keep them from coming back).
+describe('per-frame allocations', () => {
+  const body = (src, head, end) => { const i = src.indexOf(head); assert.ok(i >= 0, head); return src.slice(i, src.indexOf(end, i + head.length)); };
+  it('a held pose (pray, cheer, throw) builds no vectors, quaternions or matrices per call', () => {
+    const a = read('ts3d/avatars.js');
+    const pose = body(a, 'function pointY(', '\nclass Avatar {');
+    assert.equal(/new THREE\.|\.clone\(\)/.test(pose), false);
+    assert.match(pose, /hand\.children\[i\]\.traverse\(identityBone\)/);
+  });
+  it('traffic: one { parts, k } per slot built once, no segEnds array in pose, no closure or key strings in the signals or collide', () => {
+    const t = read('ts3d/traffic.js');
+    assert.match(t, /const SLOTS = Array\.from\(\{ length: total \}, \(_, i\) => slotAt\(i\)\);/);
+    assert.equal(/= segEnds\(/.test(body(t, '  function pose(c) {', '\n  }\n')), false);
+    const sig = body(t, '  function paintSignals() {', '\n  }\n');
+    assert.equal(/=>|\+ '/.test(sig), false);
+    const col = body(t, '  function collide(x, z, r) {', '\n  }\n');
+    assert.equal(/=>|\[1\.3, -1\.3\]/.test(col), false);
+    const up = body(t, '  function update(dt, t, player) {', '\n  function warm(');
+    assert.equal(up.includes('[...taxiParts'), false);
+  });
+  it('boards: the nearest-first rows, the measuring vector and the sets are reused every tick', () => {
+    const s = read('ts3d/screens.js');
+    const up = body(s, '  function update(dt, cam) {', '\n  // Boards whose king card');
+    assert.equal(/new Set\(|near\.push\(\{|worldPos\(b\.slotId\)|\(a, b\) =>|const hues/.test(up), false);
+    assert.match(up, /const p = worldPos\(b\.slotId, nearAt\);/);
+  });
+  it('the world step: remote peers keep their equip list, frame and cut name until presence changes them', () => {
+    const w = read('timesSquare3d.js');
+    const sync = body(w, '  function syncRemotes(dt, t) {', '\n  if (net) {');
+    assert.equal(/new Set\(|equippedOf\(cosmetics/.test(sync), false);
+    assert.match(sync, /if \(eqNew\) r\.av\.setEquip\(cosmetics\);/);
+    assert.match(sync, /if \(r\.nameSrc !== peer\.name\) \{ r\.nameSrc = peer\.name; r\.nm = chars\(peer\.name \|\| '익명', 12\); \}/);
+    const step = body(w, '  function step(dt, t, now) {', '\n  // ---- sizing / quality');
+    assert.equal(/Object\.values\(markers\)|TAXI_STANDS\.findIndex|lightCol\.set\(boards\.accentOf/.test(step), false);
+    assert.match(step, /if \(accent !== lightKey\) \{ lightKey = accent; lightCol\.set\(accent\); \}/);
   });
 });
 
