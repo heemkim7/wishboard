@@ -3,8 +3,8 @@
 // Also the player's taxi, taxis called to stands, parked taxis and remote players' taxis.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { Kit } from './kit.js?v=202611221134';
-import { makeCanvas, paintTaxiSign, paintTaxiDecal } from './art.js?v=202611221134';
+import { Kit } from './kit.js?v=202611221326';
+import { makeCanvas, paintTaxiSign, paintTaxiDecal } from './art.js?v=202611221326';
 
 // Headlight pool on the road: a wide soft fan (art.js paintBeam is now a narrow core meant for guide beams).
 function paintHeadlight(canvas) {
@@ -25,9 +25,9 @@ function paintHeadlight(canvas) {
   g.fillRect(0, 0, W, H);
   return canvas;
 }
-import { GROUND_LAYER } from './ground.js?v=202611221134';
-import { ROAD } from './nyc.js?v=202611221134';
-import { LAYOUT } from './layout.js?v=202611221134';
+import { GROUND_LAYER } from './ground.js?v=202611221326';
+import { ROAD } from './nyc.js?v=202611221326';
+import { LAYOUT } from './layout.js?v=202611221326';
 
 export function signalPhase(t) {
   const c = t % 36;

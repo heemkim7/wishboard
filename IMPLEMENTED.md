@@ -473,7 +473,7 @@
 
 한 모듈은 한 주소로만 부른다. 브라우저도 Worker 번들러도 `x.js`와 `x.js?v=1`을 다른 모듈로 본다. `tools/stamp.mjs`가 고치고 `test/cachebust.test.mjs`가 막는다.
 
-- 브라우저 전용 모듈은 모두 `./x.js?v=<빌드 id>`로, 빌드 id 하나로 부른다. 기준은 `index.html`의 `main.js?v=` 값이고 지금은 `202611221134`다. `index.html`의 `<script src>`도 같다.
+- 브라우저 전용 모듈은 모두 `./x.js?v=<빌드 id>`로, 빌드 id 하나로 부른다. 기준은 `index.html`의 `main.js?v=` 값이고 지금은 `202611221326`다. `index.html`의 `<script src>`도 같다.
 - Worker도 번들하는 모듈(`worker.js`에서 정적 import로 닿는 것)은 어디서든 쿼리 없이 부른다. 지금은 `adreport.js`, `balance.js`, `cardpng.js`, `dark.js`, `invite.js`, `league.js`, `live.js`, `plaza-account.js`, `ts3d/walkers.js`, `wish.js`다(`tools/stamp.mjs` `workerModules`가 `worker.js`의 import에서 찾는다). 이 모듈들 안의 import도 쿼리가 없다. `qr.js`, `growth.js`, `inbox.js`, `share.js`, `ts3d/loadplan.js`, `interact.js`, `bgm.js`(배경음악 합성), `ts3d/bowtie.js`(전광판 배치), `errlog.js`, `install.js`, `recap.js`, `adspage.js`, `admin-ops.js`, `admin-ads.js`는 브라우저 전용이라 `?v=`로 부른다. 5차에 더한 Worker 번들 모듈은 `ops.js`, `opsrules.js`, `adsrv.js`, `adsale.js`다(쿼리 없음). `ads.html`도 `tools/stamp.mjs`가 고친다.
 - `sw.js`(`?v=9`, 손으로 관리)와 `vendor/`는 이 규칙 밖이다. `index.html`이 `/sw.js?v=9`를 등록한다.
 - HTML 페이지(`index.html`, `admin.html`) 안의 인라인 모듈 스크립트의 import도 같은 규칙으로 `tools/stamp.mjs`가 고친다(`admin.html`의 `./growth.js?v=`).

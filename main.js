@@ -1,28 +1,28 @@
 // Times Square K-점령전 — app wiring: realtime net (DO), 3D world, UI, wallet, world state, star shower.
-import { errlogCtx } from './errlog.js?v=202611221134'; // first: its error listeners are on before any other module runs
-import { Net, CDN, guestToken } from './net.js?v=202611221134';
-import { createTimesSquare, STARTER_COLORS, taxiTrainMult } from './timesSquare3d.js?v=202611221134';
-import { speciesId } from './ts3d/avatars.js?v=202611221134';
-import { equip, unequip, loadShop, loadProfile, profileSpecies, saveColor, saveNick, saveSpecies, setSpecies } from './profile.js?v=202611221134';
-import { starSpot, insideLoop } from './ts3d/layout.js?v=202611221134';
-import { createUI } from './ui.js?v=202611221134';
-import { haptic, startMusic } from './audio.js?v=202611221134';
-import { coinGate, COIN_WAIT_MS, COIN_CAP_MS, isTouchUI } from './interact.js?v=202611221134';
+import { errlogCtx } from './errlog.js?v=202611221326'; // first: its error listeners are on before any other module runs
+import { Net, CDN, guestToken } from './net.js?v=202611221326';
+import { createTimesSquare, STARTER_COLORS, taxiTrainMult } from './timesSquare3d.js?v=202611221326';
+import { speciesId } from './ts3d/avatars.js?v=202611221326';
+import { equip, unequip, loadShop, loadProfile, profileSpecies, saveColor, saveNick, saveSpecies, setSpecies } from './profile.js?v=202611221326';
+import { starSpot, insideLoop } from './ts3d/layout.js?v=202611221326';
+import { createUI } from './ui.js?v=202611221326';
+import { haptic, startMusic } from './audio.js?v=202611221326';
+import { coinGate, COIN_WAIT_MS, COIN_CAP_MS, isTouchUI } from './interact.js?v=202611221326';
 import { BALANCE, PAY, chainsOf, live, monopolyOf, slotName, slotOf, takeGrants, cheerCount, countsAsPlay, josa, slotOpen, SLOT_SOON } from './balance.js';
 import { auctionClosed, EQUIP_MAX, OWNED_MAX } from './balance.js';
-import { trackEvent } from './analytics.js?v=202611221134';
+import { trackEvent } from './analytics.js?v=202611221326';
 import { adoptHandover, allowedLink, blockedText, handoverHref, isAndroid, isInAppWebView, loginEmail, CHEER_PHRASES, GT_LS, SESSION_LS, slotTier } from './plaza-account.js';
 import { authErrorText, cleanAddress, externalRoutes, oauthErrorText, oauthMessage, oauthReturn, sessionDrift, OAUTH_ACK, OAUTH_CHANNEL } from './plaza-account.js';
 import { invCode, inviteFrom, inviteView } from './invite.js';
-import { saveClip, dropParams } from './share.js?v=202611221134';
-import { ftueDue, crowdFacts, kstDay, lockCelebration, startFtue, wishAutoOpen, wishBootLine, awayRows, inboxUnread, seenAdd, liveKey, liveSeenAdd } from './ftue.js?v=202611221134';
-import { photoVerdicts } from './ftue.js?v=202611221134';
+import { saveClip, dropParams } from './share.js?v=202611221326';
+import { ftueDue, crowdFacts, kstDay, lockCelebration, startFtue, wishAutoOpen, wishBootLine, awayRows, inboxUnread, seenAdd, liveKey, liveSeenAdd } from './ftue.js?v=202611221326';
+import { photoVerdicts } from './ftue.js?v=202611221326';
 import { WISH, cleanWish } from './wish.js';
 import { seasonFor, seasonPreview } from './seasons.js';
-import { applyInboxPush, loadInbox, readInbox, liveOnly, handledRead, liveSeeable } from './inbox.js?v=202611221134';
-import { openTribe, pledge, sendCheer } from './tribe.js?v=202611221134';
+import { applyInboxPush, loadInbox, readInbox, liveOnly, handledRead, liveSeeable } from './inbox.js?v=202611221326';
+import { openTribe, pledge, sendCheer } from './tribe.js?v=202611221326';
 import { applyOps, ballNotice, sessionEndPlan, nineBanner, kingMinute, clockSkew, clock, nowMs } from './live.js';
-import { pushRoute, awayRead } from './overlay.js?v=202611221134';
+import { pushRoute, awayRead } from './overlay.js?v=202611221326';
 
 adoptHandover(location.search, localStorage);
 // Back from a full-page sign-in (the fallback when the Google window could not open): read once here, because supabase-js takes

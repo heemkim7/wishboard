@@ -9,6 +9,8 @@ tools
 docs
 migrations
 worker.js
+ops.js
+adsrv.js
 wrangler.jsonc
 cf_release.py
 schema.sql

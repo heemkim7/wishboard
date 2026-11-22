@@ -401,7 +401,7 @@ describe('wiring and copy', () => {
   });
   it('the /ads page: served (not hidden by .assetsignore), one module under the build id, the form posts to /rt/ads/request with a honeypot and the consent box', () => {
     const html = read('ads.html'), js = read('adspage.js'), ignore = read('.assetsignore');
-    assert.match(html, /<script type="module" src="\.\/adspage\.js\?v=202611221134"><\/script>/);
+    assert.match(html, /<script type="module" src="\.\/adspage\.js\?v=\d{12}"><\/script>/);
     for (const f of ['ads.html', 'adspage.js', 'admin-ads.js', 'adsale.js']) assert.equal(ignore.split('\n').includes(f), false, f);
     assert.equal(/^\*\.html$|^\*\*\/\*\.html$|^\*\.js$/m.test(ignore), false);
     assert.match(js, /fetch\('\/rt\/ads\/request'/);
@@ -412,7 +412,7 @@ describe('wiring and copy', () => {
     assert.match(js, /노출 보장/);
     assert.match(js, /카드 결제는 받지 않아요/);
     for (const f of [js, read('adsrv.js'), read('adsale.js'), read('admin-ads.js')]) assert.equal(/stripe|tosspayments|iamport|portone|kakaopay|card_?number|카드 ?번호|pg\.js/i.test(f), false); // no card payment code
-    assert.match(read('admin.html'), /^<script type="module" src="\.\/admin-ads\.js\?v=202611221134"><\/script>$/m);
+    assert.match(read('admin.html'), /^<script type="module" src="\.\/admin-ads\.js\?v=\d{12}"><\/script>$/m);
   });
   it('the terms and the privacy policy carry the ad sections, before 시행일', () => {
     const t = policyDoc('terms'), p = policyDoc('privacy');

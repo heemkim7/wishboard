@@ -100,7 +100,7 @@ async function main() {
   console.log('[git]   HEAD', execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim(), 'tracked changes:', execSync('git status --porcelain --untracked-files=no', { encoding: 'utf8' }).trim() || 'none');
 
   // 2. things that must not be served
-  for (const p of ['/.dev.vars', '/.env', '/.git/HEAD', '/.wrangler/', '/.claude/launch.json', '/.assetsignore', '/worker.js', '/schema.sql', '/wrangler.jsonc', '/MORNING_REPORT.md', '/AGENTS.md', '/IMPLEMENTED.md', '/tools/stamp.mjs', '/tools/prod-e2e.mjs', '/test/wish.test.mjs']) {
+  for (const p of ['/.dev.vars', '/.env', '/.git/HEAD', '/.wrangler/', '/.claude/launch.json', '/.assetsignore', '/worker.js', '/ops.js', '/adsrv.js', '/schema.sql', '/wrangler.jsonc', '/MORNING_REPORT.md', '/AGENTS.md', '/IMPLEMENTED.md', '/tools/stamp.mjs', '/tools/prod-e2e.mjs', '/test/wish.test.mjs']) {
     const r = await get(p);
     if (r.status === 200) bad++;
     console.log(`[hidden] ${p.padEnd(24)} -> ${r.status} (${r.buf.length}B)${r.status === 200 ? '  <-- SERVED' : ''}`);
