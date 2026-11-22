@@ -81,7 +81,9 @@ describe('coins migration on the schema before it', { skip: SKIP, concurrency: f
     // The same functions, grants and tables as a database made from schema.sql.
     const neu = await make(read('schema.sql'));
     try {
-      const nd = (await neu.query("SELECT p.proname, pg_get_functiondef(p.oid) def, p.proacl::text acl FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname IN " + NAMES + " ORDER BY 1")).rows;
+      // profile_read differs from schema.sql only by its two list limits (migrations/2026-11-22-shop.sql: 4 -> 6 equipped, 12 -> 16 owned).
+      const nd = (await neu.query("SELECT p.proname, pg_get_functiondef(p.oid) def, p.proacl::text acl FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname IN " + NAMES + " ORDER BY 1")).rows
+        .map((f) => (f.proname === 'profile_read' ? { ...f, def: f.def.replace(/LIMIT 6\b/, 'LIMIT 4').replace(/LIMIT 16\b/, 'LIMIT 12') } : f));
       assert.deepEqual(d1, nd); assert.equal(d1.length, 11); // the six patched in place come out exactly as schema.sql writes them
       // save_species differs from schema.sql only by the species range (migrations/2026-11-22-species.sql); the wallet check is the same.
       const sp = async (d) => (await d.query("SELECT pg_get_functiondef('public.save_species(text,text,integer)'::regprocedure) AS d")).rows[0].d.replace(/v_species := CASE[^\n]*\n/, '');

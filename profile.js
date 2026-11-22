@@ -44,6 +44,27 @@ export async function equip(cosmeticId) {
   return r.json();
 }
 
+// Take off what is worn in `kind` (migrations/2026-11-22-shop.sql; before it the answer is { ok: false, error: 'soon' }).
+export async function unequip(kind) {
+  const r = await fetch('/rt/equip', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + await bearer() },
+    body: JSON.stringify({ kind: String(kind || ''), off: true }),
+  });
+  return r.json().catch(() => ({ ok: false }));
+}
+
+// The shop as the database prices it: { open, items: [{ id, kind, price }] }. open false before migrations/2026-11-22-shop.sql (and when
+// the Worker could not ask): the sheet then shows balance.js SHOP with '곧 열려요'. Never throws; 6 s cap.
+export async function loadShop() {
+  try {
+    const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(6000) : undefined;
+    const r = await fetch('/rt/shop', { cache: 'no-store', signal });
+    const d = await r.json();
+    return { open: d?.open === true, items: Array.isArray(d?.items) ? d.items : [] };
+  } catch { return { open: false, items: [] }; }
+}
+
 export async function saveNick(name) {
   const nickname = Array.from(String(name || '')).slice(0, 16).join('').trim();
   if (!nickname) throw new Error('이름을 적어 주세요');

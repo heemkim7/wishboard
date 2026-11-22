@@ -2,7 +2,7 @@
 // scrolling news tickers, and the slot registry (MAIN_*, SUB_1A..4B, STREET_1..50, PLOT_1..18).
 import * as THREE from 'three';
 import { Kit, arcSlab } from './kit.js?v=202611221134';
-import { THEMES, makeCanvas, paintBillboard, paintTicker, fontsReady, tierOf, boardPhoto, photoReady, SANS, roundRect, chars, paintWish, wishOrd, wishRotates, wishStrip, cleanWishes, sameWishes, rowUntil, wishPlan, wishRelist, wishFontTargets, wishPinPlan, freshWish, wishSettled, WISH_CYCLE, WISH_CYCLE_LOW, WISH_BUDGET, WISH_BUDGET_LOW, WISH_NOW, WISH_DROPS } from './art.js?v=202611221134';
+import { THEMES, makeCanvas, paintBillboard, paintTicker, fontsReady, tierOf, boardPhoto, photoReady, SANS, roundRect, chars, paintWish, wishOrd, wishRotates, wishStrip, cleanWishes, sameWishes, rowUntil, wishPlan, wishRelist, wishFontTargets, wishPinPlan, freshWish, wishSettled, WISH_CYCLE, WISH_CYCLE_LOW, WISH_BUDGET, WISH_BUDGET_LOW, WISH_NOW, WISH_DROPS, frameTone } from './art.js?v=202611221134';
 import { askBid } from '../balance.js';
 import { floorOf, live, SLOT_RE, isLateSlot } from '../balance.js';
 import { auctionClosed } from '../balance.js';
@@ -557,6 +557,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
         const text = shieldText(b);
         if (text !== (b.shield || '')) { b.shield = text; paint(b); }
         const warn = text.startsWith('방어막');
+        b.rimWarn = warn;
         for (const m of b.mounts) {
           if (!m.rim) continue;
           m.rim.visible = !!text || !!b.rimColor;
@@ -570,6 +571,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
         showMeshes[1].material.color.set(hues[(liveTick / 8) % hues.length | 0]);
       }
     }
+    if (rimMoving.size) rimStep(); // after the 8-tick pass above, which sets every rim to its plain colour
   }
 
   // Boards whose king card state is wrong, nearest first, kingBudget per tick; the rest wait for the next tick.
@@ -675,10 +677,24 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
 
   function accentOf(slotId) { return THEMES[boards.get(slotId)?.data.bg_theme]?.accent || '#3fe6ff'; }
 
-  function setRim(slotId, color) {
+  // Frames that move (art.js FRAME_FX anim): 'rainbow' walks the hue, 'shine' breathes. A shield warning on the board wins.
+  const rimMoving = new Set();
+  function rimStep() {
+    const t = liveTick * 0.08;
+    for (const b of rimMoving) {
+      if (b.rimWarn || !b.rimColor) continue;
+      const tone = frameTone({ color: b.rimColor, anim: b.rimAnim }, t);
+      const op = b.rimAnim === 'shine' ? 0.62 + 0.33 * Math.abs(Math.sin(t * 1.7)) : 0.85;
+      for (const m of b.mounts) { if (!m.rim) continue; m.rim.material.color.set(tone); m.rim.material.opacity = op; }
+    }
+  }
+  /** color: the rim of a holder's frame ('' none); anim: '' | 'shine' | 'rainbow' (art.js FRAME_FX). */
+  function setRim(slotId, color, anim = '') {
     const b = boards.get(slotId);
     if (!b) return;
     b.rimColor = color || '';
+    b.rimAnim = b.rimColor ? anim || '' : '';
+    if (b.rimAnim) rimMoving.add(b); else rimMoving.delete(b);
     const text = shieldText(b);
     const warn = text.startsWith('방어막');
     for (const m of b.mounts) {

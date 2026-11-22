@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
-import { makeCanvas, paintNameTag, paintBubble } from './art.js?v=202611221134';
+import { makeCanvas, paintNameTag, paintBubble, paintRingFx, TAG_THEMES, RING_FX, RING_FX_SIZE } from './art.js?v=202611221134';
 import { MODEL_URL, modelFor } from './loadplan.js?v=202611221134';
 
 const LOOPS = new Set(['Idle', 'Walking', 'Running', 'Dance', 'Sitting', 'Standing']);
@@ -88,6 +88,18 @@ export function createAvatars({ scene, urls, models, first, height = 1.8 }) {
   // Foot ring: a thin line (6 cm, so its near and far arcs stay at least a pixel wide from the follow camera on a
   // low-tier phone) in the player's colour.
   sys.ringGeo = new THREE.RingGeometry(0.63, 0.69, 48).rotateX(-Math.PI / 2);
+  // Shop ring effects (art.js RING_FX): one flat square and one painted texture per effect, shared by every avatar wearing it.
+  sys.ringFxGeo = new THREE.PlaneGeometry(RING_FX_SIZE, RING_FX_SIZE).rotateX(-Math.PI / 2);
+  const ringFx = new Map();
+  sys.ringFxTex = (id) => {
+    let t = ringFx.get(id);
+    if (!t) {
+      t = new THREE.CanvasTexture(paintRingFx(makeCanvas(256, 256), id));
+      t.colorSpace = THREE.SRGBColorSpace;
+      ringFx.set(id, t);
+    }
+    return t;
+  };
   const bubbles = new Map();
   sys.bubbleTex = (glyph) => {
     let t = bubbles.get(glyph);
@@ -253,6 +265,9 @@ class Avatar {
     this.name = name || '익명';
     this.color = color || '#3fe6ff';
     this.cosmetics = [];
+    this.tagTheme = '';
+    this.fxId = '';
+    this.fx = null;
     this.root = new THREE.Group();
     this.holder = new THREE.Group();
     this.root.add(this.holder);
@@ -340,7 +355,7 @@ class Avatar {
   }
 
   paintTag() {
-    paintNameTag(this.tagCanvas, this.name, this.color, this.local);
+    paintNameTag(this.tagCanvas, this.name, this.color, this.local, this.tagTheme);
     this.tagTex.needsUpdate = true;
   }
 
@@ -398,8 +413,29 @@ class Avatar {
 
   setEquip(ids) {
     const src = Array.isArray(ids) ? ids : String(ids || '').split(',');
-    this.cosmetics = src.map((id) => String(id || '').trim()).filter((id) => id && id !== 'taxi').slice(0, 4);
+    const next = src.map((id) => String(id || '').trim()).filter((id) => id && id !== 'taxi').slice(0, 6);
+    if (next.join(',') === this.cosmetics.join(',')) return; // a peer's presence repeats its list every frame
+    this.cosmetics = next;
     this.syncHat();
+    const theme = next.find((id) => TAG_THEMES[id]) || '';
+    if (theme !== this.tagTheme) { this.tagTheme = theme; this.paintTag(); }
+    this.syncRingFx(next.find((id) => RING_FX[id]) || '');
+  }
+
+  // The shop's foot-ring effect: a flat painted square under the avatar (anyone's, so others see it), in place of the local plain ring.
+  syncRingFx(id) {
+    if (id === this.fxId) return;
+    this.fxId = id;
+    if (this.fx) { this.fx.removeFromParent(); this.fx.material.dispose(); this.fx = null; }
+    if (this.ring) this.ring.visible = !id;
+    if (!id) return;
+    const mat = new THREE.MeshBasicMaterial({ map: this.sys.ringFxTex(id), transparent: true, opacity: 0.95, depthWrite: false, blending: THREE.AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -12 });
+    const fx = new THREE.Mesh(this.sys.ringFxGeo, mat);
+    fx.position.y = 0.036;
+    fx.renderOrder = 1;
+    fx.layers.set(1);
+    this.root.add(fx);
+    this.fx = fx;
   }
 
   syncHat() {
@@ -543,6 +579,12 @@ class Avatar {
       const p = 1 + Math.sin(t * 3.2) * 0.05;
       this.ring.scale.set(p, 1, p);
     }
+    if (this.fx) {
+      const look = RING_FX[this.fxId], p = 1 + Math.sin(t * 3.2) * 0.04;
+      this.fx.scale.set(p, 1, p);
+      this.fx.rotation.y = (t * (look?.spin || 0) * Math.PI * 2) % (Math.PI * 2);
+      if (look?.twinkle) this.fx.material.opacity = 0.7 + 0.3 * Math.abs(Math.sin(t * 4.1));
+    }
   }
 
   dispose() {
@@ -555,6 +597,7 @@ class Avatar {
     this.tag.material.dispose();
     this.bubble.material.dispose();
     this.ringMat?.dispose();
+    this.fx?.material.dispose();
     if (this.fallback) this.model.traverse(o => { o.geometry?.dispose(); o.material?.dispose?.(); });
     else this.mainMat?.dispose();
   }

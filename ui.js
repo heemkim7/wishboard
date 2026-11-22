@@ -1,8 +1,8 @@
 // Plaza UI: glass HUD, wallet, news wire, emote dock, prompts, bungeo-ppang timing game, K-POP rhythm game,
 // taxi HUD, city map + minimap, billboard / plot / ATM / settings / credits sheets, onboarding, touch controls, SFX.
-import { paintBillboard, paintNeonSign, THEMES, makeCanvas, chars, fontsReady, tierOf, boardPhoto, photoReady } from './ts3d/art.js?v=202611221134';
+import { paintBillboard, paintNeonSign, THEMES, makeCanvas, chars, fontsReady, tierOf, boardPhoto, photoReady, paintNameTag, paintRingFx, paintFrameSwatch } from './ts3d/art.js?v=202611221134';
 import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, LANDMARKS } from './ts3d/layout.js?v=202611221134';
-import { BALANCE, PAY, askBid, auctionClosed, buildingOf, chainBoost, floorOf, nextChainFace, slotName, josa, STREET_N, SLOT_SOON, slotOpen } from './balance.js';
+import { BALANCE, PAY, askBid, auctionClosed, buildingOf, chainBoost, floorOf, nextChainFace, slotName, josa, STREET_N, SLOT_SOON, slotOpen, SHOP_KINDS, shopTiles, shopItem } from './balance.js';
 import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, tutorialTap, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611221134';
 import { WISH, WISH_ERR, cleanWish, wishRejected, wishShareText } from './wish.js';
 import { botNick, leagueLine, leagueWeek, liveSig } from './league.js';
@@ -3764,20 +3764,92 @@ export function createUI(root, hooks) {
       const owned = new Set(Array.isArray(prof.owned) ? prof.owned : []);
       fields.push(h('p', { class: 'note', text: `레벨 ${Math.min(99, Math.max(1, Math.floor(Number(prof.level) || 1)))} · 명성 ${Math.max(0, Math.floor(Number(prof.reputation) || 0))}` }));
       if (hooks.wear) {
-        const catalog = [['hat_ribbon', '리본 모자'], ['cab_yellow', '노란 택시'], ['frame_streak', '연속 테두리']].filter(([id]) => owned.has(id));
-        if (!catalog.length) fields.push(h('p', { class: 'note', text: '출석 7일마다 리본 모자, 노란 택시, 연속 테두리가 열립니다.' }));
-        else {
-          const wearRow = h('div', { class: 'species' });
-          for (const [id, label] of catalog) {
-            const b = h('button', { type: 'button', class: equipped.has(id) ? 'on' : '', text: label, onclick: async () => { if (await hooks.wear(id)) b.classList.add('on'); } });
-            wearRow.append(b);
-          }
-          fields.push(h('div', { class: 'field' }, h('label', null, '보관함'), wearRow));
-        }
+        // 꾸미기: what is worn now, and the shop (which is also the locker: owned items are worn or taken off there).
+        const worn = [...equipped].map((id) => shopItem(id)?.label).filter(Boolean);
+        const mine = [...owned].filter((id) => shopItem(id)).length;
+        fields.push(h('div', { class: 'field' }, h('label', null, '꾸미기', h('span', { text: worn.length ? worn.join(' · ') : mine ? `보관함 ${mine}개` : '이름표 · 발밑 링 · 택시 · 테두리' })),
+          h('button', { class: 'btn ghost shop-open', type: 'button', onclick: () => openShop() }, icon('gift'), h('span', { text: '꾸미기 상점' }), icon('chevronRight'))));
       }
       host.append(...fields, save);
       setTimeout(() => { if (!coarse) input.focus(); }, 50);
     }, true);
+  }
+
+  // ---------------------------------------------------------------- 꾸미기 상점
+  // Tabs per kind (balance.js SHOP_KINDS), a tile per item with a live preview (the name tag and foot ring are the same painters the
+  // plaza uses, the frame a small board, the taxi and hat a colour swatch), its price and what a tap does now (balance.js shopTiles).
+  // A buy takes one confirm (the second tap within 4 s). Before migrations/2026-11-22-shop.sql the shop is shut: '곧 열려요', and only
+  // what attendance gave can be worn. Guests are asked to link first: their coins and items live on this device until they do.
+  function shopPreview(t) {
+    const it = shopItem(t.id);
+    if (t.kind === 'tag') {
+      const c = makeCanvas(256, 64);
+      paintNameTag(c, hooks.nick(), hooks.color(), true, t.id);
+      return h('span', { class: 'pv tag' }, c);
+    }
+    if (t.kind === 'ring') return h('span', { class: 'pv ring' }, paintRingFx(makeCanvas(128, 128), t.id));
+    if (t.kind === 'frame') return h('span', { class: 'pv frame' }, paintFrameSwatch(makeCanvas(128, 64), t.id));
+    const hex = /^#[0-9a-f]{6}$/i.test(it?.tint || '') ? it.tint : '#ffb020', n = parseInt(hex.slice(1), 16);
+    const light = ((n >> 16) * 0.299 + ((n >> 8) & 255) * 0.587 + (n & 255) * 0.114) > 140; // dark ink on a light swatch, light ink on a dark one
+    return h('span', { class: 'pv tint' }, h('i', { style: { background: hex, color: light ? '#1c1300' : '#f2f4ff' } }, t.kind === 'cab' ? icon('taxi') : icon('gift')));
+  }
+  const SHOP_ACT = { off: '벗기', worn: '장착 중', wear: '장착', soon: '곧 열려요', short: '코인 부족', buy: '구매' };
+  function openShop(startKind) {
+    openSheet(['gift', '꾸미기 상점'], `${money(wallet.confirmed + wallet.pending)} 코인`, (host) => {
+      let kind = SHOP_KINDS.some((k) => k.kind === startKind) ? startKind : SHOP_KINDS[0].kind;
+      let shop = { open: false, items: [], ready: false };
+      let armed = '', armTimer = 0, busy = '';
+      const me = sheet;
+      const grid = h('div', { class: 'shop-grid', role: 'list' });
+      const status = h('p', { class: 'note shop-note', text: '상점을 불러오는 중…' });
+      const tabs = h('div', { class: 'seg shop-tabs', role: 'tablist', 'aria-label': '꾸미기 종류' });
+      for (const k of SHOP_KINDS) {
+        tabs.append(h('button', { type: 'button', role: 'tab', class: k.kind === kind ? 'on' : '', 'aria-selected': String(k.kind === kind), text: k.label, onclick: (e) => {
+          kind = k.kind; armed = '';
+          for (const c of tabs.children) { c.classList.toggle('on', c === e.currentTarget); c.setAttribute('aria-selected', String(c === e.currentTarget)); }
+          paint();
+        } }));
+      }
+      const act = async (t) => {
+        if (busy) return;
+        if (t.act === 'buy' && armed !== t.id) {
+          armed = t.id; clearTimeout(armTimer);
+          armTimer = setTimeout(() => { if (armed === t.id) { armed = ''; paint(); } }, 4000);
+          paint(); return;
+        }
+        busy = t.id; armed = ''; paint();
+        try {
+          if (t.act === 'buy') { await hooks.buyCosmetic(t.id); note(`${josa(t.label, '을', '를')} 샀어요. 바로 장착했어요`, 'ok'); }
+          else if (t.act === 'wear') await hooks.wear(t.id);
+          else if (t.act === 'off') await hooks.unwear(t.kind);
+        } catch (e) { note(e?.message || '지금은 살 수 없어요', 'err'); }
+        busy = '';
+        if (sheet === me) { const b = me.box.querySelector('h2 .badge'); if (b) b.textContent = `${money(wallet.confirmed + wallet.pending)} 코인`; paint(); }
+      };
+      const paint = () => {
+        const prof = hooks.profile?.() || {};
+        const tiles = shopTiles({ kind, open: shop.open, items: shop.items, owned: prof.owned, equip: prof.equip, coins: wallet.confirmed + wallet.pending });
+        grid.replaceChildren(...tiles.map((t) => {
+          const label = busy === t.id ? '처리 중…' : armed === t.id ? `${money(t.price)}코인 · 한 번 더` : SHOP_ACT[t.act];
+          const can = !busy && (t.act === 'buy' || t.act === 'wear' || t.act === 'off');
+          return h('div', { class: `shop-item${t.worn ? ' on' : ''}`, role: 'listitem' },
+            shopPreview(t),
+            h('b', { class: 'nm', text: t.label }),
+            h('span', { class: 'pr' }, ...(t.owned ? [t.worn ? '장착 중' : '보관함'] : withIcon('coin', `${money(t.price)} 코인`))),
+            h('button', { type: 'button', class: `btn ${t.act === 'buy' ? 'gold' : 'ghost'}${armed === t.id ? ' arm' : ''}`, disabled: !can, text: label, onclick: () => act(t) }));
+        }));
+        if (!tiles.length) grid.append(h('p', { class: 'note', text: '이 종류는 아직 팔지 않아요.' }));
+        status.textContent = !shop.ready ? '상점을 불러오는 중…' : shop.open ? '코인으로만 사요. 종류마다 하나씩 장착하고, 다른 사람에게도 보여요. 주간 리그 지출에는 들어가지 않아요.' : '꾸미기 상점은 곧 열려요. 지금은 출석 7일 보상으로 받은 꾸미기만 장착할 수 있어요.';
+      };
+      const guest = accountView.ready && accountView.guest && !accountView.linked;
+      host.append(
+        guest ? h('div', { class: 'callout warn shop-guest', style: { marginTop: 0 } }, '게스트 코인과 꾸미기는 이 기기에만 있어요. 사기 전에 계정을 연결하면 기기를 바꿔도 남고 +300코인도 받아요.',
+          h('button', { class: 'btn gold', type: 'button', text: '계정 연결 +300', onclick: () => openLogin() })) : null,
+        tabs, grid, status);
+      paint();
+      Promise.resolve(hooks.shop?.() || { open: false, items: [] }).then((r) => { shop = { open: !!r?.open, items: Array.isArray(r?.items) ? r.items : [], ready: true }; if (sheet === me) paint(); }, () => { shop = { ...shop, ready: true }; if (sheet === me) paint(); });
+      return () => clearTimeout(armTimer);
+    }, true, '', { kind: '꾸미기 상점' });
   }
 
   // ---------------------------------------------------------------- boot / onboarding

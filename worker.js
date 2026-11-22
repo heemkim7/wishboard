@@ -5,7 +5,7 @@
 // Meter DO: daily (UTC) estimate of billed DO requests -> lean mode at 80%, solo (down) at 95% of the Free 100k/day.
 // Supabase keeps auth, DB and RPCs only. No timers in DOs (hibernation-friendly); alarms only while someone waits.
 import { DurableObject } from 'cloudflare:workers';
-import { BALANCE, slotName, josa, SLOT_IDS, PAY, scaledPay, bakeBase, danceBase, farePay, ballOpen, auctionClosed, stickerNext, chainBoost, buildingOf, cheerCount, STARTER_DEFAULT, starterList } from './balance.js';
+import { BALANCE, slotName, josa, SLOT_IDS, PAY, scaledPay, bakeBase, danceBase, farePay, ballOpen, auctionClosed, stickerNext, chainBoost, buildingOf, cheerCount, STARTER_DEFAULT, starterList, EQUIP_MAX, OWNED_MAX } from './balance.js';
 import { nextBallUntil, drawSpan } from './live.js';
 import { CHEER_PHRASES, EVENT_NAMES, allowedLink, blockedText, parseGuestHandover, statsFromCounts } from './plaza-account.js';
 import { renderCardPng } from './cardpng.js';
@@ -1603,14 +1603,15 @@ function levelOf(rep) {
   const n = Math.max(0, Math.floor(Number(rep) || 0));
   return Math.min(99, 1 + Math.floor(n / 10));
 }
-function equipList(raw) {
+// Cosmetic ids: at most `max` (EQUIP_MAX equipped, one per kind; OWNED_MAX for the locker, balance.js).
+function equipList(raw, max = EQUIP_MAX) {
   const src = Array.isArray(raw) ? raw : String(raw || '').split(',');
   const out = [];
   for (const item of src) {
     const id = String(item || '');
     if (!/^[a-z0-9_]{1,40}$/.test(id) || out.includes(id)) continue;
     out.push(id);
-    if (out.length === 4) break;
+    if (out.length === max) break;
   }
   return out;
 }
@@ -1660,7 +1661,7 @@ async function profileApi(req, env, u, ctx) {
     const color = /^#[0-9a-fA-F]{6}$/.test(String(rpc.data.color || '')) ? String(rpc.data.color) : '';
     const streak = Math.max(0, Math.floor(Number(rpc.data.streak) || 0));
     const attendLast = /^\d{4}-\d{2}-\d{2}/.test(String(rpc.data.attend_last || '')) ? String(rpc.data.attend_last).slice(0, 10) : '';
-    return J({ level: prof.level, reputation: prof.reputation, species: prof.av, equip: prof.equip, owned: equipList(rpc.data.owned), starter: rpc.data.starter === true, streak, ...(attendLast ? { attend_last: attendLast } : {}), ...(color ? { color } : {}), ...(sure ? {} : { species_sure: false }) });
+    return J({ level: prof.level, reputation: prof.reputation, species: prof.av, equip: prof.equip, owned: equipList(rpc.data.owned, OWNED_MAX), starter: rpc.data.starter === true, streak, ...(attendLast ? { attend_last: attendLast } : {}), ...(color ? { color } : {}), ...(sure ? {} : { species_sure: false }) });
   }
   if (u.pathname === '/rt/profile' && req.method === 'POST') {
     if (!env.FLUSH_KEY) return J({ err: 'profile' }, 503);
@@ -1699,6 +1700,16 @@ async function profileApi(req, env, u, ctx) {
   if (u.pathname === '/rt/equip' && req.method === 'POST') {
     if (!env.FLUSH_KEY) return J({ ok: false, error: 'missing' }, 503);
     const b = await readJson(req);
+    // { kind, off: true }: take off what is worn in that kind (unequip_cosmetic, migrations/2026-11-22-shop.sql; before it: 503 soon).
+    if (b?.off === true) {
+      const kind = String(b.kind || '');
+      if (!SHOP_KIND_RE.test(kind)) return J({ ok: false, error: 'missing' }, 400);
+      const rpc = await supabaseRpc('unequip_cosmetic', { p_key: env.FLUSH_KEY, p_actor_id: actor.id, p_kind: kind });
+      if (fnMissing(rpc)) return J({ ok: false, error: 'soon' }, 503);
+      if (!rpc.ok || !rpc.data || rpc.data.ok === false) return J({ ok: false, error: 'missing' }, rpc.ok ? 400 : 502);
+      await publishProfile(env, actor.id);
+      return J({ ok: true });
+    }
     const id = String(b?.cosmetic_id || '');
     if (!/^[a-z0-9_]{1,40}$/.test(id)) return J({ ok: false, error: 'missing' }, 400);
     const rpc = await supabaseRpc('equip_cosmetic', { p_key: env.FLUSH_KEY, p_actor_id: actor.id, p_cosmetic_id: id });
@@ -1708,6 +1719,71 @@ async function profileApi(req, env, u, ctx) {
     return J({ ok: true });
   }
   return J({ err: 'method' }, 405);
+}
+// 꾸미기 상점 (migrations/2026-11-22-shop.sql). Game coins only. GET /rt/shop: { ok, open, items: [{ id, kind, price }] }, the database's
+// prices. Before the migration shop_list is missing: open false, and the sheet shows balance.js SHOP with '곧 열려요' and no buy button.
+// Per isolate: an answer for 10 minutes, a missing function, a failure or no answer in 1.5 s for 2 minutes. No Durable Object call.
+// POST /rt/shop/buy { cosmetic_id, topic }: the room's pending coins are settled first (as every spend does), then buy_cosmetic decides
+// alone (price, owned, coins) and equips it; the room is told (publishProfile). Guests may buy (the sheet asks them to link first). Shop
+// spend is not competition: it is never added to the weekly league or to wallets.spent.
+const fnMissing = (r) => !!r && !r.ok && (r.status === 404 || /PGRST202|Could not find the function/i.test(JSON.stringify(r.data ?? '')));
+const SHOP_KIND_RE = /^(hat|cab|frame|tag|ring|emote)$/;
+const SHOP_SOON = '꾸미기 상점은 곧 열려요.';
+const SHOP_ERR = { owned: '이미 가진 꾸미기예요.', coins: '코인이 부족해요.', item: '지금은 팔지 않는 꾸미기예요.', down: '지금은 살 수 없어요. 잠시 뒤에 다시 해 주세요.' };
+let SHOP_C = { at: 0, ttl: 0, open: false, items: [], p: null };
+const COSM_MOVED = new Map(); // guest id -> when this isolate last asked move_cosmetics for it (the link route)
+const shopClosed = () => { SHOP_C = { at: Date.now(), ttl: 120000, open: false, items: [], p: null }; };
+function shopRows(raw) {
+  const out = [];
+  for (const r of raw.slice(0, 64)) {
+    const id = String(r?.id || ''), kind = String(r?.kind || ''), price = Math.floor(Number(r?.price));
+    if (/^[a-z0-9_]{1,40}$/.test(id) && SHOP_KIND_RE.test(kind) && price > 0 && price <= 1000000) out.push({ id, kind, price });
+  }
+  return out;
+}
+export function shopList(env) {
+  if (Date.now() - SHOP_C.at < SHOP_C.ttl) return Promise.resolve(SHOP_C);
+  if (SHOP_C.p) return SHOP_C.p;
+  const ask = supabaseRpc('shop_list', { p_key: env.FLUSH_KEY || '' }).then((r) => (r.ok && r.data?.ok === true && Array.isArray(r.data.items) ? shopRows(r.data.items) : null), () => null);
+  let timer; const late = new Promise((res) => { timer = setTimeout(res, 1500, null); });
+  return SHOP_C.p = Promise.race([ask, late]).then((items) => {
+    clearTimeout(timer);
+    if (items) SHOP_C = { at: Date.now(), ttl: 600000, open: true, items, p: null }; else shopClosed();
+    return SHOP_C;
+  });
+}
+async function shopApi(req, env, ctx, u) {
+  if (u.pathname === '/rt/shop') {
+    if (req.method !== 'GET') return J({ err: 'get' }, 405);
+    const c = await shopList(env);
+    return J({ ok: true, open: c.open, items: c.items });
+  }
+  if (req.method !== 'POST') return J({ err: 'post' }, 405);
+  const actor = await resolveActor(env, tokenOf(req)); if (!actor) return J({ err: 'auth' }, 401);
+  const b = await readJson(req); if (!b) return J({ err: 'json' }, 400);
+  const id = String(b.cosmetic_id || '');
+  if (!/^[a-z0-9_]{1,40}$/.test(id)) return J({ ok: false, code: 'item', error: SHOP_ERR.item }, 400);
+  if (!env.FLUSH_KEY) return J({ ok: false, code: 'soon', error: SHOP_SOON }, 503);
+  const c = await shopList(env);
+  if (!c.open) return J({ ok: false, code: 'soon', error: SHOP_SOON }, 503);
+  if (!c.items.some((it) => it.id === id)) return J({ ok: false, code: 'item', error: SHOP_ERR.item }, 400); // before any Durable Object call
+  const topic = typeof b.topic === 'string' ? b.topic : '';
+  if (!PLAZA_TOPICS.includes(topic)) return J({ ok: false, error: '광장 접속 정보가 없습니다. 다시 입장한 뒤 시도해 주세요.', pending: true }, 400);
+  if (gapHit('shop:' + actor.id)) return J({ ok: false, code: 'busy', error: GAP_ERR }, 429);
+  const settled = await settle(env, topic, actor.id);
+  if (!settled.ok) return J({ ok: false, error: settled.error, pending: true }, 409);
+  const rpc = await supabaseRpc('buy_cosmetic', { p_key: env.FLUSH_KEY, p_actor_id: actor.id, p_cosmetic_id: id });
+  if (fnMissing(rpc)) { shopClosed(); return J({ ok: false, code: 'soon', error: SHOP_SOON }, 503); }
+  if (!rpc.ok || !rpc.data || typeof rpc.data !== 'object') return J({ ok: false, code: 'down', error: SHOP_ERR.down }, 502);
+  const d = rpc.data;
+  if (d.ok === false) {
+    const code = SHOP_ERR[d.error] ? String(d.error) : 'down';
+    const need = code === 'coins' && Number(d.price) > 0 ? ` ${Number(d.price).toLocaleString('en-US')}코인이 필요해요.` : '';
+    return J({ ok: false, code, error: SHOP_ERR[code] + need }, code === 'down' ? 502 : 400);
+  }
+  try { await publishProfile(env, actor.id); } catch { /* the next entry reads the database */ }
+  const coins = Math.max(0, Math.floor(Number(d.coins) || 0));
+  return J({ ok: true, cosmetic_id: id, kind: String(d.kind || ''), price: Math.floor(Number(d.price) || 0), remaining_coins: coins });
 }
 async function inboxList(req, env) {
   const actor = await resolveActor(env, tokenOf(req)); if (!actor) return J({ err: 'auth' }, 401);
@@ -3086,6 +3162,10 @@ async function accountApi(req, env, ctx, u) {
   // The guest's wish, hearts, reports and unpaid prizes become the user's (wMove), so mine, the one-wish-a-day rule and the prize follow the person.
   ctx.waitUntil(Promise.resolve().then(() => Promise.all([pushM(env).psMove(guestId, actor.id), snapM(env).snapMove(guestId, actor.id).then(() => { SNX.clear(); SNC.clear(); }),
     wishM(env).wMove(guestId, actor.id).then(() => { WISHC.at = 0; WONE.clear(); WAU.clear(); }), darkM(env).dkMove(guestId, actor.id), lgM(env).lgMove(guestId, actor.id).then(lgDrop), invM(env).ivMove(guestId, actor.id)])).catch(() => { })); // the invite code, counts and pending rewards too
+  // The guest's cosmetics (bought or from attendance) go with it (move_cosmetics, migrations/2026-11-22-shop.sql; before it the call is a 404).
+  // Once per guest per isolate in 10 minutes: a replay of the same link asks nothing extra (the move is idempotent anyway).
+  if (!(COSM_MOVED.get(guestId) > Date.now() - 600000)) { if (COSM_MOVED.size >= 2000) COSM_MOVED.clear(); COSM_MOVED.set(guestId, Date.now());
+    ctx.waitUntil(supabaseRpc('move_cosmetics', { p_key: env.FLUSH_KEY || '', p_from: guestId, p_to: actor.id }).catch(() => null)); }
   await adSoon(ctx, () => adM(env).adMove(guestId, actor.id)); // the moved boards keep their report; waited for (up to 0.8 s) so a report right after the link finds it
   // again: an account that withdrew before; no reward is announced, and the client says once that the start coins do not come back.
   return J({ ok: true, actor_id: actor.id, coins, bonus: again ? 0 : data.bonus || 0, linked: true, nickname: data.nickname || '', ...(again ? { again: true } : {}) });
@@ -3335,6 +3415,7 @@ export default {
       if (!sub) return J({ err: 'auth' }, 401);
       const r = await M.grpAdd(b.c, sub, kstDay(), isoWeek()); GRP.at = 0; return J({ ok: true, dup: !!r.dup }); }
     if (u.pathname === '/rt/profile' || u.pathname === '/rt/equip') return profileApi(req, env, u, ctx);
+    if (u.pathname === '/rt/shop' || u.pathname === '/rt/shop/buy') return shopApi(req, env, ctx, u);
     if (u.pathname === '/rt/inbox' && req.method === 'GET') return inboxList(req, env);
     if (u.pathname === '/rt/inbox/read') return inboxRead(req, env);
     if (u.pathname === '/rt/push/key') return J({ k: VAPID_PUB }, 200, { 'cache-control': 'public, max-age=3600' });

@@ -13,7 +13,7 @@ import { toNetUnits, fromNetUnits } from './net.js?v=202611221134';
 import { walkerPoints } from './ts3d/walkers.js';
 import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, SKIP_ZONES, NO_PROPS, NO_TREES, FAR_CLUSTERS, LANDMARKS, groundHeight, onStairs, fountainSpot } from './ts3d/layout.js?v=202611221134';
 import { BALANCE, PAY, chainsOf, slotName } from './balance.js';
-import { isSlotId, STREET_N } from './balance.js';
+import { isSlotId, STREET_N, shopItem, equippedOf, EQUIP_MAX } from './balance.js';
 import { kitMaterials } from './ts3d/kit.js?v=202611221134';
 import { createReflection } from './ts3d/ground.js?v=202611221134';
 import { createBoards, screenTime } from './ts3d/screens.js?v=202611221134';
@@ -26,7 +26,7 @@ import { claimIcons, buildIcons } from './ts3d/icons.js?v=202611221134';
 import { buildLandmarks } from './ts3d/landmarks.js?v=202611221134';
 import { createAvatars, EMOTES, REACTIONS, AVATAR_COLORS, STARTER_COLORS, speciesId } from './ts3d/avatars.js?v=202611221134';
 import { seesAvatar, prefetchDelay, prefetchIds } from './ts3d/loadplan.js?v=202611221134';
-import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, paintLabel, fontsReady, chars, hashStr } from './ts3d/art.js?v=202611221134';
+import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, paintLabel, fontsReady, chars, hashStr, FRAME_FX } from './ts3d/art.js?v=202611221134';
 import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=202611221134';
 import { taxiExit, EXIT_SLOW, nextOfferDelay, fareWait } from './interact.js?v=202611221134';
 import { RETURN_MS, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, portraitFov, fitDistance, reverseTime, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange, boardVantage, facesBlock } from './camrig.js?v=202611221134';
@@ -275,6 +275,9 @@ void main(){
   let color = COLOR_RE.test(opts.color || '') ? opts.color : STARTER_COLORS[0];
   let species = speciesId(opts.species);
   let myEquip = [];
+  let peerFrameSig = '', frameSig = '';
+  // The cab colour an equip list asks for (balance.js SHOP kind 'cab' tint), '' for the plain fleet yellow.
+  const cabTint = (list) => shopItem(equippedOf(list, 'cab'))?.tint || '';
   const me = avatars.create({ id: 'me', name, color, local: true, species });
   me.root.position.copy(pos);
   me.holder.rotation.y = yaw;
@@ -722,7 +725,7 @@ void main(){
     // The next passenger waits for the Room's fare gap (interact.js nextOfferDelay), counted from the last fare sent.
     job.nextAt = clockT + nextOfferDelay(fareAt == null ? null : clockT - fareAt, { min: 0.4 });
     netState.equip = 'taxi';
-    traffic?.setCabYellow(i, myEquip.includes('cab_yellow'));
+    traffic?.setCabTint(i, cabTint(myEquip));
     opts.onDrive?.(true);
     return true;
   }
@@ -791,6 +794,7 @@ void main(){
   const seeFrustum = new THREE.Frustum(), seeM = new THREE.Matrix4(), seeP = new THREE.Vector3();
   function syncRemotes(dt, t) {
     remoteCars.length = 0;
+    frameSig = '';
     if (!net?.peers) { traffic?.setRemoteTaxis(remoteCars); return; }
     const seen = new Set();
     seeFrustum.setFromProjectionMatrix(seeM.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
@@ -842,10 +846,13 @@ void main(){
       r.av.holder.rotation.y = r.yaw;
       r.av.setMotion(inCar ? 0 : Math.min(r.spd, 9), !inCar && s.anim === 'sit' && r.spd < 0.3);
       r.av.update(dt, t);
-      if (inCar) remoteCars.push({ x: r.x, z: r.z, yaw: r.yaw, v: r.spd, yellow: cosmetics.includes('cab_yellow') });
+      if (inCar) remoteCars.push({ x: r.x, z: r.z, yaw: r.yaw, v: r.spd, tint: cabTint(cosmetics) });
+      const fr = equippedOf(cosmetics, 'frame');
+      if (fr && FRAME_FX[fr]) frameSig += id + '=' + fr + ';';
     }
     for (const [id, r] of remotes) if (!seen.has(id)) { r.av.dispose(); remotes.delete(id); }
     traffic?.setRemoteTaxis(remoteCars);
+    if (frameSig !== peerFrameSig) { peerFrameSig = frameSig; paintMyFrames(); } // a holder in the room put on, changed or took off a frame
   }
   if (net) {
     net.on?.('emoji', (p) => {
@@ -1091,12 +1098,17 @@ void main(){
   }
 
   // ---- billboards / plots API -----------------------------------------------------------------------
+  // The holder's frame (art.js FRAME_FX, shop kind 'frame') around its boards: mine from my equip, another holder's from its presence while it
+  // is in this room (peerFrameSig, built in syncRemotes). A holder who is away shows the plain board.
   function paintMyFrames() {
     const mine = opts.actorId?.() || '';
-    const color = myEquip.includes('frame_streak') ? '#ff3d9a' : '';
+    const peerFrame = new Map();
+    for (const part of peerFrameSig.split(';')) { const at = part.indexOf('='); if (at > 0) peerFrame.set(part.slice(0, at), part.slice(at + 1)); }
+    const myFrame = equippedOf(myEquip, 'frame');
     for (const [id, b] of boards.boards) {
-      const own = !!(mine && b.data?.holder_id === mine);
-      boards.setRim(id, own ? color : '');
+      const holder = String(b.data?.holder_id || '');
+      const fx = FRAME_FX[holder && holder === mine ? myFrame : holder ? peerFrame.get(holder) || '' : ''];
+      boards.setRim(id, fx ? fx.color : '', fx ? fx.anim : '');
     }
   }
   function updateBillboardTexture(slotId, data, celebrate = true) {
@@ -2656,10 +2668,10 @@ void main(){
       setTimeout(() => (window.requestIdleCallback || ((f) => setTimeout(f, 0)))(run, { timeout: 15000 }), ms);
     },
     setEquip(ids) {
-      myEquip = (Array.isArray(ids) ? ids : []).map((id) => String(id || '')).filter((id) => id && id !== 'taxi').slice(0, 4);
+      myEquip = (Array.isArray(ids) ? ids : []).map((id) => String(id || '')).filter((id) => id && id !== 'taxi').slice(0, EQUIP_MAX);
       me.setEquip(myEquip);
       paintMyFrames();
-      if (drive) traffic?.setCabYellow(drive.i, myEquip.includes('cab_yellow'));
+      if (drive) traffic?.setCabTint(drive.i, cabTint(myEquip));
     },
     setGlow(v) { glow = clamp(Number(v) || 0, 0, 1); applyGlow(); },
     setExposure(v) { renderer.toneMappingExposure = clamp(Number(v) || 0.95, 0.5, 1.5); },

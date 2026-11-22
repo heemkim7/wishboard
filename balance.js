@@ -298,3 +298,69 @@ export function danceBase(score) {
   if (n >= 55) return 4;
   return 2;
 }
+
+// 꾸미기 상점: cosmetics bought with game coins only, never cash. The database holds the price that is charged (cosmetics.price,
+// migrations/2026-11-22-shop.sql seeds these same numbers) and buy_cosmetic reads it; this table is what the shop sheet shows (labels,
+// order, the price before the migration) and what test/shop.test.mjs holds the seed to. hat_ribbon, cab_yellow and frame_streak still come
+// with every 7-day attendance streak too, at the prices in docs/superpowers/specs/2026-11-15-monetize-legal-note.md. One equipped per kind.
+// tint: the colour a tile, a taxi or a frame shows for the item (ts3d/art.js paints the name tags and rings by id).
+export const SHOP_KINDS = Object.freeze([
+  Object.freeze({ kind: 'tag', label: '이름표' }),
+  Object.freeze({ kind: 'ring', label: '발밑 링' }),
+  Object.freeze({ kind: 'cab', label: '택시' }),
+  Object.freeze({ kind: 'frame', label: '테두리' }),
+  Object.freeze({ kind: 'hat', label: '모자' }),
+]);
+export const SHOP = Object.freeze([
+  { id: 'tag_heart', kind: 'tag', price: 300, label: '하트 이름표', tint: '#ff6fb5' },
+  { id: 'tag_gold', kind: 'tag', price: 500, label: '골드 이름표', tint: '#ffc94a' },
+  { id: 'tag_neon', kind: 'tag', price: 700, label: '네온 이름표', tint: '#48d6f0' },
+  { id: 'ring_sparkle', kind: 'ring', price: 700, label: '반짝이 링', tint: '#ffe9a8' },
+  { id: 'ring_heart', kind: 'ring', price: 800, label: '하트 링', tint: '#ff5fa8' },
+  { id: 'ring_rainbow', kind: 'ring', price: 1000, label: '무지개 링', tint: '#b84dff' },
+  { id: 'cab_yellow', kind: 'cab', price: 800, label: '노란 택시', tint: '#fff3a0' },
+  { id: 'cab_pink', kind: 'cab', price: 900, label: '핑크 택시', tint: '#ff6fb5' },
+  { id: 'cab_black', kind: 'cab', price: 1100, label: '블랙 택시', tint: '#23252d' },
+  { id: 'frame_streak', kind: 'frame', price: 600, label: '연속 테두리', tint: '#ff3d9a' },
+  { id: 'frame_gold', kind: 'frame', price: 1000, label: '골드 테두리', tint: '#ffc94a' },
+  { id: 'frame_rainbow', kind: 'frame', price: 1500, label: '무지개 테두리', tint: '#b84dff' },
+  { id: 'hat_ribbon', kind: 'hat', price: 400, label: '리본 모자', tint: '#ff3d9a' },
+].map((it) => Object.freeze(it)));
+const SHOP_BY = new Map(SHOP.map((it) => [it.id, it]));
+export const shopItem = (id) => SHOP_BY.get(String(id ?? '')) || null;
+// The kind of a cosmetic id: the shop's, else the id's prefix (hat_, cab_, frame_, tag_, ring_), else ''.
+export function cosmeticKind(id) {
+  const s = String(id ?? '');
+  const hit = SHOP_BY.get(s);
+  if (hit) return hit.kind;
+  const m = /^(hat|cab|frame|tag|ring)_[a-z0-9_]+$/.exec(s);
+  return m ? m[1] : '';
+}
+// The one equipped id of `kind` in an equip list (presence `equip`, GET /rt/profile equip), or ''.
+export function equippedOf(equip, kind) {
+  const src = Array.isArray(equip) ? equip : String(equip || '').split(',');
+  for (const raw of src) { const id = String(raw || '').trim(); if (id && cosmeticKind(id) === kind) return id; }
+  return '';
+}
+// Cosmetic lists on the wire: at most EQUIP_MAX equipped (one per kind, with room for 'emote') and OWNED_MAX owned.
+export const EQUIP_MAX = 6, OWNED_MAX = 16;
+// The shop sheet's tiles for one kind (or every kind with kind ''). open/items: GET /rt/shop (the database's prices; open false before the
+// migration, when SHOP's own prices are shown). owned/equip: GET /rt/profile. coins: the wallet as the HUD shows it.
+// act: 'off' (worn; the shop is open so it can be taken off), 'worn' (worn, before the migration), 'wear' (owned), 'soon' (not owned, shop
+// closed), 'short' (not enough coins), 'buy'. An item the open database does not sell is left out unless it is owned.
+export function shopTiles({ kind = '', open = false, items = [], owned = [], equip = [], coins = 0 } = {}) {
+  const dbPrice = new Map();
+  for (const it of Array.isArray(items) ? items : []) { const p = Math.floor(Number(it?.price)); if (it && typeof it.id === 'string' && p > 0) dbPrice.set(it.id, p); }
+  const have = new Set(Array.isArray(owned) ? owned : []), worn = new Set(Array.isArray(equip) ? equip : []);
+  const wallet = Math.max(0, Math.floor(Number(coins) || 0));
+  const out = [];
+  for (const it of SHOP) {
+    if (kind && it.kind !== kind) continue;
+    const mine = have.has(it.id) || worn.has(it.id), on = worn.has(it.id);
+    if (open && !dbPrice.has(it.id) && !mine) continue;
+    const price = open && dbPrice.has(it.id) ? dbPrice.get(it.id) : it.price;
+    const act = on ? (open ? 'off' : 'worn') : mine ? 'wear' : !open ? 'soon' : wallet < price ? 'short' : 'buy';
+    out.push({ id: it.id, kind: it.kind, label: it.label, tint: it.tint, price, owned: mine, worn: on, act });
+  }
+  return out;
+}
