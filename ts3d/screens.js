@@ -270,7 +270,8 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   function giftTick() {
     if (giftDirty || (giftPin && giftPin.until <= Date.now())) giftPlace();
     let left = quality === 'low' ? 2 : 4;
-    for (let i = 0; i < lastNear.length && left > 0; i++) { const b = lastNear[i].b; if (b.gifts && b.gifts.length > 1 && giftAt(b)?.id !== b.giftKey) { paint(b); left--; } }
+    // A screen whose gift changed turn, or whose words came new with the list (setGifts blanks giftKey; a board alone on its screen has no turn to wait for).
+    for (let i = 0; i < lastNear.length && left > 0; i++) { const b = lastNear[i].b, g = b.gifts ? giftAt(b) : null; if (g && g.id !== b.giftKey) { paint(b); left--; } }
   }
   const giftClean = (g) => (g && GIFT_ID.test(String(g.id || '')) ? { id: String(g.id), to: chars(g.to, 12), from: chars(g.from, 12), occ: OCCASIONS[g.occ] ? String(g.occ) : 'bday', msg: chars(g.msg, 40), th: GIFT_THEMES[g.th] ? String(g.th) : '', scr: giftScreen(g.scr) ? String(g.scr) : '', a: Number(g.a) || 0, b: Number(g.b) || 0, n: Math.max(0, Math.floor(Number(g.n) || 0)) } : null);
   /** list: /rt/world's gifts (live now). The same list again does nothing. */

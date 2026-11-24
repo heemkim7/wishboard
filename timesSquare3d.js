@@ -1531,13 +1531,15 @@ void main(){
   // ---- 환영 전광판 (main.js armFtue) ------------------------------------------------------------------------------------
   // The newcomer's own name alone on the free street screen nearest to where they stand, for WELCOME.ms, on this device only (boards.pinWelcome:
   // nothing is sent and nobody else sees it). The camera looks at that screen once, like focusSlot (a drag, a step or Escape ends it; it comes
-  // back by itself after 3.5 s), with one round of the cheer fireworks around the face. The avatar stays where it is. cam: false, the phone
-  // tier (low), a taxi and a player who is already walking (the first step would end the camera at once) leave the camera alone: the card
+  // back by itself after 3.5 s), with one round of the cheer fireworks around the face. The avatar stays where it is. cam: false,
+  // a taxi and a player who is already walking (the first step would end the camera at once) leave the camera alone: the card
   // is up and that is all. -> the slot, or '' when no screen is free.
+  // Every quality tier gets the camera: on a phone the card can hang out of sight and only the toast would say so (link arrivals move the
+  // camera on the phone tier too).
   function welcome(name, { cam = true } = {}) {
     const slot = boards.pinWelcome(name, WELCOME.ms, { x: pos.x, z: pos.z });
     const walking = cineCancels({ active: true, keys: keys.size, joy: Math.hypot(joy.x, joy.y), locked: !inputEnabled });
-    if (slot && cam && !low && !drive && !walking && focusSlot(slot, { hold: 3500, celebrate: false })) setTimeout(() => cheerAt(slot), 900);
+    if (slot && cam && !drive && !walking && focusSlot(slot, { hold: 3500, celebrate: false })) setTimeout(() => cheerAt(slot), 900);
     return slot;
   }
   // ---- 선물 전광판 15-second show (gift.js records it) ---------------------------------------------------------------

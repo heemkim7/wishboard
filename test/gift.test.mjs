@@ -22,7 +22,7 @@ const form = (o = {}) => ({ to: '민지', from: '동아리', occ: 'bday', msg: '
 // the page and what was sent. Canvas drawing goes nowhere. Timers, intervals and animation frames are kept and never run by
 // themselves (P.timers() runs the timeouts, P.tick() the one-second lines). Each load is a fresh module instance.
 let LOADS = 0;
-function fakeDom({ path = '/gift', search = '', data = null, store = {}, at = 0, respond = () => ({}) } = {}) {
+function fakeDom({ path = '/gift', search = '', data = null, store = {}, at = 0, respond = () => ({}), rec = false } = {}) {
   const sent = [], timeouts = [], ticks = [], winOn = {}, swOn = {}, copied = [], shared = [], P = { sent, store, copied, shared, winOn, swOn, skew: at ? at - Date.now() : 0 };
   const ink = new Proxy({}, { get: (t, k) => (k in t ? t[k] : k === 'measureText' ? () => ({ width: 10 }) : () => ink), set: (t, k, v) => { t[k] = v; return true; } });
   const text = (v) => ({ nodeType: 3, textContent: String(v), parent: null });
@@ -63,6 +63,8 @@ function fakeDom({ path = '/gift', search = '', data = null, store = {}, at = 0,
     fetch: async (url, opt = {}) => { sent.push({ url: String(url), method: opt.method || 'GET', body: typeof opt.body === 'string' ? JSON.parse(opt.body) : opt.body, auth: opt.headers?.authorization || '' }); const r = respond(String(url), opt); return { ok: !!r, status: r ? 200 : 404, json: async () => r || { ok: false }, blob: async () => new Blob([]) }; },
     requestAnimationFrame: () => 0, cancelAnimationFrame() {}, scrollTo() {}, scrollY: 0, matchMedia: () => ({ matches: false }),
     setInterval: (f) => { ticks.push(f); return 0; }, clearInterval() {}, setTimeout: (f, ms) => { timeouts.push({ f, ms }); return 0; }, clearTimeout() {},
+    // rec: a browser that can record a canvas (giftfilm.js canRecord); without it the two names are undefined, as in an in-app browser.
+    MediaRecorder: rec ? function MediaRecorder() {} : undefined, HTMLCanvasElement: rec ? { prototype: { captureStream() {} } } : undefined,
   };
   const before = Object.fromEntries(Object.keys(globals).map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
   for (const [k, value] of Object.entries(globals)) Object.defineProperty(globalThis, k, { value, configurable: true, writable: true });
@@ -440,7 +442,7 @@ describe('the reply board (답장 전광판) and the plaza replay', () => {
 
 describe('the owner page leads with the real video only when the Worker stores videos', () => {
   const g = view(), URL_ = 'https://sq.example/g/' + g.id, REC = '/?gb=' + g.id + '&rec=1';
-  const own = (o = {}, store = {}) => pageOf(o.gift || g, KST('2026-11-25T19:00:00'), { store: { masil_gt: GUEST(), kts_gmine: JSON.stringify([g.id]), ...store },
+  const own = (o = {}, store = {}) => pageOf(o.gift || g, KST('2026-11-25T19:00:00'), { rec: o.rec !== false, store: { masil_gt: GUEST(), kts_gmine: JSON.stringify([g.id]), ...store },
     respond: (u) => (u === '/rt/gift/' + g.id ? { ok: true, gift: o.gift || g, own: true, mine: { kids: 0, vd: 0, at: 1, lk: 1, ...(o.re ? { re: o.re } : {}) }, media: !!o.media } : u.endsWith('/interest') ? { ok: true } : null) });
   it('the rule: a video store, no video yet, the board not yet over', () => {
     assert.equal(videoFirst({ media: true, vid: null, phase: 'live' }), true); assert.equal(videoFirst({ media: true, vid: null, phase: 'before' }), true);
@@ -495,6 +497,7 @@ describe('the owner page leads with the real video only when the Worker stores v
     await same(own({ media: false }), '🎬 광장에서 진짜 15초 영상 만들기');
     await same(own({ media: true, gift: view({ vid: { t: 'mp4', at: 1 } }) }), '🎬 광장에서 진짜 15초 영상 만들기');
     await same(own({ media: true, gift: view({ phase: 'after' }) }), '');
+    await same(own({ media: true, rec: false }), '🎬 광장에서 진짜 15초 영상 만들기'); // a browser that cannot record: no gold lead, no nudge
   });
 });
 

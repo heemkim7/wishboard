@@ -238,9 +238,27 @@ describe('the welcome pin on the plaza screens', () => {
 });
 
 // ---- the world and the entry flow: source checks (they need WebGL and a page) -------------------------------------------------------------
+describe('a gift board alone on its screen follows the list', () => {
+  it('repaints with the new friend-message count and words when /rt/world brings them (it has no turn to wait for)', async () => {
+    const p = await plaza();
+    const cam = new p.THREE.Vector3(p.xOf('STREET_3'), 5, 20);
+    p.boards.setGifts([gift('eeeeeee1', 'STREET_3')]);
+    p.tick(cam);
+    assert.equal(p.boards.giftSlot('eeeeeee1'), 'STREET_3');
+    assert.ok(p.words('STREET_3').includes('To. 민지'));
+    assert.equal(p.words('STREET_3').some((w) => /친구 메시지/.test(w)), false);
+    p.boards.setGifts([{ ...gift('eeeeeee1', 'STREET_3'), n: 3, msg: '다시 축하해' }]);
+    p.tick(cam);
+    const words = p.words('STREET_3');
+    assert.ok(words.includes('다시 축하해'), 'the new words');
+    assert.ok(words.some((w) => /친구 메시지 3개/.test(w)), 'the new count: ' + words.join(' | '));
+    assert.match(words.join(' '), /선물 전광판/, 'and its strip is the gift strip, not the empty-slot one');
+  });
+});
+
 describe('the world shows the welcome (timesSquare3d.js)', () => {
   const w = read('timesSquare3d.js');
-  it('pins near where the avatar stands and looks at it once; no camera on the phone tier, in a taxi, for a player already walking or when told not to', () => {
+  it('pins near where the avatar stands and looks at it once on every tier; no camera in a taxi, for a player already walking or when told not to', () => {
     const fn = body(w, '  function welcome(');
     assert.match(fn, /const slot = boards\.pinWelcome\(name, WELCOME\.ms, \{ x: pos\.x, z: pos\.z \}\);/);
     // The same rule that ends a scripted camera decides not to start one (camrig.js cineCancels): keys or the stick, unless input is locked.
@@ -249,7 +267,8 @@ describe('the world shows the welcome (timesSquare3d.js)', () => {
     assert.equal(cineCancels({ active: true, keys: 0, joy: 0.5, locked: false }), true);
     assert.equal(cineCancels({ active: true, keys: 0, joy: 0, locked: false }), false);
     assert.equal(cineCancels({ active: true, keys: 1, joy: 1, locked: true }), false, 'entered before the city is built: movement is locked, the camera may go');
-    assert.match(fn, /if \(slot && cam && !low && !drive && !walking && focusSlot\(slot, \{ hold: 3500, celebrate: false \}\)\) setTimeout\(\(\) => cheerAt\(slot\), 900\);/);
+    assert.match(fn, /if \(slot && cam && !drive && !walking && focusSlot\(slot, \{ hold: 3500, celebrate: false \}\)\) setTimeout\(\(\) => cheerAt\(slot\), 900\);/);
+    assert.doesNotMatch(fn, /!low\b/, 'the phone tier gets the camera too: without it the card can hang out of sight');
     assert.match(fn, /return slot;/);
     assert.match(w, /import \{ WELCOME \} from '\.\/ftue\.js\?v=[0-9a-z]+';/);
     assert.match(w, /\n    pinGift\(g, ms\) \{ return boards\.pinGift\(g, ms\); \},\n    welcome,\n/, 'in the world api, next to pinGift');

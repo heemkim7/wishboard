@@ -176,6 +176,7 @@ function twoTap(btn, label, run) {
 // form comes filled in (giftrules.js replyDraft), says so, and the board is sent with ref: that board and re: 1. Everything can be edited.
 function maker({ re: answers = '', ...prefill } = {}) {
   clear();
+  try { document.title = (answers ? '답장 전광판' : '선물 전광판') + ' · WISH BOARD'; } catch { /* the tab keeps its name */ } // a reply opens here from a board page: not that board's title
   const q = new URLSearchParams(location.search), ref = refOf(q.get('ref')), re = refOf(answers);
   if (ref) { ls.set('kts_gref', JSON.stringify({ id: ref, at: Date.now() })); history.replaceState(null, '', '/gift'); }
   const today = kstDay(now()), sendLabel = re ? '💌 답장 걸기' : '🎁 무료로 걸기';
@@ -282,7 +283,7 @@ function owner(g, { fresh = false, mine: extra = null, media = false } = {}) {
   // Video first (giftrules.js videoFirst): only when the Worker stores videos, this board has none and is not over. Then the video card
   // leads, its button is the page's gold one, and the first share or copy of this board asks once (kts_gnudge) whether to make the video
   // first. It never blocks: "그냥 보내기" does what was asked. Without a video store nothing here changes.
-  const vfirst = videoFirst({ media, vid: g.vid, phase: g.phase });
+  const vfirst = videoFirst({ media, vid: g.vid, phase: g.phase }) && canRecord(); // a browser that cannot record (some in-app ones) keeps the page as it was
   const recLink = (cls, label) => h('a', { class: cls, href: '/?gb=' + g.id + '&rec=1', onclick: (e) => toPlaza(e, 'rec', g.id) }, label);
   const rec = recLink(vfirst ? 'btn gold' : 'btn pink', '🎬 광장에서 진짜 15초 영상 만들기' + (vfirst ? ' · 약 25초' : ''));
   const nudge = h('div', { class: 'ask', hidden: true });
