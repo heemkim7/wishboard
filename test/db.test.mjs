@@ -22,6 +22,7 @@ globalThis.WebSocketRequestResponsePair = class { constructor(req, res) { this.r
 const { Room, Meter } = await import('../worker.js');
 const worker = (await import('../worker.js')).default;
 const { BALANCE, STARTER_DEFAULT, starterList, setStarterSlots, SLOT_SOON } = await import('../balance.js');
+const starterFromDb = (await import('../balance.js')).starterFromDb ?? (() => { throw new Error('balance.js has no starterFromDb'); });
 const { claimWizard } = await import('../ftue.js');
 
 const read = (p) => readFileSync(new URL('../' + p, import.meta.url), 'utf8').replace(/\r\n/g, '\n'); // a Windows checkout has CRLF
@@ -68,7 +69,29 @@ describe('starter list in balance.js', () => {
   });
   it('the claim wizard shows at most four open free slots, plus the one asked for', () => {
     assert.match(read('ui.js'), /free >= 4 && id !== model\.slot/);
-    assert.match(read('net.js'), /setStarterSlots\(j\?\.starter\)/);
+    assert.match(read('net.js'), /setStarterSlots\(j\?\.starter, j\?\.starter_fallback === true\);/);
+  });
+  // A page re-reads /rt/config (main.js maintTick, every 5 minutes inside). A read that hit a cold isolate brought the old
+  // four and turned a session's goal line from 무료 거리 칸 to 건물 앞 전광판: an answer marked fallback never replaces a list
+  // the database gave.
+  it('a fallback answer never replaces a list the database gave; an unmarked answer always replaces; only fallbacks keep the old four', () => {
+    try {
+      setStarterSlots(null);
+      // only fallback answers: the old four, as before
+      assert.deepEqual(setStarterSlots([...STARTER_DEFAULT], true), STARTER_DEFAULT);
+      assert.equal(starterFromDb(), false);
+      // a fallback, then the database's list: replaced
+      assert.deepEqual(setStarterSlots(TWELVE), TWELVE);
+      assert.equal(starterFromDb(), true);
+      // the database's list, then a cold isolate's fallback: kept
+      assert.deepEqual(setStarterSlots([...STARTER_DEFAULT], true), TWELVE);
+      assert.deepEqual(BALANCE.starterSlots, TWELVE);
+      assert.equal(starterFromDb(), true);
+      // an unmarked answer (the database's list, or a Worker from before the flag) always replaces
+      assert.deepEqual(setStarterSlots(['STREET_20', 'STREET_21']), ['STREET_20', 'STREET_21']);
+      assert.deepEqual(setStarterSlots(null), STARTER_DEFAULT);
+      assert.equal(starterFromDb(), false);
+    } finally { setStarterSlots(null); }
   });
 });
 
@@ -166,9 +189,11 @@ describe('worker starter list', { concurrency: false }, () => {
       assert.equal(c.url, 'https://yxddhpacuyaffaoutxjn.supabase.co');
       assert.equal(typeof c.key, 'string');
       assert.deepEqual(c.starter, ['STREET_8', 'STREET_9', 'STREET_10', 'STREET_11']);
+      assert.equal(c.starter_fallback, true); // a cold isolate: the page keeps a list it already got from the database
       assert.equal(h.asks(), 1);
       assert.equal(JSON.parse(h.state.calls.find((x) => x.url.includes('starter_slot_list')).body).p_key, 'flush-test-key');
-      await config(h); h.add(59e3); await config(h);
+      assert.equal((await config(h)).starter_fallback, true); // and after the ask failed (no starter_slot_list): every answer
+      h.add(59e3); await config(h);
       assert.equal(h.asks(), 1); // the miss is kept for 60 s
       const token = await helloGuest(h);
       const off = await starter(h, token, 'STREET_20', '3.3.3.3'); // fallback list: the shape passes, claim_billboard refuses
@@ -228,11 +253,16 @@ describe('worker starter list', { concurrency: false }, () => {
       await config(h); // warm
       const n = h.asks();
       h.state.list = ['STREET_1', 'STREET_2'];
+      const warm = await config(h);
       h.add(9 * 6e4); assert.deepEqual((await config(h)).starter, TWELVE);
+      assert.deepEqual(warm.starter, TWELVE);
+      assert.equal('starter_fallback' in warm, false); // a list from the database: the answer is as it was
       assert.equal(h.asks(), n);
       h.state.list = 'missing'; h.add(61e3);
       await config(h);
-      assert.deepEqual((await config(h)).starter, TWELVE);
+      const kept = await config(h);
+      assert.deepEqual(kept.starter, TWELVE);
+      assert.equal('starter_fallback' in kept, false); // a failed refresh keeps the database's list, and says it is that
       assert.equal(h.asks(), n + 1);
       h.state.list = ['STREET_1', 'STREET_2']; h.add(61e3);
       await config(h);

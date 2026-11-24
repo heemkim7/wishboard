@@ -75,15 +75,22 @@ describe('the card\'s last step', () => {
     const from = main.indexOf('net.kakaoKey().catch(() => {}).then(async () => {'), to = main.indexOf('\n});', from) + 4;
     assert.ok(from > 0 && to > from);
     const consts = main.match(/^const STARTER_REREAD_MS = [^\n]+/m)?.[0] || '';
+    // the real balance.js: 'real' is the database's list, 'old' the old four marked starter_fallback (a cold isolate),
+    // 'oldw' the old four unmarked (a Worker from before the flag)
+    const B = await import('../balance.js');
     const run = async (answers) => {
-      const STARTER_DEFAULT = ['STREET_8', 'STREET_9', 'STREET_10', 'STREET_11'], REAL = ['STREET_20', 'STREET_21'];
-      const st = { list: answers[0] === 'real' ? REAL : STARTER_DEFAULT, reads: [], t: 0, known: false, settled: false };
-      const BALANCE = { get starterSlots() { return st.list; } };
-      const net = { kakaoKey: () => Promise.resolve(), loadConfig: async () => { st.reads.push(st.t); const a = answers[st.reads.length]; st.list = a === 'real' ? REAL : STARTER_DEFAULT; } };
+      const REAL = ['STREET_20', 'STREET_21'];
+      const give = (a) => (a === 'real' ? B.setStarterSlots(REAL) : B.setStarterSlots([...B.STARTER_DEFAULT], a === 'old'));
+      B.setStarterSlots(null);
+      give(answers[0]);
+      const st = { reads: [], t: 0, known: false, settled: false };
+      const net = { kakaoKey: () => Promise.resolve(), loadConfig: async () => { st.reads.push(st.t); give(answers[st.reads.length]); } };
       const setTimeout = (f, ms) => { st.t += ms; f(); };
       const body = (consts + '\n' + main.slice(from, to)).replace(/starterListKnown = true;/g, 'st.known = true;').replace(/starterListSettled = true;/g, 'st.settled = true;').replace(/^net\.kakaoKey\(\)/m, 'return net.kakaoKey()');
-      await new Function('net', 'BALANCE', 'STARTER_DEFAULT', 'setTimeout', 'st', body)(net, BALANCE, STARTER_DEFAULT, setTimeout, st);
-      return { reads: st.reads, real: st.list === REAL, known: st.known, settled: st.settled };
+      try {
+        await new Function('net', 'BALANCE', 'STARTER_DEFAULT', 'starterFromDb', 'setTimeout', 'st', body)(net, B.BALANCE, B.STARTER_DEFAULT, B.starterFromDb ?? (() => false), setTimeout, st);
+        return { reads: st.reads, real: B.BALANCE.starterSlots.join() === REAL.join(), known: st.known, settled: st.settled };
+      } finally { B.setStarterSlots(null); }
     };
     // the case that went wrong: the real list only on the third read again (one read again kept the old four all session)
     const cold = await run(['old', 'old', 'old', 'real']);
@@ -96,6 +103,15 @@ describe('the card\'s last step', () => {
     assert.deepEqual(await run(['old', 'old', 'old', 'real']), { reads: [2500, 6000, 20000], real: true, known: true, settled: true });
     // a database without starter_slot_list: the old four every time, three reads and no more
     assert.deepEqual(await run(['old', 'old', 'old', 'old', 'real']), { reads: [2500, 6000, 20000], real: false, known: true, settled: true });
+    // a Worker from before the flag answers the old four unmarked: still read again, as before
+    assert.deepEqual(await run(['oldw', 'oldw', 'real']), { reads: [2500, 6000], real: true, known: true, settled: true });
+    // the database's list at once, then a cold isolate's fallback on a later read (main.js maintTick): the list stays
+    const B2 = await import('../balance.js');
+    try {
+      B2.setStarterSlots(['STREET_20', 'STREET_21']);
+      B2.setStarterSlots([...B2.STARTER_DEFAULT], true);
+      assert.deepEqual(B2.BALANCE.starterSlots, ['STREET_20', 'STREET_21']);
+    } finally { B2.setStarterSlots(null); }
   });
 });
 
