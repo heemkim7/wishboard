@@ -525,7 +525,16 @@ describe('the taxi\'s textures', needsMap, () => {
     const m = decal.material;
     assert.equal(m.polygonOffset, true); assert.ok(m.polygonOffsetFactor < 0 && m.polygonOffsetUnits < 0);
     assert.equal(m.transparent, true); assert.equal(m.depthWrite, false);
-    assert.equal(m.premultipliedAlpha, true); assert.equal(m.map.premultiplyAlpha, true); // mipmaps of straight alpha darken the edges
+    // Mipmaps of straight alpha average the clear texels in as black (a dark rim round the stripe): the texture is
+    // premultiplied and blended as that, once (three's premultipliedAlpha switch would multiply a second time).
+    assert.equal(m.map.premultiplyAlpha, true); assert.equal(m.premultipliedAlpha, false);
+    assert.deepEqual([m.blending, m.blendSrc, m.blendDst], [THREE.CustomBlending, THREE.OneFactor, THREE.OneMinusSrcAlphaFactor]);
+    // and fog fades only what the decal covers
+    const sh = { fragmentShader: THREE.ShaderLib.basic.fragmentShader };
+    m.onBeforeCompile(sh);
+    assert.equal(sh.fragmentShader.includes('#include <fog_fragment>'), false);
+    assert.match(sh.fragmentShader, /gl_FragColor\.rgb = mix\( gl_FragColor\.rgb, fogColor \* gl_FragColor\.a, fogFactor \);/);
+    assert.equal(THREE.ShaderChunk.fog_fragment.replace('fogColor, fogFactor', 'fogColor * gl_FragColor.a, fogFactor'), sh.fragmentShader.slice(sh.fragmentShader.indexOf('#ifdef USE_FOG', sh.fragmentShader.indexOf('void main')), sh.fragmentShader.indexOf('#endif', sh.fragmentShader.indexOf('fogColor * gl_FragColor.a')) + 6), 'the rest of the fog chunk is the vendored one');
     // the stripe (top half) starts above the tyres' tops
     const stripe0 = d.max.y - (d.max.y - d.min.y) * TAXI_DECAL.band;
     assert.ok(stripe0 > 2 * tyre.r, `stripe from ${stripe0.toFixed(2)} m, tyre top ${(2 * tyre.r).toFixed(2)} m`);

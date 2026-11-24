@@ -329,10 +329,25 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
     return m;
   };
   const signMat = new THREE.MeshBasicMaterial({ map: toTex(paintTaxiSign(makeCanvas(tier.signW, tier.signH))), color: new THREE.Color(1.3, 1.3, 1.2) });
+  // The decal's texture is uploaded premultiplied, so it is blended as that: source + what is behind x (1 - alpha).
+  // (three's own premultipliedAlpha switch is for straight-alpha textures: its shader would multiply by alpha again.)
   const decalMat = new THREE.MeshBasicMaterial({
-    map: toTex(paintTaxiDecal(makeCanvas(tier.decalW, tier.decalH)), true), transparent: true, premultipliedAlpha: true, depthWrite: false,
+    map: toTex(paintTaxiDecal(makeCanvas(tier.decalW, tier.decalH)), true), transparent: true, depthWrite: false,
+    blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
     polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4, // units too: a factor alone is nothing on a panel seen face on
   });
+  // Fog is the one place the shader has to know: it may only fade what the decal covers (fog colour x alpha), or the
+  // clear part of the plane would lay a film of fog over the door.
+  decalMat.onBeforeCompile = (sh) => {
+    sh.fragmentShader = sh.fragmentShader.replace('#include <fog_fragment>', `#ifdef USE_FOG
+	#ifdef FOG_EXP2
+		float fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth );
+	#else
+		float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );
+	#endif
+	gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor * gl_FragColor.a, fogFactor );
+#endif`);
+  };
   const taxiParts = [
     mk(kits.taxi.get('paint'), paintTaxi, nTaxiSlots),
     mk(kits.taxi.get('gloss'), kitMats.gloss, nTaxiSlots),
