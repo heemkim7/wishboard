@@ -35,12 +35,15 @@ export const GIFT_ID = /^[0-9a-z]{8}$/;
 export const PAPER_ID = /^[0-9a-z]{6}$/;
 export const VISITOR_ID = /^[0-9a-f]{16,32}$/;
 
+// The line a reply board (답장 전광판) starts with; 고마움's hint is the same words.
+export const REPLY_MSG = '덕분에 행복했어, 고마워!';
 export const OCCASIONS = Object.freeze({
   bday: Object.freeze({ name: '생일', head: '생일 축하해요', emoji: '🎂', th: 'party', hint: '태어나 줘서 고마워!' }),
   anniv: Object.freeze({ name: '기념일', head: '기념일 축하해요', emoji: '💐', th: 'rose', hint: '함께라서 행복해' }),
   pass: Object.freeze({ name: '합격', head: '합격 축하해요', emoji: '🎓', th: 'gold', hint: '고생 많았어, 정말 축하해!' }),
   cheer: Object.freeze({ name: '응원', head: '언제나 응원해요', emoji: '📣', th: 'sky', hint: '넌 할 수 있어!' }),
   just: Object.freeze({ name: '그냥', head: '그냥 생각나서', emoji: '💌', th: 'mint', hint: '오늘도 좋은 하루 보내' }),
+  thanks: Object.freeze({ name: '고마움', head: '정말 고마워요', emoji: '🙏', th: 'rose', hint: REPLY_MSG }),
 });
 export const OCC_KEYS = Object.freeze(Object.keys(OCCASIONS));
 
@@ -244,7 +247,17 @@ export function giftPhase(g, now = Date.now()) {
   if (now >= a) return 'live';
   return now >= dayStart(g.day) ? 'day' : 'before';
 }
-// 21:00..08:00 KST: no advertising push goes out (the privacy policy's 알림).
+// What ?gb=<id> may do in the plaza (gift.js land): 'live' (hanging now, on its own screen for everyone), 'replay' (the day has come
+// or the window is over and the page still lives: pinned on this device only, nobody else sees it), 'wait' (before the day), 'gone'.
+// g: the public view ({ day, a, b }); a hidden or deleted board has no public view, so it never gets here.
+export function plazaLook(g, now = Date.now()) {
+  if (!g || !validDay(g.day)) return 'gone';
+  const a = Number(g.a), b = Number(g.b);
+  if (!(now < keepUntil(g))) return 'gone';
+  if (now >= a && now < b) return 'live';
+  return now >= dayStart(g.day) ? 'replay' : 'wait';
+}
+// 21:00..08:00 KST: no advertising push goes out (the privacy policy's 알림), and no reply notice either (giftsrv.js make).
 export const quietNow = (now = Date.now()) => { const h = new Date(now + 9 * 36e5).getUTCHours(); return h >= GIFT.quiet[0] || h < GIFT.quiet[1]; };
 export const AD_LABEL = '(광고) ';
 // Messages show from 00:00 KST of the day (or at once on the E3 'open' arm, lk 0).
@@ -289,6 +302,9 @@ export const REF_MS = 7 * 864e5;
 export function keptRef(raw, now = Date.now()) {
   try { const j = typeof raw === 'string' ? JSON.parse(raw) : raw; return j && refOf(j.id) && now - Number(j.at) < REF_MS && now >= Number(j.at) ? j.id : ''; } catch { return ''; }
 }
+// 답장 전광판: the maker's values for a reply to board g (its public view): to and from swapped and cut to their limits, 고마움, the
+// thanks line. Everything can still be edited and goes through giftFault like any board; a board without a sender leaves `to` empty.
+export function replyDraft(g) { return { to: cut(g?.from, GIFT.toMax), from: cut(g?.to, GIFT.fromMax), occ: 'thanks', msg: REPLY_MSG, th: '' }; }
 
 // ---- what a page shows ---------------------------------------------------------------------------------------------------
 // The public view of a stored board (the Worker strips the owner, network and visitor fields before this).

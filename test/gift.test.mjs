@@ -7,6 +7,7 @@ import {
   GIFT, GIFT_SCREENS, OCCASIONS, TIERS, TIER_NOTE, TIER_ASK, won, giftFault, paperFault, windowFor, windowText, startChoices, dayText, hourText,
   screenLoad, pickScreen, nextFree, placeGifts, turnOf, giftPhase, keepUntil, pruneDay, paperOpen, paperTakes, lockArm, refOf, keptRef, REF_MS,
   giftView, giftShareText, countdown, videoKind, rangeOf, pickRecordType, quietNow, kstDay, dayStart, addDays, giftScreen,
+  OCC_KEYS, REPLY_MSG, replyDraft, plazaLook, cpLen,
 } from '../giftrules.js';
 
 const KST = (s) => Date.parse(s + '+09:00');
@@ -143,6 +144,44 @@ describe('phases, keeping and the 롤링페이퍼 lock (E3)', () => {
     assert.equal(before.paper, null); assert.equal(before.n, 2);
     assert.deepEqual(after.paper, [{ id: 'p00001', nick: '친구', txt: '축하' }]);
     assert.match(giftShareText(stored).title, /민지님을 위한 선물 전광판/);
+  });
+});
+
+describe('the reply board (답장 전광판) and the plaza replay', () => {
+  it('고마움 is an occasion of its own: the same table for the server, the pages and the art', () => {
+    assert.deepEqual(OCC_KEYS, ['bday', 'anniv', 'pass', 'cheer', 'just', 'thanks'], 'the five days people pick first, then 고마움');
+    assert.equal(OCCASIONS.thanks.name, '고마움'); assert.equal(OCCASIONS.thanks.hint, REPLY_MSG);
+    const r = giftFault({ to: '지수', occ: 'thanks', day: '2026-11-23', at: 'now' }, NOW);
+    assert.equal(r.ok, true); assert.equal(r.v.occ, 'thanks'); assert.equal(r.v.th, 'rose');
+    assert.match(giftShareText({ to: '지수', occ: 'thanks' }).text, /정말 고마워요!$/);
+  });
+  it('a reply is filled in from the board it answers: the names swapped, 고마움, the thanks line; every value passes the form', () => {
+    assert.deepEqual(replyDraft({ to: '민지', from: '지수' }), { to: '지수', from: '민지', occ: 'thanks', msg: REPLY_MSG, th: '' });
+    assert.equal(replyDraft({ to: '민지', from: '' }).to, '', 'no sender name: the recipient writes who it is for');
+    assert.deepEqual(replyDraft(null), { to: '', from: '', occ: 'thanks', msg: REPLY_MSG, th: '' });
+    assert.ok(cpLen(REPLY_MSG) <= GIFT.msgMax, 'the line fits a board');
+    const filled = giftFault({ ...replyDraft({ to: '민지', from: '지수' }), day: '2026-11-23', at: 'now' }, NOW);
+    assert.equal(filled.ok, true, JSON.stringify(filled));
+    assert.deepEqual([filled.v.to, filled.v.from, filled.v.msg, filled.v.th], ['지수', '민지', REPLY_MSG, 'rose']);
+    const long = replyDraft({ to: '가'.repeat(30), from: '  나' + String.fromCharCode(0x200b) + '나'.repeat(30) });
+    assert.equal(cpLen(long.to), GIFT.toMax); assert.equal(cpLen(long.from), GIFT.fromMax, 'cut to the limits, marks and spaces out');
+    assert.equal(giftFault({ ...replyDraft({ to: '민지', from: '운영자' }), day: '2026-11-23', at: 'now' }, NOW).code, 'name', 'a name the form refuses is still refused');
+  });
+  it('?gb= in the plaza: live in its window, a replay on this device from the day until the page goes, a wait before the day, gone after', () => {
+    const g = { id: 'cccccccc', day: '2026-11-25', a: KST('2026-11-25T18:00:00'), b: KST('2026-11-26T00:00:00') };
+    assert.equal(plazaLook(g, KST('2026-11-24T12:00:00')), 'wait');
+    assert.equal(plazaLook(g, KST('2026-11-24T23:59:59')), 'wait');
+    assert.equal(plazaLook(g, KST('2026-11-25T00:00:00')), 'replay', 'the day has come: a preview');
+    assert.equal(plazaLook(g, KST('2026-11-25T10:00:00')), 'replay');
+    assert.equal(plazaLook(g, g.a), 'live'); assert.equal(plazaLook(g, KST('2026-11-25T19:00:00')), 'live');
+    assert.equal(plazaLook(g, g.b), 'replay', 'the window is over, the page lives');
+    assert.equal(plazaLook(g, KST('2026-11-28T12:00:00')), 'replay');
+    assert.equal(plazaLook(g, KST('2026-12-02T23:59:59')), 'replay', 'the last second of the 7 days');
+    assert.equal(plazaLook(g, KST('2026-12-03T00:00:01')), 'gone');
+    assert.equal(plazaLook(null), 'gone'); assert.equal(plazaLook({ a: 1, b: 2 }, 1), 'gone', 'no day: not a board\'s public view');
+    assert.equal(plazaLook({ ...g, day: '2026-02-30' }, g.a), 'gone');
+    const late = { day: '2026-11-23', a: KST('2026-11-23T22:00:00'), b: KST('2026-11-24T04:00:00') };
+    assert.equal(plazaLook(late, KST('2026-11-24T03:00:00')), 'live', 'a late "지금" window runs past midnight');
   });
 });
 
