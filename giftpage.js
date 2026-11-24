@@ -1,7 +1,7 @@
 // 선물 전광판 light pages (gift.html): the maker at /gift and the board page at /g/<id> (owner preview with the price ladder, the
 // recipient page, the 롤링페이퍼). No three.js, no realtime room, no Supabase client: what the page needs from the Worker comes inline in
 // #gift-data (the Worker renders /g/<id>), the rest is a few small JSON calls. Text people wrote is only set with textContent.
-import { GIFT, GIFT_ID, OCCASIONS, OCC_KEYS, GIFT_THEMES, THEME_KEYS, TIERS, TIER_NOTE, TIER_ASK, won, giftFault, paperFault, startChoices, windowText, dayText, hourText, kstDay, addDays, dayStart, countdown, dDay, refOf, keptRef, cpLen, norm, windowFor, replyDraft, replyLabel } from './giftrules.js';
+import { GIFT, GIFT_ID, OCCASIONS, OCC_KEYS, GIFT_THEMES, THEME_KEYS, TIERS, TIER_NOTE, TIER_ASK, won, giftFault, paperFault, startChoices, windowText, dayText, hourText, kstDay, addDays, dayStart, countdown, dDay, refOf, keptRef, cpLen, norm, windowFor, replyDraft, replyLabel, PLAZA_BTN } from './giftrules.js';
 import { paintGift, giftCardJpeg } from './giftart.js?v=202611230850';
 import { createFilm, FILM_MS, recordCanvas, canRecord, saveBlob, fileName } from './giftfilm.js?v=202611230850';
 
@@ -359,7 +359,8 @@ async function pushOn(tok) {
 }
 
 // The recipient page (and anyone with the link): before the day a countdown and the 롤링페이퍼; from the day the film first, then
-// [영상 저장] [직접 가서 보기] [나도 누군가에게 걸어 주기], the messages, and a line about when and where it hangs.
+// [답장 전광판 걸기] [영상 저장] [직접 가서 보기 / 광장에서 미리 보기 / 광장에서 다시 보기] [나도 누군가에게 걸어 주기], the messages, and a
+// line about when and where it hangs.
 function visit(g, { preview = false } = {}) {
   clear(); CUR = g;
   if (!preview) beacon(g.id, 'open');
@@ -377,7 +378,10 @@ function visit(g, { preview = false } = {}) {
   }
   const st = stage(g, { auto: true });
   const saveNote = h('p', { class: 'okmsg' }), saveBtn = h('button', { class: 'btn', type: 'button', onclick: () => saveVideo(g, st, saveBtn, saveNote) }, '⬇ 영상 저장');
-  const go = h('a', { class: 'btn gold', href: '/?gb=' + g.id, onclick: (e) => { beacon(g.id, 'go'); toPlaza(e, 'go', g.id); } }, '🗽 직접 가서 보기');
+  // The plaza button: the visit while the board hangs; on its day before that and after its window the plaza shows it on this device only
+  // (gift.js land, giftrules.js plazaLook). The label follows the clock; this part of the page is only built from the day on.
+  const go = h('a', { class: 'btn gold', href: '/?gb=' + g.id, onclick: (e) => { beacon(g.id, 'go'); toPlaza(e, 'go', g.id); } }, PLAZA_BTN[phase()] || PLAZA_BTN.live);
+  live(go, () => PLAZA_BTN[phase()] || PLAZA_BTN.live);
   const where = h('p', { class: 'sub' });
   live(where, () => { const p = phase(), t = now(); return p === 'live' ? `지금 ${screenName(g.scr)}에 걸려 있어요 · ${countdown(g.b - t)} 남음` : p === 'day' ? `${hourText(new Date(g.a + 9 * 36e5).getUTCHours())}에 광장에 걸려요 · ${countdown(g.a - t)} 남음` : windowText(g.a, g.b) + ' 광장에 걸렸어요'; });
   // 답장 전광판: the first button (not in the owner's own preview). It opens the maker here, filled in from this board.
@@ -385,7 +389,7 @@ function visit(g, { preview = false } = {}) {
     beacon(g.id, 'reply'); ls.set('kts_gref', JSON.stringify({ id: g.id, at: Date.now() })); // kept like ?ref=: a board made later still counts as led here
     history.pushState(null, '', '/gift'); maker({ ...replyDraft(g), re: g.id });
   } }, replyLabel(g));
-  const acts = h('div', { class: 'stack', hidden: !preview && !st.ended }, reply, saveBtn, phase() === 'live' ? go : null, h('a', { class: 'btn', href: '/gift?ref=' + g.id, onclick: () => beacon(g.id, 'cta') }, '🎁 나도 누군가에게 걸어 주기'), saveNote);
+  const acts = h('div', { class: 'stack', hidden: !preview && !st.ended }, reply, saveBtn, go, h('a', { class: 'btn', href: '/gift?ref=' + g.id, onclick: () => beacon(g.id, 'cta') }, '🎁 나도 누군가에게 걸어 주기'), saveNote);
   const skip = h('button', { class: 'linkbtn', type: 'button', onclick: () => { acts.hidden = false; skip.remove(); } }, '영상 건너뛰기');
   st.ends.add(() => { acts.hidden = false; skip.remove(); });
   const rp = twoTap(h('button', { class: 'linkbtn', type: 'button' }, '이 전광판 신고'), '한 번 더 누르면 신고해요', async () => { const r = await fetch('/rt/gift/' + g.id + '/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then((x) => x.json()).catch(() => null); rp.textContent = r?.ok ? '신고했어요' : '신고하지 못했어요'; rp.disabled = true; });

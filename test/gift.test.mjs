@@ -7,7 +7,7 @@ import {
   GIFT, GIFT_SCREENS, OCCASIONS, TIERS, TIER_NOTE, TIER_ASK, won, giftFault, paperFault, windowFor, windowText, startChoices, dayText, hourText,
   screenLoad, pickScreen, nextFree, placeGifts, turnOf, giftPhase, keepUntil, pruneDay, paperOpen, paperTakes, lockArm, refOf, keptRef, REF_MS,
   giftView, giftShareText, countdown, videoKind, rangeOf, pickRecordType, quietNow, kstDay, dayStart, addDays, giftScreen,
-  OCC_KEYS, REPLY_MSG, replyDraft, replyLabel, plazaLook, cpLen,
+  OCC_KEYS, REPLY_MSG, replyDraft, replyLabel, plazaLook, plazaNote, PLAZA_BTN, cpLen,
 } from '../giftrules.js';
 
 const src = (f) => fs.readFileSync(new URL('../' + f, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -338,6 +338,88 @@ describe('the reply board (답장 전광판) and the plaza replay', () => {
     assert.equal(plazaLook({ ...g, day: '2026-02-30' }, g.a), 'gone');
     const late = { day: '2026-11-23', a: KST('2026-11-23T22:00:00'), b: KST('2026-11-24T04:00:00') };
     assert.equal(plazaLook(late, KST('2026-11-24T03:00:00')), 'live', 'a late "지금" window runs past midnight');
+  });
+  it('the words: the page\'s plaza button by phase (none before the day) and the plaza\'s toast for a visit or a replay', () => {
+    assert.deepEqual({ ...PLAZA_BTN }, { day: '🗽 광장에서 미리 보기', live: '🗽 직접 가서 보기', after: '🗽 광장에서 다시 보기' });
+    const g = view();
+    assert.equal(plazaNote(g, 'live', KST('2026-11-25T19:00:00')), '🎁 민지님을 위한 선물 전광판이에요!');
+    assert.equal(plazaNote(g, 'replay', KST('2026-11-25T10:00:00')), '🎁 민지님을 위한 선물 전광판이에요 · 광장에는 저녁 6시에 걸려요');
+    assert.equal(plazaNote(g, 'replay', KST('2026-11-28T12:00:00')), '🎁 민지님을 위한 선물 전광판이에요 · 이 기기에서만 다시 보여 드려요');
+  });
+  it('the recipient page\'s plaza button follows the clock: a preview on the day, the visit while it hangs, a replay after; none before the day', async () => {
+    const g = view();
+    let P = pageOf(g, KST('2026-11-25T10:00:00'));
+    try {
+      await P.load('giftpage.js'); await P.press(P.btn(/영상 건너뛰기/));
+      const go = P.btn(/^🗽/);
+      assert.equal(go.textContent, '🗽 광장에서 미리 보기'); assert.equal(go.href, '/?gb=' + g.id);
+      P.skew += 9 * 36e5; P.tick(); assert.equal(go.textContent, '🗽 직접 가서 보기'); // 19:00
+      P.skew += 6 * 36e5; P.tick(); assert.equal(go.textContent, '🗽 광장에서 다시 보기'); // 01:00, the window is over
+      await P.press(go); assert.equal(P.seen(g.id, 'go'), true, 'counted as before');
+    } finally { P.done(); }
+    P = pageOf(view({ phase: 'before' }), KST('2026-11-24T12:00:00'));
+    try { await P.load('giftpage.js'); assert.deepEqual(P.heads('h1'), ['🎂 민지님을 위한 선물 전광판']); assert.equal(P.btn(/^🗽/), null); assert.equal(P.btn(/답장|고마워 전광판/), null, 'nothing to answer before the day'); } finally { P.done(); }
+  });
+  // The plaza side (gift.js) with a world that only records what it is asked to do.
+  async function plaza({ at, search = '?gb=abcd1234', gift = null, list = null } = {}) {
+    const P = fakeDom({ path: '/', search, at, store: { masil_gt: GUEST() }, respond: (u) => (/^\/rt\/gift\/[0-9a-z]{8}$/.test(u) && gift ? { ok: true, gift, own: false } : null) });
+    P.notes = []; P.calls = [];
+    const world = { pinGift: (g, ms) => { P.calls.push(['pin', g.id, ms]); return 'STREET_40'; }, goToSlot: (s) => P.calls.push(['go', s]), focusSlot: (s) => P.calls.push(['focus', s]), cheerAt: (s) => P.calls.push(['cheer', s]), setGifts() {}, setInputEnabled() {} };
+    const { mountGift } = await P.load('gift.js');
+    P.gift = mountGift({ world, ui: { note: (t, k, fn) => P.notes.push({ t, k, fn }) }, whenBuilt: (f) => f(), introDone() {} });
+    if (list) P.gift.apply(list);
+    return P;
+  }
+  const SHOWN = [['pin', 'abcd1234', 60000], ['go', 'STREET_40'], ['focus', 'STREET_40'], ['cheer', 'STREET_40']];
+  it('?gb= in the plaza shows the board on this device on its day and after its window, with the same camera and fireworks', async () => {
+    const g = view();
+    let P = await plaza({ at: KST('2026-11-28T12:00:00'), gift: view({ phase: 'after' }) });
+    try {
+      assert.equal(P.gift.arrive(), true); await P.settle(); await P.timers();
+      assert.deepEqual(P.calls, SHOWN, 'pinned for a minute, the avatar and the camera on it, fireworks');
+      assert.deepEqual(P.notes.map((n) => [n.t, n.k]), [['🎁 민지님을 위한 선물 전광판이에요 · 이 기기에서만 다시 보여 드려요', 'ok']]);
+      assert.equal(P.loc.search, '', 'the link is used up');
+    } finally { P.done(); }
+    P = await plaza({ at: KST('2026-11-25T10:00:00'), gift: view({ phase: 'day' }) });
+    try {
+      P.gift.arrive(); await P.settle(); await P.timers();
+      assert.deepEqual(P.calls, SHOWN); assert.equal(P.notes[0].t, '🎁 민지님을 위한 선물 전광판이에요 · 광장에는 저녁 6시에 걸려요');
+    } finally { P.done(); }
+    // Hanging now: the world's own copy (no day in it) is enough, nothing is fetched; the same from the frame's "직접 가서 보기".
+    P = await plaza({ at: KST('2026-11-25T19:00:00'), search: '', list: [{ id: g.id, to: g.to, from: g.from, occ: g.occ, msg: g.msg, th: g.th, scr: g.scr, a: g.a, b: g.b, n: 0 }] });
+    try {
+      assert.equal(P.gift.arrive(), false, 'no link: the usual arrival');
+      for (const f of P.winOn.message) f({ origin: P.loc.origin, data: { t: 'gift', act: 'go', id: g.id } });
+      await P.settle(); await P.timers();
+      assert.deepEqual(P.calls, SHOWN); assert.equal(P.notes[0].t, '🎁 민지님을 위한 선물 전광판이에요!');
+      assert.equal(P.sent.some((s) => s.url.startsWith('/rt/gift/')), false);
+    } finally { P.done(); }
+    P = await plaza({ at: KST('2026-11-25T19:00:00'), gift: view({ phase: 'live' }) }); // live, but this page's world list has not caught up
+    try { P.gift.arrive(); await P.settle(); await P.timers(); assert.deepEqual(P.calls, SHOWN); assert.equal(P.notes[0].t, '🎁 민지님을 위한 선물 전광판이에요!'); } finally { P.done(); }
+  });
+  it('?gb= before the day only says when it hangs; a board that is gone, hidden or deleted says so; nothing is pinned', async () => {
+    let P = await plaza({ at: KST('2026-11-24T12:00:00'), gift: view({ phase: 'before' }) });
+    try {
+      P.gift.arrive(); await P.settle(); await P.timers();
+      assert.deepEqual(P.calls, []); assert.deepEqual(P.notes.map((n) => [n.t, n.k]), [['이 선물 전광판은 11월 25일 (수) 저녁 6시 ~ 자정에 걸려요', 'ok']]);
+      P.notes[0].fn(); assert.equal(P.loc.went, '/g/abcd1234', 'a tap goes to its page');
+    } finally { P.done(); }
+    P = await plaza({ at: KST('2026-11-28T12:00:00'), gift: null }); // the Worker answers 404 for a hidden, deleted or expired board
+    try { P.gift.arrive(); await P.settle(); await P.timers(); assert.deepEqual(P.calls, []); assert.deepEqual(P.notes.map((n) => [n.t, n.k]), [['없어졌거나 가려진 선물 전광판이에요', 'err']]); } finally { P.done(); }
+    P = await plaza({ at: KST('2026-12-03T00:00:01'), gift: view({ phase: 'after' }) }); // this device's clock is past the page's last day
+    try { P.gift.arrive(); await P.settle(); await P.timers(); assert.deepEqual(P.calls, []); assert.equal(P.notes[0].t, '없어졌거나 가려진 선물 전광판이에요'); } finally { P.done(); }
+  });
+  it('a tap on the reply notice while the plaza is open opens the answered board\'s page over the plaza (the service worker hands this tab the address)', async () => {
+    const P = await plaza({ at: KST('2026-11-25T19:00:00'), search: '' });
+    try {
+      const frames = () => P.doc.body.kids.filter((n) => n.id === 'kts-gift-frame');
+      for (const url of ['/?focus=STREET_5', '/?wish=abcdefghij', '/gift', '/g/BAD', 'https://evil.example/g/abcd1234', '']) P.swOn.message({ data: { t: 'push', url } });
+      P.swOn.message({ data: { t: 'other', url: '/g/abcd1234' } });
+      assert.equal(frames().length, 0, 'only a board page of this site');
+      P.swOn.message({ data: { t: 'push', url: '/g/abcd1234' } });
+      assert.equal(frames().length, 1); assert.equal(frames()[0].kids.find((n) => n.tag === 'iframe').src, '/g/abcd1234?in=1');
+      P.swOn.message({ data: { t: 'push', url: '/g/abcd1234' } }); assert.equal(frames().length, 1, 'one frame');
+    } finally { P.done(); }
   });
 });
 

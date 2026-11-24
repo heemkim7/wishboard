@@ -1,10 +1,11 @@
 // 선물 전광판 in the plaza (browser only): the 🎁 button next to 🌠 (it opens the light maker /gift over the plaza, in a frame),
-// /rt/world's live gifts onto the street screens, the ?gb=<id> link ("직접 가서 보기": the camera goes to that board), and the
+// /rt/world's live gifts onto the street screens, the ?gb=<id> link ("직접 가서 보기": the camera goes to that board; on the board's
+// day before its window and after it, the same on this device only), and the
 // sender's 15-second video (?gb=<id>&rec=1, or 🎬 in the frame): a scripted night fly-through to the board with fireworks and a
 // cheering crew (timesSquare3d.js giftShow), drawn into a 9:16 frame with the words and the free watermark, recorded with
 // MediaRecorder (MP4 where it can, WebM otherwise) and uploaded to the board when the Worker has the R2 store (else kept on the device).
 // main.js calls mountGift once and gift.apply(remote.gifts) with every world; ui.js is not touched (the button is put next to 🌠).
-import { GIFT_ID, OCCASIONS, windowText } from './giftrules.js';
+import { GIFT_ID, OCCASIONS, windowText, plazaLook, plazaNote } from './giftrules.js';
 import { GIFT_SANS, fitSize } from './giftart.js?v=202611230850';
 import { recordCanvas, canRecord, saveBlob, fileName } from './giftfilm.js?v=202611230850';
 import { doToken } from './net.js?v=202611230850';
@@ -58,25 +59,32 @@ export function mountGift({ world, ui, whenBuilt, introDone }) {
     else if (e.data.act === 'rec' && GIFT_ID.test(id)) { closeMaker(); record(id); }
     else if (e.data.act === 'go' && GIFT_ID.test(id)) { closeMaker(); land(id); }
   });
+  // A tap on a reply notice ("…님이 답장 전광판을 걸었어요": worker.js pushUrl gives /g/<the answered board>) while the plaza is open: the
+  // service worker hands this tab the address instead of opening a window (sw.js), so that board's page opens here, over the plaza.
+  // Only a board page of this site; the plaza's own links (?focus=, ?wish=) stay main.js's.
+  const pushBoard = (url) => { try { const u = new URL(String(url || ''), location.origin); return u.origin === location.origin ? (/^\/g\/([0-9a-z]{8})$/.exec(u.pathname) || [])[1] || '' : ''; } catch { return ''; } };
+  try { navigator.serviceWorker?.addEventListener('message', (e) => { const id = e.data?.t === 'push' ? pushBoard(e.data.url) : ''; if (id && !st.busy) openMaker('/g/' + id); }); } catch { /* no service worker here */ }
 
   async function fetchGift(id) {
     let tok = ''; try { tok = await doToken(); } catch { tok = ''; }
     try { const r = await fetch('/rt/gift/' + id, { cache: 'no-store', headers: tok ? { authorization: 'Bearer ' + tok } : {} }); const d = await r.json(); return d?.ok ? { ...d, tok } : null; } catch { return null; }
   }
-  // "직접 가서 보기": the board alone on its screen for a minute, the avatar in front of it, the camera on it, fireworks.
+  // "직접 가서 보기" (and, outside the board's window, "광장에서 미리 보기" / "다시 보기"): the board alone on a screen for a minute, the
+  // avatar in front of it, the camera on it, fireworks. giftrules.js plazaLook says what the link may do: 'live' while the board hangs,
+  // 'replay' on its day before the window and after it while its page lives. A replay is drawn on this device only (pinGift is local:
+  // nothing is sent to the room or the Worker), so it takes no screen from anyone. Before the day the link only says when it hangs.
   async function land(id) {
-    const d = st.list.find((g) => g.id === id) ? { gift: st.list.find((g) => g.id === id) } : await fetchGift(id);
-    const g = d?.gift;
-    if (!g) { note('없어졌거나 가려진 선물 전광판이에요', 'err'); return; }
-    const t = Date.now(), phase = g.phase || (t >= g.b ? 'after' : t >= g.a ? 'live' : 'before'); // the world's copy has no phase: it is live by being there
-    if (phase !== 'live') { note(phase === 'after' ? '이 선물 전광판은 광장에서 내려왔어요' : `이 선물 전광판은 ${windowText(g.a, g.b)}에 걸려요`, 'ok', () => { location.href = '/g/' + id; }); return; }
+    const up = st.list.find((g) => g.id === id); // the world's copy has no day: it is live by being there
+    const g = up || (await fetchGift(id))?.gift, t = Date.now(), look = up ? 'live' : plazaLook(g, t);
+    if (!g || look === 'gone') { note('없어졌거나 가려진 선물 전광판이에요', 'err'); return; }
+    if (look === 'wait') { note(`이 선물 전광판은 ${windowText(g.a, g.b)}에 걸려요`, 'ok', () => { location.href = '/g/' + id; }); return; }
     whenBuilt(() => {
       const slot = world?.pinGift?.(g, 60000);
       if (!slot) { note('지금은 이 전광판을 보여 줄 화면이 비어 있지 않아요', 'err'); return; }
       world.goToSlot?.(slot);
       world.focusSlot?.(slot, { hold: 0, celebrate: false });
       setTimeout(() => world.cheerAt?.(slot), 900); // fireworks around the face (giftPop's bursts sit on it and hide the words)
-      note(`🎁 ${g.to}님을 위한 선물 전광판이에요!`, 'ok');
+      note(plazaNote(g, look, t), 'ok');
     });
   }
 

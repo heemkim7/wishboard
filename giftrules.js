@@ -257,6 +257,14 @@ export function plazaLook(g, now = Date.now()) {
   if (now >= a && now < b) return 'live';
   return now >= dayStart(g.day) ? 'replay' : 'wait';
 }
+// The recipient page's plaza button by phase (/?gb=<id>); before the day there is none.
+export const PLAZA_BTN = Object.freeze({ day: '🗽 광장에서 미리 보기', live: '🗽 직접 가서 보기', after: '🗽 광장에서 다시 보기' });
+// The plaza's toast once the board is on a screen: look 'live', or 'replay' (on its day before the window: when it hangs; after: only here).
+export function plazaNote(g, look, now = Date.now()) {
+  const head = `🎁 ${String(g?.to || '') || '당신'}님을 위한 선물 전광판이에요`;
+  if (look !== 'replay') return head + '!';
+  return head + ' · ' + (now < Number(g?.a) ? `광장에는 ${clockText(Number(g.a))}에 걸려요` : '이 기기에서만 다시 보여 드려요');
+}
 // 21:00..08:00 KST: no advertising push goes out (the privacy policy's 알림), and no reply notice either (giftsrv.js make).
 export const quietNow = (now = Date.now()) => { const h = new Date(now + 9 * 36e5).getUTCHours(); return h >= GIFT.quiet[0] || h < GIFT.quiet[1]; };
 export const AD_LABEL = '(광고) ';
