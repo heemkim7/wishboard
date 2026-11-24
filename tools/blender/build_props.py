@@ -1141,8 +1141,8 @@ def lot4_tower():
 # ====================================================================================================== taxi
 def taxi():
     """A chunky yellow cab on the footprint of the box kit in ts3d/traffic.js: it drives toward +z (headlights at +z,
-    as the kit does), its left side is +x. Nodes: Body, Glass, Wheel_FL/FR/RL/RR (origins on the axles, they turn
-    about x), RoofSign, HeadLights, TailLights."""
+    as the kit does), its left side is +x. Nodes: Body, Glass, Checker, Wheel_FL/FR/RL/RR (origins on the axles, they
+    turn about x), RoofSign, HeadLights, TailLights."""
     WR, WX, WZ, RA = 0.36, 0.85, 1.45, 0.44          # wheel radius, half track, half wheelbase, arch radius
     body = Geo("Body")
     # ---- the lower body: one skin lofted from tail to nose. The underside lifts over the axles to make the arches.
@@ -1200,13 +1200,15 @@ def taxi():
     body.box("White", 0.42, 0.13, 0.03, 0.0, 0.41, 2.405, soft=True)
     body.box("White", 0.42, 0.13, 0.03, 0.0, 0.66, -2.325, soft=True)
     body.box("Trim", 0.56, 0.05, 0.22, 0.0, 1.55, -0.3, b=0.02)
-    # ---- the checker stripe along the doors: a pale band with dark squares of 12 cm standing proud of it
+    # ---- the checker stripe along the doors: a pale band with dark squares of 12 cm standing proud of it.
+    # Its own node, so the same body can be an ordinary car by leaving this node and RoofSign out.
+    checker = Geo("Checker")
     for s in (-1, 1):
-        body.box("White", 0.03, 0.26, 1.94, s * 0.955, 0.78, 0.0, soft=True)
+        checker.box("White", 0.03, 0.26, 1.94, s * 0.955, 0.78, 0.0, soft=True)
         for col in range(16):
             for row in range(2):
                 if (col + row) % 2 == 0:
-                    body.box("Trim", 0.03, 0.12, 0.12, s * 0.966, 0.72 + row * 0.12, -0.9 + col * 0.12, soft=True)
+                    checker.box("Trim", 0.03, 0.12, 0.12, s * 0.966, 0.72 + row * 0.12, -0.9 + col * 0.12, soft=True)
     # ---- the lit parts, each its own node: the roof sign (no lettering: the game draws it), head and tail lamps
     sign = Geo("RoofSign")
     sign.box("RoofSign", 0.9, 0.26, 0.22, 0.0, 1.70, -0.3, b=0.06)
@@ -1233,7 +1235,7 @@ def taxi():
         "LightFront": ("#fff6da", 0.3, 0.0, "#fff6da", 3.0),
         "LightRear":  ("#ff2018", 0.3, 0.0, "#ff2018", 2.2),
     }
-    return dict(geos=[body, glass] + wheels + [sign, head, tail], palette=palette, budget=(3500, 120))
+    return dict(geos=[body, glass, checker] + wheels + [sign, head, tail], palette=palette, budget=(3500, 120))
 
 # ====================================================================================================== the plaza tree
 def xmas_tree():
