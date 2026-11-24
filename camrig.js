@@ -241,6 +241,95 @@ export function facesBlock(faces) {
   };
 }
 
+// ---- 점등식: the group photo (gift.js, timesSquare3d.js cerPose) ----------------------------------------------------------
+// The photo camera stands on the board's normal behind the crowd (the friends who came stand between it and the board), above eye
+// level, looking along the normal tilted up or down. It keeps the whole face and the crowd box (the front point ±4 m to the side,
+// 0..3 m out, 0..1.9 m up) inside NDC ±fit. Landscape: the face about `share[0]` of the width; portrait: farther back, the full face
+// at `share[1]` of the narrow width, the face centre in the upper half. The nearest distance that fits wins (the board as big as the
+// rule allows), never nearer than the crowd's back row plus `behind`.
+// With block (boardVantage's rule: the clear fraction of a segment), a pose whose view of the face or the crowd is cut by something
+// (a building, a lot, the arch, a post) is not taken: from that distance in, then a little higher, then with the lens opened up to
+// `widen` degrees, the first pose that sees all the sample points wins; when none does, the one that sees the most (`seen`).
+export const CER_SHOT = { share: [0.6, 0.9], up: [0.3, 0.42], fit: 0.95, behind: 5, near: 1.5, step: 0.5, reach: 60, rise: [2.2, 0.12], lift: [0, 2.5, 5], widen: 14 };
+/**
+ * pos: the face centre {x, y, z}; normal: its unit normal {x, z}; w, h: the face (m); front: the crowd's centre {x, z}; aspect: the
+ * view's width / height; fov: the frame's base vertical fov (deg; an upright frame opens it as portraitFov does); ground: the floor
+ * height under the crowd; block(ax, ay, az, bx, by, bz) -> the clear fraction of that segment (optional).
+ * -> { cam: {x, y, z}, look: {x, y, z}, fov, dist, seen } (dist: from the face along the normal; seen: the share of the sample points
+ * with nothing in the way, 1 without block).
+ */
+export function cerShotPose({ pos, normal, w = 0, h = 0, front, aspect = 1, fov = 55, ground = 0, block = null } = {}) {
+  const S = CER_SHOT, px = num(pos?.x), py = num(pos?.y), pz = num(pos?.z), gy = num(ground);
+  let nx = num(normal?.x), nz = num(normal?.z, 1); const nl = Math.hypot(nx, nz) || 1; nx /= nl; nz /= nl;
+  const rx = nz, rz = -nx; // the face's right as the camera sees it
+  const W = Math.max(0, num(w)), H = Math.max(0, num(h)), a = num(aspect) > 0 ? num(aspect) : 1, k = tallness(a);
+  const fd = Math.max(0, (num(front?.x, px + nx * 9) - px) * nx + (num(front?.z, pz + nz * 9) - pz) * nz);
+  const fx = px + nx * fd, fz = pz + nz * fd;
+  // What has to be in the frame: the face's corners and the crowd box's.
+  const pts = [];
+  for (const [u, v] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) pts.push([px + rx * u * W / 2, py + v * H / 2, pz + rz * u * W / 2]);
+  for (const u of [-4, 4]) for (const d of [0, 3]) for (const y of [gy, gy + 1.9]) pts.push([fx + rx * u + nx * d, y, fz + rz * u + nz * d]);
+  const v0 = portraitFov(a, clamp(num(fov, 55), 10, 120)), share = S.share[0] + (S.share[1] - S.share[0]) * k, upAim = S.up[0] + (S.up[1] - S.up[0]) * k;
+  // One distance, height and lens: the pitch (rad) that keeps every point inside and puts the face centre nearest upAim, or null.
+  const pitch = (D, cy, vf) => {
+    const tv = Math.tan((vf * Math.PI) / 360), th = tv * a, cx = px + nx * D, cz = pz + nz * D;
+    let best = null, gap = Infinity;
+    for (let deg = -40; deg <= 40; deg += 0.25) {
+      const t = (deg * Math.PI) / 180, c = Math.cos(t), s = Math.sin(t);
+      // forward (-n tilted by t), up (perpendicular to it in the normal's vertical plane)
+      const f0 = -nx * c, f1 = s, f2 = -nz * c, u0 = nx * s, u1 = c, u2 = nz * s;
+      let ok = true;
+      for (const [x, y, z] of pts) {
+        const vx = x - cx, vy = y - cy, vz = z - cz, zz = vx * f0 + vy * f1 + vz * f2;
+        if (!(zz > 0.1) || Math.abs((vx * rx + vz * rz) / (zz * th)) > S.fit || Math.abs((vx * u0 + vy * u1 + vz * u2) / (zz * tv)) > S.fit) { ok = false; break; }
+      }
+      if (!ok) continue;
+      const vx = px - cx, vy = py - cy, vz = pz - cz, zz = vx * f0 + vy * f1 + vz * f2, e = Math.abs((vx * u0 + vy * u1 + vz * u2) / (zz * tv) - upAim);
+      if (e < gap - 1e-12) { gap = e; best = t; }
+    }
+    return best;
+  };
+  const height = (D, lift) => gy + S.rise[0] + S.rise[1] * D + lift;
+  const pose = (D, lift, vf, t) => {
+    const cy = height(D, lift), cx = px + nx * D, cz = pz + nz * D, c = Math.cos(t);
+    return { cam: { x: cx, y: cy, z: cz }, look: { x: cx - nx * c * D, y: cy + Math.sin(t) * D, z: cz - nz * c * D }, fov: vf, dist: D };
+  };
+  // The free pose: from the crowd's back row plus `behind` (or the share's distance, if farther) out until it fits.
+  const tv0 = Math.tan((v0 * Math.PI) / 360);
+  const lo = Math.max(fd + 3 + S.behind, W / (2 * share * tv0 * a));
+  let free = null;
+  for (let D = lo; D <= lo + S.reach && !free; D += S.step) { const t = pitch(D, height(D, 0), v0); if (t != null) free = pose(D, 0, v0, t); }
+  for (let vf = v0 + 1; !free && vf <= v0 + S.widen; vf++) { const t = pitch(lo + S.reach, height(lo + S.reach, 0), vf); if (t != null) free = pose(lo + S.reach, 0, vf, t); }
+  if (!free) free = pose(lo, 0, v0, 0);
+  if (typeof block !== 'function') return { ...free, seen: 1 };
+  // What must be seen: the face (centre and corners 8 % in, just off its surface) and three heads across the crowd.
+  const look = [];
+  for (const [u, v] of [[0, 0], [-0.42, -0.42], [0.42, -0.42], [-0.42, 0.42], [0.42, 0.42]]) look.push([px + rx * u * W + nx * 0.6, py + v * H, pz + rz * u * W + nz * 0.6]);
+  for (const u of [-3, 0, 3]) look.push([fx + rx * u + nx * 1.5, gy + 1.5, fz + rz * u + nz * 1.5]);
+  const seenFrom = (c) => { let n = 0; for (const [x, y, z] of look) if (!(num(block(c.x, c.y, c.z, x, y, z), 1) < 0.999)) n++; return n / look.length; };
+  let best = { ...free, seen: seenFrom(free.cam) };
+  if (best.seen === 1) return best;
+  const floor = fd + 3 + S.near;
+  for (let D = free.dist; D >= floor - 1e-9; D -= 1) {
+    for (const lift of S.lift) {
+      let p = null;
+      for (let vf = free.fov; vf <= v0 + S.widen && !p; vf++) { const t = pitch(D, height(D, lift), vf); if (t != null) p = pose(D, lift, vf, t); }
+      if (!p) continue;
+      const seen = seenFrom(p.cam);
+      if (seen === 1) return { ...p, seen };
+      if (seen > best.seen) best = { ...p, seen };
+    }
+  }
+  return best;
+}
+/** Where an arrival stands in front of the board, from a seed in [0, 1) (one per tab): u metres to the face's right (-4..4), n metres
+ *  farther out along the normal than the front point (0..3). Friends who came by the same link do not stand inside each other. */
+export function cerSpread(seed) {
+  const s0 = num(seed), s = s0 >= 0 && s0 < 1 ? s0 : ((s0 % 1) + 1) % 1 || 0;
+  const n = (s * 9.8696) % 1; // a second number from the same seed, spread differently
+  return { u: clamp(-4 + 8 * s, -4, 4), n: clamp(3 * n, 0, 3) };
+}
+
 // ---- the first throw's look up at the balloon ------------------------------------------------------------------
 // The balloon floats 58 m up, out of the usual view, so the first pouch of a session shows where it is. The look used to
 // start with the throw and go 80% of the way to the balloon: the avatar left the frame at once and stayed out for 1.5 s,
