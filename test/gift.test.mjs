@@ -886,3 +886,107 @@ describe('the gift pages on a phone: what the page script builds (giftpage.js)',
     assert.deepEqual([...seen].sort(), Object.keys(RULE).sort(), 'and every kind of control was met');
   });
 });
+
+describe('the gift page over the plaza is a dialog like the sheets (gift.js)', () => {
+  // The plaza with its HUD's 🌠 button; the world only records whether its input is on.
+  async function plaza(o = {}) {
+    const P = fakeDom({ path: '/', at: KST('2026-11-25T19:00:00'), store: { masil_gt: GUEST() }, respond: () => null, ...o });
+    P.locks = [];
+    const { mountGift } = await P.load('gift.js');
+    P.gift = mountGift({ world: { setGifts() {}, setInputEnabled: (on) => P.locks.push(on) }, ui: { note() {} }, whenBuilt: (f) => f(), introDone() {} });
+    P.frame = () => P.doc.body.kids.find((n) => n.id === 'kts-gift-frame') || null;
+    P.giftBtn = P.tools.kids[1];
+    P.say = (data) => { for (const f of P.winOn.message) f({ origin: P.loc.origin, data }); };
+    return P;
+  }
+  // gift.js's own sheet (a template string) as rules.
+  const GCSS = (() => {
+    const text = /const CSS = `([\s\S]*?)`;/.exec(src('gift.js'))[1].replace(/\$\{GIFT_SANS\}/g, 'sans-serif');
+    const rules = Object.fromEntries([...text.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => [m[1].trim(), Object.fromEntries(m[2].split(';').filter(Boolean).map((d) => { const k = d.indexOf(':'); return [d.slice(0, k).trim(), d.slice(k + 1).trim()]; }))]));
+    return rules;
+  })();
+
+  it('it is a named modal dialog; opening it moves focus to the frame itself, never into a field', async () => {
+    const P = await plaza();
+    try {
+      assert.equal(P.giftBtn.attrs['aria-label'], '선물 전광판 걸기'); assert.equal(P.frame(), null);
+      await P.press(P.giftBtn);
+      const f = P.frame(), ifr = f.kids.find((n) => n.tag === 'iframe'), x = f.kids.find((n) => n.tag === 'button');
+      assert.deepEqual([f.attrs.role, f.attrs['aria-modal'], f.attrs['aria-label'], f.attrs.tabindex], ['dialog', 'true', '선물 전광판 만들기', '-1']);
+      assert.equal(ifr.src, '/gift?in=1'); assert.equal(ifr.title, '선물 전광판 만들기');
+      assert.equal(P.doc.activeElement, f); assert.deepEqual(f.focused, { preventScroll: true });
+      assert.deepEqual(P.locks, [false], 'the plaza under it takes no input');
+      // The close button: named, and drawn with the sheets' two-stroke icon (no ✕ letter).
+      assert.equal(x.attrs['aria-label'], '닫기'); assert.equal(x.type, 'button'); assert.equal(x.textContent, '');
+      assert.deepEqual(x.kids.map((n) => [n.tag, n.attrs.viewBox, n.attrs['aria-hidden']]), [['svg', '0 0 24 24', 'true']]);
+      assert.equal(x.kids[0].kids[0].attrs.d, 'M6 6L18 18M18 6L6 18');
+      assert.ok(/close: \['M6 6L18 18', 'M18 6L6 18'\]/.test(src('uiicons.js')), 'the same strokes as the sheets\' close icon (uiicons.js)');
+      // A board's page opened from a reply notice is named for what it is.
+      P.swOn.message({ data: { t: 'push', url: '/g/abcd1234?o=1' } });
+      assert.equal(P.frame().attrs['aria-label'], '선물 전광판'); assert.equal(P.frame().attrs.role, 'dialog'); assert.equal(P.frame().kids.find((n) => n.tag === 'iframe').title, '선물 전광판');
+    } finally { P.done(); }
+  });
+  it('Escape in the plaza closes it and nothing under it, and focus goes back to the 🎁 button; without the frame Escape is the plaza\'s', async () => {
+    const P = await plaza();
+    try {
+      let e = await P.key(P.winOn, 'Escape');
+      assert.deepEqual([e.defaultPrevented, e.stopped], [false, false], 'nothing open: the plaza\'s own listeners get the key');
+      await P.press(P.giftBtn);
+      for (e of [await P.key(P.winOn, 'a'), await P.key(P.winOn, 'Enter'), await P.key(P.winOn, 'Escape', { isComposing: true })]) assert.deepEqual([!!P.frame(), e.stopped], [true, false]);
+      e = await P.key(P.winOn, 'Escape');
+      assert.equal(P.frame(), null);
+      assert.deepEqual([e.defaultPrevented, e.stopped], [true, true], 'one press closes this, not also a sheet under it');
+      assert.equal(P.doc.activeElement, P.giftBtn); assert.deepEqual(P.giftBtn.focused, { preventScroll: true });
+      assert.deepEqual(P.locks, [false, true], 'the plaza takes input again');
+      e = await P.key(P.winOn, 'Escape'); assert.equal(e.stopped, false);
+      await P.press(P.giftBtn); assert.ok(P.frame(), 'and it opens again');
+    } finally { P.done(); }
+  });
+  it('the close button and the page\'s own close message do the same; focus returns to what opened it, or to 🎁 when that is gone', async () => {
+    const P = await plaza();
+    try {
+      // Opened from another control of the plaza (the "친구 이름을 전광판에 걸어 보세요" card calls gift.open()).
+      const task = P.doc.createElement('button'); P.doc.body.append(task); task.focus();
+      P.gift.open();
+      await P.press(P.frame().kids.find((n) => n.tag === 'button'));
+      assert.equal(P.frame(), null); assert.equal(P.doc.activeElement, task);
+      P.gift.open(); assert.equal(P.doc.activeElement, P.frame());
+      task.remove();
+      P.say({ t: 'gift', act: 'close' }); // 광장 가기 or Escape inside the page (giftpage.js)
+      assert.equal(P.frame(), null); assert.equal(P.doc.activeElement, P.giftBtn);
+      // Messages that are not the page's do nothing.
+      P.gift.open(); for (const f of P.winOn.message) f({ origin: 'https://evil.example', data: { t: 'gift', act: 'close' } }); P.say({ t: 'other', act: 'close' });
+      assert.ok(P.frame());
+    } finally { P.done(); }
+  });
+  it('its close button is the sheets\' close button, value for value (index.html .x)', () => {
+    const page = src('index.html'), decl = (re, what) => { const m = re.exec(page); assert.ok(m, 'index.html: ' + what + ' is not where it was. Read the sheet close button again and match gift.js to it'); return Object.fromEntries(m[1].split(';').map((d) => d.trim()).filter(Boolean).map((d) => { const k = d.indexOf(':'); return [d.slice(0, k).trim(), d.slice(k + 1).trim()]; })); };
+    const sheet = decl(/\n\s*\.x \{([^}]*)\}/, '.x'), hover = decl(/\n\s*\.x:hover \{([^}]*)\}/, '.x:hover'), pad = decl(/\n\s*html\.touch \.x::after \{([^}]*)\}/, 'html.touch .x::after'), ico = decl(/\n\s*\.x svg\.ico, \.mapzoom button svg\.ico \{([^}]*)\}/, '.x svg.ico'), line = decl(/\n\s*svg\.ico \{([^}]*)\}/, 'svg.ico');
+    const root = (k) => { const m = new RegExp('\\n\\s*' + k + ': (#[0-9a-f]{6});').exec(page); assert.ok(m, 'index.html :root ' + k); return m[1]; };
+    const mine = GCSS['#kts-gift-frame button'], mineHover = GCSS['#kts-gift-frame button:hover'], minePad = GCSS['#kts-gift-frame button::after'], mineIco = GCSS['#kts-gift-frame button svg'];
+    // Same size and corners (it was a 40px circle), same layout.
+    for (const p of ['width', 'height', 'border-radius', 'display', 'place-items']) assert.equal(mine[p], sheet[p], p);
+    assert.deepEqual([mine.width, mine.height, mine['border-radius']], ['38px', '38px', '10px']);
+    // Same colours: the plaza's own tokens, with their values of today behind them.
+    const same = (got, want) => { assert.equal(got.replace(/var\((--[\w-]+),#[0-9a-f]{6}\)/g, 'var($1)'), want); for (const m of got.matchAll(/var\((--[\w-]+),(#[0-9a-f]{6})\)/g)) assert.equal(m[2], root(m[1]), m[1]); };
+    same(mine.color, sheet.color); same(mine.background, sheet.background); same(mine.border, sheet.border);
+    same(mineHover.color, hover.color); same(mineHover['border-color'], hover['border-color']);
+    // Same place to press (38 + 3 + 3 = 44) and the same icon: 20px, the same stroke.
+    assert.equal(minePad.inset, pad.inset); assert.equal(minePad.position, 'absolute'); assert.equal(minePad.content, '""');
+    assert.equal(px(mine.width) - 2 * px(minePad.inset), 44);
+    for (const p of ['width', 'height']) assert.equal(mineIco[p], ico[p], 'icon ' + p);
+    for (const p of ['fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin']) assert.equal(mineIco[p], line[p], 'icon ' + p);
+  });
+  it('the plaza-side gift controls have a pressed state too: the close button, the buttons under the finished video, 취소 while it records', () => {
+    const x = GCSS['#kts-gift-frame button'], down = GCSS['#kts-gift-frame button:active'];
+    assert.ok(down.background && down.color && down.transition === 'none');
+    const rest = rgb(/#[0-9a-f]{6}/.exec(x.background)[0]), hit = rgb(down.background);
+    assert.ok(ratio(rest, hit) >= 1.4, 'the fill moves ' + ratio(rest, hit).toFixed(2) + ':1');
+    assert.ok(ratio(rgb(/#[0-9a-f]{6}/.exec(x.color)[0]), rest) >= 4.5 && ratio(rgb(/#[0-9a-f]{6}/.exec(down.color)[0]), hit) >= 4.5, 'the icon stays clear');
+    assert.ok(GCSS['#kts-gift-done .b:active']['background-color'] && GCSS['#kts-gift-done .b:active'].transition === 'none');
+    assert.match(GCSS['#kts-gift-done .b.gold:active']['box-shadow'], /^inset 0 0 0 99px rgba\(70,36,0,\.34\)$/, 'the gold one: the same wash as gift.html');
+    assert.match(GCSS['#kts-gift-done .b']['box-shadow'], /^inset 0 0 0 99px rgba\(70,36,0,0\)$/);
+    assert.ok(px(GCSS['#kts-gift-done .b']['min-height']) >= 44);
+    assert.ok(GCSS['#kts-gift-rec button:active'].background); assert.equal(GCSS['#kts-gift-rec button::after'].position, 'absolute'); assert.equal(GCSS['#kts-gift-rec button'].position, 'relative');
+  });
+});

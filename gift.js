@@ -11,22 +11,30 @@ import { recordCanvas, canRecord, saveBlob, fileName } from './giftfilm.js?v=202
 import { doToken } from './net.js?v=202611241127';
 
 const CSS = `
-#kts-gift-frame{position:fixed;inset:0;z-index:2147482000;background:rgba(4,4,14,.72);display:flex;align-items:stretch;justify-content:center}
+#kts-gift-frame{position:fixed;inset:0;z-index:2147482000;background:rgba(4,4,14,.72);display:flex;align-items:stretch;justify-content:center;outline:none}
 #kts-gift-frame iframe{width:min(100vw,1000px);height:100%;border:0;background:#07061a}
-#kts-gift-frame button{position:absolute;right:max(10px,env(safe-area-inset-right));top:max(10px,env(safe-area-inset-top));z-index:2;width:40px;height:40px;border-radius:50%;border:1px solid rgba(255,255,255,.25);background:rgba(10,8,30,.85);color:#fff;font:700 18px system-ui;cursor:pointer}
+#kts-gift-frame button{position:absolute;right:max(10px,env(safe-area-inset-right));top:max(10px,env(safe-area-inset-top));z-index:2;width:38px;height:38px;border-radius:10px;display:grid;place-items:center;padding:0;line-height:1;color:var(--text-2,#b9bfdc);background:var(--surface-2,#1c2440);border:1px solid var(--line,#262d47);cursor:pointer;transition:background-color .25s,border-color .25s,color .25s,transform .25s}
+#kts-gift-frame button::after{content:"";position:absolute;inset:-3px}
+#kts-gift-frame button svg{display:block;width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+#kts-gift-frame button:hover{color:var(--text,#f2f4ff);border-color:var(--line-strong,#3a4266)}
+#kts-gift-frame button:active{color:var(--text,#f2f4ff);background:#4a5380;border-color:#7781b3;transform:scale(.92);transition:none}
 body.gift-rec #ui{visibility:hidden}
 body.gift-rec{background:#000}
 body.gift-rec #view{left:50%;right:auto;width:min(100vw,calc(100vh * 9 / 16));transform:translateX(-50%)}
 #kts-gift-rec{position:fixed;left:50%;transform:translateX(-50%);top:max(12px,env(safe-area-inset-top));z-index:2147482100;display:flex;gap:8px;align-items:center;padding:8px 14px;border-radius:999px;background:rgba(10,8,30,.82);color:#fff;font:800 14px ${GIFT_SANS};border:1px solid rgba(255,255,255,.2)}
 #kts-gift-rec i{width:10px;height:10px;border-radius:50%;background:#ff2d55;display:inline-block;animation:kgr 1s infinite}
-#kts-gift-rec button{border:0;border-radius:999px;padding:4px 10px;background:rgba(255,255,255,.14);color:#fff;font:inherit;cursor:pointer}
+#kts-gift-rec button{position:relative;border:0;border-radius:999px;padding:4px 10px;background:rgba(255,255,255,.14);color:#fff;font:inherit;cursor:pointer;transition:background-color .25s}
+#kts-gift-rec button::after{content:"";position:absolute;inset:-9px -4px}
+#kts-gift-rec button:active{background:rgba(255,255,255,.42);transition:none}
 @keyframes kgr{50%{opacity:.25}}
 #kts-gift-done{position:fixed;inset:0;z-index:2147482100;background:rgba(4,4,14,.86);display:grid;place-items:center;padding:16px;font:15px/1.5 ${GIFT_SANS};color:#f3f1ff}
 #kts-gift-done .box{width:min(420px,100%);max-height:100%;overflow:auto;background:#100d2a;border:1px solid rgba(255,255,255,.14);border-radius:20px;padding:16px}
 #kts-gift-done video{display:block;width:100%;max-height:52vh;object-fit:contain;border-radius:14px;background:#000}
 #kts-gift-done h2{margin:0 0 8px;font-size:18px}
 #kts-gift-done p{margin:8px 0;color:#a8a6c9;font-size:13px}
-#kts-gift-done .b{display:flex;width:100%;min-height:48px;margin-top:8px;align-items:center;justify-content:center;border-radius:14px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.06);color:#fff;font:inherit;font-weight:900;text-decoration:none;cursor:pointer}
+#kts-gift-done .b{display:flex;width:100%;min-height:48px;margin-top:8px;align-items:center;justify-content:center;border-radius:14px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.06);color:#fff;font:inherit;font-weight:900;text-decoration:none;cursor:pointer;box-shadow:inset 0 0 0 99px rgba(70,36,0,0);transition:background-color .25s,border-color .25s,box-shadow .25s,transform .25s}
+#kts-gift-done .b:active{background-color:rgba(255,255,255,.24);border-color:rgba(255,255,255,.55);transform:scale(.97);transition:none}
+#kts-gift-done .b.gold:active{box-shadow:inset 0 0 0 99px rgba(70,36,0,.34)}
 #kts-gift-done .b.gold{border:0;color:#2a1800;background:linear-gradient(135deg,#ffe9a8,#ffcf5a 45%,#e6a52a)}
 .tool-gift{font-size:20px;line-height:1}`;
 
@@ -42,16 +50,39 @@ export function mountGift({ world, ui, whenBuilt, introDone }) {
   if (!place()) { const t = setInterval(() => { if (place()) clearInterval(t); }, 500); setTimeout(() => clearInterval(t), 30000); }
 
   // The light page over the plaza. It talks back with postMessage: close, rec (make the video here), go (look at the board here).
-  let frame = null;
+  // It is a dialog like the plaza's sheets (ui.js openSheet): named, modal, focus moves to it when it opens (to the frame itself, so a
+  // phone does not raise its keyboard; the page inside puts the cursor in its first field only where a mouse is the pointer), Escape
+  // closes it, and focus goes back to what opened it (the 🎁 button when nothing else did). Its close button is the sheets' (index.html
+  // .x: 38px, 10px corners, the same colours, 44px to press) with the same two-stroke icon (uiicons.js close).
+  let frame = null, opener = null;
   function openMaker(path = '/gift') {
     if (frame) return;
+    const name = path.startsWith('/g/') ? '선물 전광판' : '선물 전광판 만들기';
+    const active = document.activeElement;
+    opener = active && active !== document.body && typeof active.focus === 'function' ? active : null;
     frame = document.createElement('div'); frame.id = 'kts-gift-frame';
-    const ifr = document.createElement('iframe'); ifr.src = path + (path.includes('?') ? '&' : '?') + 'in=1'; ifr.title = '선물 전광판';
-    const x = document.createElement('button'); x.type = 'button'; x.textContent = '✕'; x.setAttribute('aria-label', '닫기'); x.addEventListener('click', closeMaker);
+    frame.setAttribute('role', 'dialog'); frame.setAttribute('aria-modal', 'true'); frame.setAttribute('aria-label', name); frame.setAttribute('tabindex', '-1');
+    const ifr = document.createElement('iframe'); ifr.src = path + (path.includes('?') ? '&' : '?') + 'in=1'; ifr.title = name;
+    const x = document.createElement('button'); x.type = 'button'; x.setAttribute('aria-label', '닫기'); x.addEventListener('click', closeMaker);
+    const SVG = 'http://www.w3.org/2000/svg', ico = document.createElementNS(SVG, 'svg'), strokes = document.createElementNS(SVG, 'path');
+    ico.setAttribute('viewBox', '0 0 24 24'); ico.setAttribute('aria-hidden', 'true'); ico.setAttribute('focusable', 'false'); strokes.setAttribute('d', 'M6 6L18 18M18 6L6 18');
+    ico.append(strokes); x.append(ico);
     frame.append(ifr, x); document.body.append(frame);
     world?.setInputEnabled?.(false);
+    try { frame.focus({ preventScroll: true }); } catch { /* focus stays where it was */ }
   }
-  function closeMaker() { if (!frame) return; frame.remove(); frame = null; world?.setInputEnabled?.(true); }
+  function closeMaker() {
+    if (!frame) return;
+    frame.remove(); frame = null; world?.setInputEnabled?.(true);
+    const back = opener && opener.isConnected ? opener : btn; opener = null;
+    try { back.focus({ preventScroll: true }); } catch { /* focus stays where the browser put it */ }
+  }
+  // Escape with the cursor in the plaza's own document (the frame, its close button). Before the plaza's other Escape listeners, and
+  // not passed on: one press closes this and nothing under it. Keys pressed inside the page come as its own 'close' message.
+  window.addEventListener('keydown', (e) => {
+    if (!frame || e.key !== 'Escape' || e.isComposing) return;
+    e.preventDefault(); e.stopPropagation(); closeMaker();
+  }, true);
   window.addEventListener('message', (e) => {
     if (e.origin !== location.origin || e.data?.t !== 'gift') return;
     const id = String(e.data.id || '');
