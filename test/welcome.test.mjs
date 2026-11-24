@@ -454,3 +454,42 @@ describe('the gift step is a step of the newcomer card (ui.js: source checks)', 
     assert.match(u, /\n    if \(!on\) setTutorial\('grad'\);/, 'a step started before that was known ends when it is (not only on leaving newcomer mode)');
   });
 });
+
+// ---- 점등식: the teaser card (giftart.js paintTeaser) drawn from cerTeaser's fields only ------------------------------------------------
+import { paintTeaser } from '../giftart.js';
+import { cerTeaser, windowFor } from '../giftrules.js';
+describe('the ceremony teaser card', () => {
+  const KST = (s) => Date.parse(s + '+09:00'), S = KST('2026-12-25T18:00:00');
+  const board = (o = {}) => { const w = windowFor('2026-12-25', 18, KST('2026-12-25T08:00:00')); return { id: 'abcd1234', to: '민지', from: '지수', occ: 'bday', msg: '비밀 문구 🤫', th: '', day: '2026-12-25', a: w.a, b: w.b, ...o }; };
+  // Every string the painter hands the context (fillText and strokeText alike).
+  const drawn = (cv) => cv.calls.filter((c) => c[0] === 'fillText' || c[0] === 'strokeText').map((c) => String(c[1]));
+  it('draws the chip, WISH BOARD, the name, when it lights and the time left, in that order', () => {
+    const cv = fakeCanvas();
+    paintTeaser(cv, cerTeaser(board(), S - 90000));
+    assert.deepEqual(cv.words, ['곧 켜져요', 'WISH BOARD', 'To. 민지', '🎂 18:00에 켜져요', '01:30']);
+  });
+  it('never draws the message or the sender, on any canvas size, even when they are passed in', () => {
+    for (const [w, h] of [[1024, 576], [384, 216], [512, 288]]) {
+      const cv = fakeCanvas(w, h);
+      paintTeaser(cv, { ...cerTeaser(board(), S - 30000), msg: '비밀 문구 🤫', from: '지수' });
+      for (const s of drawn(cv)) assert.equal(/비밀|지수|🤫/.test(s), false, s);
+      assert.ok(drawn(cv).length >= 5);
+    }
+  });
+  it('cuts a 13-character name to 12 and draws a card without fields', () => {
+    const cv = fakeCanvas();
+    paintTeaser(cv, { ...cerTeaser(board(), S - 1000), to: '가나다라마바사아자차카타파' });
+    assert.ok(cv.words.includes('To. 가나다라마바사아자차카타'));
+    assert.equal(cv.words.some((s) => s.includes('파')), false);
+    const none = fakeCanvas();
+    paintTeaser(none);
+    assert.deepEqual(none.words, ['곧 켜져요', 'WISH BOARD', 'To. 당신']);
+  });
+  it('shares the gift board\'s ground in the board\'s theme', () => {
+    const a = fakeCanvas(), g = fakeCanvas();
+    paintTeaser(a, cerTeaser(board({ th: 'sky' }), S - 1000));
+    paintGift(g, { ...GIFT, id: 'abcd1234', th: 'sky' });
+    const upToFrame = (cv) => cv.calls.slice(0, cv.calls.findIndex((c) => c[0] === 'stroke') + 1);
+    assert.deepEqual(upToFrame(a).filter((c) => c[0] === 'stop').slice(0, 2), upToFrame(g).filter((c) => c[0] === 'stop').slice(0, 2));
+  });
+});
