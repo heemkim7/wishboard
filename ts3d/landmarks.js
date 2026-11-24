@@ -1,8 +1,9 @@
 // Plaza landmarks: TKTS red stairs, Times Square Station exit 1, the golden bungeo-ppang pocha,
-// the Golden ATM and the 20 plot buildings (levels 0–4).
+// the Golden ATM, the K-POP stage, and the 18 plot buildings (levels 0–4) on their street, 가운데 거리.
 import * as THREE from 'three';
-import { LAYOUT, LOOP, PLOT_SLOTS, TAXI_STANDS, fountainSpot, insideLoop } from './layout.js?v=202611241127';
-import { Kit, fishGeometry } from './kit.js?v=202611241127';
+import { LAYOUT, LOOP, LOT, PLOT_SLOTS, TAXI_STANDS, fountainSpot, insideLoop, lotRect, streetPosts } from './layout.js?v=202611241127';
+import { Kit, fishGeometry, cropPlane, imgCrop } from './kit.js?v=202611241127';
+import { GROUND_LAYER } from './ground.js?v=202611241127';
 import {
   makeCanvas, paintStationSign, paintPylon, paintMenuBoard, paintTKTS, paintNeonSign,
   paintPlotBadge, paintLabel, paintTaxiStand, SANS, EMOJI,
@@ -421,8 +422,9 @@ export function buildLandmarks(ctx) {
     kit.box(17.6, 0.5, 0.5, truss, { x: 0, y: y0 + 10, z: G.z1 - 0.2, mat: 'metal' });
     kit.box(17.6, 10, 0.4, '#0d0d12', { x: 0, y: top + 5, z: G.z1 + 0.5, mat: 'metal' });
     box(-8.6, 8.6, G.z1 + 0.2, G.z1 + 0.9);
-    const trees = [[-14, G.z0 - 12], [14, G.z0 - 12], [-14, G.z0 - 26], [14, G.z0 - 26], [-15, G.z0 + 4], [15, G.z0 + 4]];
-    for (const [tx, tz] of trees) {
+    // Six planters beside the stage, south of the last pair of lots: none stands in the street or before a lot's board.
+    for (const [tx, dz] of G.trees) {
+      const tz = G.z0 + dz;
       kit.cyl(0.6, 0.6, 0.5, '#4a4d55', { x: tx, y: y0 + 0.25, z: tz, seg: 12 });
       kit.cyl(0.14, 0.2, 3.2, '#4a3324', { x: tx, y: y0 + 1.9, z: tz, seg: 8 });
       kit.sphere(1.7, '#1d4a2c', { x: tx, y: y0 + 4.4, z: tz, seg: 10 });
@@ -485,7 +487,7 @@ export function buildLandmarks(ctx) {
     scene.add(ring);
     const frontRing = new THREE.Mesh(new THREE.RingGeometry(3.3, 3.55, 64).rotateX(-Math.PI / 2), ringMat.clone());
     frontRing.material.opacity = 0.5;
-    frontRing.position.set(G.spot.x, 0.04, G.z0 - 3.6);
+    frontRing.position.set(G.spot.x, 0.09, G.z0 - 3.6); // on the street's pavers (0.022), clear of their depth offset from afar
     frontRing.layers.set(1);
     scene.add(frontRing);
     const stairSign = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 0.7), new THREE.MeshBasicMaterial({ map: tex(paintLabel(makeCanvas(768, 128), '여기로 올라가세요', '#ff7ac0', '#07070d')), color: new THREE.Color(1.1, 1.1, 1.1) }));
@@ -544,9 +546,12 @@ export function buildLandmarks(ctx) {
     const kit = new Kit();
     const own = [];
     const anim = [];
-    kit.box(8.4, 0.08, 7.6, '#2e3138', { y: 0.04 });
-    for (const [w, d, x, z] of [[8.4, 0.08, 0, 3.8], [8.4, 0.08, 0, -3.8], [0.08, 7.6, -4.2, 0], [0.08, 7.6, 4.2, 0]]) kit.box(w, 0.06, d, level ? color : '#ffe2a8', { x, y: 0.1, z, glow: level ? 1.4 : 0.55 });
-    let board = null, signSpec = null, foot = null;
+    // The pad and its lit border (layout.js LOT: test/plot-street.test.mjs keeps neighbouring pads apart with the same numbers).
+    kit.box(LOT.w, 0.08, LOT.d, '#2e3138', { y: 0.04 });
+    for (const [w, d, x, z] of [[LOT.w, 0.08, 0, LOT.d / 2], [LOT.w, 0.08, 0, -LOT.d / 2], [0.08, LOT.d, -LOT.w / 2, 0], [0.08, LOT.d, LOT.w / 2, 0]]) kit.box(w, 0.06, d, level ? color : '#ffe2a8', { x, y: 0.1, z, glow: level ? 1.4 : 0.55 });
+    let board = null, signSpec = null;
+    // Collider half-sizes [across, deep] in the lot's frame (level 0 has none). Level 1's reaches its board's two posts (x ± 2.9).
+    const foot = LOT.foot[level];
     if (level === 0) {
       kit.box(7.6, 0.42, 6.8, '#2a2c33', { y: 0.24 });
       kit.box(4.4, 2.5, 0.22, '#e6b84a', { y: 2.15, z: 2.55 });
@@ -569,7 +574,6 @@ export function buildLandmarks(ctx) {
       for (let i = 0; i < 6; i++) kit.sphere(0.08, '#ffe7a0', { x: -1.75 + i * 0.7, y: 2.42, z: 2.15, glow: 4, seg: 6 });
       board = { x: 0, y: 4.7, z: 0.4, w: 6.2, h: 3.5, posts: true };
       signSpec = { x: 0, y: 1.55, z: 2.28, w: 2.8, h: 0.5 };
-      foot = [2.5, 2.2];
     } else if (level === 2) {
       kit.box(7.4, 2.5, 3.4, '#3a2a22', { y: 1.3, z: 0.1 });
       kit.box(7.8, 0.16, 3.8, '#9aa0a8', { y: 2.62, z: 0.1, mat: 'metal' });
@@ -580,7 +584,6 @@ export function buildLandmarks(ctx) {
       kit.sphere(0.12, '#ffd0a0', { x: -3.2, y: 2.34, z: 1.95, glow: 3, seg: 8 });
       board = { x: 0, y: 6.4, z: 2.05, w: 6.4, h: 3.6 };
       signSpec = { x: 2.2, y: 2.2, z: 2.05, w: 2.4, h: 0.5 };
-      foot = [3.6, 1.9];
     } else if (level === 3) {
       kit.box(9.6, 6.4, 6.2, '#1b1d24', { y: 3.2, z: -0.3 });
       for (let i = 0; i < 4; i++) kit.box(1.7, 1.5, 0.08, '#ffe2b8', { x: -3.2 + i * 2.15, y: 1.35, z: 2.85, glow: 0.8 });
@@ -589,7 +592,6 @@ export function buildLandmarks(ctx) {
       kit.box(10, 0.28, 6.6, color, { y: 6.55, z: -0.3, glow: 2.2 });
       signSpec = { x: 0, y: 7.35, z: 1.6, w: 5.2, h: 0.8, posts: true };
       board = { x: 0, y: 4.6, z: 3.15, w: 6.6, h: 3.7 };
-      foot = [5, 3.4];
     } else {
       kit.box(8.4, 16.5, 6.4, '#0d1a33', { y: 8.25, z: -0.2, mat: 'tower' });
       for (let fy = 2.4; fy < 13; fy += 1.6) for (const x of [-2.4, -0.8, 0.8, 2.4]) kit.box(1.15, 1.05, 0.08, '#9fd4ff', { x, y: fy, z: 3.05, glow: 0.55 });
@@ -597,7 +599,6 @@ export function buildLandmarks(ctx) {
       kit.box(13.4, 0.1, 0.12, '#ffcf5a', { y: 16.7, z: 2.15, glow: 3.4 });
       signSpec = { x: 0, y: 16.3, z: 1.2, w: 6.2, h: 0.9, posts: true };
       board = { x: 0, y: 12.6, z: 3.55, w: 12.6, h: 7.1 };
-      foot = [4.4, 3.4];
     }
     if (board?.posts) for (const s of [-1, 1]) kit.box(0.08, board.y, 0.08, '#2a2c30', { x: board.x + s * (board.w / 2 - 0.2), y: board.y / 2, z: board.z - 0.12, mat: 'metal' });
     if (signSpec?.posts && level < 3) for (const s of [-1, 1]) kit.box(0.07, signSpec.y, 0.07, '#2a2c30', { x: signSpec.x + s * (signSpec.w / 2 - 0.2), y: signSpec.y / 2, z: signSpec.z - 0.08, mat: 'metal' });
@@ -625,11 +626,11 @@ export function buildLandmarks(ctx) {
     const extraBoards = [];
     const box = [];
     if (foot) {
-      const swap = Math.abs(Math.sin(slot.rot)) > 0.5;
-      const cx = slot.x, cz = slot.z, hx = (swap ? foot[1] : foot[0]) * sc, hz = (swap ? foot[0] : foot[1]) * sc;
-      box.push({ x0: cx - hx, x1: cx + hx, z0: cz - hz, z1: cz + hz, plot: slot.id });
+      // A lot on the street is turned a quarter: lotRect swaps the footprint's two sides for it.
+      const r = lotRect(slot, foot[0], foot[1]);
+      box.push({ ...r, plot: slot.id });
       colliders.push(box[0]);
-      if (level >= 3) blockers.push(Object.assign(new THREE.Box3(new THREE.Vector3(cx - hx, 0, cz - hz), new THREE.Vector3(cx + hx, (level === 4 ? 19 : 6) * sc, cz + hz)), { plot: slot.id }));
+      if (level >= 3) blockers.push(Object.assign(new THREE.Box3(new THREE.Vector3(r.x0, 0, r.z0), new THREE.Vector3(r.x1, (level === 4 ? 19 : 6) * sc, r.z1)), { plot: slot.id }));
     }
     return { id: slot.id, level, color, data: data || { plot_id: slot.id, level }, group, boardGroup, extraBoards, anim, sMat, signSpec, sign };
   }
@@ -673,6 +674,64 @@ export function buildLandmarks(ctx) {
   }
 
   for (const slot of PLOT_SLOTS) plots.set(slot.id, buildPlot(slot, { plot_id: slot.id, level: 0, theme_color: '#00ffcc' }));
+
+  // ===== 가운데 거리 (WISH STREET): the lots' street =================================================
+  // Pavers where world.js cuts the car road out (layout.js NO_ROAD), a thin lit centre line, the entrance arch with its
+  // name, and a number post at each lot's street corner. One Kit, five meshes: the pavers (world.js mats.street) and the
+  // line join the ground stack (GROUND_LAYER, at a pedestrian road's and the road paint's heights, so avatar shadows and
+  // markers still show on them), the posts and the arch go into the shared metal and glow buckets, and the name and the
+  // 18 numbers are faces on one atlas.
+  {
+    const S = LAYOUT.street, A = S.arch, P = S.pave;
+    const PINK = '#ff3d9a', CYAN = '#3fe6ff', GOLD = '#ffcf5a', DARK = '#16171c', NIGHT = '#07070d';
+    const sideColor = (slot) => (slot.side === 'E' ? PINK : CYAN); // odd numbers (east) pink, even numbers (west) cyan
+    const kit = new Kit();
+    kit.plane(P.x1 - P.x0, P.z1 - P.z0, '#ffffff', { mat: 'pave', rx: -Math.PI / 2, x: (P.x0 + P.x1) / 2, y: 0.022, z: (P.z0 + P.z1) / 2 });
+    // The centre line runs from under the arch to the ring before the stage steps.
+    const l0 = S.z0 + 1.2, l1 = S.z1 - 5;
+    kit.plane(0.14, l1 - l0, GOLD, { mat: 'line', glow: 1.7, rx: -Math.PI / 2, x: S.x, y: 0.045, z: (l0 + l1) / 2 });
+
+    // One atlas: the arch's name on top, the numbers in two rows of nine under it (half size on the phone tier).
+    const q = low ? 0.5 : 1, AW = 1024 * q, SH = 256 * q, CELL = 112 * q, AH = SH + CELL * 2;
+    const atlas = makeCanvas(AW, AH), ag = atlas.getContext('2d');
+    ag.fillStyle = NIGHT;
+    ag.fillRect(0, 0, AW, AH);
+    ag.drawImage(paintNeonSign(makeCanvas(AW, SH), 'WISH STREET', PINK, '가운데 거리 · PLOT 1 – 18'), 0, 0);
+    const cellAt = (id) => [8 * q + ((id - 1) % 9) * CELL, SH + Math.floor((id - 1) / 9) * CELL];
+    for (const slot of PLOT_SLOTS) ag.drawImage(paintLabel(makeCanvas(CELL, CELL), String(slot.id), sideColor(slot), NIGHT), ...cellAt(slot.id));
+    const crop = (x, y, w, h) => imgCrop((x + 2 * q) / AW, (y + 2 * q) / AH, (x + w - 2 * q) / AW, (y + h - 2 * q) / AH);
+    const faces = new THREE.MeshBasicMaterial({ map: tex(atlas, 8), color: new THREE.Color(1.3, 1.3, 1.3) });
+
+    for (const p of streetPosts()) {
+      colliders.push({ x0: p.x - p.r, x1: p.x + p.r, z0: p.z - p.r, z1: p.z + p.r });
+      if (p.arch) {
+        // An arch post: the east one carries the odd side's colour, the west one the even side's.
+        kit.box(0.8, A.h, 0.8, DARK, { x: p.x, y: A.h / 2, z: p.z, mat: 'metal' });
+        for (const s of [-1, 1]) kit.box(0.1, A.h - 0.8, 0.06, p.arch > 0 ? PINK : CYAN, { x: p.x, y: A.h / 2, z: p.z + s * 0.43, glow: 2.2 });
+        kit.box(1.0, 0.24, 1.0, GOLD, { x: p.x, y: A.h + 0.12, z: p.z, glow: 1.6 });
+        continue;
+      }
+      // A lot's number post (1.77 m, below every board): the number toward the street and both ways along it.
+      const slot = PLOT_SLOTS[p.lot - 1];
+      kit.box(0.5, 1.0, 0.5, DARK, { x: p.x, y: 0.5, z: p.z, mat: 'metal' });
+      kit.box(0.72, 0.72, 0.72, '#0b0c10', { x: p.x, y: 1.36, z: p.z, mat: 'metal' });
+      kit.box(0.76, 0.05, 0.76, sideColor(slot), { x: p.x, y: 1.745, z: p.z, glow: 2 });
+      const [cx, cy] = cellAt(slot.id);
+      for (const ry of [slot.rot, 0, Math.PI]) kit.add(cropPlane(0.64, 0.64, crop(cx, cy, CELL, CELL)), '#ffffff', { mat: 'faces', x: p.x + Math.sin(ry) * 0.39, y: 1.36, z: p.z + Math.cos(ry) * 0.39, ry });
+    }
+    // The arch's beam (7 m clear under it, 6.4 m under the name plate) and its name, read from both sides.
+    kit.box(A.post * 2 + 0.8, 1.2, 0.6, DARK, { x: S.x, y: A.h - 0.8, z: A.z, mat: 'metal' });
+    kit.box(A.post * 2 - 1.2, 0.06, 0.1, GOLD, { x: S.x, y: A.h - 1.44, z: A.z, glow: 2 });
+    kit.box(10.8, 3.0, 0.7, '#0b0c10', { x: S.x, y: A.h - 0.5, z: A.z, mat: 'metal' }); // deeper than the beam it hangs on
+    kit.box(10.8, 0.06, 0.74, GOLD, { x: S.x, y: A.h + 1.03, z: A.z, glow: 2 });
+    for (const ry of [0, Math.PI]) kit.add(cropPlane(10.4, 2.6, crop(0, 0, AW, SH)), '#ffffff', { mat: 'faces', x: S.x, y: A.h - 0.5, z: A.z + Math.cos(ry) * 0.41, ry });
+
+    const lineMat = new THREE.MeshBasicMaterial({ vertexColors: true, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
+    const street = kit.build({ ...kitMats, pave: ground.mats.street, line: lineMat, faces });
+    street.name = 'wish-street';
+    for (const m of street.children) if (m.name === 'pave' || m.name === 'line') { m.layers.set(GROUND_LAYER); m.renderOrder = m.name === 'pave' ? 1 : 2; }
+    scene.add(street);
+  }
 
   {
     const c = makeCanvas(1024, 256);

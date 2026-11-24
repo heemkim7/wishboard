@@ -4,15 +4,18 @@ import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  RETURN_MS, easeOutCubic, easeInOutCubic, tweenU, returnPoint, focusOptions, cineCancels, behindCar,
-  FOLLOW, followYawRate, portraitFov, fitDistance, DRIVE_CAM, reverseTime, driveCamera, easeCamDist, shortenFocus,
+  RETURN_MS, glideMs, easeOutCubic, easeInOutCubic, tweenU, returnPoint, focusOptions, cineCancels, behindCar, DRAG_SPEED, dragSpeed,
+  FOLLOW, followYawRate, CHASE, chaseYawRate, STICK_FRAME, stickFrame, DRAG_MIN, viewDragged, tallness, portraitFov, fitDistance,
+  BALLOON_LOOK, balloonLook,
+  DRIVE_CAM, reverseTime, driveView, driveWiden, driveCamera, easeCamDist, shortenFocus,
   BOARD_NEAR, pickNearBoard, boardState, boardPrompt, proximityKey, FAR_TAP, tapRoute,
   EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone,
   FRAME, frameDistance, boardRange, SPARK, sparkGlide, sparkDrop,
   CELEBRATE_GAP_MS, celebrationDue, faceAbove, PARTY, celebrationPlan, fanVelocity,
 } from '../camrig.js';
+import { THROW } from '../ts3d/gestures.js';
 
-const read = (p) => readFileSync(new URL('../' + p, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+const read =(p) => readFileSync(new URL('../' + p, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const near = (a, b, eps = 1e-9) => Math.abs(a - b) <= eps;
 
 describe('scripted camera: one way back', () => {
@@ -90,12 +93,12 @@ describe('scripted camera: one way back', () => {
     assert.match(step, /camera\.position\.lerpVectors\(cineFrom, homePos, e\)/);
     // every ending goes through endCine: the only place a camera is dropped is the landed return
     assert.equal(w.match(/\bcine = null\b/g).length, 2); // the declaration and the landed return
-    assert.match(w, /if \(e\.code === 'Escape'\) \{ endCine\(true\); return; \}/);
+    assert.match(w, /if \(e\.code === 'Escape'\) \{ endAutoWalk\(\); endCine\(true\); return; \}/);
     assert.match(w, /const cut = !!\(cine && !cine\.back && !cine\.pin\);\n\s+if \(cut\) endCine\(\);/);
     // the touch that ended the camera does not also open the board under it
     assert.match(w, /if \(moved > 7 \|\| !quick \|\| !inputEnabled \|\| cut\) return;/);
     assert.match(w, /if \(cine\.until && now >= cine\.until\) endCine\(\);/);
-    assert.match(w, /dur: RETURN_MS, back: true/);
+    assert.match(w, /dur: glideMs\(RETURN_MS, calm\.matches\), back: true/);
     // cancel-by-input no longer asks whether my avatar is drawn (it is not, in a taxi)
     assert.equal(/cine[^\n]*me\.root\.visible[^\n]*clear/.test(w), false);
     assert.match(w, /function focusSlot\(slotId, holdMsOrOpts = 0\)/);
@@ -157,29 +160,310 @@ describe('on-foot follow and field of view', () => {
     const exit = w.slice(w.indexOf('function exitTaxi()'), w.indexOf('function interact()'));
     assert.equal(/camera\.fov\s*=/.test(exit), false);
     // a board camera that opened the lens (boardVantage) holds that FOV until it heads back, then the same ease
-    assert.match(w, /const fovGoal = \(cine && !cine\.back && cine\.fov\) \|\| portraitFov\(camera\.aspect, baseFov\) \+ \(drive \? /);
-    assert.match(w, /followYawRate\(\{ f: input\.f, r: input\.r, idleMs: now - orbitEnd, dragging: orbiting \}\)/);
+    assert.match(w, /const fovGoal = \(cine && !cine\.back && cine\.fov\) \|\| portraitFov\(camera\.aspect, baseFov\) \+ \(drive \? driveWiden\(camera\.aspect, drive\.v\) : 0\);/);
+    // keys keep the old rule (the sign turns "toward the right" into a heading)
+    assert.match(w, /else if \(!scripted\) turn = -followYawRate\(\{ f: input\.f, r: input\.r, idleMs: now - orbitEnd, dragging: orbiting \}\);/);
   });
 });
 
-describe('driving camera', () => {
-  it('stays behind for a short reverse and looks back only after 1.2 s of reversing', () => {
-    assert.equal(DRIVE_CAM.reverseHold, 1.2);
+// The owner on a phone held upright (2026-11-24): "세로모드일떄는 동작이 좀 불편". One thumb is on the stick, so nothing turns the
+// view; the old rule turned it by the stick's sideways part only.
+const wrap = (a) => ((((a % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+const DEG = Math.PI / 180;
+/** Half the width of the view, in degrees, for a frame w x h with that vertical FOV. */
+const halfAcross = (w, h, vfov) => Math.atan(Math.tan((vfov * DEG) / 2) * (w / h)) / DEG;
+/**
+ * The stick and the view, frame by frame, as timesSquare3d.js runs them: thumb(t) is the thumb's angle (rad, + = right of
+ * straight up) or null. -> one row per frame: { t, view (the view's heading), travel (the walk's heading or null) }.
+ */
+function stickWalk(thumb, seconds, { idleMs = Infinity } = {}) {
+  const st = { ref: null, lag: 0 }, rows = [], dt = 1 / 60;
+  let view = 0, backT = 0;
+  for (let t = 0; t < seconds; t += dt) {
+    const a = thumb(t);
+    stickFrame(st, a);
+    if (a == null) { rows.push({ t, view, travel: null }); continue; }
+    const travel = view - st.lag - a; // stepWalk: the view's heading less the lag, turned by the thumb
+    const err = wrap(travel - view);
+    backT = Math.abs(err) > CHASE.backAngle ? backT + dt * 1000 : 0;
+    const turn = chaseYawRate({ err, idleMs, backMs: backT });
+    st.lag += turn * dt;
+    view += turn * dt;
+    rows.push({ t, view, travel });
+  }
+  return rows;
+}
+describe('the touch stick: the view comes round behind the direction of travel', () => {
+  it('an upright phone sees 18.5° either side, so the old rule left the heading off the screen', () => {
+    assert.ok(near(halfAcross(375, 812, portraitFov(375 / 812, 62)), 18.55, 0.05));
+    assert.ok(halfAcross(812, 375, portraitFov(812 / 375, 62)) > 50);
+    // the old rule: a thumb 30° right of straight up keeps walking 30° off the view's axis, and the view keeps turning
+    const rate = followYawRate({ f: Math.cos(30 * DEG), r: Math.sin(30 * DEG), idleMs: 9000 });
+    assert.ok(near(rate, 0.6, 1e-9));
+    assert.equal(followYawRate({ f: -1, r: 0, idleMs: 9000 }), 0); // and a walk back never turned it
+  });
+  it('a thumb held still walks one straight line, and the view is behind it in about a second and a half', () => {
+    for (const deg of [30, 90, -90, 135]) {
+      const rows = stickWalk(() => deg * DEG, 4);
+      const heads = rows.map((r) => r.travel);
+      assert.ok(Math.max(...heads) - Math.min(...heads) < 1e-9, `${deg}: the heading does not turn with the view`);
+      const settled = rows.find((r) => Math.abs(wrap(r.travel - r.view)) < 5 * DEG);
+      assert.ok(settled && settled.t < (Math.abs(deg) > 120 ? 2.5 : 1.5), `${deg}: behind it after ${settled?.t.toFixed(2)} s`);
+      const end = rows[rows.length - 1];
+      assert.ok(Math.abs(wrap(end.travel - end.view)) < 2 * DEG, `${deg}: and it stays there`);
+    }
+    // 90° to the side: within 5° after about 1.3 s, never faster than CHASE.max (103°/s)
+    const side = stickWalk(() => 90 * DEG, 4);
+    const at = side.find((r) => Math.abs(wrap(r.travel - r.view)) < 5 * DEG).t;
+    assert.ok(at > 1.1 && at < 1.5, String(at));
+    assert.ok(near(CHASE.max / DEG, 103.1, 0.1));
+    for (let i = 1; i < side.length; i++) assert.ok(Math.abs(side[i].view - side[i - 1].view) <= CHASE.max / 60 + 1e-9);
+  });
+  it('straight back: a few steps keep the view, a walk that goes on turns it round', () => {
+    assert.equal(CHASE.backMs, 600);
+    const rows = stickWalk(() => Math.PI, 5);
+    assert.equal(rows.find((r) => r.t > 0.55).view, 0);
+    assert.ok(Math.abs(rows.find((r) => r.t > 0.7).view) > 0);
+    const settled = rows.find((r) => Math.abs(wrap(r.travel - r.view)) < 5 * DEG);
+    assert.ok(settled && settled.t > 2.5 && settled.t < 3, String(settled?.t)); // right round in 2.8 s
+    const half = rows.find((r) => Math.abs(wrap(r.travel - r.view)) < 90 * DEG);
+    assert.ok(half.t < 1.6, String(half.t)); // side-on (the way ahead comes into an upright frame) after 1.5 s
+    assert.ok(Math.max(...rows.map((r) => r.travel)) - Math.min(...rows.map((r) => r.travel)) < 1e-9);
+    assert.equal(chaseYawRate({ err: 3, backMs: 300 }), 0);
+    assert.ok(chaseYawRate({ err: 3, backMs: 600 }) > 0);
+    assert.ok(chaseYawRate({ err: 2, backMs: 0 }) > 0); // less than backAngle off: at once
+  });
+  it('a drag of the view wins and holds for 2.5 s; a scripted camera is left alone', () => {
+    assert.equal(CHASE.holdMs, 2500);
+    assert.equal(chaseYawRate({ err: 1, dragging: true }), 0);
+    assert.equal(chaseYawRate({ err: 1, idleMs: 2400 }), 0);
+    assert.ok(chaseYawRate({ err: 1, idleMs: 2600 }) > 0);
+    assert.equal(chaseYawRate({ err: 1, scripted: true }), 0);
+    assert.equal(chaseYawRate({ err: 0 }), 0);
+    assert.ok(near(chaseYawRate({ err: 0.4 }), 1) && near(chaseYawRate({ err: -0.4 }), -1)); // gain 2.5
+    assert.equal(chaseYawRate({ err: 3, backMs: 9000 }), CHASE.max);
+    assert.equal(chaseYawRate({ err: NaN }), 0);
+    // held off, nothing turns and the stick reads the live view
+    const rows = stickWalk(() => 90 * DEG, 2, { idleMs: 1000 });
+    assert.equal(rows[rows.length - 1].view, 0);
+  });
+  it('moving the thumb takes the lag back out: a small move steers on the line, 45° or more reads the live view', () => {
+    assert.ok(near(STICK_FRAME.dead, 8 * DEG, 0.002) && near(STICK_FRAME.full, 45 * DEG, 1e-9));
+    const st = { ref: null, lag: 0 };
+    stickFrame(st, 1);
+    assert.deepEqual(st, { ref: 1, lag: 0 });
+    st.lag = 0.8;
+    stickFrame(st, 1 + 5 * DEG); // under the dead band: the reference stays, so slow drift adds up to a move
+    assert.deepEqual(st, { ref: 1, lag: 0.8 });
+    stickFrame(st, 1 + 22.5 * DEG);
+    assert.ok(near(st.lag, 0.4, 1e-9) && near(st.ref, 1 + 22.5 * DEG, 1e-12));
+    stickFrame(st, 1 + 22.5 * DEG + 50 * DEG);
+    assert.equal(st.lag, 0);
+    st.lag = 0.5;
+    stickFrame(st, null); // the thumb lifts: the next push reads the live view
+    assert.deepEqual(st, { ref: null, lag: 0 });
+    stickFrame(st, NaN);
+    assert.deepEqual(st, { ref: null, lag: 0 });
+    // across the ±180° seam a small move is still small
+    const seam = { ref: Math.PI - 0.02, lag: 1 };
+    stickFrame(seam, -Math.PI + 0.02);
+    assert.equal(seam.lag, 1);
+    // walked right until the view was behind, then the thumb goes to straight up: the walk goes on the way the screen shows
+    const rows = stickWalk((t) => (t < 3 ? 90 * DEG : 0), 5);
+    const end = rows[rows.length - 1];
+    assert.ok(Math.abs(wrap(end.travel - end.view)) < 2 * DEG);
+    assert.ok(Math.abs(wrap(end.travel - rows[170].travel)) < 3 * DEG, 'the same heading as before: up on the screen was where it was going');
+  });
+  it('a tap that left the view where it was is not a drag', () => {
+    assert.equal(viewDragged(0, 0), false);
+    assert.equal(viewDragged(DRAG_MIN / 2, -DRAG_MIN / 2), false);
+    assert.equal(viewDragged(0.1, 0), true);
+    assert.equal(viewDragged(0, -0.1), true);
+    assert.equal(viewDragged(Math.PI * 2 - 0.01, 0), false); // across the seam
+    const w = read('timesSquare3d.js');
+    assert.match(w, /if \(viewDragged\(controls\.getAzimuthalAngle\(\) - orbitYaw0, controls\.getPolarAngle\(\) - orbitPolar0\)\) orbitEnd = performance\.now\(\);/);
+    assert.equal(/controls\.addEventListener\('end', \(\) => \{ orbiting = false; orbitEnd = performance\.now\(\); \}\)/.test(w), false);
+  });
+  it('the world reads the stick against the view less the lag, and the keys against the live view', () => {
+    const w = read('timesSquare3d.js');
+    const walk = w.slice(w.indexOf('function stepWalk(dt, input, auto) {'), w.indexOf('function stepDrive('));
+    assert.match(walk, /stickFrame\(stick, input\.joy && !auto \? Math\.atan2\(input\.r, input\.f\) : null\);\n\s+if \(stick\.lag\) fwd\.applyAxisAngle\(UP, -stick\.lag\);/);
+    assert.match(walk, /travel\.on = moving && \(input\.joy \|\| !!auto\);\n\s+if \(travel\.on\) travel\.yaw = Math\.atan2\(wish\.x, wish\.z\);/);
+    const cam = w.slice(w.indexOf('// Camera: OrbitControls drives a wanted orbit'), w.indexOf('controls.target.copy(follow);\n    controls.update();'));
+    assert.match(cam, /const scripted = !!\(cine && !cine\.back\);/);
+    assert.match(cam, /turn = chaseYawRate\(\{ err, idleMs: now - orbitEnd, dragging: orbiting, scripted, backMs: autoWalk \? Infinity : backT \}\);/);
+    assert.match(cam, /if \(stick\.ref != null\) stick\.lag \+= turn \* dt;/);
+    // the avatar is never moved by the camera, and nothing here reaches the network
+    assert.equal(/\bpos\.(x|z|set|copy)\b\s*(=|\()/.test(cam), false);
+    assert.equal(/\bnet\b/.test(cam), false);
+    // getting into a taxi and a teleport start the stick's frame again
+    assert.match(w, /travel\.on = false; stick\.ref = null; stick\.lag = 0;/);
+  });
+});
+
+describe('dragging the view, and less motion for those who ask for it', () => {
+  it('a finger turns the view half as fast again as it did; a mouse as before', () => {
+    assert.deepEqual(DRAG_SPEED, { touch: 1.28, low: 0.85, mouse: 0.6 });
+    assert.equal(dragSpeed({ touch: true, low: true }), 1.28);
+    assert.equal(dragSpeed({ touch: true }), 1.28);
+    assert.equal(dragSpeed({ low: true }), 0.85);
+    assert.equal(dragSpeed(), 0.6);
+    assert.ok(near(DRAG_SPEED.touch / DRAG_SPEED.low, 1.5, 0.01));
+    // OrbitControls: 2π x speed x drag / frame height. 96 px on an 812 px frame was 36° by the formula (31° measured);
+    // now 54° (about 47° measured the same way): half a turn is a drag of one screen width, not one and a half
+    const turn = (px, speed) => (2 * Math.PI * speed * px) / 812 / DEG;
+    assert.ok(near(turn(96, 0.85), 36.2, 0.1) && near(turn(96, 1.28), 54.5, 0.1));
+    assert.ok(180 / turn(1, 1.28) < 375 * 0.9);
+    const w = read('timesSquare3d.js');
+    assert.match(w, /controls\.rotateSpeed = dragSpeed\(\{ touch: isTouchUI\(\{ coarse: matchMedia\('\(pointer: coarse\)'\)\.matches, points: navigator\.maxTouchPoints \}\), low \}\);/);
+  });
+  it('prefers-reduced-motion: the scripted cameras cut where they used to glide', () => {
+    assert.equal(glideMs(700), 700);
+    assert.equal(glideMs(700, false), 700);
+    assert.equal(glideMs(700, true), 1);
+    assert.equal(glideMs(2200, true), 1);
+    const w = read('timesSquare3d.js');
+    assert.match(w, /const calm = matchMedia\('\(prefers-reduced-motion: reduce\)'\);/);
+    // every glide starts in startCine, the intro or the way back: a board focus, the lounge tour, the look at the balloon, the gift show
+    assert.match(w, /fov: o\.fov \|\| 0 \};\n\s+cine\.dur = glideMs\(cine\.dur, calm\.matches\);/);
+    assert.match(w, /cine = \{ t0: performance\.now\(\), dur: glideMs\(2200, calm\.matches\), back: true, ease: 'inout', tell: true \};/);
+    assert.equal(w.match(/dur: glideMs\(RETURN_MS, calm\.matches\), back: true/g).length, 2);
+    // the four places a scripted camera gets its duration: startCine, the intro and the two ways back
+    assert.equal(w.match(/\n\s+cine = \{/g).length, 4);
+    assert.equal(w.match(/glideMs\(/g).length, 4);
+  });
+});
+
+describe('the first throw\'s look up at the balloon', () => {
+  it('waits for the pouch to leave the hand, goes 45% of the way from 2 m farther back, and ends when the old look did', () => {
+    assert.deepEqual(BALLOON_LOOK, { after: 250, lerp: 0.45, back: 2, dur: 600, hold: 1250 });
+    assert.equal(BALLOON_LOOK.after + BALLOON_LOOK.hold, 1500);
+    assert.ok(BALLOON_LOOK.after >= THROW.swing * 1000, 'the arm has swung and the pouch is on its way');
+    // the follow camera 8.2 m behind an avatar at the origin that faces +z; the balloon 58 m up, 80 m and 14 m away
+    const cam = { x: 0, y: 3.15, z: -8.2 }, look = { x: 0, y: 1.9, z: 0 };
+    for (const far of [80, 14]) {
+      const balloon = { x: 0, y: 58, z: far };
+      const v = balloonLook(cam, look, balloon);
+      assert.ok(near(Math.hypot(v.cam.x - cam.x, v.cam.y - cam.y, v.cam.z - cam.z), 2, 1e-9));
+      assert.ok(v.cam.z < cam.z && v.cam.y > cam.y, 'straight back along the view');
+      assert.ok(near(v.look.y, 1.9 + 0.45 * 56.1, 1e-9) && near(v.look.z, 0.45 * far, 1e-9) && v.look.x === 0);
+      // the balloon is inside an upright frame (36° either side of the view's axis) and a landscape one (31°)
+      const up = (p) => Math.atan2(p.y - v.cam.y, p.z - v.cam.z) / DEG;
+      assert.ok(Math.abs(up(balloon) - up(v.look)) < 31, `${far} m: ${(up(balloon) - up(v.look)).toFixed(0)}° off the axis`);
+      // the avatar is under the frame for as long as the look lasts (45° below the axis and more): it has thrown by then
+      assert.ok(up(v.look) - up({ y: 0, z: 0 }) > 36);
+    }
+    const w = read('timesSquare3d.js');
+    const toss = w.slice(w.indexOf('function throwPouch() {'), w.indexOf('function updateThrows(dt) {'));
+    assert.match(toss, /balloonSeen = true;\n\s+balloonLookAt = now \+ BALLOON_LOOK\.after;/);
+    assert.equal(/startCine\(/.test(toss), false, 'the throw itself moves no camera');
+    assert.match(w, /if \(balloonLookAt && now >= balloonLookAt\) lookAtBalloon\(now\);/);
+    assert.match(w, /if \(drive \|\| cine \|\| !balloon \|\| balloon\.hp <= 0\) return;\n\s+const v = balloonLook\(camera\.position, viewLook, balloon\.mesh\.position\);/);
+    assert.match(w, /\{ dur: BALLOON_LOOK\.dur, until: now \+ BALLOON_LOOK\.hold \}\);/);
+  });
+});
+
+// The owner (2026-11-24): "카메라 시점 전환이 좀 어려워서 택시 운전이 어렵고.. 택시운전시에는 카메라 시점을 차 시점으로 고정해줘야".
+/** The driving orbit frame by frame. car(t) -> the car's turn rate (rad/s). -> rows { t, off: how far the view is from straight behind }. */
+function driveRun(car, seconds, { theta = Math.PI, idle = () => Infinity, dragging = () => false, aspect = 16 / 9, reverseT = () => 0, phi = 1.2 } = {}) {
+  const rows = [], dt = 1 / 60, o = { theta, phi };
+  let yaw = 0;
+  for (let t = 0; t < seconds; t += dt) {
+    const turned = car(t) * dt;
+    yaw += turned;
+    driveCamera({ theta: o.theta, phi: o.phi, yaw, turned, dt, idleMs: idle(t), dragging: dragging(t), aspect, reverseT: reverseT(t) }, o);
+    rows.push({ t, off: wrap(yaw + Math.PI - o.theta), phi: o.phi });
+  }
+  return rows;
+}
+describe('driving camera: fixed to the car', () => {
+  it('in a full-lock turn the view trails by 6.5°, inside what an upright phone shows; the old rule trailed by 45°', () => {
+    const STEER = 1.9; // CAR.steer: the car's fastest turn, rad/s
+    assert.match(read('timesSquare3d.js'), /const CAR = \{[^}]*steer: 1\.9,/);
+    const rows = driveRun(() => STEER, 4, { aspect: 375 / 812 });
+    const lag = Math.abs(rows[rows.length - 1].off) / DEG;
+    assert.ok(near(lag, ((1 - DRIVE_CAM.ride) * STEER) / DRIVE_CAM.gain / DEG, 0.6), String(lag));
+    assert.ok(lag < 7);
+    const half = halfAcross(375, 812, portraitFov(375 / 812, 62) + driveWiden(375 / 812, 0));
+    assert.ok(half > 20 && half < 21, String(half));
+    assert.ok(lag < half / 3);
+    assert.ok(Math.max(...rows.map((r) => Math.abs(r.off))) / DEG < 7, 'never farther behind on the way into the turn');
+    // before: nothing under 3 m/s, then the gap closed at 2.4 / s: 1.9 / 2.4 rad behind the car, off an upright screen
+    assert.ok((STEER / 2.4) / DEG > 45 && (STEER / 2.4) / DEG > halfAcross(375, 812, 72 + 10));
+  });
+  it('turns with the car at any speed: no 3 m/s gate, a car turning on the spot keeps its view', () => {
+    const slow = driveRun(() => 0.43, 3); // under 1.6 m/s the car still turns at 1.9 x 1.6 / 7 rad/s
+    assert.ok(Math.abs(slow[slow.length - 1].off) / DEG < 2);
+    const w = read('timesSquare3d.js');
+    assert.equal(/driveCam\.swing|swingMin|driveCam\.front/.test(w + read('camrig.js')), false);
+    const cam = w.slice(w.indexOf('// Camera: OrbitControls drives a wanted orbit'), w.indexOf('controls.target.copy(follow);\n    controls.update();'));
+    assert.match(cam, /if \(drive\) \{/);
+    assert.match(cam, /driveCamera\(\{ theta: Math\.atan2\(off\.x, off\.z\), phi: Math\.acos\(clamp\(off\.y \/ r, -1, 1\)\), yaw: drive\.yaw, turned: wrapAngle\(drive\.yaw - driveYaw0\), dt, idleMs: now - orbitEnd, dragging: orbiting, aspect: camera\.aspect, reverseT \}, driveOrbit\);/);
+    assert.equal(/drive\.v\b[^\n]*driveCamera|Math\.abs\(drive\.v\) >=/.test(cam), false);
+  });
+  it('a drag looks around; a quarter second after it ends the view is on its way back, and is behind the car in about a second', () => {
+    assert.equal(DRIVE_CAM.holdMs, 250);
+    // dragging: the view only rides the car's turn
+    const o = driveCamera({ theta: 1, phi: 0.9, yaw: 0, turned: 0, dt: 1 / 60, dragging: true });
+    assert.deepEqual([o.theta, o.phi], [1, 0.9]);
+    assert.ok(near(driveCamera({ theta: 1, phi: 0.9, yaw: 0.1, turned: 0.1, dt: 1 / 60, dragging: true }).theta, 1 + DRIVE_CAM.ride * 0.1, 1e-12));
+    assert.equal(driveCamera({ theta: 1, phi: 0.9, yaw: 0, turned: 0, dt: 1 / 60, idleMs: 200 }).theta, 1);
+    assert.notEqual(driveCamera({ theta: 1, phi: 0.9, yaw: 0, turned: 0, dt: 1 / 60, idleMs: 300 }).theta, 1);
+    // from a look straight ahead of the car (180° off), parked: back within 5° in 1.2 s of the finger lifting, 60° off in 0.9 s
+    for (const [deg, max] of [[180, 1.2], [90, 1.0], [60, 0.9]]) {
+      const rows = driveRun(() => 0, 3, { theta: Math.PI - deg * DEG, idle: (t) => t * 1000 });
+      const back = rows.find((r) => Math.abs(r.off) < 5 * DEG);
+      assert.ok(back && back.t <= max, `${deg}°: ${back?.t.toFixed(2)} s`);
+      assert.ok(Math.abs(rows[rows.length - 1].off) < 0.2 * DEG);
+      for (let i = 1; i < rows.length; i++) assert.ok(Math.abs(rows[i].off) <= Math.abs(rows[i - 1].off) + 1e-9, 'never overshoots');
+    }
+    // the same while driving and turning
+    const moving = driveRun(() => 1, 3, { theta: Math.PI - 2, idle: (t) => t * 1000 });
+    assert.ok(Math.abs(moving[moving.length - 1].off) / DEG < 4);
+  });
+  it('stands higher and farther back in an upright frame, with a wider lens', () => {
+    assert.equal(tallness(16 / 9), 0);
+    assert.equal(tallness(1), 0);
+    assert.equal(tallness(375 / 812), 1);
+    assert.ok(tallness(0.9) > 0 && tallness(0.9) < 1);
+    assert.equal(tallness(NaN), 0);
+    assert.deepEqual(driveView({ aspect: 812 / 375 }), { dist: 11.5, polar: 1.2 });
+    assert.deepEqual(driveView({ aspect: 375 / 812 }), { dist: 13, polar: 1.08 });
+    assert.equal(driveWiden(812 / 375, 0), 0);
+    assert.equal(driveWiden(375 / 812, 0), 6);
+    assert.equal(driveWiden(375 / 812, 31), 16);
+    assert.ok(near(driveWiden(16 / 9, -15), 5, 1e-9));
+    // the orbit eases to that angle (within 0.02 rad in a second and a half), in both shapes
+    for (const [aspect, polar] of [[812 / 375, 1.2], [375 / 812, 1.08]]) {
+      const rows = driveRun(() => 0, 1.5, { aspect, phi: 1.5 });
+      assert.ok(Math.abs(rows[rows.length - 1].phi - polar) < 0.02, String(rows[rows.length - 1].phi));
+    }
+    const w = read('timesSquare3d.js');
+    assert.match(w, /rescaleOrbit\(driveView\(\{ aspect: camera\.aspect \}\)\.dist\);\n\s+driveYaw0 = t\.yaw;/);
+    assert.match(w, /const p = behindCar\(follow, drive\.yaw, d, seat\.polar\);/);
+    // getting out goes back to the walking view (8.5 m away, 1.25 m above the eye line), not the driving view's height
+    const exit = w.slice(w.indexOf('function exitTaxi()'), w.indexOf('function interact()'));
+    assert.match(exit, /const side = Math\.atan2\(camWant\.x - follow\.x, camWant\.z - follow\.z\);\n\s+follow\.set\(pos\.x, pos\.y \+ eye, pos\.z\);\n\s+camWant\.set\(follow\.x \+ Math\.sin\(side\) \* 8\.4, follow\.y \+ 1\.25, follow\.z \+ Math\.cos\(side\) \* 8\.4\);/);
+    assert.ok(near(Math.hypot(8.4, 1.25), 8.5, 0.01));
+  });
+  it('stays behind the car in reverse and rises to show the ground behind it after 0.6 s', () => {
+    assert.equal(DRIVE_CAM.reverseHold, 0.6);
     let t = 0;
-    for (let i = 0; i < 60; i++) t = reverseTime(t, -4, 1 / 60); // one second in reverse
-    assert.ok(near(t, 1, 1e-6));
-    assert.equal(driveCamera({ v: -4, reverseT: t }).front, false);
-    for (let i = 0; i < 18; i++) t = reverseTime(t, -4, 1 / 60);
-    assert.equal(driveCamera({ v: -4, reverseT: t }).front, true);
+    for (let i = 0; i < 30; i++) t = reverseTime(t, -4, 1 / 60); // half a second in reverse
+    assert.ok(near(t, 0.5, 1e-6));
+    assert.equal(driveView({ aspect: 1, reverseT: t }).polar, 1.2);
+    for (let i = 0; i < 12; i++) t = reverseTime(t, -4, 1 / 60);
+    assert.equal(driveView({ aspect: 1, reverseT: t }).polar, DRIVE_CAM.reversePolar);
+    assert.equal(driveView({ aspect: 375 / 812, reverseT: t }).polar, DRIVE_CAM.reversePolar);
     // rolling forward again resets the clock
     assert.equal(reverseTime(t, 0.5, 1 / 60), 0);
-    assert.equal(driveCamera({ v: 6, reverseT: 5 }).front, false);
-  });
-  it('never swings under 3 m/s', () => {
-    assert.equal(driveCamera({ v: 2.9, reverseT: 0 }).swing, false);
-    assert.equal(driveCamera({ v: -2.9, reverseT: 9 }).swing, false);
-    assert.equal(driveCamera({ v: 3, reverseT: 0 }).swing, true);
-    assert.equal(driveCamera({ v: -3.5, reverseT: 9 }).swing, true);
+    // the heading it wants never flips to the car's nose: after 3 s in reverse the view is still straight behind
+    const rows = driveRun(() => 0, 3, { reverseT: (s) => s });
+    assert.ok(Math.abs(rows[rows.length - 1].off) < 1e-9);
+    assert.ok(Math.abs(rows[rows.length - 1].phi - DRIVE_CAM.reversePolar) < 0.01);
+    // from 0.8 rad up at 11.5 m the bottom of a 62° frame reaches the ground 5 m behind the car's follow point (2.5 m up)
+    const up = 2.5 + 11.5 * Math.cos(0.8), back = 11.5 * Math.sin(0.8), down = Math.PI / 2 - 0.8 + 31 * DEG;
+    assert.ok(back - up * Math.tan(Math.PI / 2 - down) > 5);
   });
 });
 
@@ -686,7 +970,8 @@ describe('a reached waypoint', () => {
   // The bake tutorial opened the claim wizard at the free slot's waypoint; with it gone nothing waits for an arrival.
   it('the guide goes out when the player is within 7 m, and nobody is told', () => {
     const w = read('timesSquare3d.js');
-    assert.match(w, /if \(waypoint && Math\.hypot\(pos\.x - waypoint\.x, pos\.z - waypoint\.z\) < 7\) setWaypoint\(null\);/);
+    // (the auto-walk goes on to the end of its route first: test/interact.test.mjs)
+    assert.match(w, /if \(waypoint && !autoWalk && Math\.hypot\(pos\.x - waypoint\.x, pos\.z - waypoint\.z\) < 7\) setWaypoint\(null\);/);
     assert.equal(w.includes("'arrive'"), false);
     assert.equal(/'arrive'|ftueApi|onWaypoint\?\.\(info\)/.test(read('main.js')), false);
   });
