@@ -93,6 +93,13 @@ describe('per-frame allocations', () => {
   it('traffic: one { parts, k } per slot built once, no segEnds array in pose, no closure or key strings in the signals or collide', () => {
     const t = read('ts3d/traffic.js');
     assert.match(t, /const SLOTS = Array\.from\(\{ length: total \}, \(_, i\) => slotAt\(i\)\);/);
+    // the remote cabs' rows move with the called cabs (calledTop): their { parts, k } are built once too, and slotOf only
+    // sets k. (It built one per call, 16 or more a frame with nobody else about. test/taxi-model.test.mjs runs remote cabs
+    // after the model swap, which refills taxiParts in place, so the kept reference stays the live array.)
+    assert.match(t, /const RSLOT = Array\.from\(\{ length: N_REMOTE \}, \(\) => \(\{ parts: taxiParts, k: 0 \}\)\);/);
+    const slot = body(t, '  const slotOf = (i) => {', '\n  };\n');
+    assert.equal(/\{ parts:|new |\.\.\./.test(slot), false, slot);
+    assert.match(t, /parts\.length = 0;\s+parts\.push\(\.\.\.next\);/); // useModel keeps the arrays
     assert.equal(/= segEnds\(/.test(body(t, '  function pose(c) {', '\n  }\n')), false);
     const sig = body(t, '  function paintSignals() {', '\n  }\n');
     assert.equal(/=>|\+ '/.test(sig), false);
