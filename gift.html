@@ -24,14 +24,15 @@
 <link rel="modulepreload" href="/league.js" />
 <style>
   /* Colours. Text on the dark page is --text, --muted or --dim; each is at least 4.5:1 on the lightest dark surface it sits on
-     (the page's own gradient tops out at #3a1150; a card, a chosen price card and the notice box lie over it). test/gift.test.mjs
-     computes every pair from this sheet. --press / --gold-press / --pink-press are the fills of a control while a finger is on it. */
+     (the page's two glows top out at #3a1150 and #14205a; a card, a chosen price card and the notice box lie over that).
+     test/gift.test.mjs computes every pair from this sheet. --press / --gold-press / --pink-press are what a control's fill takes
+     while a finger is on it. */
   :root { --bg: #07061a; --card: rgba(255,255,255,.055); --stroke: rgba(255,255,255,.12); --text: #f3f1ff; --muted: #adabce; --dim: #a3a2c4; --gold: #ffcf5a; --gold2: #ffe9a8; --gold-press: rgba(70,36,0,.34); --pink: #ff4fa3; --pink-press: rgba(10,0,24,.45); --press: rgba(255,255,255,.24); --ok: #39f58a; --err: #ff8aa0; --r: 18px; }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
   body { margin: 0; min-height: 100vh; background: radial-gradient(900px 520px at 85% -10%, #3a1150 0%, transparent 60%), radial-gradient(800px 600px at -10% 10%, #14205a 0%, transparent 55%), var(--bg); color: var(--text);
     font: 15px/1.55 "Pretendard Variable", Pretendard, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif; letter-spacing: -0.01em;
-    word-break: keep-all; overflow-wrap: anywhere; } /* Korean breaks between words, never inside one ("걸어 / 요"); a long unbroken name still wraps */
+    word-break: keep-all; overflow-wrap: break-word; } /* Korean breaks between words, never inside one ("걸어 / 요"); a long unbroken name still wraps (break-word, not anywhere: a price beside a long name must not be squeezed into two lines) */
   main { max-width: 520px; margin: 0 auto; padding: max(14px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) calc(40px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
   a { color: var(--gold); }
   :is(a, button, summary, [tabindex]):focus-visible { outline: 2px solid var(--gold2); outline-offset: 2px; }
@@ -82,6 +83,7 @@
   .stage.sm { max-width: min(100%, calc(min(52vh, 420px) * 9 / 16)); max-width: min(100%, calc(min(52dvh, 420px) * 9 / 16)); border-radius: 16px; }
   .stage canvas, .stage video { position: absolute; inset: 0; width: 100%; height: 100%; display: block; object-fit: cover; }
   .stage .play { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.25); border: 0; color: #fff; font: inherit; font-weight: 900; font-size: 18px; cursor: pointer; }
+  .stage .play:focus-visible { outline-offset: -4px; } /* inside the film's rounded, clipped box */
   .stage .play span { padding: 12px 20px; border-radius: 999px; background: rgba(10,8,30,.75); border: 1px solid rgba(255,255,255,.25); }
   .stage .rec { position: absolute; left: 12px; top: 12px; padding: 6px 12px; border-radius: 999px; background: rgba(184,15,54,.92); color: #fff; font-weight: 900; font-size: 13px; }
   .tag { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 900; background: rgba(255,207,90,.16); color: var(--gold2); border: 1px solid rgba(255,207,90,.4); }
@@ -134,7 +136,7 @@
     .stage.sm { max-width: min(100%, calc(72vh * 9 / 16)); border-radius: 20px; } } /* beside the cards there is room for the whole film */
   /* A phone on its side: the picture on the left, what to press on the right, so the first screen is not the picture alone. */
   @media (orientation: landscape) and (max-height: 520px) and (min-width: 600px) and (max-width: 899px) { main { max-width: 900px; } .cols { display: grid; grid-template-columns: minmax(0, 38%) minmax(0, 1fr); gap: 20px; align-items: start; } }
-  @media (prefers-reduced-motion: reduce) { .btn, .chip, .sw, .tier, .linkbtn, .brand, .note .rp, .stage .play span { transition: none; } .btn:active, .chip:active, .sw:active, .tier:active, .stage .play:active span { transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .btn, .chip, .sw, .tier, .linkbtn, .brand, .note .rp, .stage .play span { transition: none; } } /* the pressed state stays (it is a state, not a movement); only its fade goes */
 </style>
 </head>
 <body>

@@ -725,7 +725,7 @@ describe('gift.html on a phone: pressed states, places to press, text size and c
   it('the page loads the plaza\'s typeface without waiting for it, breaks Korean between words, and outlines the darkest colour', () => {
     const page = src('gift.html'), href = /<link rel="stylesheet" href="([^"]*pretendard[^"]*)"/.exec(src('index.html'))[1];
     assert.ok(page.includes(`<link rel="stylesheet" href="${href}" media="print" onload="this.media='all'" />`), 'the same file as the plaza, never blocking the first paint');
-    assert.equal(S.get('body', 'word-break'), 'keep-all'); assert.equal(S.get('body', 'overflow-wrap'), 'anywhere'); assert.equal(S.get('.link', 'word-break'), 'break-all', 'an address still breaks anywhere');
+    assert.equal(S.get('body', 'word-break'), 'keep-all'); assert.equal(S.get('body', 'overflow-wrap'), 'break-word', 'a long name without spaces still wraps; a short word beside it is not squeezed'); assert.equal(S.get('.link', 'word-break'), 'break-all', 'an address still breaks anywhere');
     assert.match(S.get('.sw', 'box-shadow'), /^0 0 0 1px rgba\(255,255,255,\.35\)$/, '밤하늘 is the card\'s own colour: a thin ring');
   });
   it('the owner\'s preview film is at most half the screen and 420px on a phone, the whole film beside the cards on a desk; the recipient\'s is as it was', () => {

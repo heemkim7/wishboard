@@ -222,7 +222,7 @@ function maker({ re: answers = '', ...prefill } = {}) {
     whenLine.textContent = w ? windowText(w.a, w.b) + ' · ' + GIFT.hours + '시간 동안 걸려요' : '그날은 고를 수 있는 시간이 없어요';
   };
   const send = h('button', { class: 'btn gold', type: 'submit' }, sendLabel);
-  const sendErr = h('p', { class: 'err' });
+  const sendErr = h('p', { class: 'err', role: 'alert' });
   const nextBtn = h('button', { class: 'btn sm', type: 'button', hidden: true });
   const form = h('form', { novalidate: true, onsubmit: async (e) => {
     e.preventDefault();
@@ -301,11 +301,11 @@ function gone() {
 // the gold video button). So each card starts with its buttons and says the rest in small print under them.
 function owner(g, { fresh = false, mine: extra = null, media = false } = {}) {
   clear(); CUR = g;
-  const url = location.origin + '/g/' + g.id, note = h('p', { class: 'okmsg' }), O = OCCASIONS[g.occ] || OCCASIONS.bday;
+  const url = location.origin + '/g/' + g.id, note = h('p', { class: 'okmsg', role: 'status' }), O = OCCASIONS[g.occ] || OCCASIONS.bday;
   const phaseTag = h('span', { class: 'tag' + (g.phase === 'live' ? ' live' : '') });
   live(phaseTag, () => { const t = now(); const d = dDay(g.day, t); return t >= g.b ? '광장에서 내려왔어요' : t >= g.a ? '● 지금 광장에 걸려 있어요' : d >= 1 ? 'D-' + d : '걸리기까지 ' + countdown(g.a - t); });
   const st = stage(g, { auto: true, quiet: true, small: true });
-  const saveNote = h('p', { class: 'okmsg' }), saveBtn = h('button', { class: 'btn', type: 'button', onclick: () => saveVideo(g, st, saveBtn, saveNote) }, '⬇ 이 미리보기 영상 저장');
+  const saveNote = h('p', { class: 'okmsg', role: 'status' }), saveBtn = h('button', { class: 'btn', type: 'button', onclick: () => saveVideo(g, st, saveBtn, saveNote) }, '⬇ 이 미리보기 영상 저장');
   // Video first (giftrules.js videoFirst): only when the Worker stores videos, this board has none and is not over. Then the video card
   // leads, its button is the page's gold one, and the first share or copy of this board asks once (kts_gnudge) whether to make the video
   // first. It never blocks: "그냥 보내기" does what was asked. Without a video store nothing here changes.
@@ -368,7 +368,7 @@ function ladder(g) {
     pick = t; paint();
     if (!t) { ask.hidden = true; return; }
     once('pick:' + t, { act: 'pick', t });
-    const T = TIERS[t], box = h('input', { type: 'checkbox', id: 'adok' }), msg = h('p', { class: 'okmsg' });
+    const T = TIERS[t], box = h('input', { type: 'checkbox', id: 'adok' }), msg = h('p', { class: 'okmsg', role: 'status' });
     const go = h('button', { class: 'btn pink', type: 'button', disabled: true, onclick: async () => {
       go.disabled = true; say(msg, '');
       const tok = await token(false); const r = tok ? await pushOn(tok) : { ok: false, hint: '잠시 뒤에 다시 해 주세요.' };
@@ -424,7 +424,7 @@ function visit(g, { preview = false } = {}) {
     return;
   }
   const st = stage(g, { auto: true });
-  const saveNote = h('p', { class: 'okmsg' }), saveBtn = h('button', { class: 'btn', type: 'button', onclick: () => saveVideo(g, st, saveBtn, saveNote) }, '⬇ 영상 저장');
+  const saveNote = h('p', { class: 'okmsg', role: 'status' }), saveBtn = h('button', { class: 'btn', type: 'button', onclick: () => saveVideo(g, st, saveBtn, saveNote) }, '⬇ 영상 저장');
   // The plaza button: the visit while the board hangs; on its day before that and after its window the plaza shows it on this device only
   // (gift.js land, giftrules.js plazaLook). The label follows the clock; this part of the page is only built from the day on.
   const go = h('a', { class: 'btn gold', href: '/?gb=' + g.id, onclick: (e) => { beacon(g.id, 'go'); toPlaza(e, 'go', g.id); } }, PLAZA_BTN[phase()] || PLAZA_BTN.live);
