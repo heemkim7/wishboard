@@ -29,7 +29,7 @@ import { AD, AD_TEMPLATES, adSums, adBars } from './adreport.js';
 import { adScreenName, linkHost } from './adsale.js';
 import { qrEncode, paintQr } from './qr.js?v=202611241127';
 import { icon } from './uiicons.js?v=202611241127';
-import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, proofOffers, proofPlan, TOAST } from './overlay.js?v=202611241127';
+import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, proofOffers, proofPlan, TOAST, touchTag, goalKnown, PRESS, hintLeft, sameNews } from './overlay.js?v=202611241127';
 import { linesFault, LINES_ERR } from './ftue.js?v=202611241127'; // the board-line checks
 
 const LEVELS = [
@@ -54,6 +54,9 @@ const EMOJI_SETS = [
 ];
 const INK = ['#ffffff', '#ffe9a8', '#3fe6ff', '#ff7ac0', '#ff6a3d', '#39f5a0'];
 const NEON = ['#00ffcc', '#ffcf5a', '#ff3d9a', '#3fe6ff', '#b84dff', '#ff6a3d'];
+// What a swatch is called (its accessible name and tooltip): a colour's name, not its hex value.
+const SWATCH_NAMES = { '#ffffff': '흰색', '#ffe9a8': '크림', '#3fe6ff': '하늘', '#ff7ac0': '분홍', '#ff6a3d': '주황', '#39f5a0': '초록', '#00ffcc': '민트', '#ffcf5a': '노랑', '#ff3d9a': '진분홍', '#b84dff': '보라' };
+const swatchName = (c) => SWATCH_NAMES[String(c || '').toLowerCase()] || String(c || '');
 const COOLDOWN = BALANCE.cooldownMs;
 
 const money = (n) => Math.max(0, Math.floor(Number(n) || 0)).toLocaleString('ko-KR');
@@ -144,7 +147,7 @@ export function createUI(root, hooks) {
   let people = 1, peopleCh = 1, statusKind = 'warn', statusText = '연결 중';
   let near = null, world = { billboards: [], plots: [] };
   let coolUntil = 0, baking = null, sheet = null, soundOn = recall('kts_sound', true);
-  let dance = null, driving = false, rideLine = '', offerTold = 0;
+  let dance = null, driving = false, rideLine = '';
   // Movement is locked by owner (overlay.js): 'sheet', 'bake', 'dance', 'proof', 'city' (entered before the city is built).
   // It comes back only when no owner is left. A caller that names no owner shares the 'other' slot; nothing here uses it.
   const inputLock = createInputLock(typeof hooks.lockInput === 'function' ? hooks.lockInput.bind(hooks) : () => {});
@@ -306,7 +309,7 @@ export function createUI(root, hooks) {
   const liveBoard = h('div', { class: 'glass liveboard' },
     h('button', { class: 'livehead', type: 'button', onclick: () => openRanks() }, h('b', null, ...withIcon('trophy', '오늘의 응원 팀')), h('span', { text: '응원한 사람' })),
     rankRows,
-    h('button', { class: 'livehead feedhead', type: 'button', onclick: () => openFeed() }, h('b', null, ...withIcon('board', '광장 소식'))),
+    h('button', { class: 'livehead feedhead', type: 'button', onclick: () => openFeed() }, h('b', null, ...withIcon('megaphone', '광장 소식'))),
     feedRows,
   );
   feedRows.append(h('p', { class: 'empty', text: '전광판·건물 소식이 여기 남아요' }));
@@ -329,11 +332,12 @@ export function createUI(root, hooks) {
   const idCoin = h('button', { class: 'id-coin', type: 'button', 'aria-label': '내 응원 포인트', title: '응원 포인트 · 정산 안내', onclick: () => openWalletInfo() },
     h('img', { src: 'icons/coin.jpg?v=2', alt: '' }), idAmt, idPend);
   root.append(h('div', { class: 'hud-l' }, h('div', { class: 'glass ident' }, profile, idCoin, channelCard), guestWarn, walletEl, nineEl, nextLineEl, liveBoard));
-  // On a touch screen the 속보 line sits under the left column (index.html 'Phone pass'). The column grows and shrinks (the
-  // guest pill, the goal, the quests), so its bottom edge, in #ui's own coordinates, is kept in --hudl-b.
+  // On a touch screen the 속보 line sits under the left column (index.html 'Phone pass'), and on a phone the notices hang
+  // under that (index.html 'Phone layout'). The column grows and shrinks (the guest pill, the goal, the quests), so its
+  // bottom edge, in #ui's own coordinates, is kept in --hudl-b on the root element: the notices live in <body>, not in #ui.
   {
     const col = root.querySelector('.hud-l');
-    const put = () => { if (col) root.style.setProperty('--hudl-b', Math.round(col.offsetTop + col.offsetHeight) + 'px'); };
+    const put = () => { if (col) document.documentElement.style.setProperty('--hudl-b', Math.round(col.offsetTop + col.offsetHeight) + 'px'); };
     if (col && typeof ResizeObserver === 'function') new ResizeObserver(put).observe(col);
     addEventListener('resize', put);
     put();
@@ -343,16 +347,17 @@ export function createUI(root, hooks) {
   const compactNow = () => coarse && compactMq.matches;
   compactMq.addEventListener?.('change', () => placeGoal());
 
-  const soundBtn = h('button', { class: 'btn ghost icon tool-more', type: 'button', 'aria-label': '사운드', title: '사운드', onclick: () => {
-    soundOn = !soundOn;
+  // 소리: the switch is the first row of the settings sheet (openSettings), on every device. It used to be a tool button
+  // whose speaker looked like the megaphone beside it and whose name never said whether sound was on.
+  function setSoundOn(on) {
+    soundOn = !!on;
     store('kts_sound', soundOn);
     setSound(soundOn);
-    soundBtn.replaceChildren(icon(soundOn ? 'soundOn' : 'soundOff'));
     if (!soundOn) { cityStop(); lofiStop(); stopDanceAudio(); return; } // a dance in progress goes on without its music
     cityStart();
     if (!loungeEl.hidden) lofiStart();
     sfx.click();
-  } }, icon(soundOn ? 'soundOn' : 'soundOff'));
+  }
   const fsOn = () => document.fullscreenElement || document.webkitFullscreenElement;
   // byUser: the fullscreen button. Without it (entering the plaza) only a touch device goes fullscreen; a desktop window stays
   // as it is. Escape is never locked: it leaves fullscreen the way the browser says it does.
@@ -368,53 +373,63 @@ export function createUI(root, hooks) {
       try { const p = req.call(el); if (p && p.catch) p.catch(() => {}); } catch { /* this browser keeps its own chrome */ }
     }
   }
-  const fsBtn = h('button', { class: 'btn ghost icon', type: 'button', 'aria-label': '전체 화면', title: '전체 화면', onclick: () => {
+  const fsCan = () => !!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen);
+  function toggleFullscreen() {
     if (fsOn()) {
       const exit = document.exitFullscreen || document.webkitExitFullscreen;
       const p = exit && exit.call(document);
       if (p && p.catch) p.catch(() => {});
     } else askFullscreen(true);
-  } }, icon('fullscreen'));
-  const syncFs = () => { fsBtn.replaceChildren(icon(fsOn() ? 'fullscreenExit' : 'fullscreen')); };
+  }
+  // 전체 화면: a tool button in a desktop window (.tool-desk); on a touch screen it is a switch in the settings sheet.
+  const fsBtn = h('button', { class: 'btn ghost icon tool-more tool-desk', type: 'button', 'aria-label': '전체 화면', title: '전체 화면', 'aria-pressed': 'false', onclick: toggleFullscreen }, icon('fullscreen'));
+  let fsPaint = null; // the settings sheet's 전체 화면 switch, while that sheet is open
+  const syncFs = () => { fsBtn.replaceChildren(icon(fsOn() ? 'fullscreenExit' : 'fullscreen')); fsBtn.setAttribute('aria-pressed', String(!!fsOn())); fsPaint?.(); };
   document.addEventListener('fullscreenchange', syncFs); // leaving fullscreen does not end a dance
   document.addEventListener('webkitfullscreenchange', syncFs);
   const mapCanvas = h('canvas', { width: 368, height: 368 });
   const locText = h('span', { text: '맨해튼' });
   const locPill = h('div', { class: 'glass locpill', title: '지금 있는 거리' }, h('i', null, icon('pin')), locText);
-  const mapEl = h('button', { class: 'glass minimap', type: 'button', 'aria-label': '뉴욕 지도 크게 보기 (M)', title: '클릭해서 지도 크게 보기 (M)', onclick: () => openMap() }, mapCanvas, h('div', { class: 'tag', text: 'MAP · M' }), h('div', { class: 'zoom' }, icon('expand')));
-  fsBtn.classList.add('tool-more');
+  const mapEl = h('button', { class: 'glass minimap', type: 'button', 'aria-label': coarse ? '뉴욕 지도 크게 보기' : '뉴욕 지도 크게 보기 (M)', title: coarse ? '지도 크게 보기' : '클릭해서 지도 크게 보기 (M)', onclick: () => openMap() }, mapCanvas, h('div', { class: 'tag', text: 'MAP · M' }), h('div', { class: 'zoom' }, icon('expand')));
   // 오늘의 소원: shown to everyone (newcomers and phones too, never behind ⋯). The dot stays while I have no wish today.
   const wishDot = h('i', { class: 'wish-dot', 'aria-hidden': 'true', hidden: true });
-  const wishBtn = h('button', { class: 'btn icon tool-wish', type: 'button', 'aria-label': '오늘의 소원', title: '오늘의 소원', onclick: () => openWish({ from: 'hud' }) }, icon('wish'), wishDot);
+  const wishBtn = h('button', { class: 'btn icon tool-wish named', type: 'button', 'aria-label': '오늘의 소원', title: '오늘의 소원', onclick: () => openWish({ from: 'hud' }) }, icon('wish'), wishDot);
   // 받은 소식: in the bar only while there is something unread (main.js setInboxDot), on phones too, never in newcomer mode.
   const inboxBtn = h('button', { class: 'btn icon tool-inbox', type: 'button', 'aria-label': '받은 소식', title: '받은 소식', hidden: true, onclick: () => openInboxSheet() }, icon('bell'), h('i', { class: 'inbox-dot', 'aria-hidden': 'true' }));
-  // 화면만 보기 (compact phone HUD only, index.html): the eye under the map hides the HUD to look around; the joystick, the
-  // action buttons and this button stay, and the same button brings the HUD back. Remembered for this tab's session only.
-  const viewBtn = h('button', { class: 'glass view-btn', type: 'button', 'aria-label': '화면만 보기', title: '화면만 보기', 'aria-pressed': 'false', onclick: () => setViewOnly(!root.classList.contains('viewonly')) }, icon('eye'));
-  function setViewOnly(on) {
+  // 화면만 보기 (compact phone HUD only, index.html): the eye tile under the map hides the HUD to look around; the joystick,
+  // the action buttons and this button stay, and the same button brings the HUD back. Remembered for this tab's session
+  // only. The tile says what it does (화면만 / 돌아가기), and the first press of a session says it once more as a notice.
+  const viewLabel = h('span', { class: 'l', text: '화면만' });
+  const viewBtn = h('button', { class: 'view-btn', type: 'button', 'aria-label': '화면만 보기', title: '화면만 보기', 'aria-pressed': 'false', onclick: () => setViewOnly(!root.classList.contains('viewonly'), true) }, icon('eye'), viewLabel);
+  let viewTold = false;
+  function setViewOnly(on, byTap) {
     root.classList.toggle('viewonly', !!on);
     viewBtn.setAttribute('aria-pressed', String(!!on));
     viewBtn.setAttribute('aria-label', on ? '화면 다시 보기' : '화면만 보기');
     viewBtn.title = on ? '화면 다시 보기' : '화면만 보기';
-    viewBtn.replaceChildren(icon(on ? 'eyeOff' : 'eye'));
+    viewLabel.textContent = on ? '돌아가기' : '화면만';
+    viewBtn.replaceChildren(icon(on ? 'eyeOff' : 'eye'), viewLabel);
     try { sessionStorage.setItem('kts_viewonly', on ? '1' : '0'); } catch { /* private mode */ }
     if (on) { foldTools(false); toggleReacts(false); }
+    if (on && byTap && !viewTold) { viewTold = true; note('화면만 보기 · 다시 누르면 돌아와요'); }
   }
+  // The row under the map on touch (index.html .viewrow): 멍때리기 (put in below, where the button is made) and the eye.
+  const viewRow = h('div', { class: 'viewrow' }, viewBtn);
+  // The desktop tool row names its first buttons beside the icon (.named: index.html writes the aria-label there).
   root.append(h('div', { class: 'hud-r' },
     h('div', { class: 'bar' },
       h('div', { class: 'glass tools' },
-        h('button', { class: 'btn icon', type: 'button', 'aria-label': '전광판 걸기', title: '전광판 걸기', onclick: () => {
+        h('button', { class: 'btn icon named', type: 'button', 'aria-label': '전광판 걸기', title: '전광판 걸기', onclick: () => {
           const slot = firstOpenStarter();
           if (slot && !myBoards().length) openClaimStep(1, claimWizard(slot));
           else openBillboard(slot || '');
         } }, icon('board')),
         wishBtn,
         inboxBtn,
-        h('button', { class: 'btn icon tool-more tool-adv', type: 'button', 'aria-label': 'VIP 메뉴', title: 'VIP 메뉴', onclick: () => openVip() }, icon('crown')),
+        h('button', { class: 'btn icon tool-more tool-adv', type: 'button', 'aria-label': '공유·코드', title: '공유·코드', onclick: () => openVip() }, icon('share')),
         h('button', { class: 'btn icon tool-more', type: 'button', 'aria-label': '사진 찍어 공유', title: '사진 찍어 공유', onclick: () => openShot() }, icon('camera')),
-        h('button', { class: 'btn icon tool-rank', type: 'button', 'aria-label': '응원 순위', title: '응원 순위', onclick: () => openRanks() }, icon('trophy')),
-        h('button', { class: 'btn icon tool-more tool-adv', type: 'button', 'aria-label': '내 건물 짓기', title: '내 건물 짓기', onclick: () => openHub() }, icon('building')),
-        soundBtn,
+        h('button', { class: 'btn icon tool-rank named', type: 'button', 'aria-label': '응원 순위', title: '응원 순위', onclick: () => openRanks() }, icon('trophy')),
+        h('button', { class: 'btn icon tool-more tool-adv', type: 'button', 'aria-label': '내 건물', title: '내 건물', onclick: () => openHub() }, icon('building')),
         fsBtn,
         h('button', { class: 'btn ghost icon tool-more', type: 'button', 'aria-label': '설정', title: '설정', onclick: () => openSettings() }, icon('gear')),
         h('button', { class: 'btn icon tool-fold', type: 'button', 'aria-label': '메뉴 더보기', title: '메뉴', 'aria-expanded': 'false', onclick: (e) => foldTools(!e.currentTarget.parentElement.classList.contains('open')) }, icon('more')),
@@ -422,7 +437,7 @@ export function createUI(root, hooks) {
     ),
     mapEl,
     locPill,
-    viewBtn,
+    viewRow,
   ));
   // The phone ⋯ fold: closed again once one of its items is chosen, or on a tap anywhere outside the capsule.
   const toolsEl = root.querySelector('.tools');
@@ -453,11 +468,14 @@ export function createUI(root, hooks) {
     svg.append(bg, fg);
     return { svg, fg };
   })();
-  const promptKey = h('span', { class: 'keycap', text: coarse ? '탭' : 'E' });
   const promptText = h('span');
   const promptSub = h('span', { class: 'sub' });
   const promptCool = h('span', { class: 'cool', hidden: true }, coolSvg.svg);
-  const promptBtn = h('button', { class: 'glass', type: 'button', onclick: () => hooks.interact() }, promptKey, h('span', null, promptText, ' ', promptSub), promptCool);
+  // A keyboard gets a button with the E key cap. A touch screen gets a tag (index.html .prompt .tag): the name of what is
+  // in front of you, right against the round amber button, which is the one thing to press there; the tag takes no taps.
+  const promptBtn = coarse
+    ? h('div', { class: 'glass tag' }, promptText, promptSub)
+    : h('button', { class: 'glass', type: 'button', onclick: () => hooks.interact() }, h('span', { class: 'keycap', text: 'E' }), h('span', null, promptText, ' ', promptSub), promptCool);
   const promptEl = h('div', { class: 'prompt' }, promptBtn);
   root.append(promptEl);
 
@@ -486,6 +504,7 @@ export function createUI(root, hooks) {
     const cap = moreBtn.querySelector('.l');
     if (cap) cap.textContent = '동작';
     reactPanel.setAttribute('aria-label', '동작 · 리액션');
+    for (const b of reactPanel.querySelectorAll('.emote')) b.addEventListener('click', () => toggleReacts(false)); // an action closes the panel, like an emoji
   }
   root.append(reactPanel);
   document.addEventListener('pointerdown', (e) => {
@@ -500,6 +519,14 @@ export function createUI(root, hooks) {
     moreBtn.setAttribute('aria-expanded', String(open));
     if (open) sfx.click();
   }
+  // Pressed feedback (overlay.js PRESS, index.html "Pressed"): the control under the pointer keeps .tapped for 160 ms, so
+  // even the quickest tap shows. Sheets, toasts and the gift button are outside #ui, so the listener is on the document.
+  document.addEventListener('pointerdown', (e) => {
+    const el = e.target?.closest?.(PRESS.sel);
+    if (!el || el.disabled || el.getAttribute('aria-disabled') === 'true') return;
+    el.classList.add('tapped');
+    setTimeout(() => el.classList.remove('tapped'), PRESS.ms);
+  }, { passive: true, capture: true });
 
   const help = h('div', { class: 'glass help' },
     h('span', null, h('kbd', { text: 'W A S D' })), h('span', { text: '이동 (카메라 기준)' }),
@@ -535,8 +562,11 @@ export function createUI(root, hooks) {
     h('div', { class: 'meter' }, h('small', { text: '승객' }), fareEl),
     jobEl,
     trainEl,
-    h('div', { class: 'keys' }, ...(coarse ? ['조이스틱 ↑↓ 가속·후진 · ←→ 핸들 · ', icon('bolt'), ' 부스트 · 택시 내리기 버튼'] : ['W/S 가속·브레이크 · A/D 핸들 · Shift 부스트 · Space 경적 · E 택시 내리기'])),
   );
+  // The key line teaches the controls: it shows for the first 8 s of a ride (setDriving), not for the whole ride.
+  const taxiKeys = h('div', { class: 'keys', hidden: true }, ...(coarse ? ['조이스틱 ↑↓ 가속·후진 · ←→ 핸들 · ', icon('bolt'), ' 부스트'] : ['W/S 가속·브레이크 · A/D 핸들 · Shift 부스트 · Space 경적 · E 내리기']));
+  taxiHud.append(taxiKeys);
+  let taxiKeysTimer = 0;
   root.append(taxiHud);
   const sponsorTitle = h('h3');
   const sponsorBody = h('p');
@@ -587,17 +617,15 @@ export function createUI(root, hooks) {
 
   const needle = h('div', { class: 'needle' });
   // One bake = BAKE_FLIPS flips, one per BAKE_ROUND_MS (interact.js); the best flip is the session's result.
-  const bakeHint = h('span', { class: 'hint', text: coarse ? '버튼을 눌러 뒤집으세요' : 'Space · Enter · 클릭으로 뒤집기' });
-  const bakeMarks = h('span', { class: 'tnum' });
+  // The header is the title on one line and the three marks under it, with ✕ to leave; the gauge's zones are told by
+  // colour (green, amber in the middle). On touch the one button is the whole row; a keyboard gets the key line.
+  const bakeMarks = h('span', { class: 'marks tnum', role: 'status' });
   const bakeBtn = h('button', { class: 'btn gold stop', type: 'button', onclick: () => stopBake(), text: '지금 뒤집기!' });
-  const bakeEl = h('div', { class: 'glass bake', role: 'dialog', 'aria-hidden': 'true', 'aria-label': '붕어빵 굽기' },
-    h('header', null, h('h3', null, ...withIcon('fish', '황금 붕어빵 굽기')), bakeMarks),
-    h('div', { class: 'gauge' },
-      h('span', { class: 'lbl side', style: { left: '42.5%' }, text: 'GOOD' }),
-      h('span', { class: 'lbl', style: { left: '50%', color: 'var(--on-accent, #1c1300)' }, text: 'GOLD' }),
-      h('span', { class: 'lbl side', style: { left: '57.5%' }, text: 'GOOD' }),
-      needle),
-    h('div', { class: 'row' }, bakeHint, bakeBtn),
+  const bakeEl = h('div', { class: 'glass bake', role: 'dialog', 'aria-hidden': 'true', 'aria-label': '붕어빵 굽기', inert: true },
+    h('header', null, h('div', null, h('h3', null, ...withIcon('fish', '황금 붕어빵 굽기')), bakeMarks),
+      h('button', { class: 'x', type: 'button', 'aria-label': '그만 굽기', title: '그만 굽기', onclick: () => stopBake(true) }, icon('close'))),
+    h('div', { class: 'gauge' }, needle),
+    h('div', { class: 'row' }, coarse ? null : h('span', { class: 'hint', text: 'Space · Enter · 클릭으로 뒤집기' }), bakeBtn),
   );
   root.append(bakeEl);
   const resultB = h('b'), resultS = h('span');
@@ -608,10 +636,11 @@ export function createUI(root, hooks) {
   const rhythmScore = h('b', { class: 'tnum', text: '0%' });
   const rhythmCombo = h('span', { class: 'tnum' });
   const lanePads = h('div', { class: 'pads' }, ...['←', '↓', '↑', '→'].map((t, i) => h('button', { type: 'button', text: t, onpointerdown: (e) => { e.preventDefault(); danceHit(i); } })));
-  const rhythmEl = h('div', { class: 'glass rhythm', role: 'dialog', 'aria-hidden': 'true', 'aria-label': 'K-POP 댄스 챌린지' },
+  // The key line names the keys only: the dance pays nothing (the reward steps it used to list were removed 2026-11-23).
+  const rhythmEl = h('div', { class: 'glass rhythm', role: 'dialog', 'aria-hidden': 'true', 'aria-label': 'K-POP 댄스 챌린지', inert: true },
     h('header', null, h('h3', null, ...withIcon('music', 'K-POP 댄스 챌린지')), h('div', { class: 'acc' }, rhythmCombo, rhythmScore, h('button', { class: 'x', type: 'button', text: '그만두기', onclick: () => endDance(true) }))),
     rhythmCanvas,
-    coarse ? lanePads : h('p', { class: 'hint', text: '쉬움 · 55% 미만 +2 · 55% +4 · 75% +8 · 90% +12 · ←↓↑→ 또는 D F J K' }),
+    coarse ? lanePads : h('p', { class: 'hint', text: '←↓↑→ 또는 D F J K' }),
   );
   root.append(rhythmEl);
 
@@ -723,7 +752,7 @@ export function createUI(root, hooks) {
     coachTimer = setTimeout(() => {
       if (recall('kts_coach', 0)) return;
       coachEl.hidden = false;
-      coachTimer = setTimeout(coachDone, 15000);
+      coachTimer = setTimeout(coachDone, 8000);
     }, 4000);
   }
 
@@ -761,6 +790,10 @@ export function createUI(root, hooks) {
     }
     syncNewbie();
     const goalText = nextGoal().text;
+    // No line while there is nothing to say yet (the goal waits for what it reads: nextGoal).
+    const none = newbieOn ? !newcomerTask()?.text : !goalText;
+    if (nextLine.hidden !== none) nextLine.hidden = none;
+    if (none) return;
     if (newbieOn) {
       const task = newcomerTask()?.text || '';
       if (nextLine.dataset.task !== task) {
@@ -781,7 +814,7 @@ export function createUI(root, hooks) {
   const NEWCOMER_STEPS = [
     () => (tutorialOn && tutorialLine ? { text: tutorialLine, go: tutorialGo } : null),
     () => { const text = wishStep({ known: wishView.known, mine: !!wishView.mine, skipped: wishSkipped, busy: wishView.busy }); return text ? { text, go: () => openWish({ from: 'card' }) } : null; },
-    () => ({ text: nextGoal().text.replace(/^다음 목표: /, ''), go: nextGoalGo }),
+    () => { const text = nextGoal().text.replace(/^다음 목표: /, ''); return text ? { text, go: nextGoalGo } : null; },
   ];
   function newcomerTask() { return firstStep(NEWCOMER_STEPS); }
   function goTask() {
@@ -896,6 +929,9 @@ export function createUI(root, hooks) {
   }
   function pumpNews() {
     if (newsBusy || !newsQueue.length) return;
+    // While one board is being looked at (the focus camera) or the boards are toured (멍때리기) the line waits: it used to
+    // run across the top of the board in view. focusLock(false) and lounge(false) pump again.
+    if (focusOn || root.classList.contains('lounging')) return;
     newsBusy = true;
     const item = newsQueue.shift();
     const slot = item.slot;
@@ -903,8 +939,13 @@ export function createUI(root, hooks) {
     if (slot) line.dataset.slot = slot;
     for (const part of item.text) line.append(part?.nodeType ? part.cloneNode(true) : document.createTextNode(String(part ?? '')));
     for (const n of [...feedRows.querySelectorAll('.empty')]) n.remove();
+    // The same line again (the welcome comes with every reconnect): the feed keeps one copy, the newest, and the banner
+    // does not run it a second time.
+    const again = [...feedRows.children].filter((n) => sameNews(n.textContent, line.textContent));
+    for (const n of again) n.remove();
     feedRows.prepend(line);
     while (feedRows.children.length > 4) feedRows.lastChild.remove();
+    if (again.length) { newsBusy = false; pumpNews(); return; }
     newsSmall.textContent = item.kicker;
     newsText.replaceChildren(...item.text);
     newsEl.dataset.slot = slot;
@@ -930,26 +971,32 @@ export function createUI(root, hooks) {
   function cooldownLeft() { return Math.max(0, coolUntil - performance.now()); }
   function armCooldown() { coolUntil = performance.now() + COOLDOWN; }
   setInterval(() => { if (near && (near.kind === 'crowd' || near.kind === 'cart')) renderPrompt(); }, 400);
-  // Second line per device: a phone has the round button (and no keys), a keyboard has Space / E.
-  const PRESS = coarse ? '버튼을 누르면' : 'Space 또는 E를 누르면';
+  // [name, second line, the round button's word]. The second line is for a keyboard (it sits beside the E key cap); a
+  // phone shows the name alone, as a tag beside the round button, so no line here tells anyone which button to press.
   const PROMPTS = {
     crowd: ['같이 함성', '옆에 사람이 있어야 해요', '함성'],
-    cart: ['붕어빵 굽기', `${PRESS} 시작 · 세 번 뒤집어요`, '굽기!'],
-    atm: ['황금 ATM 열기', '전광판 · 토지 거래', 'ATM'],
-    stage: ['댄스 시작', `${PRESS} 시작 · 점수도 보상도 없는 리듬 놀이예요`, '댄스!'],
-    taxi: ['정차한 택시 탑승', '지나가는 택시는 타지 않아요', '탑승'],
+    cart: ['붕어빵 굽기', '세 번 뒤집어요', '굽기!'],
+    atm: ['황금 ATM', '내 건물 · 전광판 걸기', '열기'],
+    stage: ['댄스 시작', '', '댄스!'],
+    taxi: ['정차한 택시 탑승', '', '탑승'],
     stand: ['택시 호출', '오면 그 자리에서 탑승', '호출'],
     fountain: ['포춘쿠키 열기', '빨간 계단 앞 분수', '열기'],
     ring: ['황금 링 통과', '걸어서도, 택시로도 링을 지나가 보세요', '통과'],
     lounge: ['빨간 계단에서 멍때리기', `켜 두면 ${Math.round(PAY.lounge.gapMs / 1000)}초마다 응원 포인트 +${PAY.lounge.base}`, '관람'],
-    adscreen: ['광고 화면', `${PRESS} 광고 정보가 열려요`, '광고'],
+    adscreen: ['광고 화면', '광고 정보 보기', '광고'],
   };
   let focusOn = false, exitLabel = '';
+  // The round touch button: its short word, and the whole thing as its name ("걸기: 37번 메인거리 · 빈 전광판").
+  function paintAct(word, what) {
+    if (actBtn.textContent !== word) actBtn.textContent = word;
+    const name = what ? `${word}: ${what}` : word;
+    if (actBtn.getAttribute('aria-label') !== name) actBtn.setAttribute('aria-label', name);
+  }
   function renderPrompt() {
     const show = !!near && !baking && !sheet && !dance && !driving && !focusOn;
     promptEl.classList.toggle('show', show);
     actBtn.hidden = driving ? false : !(show && coarse);
-    if (driving) { exitLabel = '택시 내리기'; actBtn.textContent = exitLabel; return; }
+    if (driving) { exitLabel = '내리기'; paintAct(exitLabel, '택시'); return; }
     exitLabel = '';
     if (!near) return;
     const left = cooldownLeft();
@@ -961,10 +1008,13 @@ export function createUI(root, hooks) {
       ? (near.n
         ? [`같이 함성 · 옆 ${near.n}명`, left > 0 ? `다음 함성까지 ${(left / 1000).toFixed(0)}초` : '옆 사람과 같이', '함성']
         : ['함성', left > 0 ? `다음 함성까지 ${(left / 1000).toFixed(0)}초` : '응원 포인트는 전광판 응원에서 들어와요', '함성'])
-      : (PROMPTS[near.kind] || [`${near.id}번 건물 · ${levelOf(near.id).t}`, `${PRESS} 토지 정보가 열려요`, '건물']);
-    promptText.textContent = p[0];
-    promptSub.textContent = p[1];
-    actBtn.textContent = p[2];
+      : (PROMPTS[near.kind] || [`${near.id}번 건물 · ${levelOf(near.id).t}`, '토지 정보 보기', '건물']);
+    // Touch: one line. A board is "where · whose" (its second half, "소원 걸기" and the like, is the button's own word);
+    // a 함성 keeps its countdown as a second small line, because that one changes.
+    const tag = touchTag(near.kind, p);
+    promptText.textContent = coarse ? tag[0] : p[0];
+    promptSub.textContent = coarse ? tag[1] : p[1];
+    paintAct(p[2], tag[0]);
   }
   // A tap on a board far away (60 m+) or from a taxi: a small card near the bottom instead of a sheet. Nothing is
   // locked and it fades after 4 s. info: { dist, driving, state: 'free' | 'dark' | 'other' | 'mine', who }.
@@ -1075,7 +1125,7 @@ export function createUI(root, hooks) {
   function paintBakeMarks() {
     if (!baking) return;
     const marks = Array.from({ length: BAKE_FLIPS }, (_, i) => MARK[baking.flips[i]] || '○').join(' ');
-    bakeMarks.textContent = `${marks} · 초록에서 멈추면 바삭, 정중앙이면 황금 붕어빵`;
+    if (bakeMarks.textContent !== marks) bakeMarks.textContent = marks;
   }
   function bakeRound() {
     baking.held = false;
@@ -1092,6 +1142,7 @@ export function createUI(root, hooks) {
     baking = { flips: [], pos: 0.08, dir: 1, speed: 0.42, held: false, roundAt: performance.now(), doneAt: 0 };
     bakeEl.classList.add('show');
     bakeEl.setAttribute('aria-hidden', 'false');
+    bakeEl.inert = false;
     hooks.lockInput(true, 'bake');
     renderPrompt();
     sfx.click();
@@ -1136,6 +1187,7 @@ export function createUI(root, hooks) {
     needle.style.opacity = '';
     bakeEl.classList.remove('show');
     bakeEl.setAttribute('aria-hidden', 'true');
+    bakeEl.inert = true; // a closed panel is out of the tab order
     hooks.lockInput(false, 'bake');
     renderPrompt();
     if (awayWant) setTimeout(pumpQueued, 1500);
@@ -1254,6 +1306,7 @@ export function createUI(root, hooks) {
     dance = { notes, beat, lead, t0: performance.now() + delay * 1000, end: (lead + beats + 1) * beat, judge: '', judgeAt: 0, combo: 0, max: 0, score: 0 };
     rhythmEl.classList.add('show');
     rhythmEl.setAttribute('aria-hidden', 'false');
+    rhythmEl.inert = false;
     hooks.lockInput(true, 'dance');
     hooks.danceStart?.();
     renderPrompt();
@@ -1289,6 +1342,7 @@ export function createUI(root, hooks) {
     stopDanceAudio();
     rhythmEl.classList.remove('show');
     rhythmEl.setAttribute('aria-hidden', 'true');
+    rhythmEl.inert = true; // a closed panel is out of the tab order
     hooks.lockInput(false, 'dance');
     danceCool = performance.now() + 2500;
     renderPrompt();
@@ -1409,10 +1463,28 @@ export function createUI(root, hooks) {
       s.el.inert = under;
     });
   }
+  // A sheet is modal (aria-modal): while one is open the HUD and the canvas behind it are inert, so Tab and a screen
+  // reader stay in the sheet (Tab used to walk out to the HUD buttons under the backdrop after the sheet's last control).
+  // The notices live in <body> and stay reachable. trapTab keeps Tab and Shift+Tab going round inside the top sheet.
+  const viewEl = document.getElementById('view');
+  function backInert(on) {
+    root.inert = !!on;
+    if (viewEl) viewEl.inert = !!on;
+  }
+  const TABBABLE = 'button, a[href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])';
+  function trapTab(e, box) {
+    if (e.key !== 'Tab') return;
+    const list = [...box.querySelectorAll(TABBABLE)].filter((n) => !n.disabled && n.getClientRects().length && !n.closest('[inert], [hidden]'));
+    if (!list.length) { e.preventDefault(); box.focus({ preventScroll: true }); return; }
+    const first = list[0], last = list[list.length - 1], at = document.activeElement;
+    if (e.shiftKey && (at === first || at === box)) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && at === last) { e.preventDefault(); first.focus(); }
+  }
   function afterSheets(gone) {
     showTop();
     hooks.lockInput(sheets.length > 0, 'sheet');
     document.body.classList.toggle('has-sheet', sheets.length > 0);
+    backInert(sheets.length > 0);
     renderPrompt();
     syncBack();
     // Focus goes back to what opened the sheet that just closed (a button in the parent sheet, or the HUD).
@@ -1470,12 +1542,14 @@ export function createUI(root, hooks) {
     // A re-rendered sheet keeps the opener of the one it replaced; a child remembers the control in its parent.
     const me = { el, box, cleanup: null, title, kind, typed: false, keep: null, opener: old ? old.opener : opener };
     el.addEventListener('click', (e) => { if (e.target === el) backdropTap(me); });
+    el.addEventListener('keydown', (e) => trapTab(e, box));
     box.addEventListener('input', (e) => { if (e.isTrusted) me.typed = true; });
     sheets.push(me);
     sheet = me;
     showTop();
     hooks.lockInput(true, 'sheet');
     document.body.classList.add('has-sheet');
+    backInert(true);
     renderPrompt();
     const rawAppend = content.append.bind(content);
     content.append = (...nodes) => rawAppend(...nodes.filter((n) => n != null && n !== false));
@@ -1609,7 +1683,8 @@ export function createUI(root, hooks) {
       published.then((link) => {
         if (!status.isConnected) return;
         if (link) {
-          status.textContent = '링크를 열면 이 사진이 미리 보이고, 누르면 바로 광장으로 들어와요.';
+          status.textContent = '';
+          status.hidden = true;
           copy.disabled = false;
           share.disabled = false;
           kakao.disabled = false;
@@ -1691,15 +1766,19 @@ export function createUI(root, hooks) {
     if (!me) return [];
     return world.billboards.filter((b) => b.holder_id === me);
   }
+  // The goal is decided only once what it reads is in (overlay.js goalKnown): the boards, the account's "free slot used"
+  // flag and the settled free-slot list (main.js starterListKnown). Before that there is no goal line at all: it used to
+  // say one goal on one load and another on the next for the same guest. After GOAL_WAIT_MS it decides with what it has.
+  let plazaAt = 0;
+  const goalReady = () => goalKnown({ boards: plazaReady, used: hooks.starterUsed?.(), list: hooks.starterListKnown?.() !== false, waited: plazaAt ? performance.now() - plazaAt : 0 });
   function nextGoal() {
     const have = wallet.confirmed + wallet.pending;
     const held = myBoards();
     const liveHeld = held.filter(boardActive);
     if (!liveHeld.length && held.length) return { text: '다음 목표: 불 꺼진 칸을 다시 켜세요', slot: held[0].slot_id, relight: true };
-    const has = (prefix) => liveHeld.some((b) => String(b.slot_id).startsWith(prefix));
-    void has;
     // The prime screens (main tower, corners) are never bought: past the first board the goal is the team's, not a bigger screen.
     if (liveHeld.length) return { text: '다음 목표: 응원 팀과 함께 명당에 이름 걸기', team: true, slot: '', free: false, name: '응원 팀', left: 0 };
+    if (!goalReady()) return { text: '', undecided: true, slot: '', free: false, name: '', left: 0 };
     let slot = 'PLOT_1';
     let price = floorOf('PLOT_1');
     let name = '건물 앞 전광판';
@@ -1725,6 +1804,7 @@ export function createUI(root, hooks) {
   }
   function nextGoalGo() {
     const g = nextGoal();
+    if (g.undecided) return; // not decided yet: the line is not on screen
     if (g.team) { openTribeSheet(); return; }
     if (g.relight || !g.free) { openBillboard(g.slot); return; }
     openClaimStep(1, claimWizard(g.slot));
@@ -1905,7 +1985,6 @@ export function createUI(root, hooks) {
         go('cheer', !!(d.qPaid || {}).cheer, `전광판 응원 (${Math.min(d.cheer || 0, 3)}/3) +${PAY.quest.cheer}`),
         h('p', { class: 'note', text: `출석 ${d.streak || 0}일 · 내일 접속하면 +${tomorrow} 포인트` }),
         h('p', { class: 'note', text: todayFacts(d) }),
-        h('p', { class: 'note', text: '응원 포인트는 출석·응원·관람·공유·초대로 모아요. 돈으로 팔지 않고, 다른 사람에게 보낼 수 없어요.' }),
       );
     }, true);
   }
@@ -1922,14 +2001,14 @@ export function createUI(root, hooks) {
   let seenHold = null;
   function openHolds() {
     const mine = myBoards();
-    openSheet('내 전광판', '걸어 둔 것', (host) => {
+    openSheet('내 전광판', null, (host) => {
       host.append(h('b', { text: '지금 내 것' }));
       host.append(mine.length ? h('div', { class: 'rows' }, ...mine.map((b) => h('div', { class: 'row', style: { display: 'flex', gap: '8px' } },
         h('button', { class: 'chip', type: 'button', style: { flex: '1' }, text: slotName(b.slot_id) + (boardActive(b) ? ` · ${fmtLeft(lightLeft(b))} 남음` : ' · 불 꺼짐'), onclick: () => openBillboard(b.slot_id) }),
         h('button', { class: 'chip', type: 'button', text: '보기', onclick: () => { closeSheet(); hooks.focusShot?.(b.slot_id); } }),
         h('button', { class: 'chip', type: 'button', text: '링크', onclick: () => copyInvite(b.slot_id) }),
       ))) : h('p', { class: 'note', text: '걸어 둔 전광판이 없어요' }));
-      host.append(h('p', { class: 'note', text: '걸어 둔 전광판은 기간(72시간) 동안 내 것이고, 아무도 가져갈 수 없어요. 하루 한 번 불 켜기로 72시간을 다시 이어요.' }));
+      host.append(h('p', { class: 'note', text: '하루 한 번 불 켜기로 72시간을 다시 이어요.' }));
     }, true, '', { kind: 'holds' });
   }
   // No takeovers (docs/prime-screens.md): a board leaves my hands only when its time ran out, so there is no "taken" notice to tell.
@@ -1944,6 +2023,7 @@ export function createUI(root, hooks) {
   function maybeStarterToast() {
     if (starterToastShown || !plazaReady || !entered) return;
     if (newbieOn) return;
+    if (!goalReady()) return; // the same wait as the goal line: an offer must not come from a list that is about to change
     if (hooks.starterUsed?.() == null && performance.now() < 8000) return;
     if (hooks.starterUsed?.() === true) { starterToastShown = true; return; }
     const id = firstOpenStarter();
@@ -2469,7 +2549,7 @@ export function createUI(root, hooks) {
       daysNote.textContent = n > 0 ? `연속 ${n}일` : '';
     };
     paintStats();
-    openSheet(mine ? '내 전광판' : '걸린 전광판', mine ? 'MINE' : 'AD', (host) => {
+    openSheet(mine ? '내 전광판' : '걸린 전광판', null, (host) => {
       host.append(
         card ? h('div', { class: 'place' }, h('div', { class: 'where' }, h('b', { text: card.title }), h('span', { text: card.line }))) : null,
         h('div', { class: 'screen' }, canvas),
@@ -2560,14 +2640,14 @@ export function createUI(root, hooks) {
       const themes = h('div', { class: 'themes' });
       const inks = h('div', { class: 'swatches' });
       const inkIn = h('input', { type: 'color', 'aria-label': '글자색 직접 선택' });
-      const lines = [0, 1, 2].map(i => h('input', { class: 'input', maxLength: 16, placeholder: ['메인 문구 (16자)', '둘째 줄 (16자)', '셋째 줄 (16자)'][i] }));
+      const lines = [0, 1, 2].map(i => h('input', { class: 'input', maxLength: 16, placeholder: ['메인 문구 (16자)', '둘째 줄 (16자)', '셋째 줄 (16자)'][i], 'aria-label': ['첫째 줄', '둘째 줄', '셋째 줄'][i] }));
       const urlIn = h('input', { class: 'input', type: 'url', placeholder: 'https://threads.net/...', 'aria-label': '연결할 링크', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'done' });
       // Inline errors: one line under the field or button they are about (the same class as the sign-in sheet's).
       const errLine = () => h('p', { class: 'note login-err', role: 'alert', hidden: true });
       const linesErr = errLine(), toErr = errLine(), urlErr = errLine(), goErr = errLine();
       const say = (el, text) => { el.textContent = text || ''; el.hidden = !text; };
       const hush = () => { for (const el of [linesErr, toErr, urlErr, goErr]) say(el, ''); };
-      const urlField = h('div', { class: 'field' }, h('label', null, '외부 링크', h('span', { text: '인스타·스레드·유튜브·스마트스토어 https 주소만 저장됩니다. 전광판을 누르면 상세보기에서 열 수 있습니다' })), urlIn, urlErr);
+      const urlField = h('div', { class: 'field' }, h('label', null, '외부 링크'), urlIn, h('p', { class: 'note', text: '인스타·스레드·유튜브·스마트스토어 https 주소만 저장돼요.' }), urlErr);
       const bidIn = h('input', { class: 'input tnum', type: 'number', min: '1', step: '10', 'aria-label': '가격', hidden: true }); // the fixed price (the Worker sets it again)
       const balance = h('div', { class: 'balance' });
       const go = h('button', { class: 'btn primary cta', type: 'button' });
@@ -2596,7 +2676,8 @@ export function createUI(root, hooks) {
           const beforeUntil = boardById(slot)?.lit_until || boardById(slot)?.expires_at;
           const data = await hooks.relight?.(slot);
           const days = Math.max(0, Math.floor(Number(data?.lit_days) || 0));
-          stStreak.textContent = `연속 ${days}일`;
+          stStreak.textContent = days > 0 ? `${days}일째` : '';
+          if (stStreak.parentElement) stStreak.parentElement.hidden = !(days > 0);
           note(data?.lit_until && beforeUntil && new Date(data.lit_until).getTime() <= new Date(beforeUntil).getTime() + 60000
             ? `오늘은 이미 켰어요. ${fmtLeft(lightLeft({ lit_until: data.lit_until, holder_id: 'x' }))} 남음`
             : `72시간 연장. ${fmtLeft(lightLeft({ lit_until: data.lit_until || beforeUntil, holder_id: 'x' }))} 남음`, 'ok');
@@ -2671,7 +2752,7 @@ export function createUI(root, hooks) {
           const mineDark = b?.holder_id === hooks.actorId() && !boardActive(b);
           photoBox.replaceChildren(...[head, result, h('p', { class: 'note', text: mineDark
             ? '불이 꺼져 있어요. 위쪽 불 켜기를 누르면 사진을 올릴 수 있어요.'
-            : '전광판을 건 사람만 사진을 올릴 수 있어요. 운영자가 확인한 사진만 광장 전체에 송출되고, 확인 전에는 글자 전광판으로 보여요.' })].filter(Boolean));
+            : '사진은 운영자가 확인한 뒤 걸려요.' })].filter(Boolean));
           return;
         }
         if (st === 'pending') {
@@ -2826,12 +2907,15 @@ export function createUI(root, hooks) {
         const active = boardActive(b);
         const ll = active ? lightLeft(b) : 0;
         const mineNow = b?.holder_id && b.holder_id === hooks.actorId?.();
-        stHolder.textContent = !on ? '비어 있음 · 지금 걸 수 있어요' : !active ? (mineNow ? '내 칸 · 불 꺼짐' : `기간 끝남 · 지금 걸 수 있어요`) : mineNow ? `내 전광판 · ${fmtLeft(ll)} 남음` : `${b.holder_name || '익명'}님 · ${fmtLeft(ll)} 남음`;
-        stBid.textContent = `${money(floorOf(slot))} 포인트 · 72시간`;
-        stProt.textContent = !on ? '걸면 72시간' : !active ? (mineNow ? '불 켜면 다시 72시간' : '걸면 72시간') : mineNow ? `남은 ${fmtLeft(ll)}` : `${fmtLeft(ll)} 뒤에 비어요`;
+        // Each cell says one thing in a few words, so nothing ends in "…" on a phone's two-column grid: who has it, the
+        // price, the time (only here), and the streak cell only while there is a streak.
+        stHolder.textContent = !on ? '비어 있음' : !active ? (mineNow ? '내 칸 · 불 꺼짐' : '기간 끝남') : mineNow ? '내 전광판' : `${b.holder_name || '익명'}님`;
+        stBid.textContent = `${money(floorOf(slot))} 포인트`;
+        stProt.textContent = !on ? '걸면 72시간' : !active ? (mineNow ? '켜면 72시간' : '걸면 72시간') : `${fmtLeft(ll)} 남음`;
         stProt.className = '';
         const days = Math.max(0, Math.floor(Number(b?.lit_days) || 0));
-        stStreak.textContent = days > 0 ? `연속 ${days}일` : '';
+        stStreak.textContent = days > 0 ? `${days}일째` : '';
+        if (stStreak.parentElement) stStreak.parentElement.hidden = !(days > 0);
         relightBtn.hidden = !mineNow;
         ownRow.hidden = !mineNow;
         stScore.textContent = `택시 ${Math.floor(Number(b?.views) || 0)} · 응원 ${Math.floor(Number(b?.cheers) || 0)} · 링크 ${Math.floor(Number(b?.clicks) || 0)}`;
@@ -2877,8 +2961,8 @@ export function createUI(root, hooks) {
         slotLock++;
         pick.value = id;
         slotLock--;
-        for (const c of themes.children) c.classList.toggle('on', c.dataset.theme === state.theme);
-        for (const c of inks.querySelectorAll('.swatch')) c.classList.toggle('on', c.dataset.ink === state.ink);
+        for (const c of themes.children) { c.classList.toggle('on', c.dataset.theme === state.theme); c.setAttribute('aria-pressed', String(c.dataset.theme === state.theme)); }
+        for (const c of inks.querySelectorAll('.swatch')) { c.classList.toggle('on', c.dataset.ink === state.ink); c.setAttribute('aria-pressed', String(c.dataset.ink === state.ink)); }
         inkIn.value = state.ink;
         fillStats();
         refreshBid();
@@ -2895,7 +2979,7 @@ export function createUI(root, hooks) {
       const hotIds = Array.from({ length: STREET_N }, (_, i) => 'STREET_' + (i + 1));
       const cheapIds = Array.from({ length: 18 }, (_, i) => 'PLOT_' + (i + 1));
       const tipsEl = h('div', { class: 'rows' });
-      const pickNote = h('p', { class: 'note', text: '비어 있거나 기간이 끝난 전광판만 걸 수 있어요(72시간, 정해진 가격). 다른 사람이 걸어 둔 전광판은 기간이 끝날 때까지 그 사람의 것이에요.' });
+      const pickNote = h('p', { class: 'note', text: '비었거나 기간이 끝난 칸만 걸 수 있어요.' });
       const tips = () => {
         const me = hooks.actorId?.();
         const have = wallet.confirmed + wallet.pending;
@@ -2913,7 +2997,7 @@ export function createUI(root, hooks) {
         return scored.slice(0, 4).map((r) => r.id);
       };
       const showZone = (zone, focus) => {
-        for (const b of seg.children) b.classList.toggle('on', b.dataset.tier === zone);
+        for (const b of seg.children) { b.classList.toggle('on', b.dataset.tier === zone); b.setAttribute('aria-pressed', String(b.dataset.tier === zone)); }
         const mineIds = myBoards().map((b) => b.slot_id);
         const ids = (zone === 'pick' ? tips() : zone === 'tower' ? towerIds : zone === 'hot' ? hotIds : zone === 'cheap' ? cheapIds : mineIds).filter((id) => slotOpen(world.billboards, id));
         const list = ids.length ? ids.slice() : ['STREET_1'];
@@ -2951,7 +3035,7 @@ export function createUI(root, hooks) {
         themes.append(b);
       }
       for (const c of INK) {
-        const b = h('button', { type: 'button', class: 'swatch', 'aria-label': c, style: { background: c, color: c }, onclick: () => { state.ink = c; inkIn.value = c; drafting = true; for (const s of inks.querySelectorAll('.swatch')) s.classList.toggle('on', s === b); paint(); } });
+        const b = h('button', { type: 'button', class: 'swatch', 'aria-label': swatchName(c), title: swatchName(c), style: { background: c, color: c }, onclick: () => { state.ink = c; inkIn.value = c; drafting = true; for (const s of inks.querySelectorAll('.swatch')) s.classList.toggle('on', s === b); paint(); } });
         b.dataset.ink = c;
         inks.append(b);
       }
@@ -2964,6 +3048,8 @@ export function createUI(root, hooks) {
         state.gift = on;
         wishBtn.classList.toggle('on', !on);
         giftBtn.classList.toggle('on', on);
+        wishBtn.setAttribute('aria-pressed', String(!on));
+        giftBtn.setAttribute('aria-pressed', String(!!on));
         toField.hidden = !on;
         lines[0].hidden = on;
         for (const c of themes.children) c.hidden = on ? !THEMES[c.dataset.theme]?.gift : !!THEMES[c.dataset.theme]?.gift;
@@ -3080,8 +3166,8 @@ export function createUI(root, hooks) {
             h('div', { class: 'stat' }, h('small', { text: '지금' }), stHolder),
             h('div', { class: 'stat' }, h('small', { text: '가격' }), stBid),
             h('div', { class: 'stat' }, h('small', { text: '기간' }), stProt),
-            h('div', { class: 'stat' }, h('small', { text: '연속' }), stStreak),
-            h('div', { class: 'stat' }, h('small', { text: '반응' }), stScore),
+            h('div', { class: 'stat', hidden: true }, h('small', { text: '연속' }), stStreak),
+            h('div', { class: 'stat', style: { gridColumn: '1 / -1' } }, h('small', { text: '반응' }), stScore),
             relightBtn,
             ownRow,
             chainNote),
@@ -3174,7 +3260,7 @@ export function createUI(root, hooks) {
       const price = Number(plot.price) || 500;
       const target = !owned ? Math.max(1, level) : Math.min(4, level + 1);
       const levels = h('div', { class: 'levels' }, ...LEVELS.map((L, i) => h('div', { class: `lv${i < level ? ' done' : ''}${i === level ? ' cur' : ''}${i === target && (mine || !owned) && level < 4 ? ' next' : ''}` }, levelImg(L), h('div', { class: 't', text: L.t }))));
-      const signIn = h('input', { class: 'input', maxLength: 14, placeholder: '간판 이름 (14자)', value: plot.sign_text && plot.sign_text !== '분양 대기중' && plot.sign_text !== '빈 땅' ? plot.sign_text : `${hooks.nick()}네 가게` });
+      const signIn = h('input', { class: 'input', maxLength: 14, placeholder: '간판 이름 (14자)', 'aria-label': '간판 이름', value: plot.sign_text && plot.sign_text !== '분양 대기중' && plot.sign_text !== '빈 땅' ? plot.sign_text : `${hooks.nick()}네 가게` });
       let color = isColor(plot.theme_color) ? plot.theme_color : '#00ffcc';
       const prev = makeCanvas(512, 128);
       prev.className = 'signprev';
@@ -3182,7 +3268,7 @@ export function createUI(root, hooks) {
       const sw = h('div', { class: 'swatches' });
       const colorIn = h('input', { type: 'color', value: color, 'aria-label': '네온 컬러 직접 선택' });
       for (const c of NEON) {
-        const b = h('button', { type: 'button', class: `swatch${c === color ? ' on' : ''}`, style: { background: c, color: c }, 'aria-label': c, onclick: () => { color = c; colorIn.value = c; for (const s of sw.querySelectorAll('.swatch')) s.classList.toggle('on', s === b); paint(); } });
+        const b = h('button', { type: 'button', class: `swatch${c === color ? ' on' : ''}`, style: { background: c, color: c }, 'aria-label': swatchName(c), title: swatchName(c), 'aria-pressed': String(c === color), onclick: () => { color = c; colorIn.value = c; for (const s of sw.querySelectorAll('.swatch')) { s.classList.toggle('on', s === b); s.setAttribute('aria-pressed', String(s === b)); } paint(); } });
         sw.append(b);
       }
       sw.append(colorIn);
@@ -3225,11 +3311,11 @@ export function createUI(root, hooks) {
           h('div', { class: 'stat' }, h('small', { text: owned ? '다음 증축가' : '짓는 값' }), h('b', { class: 'gold', text: `${money(price)} 포인트` })),
           h('div', { class: 'stat' }, h('small', { text: '외벽 전광판' }), h('b', { text: boardActive(board) ? `광고 중 · ${board.holder_name || ''}` : (board?.holder_id ? `불 꺼짐 · ${board.holder_name || ''}` : '광고 모집 중') }))),
         h('button', { class: 'btn ghost', type: 'button', text: boardActive(board) ? '외벽 전광판 열기' : (board?.holder_id === hooks.actorId() ? '내 전광판 다시 켜기' : '외벽 전광판에 소원 걸기'), onclick: () => openAd('PLOT_' + id) }),
-        h('div', { class: 'callout' }, h('b', null, ...withIcon('coin', '건물주 몫')), ' — 이 건물 외벽 전광판(', h('b', { text: `PLOT_${id}` }), ')에 다른 사람이 전광판을 걸면 그 값의 ', h('b', { text: '50%' }), '가 건물주 지갑으로 들어가요.'),
+        h('div', { class: 'callout' }, h('b', null, ...withIcon('coin', '건물주 몫')), ' — 이 건물 외벽 전광판에 다른 사람이 전광판을 걸면 그 값의 ', h('b', { text: '50%' }), '가 건물주 지갑으로 들어가요.'),
         h('div', { class: 'field' }, h('label', null, '네온 간판', h('span', { text: level >= 4 && mine ? '최고층이라 간판은 고정이에요' : '미리보기 · 계약하면 광장에 붙어요' })), signIn, prev),
         h('div', { class: 'field' }, h('label', null, '네온 컬러'), sw),
         go,
-        h('p', { class: 'note', text: '빈 땅이나, 마지막으로 짓거나 올린 지 30일이 지난 땅에만 지을 수 있어요. 다른 사람이 쓰는 땅은 가져갈 수 없어요. 증축할수록 건물이 커지고 간판과 전광판이 더 높이 올라갑니다.' }),
+        h('p', { class: 'note', text: '빈 땅이나, 마지막으로 짓거나 올린 지 30일이 지난 땅에만 지을 수 있어요.' }),
       );
       paint();
       fontsReady(signIn.value).then(paint);
@@ -3237,7 +3323,8 @@ export function createUI(root, hooks) {
   }
 
   function openHub() {
-    openSheet(['coin', '황금 ATM'], 'EXCHANGE', (host) => {
+    // The sheet is called what its tool button is called (내 건물). It was 황금 ATM · EXCHANGE behind a button named 내 건물 짓기.
+    openSheet(['building', '내 건물'], null, (host) => {
       const plots = h('div', { class: 'plots' });
       const mineIds = new Set(myPlots().map(s => s.id));
       for (const s of PLOT_SLOTS) {
@@ -3252,8 +3339,7 @@ export function createUI(root, hooks) {
       const mine = myPlots();
       const where = h('div', { class: 'place' },
         h('div', { class: 'where' },
-          h('b', null, ...withIcon('pin', '토지는 K-타운 건물 구역에 있어요')),
-          h('span', { text: 'W 32nd St (코리아웨이) · 브로드웨이와 5번가 사이 · 타임스퀘어에서 남쪽으로 약 1km' })),
+          h('b', null, ...withIcon('pin', '토지는 K-타운 건물 구역에 있어요'))),
         h('div', { class: 'go' },
           h('button', { class: 'btn ghost', type: 'button', onclick: () => goWaypoint(lotCenter, 'K-타운 건물 구역') }, ...withIcon('pin', '길안내')),
           h('button', { class: 'btn gold', type: 'button', onclick: () => goTeleport(lotCenter, 'K-타운 건물 구역') }, ...withIcon('bolt', '바로 가기'))),
@@ -3264,8 +3350,8 @@ export function createUI(root, hooks) {
           h('div', { class: 'stat' }, h('small', { text: '내 건물' }), h('b', { text: `${world.plots.filter(p => p.owner_id && p.owner_id === hooks.actorId()).length}채` })),
           h('div', { class: 'stat' }, h('small', { text: '내 전광판' }), h('b', { text: `${myBoards().length}개` }))),
         h('div', { class: 'hub', style: { marginTop: '14px' } },
-          h('button', { type: 'button', onclick: () => openBillboard('') }, h('img', { class: 'big', src: 'icons/board.jpg?v=4', alt: '', draggable: 'false' }), h('h4', { text: '전광판 걸기' }), h('p', { text: 'S급 메인 타워부터 거리 전광판까지. 내 문구가 광장 모두의 화면에 송출돼요.' })),
-          h('button', { type: 'button', onclick: () => openPlot(PLOT_SLOTS.find(s => !plotById(s.id)?.owner_id)?.id || 1) }, h('img', { class: 'big', src: LEVELS[4].src, alt: '', draggable: 'false' }), h('h4', { text: '내 건물 짓기 · 증축' }), h('p', { text: '텐트에서 타워까지 5단계. 외벽 광고 수익의 50%는 건물주 몫!' }))),
+          h('button', { type: 'button', onclick: () => openBillboard('') }, h('img', { class: 'big', src: 'icons/board.jpg?v=4', alt: '', draggable: 'false' }), h('h4', { text: '전광판 걸기' }), h('p', { text: '거리 전광판에 내 문구를 걸어요.' })),
+          h('button', { type: 'button', onclick: () => openPlot(PLOT_SLOTS.find(s => !plotById(s.id)?.owner_id)?.id || 1) }, h('img', { class: 'big', src: LEVELS[4].src, alt: '', draggable: 'false' }), h('h4', { text: '내 건물 짓기 · 증축' }), h('p', { text: '텐트에서 타워까지 5단계.' }))),
         where,
         h('div', { class: 'field' }, h('label', null, 'K-타운 토지 현황', h('span', { text: '1~18번 · 번호를 눌러 상세 보기' })), plots),
       );
@@ -3273,9 +3359,12 @@ export function createUI(root, hooks) {
   }
 
   function openWalletInfo() {
-    openSheet(['coin', '응원 포인트'], '내 지갑', (host) => {
+    openSheet(['coin', '응원 포인트'], null, (host) => {
       const stat = (label, el) => h('div', { class: 'stat' }, h('small', { text: label }), el);
-      const doneEl = h('b', { class: 'gold tnum' }), waitEl = h('b', { class: 'tnum' }), sumEl = h('b', { class: 'tnum' }), ticketEl = h('b', { class: 'tnum' });
+      // One figure: the total (the number in the HUD). What is still being settled shows as a second cell only while there
+      // is some, and VIP 티켓 only while there is one (nothing spends a ticket yet).
+      const waitEl = h('b', { class: 'tnum' }), sumEl = h('b', { class: 'gold tnum' }), ticketEl = h('b', { class: 'tnum' });
+      const waitCell = stat('정산 중', waitEl), ticketCell = stat('VIP 티켓', ticketEl);
       // The compact phone HUD has no wallet chips: they are these rows at the top of the sheet, with the same labels and
       // the same taps (index.html shows .wal-quick only there). Each opens its sheet over this one.
       const quickRow = (chip, go) => h('button', { class: 'btn ghost', type: 'button', onclick: go }, h('span', { text: chip.textContent }), icon('chevronRight'));
@@ -3290,10 +3379,12 @@ export function createUI(root, hooks) {
       let quickNow = '';
       const fill = () => {
         if (quickSig() !== quickNow) { quickNow = quickSig(); fillQuick(); }
-        doneEl.textContent = `${money(wallet.confirmed)} 포인트`;
         waitEl.textContent = `+${money(wallet.pending)} 포인트`;
+        waitCell.hidden = !(wallet.pending > 0);
         sumEl.textContent = `${money(wallet.confirmed + wallet.pending)} 포인트`;
-        ticketEl.textContent = `${Math.max(0, Math.floor(Number(wallet.tickets) || 0))}장`;
+        const tickets = Math.max(0, Math.floor(Number(wallet.tickets) || 0));
+        ticketEl.textContent = `${tickets}장`;
+        ticketCell.hidden = !tickets;
       };
       fill();
       const timer = setInterval(fill, 1000);
@@ -3312,11 +3403,13 @@ export function createUI(root, hooks) {
       });
       host.append(
         quick,
-        h('div', { class: 'holder', style: { marginTop: 0 } }, stat('정산 완료', doneEl), stat('정산 대기', waitEl), stat('합계', sumEl), stat('VIP 티켓', ticketEl)),
-        h('div', { class: 'callout' }, h('b', { text: '응원 포인트는 전광판과 꾸미기에 써요' }), ' — 출석, 전광판 응원, 관람, 공유, 친구 초대, 계정 연결, 오늘의 소원으로 모아요. 붕어빵·댄스·택시 같은 놀이에는 포인트가 없어요.'),
-        h('div', { class: 'callout' }, h('b', { text: '돈으로 팔지 않고, 보낼 수도 없어요' }), ' — 응원 포인트는 사고팔 수 없고, 다른 사람에게 넘기거나 모금할 수 없어요. 현금이나 경품으로 바꿀 수도 없어요.'),
-        h('div', { class: 'callout' }, h('b', { text: '정산은 자동이에요' }), ' — 응원·관람·출석 포인트는 먼저 “정산 대기”에 쌓이고, 광장 서버가 약 30초마다 지갑에 넣어요.'),
-        h('p', { class: 'note', text: '전광판을 걸거나 건물을 지으면 그 순간 대기 포인트부터 정산되므로, 대기 중인 포인트도 바로 쓸 수 있어요. 화면 왼쪽 위 큰 숫자는 대기 포인트까지 합친 값이에요.' }),
+        h('div', { class: 'holder', style: { marginTop: 0 } }, stat('합계', sumEl), waitCell, ticketCell),
+        // Two short lines stay in view (what the points are for, and that they are not sold or sent: the non-game rule is
+        // said in place); the longer wording is folded under 자세히, as the terms say the same.
+        h('p', { class: 'note', text: '전광판과 꾸미기에 써요. 출석·응원·관람으로 모아요.' }),
+        h('p', { class: 'note', text: '돈으로 팔지 않고, 보낼 수도 없어요.' }),
+        h('details', { class: 'more' }, h('summary', { text: '자세히' }),
+          h('p', { class: 'note', text: '응원 포인트는 사고팔 수 없고, 다른 사람에게 넘기거나 모금할 수 없어요. 현금이나 경품으로 바꿀 수도 없어요. 붕어빵·댄스·택시 같은 놀이에는 포인트가 없어요.' })),
         refresh,
       );
       return () => clearInterval(timer);
@@ -3325,7 +3418,7 @@ export function createUI(root, hooks) {
 
   function openFeed() {
     const items = [...feedRows.querySelectorAll('.f')];
-    openSheet(['board', '광장 소식'], null, (host) => {
+    openSheet(['megaphone', '광장 소식'], null, (host) => {
       host.append(items.length
         ? h('div', { class: 'ranks board' }, ...items.map((n) => {
           const slot = n.dataset.slot || '';
@@ -3381,7 +3474,7 @@ export function createUI(root, hooks) {
     return [...map.values()].sort((a, b) => b.heat - a.heat || b.n - a.n).slice(0, 5);
   }
   function openRanks(start = 'today') {
-    openSheet(['trophy', '응원 순위'], 'NOW', (host) => {
+    openSheet(['trophy', '응원 순위'], null, (host) => {
       const list = h('div', { class: 'ranks' });
       const note = h('p', { class: 'note' });
       const meEl = h('p', { class: 'note', hidden: true });
@@ -3421,12 +3514,13 @@ export function createUI(root, hooks) {
           linkBtn(b))) : [h('p', { class: 'note', text: '아직 걸린 소원이 없어요.' })]));
         note.textContent = '응원 수와 택시가 선 횟수를 더합니다. 1위 전광판 위로 황금 빛기둥이 섭니다.';
       };
-      const tabBtn = (id, text) => h('button', { type: 'button', class: id === tab ? 'on' : '', text, onclick: (e) => { tab = id; for (const c of e.currentTarget.parentElement.children) c.classList.toggle('on', c === e.currentTarget); paint(); } });
+      const tabBtn = (id, text) => h('button', { type: 'button', class: id === tab ? 'on' : '', 'aria-pressed': String(id === tab), text, onclick: (e) => { tab = id; for (const c of e.currentTarget.parentElement.children) { c.classList.toggle('on', c === e.currentTarget); c.setAttribute('aria-pressed', String(c === e.currentTarget)); } paint(); } });
       rankRefresh = () => { if (tab === 'hot' || tab === 'team') paint(); }; // the world's 1 s refresh repaints only the board lists
       paint();
       // 광장 소식: the compact phone HUD has no live board, so its feed list opens from here (index.html .phone-only).
-      const feedBtn = h('button', { class: 'btn ghost phone-only', type: 'button', onclick: () => openFeed() }, ...withIcon('board', '광장 소식'));
-      host.append(h('div', { class: 'seg' }, tabBtn('today', '오늘 응원'), tabBtn('rate', '참여율'), tabBtn('week', '이번 주 목표'), tabBtn('hot', '인기 전광판'), tabBtn('team', '해시태그')), meEl, list, note,
+      const feedBtn = h('button', { class: 'btn ghost phone-only', type: 'button', onclick: () => openFeed() }, ...withIcon('megaphone', '광장 소식'));
+      // Short tab names: all five fit a phone's width (인기 전광판 was cut and 해시태그 out of sight).
+      host.append(h('div', { class: 'seg', role: 'group', 'aria-label': '순위 종류' }, tabBtn('today', '오늘'), tabBtn('rate', '참여율'), tabBtn('week', '이번 주'), tabBtn('hot', '전광판'), tabBtn('team', '태그')), meEl, list, note,
         h('button', { class: 'btn gold', type: 'button', onclick: () => openTribeSheet() }, ...withIcon('users', '응원 팀 보기')), feedBtn);
       return () => { rankRefresh = null; };
     }, false, 'steady');
@@ -3434,12 +3528,15 @@ export function createUI(root, hooks) {
   function openCredits() {
     openSheet(['info', '정보 · 출처'], null, (host) => {
       const list = h('div', { class: 'credits' });
+      // Each source is a row of link buttons under its line (the bare text links were 14px tall and ran into each other).
+      const links = (...pairs) => h('div', { class: 'linkrow' }, ...pairs.filter(([, href]) => /^https?:\/\//.test(String(href || ''))).map(([text, href]) => h('a', { href, target: '_blank', rel: 'noopener', text })));
       host.append(
-        h('div', { class: 'callout', style: { marginTop: 0 } }, h('b', { text: '조작법' }), ' — WASD/방향키: 카메라 기준 이동 · 마우스 드래그: 시점 회전 · 휠: 줌 · Shift: 걷기 · Space: 점프 · E: 상호작용 · 1~4: 감정 표현'),
-        h('div', { class: 'field' }, h('label', null, '뉴욕 지도 데이터'),
+        // The keyboard and mouse controls: a touch screen has none of them.
+        coarse ? null : h('div', { class: 'callout', style: { marginTop: 0 } }, h('b', { text: '조작법' }), ' — WASD/방향키: 카메라 기준 이동 · 마우스 드래그: 시점 회전 · 휠: 줌 · Shift: 걷기 · Space: 점프 · E: 상호작용 · 1~4: 감정 표현'),
+        h('div', { class: 'field', style: coarse ? { marginTop: 0 } : null }, h('label', null, '뉴욕 지도 데이터'),
           h('div', { class: 'credits' },
-            h('div', { class: 'c' }, h('b', { text: '맨해튼 건물 · 도로 · 공원 · 해안선' }), ' — © ',
-              h('a', { href: 'https://www.openstreetmap.org/copyright', target: '_blank', rel: 'noopener', text: 'OpenStreetMap contributors' }), ' · ODbL'),
+            h('div', { class: 'c' }, h('b', { text: '맨해튼 건물 · 도로 · 공원 · 해안선' }), ' — © OpenStreetMap contributors · ODbL',
+              links(['OpenStreetMap 저작권', 'https://www.openstreetmap.org/copyright'])),
             h('div', { class: 'c', text: '이 광장은 뉴욕 타임스퀘어에서 영감을 받아 만든 가상 공간입니다. 실제 타임스퀘어와 그곳의 건물·단체·광고와는 관계가 없습니다.' }))),
         h('div', { class: 'field' }, h('label', null, '실사 사진 (Wikimedia Commons)'), list),
         h('div', { class: 'field' }, h('label', null, '3D 에셋'),
@@ -3451,9 +3548,8 @@ export function createUI(root, hooks) {
       fetch('/assets/times-square/credits.json').then(r => r.json()).then((rows) => {
         for (const c of rows) {
           list.append(h('div', { class: 'c' },
-            h('b', { text: c.title.replace(/\.(jpe?g|png)$/i, '') }), ` — ${c.author || 'Unknown'} · `,
-            h('a', { href: c.license_url || c.source, target: '_blank', rel: 'noopener', text: c.license || 'license' }), ' · ',
-            h('a', { href: c.source, target: '_blank', rel: 'noopener', text: '원본' })));
+            h('b', { text: c.title.replace(/\.(jpe?g|png)$/i, '') }), ` — ${c.author || 'Unknown'}`,
+            links([`라이선스 · ${c.license || 'license'}`, c.license_url || c.source], ['원본', c.source])));
         }
       }).catch(() => list.append(h('div', { class: 'c', text: '출처 목록을 불러오지 못했습니다.' })));
     }, true);
@@ -3488,7 +3584,7 @@ export function createUI(root, hooks) {
     const wrap = h('div', { class: 'colors', role: 'group', 'aria-label': '옷 색' });
     for (const c of AVATAR_COLORS) {
       const name = AVATAR_COLOR_NAMES[c] || c;
-      const b = h('button', { type: 'button', class: `swatch${c === current ? ' on' : ''}`, style: { background: c, color: c, width: '38px', height: '38px' }, 'aria-label': name, title: name, 'aria-pressed': String(c === current), onclick: () => { for (const s of wrap.children) { s.classList.toggle('on', s === b); s.setAttribute('aria-pressed', String(s === b)); } onPick(c); } });
+      const b = h('button', { type: 'button', class: `swatch${c === current ? ' on' : ''}`, style: { background: c, color: c }, 'aria-label': name, title: name, 'aria-pressed': String(c === current), onclick: () => { for (const s of wrap.children) { s.classList.toggle('on', s === b); s.setAttribute('aria-pressed', String(s === b)); } onPick(c); } });
       wrap.append(b);
     }
     return wrap;
@@ -3536,8 +3632,7 @@ export function createUI(root, hooks) {
         fields.push(h('div', { class: 'field' }, h('label', null, '꾸미기', h('span', { text: worn.length ? worn.join(' · ') : mine ? `보관함 ${mine}개` : '이름표 · 발밑 링 · 택시 · 테두리' })),
           h('button', { class: 'btn ghost shop-open', type: 'button', onclick: () => openShop() }, icon('gift'), h('span', { text: '꾸미기 상점' }), icon('chevronRight'))));
       }
-      host.append(...fields, save);
-      setTimeout(() => { if (!coarse) input.focus(); }, 50);
+      host.append(...fields, save); // focus stays on the sheet itself, like every other sheet: the name box is not grabbed on opening
     }, true);
   }
 
@@ -3614,7 +3709,7 @@ export function createUI(root, hooks) {
             h('button', { type: 'button', class: `btn ${t.act === 'buy' ? 'gold' : 'ghost'}${armed === t.id ? ' arm' : ''}`, disabled: !can, text: label, onclick: () => act(t) }));
         }));
         if (!tiles.length) grid.append(h('p', { class: 'note', text: '이 종류는 아직 팔지 않아요.' }));
-        status.textContent = !shop.ready ? '상점을 불러오는 중…' : shop.open ? '응원 포인트로만 사요(돈으로는 팔지 않아요). 종류마다 하나씩 장착하고, 다른 사람에게도 보여요. 주간 리그 지출에는 들어가지 않아요.' : '꾸미기 상점은 곧 열려요. 지금은 출석 7일 보상으로 받은 꾸미기만 장착할 수 있어요.';
+        status.textContent = !shop.ready ? '상점을 불러오는 중…' : shop.open ? '종류마다 하나씩 장착해요.' : '꾸미기 상점은 곧 열려요. 지금은 출석 7일 보상으로 받은 꾸미기만 장착할 수 있어요.';
       };
       const guest = accountView.ready && accountView.guest && !accountView.linked;
       host.append(
@@ -3649,11 +3744,18 @@ export function createUI(root, hooks) {
       try { box.scrollIntoView({ block: 'nearest' }); box.focus({ preventScroll: true }); } catch { /* older browsers: it is still shown */ }
     };
     const link = (kind, text) => h('button', { type: 'button', class: 'linkbtn', text, onclick: (e) => { e.preventDefault(); e.stopPropagation(); show(kind); } });
-    return { box, link };
+    return { box, link, show };
   }
+  // The settings sheet's four links as a 2 x 2 block of 44px buttons (index.html .linkrow): the map credit, the licences,
+  // the terms and the privacy policy. They were two lines of bracketed text links whose touch areas ran into each other.
   function policyLinks() {
     const legal = legalFold();
-    return h('div', null, h('p', { class: 'note legal' }, legal.link('terms', '[이용약관]'), ' | ', legal.link('privacy', '[개인정보처리방침]')), legal.box);
+    const row = (text, props) => h(props.href ? 'a' : 'button', { ...(props.href ? { target: '_blank', rel: 'noopener' } : { type: 'button' }), ...props, text });
+    return h('div', null, h('div', { class: 'linkrow' },
+      row('지도 © OpenStreetMap', { href: 'https://www.openstreetmap.org/copyright' }),
+      row('사진·캐릭터 라이선스', { onclick: () => openCredits() }),
+      row('이용약관', { onclick: () => legal.show('terms') }),
+      row('개인정보처리방침', { onclick: () => legal.show('privacy') })), legal.box);
   }
   function openLinkPrompt() {
     if (quietBlock) return;
@@ -3728,6 +3830,8 @@ export function createUI(root, hooks) {
   }
   function openClaimStep(n, model) {
     if (!model) return;
+    // The 'wiz' sheet: on a short, wide screen (a phone on its side) the preview is a left column and the fields the right
+    // one (index.html .sheet.wiz), so the lines and 다음 / 걸기 are on the first screen.
     openSheet('전광판 걸기', n + '/3', (host) => {
       if (n === 1) {
         // Only what can be taken now: open starter slots, and the slot asked for when it is not a taken starter.
@@ -3803,7 +3907,8 @@ export function createUI(root, hooks) {
             say(linesErr, '');
             paint(); inputs[0].focus(); inputs[0].select();
           } }))),
-          h('div', { class: 'field' }, h('label', null, '링크', h('span', { text: '인스타·스레드·유튜브·스마트스토어 https 주소만 저장됩니다. 전광판을 누르면 상세보기에서 열 수 있습니다' })), linkIn, linkErr));
+          // The field's name on its own line and the explanation under the box (in one row the name broke as 링 / 크).
+          h('div', { class: 'field' }, h('label', null, '링크'), linkIn, h('p', { class: 'note', text: '인스타·스레드·유튜브·스마트스토어 https 주소만 저장돼요.' }), linkErr));
         host.append(more);
         paint();
         fontsReady(examples.join(' ') + ' ' + hooks.nick()).then(paint);
@@ -3880,7 +3985,7 @@ export function createUI(root, hooks) {
           h('p', { class: 'note', text: free ? '첫 칸은 포인트가 들지 않아요. 계정마다 한 번이에요.' : `${josa(slotName(model.slot), '은', '는')} ${money(floor)}포인트로 겁니다.` }),
           h('div', { class: 'wiz-nav', style: { position: 'sticky', bottom: '0' } }, prev, go, err));
       }
-    }, true);
+    }, true, 'wiz');
   }
   function pumpLink(now) {
     if (quietBlock) return;
@@ -3898,7 +4003,7 @@ export function createUI(root, hooks) {
   function linkCallout() {
     if (!accountView.ready || !accountView.guest || accountView.linked) return null;
     return h('div', { class: 'callout warn' },
-      h('b', { text: '계정을 연결하면 전광판과 수익이 남아요. ' }),
+      h('b', { text: '계정을 연결하면 전광판과 응원 포인트가 남아요. ' }),
       '창을 닫기 전에 연결하세요. 연결하면 +300 포인트. ',
       h('button', { class: 'btn ghost', type: 'button', text: '계정 연결', onclick: () => openLogin() }),
     );
@@ -3930,7 +4035,11 @@ export function createUI(root, hooks) {
       const id = h('input', { class: 'input', name: 'username', maxLength: 80, placeholder: '이메일 또는 아이디', autocomplete: 'username', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'next', 'aria-label': '이메일 또는 아이디' });
       const pw = h('input', { class: 'input', name: 'password', type: 'password', maxLength: 72, placeholder: '비밀번호 (6자 이상)', autocomplete: 'current-password', autocapitalize: 'off', enterkeyhint: 'go', 'aria-label': '비밀번호' });
       const agree = h('input', { type: 'checkbox', 'aria-label': '만 14세 이상이며 약관과 개인정보처리방침에 동의' });
-      const agreeRow = h('label', { class: 'agree' }, agree, h('span', null, '만 14세 이상이며 ', legal.link('terms', '[이용약관]'), '과 ', legal.link('privacy', '[개인정보처리방침]'), '에 동의합니다.'));
+      // The consent row is the box and its words; the two documents open from their own line under it. With the links
+      // inside the label, a tap meant for the box opened the terms instead.
+      const agreeRow = h('div', null,
+        h('label', { class: 'agree' }, agree, h('span', { text: '만 14세 이상이며 이용약관과 개인정보처리방침에 동의합니다.' })),
+        h('p', { class: 'agree-links' }, legal.link('terms', '이용약관 보기'), legal.link('privacy', '개인정보처리방침 보기')));
       const formErr = h('p', { class: 'note login-err', role: 'alert', hidden: true });
       // An id has no mailbox behind it (…@id.wishboard.dev), and the game has no reset by e-mail: said before the account is made.
       const idWarn = h('p', { class: 'note', hidden: true, text: '아이디로 만든 계정은 비밀번호를 잊으면 되찾을 수 없어요. 구글로 연결하면 그럴 걱정이 없어요.' });
@@ -4779,13 +4888,15 @@ export function createUI(root, hooks) {
   function openVip() {
     trackEvent('vip_modal_open');
     promptLink('vip');
-    openSheet(['crown', '공유와 스폰서 코드'], 'SPONSOR', (host) => {
+    // The sheet is called what its tool button is called (공유·코드). It was 공유와 스폰서 코드 · SPONSOR behind a crown named VIP 메뉴.
+    openSheet(['share', '공유·코드'], null, (host) => {
       const code = h('input', { class: 'input', maxLength: 32, placeholder: '8자리 스폰서 코드', 'aria-label': '스폰서 코드', autocomplete: 'off', autocapitalize: 'characters', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'go' });
       // The share bonus is for accounts (POST /rt/share-bonus answers a guest 403 code 'account'). A guest sees that, a button to the account
       // sheet, and a plain share button that asks for no bonus.
       const shareGuest = accountView.ready && accountView.guest && !accountView.linked;
       const share = h('button', { class: shareGuest ? 'btn ghost' : 'btn gold', type: 'button', text: shareGuest ? '링크만 공유하기' : '링크 복사하고 +300' });
-      const shareLink = shareGuest ? h('button', { class: 'btn gold', type: 'button', text: '계정 연결하고 받기', onclick: () => openLogin() }) : null;
+      // A guest is asked to link once, by the callout at the top of this sheet; this card keeps only the plain share.
+      const shareLink = null;
       const shareBox = h('div', { class: 'manual-copy', hidden: true });
       share.addEventListener('click', async () => {
         if (share.disabled) return;
@@ -4825,25 +4936,23 @@ export function createUI(root, hooks) {
       });
       // The address is asked for when the sheet opens and shown as a real link: a window.open after an await is a pop-up
       // that Safari blocks. Until it answers there is a status line; no address (or a failed request) says so in place.
-      const ask = h('a', { class: 'btn ghost', target: '_blank', rel: 'noopener', hidden: true, text: '스폰서 안내 열기' });
-      const askNote = h('p', { class: 'note', role: 'status', text: '안내 주소를 불러오는 중…' });
+      // The card shows only once there is an address to open: while there is none (or the request fails) it is not drawn.
+      const ask = h('a', { class: 'btn ghost', target: '_blank', rel: 'noopener', text: '스폰서 안내 열기' });
+      const askCard = h('div', { class: 'vipcard', hidden: true }, h('h4', null, ...withIcon('briefcase', '스폰서 안내')), h('p', { text: '현금 결제는 없어요. 안내 페이지만 엽니다.' }), ask);
       Promise.resolve(hooks.sponsorUrl?.()).then((url) => {
         const ok = /^https:\/\//i.test(String(url || ''));
         if (ok) ask.href = url;
-        ask.hidden = !ok;
-        askNote.textContent = ok ? '' : '스폰서 안내 주소가 아직 없어요. 운영자에게 문의해 주세요';
-        askNote.hidden = ok;
-      }).catch(() => { askNote.textContent = '안내 주소를 불러오지 못했어요. 창을 닫았다 다시 열어 주세요'; });
+        askCard.hidden = !ok;
+      }).catch(() => { askCard.hidden = true; });
       const vipLink = linkCallout();
       host.append(
         h('div', { class: 'hub' },
           vipLink,
-          h('div', { class: 'vipcard' }, h('h4', null, ...withIcon('gift', '친구에게 링크 공유하고 +300')),
-            h('p', { text: shareGuest ? `${SHARE_ACCOUNT}. 하루 한 번, 오늘 내 소원이나 내 전광판 링크를 보내면 바로 들어와요.` : '계정 전용, 하루 한 번. 오늘 내 소원이나 내 전광판 링크를 보내면 포인트가 바로 들어옵니다.' }),
+          h('div', { class: 'vipcard' }, h('h4', null, ...withIcon('gift', shareGuest ? '친구에게 링크 공유하기' : '친구에게 링크 공유하고 +300')),
+            h('p', { text: shareGuest ? '오늘 내 소원이나 내 전광판 링크를 보내요. 공유 보너스 +300은 계정 전용이에요.' : '계정 전용, 하루 한 번. 오늘 내 소원이나 내 전광판 링크를 보내면 포인트가 바로 들어와요.' }),
             shareLink, share, shareBox),
           h('div', { class: 'vipcard' }, h('h4', null, ...withIcon('key', 'VIP 스폰서 코드')), h('p', { text: '코드가 맞으면 응원 포인트 10,000이 들어와요. 명당(메인 타워와 큰 화면)은 응원 팀 사람 수로만 정해서 포인트로는 걸 수 없어요.' }), code, redeem),
-          h('div', { class: 'vipcard' }, h('h4', null, ...withIcon('briefcase', '스폰서 안내')), h('p', { text: '현금 결제는 없어요. 안내 페이지만 엽니다.' }), ask, askNote),
-          h('p', { class: 'note', text: '응원 포인트는 돈으로 팔지 않아요. 출석·응원·초대 코드로만 모아요.' }),
+          askCard,
         ),
       );
     });
@@ -5048,6 +5157,14 @@ export function createUI(root, hooks) {
     }
     g.textAlign = 'center';
     g.textBaseline = 'middle';
+    // A pin's name is drawn only where it does not run into a name already drawn (zoomed out, 포춘 분수 lay on TKTS 빨간
+    // 계단 and the two 황금 링 on each other). The pin itself always shows; zooming in brings the name back.
+    const named = [];
+    const clear = (x0, y0, x1, y1) => {
+      if (named.some((r) => x0 < r[2] && x1 > r[0] && y0 < r[3] && y1 > r[1])) return false;
+      named.push([x0, y0, x1, y1]);
+      return true;
+    };
     for (const l of MAP_PINS) {
       const sx = X(l.x), sy = Z(l.z);
       if (sx < -40 || sy < -40 || sx > W + 40 || sy > H + 40) continue;
@@ -5059,6 +5176,11 @@ export function createUI(root, hooks) {
       g.font = `800 ${Math.round(11 * ui)}px "Pretendard Variable", sans-serif`;
       g.lineWidth = 3 * ui;
       g.strokeStyle = 'rgba(10,14,26,0.9)';
+      {
+        const w = g.measureText(l.ko).width + 4 * ui, hh = 8 * ui;
+        const cx = l.side ? sx + l.side * 11 * ui + (l.side > 0 ? w / 2 : -w / 2) : sx, cy = l.side ? sy : sy + 15 * ui;
+        if (!clear(cx - w / 2, cy - hh, cx + w / 2, cy + hh)) continue;
+      }
       if (l.side) {
         g.textAlign = l.side > 0 ? 'left' : 'right';
         g.strokeText(l.ko, sx + l.side * 11 * ui, sy);
@@ -5237,7 +5359,7 @@ export function createUI(root, hooks) {
     view.cz = z0 > z1 ? (LOOP.z0 + LOOP.z1) / 2 : Math.min(z1, Math.max(z0, view.cz));
   }
   function openMap(focus) {
-    openSheet(['map', '뉴욕 지도'], 'MANHATTAN', (host) => {
+    openSheet(['map', '뉴욕 지도'], null, (host) => {
       const wrap = h('div', { class: 'bigmap' });
       const cv = h('canvas');
       wrap.append(cv);
@@ -5321,15 +5443,16 @@ export function createUI(root, hooks) {
         if (!hooks.onLand?.(p.x, p.z)) { note('강 위에는 표시할 수 없어요', 'err'); return; }
         hooks.setWaypoint({ x: p.x, z: p.z });
         sfx.click();
-        note('목적지를 표시했어요 · ⚡ 버튼으로 순간이동도 돼요', 'ok');
+        note('목적지를 표시했어요 · 순간이동 버튼으로 바로 갈 수 있어요', 'ok');
       };
       cv.addEventListener('pointerup', up);
       cv.addEventListener('pointercancel', (e) => { pointers.delete(e.pointerId); pinch = null; drag = null; });
       const zoomBtns = h('div', { class: 'mapzoom' },
         h('button', { type: 'button', 'aria-label': '확대', onclick: () => { view.scale = Math.min(MAX, view.scale * 1.4); } }, icon('plus')),
         h('button', { type: 'button', 'aria-label': '축소', onclick: () => { view.scale = Math.max(MIN, view.scale / 1.4); } }, icon('minus')),
-        h('button', { type: 'button', title: '내 위치', onclick: () => { const d = hooks.minimap?.(); if (d?.me) { view.cx = d.me.x; view.cz = d.me.z; } } }, icon('locate')),
-        h('button', { type: 'button', title: '목적지로 순간이동', onclick: () => {
+        h('button', { type: 'button', 'aria-label': '내 위치', title: '내 위치', onclick: () => { const d = hooks.minimap?.(); if (d?.me) { view.cx = d.me.x; view.cz = d.me.z; } } }, icon('locate')),
+        // 순간이동 is written out: the bolt alone is also the taxi's boost.
+        h('button', { type: 'button', class: 'wide', 'aria-label': '목적지로 순간이동', title: '목적지로 순간이동', onclick: () => {
           const d = hooks.minimap?.();
           if (!d?.waypoint) { note('먼저 지도를 눌러 목적지를 정하세요', 'err'); return; }
           if (!insideLoop(d.waypoint.x, d.waypoint.z, 0)) { note('울타리 밖으로는 갈 수 없어요', 'err'); return; }
@@ -5337,8 +5460,8 @@ export function createUI(root, hooks) {
           closeSheet();
           sfx.fanfare();
           note('순간이동 완료!', 'ok');
-        } }, icon('bolt')),
-        h('button', { type: 'button', title: '목적지 지우기', onclick: () => hooks.setWaypoint(null) }, icon('pinOff')));
+        } }, icon('bolt'), h('span', { text: '순간이동' })),
+        h('button', { type: 'button', class: 'wide', 'aria-label': '목적지 지우기', title: '목적지 지우기', onclick: () => hooks.setWaypoint(null) }, icon('pinOff'), h('span', { text: '지우기' })));
       wrap.append(zoomBtns);
       const chips = h('div', { class: 'quick' }, ...[starQuick(), ...QUICK].filter(Boolean).map(q => h('button', { type: 'button', onclick: () => {
         if (!insideLoop(q.x, q.z, 0)) return;
@@ -5346,8 +5469,13 @@ export function createUI(root, hooks) {
         hooks.setWaypoint({ x: q.x, z: q.z });
         sfx.click();
       } }, ...withIcon(q.ico || '', q.ko))));
+      // The how-to line is worth reading three times, not for ever (overlay.js hintLeft; counted in kts_maphint).
+      const seenHint = Number(recall('kts_maphint', 0)) || 0;
+      const howTo = hintLeft(seenHint) > 0 ? h('p', { class: 'note', style: { marginTop: 0 } }, coarse ? '탭: 목적지 · 드래그: 이동 · 두 손가락: 확대' : '클릭: 목적지 · 드래그: 이동 · 휠: 확대') : null;
+      if (howTo) store('kts_maphint', seenHint + 1);
+      // The legend shows the marks as the map itself draws them (the emoji pins of MAP_PINS and the taxi stands).
       host.append(
-        h('p', { class: 'note' }, coarse ? '탭: 목적지 · 드래그: 이동 · 두 손가락: 확대 · ' : '클릭: 목적지 · 드래그: 이동 · 휠: 확대 · ', icon('bolt'), ' 순간이동'),
+        howTo,
         chips, wrap, h('div', { class: 'legend' },
         h('span', null, '🔴 TKTS'), h('span', null, '🐟 붕어빵'), h('span', null, '🥠 포춘 분수'), h('span', null, '💍 황금 링'), h('span', null, '💃 K-POP 스테이지'), h('span', null, '🏗️ K-타운 건물'), h('span', null, '🚕 택시 승강장'),
         h('span', null, h('i', { style: { background: '#ffc21a' } }), '택시'), h('span', null, h('i', { style: { background: '#3fe6ff' } }), '목적지'),
@@ -5369,7 +5497,8 @@ export function createUI(root, hooks) {
       const off = setStatsOff(box.checked);
       said.textContent = off ? '이제 이 브라우저에서는 방문 통계를 보내지 않아요.' : '다음 방문부터 방문 통계를 다시 보내요.';
     });
-    return h('div', { class: 'field' }, h('label', { class: 'agree' }, box, h('span', null, '방문 통계 보내지 않기')), said);
+    // The label is wrapped (.field > label is the field's title row, which pushed the words to the far edge from the box).
+    return h('div', { class: 'field' }, h('div', null, h('label', { class: 'agree' }, box, h('span', null, '방문 통계 보내지 않기'))), said);
   }
   // 비밀번호 바꾸기 for a signed-in password account: the new one twice, then hooks.changePassword (net.js: auth.updateUser on this session).
   function passwordFold() {
@@ -5399,25 +5528,49 @@ export function createUI(root, hooks) {
   function openSettings() {
     openSheet(['gear', '설정'], null, (host) => {
       const s = hooks.settings();
-      const row = (label, hint, min, max, value, fmt, onInput) => {
+      // A slider is named by its row's title (aria-label) and says its value as a percentage.
+      const row = (label, min, max, value, fmt, onInput) => {
         const out = h('b', { class: 'tnum', text: fmt(value) });
-        const input = h('input', { type: 'range', min: String(min), max: String(max), value: String(value), class: 'range' });
-        input.addEventListener('input', () => { out.textContent = fmt(Number(input.value)); onInput(Number(input.value)); });
-        return h('div', { class: 'field' }, h('label', null, label, h('span', { text: hint })), h('div', { class: 'rangerow' }, input, out));
+        const input = h('input', { type: 'range', min: String(min), max: String(max), value: String(value), class: 'range', 'aria-label': label, 'aria-valuetext': fmt(value) });
+        input.addEventListener('input', () => { out.textContent = fmt(Number(input.value)); input.setAttribute('aria-valuetext', out.textContent); onInput(Number(input.value)); });
+        return h('div', { class: 'field' }, h('label', null, label), h('div', { class: 'rangerow' }, input, out));
       };
-      const qSel = h('div', { class: 'seg' });
+      // A switch row (index.html .rowlist .switch): its name, 켜짐 / 꺼짐 in words, and aria-pressed.
+      // draw(on): the row's icon for that state.
+      const switchRow = (draw, label, isOn, toggle) => {
+        const state = h('em'), art = h('i', { 'aria-hidden': 'true' });
+        const b = h('button', { class: 'switch', type: 'button', onclick: () => { toggle(); paint(); } });
+        const paint = () => {
+          const on = !!isOn();
+          b.setAttribute('aria-pressed', String(on));
+          state.textContent = on ? '켜짐' : '꺼짐';
+          b.replaceChildren(draw(on), h('span', { text: label }), state, art);
+        };
+        paint();
+        return { el: b, paint };
+      };
+      // 소리 first: music, effects and vibration follow it (audio.js). 전체 화면 is here on a touch screen, where the tool
+      // row has no button for it (and only where the browser can do it: an iPhone's Safari cannot).
+      const sound = switchRow((on) => icon(on ? 'soundOn' : 'soundOff'), '소리', () => soundOn, () => setSoundOn(!soundOn));
+      const full = coarse && fsCan() ? switchRow((on) => icon(on ? 'fullscreenExit' : 'fullscreen'), '전체 화면', () => !!fsOn(), () => toggleFullscreen()) : null;
+      if (full) fsPaint = full.paint;
+      const qSel = h('div', { class: 'seg', role: 'group', 'aria-label': '그래픽 품질' });
       for (const [q, label] of [['auto', '자동'], ['high', '높음'], ['medium', '중간'], ['low', '낮음']]) {
-        const b = h('button', { type: 'button', text: label, class: s.quality === q ? 'on' : '', onclick: () => { for (const c of qSel.children) c.classList.toggle('on', c === b); hooks.setQuality(q); qNote.hidden = false; } });
+        const b = h('button', { type: 'button', text: label, class: s.quality === q ? 'on' : '', 'aria-pressed': String(s.quality === q), onclick: () => { for (const c of qSel.children) { c.classList.toggle('on', c === b); c.setAttribute('aria-pressed', String(c === b)); } hooks.setQuality(q); qNote.hidden = false; } });
         qSel.append(b);
       }
       const qNote = h('div', { class: 'note', hidden: true }, '품질 변경은 새로고침 후 적용돼요 · ', h('button', { type: 'button', class: 'linkbtn', text: '지금 새로고침', onclick: () => location.reload() }));
       const accountId = String(hooks.actorId() || '');
-      const accountBox = h('input', { class: 'input', readOnly: true, value: accountId || '입장하면 발급됩니다', 'aria-label': '계정 번호' });
-      const copyBtn = h('button', { class: 'btn ghost', type: 'button', text: '복사', style: { height: '44px', padding: '0 14px' }, onclick: async () => {
+      // The account number is a plain 14px line, shortened in the middle when long (the whole number is its tooltip and what
+      // 복사 copies); it used to be large amber text cut off at the right. If the clipboard refuses, the whole number
+      // appears under it in a box to copy by hand.
+      const idShort = accountId.length > 26 ? `${accountId.slice(0, 16)}…${accountId.slice(-6)}` : accountId;
+      const accountBox = h('span', { class: 'idline', title: accountId || null, 'aria-label': accountId ? `계정 번호 ${accountId}` : null, text: accountId ? idShort : '입장하면 발급됩니다' });
+      const idManual = h('div', { class: 'manual-copy', hidden: true });
+      const copyBtn = h('button', { class: 'btn ghost', type: 'button', text: '복사', 'aria-label': '계정 번호 복사', style: { height: '44px', padding: '0 14px' }, onclick: async () => {
         if (!accountId) return;
-        accountBox.select();
-        try { await navigator.clipboard.writeText(accountId); note('계정 번호를 복사했어요', 'ok'); }
-        catch { note('길게 눌러 계정 번호를 선택하세요', 'err'); }
+        if (await writeClip(accountId)) note('계정 번호를 복사했어요', 'ok');
+        else showManual(accountId, idManual);
       } });
       const who = hooks.linked?.() ? '인증 계정' : (hooks.isGuest?.() ? '임시 게스트' : '입장 전');
       // An id sign-up has a made-up address (…@id.wishboard.dev): only the id is shown.
@@ -5458,28 +5611,33 @@ export function createUI(root, hooks) {
       } else if (hooks.isGuest?.()) {
         account.append(
           h('button', { class: 'btn', type: 'button', text: '계정 연결 · 로그인 (+300)', onclick: () => openLogin() }),
-          h('p', { class: 'note', text: '연결하면 창을 닫아도 응원 포인트와 전광판이 남아요. 이미 계정이 있으면 여기서 로그인하세요.' }),
+          h('p', { class: 'note', text: '창을 닫아도 포인트와 전광판이 남아요.' }),
         );
       }
+      // The four sheets that open from here are one list of rows of the same look (name, then a chevron). 알림 used to be
+      // the one amber button among three grey ones, which made it read as the sheet's main action.
+      const open = (label, go) => h('button', { type: 'button', onclick: go }, h('span', { text: label }), icon('chevronRight'));
       host.append(
-        h('div', { class: 'holder', style: { marginTop: 0 } },
+        h('div', { class: 'rowlist', style: { marginTop: 0 } }, sound.el, full?.el),
+        h('div', { class: 'holder' },
           h('div', { class: 'stat' }, h('small', { text: '상태' }), h('b', { text: who })),
           h('div', { class: 'stat' }, h('small', { text: '닉네임' }), h('b', { text: hooks.nick?.() || '—' })),
           h('div', { class: 'stat' }, h('small', { text: acct.kind === 'id' ? '아이디' : '이메일' }), h('b', { text: acct.text || '없음', title: acct.text || null }))),
         account.childNodes.length ? account : null,
-        row('네온 글로우', '눈부시면 낮춰 주세요', 0, 100, Math.round(s.glow * 100), v => `${v}%`, v => hooks.setGlow(v / 100)),
-        row('화면 밝기', '노출', 60, 130, Math.round(s.exposure * 100), v => `${v}%`, v => hooks.setExposure(v / 100)),
-        h('div', { class: 'field' }, h('label', null, '그래픽 품질', h('span', { text: '반사·해상도' })), qSel, qNote),
-        h('div', { class: 'field' }, h('label', null, '계정 번호', h('span', { text: '포인트 지급은 이 번호로만' })), h('div', { class: 'bid' }, accountBox, copyBtn)),
-        h('button', { class: 'btn gold', type: 'button', text: '알림', onclick: () => openPushSheet() }),
-        h('button', { class: 'btn ghost', type: 'button', text: '받은 소식', onclick: () => openInboxSheet() }),
-        h('button', { class: 'btn ghost', type: 'button', text: '이번 주 코드', onclick: () => openCodeSheet() }),
-        h('button', { class: 'btn ghost', type: 'button', text: '문의하기', onclick: () => openSupport() }),
+        row('네온 글로우', 0, 100, Math.round(s.glow * 100), v => `${v}%`, v => hooks.setGlow(v / 100)),
+        row('화면 밝기', 60, 130, Math.round(s.exposure * 100), v => `${v}%`, v => hooks.setExposure(v / 100)),
+        h('div', { class: 'field' }, h('label', null, '그래픽 품질'), qSel, qNote),
+        h('div', { class: 'field' }, h('label', null, '계정 번호'), h('div', { class: 'bid' }, accountBox, copyBtn), idManual),
+        h('div', { class: 'rowlist' },
+          open('알림', () => openPushSheet()),
+          open('받은 소식', () => openInboxSheet()),
+          open('이번 주 코드', () => openCodeSheet()),
+          open('문의하기', () => openSupport())),
         statsField(),
-        h('p', { class: 'note' }, '지도 © ', h('a', { href: 'https://www.openstreetmap.org/copyright', target: '_blank', rel: 'noopener', text: 'OpenStreetMap' }), ' · ', h('button', { type: 'button', class: 'linkbtn', text: '사진·캐릭터 라이선스', onclick: () => openCredits() })),
         policyLinks(),
         operatorFooter(),
       );
+      return () => { fsPaint = null; };
     }, true);
   }
   // One line under the policy links when the Worker has OPERATOR_INFO (legal.js setOperator), nothing otherwise.
@@ -5642,8 +5800,9 @@ export function createUI(root, hooks) {
         jobTime.textContent = '';
         jobArrow.style.transform = 'rotate(-90deg)';
       }
-      const label = hd.exiting ? '멈추는 중…' : hd.exitArmed ? '한 번 더 누르기' : '택시 내리기';
-      if (exitLabel && exitLabel !== label) { exitLabel = label; actBtn.textContent = label; }
+      // Short words: the button is a 52px circle on touch (택시 내리기 broke inside a word, as 택시 내 / 리기).
+      const label = hd.exiting ? '멈춤…' : hd.exitArmed ? '한 번 더' : '내리기';
+      if (exitLabel && exitLabel !== label) { exitLabel = label; paintAct(label, hd.exiting ? '택시를 세우는 중' : hd.exitArmed ? '한 번 더 누르면 택시에서 내려요' : '택시'); }
       if (hd.train && hd.train.riders > 0) {
         trainEl.hidden = false;
         setIconText(trainEl, 'taxi', `택시 기차: ${hd.train.riders}명 탑승 중 · 지금 내릴까, 한 명 더 태울까?`);
@@ -5712,9 +5871,17 @@ export function createUI(root, hooks) {
   const loungeBtn = h('button', { class: 'stay-lounge-btn', type: 'button', title: `전광판 관람. 8초마다 다른 전광판, ${Math.round(PAY.lounge.gapMs / 1000)}초마다 응원 포인트 +${PAY.lounge.base}(하루 ${PAY.lounge.perDay}번까지). 움직이면 끝`, onclick: () => hooks.toggleLounge?.() },
     h('span', { class: 'e' }, icon('coffee')), h('span', { class: 'l', text: '멍때리기' }));
   const focusBtn = h('button', { class: 'stay-focus', type: 'button', hidden: true, onclick: () => hooks.endFocus?.() }, '시점 해제');
-  dock.prepend(loungeBtn);
+  // Touch: 멍때리기 is a named tile beside the eye under the map (a way of looking, one tap away), and the pouch is the
+  // first row of the 동작 panel with its count, so the right thumb column is the action, jump and 동작 only. A desktop
+  // window keeps 멍때리기 in the dock and the pouch as a pill under the map.
+  if (coarse) {
+    viewRow.prepend(loungeBtn);
+    reactPanel.prepend(balloonEl);
+  } else {
+    dock.prepend(loungeBtn);
+    root.querySelector('.hud-r')?.append(balloonEl);
+  }
   root.querySelector('.hud-l')?.append(questEl);
-  root.querySelector('.hud-r')?.append(balloonEl);
   root.append(loungeEl, focusBtn);
   // A title tooltip never shows on a touch screen. Where the tap already means something, a long press says the same
   // text as a notice (and that press does not also count as the tap).
@@ -5738,9 +5905,14 @@ export function createUI(root, hooks) {
   }
   holdTip(loungeBtn, () => loungeBtn.title);
   holdTip(balloonEl, () => balloonEl.title);
-  // The pouch balloon shows only a number on a phone: its first tap of the session also says what it is.
+  // The pouch on a phone: its first tap of the session says in one line what to do, and the 동작 panel closes so the
+  // throw is in view.
   let balloonTold = false;
-  balloonEl.addEventListener('click', () => { if (coarse && !balloonTold && balloonEl.title) { balloonTold = true; note(balloonEl.title); } });
+  balloonEl.addEventListener('click', () => {
+    if (!coarse) return;
+    toggleReacts(false);
+    if (!balloonTold && balloonHp > 0) { balloonTold = true; note('복주머니를 맞혀 보세요'); }
+  });
   let loungeN = 0;
   let loungeWatch = false;
   const portraitMq = matchMedia('(orientation: portrait)');
@@ -5751,11 +5923,12 @@ export function createUI(root, hooks) {
     // The boards are the view now: the stylesheet moves the left column, the map and the news bar out of the way.
     root.classList.toggle('lounging', !!on);
     loungeBtn.classList.toggle('on', !!on);
+    loungeBtn.setAttribute('aria-pressed', String(!!on));
     const label = loungeBtn.querySelector('.l');
     if (label) label.textContent = on ? '그만 보기' : '멍때리기';
     loungeN = n || 0;
     // One short line at the top of the screen (index.html .stay-lounge): what is on, and what it has paid so far.
-    if (on) setIconText(loungeEl, 'coffee', `전광판 관람 중 · ${Math.round(PAY.lounge.gapMs / 1000)}초마다 +${PAY.lounge.base} · 누적 +${loungeN}`);
+    if (on) setIconText(loungeEl, 'coffee', `전광판 관람 중 · 관람 포인트 +${loungeN}`);
   }
   function paintQuests() {
     const d = today();
@@ -5784,25 +5957,29 @@ export function createUI(root, hooks) {
   let balloonHp = 0, balloonWait = 25000, balloonWaitAt = 0;
   // The packet icon, then the text in its own span: on touch the button is a circle with the icon and the span is the
   // count badge on its edge (index.html .stay-balloon .bn), so a phone gets the bare count, at most 999+.
+  // On touch the button is a row of the 동작 panel: the icon, its name (.bl) and the count as a badge (.bn).
   function balloonText(text) {
     const key = `packet|${text}`;
     if (balloonEl.dataset.it === key) return;
     balloonEl.dataset.it = key;
-    balloonEl.replaceChildren(icon('packet'), h('span', { class: 'bn', text }));
+    balloonEl.replaceChildren(...[icon('packet'), coarse ? h('span', { class: 'bl', text: '복주머니 던지기' }) : null, h('span', { class: 'bn', text })].filter(Boolean));
   }
+  // The name says what the button is and how many throws are left; the long explanation is the tooltip (and the long press).
+  function balloonName(name) { if (balloonEl.getAttribute('aria-label') !== name) balloonEl.setAttribute('aria-label', name); }
   function paintBalloon() {
     balloonEl.hidden = false;
     balloonEl.disabled = !(balloonHp > 0);
+    balloonEl.title = '맞출 때마다 줄어요. 0이 되면 터지면서 복이 쏟아져요';
     if (balloonHp > 0) {
       const left = Math.ceil(balloonHp / 10);
       balloonText(coarse ? (left > 999 ? '999+' : `${left}`) : `${left}번 남음 · 터뜨려 보세요`);
-      balloonEl.title = '맞출 때마다 줄어요. 0이 되면 터지면서 복이 쏟아져요';
-      balloonEl.setAttribute('aria-label', balloonEl.title);
+      balloonName(`복주머니 던지기 · ${left}번 남음`);
     }
-    else if (!balloonWaitAt) balloonText('준비');
+    else if (!balloonWaitAt) { balloonText('준비'); balloonName('복주머니 · 준비 중'); }
     else {
       const left = Math.max(0, Math.ceil((balloonWaitAt + (balloonWait || 25000) - Date.now()) / 1000));
       balloonText(`${left}초`);
+      balloonName(`복주머니 · ${left}초 뒤에 다시 와요`);
     }
   }
   setInterval(paintBalloon, 1000);
@@ -5832,8 +6009,9 @@ export function createUI(root, hooks) {
       saveDay(d);
       paintQuests();
     },
-    lounge(on, n) { paintLounge(on, n); loungeWatch = !!on; syncWatchPortrait(); if (on) lofiStart(); else lofiStop(); if (!on && awayWant) setTimeout(pumpQueued, 0); },
-    focusLock(on) { focusOn = !!on; focusBtn.hidden = !on; renderPrompt(); if (!on) setTimeout(pumpQueued, 0); },
+    lounge(on, n) { paintLounge(on, n); loungeWatch = !!on; syncWatchPortrait(); if (on) lofiStart(); else lofiStop(); if (!on && awayWant) setTimeout(pumpQueued, 0); if (!on) pumpNews(); },
+    // #ui.focusing (index.html): on a phone the goal and guest pills and the 속보 line step aside while one board is in view.
+    focusLock(on) { focusOn = !!on; focusBtn.hidden = !on; root.classList.toggle('focusing', focusOn); renderPrompt(); if (!on) { setTimeout(pumpQueued, 0); pumpNews(); } },
     // A board of mine was taken (socket TAKE): queued as a tappable notice, see queueTaken.
     taken() { /* no takeovers any more (docs/prime-screens.md): nothing to tell */ },
     openTeam: (id) => teamUi().openTeam(id),
@@ -5853,18 +6031,23 @@ export function createUI(root, hooks) {
       taxiHud.hidden = !driving;
       dock.hidden = driving;
       if (driving) { toggleReacts(false); coachDone(); }
-      if (driving) { closeSheet(); note('운전 시작! 손님 기둥에서 손님을 태우고, 도착 기둥에서 속도를 줄이면 내려요', 'ok'); }
+      // One short notice (the HUD's own line already says what to do next), and the key line for the first 8 s.
+      if (driving) { closeSheet(); note('손님 기둥 앞에서 속도를 줄이세요', 'ok'); }
+      clearTimeout(taxiKeysTimer);
+      taxiKeys.hidden = !driving;
+      if (driving) taxiKeysTimer = setTimeout(() => { taxiKeys.hidden = true; }, 8000);
+      loungeBtn.hidden = coarse && driving; // 멍때리기 is refused in a taxi: its tile under the map steps aside for the ride
       if (boostBtn) boostBtn.hidden = !driving;
       paintJump();
       renderPrompt();
       if (!driving && awayWant) setTimeout(pumpQueued, 1500);
     },
     job(ev) {
-      // The long offer line twice a session; after that the HUD line says it.
+      // An offer is the HUD's own line (손님에게 가세요, then 손님 기둥에서 속도를 줄이세요): the ride's one notice was said
+      // when it began (setDriving), so no second notice lies on the road here.
       if (ev.type === 'offer') {
         rideLine = '';
         jobTitle.textContent = '손님에게 가세요';
-        if (offerTold < 2) { offerTold++; note('진행 방향 도로 위에 손님 기둥이 있어요. 가까이 가서 시속 40 아래로 줄이세요'); }
       }
       else if (ev.type === 'board') {
         rideLine = PASSENGER_LINES[(Math.random() * PASSENGER_LINES.length) | 0];
@@ -5933,6 +6116,7 @@ export function createUI(root, hooks) {
     setWorld(next) {
       world = { billboards: next?.billboards || [], plots: next?.plots || [], ranks: next?.ranks || [], today: next?.today || null, teams: Array.isArray(next?.teams) ? next.teams : [] };
       plazaReady = true;
+      if (!plazaAt) plazaAt = performance.now();
       renderPrompt();
       rankRefresh?.();
       adRefresh?.();

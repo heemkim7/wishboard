@@ -10,7 +10,7 @@ import { createUI } from './ui.js?v=202611241127';
 import { haptic, startMusic } from './audio.js?v=202611241127';
 import { isTouchUI } from './interact.js?v=202611241127';
 import { BALANCE, PAY, chainsOf, live, slotName, slotOf, takeGrants, cheerCount, countsAsActivity, josa, slotOpen, SLOT_SOON } from './balance.js';
-import { auctionClosed, EQUIP_MAX, OWNED_MAX } from './balance.js';
+import { auctionClosed, EQUIP_MAX, OWNED_MAX, STARTER_DEFAULT } from './balance.js';
 import { primeAt, WHY_CHIP } from './primerules.js';
 import { trackEvent } from './analytics.js?v=202611241127';
 import { adoptHandover, allowedLink, blockedText, handoverHref, isAndroid, isInAppWebView, loginEmail, CHEER_PHRASES, GT_LS, SESSION_LS, slotTier } from './plaza-account.js';
@@ -117,7 +117,8 @@ function paintBootLive(data, here) {
     ? `지금 메인 타워: ${chars(onTower.name, 16)} 응원 팀 · ${WHY_CHIP[onTower.why] || '응원 팀 명당'}`
     : lead?.name
       ? `오늘 가장 많이 응원받는 팀: ${chars(lead.name, 16)} · ${Math.max(0, Math.floor(Number(lead.n) || 0)).toLocaleString('ko-KR')}명`
-      : '명당은 응원 팀 자리 — 하루 서로 다른 30명이 응원하면 다음 날 명당에 팀 이름이 걸려요';
+      : '';
+  king.hidden = !king.textContent; // no team on the tower and none leading: no line (the rule of how a team gets there is not for the door)
   stat.textContent = [
     open ? `지금 걸 수 있는 빈 자리 ${open}곳` : '지금은 빈 자리가 없어요',
     visitors ? `오늘 다녀간 사람 ${visitors.toLocaleString('ko-KR')}명` : '',
@@ -209,6 +210,7 @@ let linkedGuest = '', actorOps = 0, syncAsked = false, syncing = false, syncTime
 const INBOX_SEEN_KEY = 'kts_inbox_seen', WISH_SEEN_KEY = 'kts_wish_seen', WISH_PRIZE_KEY = 'kts_wish_prize', INBOX_LIVE_KEY = 'kts_inbox_live';
 function readJson(key, dflt) { try { const v = JSON.parse(recall(key) || 'null'); return v ?? dflt; } catch { return dflt; } }
 let focusedSlot = '', inboxRows = [], inboxHandled = new Set(), liveNews = [];
+let starterListKnown = false; // the free-slot list from /rt/config is the settled one (set where the config answer is read, below)
 let introDone = () => {};
 let giftUi = null; // gift.js mountGift, once the world and ui exist
 const introReady = new Promise((resolve) => { introDone = resolve; });
@@ -257,6 +259,7 @@ const ui = createUI(document.getElementById('ui'), {
   wantSpecies: (id) => world?.wantSpecies?.(id),
   profile: () => state.profile,
   starterUsed: () => state.starterUsed,
+  starterListKnown: () => starterListKnown,
   wear: (id) => wear(id),
   unwear: (kind) => unwear(kind),
   shop: () => loadShop(),
@@ -468,6 +471,18 @@ function maintTick() {
 }
 // kakaoKey settles when net.init's one /rt/config read has finished (net.js loadConfig): maint and operator are known then.
 net.kakaoKey().then(() => { ui.setOperator(net.operator); maintShow(net.maint); maintTick(); }).catch(() => {});
+// The free-slot list in that answer. A Worker isolate that has not asked the database yet answers with the old four
+// (STARTER_DEFAULT) and asks behind the response (worker.js starterSlots, 1.5 s at most), so the next answer has the real
+// list. The same guest saw "무료 거리 칸" on one load and "건물 앞 전광판" on the next, depending on which answer it got.
+// When the first answer is exactly the old four it is asked once more, 2.5 s later; until then the HUD shows no goal
+// (hooks.starterListKnown, ui.js nextGoal). A database without starter_slot_list answers the old four both times.
+net.kakaoKey().catch(() => {}).then(async () => {
+  if (BALANCE.starterSlots.join() === STARTER_DEFAULT.join()) {
+    await new Promise((r) => setTimeout(r, 2500));
+    try { await net.loadConfig(); } catch { /* the first answer stands */ }
+  }
+  starterListKnown = true;
+});
 
 world = createTimesSquare(document.getElementById('view'), {
   net,
@@ -612,8 +627,7 @@ function setLounge(on) {
   if (!loungeOn) {
     clearInterval(loungeTimer);
     world?.stopLounge();
-    ui.lounge(false, 0);
-    ui.note('관람을 마쳤어요. 시점이 캐릭터에게 돌아와요.');
+    ui.lounge(false, 0); // no notice: the view coming back to the character says it
     return;
   }
   // The world refuses in a taxi (and says why); nothing else changes then.
@@ -622,7 +636,7 @@ function setLounge(on) {
   loungeTold = false;
   ui.lounge(true, 0);
   // Short: the line at the top of the screen already says the rate and the running total (ui.js paintLounge).
-  ui.note(loungeFull ? '전광판 관람 중 · 오늘 관람 포인트는 다 받았어요 · 움직이면 끝나요' : '전광판 관람 중 · 8초마다 다음 전광판 · 움직이면 끝나요', 'ok');
+  ui.note(loungeFull ? '오늘 관람 포인트는 다 받았어요 · 움직이면 끝나요' : '움직이면 끝나요', 'ok');
   clearInterval(loungeTimer);
   loungeTimer = setInterval(() => {
     // Nothing is watched in a hidden tab: no 관람 points then. After 5 min hidden net.js also closes the socket (park), so the room has no seat

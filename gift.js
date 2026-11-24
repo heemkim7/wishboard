@@ -36,7 +36,7 @@ export function mountGift({ world, ui, whenBuilt, introDone }) {
   const note = (t, k, fn) => { try { ui?.note?.(t, k, fn); } catch { /* no toast */ } };
   // The 🎁 button: right after 🌠, when the HUD is there (it is built before the world).
   const btn = document.createElement('button');
-  btn.className = 'btn icon tool-gift'; btn.type = 'button'; btn.title = '선물 전광판'; btn.setAttribute('aria-label', '선물 전광판 걸기'); btn.textContent = '🎁';
+  btn.className = 'btn icon tool-gift'; btn.type = 'button'; btn.title = '선물 전광판'; btn.setAttribute('aria-label', '선물 전광판 걸기'); import('./uiicons.js?v=202611241127').then((m) => btn.replaceChildren(m.icon('gift'))).catch(() => { btn.textContent = '🎁'; }); // the line icon, like its neighbours (the emoji only if the icon set cannot be loaded)
   btn.addEventListener('click', () => openMaker());
   const place = () => { const w = document.querySelector('#ui .tool-wish'); if (w && !btn.isConnected) w.after(btn); return !!w; };
   if (!place()) { const t = setInterval(() => { if (place()) clearInterval(t); }, 500); setTimeout(() => clearInterval(t), 30000); }

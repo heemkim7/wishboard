@@ -191,7 +191,7 @@ describe('wiring', () => {
   it('the 🌠 tool is not folded behind ⋯ and not hidden for newcomers', () => {
     const ui = read('ui.js');
     const btn = ui.slice(ui.indexOf('const wishBtn'), ui.indexOf('const wishBtn') + 200);
-    assert.match(btn, /class: 'btn icon tool-wish'/);
+    assert.match(btn, /class: 'btn icon tool-wish named'/); // named: a desktop window writes its name beside the icon
     assert.equal(/tool-more|tool-adv/.test(btn), false);
   });
   it('the analytics allow-list has the wish events', () => {

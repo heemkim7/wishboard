@@ -297,7 +297,7 @@ export function createTeamUI(k) {
     list.replaceChildren(rowsOf.length ? rows(rowsOf, value, hooks.myTeamId?.() || '') : h('p', { class: 'note', text: tab === 'rate' ? `참여율은 최근 7일 응원한 팀원이 ${PRIME.minTeam}명 이상인 팀만 매겨요. 아직 그런 팀이 없어요.` : tab === 'week' ? '이번 주에는 아직 목표를 채운 팀이 없어요.' : '오늘은 아직 응원한 팀이 없어요.' }));
     return tab === 'rate' ? '오늘 응원한 팀원 ÷ 최근 7일 동안 응원한 팀원. 하루 1위는 다음 날 1번 코너 위 큰 화면을 하루 종일 써요.'
       : tab === 'week' ? '월요일 0시(한국 시간)부터 이번 주에 팀이 채운 목표(30·100·1,000명, 가장 뜨거운 팀, 밤 9시)의 수예요.'
-        : '오늘 0시(한국 시간)부터 팀을 응원한 서로 다른 사람의 수예요(계정 연결 3일 이상, 같은 인터넷 연결은 팀마다 한 명). 포인트로는 오르지 않아요.';
+        : '오늘 팀을 응원한 사람 수예요. 포인트로는 오르지 않아요.'; // who counts (계정 연결 3일, 연결마다 한 명) is in 명당은 이렇게 돌아가요 (the team sheet's fold)
   }
   return { openTeams, openTeam, openPrime, rankInto, isPrime };
 }

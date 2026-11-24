@@ -8,6 +8,7 @@ import {
   bakeFlip, bakeBest, BAKE_FLIPS, BAKE_ROUND_MS,
 } from '../interact.js';
 import { PLAY } from '../balance.js';
+import { touchTag } from '../overlay.js';
 
 const read = (f) => readFileSync(new URL('../' + f, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const between = (src, a, b) => { const i = src.indexOf(a); assert.ok(i >= 0, a); const j = src.indexOf(b, i + a.length); assert.ok(j > i, b); return src.slice(i, j); };
@@ -134,11 +135,35 @@ describe('touch controls', () => {
     assert.match(main, /const TOUCH = isTouchUI\(\{ coarse: matchMedia\('\(pointer: coarse\)'\)\.matches, points: navigator\.maxTouchPoints \}\);/);
     assert.equal(/E를 누르세요'/.test(main.replace("TOUCH ? '탑승 버튼을 누르세요' : 'E를 누르세요'", '')), false);
   });
-  it('phone prompts do not name keys', () => {
+  it('phone prompts do not name keys, and no prompt line says which button to press', () => {
     const ui = read('ui.js');
-    assert.match(ui, /const PRESS = coarse \? '버튼을 누르면' : 'Space 또는 E를 누르면';/);
+    const prompts = ui.slice(ui.indexOf('  const PROMPTS = {'), ui.indexOf('  let focusOn = false'));
+    // the lines that only said "press the button to start" are gone (the round button on a phone, the E key cap on a keyboard say it)
+    assert.equal(/버튼을 누르면|Space 또는 E|E를 누르면|지나가는 택시는 타지 않아요|점수도 보상도 없는/.test(ui), false);
+    assert.match(prompts, /cart: \['붕어빵 굽기', '세 번 뒤집어요', '굽기!'\],/);
+    assert.match(prompts, /stage: \['댄스 시작', '', '댄스!'\],/);
+    assert.match(prompts, /taxi: \['정차한 택시 탑승', '', '탑승'\],/);
     assert.equal(/'Space 또는 E · /.test(ui), false);
     assert.equal(/붕어빵 포차와는 다른 자리예요/.test(ui), false);
+    // a phone shows a tag beside the round button (a plain box, no key cap, no taps); a keyboard keeps the E button
+    assert.match(ui, /const promptBtn = coarse\n\s+\? h\('div', \{ class: 'glass tag' \}, promptText, promptSub\)\n\s+: h\('button', \{ class: 'glass', type: 'button', onclick: \(\) => hooks\.interact\(\) \}, h\('span', \{ class: 'keycap', text: 'E' \}\),/);
+    assert.equal(ui.includes("text: coarse ? '탭' : 'E'"), false);
+    assert.match(ui, /const tag = touchTag\(near\.kind, p\);\n\s+promptText\.textContent = coarse \? tag\[0\] : p\[0\];\n\s+promptSub\.textContent = coarse \? tag\[1\] : p\[1\];\n\s+paintAct\(p\[2\], tag\[0\]\);/);
+  });
+  it('the tag is one line: a board is "where · whose", a 함성 keeps its countdown, the rest is the name alone', () => {
+    assert.deepEqual(touchTag('board', ['빈 전광판 · 소원 걸기', '37번 메인거리', '걸기']), ['37번 메인거리 · 빈 전광판', '']);
+    assert.deepEqual(touchTag('board', ['브로드웨이곰33님의 전광판 · 응원하기', '46번 메인거리', '응원']), ['46번 메인거리 · 브로드웨이곰33님의 전광판', '']);
+    assert.deepEqual(touchTag('board', ['곧 열리는 전광판', '', '보기']), ['곧 열리는 전광판', '']);
+    assert.deepEqual(touchTag('crowd', ['같이 함성 · 옆 2명', '다음 함성까지 12초', '함성']), ['같이 함성 · 옆 2명', '다음 함성까지 12초']);
+    assert.deepEqual(touchTag('cart', ['붕어빵 굽기', '세 번 뒤집어요', '굽기!']), ['붕어빵 굽기', '']);
+    assert.deepEqual(touchTag('plot', null), ['', '']);
+    // the tag takes no touches, so a drag that starts on it turns the view
+    const css = read('index.html');
+    assert.match(css, /html\.touch \.prompt\.show \{ transform: none; pointer-events: none !important; \}/);
+    // the round button carries the whole name for a screen reader, its short word still first (label in name)
+    assert.match(read('ui.js'), /const name = what \? `\$\{word\}: \$\{what\}` : word;/);
+    // driving: short words that fit the 52px circle (택시 내리기 broke as 택시 내 / 리기)
+    assert.match(read('ui.js'), /const label = hd\.exiting \? '멈춤…' : hd\.exitArmed \? '한 번 더' : '내리기';/);
   });
 });
 
