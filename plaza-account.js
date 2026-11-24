@@ -34,6 +34,9 @@ export const EVENT_NAMES = Object.freeze([
   'week_recap',
   'welcome_show',
   'welcome_cta',
+  'dance_start', // 같이 춤추기 (dance.js): kind stage | panel | join
+  'dance_end',   // span: how long, as a bucket (dance.js spanBucket)
+  'bake_start',
 ]);
 const GUEST_SUB = /^g-[0-9a-f-]{36}$/i;
 const TICKET = /^h1\.[A-Za-z0-9_-]{20,200}\.[A-Za-z0-9_-]{20,90}$/;

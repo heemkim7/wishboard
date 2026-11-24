@@ -145,7 +145,7 @@ describe('touch controls', () => {
     // the lines that only said "press the button to start" are gone (the round button on a phone, the E key cap on a keyboard say it)
     assert.equal(/버튼을 누르면|Space 또는 E|E를 누르면|지나가는 택시는 타지 않아요|점수도 보상도 없는/.test(ui), false);
     assert.match(prompts, /cart: \['붕어빵 굽기', '세 번 뒤집어요', '굽기!'\],/);
-    assert.match(prompts, /stage: \['댄스 시작', '', '댄스!'\],/);
+    assert.match(prompts, /stage: \['같이 춤추기', '모두 같은 음악에 같은 춤', '춤추기'\],/);
     assert.match(prompts, /taxi: \['정차한 택시 탑승', '', '탑승'\],/);
     assert.equal(/'Space 또는 E · /.test(ui), false);
     assert.equal(/붕어빵 포차와는 다른 자리예요/.test(ui), false);
@@ -479,7 +479,7 @@ describe('bake: three flips in one session', () => {
     assert.doesNotMatch(main, /sendSess|bakeWait|bakeEnding|BAKE_MISS|DANCE_MISS|beginBake|finishDance/);
     assert.doesNotMatch(main, /finishBake|noteBakePay|bakeGuided/);
     assert.match(main, /  bakeFlip: \(result\) => world\?\.bake\?\.\(result === 'gold'\),/);
-    assert.match(main, /  danceStart: \(\) => world\?\.setDancing\(true\),/);
+    assert.match(main, /  danceStart: \(\) => world\?\.setDancing\(true\) === true,/);
     assert.match(main, /  danceEnd: \(\) => world\?\.setDancing\(false\),/);
     assert.doesNotMatch(read('net.js'), /sendSess|t: 'SESS'/);
     assert.match(main, /const got = creditNow\(m\?\.amount, countsAsActivity\(m\?\.kind\)\);/);

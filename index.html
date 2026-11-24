@@ -326,21 +326,18 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html.touch .toasts > .sponsor .chips button { flex: none; white-space: nowrap; }
   .act.boost { font-size: 20px; color: var(--text); background: var(--surface-hud); }
 
-  /* ---------- rhythm game ---------- */
-  .rhythm, .rhythm * { pointer-events: none !important; }
-  .rhythm { position: absolute; left: 50%; bottom: calc(18px + var(--safe-b)); width: min(520px, calc(100% - 24px)); transform: translate(-50%, 24px); opacity: 0; transition: all .35s cubic-bezier(.16,1,.3,1); padding: 14px 16px 12px; }
-  .rhythm.show, .rhythm.show * { pointer-events: auto !important; }
-  .rhythm.show { transform: translate(-50%, 0); opacity: 1; }
-  .rhythm header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-  .rhythm h3 { margin: 0; font: 800 17px/1.1 var(--font); letter-spacing: -.01em; color: var(--text); }
-  .rhythm .acc { display: flex; align-items: baseline; gap: 10px; }
-  .rhythm .acc b { font: 800 20px/1 var(--font); color: var(--text); font-variant-numeric: tabular-nums; }
-  .rhythm .acc span { font: 800 13px/1 var(--font); color: var(--info); letter-spacing: .04em; }
-  .rhythm canvas { width: 100%; aspect-ratio: 960 / 560; display: block; border-radius: 10px; background: var(--bg); }
-  .rhythm .hint { margin: 8px 0 0; text-align: center; font-size: 12px; font-weight: 500; color: var(--muted); }
-  .rhythm .pads { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
-  .rhythm .pads button { height: 64px; border-radius: 14px; font-size: 28px; font-weight: 800; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); touch-action: manipulation; }
-  .rhythm .pads button:active { background: var(--live-weak); border-color: var(--line-strong); }
+  /* ---------- 같이 춤추기 (ui.js danceEl): a strip while dancing, not a panel ----------
+     One line: ♪ the track · 지금 N명이 같이 춰요 · 그만 추기 (38px tall, its taps 44px, like the waypoint pill). It covers
+     nothing of the 3D view but its own line and hides nothing: the stick and the right-hand buttons stay (moving ends the
+     dance). A desktop window has it over the dock; touch has it in the bottom lane the prompt tag uses (the tag is down
+     while dancing); an upright phone has it over the stick, as two lines of text beside the button. */
+  .dancebar { position: absolute; left: 50%; bottom: calc(116px + var(--safe-b)); transform: translateX(-50%); display: flex; align-items: center; gap: 12px; min-height: 44px; max-width: calc(100% - 24px - var(--safe-l) - var(--safe-r)); padding: 3px 3px 3px 16px; border-radius: 999px; pointer-events: auto !important; z-index: 4; }
+  .dancebar[hidden] { display: none; }
+  .dancebar .txt { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+  .dancebar .song { font: 800 13px/1.25 var(--font); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dancebar .mates { font: 700 12px/1.25 var(--font); color: var(--text-2); white-space: nowrap; }
+  .dancebar .stop { position: relative; flex: none; height: 38px; padding: 0 14px; border-radius: 999px; font: 700 13px/1 var(--font); color: var(--text); background: var(--surface-2); border: 1px solid var(--line-strong); white-space: nowrap; }
+  .dancebar .stop::after { content: ''; position: absolute; inset: -3px 0; }
 
   /* ---------- full map / settings ---------- */
   .sheet.map { width: min(1180px, 100%); }
@@ -436,6 +433,10 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   @keyframes fire { 30% { transform: translateY(-6px) scale(1.06); background: var(--line-strong); } }
   .dock .sep { width: 1px; margin: 8px 2px; background: var(--line); }
   .emote.more.on { border-color: var(--line-strong); background: var(--accent-weak); color: var(--accent); }
+  .emote.dance-go svg.ico { width: 26px; height: 26px; }
+  /* 같이 춤추기 in the touch 동작 panel: a whole row under the four actions, like the pouch row above them. */
+  html.touch .reacts button.dance-go { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; width: auto; height: 44px; padding: 0 12px; border-radius: 10px; font: 700 14px/1.2 var(--font); color: var(--text); background: var(--surface-2); border: 1px solid var(--line); }
+  html.touch .reacts button.dance-go svg.ico { width: 22px; height: 22px; color: var(--accent); }
   .reacts { position: absolute; left: 50%; bottom: calc(112px + var(--safe-b)); transform: translateX(-50%); display: grid; grid-template-columns: repeat(8, 46px); gap: 6px; padding: 10px; pointer-events: auto !important; animation: fadeIn .2s ease; box-shadow: var(--shadow-pop); }
   @keyframes fadeIn { from { opacity: 0; } }
   .reacts button { width: 46px; height: 46px; border-radius: 10px; font-size: 28px; background: var(--surface-2); border: 1px solid transparent; transition: transform .12s, border-color .2s; }
@@ -476,7 +477,6 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .bake { position: absolute; left: 50%; bottom: calc(112px + var(--safe-b)); width: min(560px, calc(100% - 24px)); transform: translate(-50%, 24px); opacity: 0; transition: all .35s cubic-bezier(.16,1,.3,1); padding: 16px 18px 14px; }
   .bake.show, .bake.show * { pointer-events: auto !important; }
   .bake.show { transform: translate(-50%, 0); opacity: 1; z-index: 9; }
-  .rhythm.show { z-index: 9; }
   .bake header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .bake h3 { margin: 0; font: 800 17px/1.1 var(--font); letter-spacing: -.01em; color: var(--text); }
   .bake header span { font-size: 12px; font-weight: 500; color: var(--muted); }
@@ -516,11 +516,11 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   /* A tappable toast ends in a chevron. */
   .toast .go { display: inline-block; margin-left: 6px; font-style: normal; color: var(--text-2); }
   .toast .go svg.ico { width: 15px; height: 15px; vertical-align: -3px; }
-  /* While a sheet, the proof bar, the bake panel or the dance panel is up the toasts sit at the top: clear of the
+  /* While a sheet, the proof bar or the bake panel is up the toasts sit at the top: clear of the
      panel's buttons and of the phone keyboard. */
-  body.has-sheet .toasts, body.has-proof .toasts, body:has(#ui > .bake.show) .toasts, body:has(#ui > .rhythm.show) .toasts { top: calc(var(--app-top, 0px) + 10px + var(--safe-t)); bottom: auto !important; flex-direction: column; }
+  body.has-sheet .toasts, body.has-proof .toasts, body:has(#ui > .bake.show) .toasts { top: calc(var(--app-top, 0px) + 10px + var(--safe-t)); bottom: auto !important; flex-direction: column; }
   /* Only the toasts go up there: the cards in the floating stack (hint, far-board card, 홈 화면 추가) wait. */
-  body.has-sheet .toasts > :not(.toast), body.has-proof .toasts > :not(.toast), body:has(#ui > .bake.show) .toasts > :not(.toast), body:has(#ui > .rhythm.show) .toasts > :not(.toast) { display: none; }
+  body.has-sheet .toasts > :not(.toast), body.has-proof .toasts > :not(.toast), body:has(#ui > .bake.show) .toasts > :not(.toast) { display: none; }
   /* Sheets stack: a parent under its child keeps its layout (inputs, scroll) and is only hidden. */
   .modal.under { visibility: hidden; }
   .sheet:focus { outline: none; }
@@ -944,15 +944,19 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html.touch #ui > .pouchgo[hidden] { display: none; }
   html.touch #ui > .pouchgo svg.ico { width: 24px; height: 24px; }
   html.touch #ui > .pouchgo .bn { position: absolute; top: -6px; left: -8px; min-width: 24px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--accent); color: var(--on-accent); font: 800 12px/20px var(--font); text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; }
-  html.touch #ui:is(.newbie, .lounging, .viewonly, :has(.bake.show, .rhythm.show)) > .pouchgo { display: none; }
+  html.touch #ui:is(.newbie, .lounging, .viewonly, :has(.bake.show)) > .pouchgo { display: none; }
   html.touch .toasts { bottom: calc(190px + var(--safe-b)); left: calc(72px + var(--safe-l)); right: calc(72px + var(--safe-r)); transform: none; }
   /* A desktop window lifts the toasts over the board's card; on touch the card is in the toasts' own column. */
   html:not(.touch) body.has-sponsor .toasts { bottom: calc(360px + var(--safe-b)); }
-  /* The bake and dance panels take the bottom of a touch screen: the stick, the right-hand buttons and the prompt tag
-     step aside for them (movement is locked while either is up), so nothing shows through or sticks out under a panel. */
-  html.touch .bake, html.touch .rhythm { bottom: calc(24px + var(--safe-b)); }
-  html.touch #ui:has(.bake.show, .rhythm.show) > :is(.dock, .acts, .joy, .prompt, .reacts) { visibility: hidden !important; }
-  html.touch #ui:has(.bake.show, .rhythm.show) .viewrow { visibility: hidden !important; } /* the dance panel reaches the two tiles on a 740px wide phone on its side */
+  /* The bake panel takes the bottom of a touch screen: the stick, the right-hand buttons and the prompt tag step aside
+     for it (movement is locked while it is up), so nothing shows through or sticks out under the panel. (The dance is a
+     strip now, .dancebar: nothing steps aside for it.) */
+  html.touch .bake { bottom: calc(24px + var(--safe-b)); }
+  html.touch #ui:has(.bake.show) > :is(.dock, .acts, .joy, .prompt, .reacts) { visibility: hidden !important; }
+  html.touch #ui:has(.bake.show) .viewrow { visibility: hidden !important; }
+  /* The dance strip on touch: the bottom lane between the resting stick and the right-hand column (the prompt tag's
+     place: the tag is down while dancing). */
+  html.touch .dancebar { bottom: calc(44px + var(--safe-b)); left: calc(122px + var(--safe-l)); right: calc(72px + var(--safe-r)); width: fit-content; max-width: none; margin: 0 auto; transform: none; }
   @media (orientation: landscape) and (max-height: 520px) {
     html.touch .stay-quest { display: none; }
     /* The left column is at most min(240px, 40vw) wide and starts 10-14px in, so everything in the middle that shares its
@@ -982,13 +986,10 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     /* The action buttons carry their names: the two headings would cost 48px of a 375px screen. They stay as row breaks
        of no height, so the emoji start on their own row under the four actions. */
     html.touch .reacts .rh { height: 0; margin: 0; overflow: hidden; visibility: hidden; }
-    /* The dance panel was 455px tall on a 375px screen: its title, 그만두기 and the top of the lanes were off the top edge.
-       Here the lanes are as tall as the screen leaves (the canvas keeps its 960:560 shape and narrows), the pads are
-       lower, and both panels sit 8px from the bottom. */
-    html.touch .bake, html.touch .rhythm { bottom: calc(8px + var(--safe-b)); width: min(560px, calc(100% - 24px)); }
-    html.touch .rhythm { width: fit-content; max-width: calc(100% - 24px); padding: 8px 12px; }
-    html.touch .rhythm canvas { width: auto; height: calc(var(--app-h, 100dvh) - 150px - var(--safe-t) - var(--safe-b)); margin: 0 auto; }
-    html.touch .rhythm .pads button { height: 48px; }
+    /* The bake panel sits 8px from the bottom; the dance strip is in the bottom lane, 10px up, between the stick (88px)
+       and the right-hand column. */
+    html.touch .bake { bottom: calc(8px + var(--safe-b)); width: min(560px, calc(100% - 24px)); }
+    html.touch .dancebar { bottom: calc(10px + var(--safe-b)); left: calc(110px + var(--safe-l)); }
     #boot h1 { font-size: 28px; margin: 6px 0; }
     /* A phone on its side: no mark and tighter rows, so less of the card needs scrolling to reach 입장하기. */
     #boot .bootmark { display: none; }
@@ -1150,7 +1151,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
      the left column, one toast at a time ("Phone layout" at the end). Words in a toast are not split across lines. */
   html.touch .toast { word-break: keep-all; overflow-wrap: anywhere; }
   html.touch .toasts > * { align-self: flex-start; margin-left: calc(50% + 25px); max-width: calc(100% + 60px); translate: min(-50%, calc(50vw - 97px - (var(--safe-l) + var(--safe-r)) / 2 - 100%)); }
-  html.touch body.has-sheet .toasts > *, html.touch body.has-proof .toasts > *, html.touch body:has(#ui > .bake.show) .toasts > *, html.touch body:has(#ui > .rhythm.show) .toasts > * { align-self: center; margin-left: 0; max-width: 100%; translate: none; }
+  html.touch body.has-sheet .toasts > *, html.touch body.has-proof .toasts > *, html.touch body:has(#ui > .bake.show) .toasts > * { align-self: center; margin-left: 0; max-width: 100%; translate: none; }
   /* The ⋯ menu and the 동작 panel are menus: nothing floats over them while one is open (a toast used to lie on 전체 화면,
      the hint on the first emoji row). */
   body:has(#ui .tools.open) .toasts, html.touch body:has(#ui > .reacts:not([hidden])) .toasts { visibility: hidden; }
@@ -1172,8 +1173,8 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   #ui .nextgoal.task:hover { border-color: var(--line-strong); }
   #ui.reveal .liveboard, #ui.reveal .stay-quest, #ui.reveal .stay-balloon, #ui.reveal .tool-adv { animation: revealIn .8s ease-out both; }
   @keyframes revealIn { from { opacity: 0; } to { opacity: 1; } }
-  /* The waypoint pill would sit on the bake and dance panels in portrait; it hides while they are open (the proof bar already hides it). */
-  #ui:has(.bake.show) .waypill, #ui:has(.rhythm.show) .waypill, #ui:has(.bake.show) .help, #ui:has(.rhythm.show) .help { display: none; }
+  /* The waypoint pill would sit on the bake panel in portrait; it hides while it is open (the proof bar already hides it). */
+  #ui:has(.bake.show) .waypill, #ui:has(.bake.show) .help { display: none; }
   /* 오늘의 소원: the 🌠 tool (never folded behind ⋯), and its sheet. Buttons stay ≥ 40px tall on phones. */
   .tools .tool-wish { position: relative; }
   .tool-wish .wish-dot { position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--live); outline: 2px solid var(--bg); pointer-events: none; }
@@ -1298,7 +1299,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .liveboard .livehead b, .ph-head b, .wish-row .wh { display: inline-flex; align-items: center; gap: 6px; }
   .sheet h2 { gap: 6px; }
   .sheet h2 .badge { margin-left: 4px; }
-  .bake h3, .rhythm h3, .vipcard h4, .wish-hearts { display: flex; align-items: center; gap: 6px; }
+  .bake h3, .vipcard h4, .wish-hearts { display: flex; align-items: center; gap: 6px; }
   .chip-btn, .quick button, .wish-heart { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
   .stay-quest > div { display: flex; align-items: center; gap: 6px; }
   .verified svg.ico { width: 12px; height: 12px; stroke-width: 2.5; vertical-align: 0; }
@@ -1457,8 +1458,8 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     html.touch .toast { text-align: left; }
     html.touch .toasts > :is(.sponsor, .a2hs) { width: min(420px, 100%); }
     html.touch body.has-proof .toasts { top: calc(var(--app-top, 0px) + 10px + var(--safe-t)); }
-    /* The bake panel is along the bottom on a phone: a notice keeps its place under the left column (elsewhere, and
-       during a dance on a phone on its side, where the panel reaches that place, it goes to the top edge). */
+    /* The bake panel is along the bottom on a phone: a notice keeps its place under the left column (elsewhere it goes
+       to the top edge). */
     html.touch body:has(#ui > .bake.show) .toasts { top: var(--stack-top, 182px); }
     html.touch body:has(#ui > .bake.show) .toasts > * { align-self: flex-start; }
     /* Driving: the taxi HUD's arrow points the way, so the waypoint pill waits (the beam in the street stays). */
@@ -1481,9 +1482,10 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     html.touch body:has(#ui > .taxihud:not([hidden])) .toasts { --stack-top: calc(282px + var(--safe-t)); }
     html.touch .waypill { top: max(calc(180px + var(--safe-t)), calc(var(--hudl-b, 142px) + 47px)); bottom: auto; left: auto; right: calc(8px + var(--safe-r)); max-width: calc(100vw - 16px - var(--safe-l) - var(--safe-r)); margin: 0; }
     html.touch .taxihud { top: calc(182px + var(--safe-t)); }
-    /* Upright the dance panel is along the bottom too, so its notices also stay under the left column. */
-    html.touch body:has(#ui > .rhythm.show) .toasts { top: var(--stack-top, 182px); }
-    html.touch body:has(#ui > .rhythm.show) .toasts > * { align-self: flex-start; }
+    /* Upright the dance strip is over the stick (148px up, from the left edge to the right-hand column: 293px on a 375px
+       phone), with the track and the count as two lines beside 그만 추기. */
+    html.touch .dancebar { bottom: calc(148px + var(--safe-b)); left: calc(10px + var(--safe-l)); margin: 0; padding-left: 14px; }
+    html.touch .dancebar .txt { flex-direction: column; align-items: flex-start; gap: 1px; }
     /* Under 400px wide the identity row is 114-193px (the icon row beside it is 180px): the avatar picture steps aside
        there, so an eight-letter name (브로드웨이곰68: 84px) is whole from 360px up instead of ending in "…". */
     @media (max-width: 399px) { html.touch .ident .avatar { display: none; } html.touch .ident .profile { padding-left: 12px; min-height: 44px; } }
@@ -1637,10 +1639,8 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .bake .marks { display: block; margin-top: 6px; font: 700 15px/1 var(--font); letter-spacing: .12em; color: var(--text-2); }
   .bake .x { flex: none; }
   html.touch .bake .stop { width: 100%; height: 52px; justify-content: center; font-size: 17px; }
-  /* 그만두기 in the dance panel: one line, thumb-sized (it broke as 그만 / 두기 in a 38px box). */
-  .rhythm .x { width: auto; min-height: 44px; padding: 0 12px; font: 700 13px/1 var(--font); white-space: nowrap; }
   /* A closed game panel is out of the tab order and the accessibility tree (ui.js also sets inert on it). */
-  .bake:not(.show), .rhythm:not(.show) { visibility: hidden; }
+  .bake:not(.show) { visibility: hidden; }
 
   /* Short screens (a phone on its side, a desktop window at 200%). */
   /* 응원 순위 (.sheet.steady): the tab row never shrinks (it was squeezed to 10px with a 0px list under it), and under

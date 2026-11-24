@@ -433,8 +433,10 @@ const ui = createUI(document.getElementById('ui'), {
   },
   mapData: () => world?.mapData(),
   onLand: (x, z) => world?.onLand(x, z) ?? true,
-  danceStart: () => world?.setDancing(true),
-  danceEnd: () => world?.setDancing(false), // the dance pays nothing: the score stays on the page
+  // 같이 춤추기 (dance.js): the world plays the clock's moves and re-sends the K-댄스 reaction; nothing is scored or stored.
+  danceStart: () => world?.setDancing(true) === true,
+  danceEnd: () => world?.setDancing(false),
+  danceCount: () => world?.danceCount?.() || 0,
   settings: () => ({ ...gfx }),
   setGlow(v) { gfx.glow = v; world?.setGlow(v); saveGfx(); },
   setExposure(v) { gfx.exposure = v; world?.setExposure(v); saveGfx(); },
@@ -534,7 +536,7 @@ world = createTimesSquare(document.getElementById('view'), {
     // E at a board opens what a tap on that board opens.
     else if (kind === 'board') ui.openAd(id);
     else if (kind === 'plot') ui.openPlot(id);
-    else if (kind === 'stage') ui.startDance();
+    else if (kind === 'stage') ui.startDance('stage');
     else if (kind === 'crowd') {
       const left = ui.cooldownLeft();
       if (left > 0) ui.note(`다음 함성까지 ${(left / 1000).toFixed(0)}초`, '', null, { key: 'shout-wait' });
@@ -558,6 +560,9 @@ world = createTimesSquare(document.getElementById('view'), {
   onBump: () => { ui.sfx.bump(); haptic(20); },
   onBoost: () => ui.sfx.boost(),
   onJump: () => ui.sfx.whoosh(),
+  // 같이 춤추기: moving, a taxi or 순간이동 ended mine; someone near me keeps dancing (one notice each, ui.js answers if it showed).
+  onDanceEnd: (why) => ui.endDance?.(why),
+  onDancerNear: (id, name) => ui.danceInvite?.(name) === true,
   // Getting in starts the engine (it had no sound); getting out is a door whoosh. Music follows the sound setting (audio.js).
   onDrive: (on) => { if (on) ui.sfx.engine(); else ui.sfx.whoosh(); ui.setDriving(on); startMusic(on ? 'drive' : (ballShown ? 'night' : 'plaza')); },
   // The rings, a high five between cabs and the pouch are play without points: only the feedback.
@@ -592,7 +597,7 @@ world = createTimesSquare(document.getElementById('view'), {
 window.G.world = world;
 window.G.ui = ui;
 errlogCtx({ tier: String(world?.quality || '') });
-giftUi = mountGift({ world, ui, whenBuilt, introDone: () => introDone() }); // 선물 전광판: the 🎁 button, ?gb= links, the 15-second video (gift.js)
+giftUi = mountGift({ world, ui, whenBuilt, introDone: () => introDone(), budgetDown: () => !!(net.budgetDown || net.gateDown) }); // 선물 전광판: the 🎁 button, ?gb= links (and the 점등식), the 15-second video (gift.js)
 
 // ---- 환영 전광판: the newcomer's first seconds --------------------------------------------------------------------------
 // Once the arrival intro has landed (or a sheet a link opened has closed), a newcomer who came without a link sees their own nickname on a free
@@ -2264,6 +2269,9 @@ async function enter({ nick, color, species }) {
   setTimeout(() => { ensureInvite().catch(() => {}); }, ui.isNewbie?.() ? 90000 : 20000);
   inviteGiftOnEntry(); // a gift that waited for a full day shows on the next entry
   if (ready === false) { ui.setStatus('혼자 걷는 중', 'off'); return; }
+  // 점등식: a /?gb=<id>&cer=1 link joins the room only once gift.js has read the board (at once for every other entry); too early or at
+  // budget hard it sends the visitor back to the recipient page and this never returns.
+  try { await giftUi?.cerHold?.(); } catch { /* the gate does not throw; the room is joined as ever */ }
   try {
     await net.join('square', world.netState());
     bindTake();

@@ -32,7 +32,9 @@ import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, 
 import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=202611241625';
 import { taxiExit, EXIT_SLOW, nextOfferDelay, fareWait, isTouchUI, AUTO_WALK, gridPath, walkSteer, walkStall, walkPace, autoWalkEnds } from './interact.js?v=202611241625';
 import { WELCOME } from './ftue.js?v=202611241625';
-import { RETURN_MS, glideMs, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, chaseYawRate, CHASE, stickFrame, dragSpeed, viewDragged, portraitFov, fitDistance, BALLOON_LOOK, balloonLook, reverseTime, driveView, driveWiden, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange, boardVantage, facesBlock } from './camrig.js?v=202611241625';
+import { radioAt, seenDancer, isDancing, isSustained, nearDancers, resendDue, NEAR_M } from './dance.js?v=202611241625';
+import { nowMs } from './live.js';
+import { RETURN_MS, glideMs, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, chaseYawRate, CHASE, stickFrame, dragSpeed, viewDragged, portraitFov, fitDistance, BALLOON_LOOK, balloonLook, reverseTime, driveView, driveWiden, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange, boardVantage, facesBlock, cerShotPose, cerSpread, cerPhotoPose, cerLabels, CER_PHOTO } from './camrig.js?v=202611241625';
 
 export { paintBillboard, THEMES, LAYOUT, PLOT_SLOTS, groundHeight, EMOTES, AVATAR_COLORS, STARTER_COLORS, taxiTrainMult, applyTaxiHardHit };
 export const PLAZA = LAYOUT;
@@ -195,11 +197,11 @@ void main(){
   const westLight = new THREE.PointLight(0xff3d9a, low ? 760 : 520, 85, 2);
   westLight.position.set(low ? 16 : -22, 16, low ? 60 : -40);
   scene.add(mainLight, stallLight, westLight);
-  let eastLight = null;
+  let eastLight = null, stageLight = null; // stageLight: 같이 춤추기 on the stage pulses it on the beat (stepDance); not on low
   if (!low) {
     eastLight = new THREE.PointLight(0x3fe6ff, 700, 85, 2);
     eastLight.position.set(30, 16, 95);
-    const stageLight = new THREE.PointLight(0xff3d9a, 210, 30, 2);
+    stageLight = new THREE.PointLight(0xff3d9a, 210, 30, 2);
     stageLight.position.set(LAYOUT.stage.cx, 7, LAYOUT.stage.z0 - 2);
     scene.add(eastLight, stageLight);
   }
@@ -277,7 +279,7 @@ void main(){
   const pos0 = opts.start && Number.isFinite(opts.start.x) ? opts.start : LAYOUT.spawn;
   const pos = new THREE.Vector3(pos0.x, groundHeight(pos0.x, pos0.z), pos0.z);
   const vel = new THREE.Vector3();
-  let yaw = Number.isFinite(pos0.yaw) ? pos0.yaw : LAYOUT.spawn.yaw, animSpeed = 0, sitTimer = 0, inputEnabled = true, dancing = false, danceAt = 0;
+  let yaw = Number.isFinite(pos0.yaw) ? pos0.yaw : LAYOUT.spawn.yaw, animSpeed = 0, sitTimer = 0, inputEnabled = true, dancing = false;
   let name = chars(opts.name || '네온손님', 16);
   let color = COLOR_RE.test(opts.color || '') ? opts.color : STARTER_COLORS[0];
   let species = speciesId(opts.species);
@@ -360,6 +362,8 @@ void main(){
   // are its pose this frame, and every ending eases back to it (endCine). hidMe: frameBillboard hid my avatar, which is
   // not the same thing as sitting in a taxi.
   const homePos = camera.position.clone(), homeLook = follow.clone(), viewLook = follow.clone();
+  const radio = {}, danceRows = [], danceAsked = new Set(); // 같이 춤추기: the radio this frame (dance.js radioAt), the others dancing, who was offered
+  let myDanceKey = -1, danceSentAt = -1e9, danceNear = 0;
   let hidMe = false, clipDist = Infinity, reverseT = 0, lastEmote = -1e9, stuntAt = -1e9, ringDim = false, boardAt = 0, boardNear = null;
   // The follow cameras (camrig.js). travel: the heading the walk is asked to take this frame (the stick or the auto-walk), which
   // the view comes round behind. stick: the stick's frame (stickFrame). backT: ms the walk has pointed back toward the lens.
@@ -827,6 +831,7 @@ void main(){
     job.nextAt = clockT + nextOfferDelay(fareAt == null ? null : clockT - fareAt, { min: 0.4 });
     netState.equip = 'taxi';
     traffic?.setCabTint(i, cabTint(myEquip));
+    if (dancing) { setDancing(false); opts.onDanceEnd?.('taxi'); } // a taxi ends 같이 춤추기
     opts.onDrive?.(true);
     return true;
   }
@@ -897,8 +902,23 @@ void main(){
   function remoteFor(id) { return remotes.get(id)?.av || null; }
   const seeFrustum = new THREE.Frustum(), seeM = new THREE.Matrix4(), seeP = new THREE.Vector3();
   const seenPeers = new Set(), UNSET = {};
+  // A remote dancer: the same move as mine for this bar; walking or a taxi ends it (their own screen ended it too). One
+  // notice per player who keeps dancing within NEAR_M while I am not (opts.onDancerNear answers whether it showed).
+  function stepRemoteDance(id, r, inCar) {
+    const now = performance.now();
+    if (inCar || r.spd > 0.6) { r.lastSeen = 0; r.danceKey = -1; return; }
+    if (!isDancing(r, now)) { r.danceKey = -1; return; }
+    danceRows.push(r);
+    if (r.danceKey !== radio.key) { r.danceKey = radio.key; danceMove(r.av, radio.clip, radio.barMs + 400); }
+    if (dancing || danceAsked.has(id) || !(now >= (r.askAt || 0)) || !isSustained(r, now)) return;
+    if ((r.x - pos.x) ** 2 + (r.z - pos.z) ** 2 > NEAR_M * NEAR_M) return;
+    if (opts.onDancerNear?.(id, r.nm) === true) danceAsked.add(id);
+    else r.askAt = now + 3000;
+  }
   function syncRemotes(dt, t) {
     remoteCars.length = 0;
+    danceRows.length = 0;
+    radioAt(nowMs(), radio); // the bar every dancer is on this frame (stepRemoteDance, then stepDance for mine)
     frameSig = '';
     if (!net?.peers) { traffic?.setRemoteTaxis(remoteCars); return; }
     const seen = seenPeers;
@@ -956,6 +976,7 @@ void main(){
       if (r.av.modelSpecies !== r.av.species && !r.av.asked && !inCar && seesAvatar(camera.position.distanceTo(r.av.root.position), seeFrustum.containsPoint(seeP.set(r.x, r.y + 1, r.z)))) r.av.want();
       r.av.holder.rotation.y = r.yaw;
       r.av.setMotion(inCar ? 0 : Math.min(r.spd, 9), !inCar && s.anim === 'sit' && r.spd < 0.3);
+      if (r.lastSeen) stepRemoteDance(id, r, inCar);
       r.av.update(dt, t);
       if (inCar) remoteCars.push({ x: r.x, z: r.z, yaw: r.yaw, v: r.spd, tint: cabTint(cosmetics) });
       const fr = r.fr;
@@ -971,6 +992,8 @@ void main(){
       const av = remoteFor(p.id);
       const e = EMOTES[p.e];
       if (!av || !e) return;
+      // K-댄스 marks the player dancing (dance.js); a re-send while they are is not shown again, the bar's move goes on.
+      if (p.e === 4 && !seenDancer(remotes.get(p.id), performance.now())) return;
       av.emote(e.anim, e.hold);
       av.say(e.glyph);
       if (p.e === 2) { const r = remotes.get(p.id); launch(r.x, r.z, r.y + 9, PALETTE[(Math.random() * PALETTE.length) | 0], 0.25); }
@@ -1364,7 +1387,7 @@ void main(){
     pos.z = nz;
     pos.y += (groundHeight(pos.x, pos.z) - pos.y) * (1 - Math.exp(-dt * 16));
     animSpeed += (Math.min(actual, top + 0.5) - animSpeed) * (1 - Math.exp(-dt * 12));
-    if (Math.hypot(vel.x, vel.z) > 0.3 && moving) { yaw = dampAngle(yaw, Math.atan2(vel.x, vel.z), 13, dt); if (dancing) setDancing(false); }
+    if (Math.hypot(vel.x, vel.z) > 0.3 && moving) { yaw = dampAngle(yaw, Math.atan2(vel.x, vel.z), 13, dt); if (dancing) { setDancing(false); opts.onDanceEnd?.('move'); } }
     if (onStairs(pos.x, pos.z) && !moving && animSpeed < 0.2) sitTimer += dt; else sitTimer = 0;
     const sitting = sitTimer > 1.2 && !dancing;
     if (sitting) yaw = dampAngle(yaw, 0, 5, dt);
@@ -1733,6 +1756,177 @@ void main(){
     at(ms, () => { stop(); o.onDone?.(); });
     return { stop };
   }
+  // ---- 점등식: the group photo's pose (gift.js) ---------------------------------------------------------------------------
+  // camrig.js cerShotPose: on the board's normal behind the crowd, above eye level. What may stand in the way: a cheap test first
+  // (nyc's walls and the other boards' faces), then for the spots it finds clear an exact one, rays against what this frame draws
+  // within CER_NEAR m of the board (the building tiles, the lots, the arch and its name plate, number posts, taxi-stand signs, lamps,
+  // trees, signal poles, blade signs, the other boards' frames). Left out: the avatars (they are the crowd), the board's own screen,
+  // glows and beams, and the moving cars and walkers. A blocked ideal pose steps nearer, higher, wider or turned (cerShotPose); the one
+  // that sees the most is taken when none is clear. gift.js asks for it once when the ceremony starts (cerPrep, kept per board and frame
+  // shape) so the photo's move at +6.5 s does not wait for the rays.
+  // The pose: a pinned scripted camera (input does not end it; a cut with reduced motion: no `film`) that ends itself after CER_HOLD
+  // ms if gift.js never calls cerEnd. My avatar turns to face it (a local turn like goToSlot's: it goes out in the ordinary position packet).
+  const CER_NEAR = 110, CER_HOLD = 9000;
+  function cerTests(slotId, p) {
+    const others = [];
+    for (const b of boards.boards.values()) {
+      if (b.slotId === slotId || !b.mounts.length) continue;
+      const o = boards.face(b.slotId);
+      if (o && o.pos.distanceToSquared(p) < 6400) others.push(o);
+    }
+    const hitFace = facesBlock(others);
+    if (nyc) nyc.ensureSolid(p.x, p.z, 90);
+    const block = (ax, ay, az, bx, by, bz) => Math.min(nyc ? nyc.rayBlock(ax, ay, az, bx, by, bz) : 1, hitFace(ax, ay, az, bx, by, bz));
+    scene.updateMatrixWorld();
+    const own = new Set();
+    for (const m of boards.get(slotId)?.mounts || []) m.screen?.traverse?.((o) => own.add(o));
+    me.root.traverse((o) => own.add(o));
+    const list = [], c = new THREE.Vector3();
+    scene.traverseVisible((o) => {
+      if (!o.isMesh || o.isSkinnedMesh || own.has(o) || (o.isInstancedMesh && o.parent === scene) || !(o.layers.mask & camera.layers.mask)) return;
+      const m = Array.isArray(o.material) ? o.material[0] : o.material;
+      if (!m || m.blending === THREE.AdditiveBlending || m.depthWrite === false || (m.transparent && m.opacity < 0.9)) return;
+      // An instanced mesh's own sphere holds all of its instances (the lamps of a tile); a plain mesh's is its geometry's.
+      let s = null;
+      if (o.isInstancedMesh) { if (!o.boundingSphere) o.computeBoundingSphere(); s = o.boundingSphere; } else { if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere(); s = o.geometry.boundingSphere; }
+      if (!s) return;
+      c.copy(s.center).applyMatrix4(o.matrixWorld);
+      if (c.distanceTo(p) > CER_NEAR + s.radius * o.matrixWorld.getMaxScaleOnAxis()) return;
+      list.push(o);
+    });
+    const ray = new THREE.Raycaster(), a = new THREE.Vector3(), d = new THREE.Vector3(), hits = [];
+    ray.layers.mask = camera.layers.mask;
+    ray.camera = camera;
+    const sure = (ax, ay, az, bx, by, bz) => {
+      a.set(ax, ay, az); d.set(bx - ax, by - ay, bz - az);
+      const len = d.length();
+      if (!(len > 1e-3)) return 1;
+      ray.set(a, d.multiplyScalar(1 / len)); ray.near = 0; ray.far = len;
+      hits.length = 0;
+      ray.intersectObjects(list, false, hits);
+      return Math.min(block(ax, ay, az, bx, by, bz), hits.length ? hits[0].distance / len : 1);
+    };
+    return { block, sure };
+  }
+  let cerKept = null; // { key, shot }: the last pose worked out (cerPrep), for this board and this frame shape
+  function cerShot(slotId) {
+    const p = boards.worldPos(slotId), face = boards.face(slotId);
+    if (!p || !face) return null;
+    const key = slotId + ':' + camera.aspect.toFixed(3) + ':' + p.x.toFixed(1) + ',' + p.z.toFixed(1);
+    if (cerKept?.key === key) return cerKept.shot;
+    let nx = face.normal.x, nz = face.normal.z; const nl = Math.hypot(nx, nz) || 1; nx /= nl; nz /= nl;
+    const front = { x: p.x + nx * 9, z: p.z + nz * 9 };
+    const { block, sure } = cerTests(slotId, p);
+    const pose = cerShotPose({ pos: { x: p.x, y: p.y, z: p.z }, normal: { x: nx, z: nz }, w: face.w, h: face.h, front, aspect: camera.aspect, fov: baseFov, ground: groundHeight(front.x, front.z), block, sure });
+    const shot = { ...pose, face: { x: p.x, y: p.y, z: p.z, nx, nz, w: face.w, h: face.h }, front };
+    cerKept = { key, shot };
+    return shot;
+  }
+  /** Works the photo pose out ahead of time (nothing moves). -> the pose, or null when the board is not on the map. */
+  function cerPrep(slotId) { const s = cerShot(slotId); cerPhoto(slotId); return s; }
+  // ---- 점등식: the group photo itself (capture({ photo })) -----------------------------------------------------------------------
+  // Its own render with its own pose (camrig.js cerPhotoPose: 3:2, the people large above the band, the board whole above them),
+  // not whatever the live camera shows: the scene is first put in the photo's state, in this call, so a page that drew no frame
+  // since the start (a throttled pane, a slow phone) still gets the lit card and the people in it. Refused (null) while the page is
+  // hidden, the context is lost or the board is not on its screen; gift.js then offers the photo later.
+  let cerPhotoKept = null;
+  function cerPhoto(slotId) {
+    const p = boards.worldPos(slotId), face = boards.face(slotId);
+    if (!p || !face) return null;
+    const key = slotId + ':' + p.x.toFixed(1) + ',' + p.z.toFixed(1);
+    if (cerPhotoKept?.key === key) return cerPhotoKept.shot;
+    let nx = face.normal.x, nz = face.normal.z; const nl = Math.hypot(nx, nz) || 1; nx /= nl; nz /= nl;
+    const front = { x: p.x + nx * 9, z: p.z + nz * 9 };
+    const { block, sure } = cerTests(slotId, p);
+    const pose = cerPhotoPose({ pos: { x: p.x, y: p.y, z: p.z }, normal: { x: nx, z: nz }, w: face.w, h: face.h, front, ground: groundHeight(front.x, front.z), block, sure });
+    const shot = pose && { ...pose, face: { x: p.x, y: p.y, z: p.z, nx, nz, w: face.w, h: face.h }, front };
+    cerPhotoKept = { key, shot };
+    return shot;
+  }
+  const photoV = new THREE.Vector3();
+  function cerPicture(slotId, band) {
+    if (document.hidden || renderer.getContext?.()?.isContextLost?.() || ctxLost) return null;
+    const shot = cerPhoto(slotId);
+    if (!shot || !boards.cerLit?.(slotId)) return null; // the lit card on the board now (crossed here if this board had not yet)
+    const W = low ? 960 : CER_PHOTO.w, H = Math.round(W * CER_PHOTO.h / CER_PHOTO.w);
+    if (remotes.size) syncRemotes(0.5, performance.now() / 1000); // the people where the room last said they are
+    me.root.position.copy(pos);
+    if (!drive) {
+      me.root.visible = true;
+      const dx = shot.cam.x - pos.x, dz = shot.cam.z - pos.z;
+      if (dx * dx + dz * dz > 1) { yaw = Math.atan2(dx, dz); me.holder.rotation.y = yaw; }
+    }
+    const people = [...(drive ? [] : [[me, name]]), ...[...remotes.values()].map((r) => [r.av, r.nm])];
+    const tags = people.map(([av]) => av.tag.visible);
+    const was = { p: camera.position.clone(), q: camera.quaternion.clone(), fov: camera.fov, aspect: camera.aspect };
+    const out = document.createElement('canvas'); out.width = W; out.height = H;
+    const g = out.getContext('2d'), heads = [];
+    try {
+      for (const [av] of people) av.tag.visible = false; // the names are drawn on the picture instead, large enough to read
+      camera.position.set(shot.cam.x, shot.cam.y, shot.cam.z);
+      camera.fov = shot.fov; camera.aspect = W / H; camera.up.set(0, 1, 0);
+      camera.lookAt(shot.look.x, shot.look.y, shot.look.z);
+      camera.updateProjectionMatrix(); camera.updateMatrixWorld();
+      renderer.setPixelRatio(1); renderer.setSize(W, H, false);
+      composer.setPixelRatio(1); composer.setSize(W, H);
+      bloom.setSize(Math.round(W * (low ? 0.5 : 0.75)), Math.round(H * (low ? 0.5 : 0.75)));
+      if (reflection.enabled) { reflection.setSize(W, H); reflection.update(scene, camera); }
+      scene.updateMatrixWorld();
+      composer.render();
+      g.drawImage(canvas, 0, 0, W, H);
+      for (const [av, who] of people) {
+        if (!who || !av.root.visible || !av.holder.visible || !av.root.parent) continue;
+        photoV.copy(av.root.position); photoV.y += (av.sys?.height || 1.6) + 0.25;
+        const depth = photoV.distanceTo(camera.position);
+        if (depth > 45) continue;
+        photoV.project(camera);
+        if (photoV.z >= 1 || Math.abs(photoV.x) > 1 || Math.abs(photoV.y) > 1) continue;
+        heads.push({ x: (photoV.x + 1) / 2 * W, y: (1 - photoV.y) / 2 * H, depth, text: chars(String(who), 12) });
+      }
+    } finally {
+      people.forEach(([av], i) => { av.tag.visible = tags[i]; });
+      resize();
+      camera.position.copy(was.p); camera.quaternion.copy(was.q); camera.fov = was.fov; camera.aspect = was.aspect; camera.updateProjectionMatrix();
+    }
+    // The names: a dark pill and white words over each head (camrig.js cerLabels: nearest first, overlaps moved up or left out).
+    const size = Math.max(16, Math.round(22 * W / 1200));
+    g.font = `800 ${size}px sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    for (const l of cerLabels(heads, W, H, size, (t, s) => g.measureText(t).width || String(t).length * s * 0.62)) {
+      g.fillStyle = 'rgba(8,6,28,0.72)'; g.beginPath(); g.roundRect ? g.roundRect(l.x - l.w / 2, l.y - l.h / 2, l.w, l.h, l.h / 2) : g.rect(l.x - l.w / 2, l.y - l.h / 2, l.w, l.h); g.fill();
+      g.fillStyle = '#ffffff'; g.fillText(l.text, l.x, l.y + 1);
+    }
+    // The band: a strip at the bottom (9 % of the height), its words made smaller until they fit.
+    const bar = Math.round(H * 0.09);
+    g.fillStyle = 'rgba(5,6,16,0.82)'; g.fillRect(0, H - bar, W, bar);
+    const words = String(band || '') || 'WISH BOARD · 모두의 전광판';
+    let fs = Math.round(bar * 0.42);
+    g.textAlign = 'left'; g.font = `800 ${fs}px sans-serif`;
+    while (fs > 12 && g.measureText(words).width > W - 2 * Math.round(bar * 0.4)) { fs -= 1; g.font = `800 ${fs}px sans-serif`; }
+    g.fillStyle = '#ffe7a8'; g.fillText(words, Math.round(bar * 0.4), H - bar / 2);
+    const raw = out.toDataURL('image/jpeg', 0.9).split(',')[1] || '';
+    const bin = atob(raw), bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type: 'image/jpeg' });
+  }
+  function cerPose(slotId) {
+    if (drive) return false;
+    const pose = cerShot(slotId);
+    if (!pose) return false;
+    endAutoWalk();
+    if (hidMe) { hidMe = false; me.root.visible = true; }
+    startCine(new THREE.Vector3(pose.cam.x, pose.cam.y, pose.cam.z), new THREE.Vector3(pose.look.x, pose.look.y, pose.look.z), { dur: 900, pin: true, fov: pose.fov, until: performance.now() + CER_HOLD });
+    cine.cer = true;
+    // Face the camera: a local turn (no move), unless the player is walking.
+    if (!walkingNow()) {
+      const dx = pose.cam.x - pos.x, dz = pose.cam.z - pos.z;
+      if (dx * dx + dz * dz > 1) { yaw = Math.atan2(dx, dz); me.holder.rotation.y = yaw; }
+    }
+    opts.onFocus?.(true);
+    return pose; // truthy: the pose that is up ({ cam, look, fov, dist, seen, face, front })
+  }
+  /** Ends the photo pose (and nothing else: another scripted camera that took over is left alone). */
+  function cerEnd() { if (cine?.cer && !cine.back) endCine(); }
+  const walkingNow = () => cineCancels({ active: true, keys: keys.size, joy: Math.hypot(joy.x, joy.y), locked: !inputEnabled });
   // The prime screens, each seen the way the photo frame sees it: level with the face and straight on (framePose), in
   // either orientation. A screen whose straight view is blocked (a corner screen the vantage can only see turned up to
   // 72° along the street) is skipped, so the tour never shows a board from the side or from far below; only when no
@@ -1975,7 +2169,7 @@ void main(){
     netState.outfit = color;
     netState.av = species;
     if (net) { try { net.tick(netState); } catch { /* transport hiccup */ } }
-    if (dancing && now - danceAt > 6000) { danceAt = now; try { net?.sendEmoji?.(4); } catch { /* offline */ } }
+    if (dancing) sendDance(now);
 
     // Camera: OrbitControls drives a wanted orbit; past the floor the view tilts upward instead.
     prevFollow.copy(follow);
@@ -2164,6 +2358,7 @@ void main(){
     for (const m of markerList) if (m.g.visible) { m.icon.position.y = 6 + Math.sin(t * 2.4) * 0.4; m.ring.scale.setScalar(1 + Math.sin(t * 3) * 0.06); }
 
     syncRemotes(dt, t);
+    stepDance(now);
     stepWalkers(t);
     stepGhosts(now);
     if (nyc) nyc.ensureSolid(pos.x, pos.z);
@@ -2350,14 +2545,43 @@ void main(){
     if (go && waypoint) beginAutoWalk();
     sayGuide();
   }
+  // 같이 춤추기 (dance.js): every dancer, mine and the others', plays the radio's move for the bar the clock is at, so the
+  // same moment is the same move on every screen. Mine sends the K-댄스 reaction now and every RESEND_MS (it waits out the
+  // emote cooldown), which is all the others get: no new message. Moving ends it here and tells ui.js (onDanceEnd).
+  // -> whether I am dancing now (false in a taxi).
   function setDancing(on) {
-    if (on === dancing || drive) return;
+    on = !!on;
+    if (on && drive) return false;
+    if (on === dancing) return dancing;
     dancing = on;
-    if (on) {
-      me.emote('Dance', 600);
-      danceAt = performance.now();
-      try { net?.sendEmoji?.(4); } catch { /* offline */ }
-    } else me.danceUntil = 0;
+    myDanceKey = -1;
+    if (on) { danceSentAt = -1e9; sendDance(performance.now()); }
+    else me.danceUntil = 0;
+    return dancing;
+  }
+  function sendDance(now) {
+    if (!resendDue(now, danceSentAt, lastEmote, EMOTE_GAP_MS)) return;
+    danceSentAt = now;
+    lastEmote = now;
+    try { net?.sendEmoji?.(4); } catch { /* offline */ }
+  }
+  // One move: the Dance loop is the base between the others for the bar (and a little over, so the next bar takes over
+  // without a gap); a move other than Dance plays once on top of it.
+  function danceMove(av, clip, ms) {
+    av.danceUntil = performance.now() + ms;
+    if (clip !== 'Dance') av.emote(clip);
+    else if (av.base !== 'Dance') av.emote('Dance', ms / 1000);
+  }
+  // Every frame, after syncRemotes has filled `radio` (radioAt, no allocation) and danceRows. The count is me (when dancing) and the others dancing within NEAR_M.
+  function stepDance(now) {
+    if (dancing && myDanceKey !== radio.key) { myDanceKey = radio.key; danceMove(me, radio.clip, radio.barMs + 400); }
+    danceNear = (dancing ? 1 : 0) + nearDancers(danceRows, now, pos.x, pos.z);
+    // On the stage the pink light pulses on the beat (this device only); not under prefers-reduced-motion.
+    if (stageLight) {
+      const G = LAYOUT.stage.spot, on = dancing && !calm.matches && (pos.x - G.x) ** 2 + (pos.z - G.z) ** 2 < 144;
+      const want = on ? 210 * (0.6 + 1.1 * (1 - radio.phase) ** 3) : 210;
+      if (stageLight.intensity !== want) stageLight.intensity = want;
+    }
   }
 
   // Street names for the HUD: the street underfoot and the nearest cross street.
@@ -2806,6 +3030,7 @@ void main(){
     setGlow(v) { glow = clamp(Number(v) || 0, 0, 1); applyGlow(); },
     setExposure(v) { renderer.toneMappingExposure = clamp(Number(v) || 0.95, 0.5, 1.5); },
     setDancing,
+    danceCount: () => danceNear, // 같이 춤추기: me and the others dancing within 15 m (stepDance)
     playIntro: playIntroSweep,
     focusSlot,
     slotCard(id) {
@@ -2832,11 +3057,23 @@ void main(){
     },
     // Deep links and QR codes: put the avatar at the board's front point (the same local teleport the map uses; the
     // position still comes only from this client) facing the board. Returns the point, or null when the board is not
-    // on the map or its front is outside the fence.
-    goToSlot(slotId) {
+    // on the map or its front is outside the fence. spread (점등식, gift.js: one seed per tab): that far to the side and out
+    // (camrig.js cerSpread), so friends who came by the same link do not stand inside each other; the front point when that spot is
+    // outside the fence.
+    goToSlot(slotId, { spread } = {}) {
       const pose = slotPose(slotId, 18);
       if (!pose || !insideLoop(pose.front.x, pose.front.z, 0)) return null;
-      api.teleport(pose.front.x, pose.front.z);
+      let tx = pose.front.x, tz = pose.front.z;
+      if (spread != null && Number.isFinite(Number(spread))) {
+        const s = cerSpread(Number(spread)), nx = (pose.front.x - pose.look.x) / 9, nz = (pose.front.z - pose.look.z) / 9;
+        // The spot, else its mirror across the normal: one the teleport would not pull onto a named place (the arch's entry, a taxi
+        // stand: approachOf) and inside the fence.
+        for (const u of [s.u, -s.u]) {
+          const sx = tx + nz * u + nx * s.n, sz = tz - nx * u + nz * s.n;
+          if (insideLoop(sx, sz, 0) && !approachOf(sx, sz)) { tx = sx; tz = sz; break; }
+        }
+      }
+      api.teleport(tx, tz);
       const dx = pose.look.x - pos.x, dz = pose.look.z - pos.z;
       if (dx * dx + dz * dz > 1) {
         yaw = Math.atan2(dx, dz);
@@ -2858,10 +3095,15 @@ void main(){
     isDriving: () => !!drive,
     exitTaxi,
     startStars, removeStar, clearStars,
-    capture() {
-      // The picture is taken without my own name tag (the frame loop decides its visibility again on the next frame).
+    // The picture, as a JPEG blob (1280 px wide at most) with a band across the bottom. Default: without my own name tag and the band
+    // 'WISH BOARD · 모두의 전광판' (ui.js openShot). The ceremony's group photo (gift.js): { me: true } keeps my tag in it (forced on for
+    // this one render: a scripted camera hides it every frame), band: its own words, made smaller until they fit the width.
+    // photo: a board's slot: the ceremony's group photo instead (cerPicture: its own 3:2 render; null when it cannot be taken now).
+    capture({ me: withMe = false, band = '', photo = '' } = {}) {
+      if (photo) return cerPicture(photo, band);
+      // The frame loop decides the tag's visibility again on the next frame.
       const tagOn = me.tag.visible;
-      me.tag.visible = false;
+      me.tag.visible = !!withMe;
       try { composer.render(); } finally { me.tag.visible = tagOn; }
       const maxW = 1280;
       const scale = Math.min(1, maxW / Math.max(1, canvas.width));
@@ -2875,8 +3117,11 @@ void main(){
       g.fillRect(0, out.height - bar, out.width, bar);
       g.textBaseline = 'middle';
       g.fillStyle = '#ffe7a8';
-      g.font = `800 ${Math.max(15, Math.round(bar * 0.4))}px sans-serif`;
-      g.fillText('WISH BOARD · 모두의 전광판', 16, out.height - bar * 0.62);
+      const words = String(band || '') || 'WISH BOARD · 모두의 전광판';
+      let size = Math.max(15, Math.round(bar * 0.4));
+      g.font = `800 ${size}px sans-serif`;
+      if (band) while (size > 12 && g.measureText(words).width > out.width - 32) { size -= 1; g.font = `800 ${size}px sans-serif`; }
+      g.fillText(words, 16, out.height - bar * 0.62);
       const raw = out.toDataURL('image/jpeg', 0.9).split(',')[1] || '';
       const bin = atob(raw);
       const bytes = new Uint8Array(bin.length);
@@ -2897,8 +3142,11 @@ void main(){
     // 선물 전광판 (gift.js): /rt/world's live gifts on the street and lot screens; show one alone on a screen for ms (-> its slot);
     // which screen shows a gift now; the 15-second show; a hook after every drawn frame (the recorder), -> its remover.
     setGifts(list) { boards.setGifts(list); },
-    pinGift(g, ms) { return boards.pinGift(g, ms); },
+    pinGift(g, ms, o) { return boards.pinGift(g, ms, o); },
     welcome,
+    // 점등식 (gift.js): the group photo's pinned pose (-> false while driving or when the board is not on the map), its end, and
+    // whether the player is walking right now (keys or the stick: a scripted camera would end at once).
+    cerPrep, cerPose, cerEnd, cerPhoto, walking: () => walkingNow(),
     giftSlot(id) { return boards.giftSlot(id); },
     giftShow,
     onFrame(fn) { afterRender.add(fn); return () => afterRender.delete(fn); },
@@ -2935,6 +3183,7 @@ void main(){
     balloonUp: () => !!(balloon && balloon.hp > 0),
     teleport(x, z) {
       if (drive) exitTaxi();
+      if (dancing) { setDancing(false); opts.onDanceEnd?.('teleport'); } // 순간이동 ends 같이 춤추기
       endAutoWalk(); // the route was planned from the old place
       stick.ref = null; stick.lag = 0;
       let tx = clamp(Number(x) || 0, LOOP.x0 + 4, LOOP.x1 - 4), tz = clamp(Number(z) || 0, LOOP.z0 + 4, LOOP.z1 - 4);

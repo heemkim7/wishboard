@@ -230,7 +230,7 @@ describe('first-minute review fixes', () => {
     assert.equal(newcomerKnown({ plazaReady: true, actor: 'c-temp123' }), false);
     assert.equal(newcomerKnown({ plazaReady: true, actor: 'guest:g-1' }), true);
   });
-  it('the waypoint pill hides while the bake or dance panel is open', () => {
-    assert.match(read('index.html'), /#ui:has\(\.bake\.show\) \.waypill, #ui:has\(\.rhythm\.show\) \.waypill, #ui:has\(\.bake\.show\) \.help, #ui:has\(\.rhythm\.show\) \.help \{ display: none; \}/);
+  it('the waypoint pill hides while the bake panel is open', () => {
+    assert.match(read('index.html'), /#ui:has\(\.bake\.show\) \.waypill, #ui:has\(\.bake\.show\) \.help \{ display: none; \}/);
   });
 });

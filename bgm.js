@@ -2,6 +2,8 @@
 // WebAudio oscillators and one noise buffer. lounge is not one of audio.js's tracks: ui.js lays it over the current track
 // while the player sits in the lounge (over('lounge')) and takes it off again (over(null)). No audio files: audio.js tries assets/audio/<id>.ogg first (none are shipped) and hands the track
 // to this synth when the file fails. ui.js owns the AudioContext and binds the synth with bindMusic().
+// The four dance tracks (neon, disco, groove and the December carol jingle) are laid over the same way while the player
+// dances (같이 춤추기, dance.js), from the position the clock gives (over(id, seconds)), so everyone dancing hears the same bar.
 //
 // Everything is scheduled a little ahead (LOOK seconds) on the context clock, so a suspended context (page hidden,
 // ui.js suspends it) simply stops time and the loop carries on where it was. Notes are short-lived nodes; a bar of the
@@ -54,7 +56,76 @@ export const TRACKS = Object.freeze({
     kick: [[0, 8, 10], [0, 6, 8]], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], openHat: [6],
     bassSteps: [[0, 6], [6, 2], [8, 6], [14, 2]], keys: 'stab', arp: 4, leadDensity: 0.26, leadSteps: [0, 2, 4, 8, 10, 12],
   }),
+  // 같이 춤추기 (dance.js plays these from the clock, ui.js lays the one on air over the current track). Four dance tracks,
+  // each with its own mood. The fields past the ones above: octBass (the bass jumps an octave every other eighth), walk
+  // (the bass steps to the fifth on beat 3), form (the chord index per bar, instead of barsPerChord), melody (a fixed
+  // tune instead of the seeded lead: per bar, [step, note, length in steps]), leadType / leadGain, arpType / arpOct, hatHz.
+  // 네온 스텝: bright synth pop. Dm Bb F C, two bars each, four on the floor, pumping octave bass, a square arpeggio.
+  neon: Object.freeze({
+    bpm: 124, swing: 0, cutoff: 6000, barsPerChord: 2,
+    chords: [[50, 53, 57, 62], [46, 50, 53, 58], [53, 57, 60, 65], [48, 52, 55, 60]],
+    bass: [38, 34, 41, 36],
+    scale: [69, 72, 74, 76, 77, 79, 81],
+    kick: [[0, 4, 8, 12]], snare: [4, 12], hat: [2, 6, 10, 14], openHat: [6, 14],
+    bassSteps: [[0, 2], [2, 2], [4, 2], [6, 2], [8, 2], [10, 2], [12, 2], [14, 2]], keys: 'pad', arp: 2, leadDensity: 0.3, leadSteps: [0, 3, 6, 8, 11, 14],
+    octBass: true, leadType: 'triangle',
+  }),
+  // 반짝 미러볼: disco. Am7 Dm7 G7 Cmaj7, a bar each, open hats on the off-beats, octave bass, chord stabs.
+  disco: Object.freeze({
+    bpm: 116, swing: 0.04, cutoff: 5000, barsPerChord: 1,
+    chords: [[57, 60, 64, 67], [50, 53, 57, 60], [55, 59, 62, 65], [48, 52, 55, 59]],
+    bass: [33, 38, 31, 36],
+    scale: [69, 71, 72, 74, 76, 79, 81],
+    kick: [[0, 4, 8, 12]], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], openHat: [2, 6, 10, 14],
+    bassSteps: [[0, 2], [2, 2], [4, 2], [6, 2], [8, 2], [10, 2], [12, 2], [14, 2]], keys: 'stab', arp: null, leadDensity: 0.24, leadSteps: [0, 2, 6, 8, 10, 14],
+    octBass: true, leadType: 'triangle',
+  }),
+  // 골목 그루브: laid back. Em7 A9 Dmaj7 Bm7, two bars each, swung hats, a kick that leans late, held keys.
+  groove: Object.freeze({
+    bpm: 100, swing: 0.14, cutoff: 3400, barsPerChord: 2,
+    chords: [[52, 55, 59, 62], [45, 49, 52, 55, 59], [50, 54, 57, 61], [47, 50, 54, 57]],
+    bass: [40, 33, 38, 35],
+    scale: [64, 66, 67, 69, 71, 74, 76],
+    kick: [[0, 7, 10], [0, 3, 8, 10]], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], openHat: [],
+    bassSteps: [[0, 6], [6, 2], [10, 4], [14, 2]], keys: 'hold', arp: null, leadDensity: 0.34, leadSteps: [2, 6, 8, 11, 14],
+  }),
+  // 징글벨 (James Lord Pierpont, 1857: public domain). Our own arrangement of the chorus melody in C: a triangle lead,
+  // sleigh-bell hats on every eighth, a root-fifth bass, chord stabs and high sine bells. The 16-bar form:
+  // C C C C | F C D7 G7 | C C C C | F C G7 C.
+  jingle: Object.freeze({
+    bpm: 120, swing: 0, cutoff: 5200, barsPerChord: 2,
+    chords: [[48, 52, 55, 60], [53, 57, 60, 65], [55, 59, 62, 65], [50, 54, 57, 60]],
+    bass: [36, 41, 43, 38],
+    form: [0, 0, 0, 0, 1, 0, 3, 2, 0, 0, 0, 0, 1, 0, 2, 0],
+    scale: [72, 74, 76, 77, 79],
+    kick: [[0, 8]], snare: [4, 12], hat: [0, 2, 4, 6, 8, 10, 12, 14], openHat: [], hatHz: 9500,
+    bassSteps: [[0, 4], [8, 4]], keys: 'stab', arp: 4, leadDensity: 1, leadSteps: [0, 4, 8, 12, 14],
+    walk: true, leadType: 'triangle', leadGain: 0.05, arpType: 'sine', arpOct: 24,
+    melody: [
+      [[0, 76, 4], [4, 76, 4], [8, 76, 8]],                // jin-gle bells
+      [[0, 76, 4], [4, 76, 4], [8, 76, 8]],                // jin-gle bells
+      [[0, 76, 4], [4, 79, 4], [8, 72, 6], [14, 74, 2]],   // jin-gle all the
+      [[0, 76, 16]],                                       // way
+      [[0, 77, 4], [4, 77, 4], [8, 77, 6], [14, 77, 2]],
+      [[0, 77, 4], [4, 76, 4], [8, 76, 4], [12, 76, 2], [14, 76, 2]],
+      [[0, 76, 4], [4, 74, 4], [8, 74, 4], [12, 76, 4]],
+      [[0, 74, 8], [8, 79, 8]],
+      [[0, 76, 4], [4, 76, 4], [8, 76, 8]],
+      [[0, 76, 4], [4, 76, 4], [8, 76, 8]],
+      [[0, 76, 4], [4, 79, 4], [8, 72, 6], [14, 74, 2]],
+      [[0, 76, 16]],
+      [[0, 77, 4], [4, 77, 4], [8, 77, 6], [14, 77, 2]],
+      [[0, 77, 4], [4, 76, 4], [8, 76, 4], [12, 76, 2], [14, 76, 2]],
+      [[0, 79, 4], [4, 79, 4], [8, 77, 4], [12, 74, 4]],
+      [[0, 72, 16]],
+    ],
+  }),
 });
+
+// The chord (index into chords and bass) a bar plays: the form when the track has one, else barsPerChord bars each.
+export function chordAt(track, bar) {
+  return track.form ? track.form[bar % track.form.length] : Math.floor(bar / track.barsPerChord) % track.chords.length;
+}
 
 export function stepSeconds(track) { return 60 / track.bpm / 4; }
 export function loopBars(track) { return track.chords.length * track.barsPerChord; }
@@ -69,9 +140,10 @@ export function rng(seed) {
 export function leadBar(id, bar) {
   const t = TRACKS[id];
   if (!t) return [];
+  if (t.melody) return t.melody[bar % t.melody.length].map(([step, note, len]) => ({ step, note, len }));
   const phrase = Math.floor(bar / 8) % 4;
   const r = rng(0x9e3779b1 ^ (id.length * 7919) ^ (phrase * 104729) ^ ((bar % 4) * 1299709));
-  const chord = t.chords[Math.floor(bar / t.barsPerChord) % t.chords.length];
+  const chord = t.chords[chordAt(t, bar)];
   const tones = new Set(chord.map((n) => n % 12));
   const out = [];
   let last = t.scale[Math.floor(r() * t.scale.length)];
@@ -192,21 +264,23 @@ export function createBgm(getCtx, getDest, { setTimer = setInterval, clearTimer 
     const T = track;
     const sx = stepSeconds(T);
     const inBar = s % 16;
-    const chord = T.chords[Math.floor(bar / T.barsPerChord) % T.chords.length];
-    const root = T.bass[Math.floor(bar / T.barsPerChord) % T.bass.length];
+    const ci = chordAt(T, bar);
+    const chord = T.chords[ci];
+    const root = T.bass[ci % T.bass.length];
     const kicks = T.kick[bar % T.kick.length];
     const soft = T.soft ? 0.45 : 1;
     if (kicks.includes(inBar)) kick(t, soft);
     if (T.snare.includes(inBar)) hiss(t, 'bandpass', T.soft ? 2600 : id === 'plaza' ? 1500 : 1900, (id === 'plaza' ? 0.07 : 0.1) * soft, T.soft ? 0.05 : id === 'plaza' ? 0.12 : 0.16, 0.9);
     if (T.hat.includes(inBar)) {
       const open = T.openHat.includes(inBar);
-      hiss(t, 'highpass', 7200, (inBar % 4 === 0 ? 0.022 : 0.032) * (id === 'plaza' ? 0.8 : 1) * soft, open ? 0.14 : 0.035);
+      hiss(t, 'highpass', T.hatHz || 7200, (inBar % 4 === 0 ? 0.022 : 0.032) * (id === 'plaza' ? 0.8 : 1) * soft, open ? 0.14 : 0.035);
     }
     for (const [at, len] of T.bassSteps) {
       if (at !== inBar) continue;
-      const oct = id === 'drive' && (inBar / 2) % 2 === 1 ? 12 : 0;
-      voice('sine', root + oct, t, 0.16 * (T.soft ? 0.8 : 1), 0.01, len * sx * 0.55, len * sx * 0.4);
-      if (!T.soft) voice('triangle', root + 12 + oct, t, 0.025, 0.01, len * sx * 0.3, len * sx * 0.4);
+      const oct = (id === 'drive' || T.octBass) && (inBar / 2) % 2 === 1 ? 12 : 0;
+      const fifth = T.walk && inBar === 8 ? 7 : 0;
+      voice('sine', root + oct + fifth, t, 0.16 * (T.soft ? 0.8 : 1), 0.01, len * sx * 0.55, len * sx * 0.4);
+      if (!T.soft) voice('triangle', root + 12 + oct + fifth, t, 0.025, 0.01, len * sx * 0.3, len * sx * 0.4);
     }
     if (inBar === 0) {
       const barSec = 16 * sx;
@@ -224,12 +298,13 @@ export function createBgm(getCtx, getDest, { setTimer = setInterval, clearTimer 
     }
     if (T.arp && inBar % T.arp === 0) {
       const k = (inBar / T.arp) % chord.length;
-      const n = chord[(k + Math.floor(bar / 2)) % chord.length] + (id === 'night' ? 24 : 12);
-      voice(id === 'night' ? 'sine' : 'square', n, t, id === 'night' ? 0.026 : 0.0095, 0.004, 0.02, id === 'night' ? 0.5 : 0.16);
+      const bell = id === 'night' || T.arpType === 'sine';
+      const n = chord[(k + Math.floor(bar / 2)) % chord.length] + (T.arpOct || (id === 'night' ? 24 : 12));
+      voice(bell ? 'sine' : 'square', n, t, bell ? 0.026 : 0.0095, 0.004, 0.02, bell ? 0.5 : 0.16);
     }
     for (const L of leadBar(id, bar)) {
       if (L.step !== inBar) continue;
-      const g = voice(id === 'drive' ? 'triangle' : 'sine', L.note, t, 0.038, 0.012, L.len * sx * 0.4, 0.5 + L.len * sx * 0.3);
+      const g = voice(T.leadType || (id === 'drive' ? 'triangle' : 'sine'), L.note, t, T.leadGain || 0.038, 0.012, L.len * sx * 0.4, 0.5 + L.len * sx * 0.3);
       g.connect(echo);
     }
   }
@@ -260,7 +335,9 @@ export function createBgm(getCtx, getDest, { setTimer = setInterval, clearTimer 
     stopAt = 0;
   }
 
-  function play(name) {
+  // at: seconds into the track (같이 춤추기: the radio's position from the clock), so the first step heard is the one due
+  // then; without it the track starts from its first bar.
+  function play(name, at) {
       const T = TRACKS[name];
       if (!T) return false;
       if (!ensure()) return false;
@@ -273,6 +350,12 @@ export function createBgm(getCtx, getDest, { setTimer = setInterval, clearTimer 
       step = 0;
       bar = 0;
       next = now + (switching ? 0.25 : 0.1);
+      if (Number.isFinite(at) && at >= 0) {
+        const sx = stepSeconds(T);
+        step = Math.ceil((at + (next - now)) / sx);
+        next = now + step * sx - at;
+        bar = Math.floor(step / 16) % (loopBars(T) * 4 * 4);
+      }
       tone.frequency.setValueAtTime(T.cutoff, now);
       if (switching) {
         try {
@@ -295,10 +378,11 @@ export function createBgm(getCtx, getDest, { setTimer = setInterval, clearTimer 
       if (overId) return true; // the lounge goes on; this one plays when it ends
       return play(name);
     },
-    // Lay a track over the current one (name), or take it off and go back to the current one (null).
-    over(name) {
+    // Lay a track over the current one (name), or take it off and go back to the current one (null). at: seconds into
+    // the track it lays over (play).
+    over(name, at) {
       overId = name && TRACKS[name] ? name : '';
-      if (overId) return play(overId);
+      if (overId) return play(overId, at);
       if (base) return play(base);
       this.stop();
       return false;

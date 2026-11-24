@@ -1,7 +1,7 @@
 // 선물 전광판 artwork on a 2D canvas: the plaza screen (ts3d/screens.js), the light pages' live preview and film (giftpage.js,
 // giftfilm.js) and the link-preview card (1200 x 630). Browser only (no three.js, no fonts of its own: the system stack is enough on a
 // phone and the plaza's Pretendard is used when it is there). Text is only ever drawn with fillText.
-import { OCCASIONS, GIFT_THEMES } from './giftrules.js';
+import { OCCASIONS, GIFT_THEMES, CER_TEXT } from './giftrules.js';
 
 export const GIFT_SANS = '"Pretendard Variable", Pretendard, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif';
 const arr = (s) => Array.from(String(s ?? ''));
@@ -134,6 +134,30 @@ export function paintWelcome(canvas, { name, line } = {}) {
   c.fillStyle = T.hi; c.fillText(big, W / 2, H * 0.43);
   const sub = String(line ?? '').trim();
   if (sub) { c.font = `800 ${fitSize(c, sub, W - pad * 4, 50 * k, 26 * k)}px ${GIFT_SANS}`; c.fillStyle = T.ink; c.fillText(sub, W / 2, H * 0.65); }
+  c.restore();
+}
+
+// 점등식 teaser (ts3d/screens.js pinGift with cer, before the start): t is giftrules.js cerTeaser's fields and nothing else is read, so the
+// message and the sender never reach this canvas. The gift board's ground in the board's theme, the chip (곧 켜져요) left, WISH BOARD
+// right, 'To. name' big (12 code points), '<emoji> 18:00에 켜져요' and the time left (mm:ss) under it.
+export function paintTeaser(canvas, t = {}) {
+  const T = GIFT_THEMES[t?.th] || GIFT_THEMES.party, to = arr(t?.to).slice(0, 12).join('').trim() || '당신';
+  const { c, W, H, k, pad } = paintGround(canvas, T, 'cer' + to);
+  paintChip(c, k, String(t?.chip || CER_TEXT.soon), pad * 1.3, pad * 1.25, false, 'rgba(8,6,28,0.55)', '#ffffff');
+  paintChip(c, k, 'WISH BOARD', W - pad * 1.3, pad * 1.25, true, T.hi, T.deep);
+  const big = 'To. ' + to;
+  c.textAlign = 'center';
+  const ts = fitSize(c, big, W - pad * 4, 112 * k, 46 * k, 900);
+  c.font = `900 ${ts}px ${GIFT_SANS}`;
+  c.lineWidth = Math.max(3, ts * 0.09); c.strokeStyle = 'rgba(10,4,30,0.35)'; c.strokeText(big, W / 2, H * 0.37);
+  c.fillStyle = T.hi; c.fillText(big, W / 2, H * 0.37);
+  const when = String(t?.when || '');
+  if (when) {
+    const line = (t?.emoji ? String(t.emoji) + ' ' : '') + when + '에 켜져요';
+    c.font = `800 ${fitSize(c, line, W - pad * 4, 50 * k, 26 * k)}px ${GIFT_SANS}`; c.fillStyle = T.ink; c.fillText(line, W / 2, H * 0.58);
+  }
+  const left = String(t?.left || '');
+  if (left) { c.font = `900 ${Math.round(92 * k)}px ${GIFT_SANS}`; c.fillStyle = '#ffffff'; c.fillText(left, W / 2, H * 0.78); }
   c.restore();
 }
 

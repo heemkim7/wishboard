@@ -380,7 +380,7 @@ describe('3. the pouch: after the first throw, one tap per throw with the balloo
     assert.equal(px(base, 'right'), 12 + 52 + 8);
     assert.match(base, /pointer-events: auto;/);
     assert.match(css, /html\.touch #ui > \.pouchgo\[hidden\] \{ display: none; \}/);
-    assert.match(css, /html\.touch #ui:is\(\.newbie, \.lounging, \.viewonly, :has\(\.bake\.show, \.rhythm\.show\)\) > \.pouchgo \{ display: none; \}/);
+    assert.match(css, /html\.touch #ui:is\(\.newbie, \.lounging, \.viewonly, :has\(\.bake\.show\)\) > \.pouchgo \{ display: none; \}/);
     const blocks = {
       tablet: css,
       up: media('(orientation: portrait)', 'html.touch .acts'),
@@ -479,10 +479,10 @@ function keyRig({ ext = true, sheet = true } = {}) {
   const calls = [];
   const src = ui.slice(ui.indexOf("  window.addEventListener('keydown', (e) => {\n    const tag = e.target?.tagName;"));
   const body = src.slice(src.indexOf('(e) => {'), src.indexOf('\n  }, true);') + 4);
-  const names = ['ext', 'closeLayer', 'dance', 'endDance', 'DANCE_KEYS', 'danceHit', 'proof', 'leaveProof', 'baking', 'reactPanel', 'toggleReacts', 'stopBake', 'sheet', 'backSheet', 'fsOn', 'openMap', 'driving'];
+  const names = ['ext', 'closeLayer', 'dance', 'endDance', 'proof', 'leaveProof', 'baking', 'reactPanel', 'toggleReacts', 'stopBake', 'sheet', 'backSheet', 'fsOn', 'openMap', 'driving'];
   const rec = (n) => (...a) => { calls.push(n); return true; };
   const fn = new Function(...names, 'return ' + body)(
-    ext ? { el: {}, close() {} } : null, rec('closeLayer'), null, rec('endDance'), {}, rec('danceHit'), { hidden: true }, rec('leaveProof'), false,
+    ext ? { el: {}, close() {} } : null, rec('closeLayer'), null, rec('endDance'), { hidden: true }, rec('leaveProof'), false,
     { hidden: true }, rec('toggleReacts'), rec('stopBake'), sheet ? { el: { querySelector: () => null } } : null, rec('backSheet'), () => false, rec('openMap'), false);
   const press = (key, code = '') => { const e = { key, code, repeat: false, isComposing: false, target: { tagName: 'BUTTON' }, prevented: false, stopped: false, preventDefault() { e.prevented = true; }, stopPropagation() { e.stopped = true; } }; fn(e); return e; };
   return { press, calls };

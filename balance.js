@@ -23,7 +23,6 @@ export const BALANCE = {
   attend: [10, 12, 15, 20, 30],
   shareShot: 5,
   season: { mission: 20 },
-  dance: { bpm: 96, beats: 40, perfect: 0.18, great: 0.32, good: 0.48, window: 0.5 },
   flushAskMs: 8000,
   grantKeepMs: 180000,
 };

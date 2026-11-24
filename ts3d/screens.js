@@ -8,8 +8,8 @@ import { nowMs, kingCovers } from '../live.js';
 import { isPrime, primeAt, primeCard, primeKey, primeNotice } from '../primerules.js';
 import { ADS, adView, adWorld, linkHost } from '../adsale.js';
 import { SEASONS } from '../seasons.js';
-import { GIFT_ID, GIFT_SCREENS, OCCASIONS, GIFT_THEMES, placeGifts, turnOf, giftScreen } from '../giftrules.js';
-import { paintGift, paintWelcome } from '../giftart.js?v=202611241625';
+import { GIFT_ID, GIFT_SCREENS, OCCASIONS, GIFT_THEMES, placeGifts, turnOf, giftScreen, cerTeaser, cerClock } from '../giftrules.js';
+import { paintGift, paintWelcome, paintTeaser } from '../giftart.js?v=202611241625';
 import { WELCOME } from '../ftue.js?v=202611241625';
 
 export const screenTime = { value: 0 };
@@ -251,7 +251,25 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   let giftPin = null, giftDirty = false, giftPlan = new Map();
   const WELCOME_ID = '!welcome';
   const giftFree = (slot) => { const b = boards.get(slot); return !!b && !b.shared && b.mounts.length > 0 && !live(b.row) && !airOn(); };
-  const giftAt = (b) => { const ids = b.gifts; if (!ids?.length) return null; const id = ids[turnOf(ids.length, Date.now())]; return gifts.get(id) || (giftPin?.g.id === id ? giftPin.g : null); };
+  // A ceremony pin (giftPin.cer: the start) is drawn from its own entry while it lives, even when /rt/world lists the same id (the localhost
+  // seam runs a ceremony on a live board): its teaser must not be replaced by the list's copy before the start.
+  const giftAt = (b) => { const ids = b.gifts; if (!ids?.length) return null; const id = ids[turnOf(ids.length, Date.now())]; return (giftPin?.cer && giftPin.g.id === id ? giftPin.g : null) || gifts.get(id) || (giftPin?.g.id === id ? giftPin.g : null); };
+  // The ceremony pin's teaser is up: before its start, on the pin's own entry. -> the shown time left ('mm:ss'), or '' (the card).
+  const cerShown = (g, now = nowMs()) => (giftPin?.cer && !giftPin.lit && giftPin.g === g && now < giftPin.cer ? cerClock(giftPin.cer - now) : '');
+  // The whole seconds the teaser shows (0: the card): compared every 0.08 s tick without making a string, so a slow frame rate does not
+  // keep the teaser up past the start.
+  const cerSec = (now) => (giftPin?.cer && !giftPin.lit && now < giftPin.cer ? Math.ceil((giftPin.cer - now) / 1000) : 0);
+  /** The group photo (timesSquare3d.js cerPicture): the ceremony pin on this slot shows the lit card now, crossed here if it had not
+   *  been yet. -> true when the card is on that screen. */
+  function cerLit(slot) {
+    if (!giftPin?.cer || giftPin.slot !== slot) return false;
+    giftPin.lit = true;
+    const b = boards.get(slot);
+    if (!b?.gifts?.includes(giftPin.g.id)) return false;
+    if (b.giftKey !== giftPin.g.id || b.cerKey) paint(b);
+    return b.giftKey === giftPin.g.id && !b.cerKey;
+  }
+  function cerStep() { const b = boards.get(giftPin.slot); if (b && b.giftKey === giftPin.g.id && cerSec(nowMs()) !== b.cerSec) paint(b); }
   function giftPlace() {
     giftDirty = false;
     if (giftPin && (giftPin.until <= Date.now() || (giftPin.g.welcome && !giftFree(giftPin.slot)))) giftPin = null;
@@ -281,18 +299,23 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     if (sig === setGifts.sig) return false;
     setGifts.sig = sig;
     gifts.clear(); for (const g of next) gifts.set(g.id, g);
-    for (const b of boards.values()) if (b.gifts && b.giftKey !== WELCOME_ID) b.giftKey = ''; // words may have changed (never the welcome card's: it is not in the list)
+    for (const b of boards.values()) if (b.gifts && b.giftKey !== WELCOME_ID && !(giftPin?.cer && b.giftKey === giftPin.g.id)) b.giftKey = ''; // words may have changed (never the welcome card's: it is not in the list; nor a ceremony pin's, drawn from its own entry)
     giftPlace();
     return true;
   }
-  /** Shows gift g (live or not: the sender records before the day) alone on a screen for ms. -> the slot, or '' when none is free. */
-  function pinGift(g, ms = 30000) {
+  /** Shows gift g (live or not: the sender records before the day) alone on a screen for ms. -> the slot, or '' when none is free.
+   *  cer: a ceremony's start (gift.js, 점등식): until then the screen shows the teaser (giftart.js paintTeaser from cerTeaser: never the
+   *  message or the sender), from then the card, on the same screen. One pin for the whole ceremony (cerPinMs). */
+  function pinGift(g, ms = 30000, { cer = 0 } = {}) {
     const c = giftClean(g); if (!c) return '';
     const cur = [...giftPlan].find(([, ids]) => ids.includes(c.id))?.[0] || '';
     const slot = cur || (c.scr && giftFree(c.scr) ? c.scr : placeGifts([{ ...c, scr: '' }], giftFree).keys().next().value || '');
     if (!slot) return '';
-    giftPin = { g: c, slot, until: Date.now() + Math.max(1000, ms) };
+    const start = Number(cer) > 0 ? Number(cer) : 0;
+    giftPin = { g: c, slot, until: Date.now() + Math.max(1000, ms), cer: start, when: start ? cerTeaser(c, nowMs(), start).when : '' };
     giftPlace();
+    // Already on that screen from the list (the same ids, so giftPlace left it): drawn again from the pin's entry, the teaser now.
+    if (start) { const b = boards.get(slot); if (b?.gifts) paint(b); }
     return slot;
   }
   const WELCOME_FAR = 60;
@@ -370,8 +393,11 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     const gift = b.gifts && !airOn() ? giftAt(b) : null;
     if (gift) {
       if (b.wish) dropWish(b);
-      b.kingOn = 0; b.giftKey = gift.id;
-      if (gift.welcome) paintWelcome(b.canvas, { name: gift.to, line: WELCOME.line }); else paintGift(b.canvas, gift);
+      const now = nowMs();
+      b.kingOn = 0; b.giftKey = gift.id; b.cerKey = cerShown(gift, now); b.cerSec = b.cerKey ? cerSec(now) : 0;
+      if (gift.welcome) paintWelcome(b.canvas, { name: gift.to, line: WELCOME.line });
+      else if (b.cerKey) paintTeaser(b.canvas, cerTeaser(gift, now, giftPin.cer));
+      else paintGift(b.canvas, gift);
       remember(b.canvas); b.tex.needsUpdate = true;
       return;
     }
@@ -602,7 +628,8 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     g.fillRect(0, body, W, Math.max(1, Math.round(k)));
     const onAir = live(b.row);
     const held = !!b.row?.holder_id;
-    const gift = b.gifts && b.giftKey ? gifts.get(b.giftKey) || (giftPin?.g.id === b.giftKey ? giftPin.g : null) : null;
+    const gift = b.gifts && b.giftKey ? (giftPin?.cer && giftPin.g.id === b.giftKey ? giftPin.g : null) || gifts.get(b.giftKey) || (giftPin?.g.id === b.giftKey ? giftPin.g : null) : null;
+    const cerOn = !!gift && !!b.cerKey; // the ceremony's teaser is on this screen
     const team = b.primeKey ? b.primeName || '' : null;
     const [tag, tagBg, tagInk] = TAGS[team != null ? 'prime' : gift ? (gift.welcome ? 'welcome' : 'gift') : kingOn ? 'king' : wishOn ? 'wish' : onAir ? 'live' : held ? 'dark' : 'free'];
     const ph = Math.max(16, th - 16 * k), pw = 92 * k, px = 12 * k;
@@ -626,7 +653,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     const cheers = Math.max(0, Math.floor(Number(b.data?.cheers) || 0));
     const clicks = Math.max(0, Math.floor(Number(b.data?.clicks) || 0));
     const notes = Array.isArray(b.data?.notes) ? b.data.notes.map((t) => chars(String(t || ''), 16)).filter(Boolean).slice(-5) : [];
-    const msg = team != null ? `응원 팀 명당   ·   ${team ? chars(team, 16) + '   ·   ' : ''}서로 다른 사람의 응원으로 정해요   ·   ${liveHead}` : gift?.welcome ? `${gift.to}님, 가상 타임스퀘어에 오신 걸 환영해요   ·   ${liveHead}` : gift ? `선물 전광판   ·   To. ${gift.to}   ·   ${(OCCASIONS[gift.occ] || OCCASIONS.bday).head}${gift.from ? '   ·   From. ' + gift.from : ''}${gift.n ? '   ·   💌 친구 메시지 ' + gift.n + '개' : ''}   ·   ${liveHead}` : kingOn ? `어제의 소원왕   ·   ${chars(b.kingNick || '', 16)}   ·   ${liveHead}` : wishOn ? `오늘의 소원   ·   ${b.wishMsg}   ·   ${liveHead}` : `택시 정차 ${views}회   ·   응원 ${cheers}회   ·   링크 클릭 ${clicks}회   ·   ${notes.length ? notes.join('   ·   ') + '   ·   ' : ''}${liveHead}`;
+    const msg = team != null ? `응원 팀 명당   ·   ${team ? chars(team, 16) + '   ·   ' : ''}서로 다른 사람의 응원으로 정해요   ·   ${liveHead}` : gift?.welcome ? `${gift.to}님, 가상 타임스퀘어에 오신 걸 환영해요   ·   ${liveHead}` : cerOn ? `점등식   ·   To. ${gift.to}   ·   ${giftPin?.when || ''}에 켜져요   ·   ${liveHead}` : gift ? `선물 전광판   ·   To. ${gift.to}   ·   ${(OCCASIONS[gift.occ] || OCCASIONS.bday).head}${gift.from ? '   ·   From. ' + gift.from : ''}${gift.n ? '   ·   💌 친구 메시지 ' + gift.n + '개' : ''}   ·   ${liveHead}` : kingOn ? `어제의 소원왕   ·   ${chars(b.kingNick || '', 16)}   ·   ${liveHead}` : wishOn ? `오늘의 소원   ·   ${b.wishMsg}   ·   ${liveHead}` : `택시 정차 ${views}회   ·   응원 ${cheers}회   ·   링크 클릭 ${clicks}회   ·   ${notes.length ? notes.join('   ·   ') + '   ·   ' : ''}${liveHead}`;
     const tw = Math.max(8, g.measureText(msg).width);
     const x0 = sx + 6 * k - ((t * 90) % tw);
     g.fillText(msg, x0, body + th / 2 + 1);
@@ -667,6 +694,9 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     near.sort(byDist);
     lastNear = near;
     if (kingDirty) kingStep();
+    // The ceremony pin: its teaser's time left, repainted when the shown second changes (at most once a second), and the card in the
+    // tick that crosses the start (same canvas, same screen: no re-placement, no blank frame).
+    if (giftPin?.cer) cerStep();
     // The strip is a canvas redraw and a texture upload per board: LIVE_HOT boards, every LIVE_EVERY-th tick.
     const draw = liveTick % LIVE_EVERY === 0;
     const hot = hotSet;
@@ -835,7 +865,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     }
   }
 
-  return { boards, ensure, mount, unmount, set, expire, get: (id) => boards.get(id), worldPos, face, setTicker, setOps, setSeason, repaintAll, update, accentOf, tickerCanvas, watchShow, setShow, setAir, setKing, setDecals, setWishes, pinWish, setGifts, pinGift, pinWelcome, giftSlot, setPrime, primeOf: (id) => { const b = boards.get(id); return b ? primeNow(b) : null; }, decalsOf: (id) => (boards.get(id)?.decals || []).slice(), setRim };
+  return { boards, ensure, mount, unmount, set, expire, get: (id) => boards.get(id), worldPos, face, setTicker, setOps, setSeason, repaintAll, update, accentOf, tickerCanvas, watchShow, setShow, setAir, setKing, setDecals, setWishes, pinWish, setGifts, pinGift, pinWelcome, giftSlot, cerLit, setPrime, primeOf: (id) => { const b = boards.get(id); return b ? primeNow(b) : null; }, decalsOf: (id) => (boards.get(id)?.decals || []).slice(), setRim };
 }
 
 // ---- ad-only screens AD_1..AD_5 (adsale.js) -------------------------------------------------------------------------

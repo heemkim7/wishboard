@@ -175,7 +175,7 @@ describe('names and states a screen reader hears', () => {
     assert.match(ui, /class: 'btn ghost icon tool-more tool-desk tool-fs t-1680', type: 'button', 'aria-label': '전체 화면'/);
     assert.match(css, /html\.touch \.tools \.btn\.tool-desk \{ display: none !important; \}/);
     // the setter is what the old button did
-    assert.match(ui, /function setSoundOn\(on\) \{\n\s+soundOn = !!on;\n\s+store\('kts_sound', soundOn\);\n\s+setSound\(soundOn\);\n\s+if \(!soundOn\) \{ cityStop\(\); lofiStop\(\); stopDanceAudio\(\); return; \}/);
+    assert.match(ui, /function setSoundOn\(on\) \{\n\s+soundOn = !!on;\n\s+store\('kts_sound', soundOn\);\n\s+setSound\(soundOn\);\n\s+if \(!soundOn\) \{ cityStop\(\); lofiStop\(\); danceSong = ''; return; \}/);
   });
   it('the two sliders are named, the tab groups say which is chosen, and the four rows that open a sheet look alike', () => {
     const set = ui.slice(ui.indexOf('  function openSettings() {'), ui.indexOf('  function operatorFooter()'));
@@ -250,9 +250,9 @@ describe('icons', () => {
 
 describe('lines that were taken out', () => {
   const all = code(ui) + code(read('main.js')) + code(read('teamui.js'));
-  it('the dance panel lists no reward steps (the dance pays nothing), and no prompt tells which button to press', () => {
+  it('the dance lists no reward steps (the dance pays nothing), and no prompt tells which button to press', () => {
     assert.equal(/55% 미만|\+2 · 55%|90% \+12/.test(all), false);
-    assert.match(ui, /coarse \? lanePads : h\('p', \{ class: 'hint', text: '←↓↑→ 또는 D F J K' \}\)/);
+    assert.equal(/←↓↑→ 또는 D F J K|lanePads/.test(all), false); // 같이 춤추기 has no keys to learn
   });
   it('stale and duplicate lines from the audit are gone', () => {
     for (const gone of [
@@ -301,10 +301,11 @@ describe('the bake panel and short screens', () => {
     assert.equal(css.includes('.gauge .lbl'), false);
     assert.match(css, /\n\s*\.bake h3 \{ white-space: nowrap; \}/);
     assert.match(ui, /if \(bakeMarks\.textContent !== marks\) bakeMarks\.textContent = marks;/);
-    // 그만두기 in the dance panel is one line and thumb-sized
-    const x = rule('.rhythm .x');
+    // 그만 추기 on the dance strip is one line, and its taps are 44px (38px and 3px above and below)
+    const x = rule('.dancebar .stop');
     assert.match(x, /white-space: nowrap;/);
-    assert.ok(px(x, 'min-height') >= 44);
+    assert.equal(px(x, 'height'), 38);
+    assert.match(rule('.dancebar .stop::after'), /inset: -3px 0;/);
   });
   it('the ranks sheet shows its tabs and its list on a short screen, and an empty list does not hold the sheet open', () => {
     assert.match(css, /\n\s*\.sheet\.steady \.seg \{ flex: none; \}/); // it was squeezed to 10px with a 0px list under it

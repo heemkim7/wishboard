@@ -93,7 +93,7 @@ export function gaName(name) {
   return String(name || '').toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^[^a-z]+/, '').slice(0, 40);
 }
 // Only these keys ever reach Google (what the callers send today), so no future caller can leak player-written text (nick, text, wish) to GA.
-export const GA_PARAMS = Object.freeze(['slot', 'ref', 'streak', 'tier', 'found', 'method', 'kind', 'how', 'from', 'fresh', 'pic', 'load_ms', 'gap', 'kept', 'side', 'amount']);
+export const GA_PARAMS = Object.freeze(['slot', 'ref', 'streak', 'tier', 'found', 'method', 'kind', 'how', 'from', 'fresh', 'pic', 'load_ms', 'gap', 'kept', 'side', 'amount', 'span']);
 export function gaParams(params) {
   const out = {};
   if (!params || typeof params !== 'object') return out;

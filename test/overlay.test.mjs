@@ -431,7 +431,8 @@ describe('input lock', () => {
   });
   it('ui.js names its owners, every call has one, and each owner lets go by itself', () => {
     const ui = read('ui.js');
-    for (const owner of ['sheet', 'proof', 'bake', 'dance', 'city']) assert.match(ui, new RegExp(`hooks\\.lockInput\\??\\.?\\((true|false|sheets\\.length > 0), '${owner}'\\)`), owner);
+    for (const owner of ['sheet', 'proof', 'bake', 'city']) assert.match(ui, new RegExp(`hooks\\.lockInput\\??\\.?\\((true|false|sheets\\.length > 0), '${owner}'\\)`), owner);
+    assert.equal(/lockInput\([^)]*'dance'\)/.test(ui), false, '같이 춤추기 does not lock movement: moving ends it');
     assert.match(ui, /hooks\.lockInput = \(on, owner\) => inputLock\.set\(owner, !!on\);/);
     const calls = [...ui.matchAll(/hooks\.lockInput\??\.?\(([^)]*)\)/g)].map((m) => m[1]);
     assert.ok(calls.length >= 8, String(calls.length));
@@ -466,7 +467,7 @@ describe('toasts', () => {
     assert.match(ui, /function note\(text, kind = '', onClick, opts\)/);
     assert.match(ui, /toastMs\(say, !!click\)/);
     assert.match(ui, /click \? h\('i', \{ class: 'go', 'aria-hidden': 'true' \}, icon\('chevronRight'\)\) : null/);
-    assert.match(read('index.html'), /body\.has-sheet \.toasts, body\.has-proof \.toasts, body:has\(#ui > \.bake\.show\) \.toasts, body:has\(#ui > \.rhythm\.show\) \.toasts \{ top: calc\(var\(--app-top, 0px\) \+ 10px \+ var\(--safe-t\)\); bottom: auto !important;/);
+    assert.match(read('index.html'), /body\.has-sheet \.toasts, body\.has-proof \.toasts, body:has\(#ui > \.bake\.show\) \.toasts \{ top: calc\(var\(--app-top, 0px\) \+ 10px \+ var\(--safe-t\)\); bottom: auto !important;/);
   });
 });
 
