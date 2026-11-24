@@ -19,9 +19,9 @@ export const MODEL_URL = {
 };
 
 // The plot buildings, one file per level (0 empty lot, 1 tent, 2 stall, 3 shop, 4 tower), from tools/blender/build_props.py.
-// None is fetched at boot: ts3d/landmarks.js asks for all five, each once, the first time the camera is within LOTS_R
-// of the lots' street (a link that lands on a plot is inside it on its first frame), and shows its box buildings until
-// they are in, or for good when a file fails. The same rule as above for a changed file: a new name.
+// None is fetched at boot: ts3d/landmarks.js asks for all five, each once, the first time the camera or the player is
+// within LOTS_R of the lots' street (a link that lands on a plot puts the player there on its first frame), and shows
+// its box buildings until they are in, or for good when a file fails. The same rule as above for a changed file: a new name.
 export const LOT_MODEL_URL = {
   0: '/assets/models/lots/lot0_empty.glb',
   1: '/assets/models/lots/lot1_tent.glb',

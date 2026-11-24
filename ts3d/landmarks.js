@@ -527,8 +527,8 @@ export function buildLandmarks(ctx) {
   }
 
   // ===== Plots ===================================================================
-  // A lot draws the model for its level (ts3d/lotmodels.js: five files shared by all 18 lots, asked for the first time
-  // the camera is near the street, see update) or, until that file is in and for good when it failed, the box building
+  // A lot draws the model for its level (ts3d/lotmodels.js: five files shared by all 18 lots, asked for the first time the
+  // camera or the player is near the street, see update) or, until that file is in and for good when it failed, the box building
   // below. Everything else of a lot is the same for both: where it stands, its billboard, its name sign, its badge, its
   // collider and its camera blocker (LOT in ts3d/layout.js). So putting the model in place of the boxes moves nothing.
   const plots = new Map();
@@ -845,9 +845,10 @@ export function buildLandmarks(ctx) {
     rail(L.x1 - 1.2, L.x1, L.z0, L.z1);
   }
 
-  /** eye: where the camera is ({ x, z }). The first time it is within LOTS_R of the street the five lot models are asked for. */
-  function update(dt, t, eye) {
-    if (eye && !lots.started && nearLots(eye.x, eye.z, LAYOUT.street)) lots.want();
+  /** eye, me: where the camera and the player are ({ x, z }). The first time either is within LOTS_R of the street the five
+   *  lot models are asked for: the player lands there at once from a link to a plot, the camera flies there to show a board. */
+  function update(dt, t, eye, me) {
+    if (!lots.started && ((eye && nearLots(eye.x, eye.z, LAYOUT.street)) || (me && nearLots(me.x, me.z, LAYOUT.street)))) lots.want();
     for (const u of updaters) u(dt, t);
     for (const rec of plots.values()) for (const a of rec.anim) a(dt, t);
   }

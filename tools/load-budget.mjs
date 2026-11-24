@@ -35,8 +35,8 @@ export const RULES = [
   [/^assets\/times-square\/\$\{name\}\.env\.jpg$/, 'boot', () => ENV_PHOTOS.map((n) => clean(envPhotoUrl(n)))],
   [/^assets\/models\/[A-Z][a-z]+Toy\.glb$/, (lit, ctx) => (lit === clean(MODEL_URL[ctx.species]) ? 'boot' : ctx.peers.has(lit) ? 'first' : 'later')],
   // The five plot buildings (ts3d/loadplan.js LOT_MODEL_URL): never at boot. They are asked for together the first time the
-  // camera is within LOTS_R of the lots' street (234 m from the spawn), like a species model on first sight. A link that
-  // lands on a plot does fetch them in its first minute: 0.6 MB that the `first` total does not count.
+  // camera or the player is within LOTS_R of the lots' street (234 m from the spawn), like a species model on first sight.
+  // A link that lands on a plot does fetch them in its first minute: 0.6 MB that the `first` total does not count.
   [/^assets\/models\/lots\/lot[0-4]_[a-z]+\.glb$/, 'later'],
   [/^assets\/avatars\/[a-z]+(-hood)?\.png$/, 'later'], // character picker tiles and their hoodie masks (ts3d/avatars.js SPECIES thumb, hood), only in the profile sheet
   [/^assets\/audio\/(sfx\/)?$/, 'first', () => []], // 'assets/audio/' + id + '.ogg': no such files in the repo, the browser gets 404s

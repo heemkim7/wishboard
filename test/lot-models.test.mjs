@@ -1,5 +1,5 @@
 // The plot buildings as models: five GLB files under assets/models/lots (tools/blender/build_props.py), fetched when the
-// camera first comes near the lots' street and shared by all 18 lots (ts3d/lotmodels.js, ts3d/landmarks.js buildPlot).
+// camera or the player first comes near the lots' street and shared by all 18 lots (ts3d/lotmodels.js, ts3d/landmarks.js buildPlot).
 // The files are read from disk here: their glTF JSON for what they promise, and through the repository's own GLTFLoader
 // for what the game makes of them. Then ts3d/landmarks.js is built in Node (the real three, the real board registry, no
 // renderer; the harness of test/plot-street.test.mjs) with a loader that reads the same files, or fails.
@@ -147,13 +147,14 @@ describe('the lot models are not part of the first load', () => {
     // nothing preloads them, and the page itself does not name them
     for (const f of ['index.html', 'main.js', 'sw.js']) assert.equal(/models\/lots/.test(read(f)), false, f);
   });
-  it('they are asked for from one place: marks.update, once the camera is within 150 m of the street', () => {
+  it('they are asked for from one place: marks.update, once the camera or the player is within 150 m of the street', () => {
     assert.equal(LOTS_R, 150);
     const lm = read('ts3d/landmarks.js');
-    assert.match(lm, /function update\(dt, t, eye\) \{\n\s*if \(eye && !lots\.started && nearLots\(eye\.x, eye\.z, LAYOUT\.street\)\) lots\.want\(\);/);
+    assert.match(lm, /function update\(dt, t, eye, me\) \{\n\s*if \(!lots\.started && \(\(eye && nearLots\(eye\.x, eye\.z, LAYOUT\.street\)\) \|\| \(me && nearLots\(me\.x, me\.z, LAYOUT\.street\)\)\)\) lots\.want\(\);/);
     assert.equal((lm.match(/lots\.want\(/g) || []).length, 1);
-    // the world hands it the camera's position every frame: a link that lands on a plot is inside the radius on its first frame
-    assert.match(read('timesSquare3d.js'), /marks\?\.update\(dt, t, camera\.position\);/);
+    // the world hands it the camera's and the player's positions every frame: a link that lands on a plot puts the player
+    // inside the radius on its first frame, and a camera flown to a lot's board brings the camera there
+    assert.match(read('timesSquare3d.js'), /marks\?\.update\(dt, t, camera\.position, pos\);/);
     for (const f of ['timesSquare3d.js', 'main.js', 'ui.js']) assert.equal(/lots\.want|LOT_MODEL_URL|lotmodels/.test(read(f)), false, f);
   });
   it('nearLots: 150 m from the street\'s centre line, ends included', () => {
@@ -391,7 +392,7 @@ describe('the street with the models in (ts3d/landmarks.js with the real three a
   it('nothing is asked for until the camera is within 150 m of the street; then each file once, and the boxes stand until it is in', async () => {
     const lots = W.marks.lots;
     assert.equal(lots.started, false);
-    for (let i = 0; i < 3; i++) { W.marks.update(0.016, i, FAR); W.marks.update(0.016, i); }
+    for (let i = 0; i < 3; i++) { W.marks.update(0.016, i, FAR, FAR); W.marks.update(0.016, i, FAR); W.marks.update(0.016, i); }
     assert.equal(lots.started, false);
     assert.deepEqual(disk.calls, []);
     for (const rec of W.marks.plots.values()) assert.ok(isBox(rec), 'lot ' + rec.id);
@@ -846,10 +847,12 @@ describe('when a lot model does not arrive, the boxes stay', () => {
     assert.equal(inScene(old.group, W.scene), false);
     for (const o of W.pick) assert.ok(inScene(o, W.scene), o.name);
   });
-  it('the phone tier builds the same', async () => {
+  it('the phone tier builds the same, and a player set down at a plot is enough while the camera is still far away', async () => {
     const disk = await diskLoader();
     const W = await buildWorld({ loadGlb: disk.loadGlb, quality: 'low' });
-    W.marks.update(0.016, 0, NEAR);
+    const front = W.marks.plotFront(12); // where a link to plot 12 puts the player
+    W.marks.update(0.016, 0, FAR, { x: front.x, y: 0, z: front.z });
+    assert.equal(disk.calls.length, 5);
     await W.marks.lots.settled();
     for (const rec of W.marks.plots.values()) assert.deepEqual(rec.body.map((m) => m.name), ['matte', 'glow', 'gem']);
   });

@@ -2161,7 +2161,7 @@ void main(){
     world?.update(dt, t, camera.position);
     traffic?.update(dt, t, playerInfo);
     tsq?.update(dt, t);
-    marks?.update(dt, t, camera.position);
+    marks?.update(dt, t, camera.position, pos);
     boards.update(dt, camera.position);
     adScreens.update(dt, camera, adOccluded);
     stepPlaza(dt, t);
