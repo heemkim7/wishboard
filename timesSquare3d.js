@@ -32,7 +32,7 @@ import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, 
 import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=202611241625';
 import { taxiExit, EXIT_SLOW, nextOfferDelay, fareWait, isTouchUI, AUTO_WALK, gridPath, walkSteer, walkStall, walkPace, autoWalkEnds } from './interact.js?v=202611241625';
 import { WELCOME } from './ftue.js?v=202611241625';
-import { RETURN_MS, glideMs, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, chaseYawRate, CHASE, stickFrame, dragSpeed, viewDragged, portraitFov, fitDistance, BALLOON_LOOK, balloonLook, reverseTime, driveView, driveWiden, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange, boardVantage, facesBlock, cerShotPose, cerSpread } from './camrig.js?v=202611241625';
+import { RETURN_MS, glideMs, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, chaseYawRate, CHASE, stickFrame, dragSpeed, viewDragged, portraitFov, fitDistance, BALLOON_LOOK, balloonLook, reverseTime, driveView, driveWiden, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange, boardVantage, facesBlock, cerShotPose, cerSpread, cerPhotoPose, cerLabels, CER_PHOTO } from './camrig.js?v=202611241625';
 
 export { paintBillboard, THEMES, LAYOUT, PLOT_SLOTS, groundHeight, EMOTES, AVATAR_COLORS, STARTER_COLORS, taxiTrainMult, applyTaxiHardHit };
 export const PLAZA = LAYOUT;
@@ -1800,7 +1800,91 @@ void main(){
     return shot;
   }
   /** Works the photo pose out ahead of time (nothing moves). -> the pose, or null when the board is not on the map. */
-  function cerPrep(slotId) { return cerShot(slotId); }
+  function cerPrep(slotId) { const s = cerShot(slotId); cerPhoto(slotId); return s; }
+  // ---- 점등식: the group photo itself (capture({ photo })) -----------------------------------------------------------------------
+  // Its own render with its own pose (camrig.js cerPhotoPose: 3:2, the people large above the band, the board whole above them),
+  // not whatever the live camera shows: the scene is first put in the photo's state, in this call, so a page that drew no frame
+  // since the start (a throttled pane, a slow phone) still gets the lit card and the people in it. Refused (null) while the page is
+  // hidden, the context is lost or the board is not on its screen; gift.js then offers the photo later.
+  let cerPhotoKept = null;
+  function cerPhoto(slotId) {
+    const p = boards.worldPos(slotId), face = boards.face(slotId);
+    if (!p || !face) return null;
+    const key = slotId + ':' + p.x.toFixed(1) + ',' + p.z.toFixed(1);
+    if (cerPhotoKept?.key === key) return cerPhotoKept.shot;
+    let nx = face.normal.x, nz = face.normal.z; const nl = Math.hypot(nx, nz) || 1; nx /= nl; nz /= nl;
+    const front = { x: p.x + nx * 9, z: p.z + nz * 9 };
+    const { block, sure } = cerTests(slotId, p);
+    const pose = cerPhotoPose({ pos: { x: p.x, y: p.y, z: p.z }, normal: { x: nx, z: nz }, w: face.w, h: face.h, front, ground: groundHeight(front.x, front.z), block, sure });
+    const shot = pose && { ...pose, face: { x: p.x, y: p.y, z: p.z, nx, nz, w: face.w, h: face.h }, front };
+    cerPhotoKept = { key, shot };
+    return shot;
+  }
+  const photoV = new THREE.Vector3();
+  function cerPicture(slotId, band) {
+    if (document.hidden || renderer.getContext?.()?.isContextLost?.() || ctxLost) return null;
+    const shot = cerPhoto(slotId);
+    if (!shot || !boards.cerLit?.(slotId)) return null; // the lit card on the board now (crossed here if this board had not yet)
+    const W = low ? 960 : CER_PHOTO.w, H = Math.round(W * CER_PHOTO.h / CER_PHOTO.w);
+    if (remotes.size) syncRemotes(0.5, performance.now() / 1000); // the people where the room last said they are
+    me.root.position.copy(pos);
+    if (!drive) {
+      me.root.visible = true;
+      const dx = shot.cam.x - pos.x, dz = shot.cam.z - pos.z;
+      if (dx * dx + dz * dz > 1) { yaw = Math.atan2(dx, dz); me.holder.rotation.y = yaw; }
+    }
+    const people = [...(drive ? [] : [[me, name]]), ...[...remotes.values()].map((r) => [r.av, r.nm])];
+    const tags = people.map(([av]) => av.tag.visible);
+    const was = { p: camera.position.clone(), q: camera.quaternion.clone(), fov: camera.fov, aspect: camera.aspect };
+    const out = document.createElement('canvas'); out.width = W; out.height = H;
+    const g = out.getContext('2d'), heads = [];
+    try {
+      for (const [av] of people) av.tag.visible = false; // the names are drawn on the picture instead, large enough to read
+      camera.position.set(shot.cam.x, shot.cam.y, shot.cam.z);
+      camera.fov = shot.fov; camera.aspect = W / H; camera.up.set(0, 1, 0);
+      camera.lookAt(shot.look.x, shot.look.y, shot.look.z);
+      camera.updateProjectionMatrix(); camera.updateMatrixWorld();
+      renderer.setPixelRatio(1); renderer.setSize(W, H, false);
+      composer.setPixelRatio(1); composer.setSize(W, H);
+      bloom.setSize(Math.round(W * (low ? 0.5 : 0.75)), Math.round(H * (low ? 0.5 : 0.75)));
+      if (reflection.enabled) { reflection.setSize(W, H); reflection.update(scene, camera); }
+      scene.updateMatrixWorld();
+      composer.render();
+      g.drawImage(canvas, 0, 0, W, H);
+      for (const [av, who] of people) {
+        if (!who || !av.root.visible || !av.holder.visible || !av.root.parent) continue;
+        photoV.copy(av.root.position); photoV.y += (av.sys?.height || 1.6) + 0.25;
+        const depth = photoV.distanceTo(camera.position);
+        if (depth > 45) continue;
+        photoV.project(camera);
+        if (photoV.z >= 1 || Math.abs(photoV.x) > 1 || Math.abs(photoV.y) > 1) continue;
+        heads.push({ x: (photoV.x + 1) / 2 * W, y: (1 - photoV.y) / 2 * H, depth, text: chars(String(who), 12) });
+      }
+    } finally {
+      people.forEach(([av], i) => { av.tag.visible = tags[i]; });
+      resize();
+      camera.position.copy(was.p); camera.quaternion.copy(was.q); camera.fov = was.fov; camera.aspect = was.aspect; camera.updateProjectionMatrix();
+    }
+    // The names: a dark pill and white words over each head (camrig.js cerLabels: nearest first, overlaps moved up or left out).
+    const size = Math.max(16, Math.round(22 * W / 1200));
+    g.font = `800 ${size}px sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    for (const l of cerLabels(heads, W, H, size, (t, s) => g.measureText(t).width || String(t).length * s * 0.62)) {
+      g.fillStyle = 'rgba(8,6,28,0.72)'; g.beginPath(); g.roundRect ? g.roundRect(l.x - l.w / 2, l.y - l.h / 2, l.w, l.h, l.h / 2) : g.rect(l.x - l.w / 2, l.y - l.h / 2, l.w, l.h); g.fill();
+      g.fillStyle = '#ffffff'; g.fillText(l.text, l.x, l.y + 1);
+    }
+    // The band: a strip at the bottom (9 % of the height), its words made smaller until they fit.
+    const bar = Math.round(H * 0.09);
+    g.fillStyle = 'rgba(5,6,16,0.82)'; g.fillRect(0, H - bar, W, bar);
+    const words = String(band || '') || 'WISH BOARD · 모두의 전광판';
+    let fs = Math.round(bar * 0.42);
+    g.textAlign = 'left'; g.font = `800 ${fs}px sans-serif`;
+    while (fs > 12 && g.measureText(words).width > W - 2 * Math.round(bar * 0.4)) { fs -= 1; g.font = `800 ${fs}px sans-serif`; }
+    g.fillStyle = '#ffe7a8'; g.fillText(words, Math.round(bar * 0.4), H - bar / 2);
+    const raw = out.toDataURL('image/jpeg', 0.9).split(',')[1] || '';
+    const bin = atob(raw), bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type: 'image/jpeg' });
+  }
   function cerPose(slotId) {
     if (drive) return false;
     const pose = cerShot(slotId);
@@ -2960,7 +3044,9 @@ void main(){
     // The picture, as a JPEG blob (1280 px wide at most) with a band across the bottom. Default: without my own name tag and the band
     // 'WISH BOARD · 모두의 전광판' (ui.js openShot). The ceremony's group photo (gift.js): { me: true } keeps my tag in it (forced on for
     // this one render: a scripted camera hides it every frame), band: its own words, made smaller until they fit the width.
-    capture({ me: withMe = false, band = '' } = {}) {
+    // photo: a board's slot: the ceremony's group photo instead (cerPicture: its own 3:2 render; null when it cannot be taken now).
+    capture({ me: withMe = false, band = '', photo = '' } = {}) {
+      if (photo) return cerPicture(photo, band);
       // The frame loop decides the tag's visibility again on the next frame.
       const tagOn = me.tag.visible;
       me.tag.visible = !!withMe;
@@ -3006,7 +3092,7 @@ void main(){
     welcome,
     // 점등식 (gift.js): the group photo's pinned pose (-> false while driving or when the board is not on the map), its end, and
     // whether the player is walking right now (keys or the stick: a scripted camera would end at once).
-    cerPrep, cerPose, cerEnd, walking: () => walkingNow(),
+    cerPrep, cerPose, cerEnd, cerPhoto, walking: () => walkingNow(),
     giftSlot(id) { return boards.giftSlot(id); },
     giftShow,
     onFrame(fn) { afterRender.add(fn); return () => afterRender.delete(fn); },

@@ -92,7 +92,8 @@ function fakeWorld(P, { slot = 'STREET_31', emote = [true], driving = false, wal
     cerPrep: (s) => { calls.push(['prep', s]); return {}; },
     cerPose: (s) => { calls.push(['pose', s, P.at - S]); return pose ? {} : false; },
     cerEnd: () => calls.push(['end']),
-    capture: (o) => { calls.push(['capture', P.at - S, o?.me === true, o?.band || '']); return new Blob(['jpeg'], { type: 'image/jpeg' }); },
+    // W.refuse: how many captures to refuse (null: the page hidden, the context lost) before one succeeds.
+    capture: (o) => { calls.push(['capture', P.at - S, o?.photo || '', o?.band || '']); if (W.refuse > 0) { W.refuse--; return null; } return new Blob(['jpeg'], { type: 'image/jpeg' }); },
     cheerAt: (s) => { if (W.throwOn === 'cheer') throw new Error('boom'); calls.push(['cheer', s, P.at - S]); },
     playEmote: (id) => { const ok = W.emote.length ? W.emote.shift() : true; calls.push(['emote', id, ok]); return ok; },
     isDriving: () => W.driving, walking: () => W.walk,
@@ -213,7 +214,7 @@ describe('the ceremony, step by step on one device', () => {
       const rounds = of(P, 'cheer').map((c) => c[2]);
       assert.equal(rounds.length, 6); rounds.forEach((t, k) => assert.ok(t >= k * CER.roundMs && t < k * CER.roundMs + 250, 'round ' + k + ' at ' + t)); // on the first tick of its moment
       assert.deepEqual(of(P, 'pose'), [['pose', 'STREET_31', CER.pose]]);
-      assert.deepEqual(of(P, 'capture'), [['capture', CER.shot, true, 'To. 민지 · 2026.12.25 · WISH BOARD 가상 광장']]);
+      assert.deepEqual(of(P, 'capture'), [['capture', CER.shot, 'STREET_31', 'To. 민지 · 2026.12.25 · WISH BOARD 가상 광장']], 'the ceremony photo of that board');
       assert.ok(kinds(P).indexOf('end') > kinds(P).indexOf('capture'), 'the pose ends after the shot');
       assert.equal(P.hudHidden(), false, 'the HUD is back for the card');
       const card = P.card(); assert.ok(card, 'the photo card');
@@ -355,6 +356,34 @@ describe('the photo card: save; the gather notice; the countdown camera', () => 
   });
 });
 
+describe('a photo the world could not take is not claimed', () => {
+  it('refused twice (a hidden page): tried again on the next ticks, then taken; no error notice', async () => {
+    const P = await plaza({ at: S - 30000 });
+    try {
+      P.gift.arrive(); await P.settle(); P.world.refuse = 2;
+      P.run(CER.shot + 1000);
+      const caps = of(P, 'capture');
+      assert.equal(caps.length, 3); assert.ok(P.card(), 'the third try made the card');
+      assert.equal(P.notes.some((n) => n.k === 'err'), false);
+      assert.ok(kinds(P).lastIndexOf('end') > kinds(P).lastIndexOf('capture') - 1);
+    } finally { P.done(); }
+  });
+  it('refused until the slack runs out: no card, no claim, then the 📸 offer (and the offer takes it)', async () => {
+    const P = await plaza({ at: S - 30000 });
+    try {
+      P.gift.arrive(); await P.settle(); P.world.refuse = 1e9;
+      P.run(CER.shot + CER.shotSlack + 1000);
+      assert.equal(P.card(), null);
+      assert.ok(of(P, 'capture').length > 1);
+      const n = P.notes.find((x) => x.t === CER_TEXT.shotTake);
+      assert.ok(n?.fn, 'offered after the slack');
+      assert.equal(P.hudHidden(), false);
+      P.world.refuse = 0; n.fn(); await P.timers();
+      assert.ok(P.card());
+    } finally { P.done(); }
+  });
+});
+
 describe('every way out of the countdown brings the HUD back', () => {
   // Each starts with the HUD hidden in the countdown.
   async function counting(o) { const P = await plaza({ at: S - 30000, ...o }); P.gift.arrive(); await P.settle(); P.run(-5000); assert.equal(P.hudHidden(), true); return P; }
@@ -399,6 +428,23 @@ describe('the photo card and the overlay follow the HUD rules (sheet)', () => {
   it('the number takes no pointer, is min(42vw, 42vh), and does not move with reduced motion', () => {
     assert.match(css, /#kts-cer-n\{position:fixed;inset:0;[^}]*pointer-events:none;font:900 min\(42vw,42vh\)\/1/);
     assert.match(css, /@media \(prefers-reduced-motion: reduce\)\{#kts-cer-n\.a,#kts-cer-n\.b\{animation:none\}\}/);
+  });
+  it('the number is unmistakable over any board: opaque white on a dark disc with a dark outline, never faded in', () => {
+    const rule = /#kts-cer-n\{([^}]*)\}/.exec(css.replace(/\$\{GIFT_SANS\}/g, 'sans-serif'))[1];
+    assert.match(rule, /color:#fff;/);
+    assert.doesNotMatch(rule, /opacity|-webkit-text-stroke/, 'no see-through glyph (a stroke eats into the white)');
+    assert.match(rule, /text-shadow:[^;]*0 0 \.\d+em rgba\(0,0,0,\.9\)/, 'a soft dark halo');
+    for (const k of css.match(/@keyframes kcer\d\{[^}]*\}[^}]*\}/g)) assert.doesNotMatch(k, /opacity/, k);
+    // The disc: its centre colour over a white board and over the teaser's purple, against the white digit (large text: 3:1).
+    const m = /background:radial-gradient\(circle,rgba\((\d+),(\d+),(\d+),([.\d]+)\) 0 (\d+)%/.exec(rule);
+    assert.ok(m, 'a dark disc behind the number');
+    const [r, g, b, a] = [+m[1], +m[2], +m[3], +m[4]];
+    const lum = ([x, y, z]) => { const f = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(x) + 0.7152 * f(y) + 0.0722 * f(z); };
+    for (const under of [[255, 255, 255], [192, 38, 211], [124, 58, 237], [255, 207, 90]]) {
+      const mix = [r, g, b].map((c, i) => c * a + under[i] * (1 - a));
+      assert.ok((1.05) / (lum(mix) + 0.05) >= 3, `white over the disc on rgb(${under}): ${(1.05 / (lum(mix) + 0.05)).toFixed(2)}`);
+    }
+    assert.ok(+m[5] >= 50, 'the disc reaches past the glyph');
   });
   it('the card\'s buttons are 48 px tall, its ✕ 44 px, no text under 12 px', () => {
     assert.match(css, /#kts-cer-card \.b\{display:flex;width:100%;min-height:48px;/);

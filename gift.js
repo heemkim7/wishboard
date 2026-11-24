@@ -38,16 +38,17 @@ body.gift-rec #view{left:50%;right:auto;width:min(100vw,calc(100vh * 9 / 16));tr
 #kts-gift-done .b.gold:active{box-shadow:inset 0 0 0 99px rgba(70,36,0,.34)}
 #kts-gift-done .b.gold{border:0;color:#2a1800;background:linear-gradient(135deg,#ffe9a8,#ffcf5a 45%,#e6a52a)}
 body.gift-cer:not(.has-sheet) #ui{visibility:hidden}
-#kts-cer-n{position:fixed;inset:0;z-index:2147481900;display:grid;place-items:center;pointer-events:none;font:900 min(42vw,42vh)/1 ${GIFT_SANS};color:#fff;-webkit-text-stroke:max(3px,.7vmin) rgba(8,6,28,.88);paint-order:stroke fill;text-shadow:0 0 28px rgba(0,0,0,.6);font-variant-numeric:tabular-nums;user-select:none}
-#kts-cer-n.a{animation:kcer1 .85s ease-out}
-#kts-cer-n.b{animation:kcer2 .85s ease-out}
-@keyframes kcer1{from{transform:scale(1.3);opacity:.25}to{transform:none;opacity:1}}
-@keyframes kcer2{from{transform:scale(1.3);opacity:.25}to{transform:none;opacity:1}}
+#kts-cer-n{position:fixed;inset:0;margin:auto;width:min(56vw,56vh);height:min(56vw,56vh);z-index:2147481900;display:grid;place-items:center;pointer-events:none;font:900 min(42vw,42vh)/1 ${GIFT_SANS};color:#fff;border-radius:50%;background:radial-gradient(circle,rgba(6,4,20,.8) 0 56%,rgba(6,4,20,0) 71%);text-shadow:.045em .000em 0 #06041a,-.045em .000em 0 #06041a,.000em .045em 0 #06041a,.000em -.045em 0 #06041a,.032em .032em 0 #06041a,-.032em .032em 0 #06041a,.032em -.032em 0 #06041a,-.032em -.032em 0 #06041a,0 0 .12em rgba(0,0,0,.9);font-variant-numeric:tabular-nums;user-select:none}
+#kts-cer-n.a{animation:kcer1 .45s ease-out}
+#kts-cer-n.b{animation:kcer2 .45s ease-out}
+@keyframes kcer1{from{transform:scale(1.22)}to{transform:none}}
+@keyframes kcer2{from{transform:scale(1.22)}to{transform:none}}
 @media (prefers-reduced-motion: reduce){#kts-cer-n.a,#kts-cer-n.b{animation:none}}
 #kts-cer-card{position:fixed;inset:0;z-index:2147482100;background:rgba(4,4,14,.86);display:grid;place-items:center;padding:16px;font:15px/1.5 ${GIFT_SANS};color:#f3f1ff;outline:none}
 #kts-cer-card .box{position:relative;width:min(440px,100%);max-height:100%;overflow:auto;background:#100d2a;border:1px solid rgba(255,255,255,.14);border-radius:20px;padding:16px}
 #kts-cer-card h2{margin:0 52px 10px 0;font-size:18px;line-height:1.35}
-#kts-cer-card img{display:block;width:100%;max-height:52vh;object-fit:contain;border-radius:14px;background:#000}
+#kts-cer-card img{display:block;width:100%;aspect-ratio:3/2;height:auto;object-fit:contain;border-radius:14px;background:#000}
+@media (orientation: landscape) and (max-height: 520px){#kts-cer-card .box{width:min(760px,100%);display:grid;grid-template-columns:3fr 2fr;column-gap:14px;align-items:start}#kts-cer-card h2{grid-column:1/-1}#kts-cer-card img{grid-column:1;grid-row:2/span 5;max-height:calc(100vh - 110px);width:auto;max-width:100%}#kts-cer-card p,#kts-cer-card .b{grid-column:2}#kts-cer-card p{grid-row:2;margin-top:0}}
 #kts-cer-card p{margin:8px 0 0;color:#a8a6c9;font-size:13px;min-height:1.5em}
 #kts-cer-card .b{display:flex;width:100%;min-height:48px;margin-top:8px;align-items:center;justify-content:center;border-radius:14px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.06);color:#fff;font:inherit;font-weight:900;text-decoration:none;cursor:pointer;box-shadow:inset 0 0 0 99px rgba(70,36,0,0);transition:background-color .25s,border-color .25s,box-shadow .25s,transform .25s}
 #kts-cer-card .b:active{background-color:rgba(255,255,255,.24);border-color:rgba(255,255,255,.55);transform:scale(.97);transition:none}
@@ -411,7 +412,7 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown }) {
       if (s.cheer && world.playEmote?.(3)) c.done.cheer = true; // refused by the cooldown: the next tick tries again (until +5 s)
       if (s.round >= 0) { c.done.rounds = s.round + 1; world.cheerAt?.(c.slot); }
       if (s.pose) { c.done.pose = true; c.posed = !!world.cerPose?.(c.slot); }
-      if (s.shot) { c.done.shot = true; shoot(c); }
+      if (s.shot && shoot(c)) c.done.shot = true; // refused (a hidden page, a lost context): tried again next tick, offered after the slack
       if (s.offer) {
         c.done.offer = true;
         note(CER_TEXT.shotTake, 'ok', () => takeLater(c), { ms: Math.max(4000, c.start + CER.late - now) });
@@ -427,17 +428,20 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown }) {
   // The offered photo (a late arrival, or the moment passed unseen): the same pose, the shot 1.5 s later, the same card.
   function takeLater(c) {
     if (!world?.cerPose?.(c.slot)) { note('지금은 단체 사진을 찍을 수 없어요. 택시에서 내린 뒤에 다시 해 주세요', 'err'); return; }
-    setTimeout(() => shoot(c), CER.shot - CER.pose);
+    setTimeout(() => { if (!shoot(c)) note('지금은 단체 사진을 찍을 수 없어요. 잠시 뒤에 다시 해 주세요', 'err'); }, CER.shot - CER.pose);
   }
+  // The photo is the world's own 3:2 render of the ceremony (timesSquare3d.js capture({ photo })): it does not wait for the live camera
+  // or for a frame to be drawn. -> true when there is a photo; false when the world refused (nothing is claimed).
   function shoot(c) {
     let blob = null;
-    try { blob = world.capture?.({ me: true, band: cerBand(c.g, c.start) }) || null; } catch { blob = null; }
+    try { blob = world.capture?.({ photo: c.slot, band: cerBand(c.g, c.start) }) || null; } catch { blob = null; }
+    if (!blob) return false;
     try { world.cerEnd?.(); } catch { /* the camera comes back by itself */ }
     if (cer === c) hud();
-    if (!blob) { note('단체 사진을 찍지 못했어요', 'err'); return; }
     // A sheet or a layer is open: the photo waits behind a notice (the card is the one modal layer).
     if (busy()) note(CER_TEXT.shotReady, 'ok', () => photoCard(c.g, blob), { ms: 60000 });
     else photoCard(c.g, blob);
+    return true;
   }
   // The photo card: one modal layer (ui.layer: Escape, the back button and ✕ close it; the HUD under it is inert).
   let cardEl = null, cardUrl = '';

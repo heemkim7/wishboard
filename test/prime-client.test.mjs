@@ -76,6 +76,12 @@ describe('prime screens on the plaza', () => {
     assert.equal(!!boards.get('STREET_1').kingOn, true);
   });
   it('turns a shared screen by the wall clock, the main tower in its hour, and never shows a takeover shield', async () => {
+    // Its own clock: today 14:00 KST. The real one failed this between 20:50 and 21:10 KST, when the 9 pm show owns the tower.
+    const wall = Date.now, at = dayStart(kstDay(wall())) + 14 * 36e5;
+    Date.now = () => at;
+    try { await towerTurns(); } finally { Date.now = wall; }
+  });
+  async function towerTurns() {
     const { boards, words, cam } = await boardsFor();
     const day = kstDay(Date.now()), now = Date.now();
     const teams = [1, 2, 3, 4, 5].map((i) => ({ id: T(i), name: '팀' + i, n: 40 - i }));
@@ -90,7 +96,7 @@ describe('prime screens on the plaza', () => {
     boards.set('STREET_2', { holder_id: 'guest:x', holder_name: 'x', line1: '내 가게', protected_until: new Date(now - 1000).toISOString(), lit_until: new Date(now + 36e5).toISOString() });
     for (let i = 0; i < 20; i++) boards.update(0.1, cam);
     assert.doesNotMatch(words('STREET_2'), /빼기|방어막/);
-  });
+  }
 });
 
 describe('the board sheet and the team sheets', () => {
