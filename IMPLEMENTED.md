@@ -345,7 +345,7 @@ Room이 `BONUS`로 받는 종류는 `balance.js` `BONUS_KINDS`(attend, mission, 
 
 예전 화면(배포 전에 연 탭)이 보내는 놀이 메시지의 답: `MINE`은 `PAY amount 0 why 'off'`(그 화면은 동전을 제자리에 둔다), `SESS` 시작은 `{ t:'SESS', id:'off', ok:true }`, 끝은 `PAY kind bake|dance amount 0 why 'off'`(그 화면은 판을 조용히 닫는다), `BONUS` stunt·hive·star·pouch는 `off`, `FARE`는 답 없음(그 화면은 `하차 완료`를 못 보일 뿐이다), `FEVER`·`REV`·`DRAW_CHECK`는 답 없음. 어느 것도 포인트를 주지 않는다.
 
-### 같이 춤추기 (2026-11-25. 로컬 `main`, 배포 전)
+### 같이 춤추기 (2026-11-25 배포)
 
 주인이 2026-11-24에 리듬 놀이를 두고 "있는 게 맞나, 노래가 너무 없다"고 물었고, 두 안 가운데 "같이 춤추기로"를 골랐다. 설계는 `docs/superpowers/specs/2026-11-24-dance-together-design.md`다.
 
@@ -361,7 +361,7 @@ Room이 `BONUS`로 받는 종류는 `balance.js` `BONUS_KINDS`(attend, mission, 
 - 테스트: `test/dance.test.mjs`(규칙), `test/dance-world.test.mjs`(실제 월드에서 내 캐릭터와 남의 캐릭터가 같은 프레임에 같은 동작, 보내는 것은 `E 4`뿐), `test/dance-ui.test.mjs`, `test/bgm.test.mjs`. 곡은 `OfflineAudioContext`로 8마디씩 그려 소리가 나는지, 깨지지 않는지, 빠르기가 맞는지 쟀다(들어 볼 파일: `out/2026-11-24/dance/track-*.wav`, 저장소에는 올리지 않는다).
 - 보지 못한 것: 두 기기에서 실제로 박자가 맞아 보이는지, 곡이 듣기 좋은지(주인이 듣고 판단), 실제 화면의 띠(뼈대 화면 캡처만), 무대 조명.
 
-### 오늘 할 일 (2026-11-25. 로컬 `main`, 배포 전)
+### 오늘 할 일 (2026-11-25 배포)
 
 주인이 2026-11-24 저녁에 "응원 미션 3번을 끝내도 초록 표시만 되고 끝난다, 오늘의 미션이 있는지도 모르겠다, 하고 싶게 만들어 달라"고 했고, 그림으로 낸 설계안을 보고 "이대로 만들기"(꾸미기 보상 없는 쪽)를 골랐다. 설계는 `docs/superpowers/specs/2026-11-24-today-todo-design.md`다. 이 문서의 다른 곳에 남은 `미션` 시트, `미션 · N일` 칩, `오늘의 응원` 카드(퀘스트 카드), 토스트 `오늘 미션 +15 포인트`·`오늘의 응원 미션 완료 +30 포인트`·`출석 +N 포인트`는 모두 이 블록의 것으로 바뀌었다.
 
@@ -841,7 +841,7 @@ Room이 `BONUS`로 받는 종류는 `balance.js` `BONUS_KINDS`(attend, mission, 
 - **스위치**: `GIFT_E3=1`이면 보드 반은 메시지를 바로 보인다(E3). R2는 `docs/gift-board.md`의 명령으로 주인이 켠다.
 - **예산**: 쓰기는 hard에서 DO 호출 없이 503, 비컨은 버린다. 보드 읽기는 isolate마다 20초(hard 10분), `/rt/world`의 선물은 isolate마다 2분(없으면 5분)에 DO 한 번. 받는 사람 페이지는 방과 3D를 부르지 않는다.
 
-### 점등식 (2026-11-24, '받는 순간' 2차. 로컬 `main`에 있고 아직 배포하지 않았다)
+### 점등식 (2026-11-24, '받는 순간' 2차. 2026-11-25 배포)
 
 설계는 `docs/superpowers/specs/2026-11-24-receiving-moment-design.md` ③, 구현 계획은 `docs/superpowers/plans/2026-11-24-receiving-moment-batch2.md`다. 규칙은 `giftrules.js` › 점등식(`CER`, `cerStart`, `cerPhase`, `cerSteps` 등)에 있고 서버가 신호를 보내지 않는다. 각 기기가 자기 시계에 서버 차이를 더해(`nowMs()`) 그 보드의 시작 시각으로 단계를 계산한다. 시작 시각은 보드의 창 시작(`a`)이 그날의 9·12·15·18시일 때다(`지금` 보드는 해당 없음. 공개 보기 `giftView`의 `fx`가 만든 시각이 창 시작보다 앞인지 알려 주므로 정시 직후에 만든 `지금` 보드도 점등식이 아니다. `fx`가 없는 예전 캐시 보기에는 예전 규칙이 적용된다). 단계는 `early`(10분 전보다 이름), `wait`(10분 전~10초 전), `count`(마지막 10초), `lit`(시작~2분), `over`다.
 
