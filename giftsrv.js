@@ -93,8 +93,8 @@ export const giftDb = {
   },
   // o: { uid, ip, v (giftFault's), ref, re, split }. -> { ok: true, row, gone, reply? } | { ok: false, code: 'mine' | 'net' | 'full', next, gone }.
   // 답장 전광판: with o.re and a kept ref (the answered board exists and is another account's) the answered board keeps this board's id
-  // in re, once: the first reply stays. reply: { to: the answered board's owner, gid: its id } only when that mark was set now (the Worker
-  // sends that owner one notice); a later reply is an ordinary board made from the page (kids, made_ref) and nothing more.
+  // in re: the first reply stays, a later one changes nothing. reply: { to: the answered board's owner, gid: its id } only when that mark
+  // was set now (the Worker sends that owner one notice); a later reply is an ordinary board made from the page (kids, made_ref).
   make(q, o, now = Date.now()) {
     const gone = this.prune(q, now), d = kstDay(now), v = o.v;
     if (lim(q, 'u:' + o.uid, d) >= GIFT.dayPerActor) return { ok: false, code: 'mine', gone };
@@ -111,8 +111,12 @@ export const giftDb = {
     limAdd(q, 'u:' + o.uid, d); limAdd(q, 'n:' + o.ip, d);
     bump(q, d, 'made');
     if (ref) { q.exec('update gb set kids = kids + 1 where id = ?', ref); bump(q, d, 'made_ref'); }
-    let reply = null; // only a board whose page can still be opened is answered (not a hidden one, not one past its 7 days)
-    if (ref && o.re && giftPhase(parent, now) !== 'gone' && q.exec("update gb set re = ? where id = ? and re = ''", id, ref).rowsWritten > 0) { bump(q, d, 'reply'); reply = { to: parent.uid, gid: ref }; }
+    // Only a board whose page can still be opened is answered (not a hidden one, not one past its 7 days), and the place is taken only
+    // while the reply in it can be opened too: a reply that was hidden or is over does not keep later ones out.
+    let reply = null;
+    if (ref && o.re && giftPhase(parent, now) !== 'gone' && giftPhase(parent.re ? rowOf(q.exec('select * from gb where id = ?', parent.re).toArray()[0]) : null, now) === 'gone') {
+      q.exec('update gb set re = ? where id = ?', id, ref); bump(q, d, 'reply'); reply = { to: parent.uid, gid: ref };
+    }
     return { ok: true, row: this.get(q, id, now, false), gone, ...(reply ? { reply } : {}) };
   },
   // The stored board (owner fields included: the Worker strips them), with its visible lines (no writer ids) when withPaper.

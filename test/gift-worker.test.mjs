@@ -591,6 +591,13 @@ describe('답장 전광판 on the Worker', { concurrency: false }, () => {
       await H.admin('/rt/admin/gift/hide', { id: again.id, hide: false });
       clock.add(21000);
       assert.equal((await (await H.get('/rt/gift/' + later.id, A.token)).json()).mine.re, again.id);
+      // Hidden again: a reply nobody can open does not keep the place, the next one takes it.
+      await H.admin('/rt/admin/gift/hide', { id: again.id });
+      const C = await H.guest('3.3.3.3'), real = await (await H.post('/rt/gift', REPLY(later.id, { from: '진짜' }), C.token, '3.3.3.3')).json();
+      assert.equal(reOf(env, later.id), real.id);
+      await H.admin('/rt/admin/gift/hide', { id: again.id, hide: false });
+      assert.equal(reOf(env, later.id), real.id, 'and keeps it');
+      assert.equal((await (await H.get('/rt/gift/' + later.id, A.token)).json()).mine.re, real.id);
     } finally { done(); }
   });
 });
