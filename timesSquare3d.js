@@ -32,6 +32,7 @@ import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, 
 import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=202611241625';
 import { taxiExit, EXIT_SLOW, nextOfferDelay, fareWait, isTouchUI, AUTO_WALK, gridPath, walkSteer, walkStall, walkPace, autoWalkEnds } from './interact.js?v=202611241625';
 import { WELCOME } from './ftue.js?v=202611241625';
+import { freeFrame } from './ts3d/freeframe.js?v=202611241625';
 import { radioAt, seenDancer, isDancing, isSustained, nearDancers, resendDue, NEAR_M } from './dance.js?v=202611241625';
 import { nowMs } from './live.js';
 import { RETURN_MS, glideMs, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, chaseYawRate, CHASE, stickFrame, dragSpeed, viewDragged, portraitFov, fitDistance, BALLOON_LOOK, balloonLook, reverseTime, driveView, driveWiden, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange, boardVantage, facesBlock, cerShotPose, cerSpread, cerPhotoPose, cerLabels, CER_PHOTO } from './camrig.js?v=202611241625';
@@ -1652,6 +1653,7 @@ void main(){
     if (drive) { tell('운전 중에는 내린 뒤에 볼 수 있어요'); return null; }
     const pose = slotPose(slotId, 18, true);
     if (!pose) return null;
+    if (holdMsOrOpts?.free) freeFit(pose);
     endAutoWalk(); // the view leaves the avatar: it does not walk on unseen
     if (hidMe) { hidMe = false; me.root.visible = true; }
     startCine(pose.cam, pose.look, { dur: 700, until: o.hold ? performance.now() + o.hold : 0, fov: pose.fov });
@@ -1660,6 +1662,24 @@ void main(){
     if (o.celebrate) celebrateBoard(slotId, '#ffcf5a');
     opts.onFocus?.(true);
     return pose;
+  }
+  // A desktop window's street-screen card (welcome: free): the face in the part of the window that is not under the HUD's left column
+  // and the minimap column (ts3d/freeframe.js): the camera steps back along its own line to the face while that spot still sees it (a
+  // clear line, above the ground), turns so the face sits in that band, and opens the lens a little only where it could not step back
+  // far enough. opts.freeView gives the band ({ left, right } px), null on touch layouts: phones and tablets keep the full-window frame.
+  // Nothing fits: the frame is the board camera's, as before.
+  function freeFit(pose) {
+    const band = opts.freeView?.();
+    const f = band && boards.face(pose.slot);
+    if (!f) return;
+    const vfov = pose.fov || portraitFov(camera.aspect, baseFov);
+    if (nyc) nyc.ensureSolid(f.pos.x, f.pos.z, 90);
+    const sees = (p) => p.y >= groundHeight(p.x, p.z) + 1.2 && (!nyc || nyc.rayBlock(p.x, p.y, p.z, f.pos.x, f.pos.y, f.pos.z) >= 0.97);
+    const ff = freeFrame({ cam: pose.cam, look: pose.look, face: { c: f.pos, right: f.right, up: f.up, w: f.w, h: f.h }, vfov, W: width, H: height, left: band.left, right: band.right, sees });
+    if (!ff) return;
+    pose.cam.set(ff.cam.x, ff.cam.y, ff.cam.z);
+    pose.look.set(ff.look.x, ff.look.y, ff.look.z);
+    if (ff.fov > vfov + 0.01) pose.fov = ff.fov;
   }
   // The straight-on frame: from 8 m (15.8 m in the tall 9:16 watch frame) for a small board; slotPose moves it out
   // until the whole face is in the frame, so a wide board fills the width less the margin instead of being cropped.
@@ -1696,8 +1716,8 @@ void main(){
   // of fireworks goes off even when the camera stays (around the screen, or over the avatar when no screen was free).
   function welcome(name, { cam = true, card = null, fx = false } = {}) {
     const slot = boards.pinWelcome(name, WELCOME.ms, { x: pos.x, z: pos.z }, card);
-    const walking = cineCancels({ active: true, keys: keys.size, joy: Math.hypot(joy.x, joy.y), locked: !inputEnabled });
-    if (slot && cam && !drive && !walking && focusSlot(slot, { hold: 3500, celebrate: false })) setTimeout(() => cheerAt(slot), 900);
+    const walking = !!autoWalk || cineCancels({ active: true, keys: keys.size, joy: Math.hypot(joy.x, joy.y), locked: !inputEnabled }); // an auto-walk is walking: focusSlot would end it
+    if (slot && cam && !drive && !walking && focusSlot(slot, { hold: 3500, celebrate: false, free: true })) setTimeout(() => cheerAt(slot), 900);
     else if (fx) setTimeout(() => { if (slot) cheerAt(slot); else if (!drive) for (let i = 0; i < 3; i++) launch(pos.x + (i - 1) * 2.5, pos.z, pos.y + 9 + i, PALETTE[i % PALETTE.length], 0.2 * i); }, 900);
     return slot;
   }
@@ -2582,8 +2602,7 @@ void main(){
   }
   function sendDance(now) {
     if (!resendDue(now, danceSentAt, lastEmote, EMOTE_GAP_MS)) return;
-    danceSentAt = now;
-    lastEmote = now;
+    danceSentAt = now; // not lastEmote: the re-send waits for the player's own emotes and never takes their cooldown (a tap right after it still plays)
     try { net?.sendEmoji?.(4); } catch { /* offline */ }
   }
   // One move: the Dance loop is the base between the others for the bar (and a little over, so the next bar takes over
@@ -3108,6 +3127,7 @@ void main(){
       return { x: pos.x, z: pos.z };
     },
     cineOn: () => !!cine || lounge,
+    autoWalking: () => !!autoWalk,
     setBoost(on) { boostHeld = !!on; },
     setWaypoint,
     getPlayer() { return playerInfo; },

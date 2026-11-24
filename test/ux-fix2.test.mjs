@@ -185,6 +185,7 @@ function rig() {
     n.classList = { add: (k) => s.add(k), remove: (k) => s.delete(k), contains: (k) => s.has(k), toggle: (k, on) => { if (on ?? !s.has(k)) s.add(k); else s.delete(k); } };
     n.append = (...cs) => { for (const c of cs) { if (c && typeof c === 'object') { c.remove?.(); c.parent = n; n.kids.push(c); } else if (typeof c === 'string') n.text += c; } };
     n.remove = () => { if (n.parent) n.parent.kids = n.parent.kids.filter((k) => k !== n); n.parent = null; };
+    n.insertBefore = (c, ref) => { c.remove?.(); c.parent = n; const i = n.kids.indexOf(ref); n.kids.splice(i < 0 ? n.kids.length : i, 0, c); }; // note() keeps a replaced row's place
     n.addEventListener = () => {};
     Object.defineProperty(n, 'children', { get: () => n.kids });
     Object.defineProperty(n, 'isConnected', { get: () => !!n.parent });

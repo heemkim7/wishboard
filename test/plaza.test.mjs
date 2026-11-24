@@ -197,6 +197,20 @@ describe('times square plaza', { concurrency: false }, () => {
     assert.equal(msgs(me).some(m => m.t === 'E'), false);
   });
 
+  // 같이 춤추기 re-sends K-댄스 (E 4) every 4 s: relayed as before, but not kept in the 10-entry history a joiner is replayed, so two or
+  // three dancers do not push the recent board updates (WORLD_UPDATE) out of it (test/review2-hud.test.mjs, finding 4).
+  it('relays K-댄스 (E 4) but keeps it out of the join history; the other reactions and the board updates stay in it', async () => {
+    const { room } = makeRoom();
+    const a = openSock(room, 'guest:a'), b = openSock(room, 'guest:b'), c = openSock(room, 'guest:c');
+    await room.fetch(new Request('https://room.internal/world', { method: 'POST', body: JSON.stringify({ t: 'WORLD_UPDATE', kind: 'BILLBOARD', data: { slot_id: 'STREET_8' } }) }));
+    await room.webSocketMessage(a, JSON.stringify({ t: 'E', e: 1 }));
+    for (let i = 0; i < 12; i++) await room.webSocketMessage(i % 2 ? b : a, JSON.stringify({ t: 'E', e: 4 }));
+    assert.equal(msgs(c).filter(m => m.t === 'E' && m.e === 4).length, 12, 'every dance re-send is relayed');
+    // room.hist is what a v2 joiner gets as `h` (Room's welcome: o.h = this.hist)
+    assert.deepEqual(room.hist.map(m => m.t + (m.e ? ':' + m.e : '')), ['WORLD_UPDATE', 'E:1'], 'the board update is still there for a late joiner');
+    assert.match(await readFile(new URL('../worker.js', import.meta.url), 'utf8'), /if \(a\.v2 && this\.hist\) o\.h = ghosts\.length \? this\.hist\.concat\(ghosts\) : this\.hist;/);
+  });
+
   // Ground coins pay nothing since the non-game change (MINE is answered why 'off'); the flush mechanics are the same for any grant, here 관람.
   it('credits 관람 in memory-backed sqlite, pays ground coins nothing, keeps the 20 s gap, and flushes coin_batch', async () => {
     const orig = Date.now;

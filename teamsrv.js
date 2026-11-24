@@ -397,19 +397,25 @@ export async function teamApi(req, env, ctx, u, k) {
   }
   if (p === '/rt/team/me') {
     if (req.method !== 'GET') return J({ err: 'get' }, 405);
+    // ?peek=1 (the plaza's entry, main.js askTeamToday): what the team store already has, the same shape. It never reads Supabase and
+    // never brings an old 소속 over (no tri, no team row, no membership): an account with no row is "no team". The sheet reads without it.
+    const peek = u.searchParams.get('peek') === '1';
     const actor = await actorOf(req, k, env); if (!actor) return no('auth', 401);
     const hit = fresh(ME, actor.id, ME_TTL); if (hit) return J(hit.v);
     if (await hard(k, env)) { const any = ME.get(actor.id); return any ? J({ ...any.v, busy: true }) : no('busy', 503); }
     try {
       const M = teamM(env);
       let v = await M.teamMe(actor.id, Date.now());
+      const bring = !v.team && !v.looked && !actor.guest && k.myTribe;
       // An old 소속 (Supabase tribes) is brought over once, the first time an account without a team opens the sheet.
-      if (!v.team && !v.looked && !actor.guest && k.myTribe) {
+      if (!peek && bring) {
         const tribe = await k.myTribe(env, actor.id).catch(() => null);
         const got = await M.teamBring(actor.id, tribe, Date.now());
         if (got?.moved) v = await M.teamMe(actor.id, Date.now());
       }
-      return J(keep(ME, actor.id, { ...v, guest: !!(actor.guest || actor.anon) }));
+      const out = { ...v, guest: !!(actor.guest || actor.anon) };
+      // A peek that skipped the bring is not kept: the sheet's read right after must still bring the old 소속 over.
+      return J(peek && bring ? out : keep(ME, actor.id, out));
     } catch { return no('down', 503); }
   }
   // GET /rt/team?id=<id>: the public team page.

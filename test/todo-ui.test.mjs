@@ -71,7 +71,7 @@ describe('the notices: one keyed line per row finished, the next row as its tap'
     t.api.renderTodo();
     assert.deepEqual(t.notes(), [], 'the wish was posted before: no notice');
     t.d.cheer = 3; t.api.renderTodo();
-    assert.deepEqual(t.notes(), [['note', '✓ 전광판 응원 3번 · +45 포인트 · 다음: 소원에 하트 1개', 'ok', 'function', 'todo']]);
+    assert.deepEqual(t.notes(), [['note', '✓ 전광판 응원 3번 · 다음: 소원에 하트 1개', 'ok', 'function', 'todo']]); // no QUEST claim went out here: no points (test/review2-hud.test.mjs 2)
     assert.deepEqual(t.calls.filter((c) => c[0] === 'sfx'), [['sfx', 'todo']]);
     assert.deepEqual(t.events(), [['todo_done', { kind: 'cheer' }]]);
   });
@@ -84,7 +84,7 @@ describe('the notices: one keyed line per row finished, the next row as its tap'
     t.clear();
     t.api.attendPaid(3, 15);
     assert.deepEqual(t.notes(), [['note', '출석 3일 · +15 포인트 · 다음: 소원에 하트 1개', 'ok', 'function', 'todo']]);
-    assert.deepEqual(t.events(), [['todo_done', { kind: 'attend' }]]);
+    assert.deepEqual(t.events(), [], 'no todo_done for attendance (test/review2-hud.test.mjs 5)');
   });
   it('a row known only later (the wish list, the team) is not announced as just done', () => {
     const t = harness({ wish: { known: false, mine: null, given: [], busy: false } });
@@ -135,7 +135,7 @@ describe('the whole list: once a day per device', () => {
     t.api.setTeamToday('ask');
     t.api.renderTodo(); // the HUD's 1 s tick
     t.d.heart = 1; t.api.renderTodo();
-    assert.deepEqual(t.notes().map((n) => n[1]), ['✓ 소원에 하트 1개 · +15 포인트'], 'the team may still be a row: not all done yet');
+    assert.deepEqual(t.notes().map((n) => n[1]), [], 'the team may still be a row: not all done yet (and the heart row\'s line waits for its pay)');
     t.clear(); t.tick(10001); t.api.renderTodo();
     assert.deepEqual(t.notes().map((n) => n[1]), ['🎉 오늘 할 일을 다 했어요 · 출석 3일']);
   });
@@ -202,7 +202,7 @@ describe('nothing goes to the room or the server for the moment', () => {
   it('world.welcome takes the card and its fireworks on the same path; the camera rule is unchanged', () => {
     const fn = body(world, '  function welcome(');
     assert.match(fn, /function welcome\(name, \{ cam = true, card = null, fx = false \} = \{\}\)/);
-    assert.match(fn, /if \(slot && cam && !drive && !walking && focusSlot\(slot, \{ hold: 3500, celebrate: false \}\)\) setTimeout\(\(\) => cheerAt\(slot\), 900\);/);
+    assert.match(fn, /if \(slot && cam && !drive && !walking && focusSlot\(slot, \{ hold: 3500, celebrate: false, free: true \}\)\) setTimeout\(\(\) => cheerAt\(slot\), 900\);/);
     assert.match(fn, /else if \(fx\) setTimeout\(\(\) => \{ if \(slot\) cheerAt\(slot\); else if \(!drive\) for/);
     assert.equal(/net\b|\.send|raw\(/.test(fn), false);
     assert.match(screens, /function pinWelcome\(name, ms = 8000, at = \{ x: 0, z: 0 \}, card = null\)/);
@@ -217,13 +217,13 @@ describe('nothing goes to the room or the server for the moment', () => {
 describe('the pays and their words', () => {
   it('the old notices are gone: the PAY handlers mark and announce through 오늘 할 일', () => {
     assert.doesNotMatch(main, /오늘의 응원 미션 완료|`출석 \+\$\{got\} 포인트`/);
-    assert.match(main, /if \(m\?\.kind === 'quest' && got\) ui\.markQuest\?\.\(m\.key\);/);
+    assert.match(main, /if \(m\?\.kind === 'quest' && got\) ui\.markQuest\?\.\(m\.key, got\);/);
     assert.match(main, /if \(got\) ui\.attendPaid\?\.\(m\?\.key, got\);/);
     assert.doesNotMatch(ui, /오늘 미션 \+|오늘의 응원'\s*\}|h\('b', \{ text: '오늘의 응원' \}\)/);
     // the pay flow itself is as it was: payDue, MISSION_NEED, the QUEST claim
     assert.match(ui, /const MISSION_NEED = \{ cheer: 1, wish: 1, heart: 1 \};/);
     assert.match(ui, /if \(!key \|\| !hooks\.bonus\?\.\('mission', BALANCE\.missionReward\)\) return;/);
-    assert.match(ui, /if \(!hooks\.claimQuest\?\.\(key\)\) note\(/);
+    assert.match(ui, /const sent = d\[key\] < need \|\| !!hooks\.claimQuest\?\.\(key\);/);
   });
   it('미션 leaves the screen; the 응원 팀 ranking keeps its name', () => {
     const strings = (src) => [...code(src).matchAll(/'([^'\n]*)'|`([^`\n]*)`/g)].map((m) => m[1] ?? m[2]);
@@ -250,7 +250,7 @@ describe('the pays and their words', () => {
     assert.match(main, /function askTeamToday\(\) \{\n\s+if \(net\.budgetDown \|\| net\.gateDown\) \{ ui\.setTeamToday\?\.\(false\); return; \}/);
     assert.match(main, /askTeamToday\(\); \/\/ 오늘 할 일/);
     assert.match(main, /const teamToday = \(me\) => \(\{ has: !!me\?\.team, done: !!\(me\?\.team && me\.today && me\.today\.here !== false\) \}\);/);
-    assert.match(main, /if \(body\?\.op === 'cheer' && r\?\.ok !== false\) ui\.setTeamToday\?\.\(\{ has: true, done: true \}\);/);
+    assert.match(main, /if \(body\?\.op === 'cheer' && r\?\.ok !== false && r\?\.why && r\.why !== 'wait'\) ui\.setTeamToday\?\.\(\{ has: true, done: true \}\);/);
   });
 });
 

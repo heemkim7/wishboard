@@ -1518,7 +1518,7 @@ export class Room extends DurableObject {
     else if (m.t === 'CHEER' && a.q) await this.cheer(w, a, m);
     else if (m.t === 'REPLY' && a.q) await this.replyCheer(w, a, m);
     else if (m.t === 'ADCLICK' && a.q) this.adClick(w, a, m.nick, String(m.slot || ''));
-    else if (m.t === 'E' && a.q) { const e = m.e; if (Number.isInteger(e) && e >= 1 && e <= 4 && burst(a, 'xe', RELAY_N)) { this.bc({ t: 'E', k: a.k, e }, w); this.pushEv({ t: 'E', k: a.k, e }); } }
+    else if (m.t === 'E' && a.q) { const e = m.e; if (Number.isInteger(e) && e >= 1 && e <= 4 && burst(a, 'xe', RELAY_N)) { this.bc({ t: 'E', k: a.k, e }, w); if (e !== 4) this.pushEv({ t: 'E', k: a.k, e }); } } // K-댄스 (4) is relayed but not kept for joiners: 같이 춤추기 re-sends it every 4 s and would push the board updates out of the 10
     else if (m.t === 'b' && a.q) { const e = String(m.e || ''), p = m.p && typeof m.p === 'object' ? m.p : {}, now = Date.now();
       if (e === 'pos') this.relayPos(w, a, posOf([p.x, p.y, p.face, p.anim, p.fl, p.vx, p.vy]));
       else if (RELAY.includes(e)) { // no free text: only the game's own broadcasts, numeric fields, identity from the verified token, RELAY_N per RELAY_MS

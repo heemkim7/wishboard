@@ -302,6 +302,28 @@ describe('응원 팀 on the Worker', { concurrency: false }, () => {
       assert.equal(state.calls.filter((u) => u.includes('my_tribe')).length, n, 'looked at once');
     } finally { done(); }
   });
+
+  // The plaza's entry (main.js askTeamToday) peeks: it must not move an account into its old 소속 just by entering (test/review2-hud.test.mjs 5).
+  it('?peek=1 answers from the team store: no my_tribe read, no team made, no membership; the sheet\'s read right after still brings it over', async () => {
+    const { clock, state, done } = await setup();
+    try {
+      const env = makeEnv(), H = harness(env), O = await user(state, clock, 'peeker');
+      state.tribe = { ok: true, tribe_id: 'beef1234', tag: '옛소속', role: 'owner' };
+      const peek = await (await H.get('/rt/team/me?peek=1', O.token)).json();
+      assert.equal(peek.ok, true); assert.equal(peek.team, null, 'no team: the to-do row reads 응원 팀 고르기');
+      assert.equal(state.calls.filter((u) => u.includes('my_tribe')).length, 0, 'Supabase was not asked');
+      assert.equal(db(env).prepare('select count(*) n from tm').get().n, 0, 'no team row');
+      assert.equal(db(env).prepare('select count(*) n from tmm').get().n, 0, 'no membership');
+      assert.equal(db(env).prepare('select count(*) n from tri').get().n, 0, 'not marked looked');
+      const again = await (await H.get('/rt/team/me?peek=1', O.token)).json();
+      assert.equal(again.team, null);
+      const me = await (await H.get('/rt/team/me', O.token)).json();
+      assert.equal(me.team.id, 'beef1234', 'the sheet behaves as before (the peek was not kept in the isolate cache)');
+      const after = await (await H.get('/rt/team/me?peek=1', O.token)).json();
+      assert.equal(after.team.id, 'beef1234', 'a peek after that sees the team');
+      assert.deepEqual(Object.keys(peek).sort(), Object.keys(await (await H.get('/rt/team/me?peek=1', (await user(state, clock, 'other')).token)).json()).sort(), 'the same shape');
+    } finally { done(); }
+  });
 });
 
 describe('no takeovers on the claim path', { concurrency: false }, () => {

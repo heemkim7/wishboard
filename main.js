@@ -216,6 +216,8 @@ let starterListSettled = false; // the re-reads of that list are over (below): t
 let introDone = () => {};
 let giftUi = null; // gift.js mountGift, once the world and ui exist
 const introReady = new Promise((resolve) => { introDone = resolve; });
+let introOver = false; // the arrival intro (or the focus link's landing) is over: 오늘 할 일's card waits for it (ui.js pumpTodoCard)
+introReady.then(() => { introOver = true; });
 let linkWishDone = () => {};
 const linkWishClosed = new Promise((resolve) => { linkWishDone = resolve; });
 function dropDeep(keys) {
@@ -412,6 +414,8 @@ const ui = createUI(document.getElementById('ui'), {
   focusShot: (slot) => { const pose = world?.focusSlot(slot); if (pose) focusedSlot = String(slot || ''); return pose; },
   endFocus: () => world?.endFocus(),
   cineOn: () => !!world?.cineOn?.(),
+  autoWalking: () => !!world?.autoWalking?.(),
+  introOn: () => !introOver,
   boardView: (slot) => world?.boardView?.(slot) || null,
   setChannel(n) {
     const ch = Math.max(1, Math.min(8, Math.round(Number(n)) || 1));
@@ -581,6 +585,7 @@ world = createTimesSquare(document.getElementById('view'), {
   onLoungeEnd: () => setLounge(false),
   onFocus: (on) => { if (!on) focusedSlot = ''; ui.focusLock(on); if (!on) armFtue(); },
   onWaypoint: (wp) => ui.setWaypoint(wp),
+  freeView: () => ui.freeView?.() || null, // a desktop window's band clear of the HUD columns, for the street-screen card (ts3d/freeframe.js)
   // Taxi rides pay nothing. A pick-up and a drop-off in front of a board still go to the room (PICK, FARE): the drop-off counts toward that board's
   // report (택시 손님). ev.sent = false tells the world that no fare went out, so the next passenger does not wait for a fare gap.
   onJob(ev) {
@@ -785,8 +790,9 @@ async function reportBoard(slot, reason) {
   return net.authed('/rt/report', { slot, reason });
 }
 // 응원 팀: my membership (teamsrv.js /rt/team/me) and the writes. state.team follows what they say (the ranking marks my row with it).
-async function teamMe() {
-  const me = await net.teamGet('/rt/team/me');
+// peek: the entry's read (askTeamToday): what the team store has, never the old 소속 brought over (teamsrv.js); the sheet reads without it.
+async function teamMe(peek = false) {
+  const me = await net.teamGet(peek ? '/rt/team/me?peek=1' : '/rt/team/me');
   state.team = me?.team ? { id: me.team.id, name: me.team.name } : null;
   ui.setTeamToday?.(teamToday(me));
   return me;
@@ -797,7 +803,7 @@ async function teamOp(body) {
   const r = await net.authed('/rt/team', body);
   if (r?.team?.id) state.team = { id: r.team.id, name: r.team.name };
   else if (body?.op === 'leave') state.team = null;
-  if (body?.op === 'cheer' && r?.ok !== false) ui.setTeamToday?.({ has: true, done: true }); // recorded (counted or not): the row is done
+  if (body?.op === 'cheer' && r?.ok !== false && r?.why && r.why !== 'wait') ui.setTeamToday?.({ has: true, done: true }); // recorded (counted or not): the row is done; 'wait' recorded nothing
   else if (body?.op === 'leave') ui.setTeamToday?.({ has: false, done: false });
   else if ((body?.op === 'join' || body?.op === 'create') && state.team) ui.setTeamToday?.({ has: true, done: false });
   return r;
@@ -807,7 +813,7 @@ async function teamOp(body) {
 function askTeamToday() {
   if (net.budgetDown || net.gateDown) { ui.setTeamToday?.(false); return; }
   ui.setTeamToday?.('ask');
-  teamMe().catch(() => ui.setTeamToday?.(false));
+  teamMe(true).catch(() => ui.setTeamToday?.(false));
 }
 // ---- 오늘 할 일: the whole list's card (ui.js pumpTodoCard calls this once the screen is free) ----------------------------------------------
 // The welcome board's path (world.welcome): the card on the nearest free street screen for 8 s with its own chip and bottom line (todo.js
@@ -1360,8 +1366,8 @@ async function heartWish(id) {
     patchWish(id, { hearts: Math.max(0, Math.floor(Number(res.hearts) || 0)) });
     state.wish.left = Math.max(0, Math.floor(Number(res.left)) || 0);
     if (!state.wish.given.includes(id)) state.wish.given.push(id);
+    ui.mission?.('heart'); // today's heart mission (ui.js MISSION_NEED), counted before the list sees the heart: its row's notice then waits for the pay
     paintWish();
-    ui.mission?.('heart'); // today's heart mission (ui.js MISSION_NEED)
   }
   return res;
 }
@@ -1534,7 +1540,7 @@ net.on('pay', (m) => {
   if (m?.kind === 'shot' && got) { ui.noteShot?.(); ui.note(`공유 +${got} 포인트`, 'ok'); }
   if (m?.kind === 'cheer' && got) { ui.quest?.('cheer'); ui.note(`응원 +${got} 포인트`, 'ok', null, { key: 'cheer-paid' }); }
   if (m?.kind === 'click' && got) ui.note(`링크 방문 +${got} 포인트`, 'ok');
-  if (m?.kind === 'quest' && got) ui.markQuest?.(m.key); // 오늘 할 일 said '✓ 전광판 응원 3번 …' when the third cheer landed (ui.js renderTodo)
+  if (m?.kind === 'quest' && got) ui.markQuest?.(m.key, got); // 오늘 할 일's '✓ 전광판 응원 3번 · +N 포인트 …' waits for this (ui.js renderTodo)
   if (m?.kind === 'mission' && got) ui.markDaily?.(got);
   if (m?.kind === 'hello') { keep('kts_hello', '1'); if (got) ui.note(`첫 방문 +${got} 포인트`, 'ok'); }
   if (m?.kind === 'attend') {
@@ -1789,7 +1795,7 @@ function claimLinkReward(user, held) {
       if (r?.amount > 0) { ui.note(`연결 보상 +${r.amount} 포인트`, 'ok'); try { await refreshWallet(); } catch { /* paints on the next sync */ } }
     } catch (e) {
       if (sessionUser !== user) return;
-      ui.note(e?.code === 'human' ? e.message : `연결 보상 ${held}포인트를 지금은 넣지 못했어요. 잠시 뒤에 눌러서 다시 받아 주세요.`, 'err', () => claimLinkReward(user, held));
+      ui.note(e?.code === 'human' ? e.message : `연결 보상 ${held}포인트를 지금은 넣지 못했어요. 잠시 뒤에 눌러서 다시 받아 주세요.`, 'err', () => claimLinkReward(user, held), { recover: true });
     }
   })().finally(() => { rewardRun = null; });
 }
@@ -1806,7 +1812,7 @@ async function bootAccount() {
   else {
     accountReady = true;
     ui.setAccount?.({ ready: true, guest: true, linked: false });
-    if (mailSaid) ui.note(mailSaid, ARRIVED.failed ? 'err' : 'ok', () => ui.openLogin?.());
+    if (mailSaid) ui.note(mailSaid, ARRIVED.failed ? 'err' : 'ok', () => ui.openLogin?.(), { recover: true });
     else if (ARRIVED.code && !ARRIVED.failed) ui.note('로그인을 마치지 못했어요. 다시 시도해 주세요.', 'err');
   }
   if (ARRIVED.failed && !mailSaid) ui.note(oauthErrorText(ARRIVED), 'err');
@@ -1991,7 +1997,7 @@ async function syncActor() {
       finally { ui.setLogin?.({ wait: false, text: '', err: '', info: '' }); ui.closeLogin?.(); }
     } else if (drift === 'out') {
       await becomeGuest({ adopt: true });
-      ui.note('로그아웃됐어요 · 다시 로그인', '', () => ui.openLogin?.());
+      ui.note('로그아웃됐어요 · 다시 로그인', '', () => ui.openLogin?.(), { recover: true });
     } else if (stored && !sessionUser) {
       // Guests in every window: this one plays as the stored guest. Another window replaced it (its sign-out, a handover it took).
       const g = guestActor();
