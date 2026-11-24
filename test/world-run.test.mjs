@@ -398,6 +398,34 @@ describe('the world, run in Node: the same phone on its side (812 x 375)', { ski
     assert.ok(cut.went > 0.999, 'already there');
     assert.ok(cut.back < 0.05, `and back at once (${cut.back.toFixed(2)} m)`);
   });
+  it('the gift show is a film (gift.js records it for someone else): its glides stay glides for a player who asked for less motion', async () => {
+    const film = async (on) => {
+      calm = on;
+      try {
+        const { world, cam } = await boot(812, 375);
+        const show = world.giftShow('MAIN_LOW', { ms: 15000, crew: false });
+        assert.ok(show);
+        frame();
+        const high = cam.position.clone();
+        await new Promise((r) => real.setTimeout(r, 150)); // the first glide starts on a 60 ms timer
+        frame();
+        const a = cam.position.clone();
+        run(1);
+        const b = cam.position.clone();
+        run(1);
+        const c = cam.position.clone();
+        show.stop();
+        world.dispose();
+        return { first: a.distanceTo(high), second: b.distanceTo(a), third: c.distanceTo(b) };
+      } finally { calm = false; }
+    };
+    for (const on of [false, true]) {
+      const m = await film(on);
+      // the 5.4 s glide from high above: one frame in it has barely left, and it is still on its way a second and two in
+      assert.ok(m.first < 1, `${on ? 'calm' : 'plain'}: ${m.first.toFixed(2)} m on the first frame of the glide (a cut jumps all the way)`);
+      assert.ok(m.second > 1 && m.third > 1, `${on ? 'calm' : 'plain'}: moving ${m.second.toFixed(2)} m, then ${m.third.toFixed(2)} m`);
+    }
+  });
   it('the lot models: none is asked for at the spawn; set down at a plot (as a link does) the five come in, every lot wears one, an upgrade swaps it', async () => {
     const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
     const { LOT_MODEL_URL } = await import('../ts3d/loadplan.js');

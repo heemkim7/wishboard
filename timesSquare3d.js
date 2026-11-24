@@ -1587,7 +1587,9 @@ void main(){
     cineTo.copy(cam);
     cineL1.copy(look);
     cine = { t0: performance.now(), dur: o.dur || 700, back: false, until: o.until || 0, pin: !!o.pin, fov: o.fov || 0 };
-    cine.dur = glideMs(cine.dur, calm.matches); // a cut for a player who asked for less motion
+    // A cut for a player who asked for less motion; not in a film (o.film: the gift show, which gift.js records for
+    // someone else to watch: a cut there would join three stills).
+    if (!o.film) cine.dur = glideMs(cine.dur, calm.matches);
   }
   /**
    * The one way out of a scripted camera: movement, a tap, Escape, a timed hold running out, 시점 해제, the lounge
@@ -1703,8 +1705,10 @@ void main(){
     // Cut to the high view, then two glides and the hold.
     startCine(high, look, { dur: 1, pin: true }); cineFrom.copy(high); cineL0.copy(look); camera.position.copy(high); camera.lookAt(look); viewLook.set(look.x, look.y, look.z);
     me.root.visible = false; hidMe = true; opts.onFocus?.(true);
-    at(60, () => { startCine(mid, look, { dur: Math.round(ms * 0.36), pin: true }); cine.arc = 6; });
-    at(Math.round(ms * 0.38), () => startCine(hold.cam, look, { dur: Math.round(ms * 0.24), pin: true, fov: hold.fov }));
+    // (film: the glides stay glides with reduced motion on. The way back at the end, endCine, is the player's own view
+    // again and stays a cut for them.)
+    at(60, () => { startCine(mid, look, { dur: Math.round(ms * 0.36), pin: true, film: true }); cine.arc = 6; });
+    at(Math.round(ms * 0.38), () => startCine(hold.cam, look, { dur: Math.round(ms * 0.24), pin: true, fov: hold.fov, film: true }));
     // The crew: six avatars a few metres in front of the face, looking at it, cheering in turn.
     if (o.crew !== false) {
       crewClear();
