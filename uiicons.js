@@ -65,7 +65,10 @@ export const ICONS = Object.freeze({
   // K-댄스: a figure mid-step, one arm up
   dance: [['circle', 13.5, 5, 2], 'M13 9L11.5 14.5', 'M12.8 10L17 7', 'M12.8 10L8 11.5', 'M11.5 14.5L15 17L14 20.5', 'M11.5 14.5L8 19.5'],
   smile: [['circle', 12, 12, 8.5], 'M8.5 14A4 4 0 0 0 15.5 14', ['circle', 9, 10, 0.5], ['circle', 15, 10, 0.5]],
-  // 붉은 봉투 (복주머니 풍선)
+  // 복주머니: a round bag gathered at the neck under a frill of cloth, tied with a knot whose two cord ends hang down. It replaced
+  // `packet` on the pouch buttons, where an envelope read as mail (the owner: "the icon has nothing to do with a pouch").
+  pouch: ['M9 10.5C5.8 11.8 4 14.2 4 16.8A3.7 3.7 0 0 0 7.7 20.5H16.3A3.7 3.7 0 0 0 20 16.8C20 14.2 18.2 11.8 15 10.5', 'M9 10.5C7.6 9 6.8 6.8 7.5 4.5C9.5 6 14.5 6 16.5 4.5C17.2 6.8 16.4 9 15 10.5', 'M8.6 10.5H15.4', ['circle', 12, 10.5, 1.2], 'M11.3 11.6L10.3 15.2', 'M12.7 11.6L13.7 15.2'],
+  // 붉은 봉투 (no longer on a button: the pouch buttons use `pouch`)
   packet: [['rect', 5.5, 3.5, 13, 17, 2], 'M5.5 8L12 12L18.5 8', ['circle', 12, 12.5, 1.6]],
   // crystal ball (the 9 pm drop)
   orb: [['circle', 12, 10.5, 6.5], 'M7 19.5H17', 'M8.5 16.3L7.5 19.5', 'M15.5 16.3L16.5 19.5', 'M9 9A3.2 3.2 0 0 1 11.5 7'],

@@ -114,7 +114,7 @@ describe('touch: the right thumb column is three round buttons', () => {
     assert.match(rule(css, 'html.touch .reacts button.stay-balloon:disabled .bn'), /color: var\(--text-2\);/);
     // the count is a badge at the row's end, the name beside the icon; at most 999+
     const paint = ui.slice(ui.indexOf('function balloonText('), ui.indexOf('setInterval(paintBalloon, 1000);'));
-    assert.match(paint, /balloonEl\.replaceChildren\(\.\.\.\[icon\('packet'\), coarse \? h\('span', \{ class: 'bl', text: '복주머니 던지기' \}\) : null, h\('span', \{ class: 'bn', text \}\)\]\.filter\(Boolean\)\);/);
+    assert.match(paint, /balloonEl\.replaceChildren\(\.\.\.\[icon\('pouch'\), coarse \? h\('span', \{ class: 'bl', text: '복주머니 던지기' \}\) : null, h\('span', \{ class: 'bn', text \}\)\]\.filter\(Boolean\)\);/);
     assert.match(paint, /balloonText\(coarse \? \(left > 999 \? '999\+' : `\$\{left\}`\) : `\$\{left\}번 남음 · 터뜨려 보세요`\);/); // play: no points
     // its name says what it is and how many are left; the explanation is the tooltip
     assert.match(paint, /balloonName\(`복주머니 던지기 · \$\{left\}번 남음`\);/);
@@ -350,11 +350,14 @@ describe('the floating stack: the hint, a far-board card, 홈 화면 추가, a b
     const s = rule(PHONE_LAND, 'html.touch .toasts');
     assert.match(s, /--stack-top: calc\(var\(--hudl-b, 142px\) \+ 8px\);/);
     assert.match(s, /right: auto; width: min\(300px,/);
-    // the 속보 line is the top centre banner there, between the left column and the icon row (180px, 8px in), the pill centred under it
+    // the 속보 line is the top centre banner there, the pill centred under it: the band is the left column's width + 18px from
+    // both edges (it was left column … icon row, 31px right of the screen's centre at 812px), and that is more than the icon
+    // row's 196px (8 + 180 + 8) on every phone on its side
     const news = rule(PHONE_LAND, 'html.touch .news'), pill = rule(PHONE_LAND, 'html.touch .waypill');
     for (const r of [news, pill]) {
-      assert.match(r, /left: calc\(min\(240px, 40vmax\) \+ 18px \+ var\(--safe-l\)\);/);
-      assert.equal(px(r, 'right'), 8 + 180 + 8);
+      assert.match(r, /left: calc\(min\(240px, 40vmax\) \+ 18px \+ max\(var\(--safe-l\), var\(--safe-r\)\)\);/);
+      assert.match(r, /right: calc\(min\(240px, 40vmax\) \+ 18px \+ max\(var\(--safe-l\), var\(--safe-r\)\)\);/);
+      for (const vw of [641, 740, 812]) assert.ok(Math.min(240, 0.4 * vw) + 18 >= 8 + 180 + 8, String(vw));
       assert.match(r, /margin: 0 auto;/);
     }
     assert.equal(px(pill, 'top'), px(news, 'top') + px(rule(css, 'html.touch .news'), 'height') + 6);
@@ -536,15 +539,13 @@ describe('desktop windows', () => {
     assert.equal(/soundBtn/.test(ui), false);
     assert.equal((ui.slice(ui.indexOf("h('div', { class: 'glass tools' },"), ui.indexOf('    mapEl,\n')).match(/h\('button'/g) || []).length, 7); // + wishBtn, inboxBtn, fsBtn; gift.js and the key card add theirs
   });
-  it('from 1240px the first four tools carry their name beside the icon (twelve bare icons told nothing apart)', () => {
-    const wide = media('(min-width: 1240px)', '.named');
-    assert.match(rule(wide, 'html:not(.touch) .tools .btn:is(.named, .tool-gift)'), /width: auto;/);
-    assert.match(rule(wide, 'html:not(.touch) .tools .btn:is(.named, .tool-gift)::after'), /content: attr\(aria-label\);/);
+  it('from 1024px every tool in the row carries its name beside the icon (test/ux-fix2.test.mjs has the widths)', () => {
+    const wide = media('(min-width: 1024px)', '.tool-fold::after');
+    assert.match(rule(wide, 'html:not(.touch) .tools > .btn'), /width: auto;/);
+    assert.match(rule(wide, 'html:not(.touch) .tools > .btn::after'), /content: attr\(aria-label\);/);
     const ui = read('ui.js');
-    for (const name of ['전광판 걸기', '응원 순위']) assert.match(ui, new RegExp(`class: 'btn icon( tool-rank)? named', type: 'button', 'aria-label': '${name}'`));
-    assert.match(ui, /class: 'btn icon tool-wish named'/);
-    // four names of about 110-150px and seven 40px icons are about 770px: clear of the left column (354px) at 1240px
-    assert.ok(1240 - 14 - (124 + 124 + 150 + 112 + 7 * 40 + 10) - IDENT_RIGHT >= 12);
+    for (const name of ['전광판 걸기', '응원 순위']) assert.match(ui, new RegExp(`class: 'btn icon tool-(board|rank)', type: 'button', 'aria-label': '${name}'`));
+    assert.match(ui, /class: 'btn icon tool-wish'/);
   });
   it('a button and the sheet it opens say the same thing', () => {
     const ui = read('ui.js');
@@ -808,7 +809,7 @@ describe('compact phone HUD (a touch phone upright or on its side)', () => {
     for (const [vw, vh] of [[568, 320], [667, 375], [740, 360], [780, 360], [844, 390]]) assert.equal(colW(vw, vh), Math.min(240, vw * 0.4), String(vw));
   });
   it('the identity row carries the coin amount (tap: the wallet sheet) and a +N badge while coins wait', () => {
-    assert.match(ui, /const idCoin = h\('button', \{ class: 'id-coin', type: 'button', 'aria-label': '내 응원 포인트', title: '응원 포인트 · 정산 안내', onclick: \(\) => openWalletInfo\(\) \}/);
+    assert.match(ui, /const idCoin = h\('button', \{ class: 'id-coin', type: 'button', 'aria-label': '응원 포인트 0', title: '응원 포인트 · 정산 안내', onclick: \(\) => openWalletInfo\(\) \}/);
     assert.match(ui, /h\('div', \{ class: 'glass ident' \}, profile, idCoin, channelCard\)/);
     assert.match(ui, /idAmt\.textContent = amtEl\.textContent;/);
     assert.match(ui, /idPend\.hidden = pendingChip\.hidden;/);
@@ -817,8 +818,8 @@ describe('compact phone HUD (a touch phone upright or on its side)', () => {
     assert.match(rule(box, 'html.touch .ident .id-coin'), /display: grid; grid-template-rows: auto auto;/);
     assert.match(rule(box, 'html.touch .id-coin .pend'), /grid-row: 2;/);
     assert.match(rule(box, 'html.touch .id-coin .pend'), /font-size: 12px;/); // it was 10px
-    // under 400px upright the coin picture steps aside for the name (the wider tool row took 28px from the identity row)
-    assert.match(box, /@media \(orientation: portrait\) and \(max-width: 399px\) \{ html\.touch \.id-coin img \{ display: none; \} \}/);
+    // under 400px upright the coin picture stays (a bare number read like an ID); the row gets tighter and the name gives way
+    assert.match(box, /@media \(orientation: portrait\) and \(max-width: 399px\) \{ html\.touch \.ident \.id-coin \{ padding: 0 8px 0 5px; \}/);
   });
   it('the next goal is one line under the identity row, with a small 목표 tag in place of "다음 목표: "', () => {
     assert.match(ui, /if \(compactNow\(\)\) \{ if \(nextLine\.nextElementSibling !== guestWarn\) guestWarn\.before\(nextLine\); \}/);

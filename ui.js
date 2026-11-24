@@ -29,7 +29,7 @@ import { AD, AD_TEMPLATES, adSums, adBars } from './adreport.js';
 import { adScreenName, linkHost } from './adsale.js';
 import { qrEncode, paintQr } from './qr.js?v=202611241625';
 import { icon } from './uiicons.js?v=202611241625';
-import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, proofOffers, proofPlan, TOAST, touchTag, goalKnown, PRESS, hintLeft, sameNews } from './overlay.js?v=202611241625';
+import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, proofOffers, proofPlan, TOAST, touchTag, goalKnown, PRESS, TOOL_ORDER, hintLeft, sameNews } from './overlay.js?v=202611241625';
 import { linesFault, LINES_ERR } from './ftue.js?v=202611241625'; // the board-line checks
 
 const LEVELS = [
@@ -333,7 +333,9 @@ export function createUI(root, hooks) {
   // while coins wait to be settled. Hidden elsewhere; the wallet card above stays the desktop and tablet readout.
   const idAmt = h('span', { class: 'tnum', text: '0' });
   const idPend = h('span', { class: 'pend tnum', hidden: true });
-  const idCoin = h('button', { class: 'id-coin', type: 'button', 'aria-label': '내 응원 포인트', title: '응원 포인트 · 정산 안내', onclick: () => openWalletInfo() },
+  // Named by what it shows (응원 포인트 201, renderWallet keeps it current): the coin picture before the number says it is
+  // points on every screen, the name says it to a screen reader.
+  const idCoin = h('button', { class: 'id-coin', type: 'button', 'aria-label': '응원 포인트 0', title: '응원 포인트 · 정산 안내', onclick: () => openWalletInfo() },
     h('img', { src: 'icons/coin.jpg?v=2', alt: '' }), idAmt, idPend);
   root.append(h('div', { class: 'hud-l' }, h('div', { class: 'glass ident' }, profile, idCoin, channelCard), guestWarn, walletEl, nineEl, nextLineEl, liveBoard));
   // On a touch screen the 속보 line sits under the left column (index.html 'Phone pass'), and on a phone the notices hang
@@ -386,7 +388,7 @@ export function createUI(root, hooks) {
     } else askFullscreen(true);
   }
   // 전체 화면: a tool button in a desktop window (.tool-desk); on a touch screen it is a switch in the settings sheet.
-  const fsBtn = h('button', { class: 'btn ghost icon tool-more tool-desk', type: 'button', 'aria-label': '전체 화면', title: '전체 화면', 'aria-pressed': 'false', onclick: toggleFullscreen }, icon('fullscreen'));
+  const fsBtn = h('button', { class: 'btn ghost icon tool-more tool-desk tool-fs t-1680', type: 'button', 'aria-label': '전체 화면', title: '전체 화면', 'aria-pressed': 'false', onclick: toggleFullscreen }, icon('fullscreen'));
   let fsPaint = null; // the settings sheet's 전체 화면 switch, while that sheet is open
   const syncFs = () => { fsBtn.replaceChildren(icon(fsOn() ? 'fullscreenExit' : 'fullscreen')); fsBtn.setAttribute('aria-pressed', String(!!fsOn())); fsPaint?.(); };
   document.addEventListener('fullscreenchange', syncFs); // leaving fullscreen does not end a dance
@@ -397,7 +399,7 @@ export function createUI(root, hooks) {
   const mapEl = h('button', { class: 'glass minimap', type: 'button', 'aria-label': coarse ? '뉴욕 지도 크게 보기' : '뉴욕 지도 크게 보기 (M)', title: coarse ? '지도 크게 보기' : '클릭해서 지도 크게 보기 (M)', onclick: () => openMap() }, mapCanvas, h('div', { class: 'tag', text: 'MAP · M' }), h('div', { class: 'zoom' }, icon('expand')));
   // 오늘의 소원: shown to everyone (newcomers and phones too, never behind ⋯). The dot stays while I have no wish today.
   const wishDot = h('i', { class: 'wish-dot', 'aria-hidden': 'true', hidden: true });
-  const wishBtn = h('button', { class: 'btn icon tool-wish named', type: 'button', 'aria-label': '오늘의 소원', title: '오늘의 소원', onclick: () => openWish({ from: 'hud' }) }, icon('wish'), wishDot);
+  const wishBtn = h('button', { class: 'btn icon tool-wish', type: 'button', 'aria-label': '오늘의 소원', title: '오늘의 소원', onclick: () => openWish({ from: 'hud' }) }, icon('wish'), wishDot);
   // 받은 소식: in the bar only while there is something unread (main.js setInboxDot), on phones too, never in newcomer mode.
   const inboxBtn = h('button', { class: 'btn icon tool-inbox', type: 'button', 'aria-label': '받은 소식', title: '받은 소식', hidden: true, onclick: () => openInboxSheet() }, icon('bell'), h('i', { class: 'inbox-dot', 'aria-hidden': 'true' }));
   // 화면만 보기 (compact phone HUD only, index.html): the eye tile under the map hides the HUD to look around; the joystick,
@@ -419,23 +421,27 @@ export function createUI(root, hooks) {
   }
   // The row under the map on touch (index.html .viewrow): 멍때리기 (put in below, where the button is made) and the eye.
   const viewRow = h('div', { class: 'viewrow' }, viewBtn);
-  // The desktop tool row names its first buttons beside the icon (.named: index.html writes the aria-label there).
+  // The tool row, in the order of use (TOOL_ORDER, overlay.js), the same on every screen and in the ⋯ menu: the core action
+  // (전광판 걸기), the growth loop (선물 전광판: gift.js adds it, placeTools moves it to second), today's wish, then the social
+  // ones (응원 순위, 받은 소식 while something is unread), then the self ones (사진 찍어 공유, 공유·코드, 내 건물), and the window's
+  // own (조작 안내, 전체 화면) with 설정 last. A desktop window from 1024px writes every visible tool's name beside its icon
+  // (index.html "Desktop tool row"); what does not fit at that width is in ⋯ (.t-1280, .t-1440, .t-1680: inline from that width).
   root.append(h('div', { class: 'hud-r' },
     h('div', { class: 'bar' },
       h('div', { class: 'glass tools' },
-        h('button', { class: 'btn icon named', type: 'button', 'aria-label': '전광판 걸기', title: '전광판 걸기', onclick: () => {
+        h('button', { class: 'btn icon tool-board', type: 'button', 'aria-label': '전광판 걸기', title: '전광판 걸기', onclick: () => {
           const slot = firstOpenStarter();
           if (slot && !myBoards().length) openClaimStep(1, claimWizard(slot));
           else openBillboard(slot || '');
         } }, icon('board')),
         wishBtn,
+        h('button', { class: 'btn icon tool-rank', type: 'button', 'aria-label': '응원 순위', title: '응원 순위', onclick: () => openRanks() }, icon('trophy')),
         inboxBtn,
-        h('button', { class: 'btn icon tool-more tool-adv', type: 'button', 'aria-label': '공유·코드', title: '공유·코드', onclick: () => openVip() }, icon('share')),
-        h('button', { class: 'btn icon tool-more', type: 'button', 'aria-label': '사진 찍어 공유', title: '사진 찍어 공유', onclick: () => openShot() }, icon('camera')),
-        h('button', { class: 'btn icon tool-rank named', type: 'button', 'aria-label': '응원 순위', title: '응원 순위', onclick: () => openRanks() }, icon('trophy')),
-        h('button', { class: 'btn icon tool-more tool-adv', type: 'button', 'aria-label': '내 건물', title: '내 건물', onclick: () => openHub() }, icon('building')),
+        h('button', { class: 'btn icon tool-more tool-shot t-1280', type: 'button', 'aria-label': '사진 찍어 공유', title: '사진 찍어 공유', onclick: () => openShot() }, icon('camera')),
+        h('button', { class: 'btn icon tool-more tool-adv tool-vip t-1280', type: 'button', 'aria-label': '공유·코드', title: '공유·코드', onclick: () => openVip() }, icon('share')),
+        h('button', { class: 'btn icon tool-more tool-adv tool-hub t-1440', type: 'button', 'aria-label': '내 건물', title: '내 건물', onclick: () => openHub() }, icon('building')),
         fsBtn,
-        h('button', { class: 'btn ghost icon tool-more', type: 'button', 'aria-label': '설정', title: '설정', onclick: () => openSettings() }, icon('gear')),
+        h('button', { class: 'btn ghost icon tool-more tool-set t-1680', type: 'button', 'aria-label': '설정', title: '설정', onclick: () => openSettings() }, icon('gear')),
         h('button', { class: 'btn icon tool-fold', type: 'button', 'aria-label': '메뉴 더보기', title: '메뉴', 'aria-expanded': 'false', onclick: (e) => foldTools(!e.currentTarget.parentElement.classList.contains('open')) }, icon('more')),
       ),
     ),
@@ -443,15 +449,27 @@ export function createUI(root, hooks) {
     locPill,
     viewRow,
   ));
-  // The phone ⋯ fold: closed again once one of its items is chosen, or on a tap anywhere outside the capsule.
+  // The ⋯ fold: closed again once one of its items is chosen, or on a tap anywhere outside the capsule.
   const toolsEl = root.querySelector('.tools');
+  // Tools other modules add (gift.js puts 선물 전광판 after the wish button) take their place in TOOL_ORDER. The DOM order is
+  // the order a keyboard and a screen reader meet them, so the row is sorted, not given a CSS `order`.
+  function placeTools() {
+    if (!toolsEl) return;
+    const rank = (el) => { const i = TOOL_ORDER.findIndex((c) => el.classList.contains(c)); return i < 0 ? TOOL_ORDER.length - 1 : i; };
+    const kids = [...toolsEl.children];
+    const sorted = [...kids].sort((a, b) => rank(a) - rank(b));
+    if (sorted.every((el, i) => el === kids[i])) return;
+    toolsEl.append(...sorted);
+  }
+  if (toolsEl && typeof MutationObserver === 'function') new MutationObserver(placeTools).observe(toolsEl, { childList: true });
   function foldTools(open) {
     if (!toolsEl) return;
     toolsEl.classList.toggle('open', !!open);
     toolsEl.querySelector('.tool-fold')?.setAttribute('aria-expanded', String(!!open));
     holdToasts();
   }
-  toolsEl?.addEventListener('click', (e) => { if (e.target.closest?.('.tool-more')) foldTools(false); });
+  // Any tool chosen from the open menu closes it (on a phone the .tool-more rows, in a desktop window any of its rows).
+  toolsEl?.addEventListener('click', (e) => { if (toolsEl.classList.contains('open') && e.target.closest?.('.tools > .btn:not(.tool-fold)')) foldTools(false); });
   document.addEventListener('pointerdown', (e) => { if (toolsEl?.classList.contains('open') && !e.target.closest?.('.tools')) foldTools(false); });
 
   const newsKick = h('div', { class: 'kick' }, h('b', { text: '속보' }), 'LIVE');
@@ -546,10 +564,8 @@ export function createUI(root, hooks) {
   if (!coarse) {
     root.append(help);
     const tools = root.querySelector('.tools');
-    const keyBtn = h('button', { class: 'btn ghost icon tool-desk', type: 'button', 'aria-label': '조작 안내', title: '조작 안내', onclick: () => help.classList.toggle('fade') }, icon('keyboard'));
-    const fold = tools?.querySelector('.tool-fold');
-    if (fold) tools.insertBefore(keyBtn, fold);
-    else tools?.append(keyBtn);
+    const keyBtn = h('button', { class: 'btn ghost icon tool-desk tool-keys t-1440', type: 'button', 'aria-label': '조작 안내', title: '조작 안내', onclick: () => help.classList.toggle('fade') }, icon('keyboard'));
+    tools?.append(keyBtn); // placeTools puts it before 전체 화면 and 설정
   }
   // The controls card fades 16 s after entering (helpFade from the boot card's enter), not after the page load.
   const helpFade = () => setTimeout(() => help.classList.add('fade'), 16000);
@@ -910,6 +926,7 @@ export function createUI(root, hooks) {
   function renderWallet(bump) {
     amtEl.textContent = money(wallet.confirmed + wallet.pending);
     idAmt.textContent = amtEl.textContent;
+    idCoin.setAttribute('aria-label', `응원 포인트 ${amtEl.textContent}`);
     renderPending();
     renderGoal();
     if (bump) for (const el of [walletEl, idCoin]) { el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
@@ -938,12 +955,29 @@ export function createUI(root, hooks) {
   // note(text, kind, onClick): how long it stays comes from its length (overlay.js toastMs; a tappable one at least 8 s),
   // a tappable one carries a chevron, and while a sheet or the proof bar is up the stack sits at the top (index.html).
   // opts.ms overrides the time. Returns the toast element.
+  // The same notice again is one row, not a new one (ten fast presses of 응원 stacked up to three "다음 응원까지 n초"):
+  // opts.key names a kind of notice (cheer-wait, copied, offline …), and a notice still up with that key, or without a
+  // key the same text, is taken down and this one stands in its place with a fresh clock and the newest text. Only a
+  // notice of the same tappability counts: a keyed plain notice never takes away a tappable one (its retry or link).
   function note(text, kind = '', onClick, opts) {
     const say = toastText(text, kind);
     if (!say) return null;
     const click = typeof onClick === 'function' ? onClick : null;
+    const key = opts?.key ? String(opts.key) : '';
+    let again = false;
+    for (const c of [...toasts.children]) {
+      if (!c.classList.contains('toast') || c.classList.contains('out') || c.classList.contains('hit') !== !!click) continue;
+      if (key ? c.kKey !== key : (c.kKey || c.kSay !== say)) continue;
+      clearTimeout(c.kTimer);
+      clearTimeout(c.pTimer);
+      c.remove();
+      again = true;
+    }
     const t = h(click ? 'button' : 'div', { class: `glass toast ${kind}${click ? ' hit' : ''}`, type: click ? 'button' : null },
       say, click ? h('i', { class: 'go', 'aria-hidden': 'true' }, icon('chevronRight')) : null);
+    t.kKey = key;
+    t.kSay = say;
+    if (again) t.classList.add('again'); // no second entrance: the row stays where it was and only its words change
     if (click) t.addEventListener('click', () => { t.remove(); click(); });
     toasts.append(t);
     // Over three: the oldest plain one goes first, so a tappable notice is not pushed out by a burst of coin lines. Only
@@ -953,7 +987,7 @@ export function createUI(root, hooks) {
     for (let list = shown(); list.length > 3; list = shown()) (list.find((c) => c !== t && !c.classList.contains('hit')) || list[0]).remove();
     const ms = Number(opts?.ms) > 0 ? Number(opts.ms) : toastMs(say, !!click);
     if (click) { t.kLeft = ms; armToast(t); } // a tappable one waits out an open menu (holdToasts)
-    else setTimeout(() => toastOut(t), ms);
+    else t.pTimer = setTimeout(() => toastOut(t), ms);
     return t;
   }
   function toastOut(t) { if (!t.isConnected) return; t.classList.add('out'); setTimeout(() => t.remove(), 320); }
@@ -1196,7 +1230,7 @@ export function createUI(root, hooks) {
     if (baking || sheet) return false;
     if (near?.kind !== 'cart') { note('붕어빵 포차 앞으로 가까이 가세요', 'err'); return false; }
     const left = cooldownLeft();
-    if (left > 0) { note(`붕어빵 틀이 식는 중… ${(left / 1000).toFixed(1)}초`); return false; }
+    if (left > 0) { note(`붕어빵 틀이 식는 중… ${(left / 1000).toFixed(1)}초`, '', null, { key: 'bake-wait' }); return false; }
     baking = { flips: [], pos: 0.08, dir: 1, speed: 0.42, held: false, roundAt: performance.now(), doneAt: 0 };
     bakeEl.classList.add('show');
     bakeEl.setAttribute('aria-hidden', 'false');
@@ -1734,7 +1768,7 @@ export function createUI(root, hooks) {
       const copy = h('button', { class: 'btn ghost', type: 'button', text: '공유 링크 복사', disabled: true, onclick: async () => {
         if (!page || shareBusy) return;
         const how = await sendLink({ kind: 'shot', text: SHARE_TEXT, url: page, into: copyBox });
-        if (how === 'copied') { note('공유 링크를 복사했어요', 'ok'); askShot(); }
+        if (how === 'copied') { note('공유 링크를 복사했어요', 'ok', null, { key: 'copied' }); askShot(); }
       } });
       const share = h('button', { class: 'btn gold', type: 'button', text: '공유하기', disabled: true, onclick: async () => {
         if (!page || shareBusy) return;
@@ -1750,7 +1784,7 @@ export function createUI(root, hooks) {
           finally { shareBusy = false; }
         }
         const how = await sendLink({ kind: 'shot', native: true, title: payload.title, text: SHARE_TEXT, url: page, into: copyBox });
-        if (how === 'copied') note('공유 링크를 복사했어요', 'ok');
+        if (how === 'copied') note('공유 링크를 복사했어요', 'ok', null, { key: 'copied' });
         if (how === 'shared' || how === 'copied') askShot();
       } });
       const kakao = kakaoButton(async () => {
@@ -1758,7 +1792,7 @@ export function createUI(root, hooks) {
         const words = { kind: 'shot', title: 'WISH BOARD : 모두의 전광판', text: SHARE_TEXT, url: page };
         const how = (await sendKakao(words)) || (await sendLink({ ...words, native: true, into: copyBox }));
         if (how === 'busy') return;
-        if (how === 'copied') note('공유 링크를 복사했어요', 'ok');
+        if (how === 'copied') note('공유 링크를 복사했어요', 'ok', null, { key: 'copied' });
         if (how === 'kakao' || how === 'shared' || how === 'copied') askShot();
       }, { disabled: true });
       const row = h('div', { class: 'shot-row' }, save, copy, share, kakao);
@@ -2516,7 +2550,7 @@ export function createUI(root, hooks) {
         const how = (viaKakao && (await sendKakao({ kind: 'wish', title, text, url }))) || (await sendLink({ kind: 'wish', native: true, title, text, url, into: shareBox }));
         if (how === 'cancel' || how === 'busy') return;
         trackEvent('wish_share', { how, pic: pic ? 1 : 0 });
-        if (how === 'copied') note('링크를 복사했어요. 친구에게 붙여 넣어 보내세요.', 'ok');
+        if (how === 'copied') note('링크를 복사했어요. 친구에게 붙여 넣어 보내세요.', 'ok', null, { key: 'copied' });
         if (how === 'manual') manualLink = invited(url, hooks.inviteCode?.());
       }
       function armReport(id) {
@@ -3286,7 +3320,7 @@ export function createUI(root, hooks) {
       const body = h('div', null, h('p', { class: 'note', text: '불러오는 중…' }));
       const copyBox = h('div', { class: 'manual-copy', hidden: true });
       const share = h('button', { class: 'btn gold', type: 'button', text: '이 전광판 링크 공유하기', onclick: async () => {
-        if (await sendLink({ kind: 'invite', url: cardUrl(slot), native: true, into: copyBox }) === 'copied') note('링크를 복사했어요', 'ok');
+        if (await sendLink({ kind: 'invite', url: cardUrl(slot), native: true, into: copyBox }) === 'copied') note('링크를 복사했어요', 'ok', null, { key: 'copied' });
       } });
       host.append(body, share, copyBox, h('button', { class: 'btn ghost', type: 'button', text: '전광판으로 돌아가기', onclick: () => { if (!backTo('전광판 걸기')) openBillboard(slot); } }));
       let alive = true;
@@ -4552,7 +4586,7 @@ export function createUI(root, hooks) {
     const how = await sendLink({ kind: 'invite', text: line, url: link, into });
     if (how === 'copied') {
       trackEvent('share_send', { slot });
-      note('초대 문구를 복사했어요', 'ok');
+      note('초대 문구를 복사했어요', 'ok', null, { key: 'copied' });
     }
   }
   // ---- proof bar: after a claim or a plot purchase. One way in (showProof), one way out (leaveProof).
@@ -5003,7 +5037,7 @@ export function createUI(root, hooks) {
           return;
         }
         if (shareGuest) { share.disabled = false; note(SHARE_ACCOUNT, 'ok', () => openLogin()); return; } // sent, and no bonus asked for
-        if (how === 'copied') note('링크를 복사했어요', 'ok');
+        if (how === 'copied') note('링크를 복사했어요', 'ok', null, { key: 'copied' });
         try {
           const r = await hooks.shareBonus?.();
           note(r?.coins != null ? `공유 보너스 +300 · 잔액 ${r.coins}` : '공유 보너스를 넣었어요', 'ok');
@@ -5659,7 +5693,7 @@ export function createUI(root, hooks) {
       const idManual = h('div', { class: 'manual-copy', hidden: true });
       const copyBtn = h('button', { class: 'btn ghost', type: 'button', text: '복사', 'aria-label': '계정 번호 복사', style: { height: '44px', padding: '0 14px' }, onclick: async () => {
         if (!accountId) return;
-        if (await writeClip(accountId)) note('계정 번호를 복사했어요', 'ok');
+        if (await writeClip(accountId)) note('계정 번호를 복사했어요', 'ok', null, { key: 'copied' });
         else showManual(accountId, idManual);
       } });
       const who = hooks.linked?.() ? '인증 계정' : (hooks.isGuest?.() ? '임시 게스트' : '입장 전');
@@ -6024,7 +6058,7 @@ export function createUI(root, hooks) {
     pouchGo.hidden = !on;
     if (!on) return;
     const left = Math.ceil(balloonHp / 10), text = left > 999 ? '999+' : String(left);
-    if (pouchGo.dataset.n !== text) { pouchGo.dataset.n = text; pouchGo.replaceChildren(icon('packet'), h('span', { class: 'bn', text })); }
+    if (pouchGo.dataset.n !== text) { pouchGo.dataset.n = text; pouchGo.replaceChildren(icon('pouch'), h('span', { class: 'bn', text })); }
     const name = `복주머니 던지기 · ${left}번 남음`;
     if (pouchGo.getAttribute('aria-label') !== name) pouchGo.setAttribute('aria-label', name);
   }
@@ -6067,17 +6101,17 @@ export function createUI(root, hooks) {
     saveDay(d);
     paintQuests();
     if (d[key] < need) return;
-    if (!hooks.claimQuest?.(key)) note('광장에 연결되면 미션 포인트가 들어와요', 'err');
+    if (!hooks.claimQuest?.(key)) note('광장에 연결되면 미션 포인트가 들어와요', 'err', null, { key: 'offline' });
   }
   let balloonHp = 0, balloonWait = 25000, balloonWaitAt = 0;
-  // The packet icon, then the text in its own span: on touch the button is a circle with the icon and the span is the
+  // The pouch icon, then the text in its own span: on touch the button is a circle with the icon and the span is the
   // count badge on its edge (index.html .stay-balloon .bn), so a phone gets the bare count, at most 999+.
   // On touch the button is a row of the 동작 panel: the icon, its name (.bl) and the count as a badge (.bn).
   function balloonText(text) {
-    const key = `packet|${text}`;
+    const key = `pouch|${text}`;
     if (balloonEl.dataset.it === key) return;
     balloonEl.dataset.it = key;
-    balloonEl.replaceChildren(...[icon('packet'), coarse ? h('span', { class: 'bl', text: '복주머니 던지기' }) : null, h('span', { class: 'bn', text })].filter(Boolean));
+    balloonEl.replaceChildren(...[icon('pouch'), coarse ? h('span', { class: 'bl', text: '복주머니 던지기' }) : null, h('span', { class: 'bn', text })].filter(Boolean));
   }
   // The name says what the button is and how many throws are left; the long explanation is the tooltip (and the long press).
   function balloonName(name) { if (balloonEl.getAttribute('aria-label') !== name) balloonEl.setAttribute('aria-label', name); }
@@ -6175,7 +6209,7 @@ export function createUI(root, hooks) {
         note(ev.title || '도착 기둥까지 가서 시속 40 아래로 줄이면 손님이 내려요', 'ok');
       }
       else if (ev.type === 'abandon') { rideLine = ''; jobEl.classList.remove('talk'); hideSponsor(); note('손님이 내렸어요', 'err'); }
-      else if (ev.type === 'chain') { sfx.pickup(); note(`${ev.riders}명째 탑승 · x${ev.mult}배`, 'ok'); }
+      else if (ev.type === 'chain') { sfx.pickup(); note(`${ev.riders}명째 탑승 · x${ev.mult}배`, 'ok', null, { key: 'taxi-chain' }); }
       else if (ev.type === 'detach') { sfx.bump(); note('맨 뒤 손님이 도로로 떨어졌어요', 'err'); }
       else if (ev.type === 'fail') { rideLine = ''; jobEl.classList.remove('talk'); sfx.miss(); jobTitle.textContent = '손님 찾는 중'; hideSponsor(); note('시간 초과… 손님이 내렸어요', 'err'); }
       else if (ev.type === 'done') { rideLine = ''; jobEl.classList.remove('talk'); sfx.cash(); jobTitle.textContent = '손님 찾는 중'; showSponsor(ev); }

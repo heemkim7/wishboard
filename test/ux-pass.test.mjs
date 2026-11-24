@@ -69,7 +69,8 @@ describe('sizes: what a thumb presses is at least 44px', () => {
   it('chips, tabs, the wish tabs, map buttons, the fold line, sliders and a tappable notice', () => {
     assert.ok(px(rule('html.touch .sheet .seg button'), 'min-height') >= 44);
     assert.ok(px(rule('html.touch .sheet .chips button'), 'min-height') >= 44);
-    assert.equal(px(rule('html.touch .sheet .chips'), 'gap'), 8);
+    // chips follow the sheets' shared spacing (index.html "Sheet spacing": 12px on touch)
+    assert.match(rule('html.touch .sheet .chips'), /gap: var\(--tap-gap\);/);
     assert.ok(px(rule('html.touch .wish-tab'), 'min-height') >= 44);
     const zoom = rule('html.touch .mapzoom button');
     assert.ok(px(zoom, 'width') >= 44 && px(zoom, 'height') >= 44);
@@ -171,7 +172,7 @@ describe('names and states a screen reader hears', () => {
     assert.equal(/soundBtn|'aria-label': '사운드'/.test(ui), false);
     // 전체 화면: a switch here on touch (where the browser can do it), a tool button in a desktop window
     assert.match(set, /const full = coarse && fsCan\(\) \? switchRow\(\(on\) => icon\(on \? 'fullscreenExit' : 'fullscreen'\), '전체 화면', \(\) => !!fsOn\(\), \(\) => toggleFullscreen\(\)\) : null;/);
-    assert.match(ui, /class: 'btn ghost icon tool-more tool-desk', type: 'button', 'aria-label': '전체 화면'/);
+    assert.match(ui, /class: 'btn ghost icon tool-more tool-desk tool-fs t-1680', type: 'button', 'aria-label': '전체 화면'/);
     assert.match(css, /html\.touch \.tools \.btn\.tool-desk \{ display: none !important; \}/);
     // the setter is what the old button did
     assert.match(ui, /function setSoundOn\(on\) \{\n\s+soundOn = !!on;\n\s+store\('kts_sound', soundOn\);\n\s+setSound\(soundOn\);\n\s+if \(!soundOn\) \{ cityStop\(\); lofiStop\(\); stopDanceAudio\(\); return; \}/);
@@ -188,7 +189,7 @@ describe('names and states a screen reader hears', () => {
     assert.equal(/눈부시면 낮춰 주세요|반사·해상도|포인트 지급은 이 번호로만/.test(set), false);
     // the account number: a plain line shortened in the middle, copied whole
     assert.match(set, /const idShort = accountId\.length > 26 \? `\$\{accountId\.slice\(0, 16\)\}…\$\{accountId\.slice\(-6\)\}` : accountId;/);
-    assert.match(set, /if \(await writeClip\(accountId\)\) note\('계정 번호를 복사했어요', 'ok'\);\n\s+else showManual\(accountId, idManual\);/);
+    assert.match(set, /if \(await writeClip\(accountId\)\) note\('계정 번호를 복사했어요', 'ok', null, \{ key: 'copied' \}\);\n\s+else showManual\(accountId, idManual\);/);
   });
   it('the four links of the settings sheet are a 2 x 2 block of buttons, and a photo\'s links are buttons under its line', () => {
     const p = ui.slice(ui.indexOf('  function policyLinks() {'), ui.indexOf('  function openLinkPrompt()'));

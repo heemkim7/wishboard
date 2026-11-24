@@ -86,7 +86,7 @@ describe('taxi: leaving, offers and the fare gap', () => {
     const job = between(main, '  onJob(ev) {', '\n  },\n');
     assert.match(job, /net\.ch\?\.raw\?\.\(\{ t: 'PICK' \}\)/);
     assert.match(job, /if \(ev\.type === 'done'\) \{ if \(dropped\) net\.sendDrop\?\.\(ev\.slot\); ev\.sent = false; \}/);
-    assert.match(job, /ui\.note\(`하차 완료 · \$\{ev\.riders \|\| 1\}명 · 연속 \$\{fareStreak\}명`, 'ok'\);/);
+    assert.match(job, /ui\.note\(`하차 완료 · \$\{ev\.riders \|\| 1\}명 · 연속 \$\{fareStreak\}명`, 'ok', null, \{ key: 'taxi-drop' \}\);/);
     assert.doesNotMatch(main, /payFare|sendFare|운임 \+/);
     assert.match(read('net.js'), /sendDrop\(slot\) \{ if \(!this\.ch\?\.raw \|\| this\.status !== 'online'\) return false; return this\.ch\.raw\(\{ t: 'FARE', slot: String\(slot \|\| ''\)\.slice\(0, 16\) \}\); \}/);
     assert.equal(/운임/.test(read('ui.js')), false);

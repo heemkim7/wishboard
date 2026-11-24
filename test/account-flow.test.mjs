@@ -696,7 +696,7 @@ describe('account: nickname, sign-out, settings, handover, withdrawal', () => {
     assert.match(html, /\.modal\.front \{ z-index: 60; \}/); // the sheet opens over the boot card (z-index 50)
     // Newcomer mode hides the banner, not the settings gear.
     assert.ok(html.includes('#ui.newbie .guestwarn'));
-    assert.match(ui, /class: 'btn ghost icon tool-more', type: 'button', 'aria-label': '설정'/);
+    assert.match(ui, /class: 'btn ghost icon tool-more tool-set t-1680', type: 'button', 'aria-label': '설정'/);
   });
   it('withdrawal is its own step: the list, 되돌릴 수 없어요, 취소 as the big button, and the typed word', () => {
     const w = between(ui, '  function openWithdraw() {', '\n  // ---------------------------------------------------------------- HUD readouts');

@@ -171,6 +171,13 @@ export function toastText(text, kind = '') {
 // .tapped on the control under the pointer for PRESS.ms from pointerdown, so a quick tap is seen too.
 export const PRESS = Object.freeze({ sel: 'button, [role="button"], summary, a.btn, label.agree', ms: 160 });
 
+// ---- the tool row's order --------------------------------------------------------------------
+// The top-right tool row, the phone's closed row and the ⋯ menu all list the tools in this order, by how much they are
+// used (each tool button carries the class): 전광판 걸기 is the core action; 선물 전광판 the growth loop (a friend's name on
+// a board, shared); 오늘의 소원 the daily return; 응원 순위 and 받은 소식 the social ones; 사진 찍어 공유, 공유·코드 and 내 건물
+// one's own; 조작 안내 and 전체 화면 the window's; 설정 last; ⋯ itself at the end. The map is the minimap tile, not a tool.
+export const TOOL_ORDER = Object.freeze(['tool-board', 'tool-gift', 'tool-wish', 'tool-rank', 'tool-inbox', 'tool-shot', 'tool-vip', 'tool-hub', 'tool-keys', 'tool-fs', 'tool-set', 'tool-fold']);
+
 // ---- the touch prompt tag --------------------------------------------------------------------
 // What the tag beside the round touch button says, from the prompt's three parts [name, second line, button word]:
 // [the line, a small second line or '']. A board is "where · whose" (the rest of its name, "소원 걸기" and the like, is the
