@@ -5,7 +5,8 @@
 // The rules of the street (test/street-traffic.test.mjs drives them for simulated minutes and reads the result back
 // from the instance matrices, so what it checks is what is drawn):
 // - a car is on one lane line of one stretch of road, facing along it; corners are arcs between two lane lines;
-// - no lane runs through what the game built on the map (the lots, the stage, the red steps);
+// - no lane runs through what the game built on the map: the lots' pedestrian street (layout.js NO_ROAD, which holds
+//   the lots and the stage) and the red steps; no signal pole and no called cab stands in the way in to that street;
 // - a queue keeps RULES.gap between bumpers and stops short of the painted stop line;
 // - no step is taken that would bring two cars closer than a hand's width (the hard rule in drive());
 // - one direction at a time owns a junction (opposite directions share it when neither turns left);
@@ -36,7 +37,7 @@ function paintHeadlight(canvas) {
 }
 import { GROUND_LAYER } from './ground.js?v=202611241127';
 import { ROAD } from './nyc.js?v=202611241127';
-import { LAYOUT, PLOT_SLOTS } from './layout.js?v=202611241127';
+import { LAYOUT, NO_ROAD } from './layout.js?v=202611241127';
 
 export function signalPhase(t) {
   const c = t % 36;
@@ -74,15 +75,18 @@ const CAR_COLORS = ['#101114', '#e9eaec', '#8e9399', '#2b2f36', '#1c2b4a', '#6b1
 const VMAX = { [ROAD.MOTORWAY]: 21, [ROAD.PRIMARY]: 12.5, [ROAD.SECONDARY]: 12, [ROAD.TERTIARY]: 10.5, [ROAD.STREET]: 8.5, [ROAD.SERVICE]: 4.5, [ROAD.LINK]: 11 };
 const wrap = (a) => ((((a % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
 
-/** What the game built where the map has a street: no lane runs through these boxes (x0, x1, z0, z1). */
+// What the game built where the map has a car road (x0, x1, z0, z1): the lots' pedestrian street, where world.js draws
+// no roadway (it holds the lots and the stage; on the map it is 7th Avenue, with West 41st Street across it), and the
+// red steps. A road whose roadway touches one of these is closed to traffic.
 function builtZones() {
-  const G = LAYOUT.stage, S = LAYOUT.stairs;
-  const out = [
-    { x0: G.x0 - 3.6, x1: G.x1 + 3.6, z0: G.z0 - 2.4, z1: G.z1 + 0.9 }, // the dance floor, its steps and speaker stacks
-    { x0: S.x0 - 0.4, x1: S.x1 + 0.4, z0: S.back, z1: S.front + 0.2 }, // the red steps
-  ];
-  for (const s of PLOT_SLOTS) out.push({ x0: s.x - 6, x1: s.x + 6, z0: s.z - 3.4, z1: s.z + 3.4 }); // a lot at its tallest
-  return out;
+  const S = LAYOUT.stairs;
+  return [NO_ROAD, { x0: S.x0 - 0.4, x1: S.x1 + 0.4, z0: S.back, z1: S.front + 0.2 }];
+}
+// The way in to the lots' street: the ground between the entrance arch's posts, from the far side of the crossing in
+// front of it to the arch. With NO_ROAD itself this is kept clear of signal poles and of cabs called to the stand.
+export function streetMouth() {
+  const S = LAYOUT.street, half = S.arch.post + S.arch.r;
+  return { x0: S.x - half, x1: S.x + half, z0: S.arch.z - 10, z1: S.arch.z };
 }
 
 /** Do two car-shaped boxes on the ground overlap? Centre, heading (unit), half length, half width of each. */
@@ -219,8 +223,10 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
   }
   const segLen = (p) => Math.hypot(R.xs[p + 1] - R.xs[p], R.zs[p + 1] - R.zs[p]);
 
-  // Streets the game has built on. 7th Avenue runs straight through four lots and the dance floor on the south pad:
-  // its lanes there are closed, and so is any stretch that can only be reached through a closed one or only leads into one.
+  // Streets the game has built on. On the map the lots' pedestrian street is 7th Avenue from W 42nd to W 40th St, and
+  // West 41st Street crosses it: every segment whose roadway reaches into NO_ROAD is closed (the whole segment, from
+  // the junction before it: cars turn off at W 42nd St and at Broadway), and so is any stretch that can only be reached
+  // through a closed one or only leads into one.
   const shut = new Uint8Array(R.xs.length * 2);
   {
     const zones = builtZones(), todo = [];
@@ -230,8 +236,7 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
       const r = R.segRoad[p];
       if (r < 0 || !carRoad(r)) continue;
       const ax = R.xs[p], az = R.zs[p], bx = R.xs[p + 1], bz = R.zs[p + 1];
-      // the widest a car on this road gets from the centre line, and half a metre more
-      const reach = Math.abs(laneOffset(r, lanesOf(r) - 1)) + CAR_HW + 0.6;
+      const reach = R.width[r] / 2; // the roadway: a car going around something may use all of it
       if (Math.max(ax, bx) < bx0 - reach || Math.min(ax, bx) > bx1 + reach || Math.max(az, bz) < bz0 - reach || Math.min(az, bz) > bz1 + reach) continue;
       const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 1.5));
       let hit = false;
@@ -267,6 +272,15 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
   }
   /** A road segment a car may be put on (nyc.nearestRoad filter). */
   const openRoad = (r, p) => carRoad(r) && !(R.oneway[r] ? shut[dkey(p, 1)] : shut[dkey(p, 1)] && shut[dkey(p, -1)]);
+  // The way in to the lots' street is kept clear, as the street is: of signal poles (POLE_CLEAR metres to each side
+  // of it) and of cabs called to the stand in front of it.
+  const mouth = streetMouth(), POLE_CLEAR = 1.5;
+  const inRect = (q, x, z, pad) => x > q.x0 - pad && x < q.x1 + pad && z > q.z0 - pad && z < q.z1 + pad;
+  /** Would a cab standing at (x, z) along (fx, fz), with 0.6 m around it, reach into the rectangle q? */
+  function cabInRect(q, x, z, fx, fz) {
+    const ex = Math.abs(fx) * CAR_HL + Math.abs(fz) * CAR_HW + 0.6, ez = Math.abs(fz) * CAR_HL + Math.abs(fx) * CAR_HW + 0.6;
+    return x + ex > q.x0 && x - ex < q.x1 && z + ez > q.z0 && z - ez < q.z1;
+  }
 
   // ---- vehicles -----------------------------------------------------------------------------------------
   // slots: [0, N_TAXI) AI cabs · [N_TAXI, N_AI) AI cars · [N_AI, +N_SPECIAL) called/parked cabs · then remote cabs
@@ -578,17 +592,24 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
       if (!G.nodeSignal[nd]) continue;
       const nx = G.nodeX[nd], nz = G.nodeZ[nd];
       if (Math.abs(nx - px) > rad || Math.abs(nz - pz) > rad) continue;
+      if (inRect(NO_ROAD, nx, nz, 0)) continue; // a crossing inside the lots' street (7th Avenue x W 41st St): no cars, no lights
       const jr = junctionR[nd];
       for (const e of G.nodeAdj[nd]) {
         const r = e.road;
         if (R.cls[r] > ROAD.STREET) continue;
         if (R.oneway[r] && e.dir !== -1) continue;
-        if (shut[dkey(e.seg, -e.dir)]) continue; // no light for a lane nobody arrives on (7th Avenue among the lots)
+        if (shut[dkey(e.seg, -e.dir)]) continue; // no light for a lane nobody arrives on
         const ux = G.nodeX[e.to] - nx, uz = G.nodeZ[e.to] - nz, L = Math.hypot(ux, uz) || 1;
         const dx = -ux / L, dz = -uz / L;
         const rx = -dz, rz = dx;
         const w = R.width[r];
-        const x = nx + dx * (jr + 1.6) + rx * (w / 2 + 0.9), z = nz + dz * (jr + 1.6) + rz * (w / 2 + 0.9);
+        let x = nx + dx * (jr + 1.6) + rx * (w / 2 + 0.9);
+        const z = nz + dz * (jr + 1.6) + rz * (w / 2 + 0.9);
+        // The poles stand on the far side of a crossing, and the far side of 7th Avenue x W 42nd St is the way in to
+        // the lots' street: a pole that would stand between the arch's posts goes just outside the nearer post. Its
+        // light still hangs toward the lane it is for, and the crossing works as before.
+        if (inRect(mouth, x, z, POLE_CLEAR)) x = x < (mouth.x0 + mouth.x1) / 2 ? mouth.x0 - POLE_CLEAR : mouth.x1 + POLE_CLEAR;
+        if (inRect(NO_ROAD, x, z, 0)) continue;
         const yaw = Math.atan2(-rx, -rz);
         poles.push(new THREE.Matrix4().compose(new THREE.Vector3(x, 0, z), new THREE.Quaternion().setFromAxisAngle(Y_AXIS, yaw), ONE));
         sigPoles.push({ x, z });
@@ -691,9 +712,11 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
     const fx = c.fx, fz = c.fz, reach = c.sT - c.s;
     let ex = o.x - c.ax, ez = o.z - c.az, along = ex * fx + ez * fz - c.s;
     if (along > 0.5) {
-      const cs = Math.abs(o.hx * fx + o.hz * fz), sn = Math.abs(o.hx * fz - o.hz * fx), gap = along - (o.hl * cs + o.hw * sn) - CAR_HL;
+      const cs = Math.abs(o.hx * fx + o.hz * fz), sn = Math.abs(o.hx * fz - o.hz * fx), deep = o.hl * cs + o.hw * sn;
       const side = Math.abs(ez * fx - ex * fz - c.off) - (o.hl * sn + o.hw * cs + CAR_HW);
-      if (gap < reach && side < SIDE) { pathSkew = sn; pathHere = true; pathSide = side; return gap; }
+      // on this stretch: its near side is before the corner point (a car's nose swings at most 0.4 m past that as it
+      // turns: someone standing 2 m beyond the corner, straight on, is not in the way of a car that turns there)
+      if (along - deep < reach + 0.5 && side < SIDE) { pathSkew = sn; pathHere = true; pathSide = side; return along - deep - CAR_HL; }
     }
     if (c.nxSeg < 0) return 1e9;
     const gx = c.nxFx, gz = c.nxFz;
@@ -1062,9 +1085,19 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
     // along the curb, clear of the crossings at both ends of the block (cars turn through a corner there)
     const p = hit.seg, L = segLen(p), na = G.nodeAt(R.xs[p], R.zs[p]), nb = G.nodeAt(R.xs[p + 1], R.zs[p + 1]);
     const lo = (na == null ? 0 : junctionR[na]) + CAR_HL + 4, hi = L - (nb == null ? 0 : junctionR[nb]) - CAR_HL - 4;
-    const s = lo < hi ? Math.max(lo, Math.min(hi, hit.t * L)) : L / 2;
-    slot.x = R.xs[p] + hit.fx * s + -tz * off;
-    slot.z = R.zs[p] + hit.fz * s + tx * off;
+    let s = lo < hi ? Math.max(lo, Math.min(hi, hit.t * L)) : L / 2;
+    // and not across the way in to the lots' street (the 건물 구역 stand is right in front of the arch): the nearest
+    // place along this curb that leaves the arch's whole span clear, so the cab waits beside the entrance
+    const kx = R.xs[p] - tz * off, kz = R.zs[p] + tx * off; // the curb line at the segment's start
+    const inWay = (at) => cabInRect(mouth, kx + hit.fx * at, kz + hit.fz * at, tx, tz) || cabInRect(NO_ROAD, kx + hit.fx * at, kz + hit.fz * at, tx, tz);
+    if (inWay(s)) {
+      for (let d = 0.25; d <= 30; d += 0.25) {
+        if (s - d >= lo && !inWay(s - d)) { s -= d; break; }
+        if (s + d <= hi && !inWay(s + d)) { s += d; break; }
+      }
+    }
+    slot.x = kx + hit.fx * s;
+    slot.z = kz + hit.fz * s;
     slot.yaw = Math.atan2(tx, tz);
     slot.hx = tx; slot.hz = tz; slot.hw = CAR_HW;
     slot.v = 0;

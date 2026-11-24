@@ -39,9 +39,9 @@ globalThis.document ||= { createElement: () => canvasStub() };
 const THREE = await import('three');
 const { createNYC, ROAD } = await import('../ts3d/nyc.js');
 const { kitMaterials } = await import('../ts3d/kit.js');
-const { createTraffic, signalPhase, RULES, taxiTextureTier } = await import('../ts3d/traffic.js');
+const { createTraffic, signalPhase, RULES, taxiTextureTier, streetMouth } = await import('../ts3d/traffic.js');
 const { paintTaxiDecal, paintTaxiSign, TAXI_DECAL } = await import('../ts3d/art.js');
-const { LAYOUT, PLOT_SLOTS, TAXI_STANDS } = await import('../ts3d/layout.js');
+const { LAYOUT, NO_ROAD, PLOT_SLOTS, TAXI_STANDS } = await import('../ts3d/layout.js');
 const read = (f) => readFileSync(new URL('../' + f, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 
 const MAP = new URL('../assets/nyc/manhattan.bin', import.meta.url);
@@ -72,10 +72,19 @@ function overlap(a, b) {
   }
   return true;
 }
-// What the game built on the map: nobody drives here.
-const BUILT = [{ n: 'the stage', x0: LAYOUT.stage.x0 - 1, x1: LAYOUT.stage.x1 + 1, z0: LAYOUT.stage.z0 - 3.4, z1: LAYOUT.stage.z1 + 1 },
-  ...PLOT_SLOTS.map((s) => ({ n: 'lot ' + s.id, x0: s.x - 4.2, x1: s.x + 4.2, z0: s.z - 3.6, z1: s.z + 3.6 }))];
-const builtAt = (c) => BUILT.find((q) => c.x > q.x0 && c.x < q.x1 && c.z > q.z0 && c.z < q.z1)?.n || '';
+// The lots' pedestrian street (layout.js NO_ROAD: the lots, their street and the stage; no roadway is drawn there) and
+// the way in to it between the arch's posts. No part of a car's body comes within a metre of the street.
+const inRect = (q, x, z, pad = 0) => x > q.x0 - pad && x < q.x1 + pad && z > q.z0 - pad && z < q.z1 + pad;
+const inStreet = (c) => corners(c).some(([x, z]) => inRect(NO_ROAD, x, z, 1));
+const carRoad = (r) => nyc.roads.cls[r] !== ROAD.PEDESTRIAN && nyc.roads.cls[r] !== ROAD.SERVICE;
+/** The junction at (x, z): its node and its radius (half the widest road that meets there), as traffic.js and world.js have it. */
+function junctionAt(x, z) {
+  const G = nyc.graph, R = nyc.roads;
+  let n = -1;
+  for (let i = 0; i < G.nodeX.length; i++) if (Math.hypot(G.nodeX[i] - x, G.nodeZ[i] - z) < 1.5) { n = i; break; }
+  assert.ok(n >= 0 && G.nodeAdj[n].length >= 3, `a junction at (${x}, ${z})`);
+  return { n, x: G.nodeX[n], z: G.nodeZ[n], r: Math.max(...G.nodeAdj[n].map((e) => R.width[e.road])) / 2, signal: !!G.nodeSignal[n] };
+}
 
 function world(quality, seed) {
   Math.random = seeded(seed);
@@ -85,7 +94,14 @@ function world(quality, seed) {
   const wheels = inst.reduce((a, b) => (b.count > a.count ? b : a));
   const beams = inst.find((o) => o.count * 4 === wheels.count); // one matrix per vehicle: its drawn pose
   const nAI = beams.count - 16; // then 8 called / parked cabs and 8 remote players' cabs
-  return { traffic, inst, wheels, beams, nAI, honks };
+  // the signal poles as they stand now: every instance in the signals group that is on the ground (the lamps are 5 m up)
+  const signals = added.find((o) => o.isGroup);
+  const poles = () => {
+    const at = new Map();
+    for (const m of signals.children) for (let i = 0; i < m.count; i++) { const a = m.instanceMatrix.array, o = i * 16; if (a[o + 13] === 0) at.set(a[o + 12].toFixed(2) + ',' + a[o + 14].toFixed(2), { x: a[o + 12], z: a[o + 14] }); }
+    return [...at.values()];
+  };
+  return { traffic, inst, wheels, beams, nAI, honks, poles };
 }
 // Every car-road segment whose roadway the point is on.
 function roadsAt(x, z) {
@@ -169,9 +185,8 @@ function watch({ quality = 'low', seed, player, minutes, fps = 30, script = null
       if (c.ai) {
         seen.carSteps++; seen.moved += c.speed * dt;
         if (c.still > seen.stillMax) seen.stillMax = c.still;
-        const where = builtAt(c);
-        if (where) note('built', `t=${t.toFixed(1)} in ${where}: ${f(c)}`);
-        if (c.still > 2 || (c.speed > 2 && c.age > 1)) {
+        if (inStreet(c)) note('built', `t=${t.toFixed(1)} in the lots' street: ${f(c)}`);
+        if (k % 4 === 0 && (c.still > 2 || (c.speed > 2 && c.age > 1))) { // (these look the road up: every fourth frame)
           const roads = roadsAt(c.x, c.z);
           if (c.still > 2) {
             // at rest: along a lane of a road here (the legal way on a one-way), or partway round a corner from one
@@ -252,45 +267,40 @@ describe('the rules of the street', () => {
 });
 
 // ---- the street ---------------------------------------------------------------------------------------------------
-describe('ten minutes by lot 18 on a phone (where the pile was)', needsMap, () => {
-  // W 41st St runs west between the lot rows to its light at 7th Avenue: (-2.5, 334.9), the junction 7 m in radius.
-  const LIGHT = { x: -2.5, z: 334.9, r: 7 };
-  let r = null;
-  const queues = [], onSeventh = [], onW41 = { n: 0 };
+// The pile was by lot 18, at the light where W 41st St met 7th Avenue. Since the lots were laid out as one pedestrian
+// street (layout.js NO_ROAD) both of those roads are closed there. The light a player by the stage sees now is W 40th St
+// at 7th Avenue, 20 m behind the stage: one lane, one way, the same kind of queue as the one that piled up.
+describe('ten minutes by the stage on a phone: the queue at a one-lane light (which was the pile)', needsMap, () => {
+  let r = null, LIGHT = null;
+  const queues = [];
   before(() => {
     city();
-    r = watch({ seed: 14, player: onFoot(8, 337), minutes: 10, each(cs) {
-      const q = cs.filter((c) => c.ai && c.still > 1.5 && Math.abs(c.z - LIGHT.z) < 3.5 && c.x > LIGHT.x + LIGHT.r && c.x < LIGHT.x + 50).sort((a, b) => a.x - b.x);
+    LIGHT = junctionAt(-1.9, 412.9);
+    r = watch({ seed: 10, player: onFoot(0, 370), minutes: 10, each(cs) {
+      // W 40th St runs east to the light: the queue stands west of the junction, the first car nearest it
+      const q = cs.filter((c) => c.ai && c.still > 1.5 && Math.abs(c.z - LIGHT.z) < 3.5 && c.x < LIGHT.x - LIGHT.r && c.x > LIGHT.x - 60).sort((a, b) => b.x - a.x);
       if (q.length >= 2) queues.push(q.map((c) => ({ x: c.x, z: c.z, yaw: c.yaw })));
-      for (const c of cs) {
-        if (!c.ai) continue;
-        if (Math.abs(c.x + 2) < 8 && c.z > 262 && c.z < 404 && Math.abs(c.z - LIGHT.z) > 6) onSeventh.push(c); // (W 41st St crosses it at the light)
-        if (Math.abs(c.z - LIGHT.z) < 3 && Math.abs(c.x) < 60) onW41.n++;
-      }
     } });
   });
   it('no two cars are ever drawn overlapping', () => clean(r, ['overlap']));
-  it('nobody drives through a lot or the dance floor, or on 7th Avenue between them', () => {
-    clean(r, ['built']);
-    assert.equal(onSeventh.length, 0, onSeventh[0] && `a car at (${onSeventh[0].x.toFixed(1)}, ${onSeventh[0].z.toFixed(1)})`);
-    assert.ok(onW41.n > 500, 'W 41st St between the lot rows still has its traffic: ' + onW41.n);
-  });
+  it('no car comes into the lots\' street', () => clean(r, ['built']));
   it('nobody goes against a one-way street or slides sideways', () => clean(r, ['wrongWay', 'sideways']));
   it('a car at rest stands along its lane', () => clean(r, ['askew']));
   it('cars at rest behind one another keep the gap', () => {
     clean(r, ['gap']);
     assert.ok(r.seen.gapMin > RULES.gap - 0.05 && r.seen.gapMin < RULES.gap + 0.5, 'smallest gap in a queue: ' + r.seen.gapMin);
   });
-  it('the queue at the W 41st St light stands in line, behind the stop line', () => {
+  it('the queue at the W 40th St light stands in line, behind the stop line', () => {
+    assert.equal(LIGHT.signal, true);
     assert.ok(queues.length > 300, 'two or more cars waited at the light: ' + queues.length + ' frames');
     assert.ok(queues.filter((q) => q.length >= 3).length > 100, 'and three of them, as in the pile');
     for (const q of queues) {
       const front = q[0];
-      assert.ok(front.x - HL >= LIGHT.x + LIGHT.r + 4.9, `the first nose at x ${(front.x - HL).toFixed(2)} is before the stop line`);
+      assert.ok(front.x + HL <= LIGHT.x - LIGHT.r - 4.9, `the first nose at x ${(front.x + HL).toFixed(2)} is before the stop line at ${(LIGHT.x - LIGHT.r - 4.9).toFixed(2)}`);
       for (let i = 0; i < q.length; i++) {
-        assert.ok(Math.abs(wrap(q[i].yaw + 90 * deg)) < 0.03, 'facing west');
+        assert.ok(Math.abs(wrap(q[i].yaw - 90 * deg)) < 0.03, 'facing east');
         assert.ok(Math.abs(q[i].z - front.z) < 0.15, 'on one line: ' + q.map((c) => c.z.toFixed(2)).join(', '));
-        if (i) assert.ok(q[i].x - q[i - 1].x >= RULES.len + RULES.gap - 0.05, 'spaced: ' + q.map((c) => c.x.toFixed(2)).join(', '));
+        if (i) assert.ok(q[i - 1].x - q[i].x >= RULES.len + RULES.gap - 0.05, 'spaced: ' + q.map((c) => c.x.toFixed(2)).join(', '));
       }
     }
   });
@@ -305,7 +315,7 @@ describe('ten minutes by lot 18 on a phone (where the pile was)', needsMap, () =
 
 describe('other tiers, frame rates and a tab that was away', needsMap, () => {
   before(city);
-  it('desktop (68 cars) by lot 18', () => { const r = watch({ quality: 'high', seed: 3, player: onFoot(8, 337), minutes: 4 }); clean(r); assert.ok(r.seen.stillMax < 30); });
+  it('desktop (68 cars) by the stage', () => { const r = watch({ quality: 'high', seed: 3, player: onFoot(0, 370), minutes: 4 }); clean(r); assert.ok(r.seen.stillMax < 30); });
   it('medium (46 cars) on the plaza beside 7th Avenue', () => { const r = watch({ quality: 'medium', seed: 5, player: onFoot(12, 120), minutes: 4 }); clean(r); assert.ok(r.seen.stillMax < 30); });
   it('20 frames a second', () => { const r = watch({ seed: 7, player: onFoot(16, 28), minutes: 4, fps: 20 }); clean(r); assert.ok(r.seen.stillMax < 30); });
   it('a tab hidden for ten minutes comes back with one long frame, again and again', () => {
@@ -314,7 +324,7 @@ describe('other tiers, frame rates and a tab that was away', needsMap, () => {
     clean(r); assert.ok(r.seen.stillMax < 30);
   });
   it('the player jumps between the bowtie, the lots and the red steps', () => {
-    const spots = [[16, 28], [8, 337], [-21, -118]];
+    const spots = [[16, 28], [LAYOUT.street.entry.x, LAYOUT.street.entry.z], [-21, -118]];
     const r = watch({ seed: 38, player: onFoot(16, 28), minutes: 5, script(W, t, player) {
       const [x, z] = spots[Math.floor(t / 45) % 3];
       if (player.x === x && player.z === z) return;
@@ -330,14 +340,18 @@ describe('something left in a lane', needsMap, () => {
   before(city);
   const cases = [
     ['a cab left in the second lane of 7th Avenue', 31, onFoot(16, 110), TAXI_STANDS[0], [0.46, 120, 0], [0, 1]],
-    ['a cab left in the one lane of W 41st St, between the lot rows', 32, onFoot(8, 337), TAXI_STANDS[2], [30, 334.5, -90 * deg], [-1, 0]],
+    ['a cab left in the one lane of W 40th St, behind the stage', 32, onFoot(0, 370), TAXI_STANDS[2], [-60, 412.95, 90 * deg], [1, 0]],
     ['a cab left across two lanes of 7th Avenue', 33, onFoot(16, 110), TAXI_STANDS[0], [-1.4, 120, 90 * deg], [0, 1]],
   ];
   for (const [name, seed, player, stand, [x, z, yaw], [fx, fz]] of cases) {
     it(name + ': the cars behind go around it', () => {
       const past = passes(x, z, fx, fz, 12);
-      let cab = -1;
-      const r = watch({ quality: 'medium', seed, player, minutes: 5, script(W) { if (cab < 0) cab = leaveCab(W, stand, x, z, yaw); }, each: (cs) => past.tick(cs) });
+      let cab = -1, clear = false; // the player gets out where no car is (nobody can stop on top of one)
+      const r = watch({ quality: 'medium', seed, player, minutes: 5, script(W) { if (cab < 0 && clear) cab = leaveCab(W, stand, x, z, yaw); }, each(cs) {
+        clear = cs.every((c) => Math.hypot(c.x - x, c.z - z) > 14);
+        past.tick(cs);
+      } });
+      assert.ok(cab >= 0);
       clean(r, ['overlap', 'built', 'wrongWay', 'askew', 'gap']);
       assert.ok(past.n >= 6, past.n + ' cars got past it');
       assert.ok(r.seen.stillMax < 45, 'nobody waits behind it for long: ' + r.seen.stillMax.toFixed(0) + ' s');
@@ -375,15 +389,15 @@ describe('something left in a lane', needsMap, () => {
 
 describe('what cannot get past is taken off the street', needsMap, () => {
   before(city);
-  it('a cab across the one lane of W 41st St: each car waits about 12 s, shrinks away, and the street works again once the cab is gone', () => {
-    // across the lane at (30, 334.5): 1.3 m of road on one side of it and 2.1 m on the other, no way around
-    const cabs = [{ x: 30, z: 334.5, yaw: 0, v: 0 }];
+  it('a cab across the one lane of W 40th St: each car waits about 12 s, shrinks away, and the street works again once the cab is gone', () => {
+    // across the lane at (-60, 412.95) of an 8.25 m road: 1.7 m of road on either side of it, no way around
+    const cabs = [{ x: -60, z: 412.95, yaw: 0, v: 0 }];
     const behind = { stillMax: 0, n: 0 }, gone = [], last = new Map();
-    const after = passes(30, 334.5, -1, 0, 4);
-    const r = watch({ quality: 'medium', seed: 41, player: onFoot(8, 337), minutes: 8, script(W, t) { W.traffic.setRemoteTaxis(t < 240 ? cabs : []); }, each(cs, t) {
+    const after = passes(-60, 412.95, 1, 0, 4);
+    const r = watch({ quality: 'medium', seed: 41, player: onFoot(0, 370), minutes: 8, script(W, t) { W.traffic.setRemoteTaxis(t < 240 ? cabs : []); }, each(cs, t) {
       const here = new Set();
       for (const c of cs) {
-        if (!c.ai || Math.abs(c.z - 334.5) > 3 || c.x < 32 || c.x > 75) continue;
+        if (!c.ai || Math.abs(c.z - 412.95) > 3 || c.x > -62 || c.x < -140) continue;
         here.add(c.i);
         if (t < 240) { if (c.still > behind.stillMax) behind.stillMax = c.still; if (c.still > 3) behind.n++; }
         last.set(c.i, c);
@@ -420,7 +434,7 @@ describe('cabs called to the stands', needsMap, () => {
       const c = drawn.get(ids[k]);
       assert.ok(c, s.name);
       assert.ok(Math.hypot(c.x - s.x, c.z - s.z) < 18, `${s.name}: the cab is ${Math.hypot(c.x - s.x, c.z - s.z).toFixed(1)} m from its stand (the game looks within 18 m)`);
-      assert.equal(builtAt(c), '', s.name);
+      assert.equal(inStreet(c), false, s.name);
       const hit = nyc.nearestRoad(c.x, c.z, 20, (r) => R.cls[r] !== ROAD.PEDESTRIAN && R.cls[r] !== ROAD.SERVICE);
       // beside the road edge, along the road, and not on a crossing
       assert.ok(Math.abs(hit.d - (R.width[hit.road] / 2 - 0.75)) < 0.05, `${s.name}: ${hit.d.toFixed(2)} m from the centre line of a ${R.width[hit.road]} m road`);
@@ -453,6 +467,137 @@ describe('cabs called to the stands', needsMap, () => {
     assert.ok(Math.hypot(px - 20, pz - 40.2) > 0.05);
     assert.deepEqual(W.traffic.collide(20, 60, 0.4), [20, 60]);
     assert.match(W.traffic.phase(), /^(nsG|nsY|ewG|ewY|red)$/);
+  });
+});
+
+// ---- the lots' pedestrian street -----------------------------------------------------------------------------------
+// The 18 lots stand on both sides of one north-south street from the entrance arch (z 262) to the stage. On the map that
+// street is 7th Avenue (one-way south), with West 41st Street across it: layout.js NO_ROAD is where world.js draws no
+// roadway any more. No AI car drives there, no signal pole stands in it or in the way in, and the cab called to the
+// 건물 구역 stand in front of the arch waits beside the entrance. (The player's own cab may drive in: fares end at lots.)
+describe('the lots\' pedestrian street', needsMap, () => {
+  before(city);
+  const S = LAYOUT.street, mouth = streetMouth();
+  // every car-road segment whose roadway (centre line +- half its width) reaches into NO_ROAD, by geometry
+  const reaching = () => {
+    const R = nyc.roads, G = nyc.graph, out = [];
+    for (let p = 0; p < R.xs.length - 1; p++) {
+      const r = R.segRoad[p];
+      if (r == null || r < 0 || !carRoad(r)) continue;
+      const ax = R.xs[p], az = R.zs[p], bx = R.xs[p + 1], bz = R.zs[p + 1], h = R.width[r] / 2, L = Math.hypot(bx - ax, bz - az);
+      if (Math.max(ax, bx) < NO_ROAD.x0 - h || Math.min(ax, bx) > NO_ROAD.x1 + h || Math.max(az, bz) < NO_ROAD.z0 - h || Math.min(az, bz) > NO_ROAD.z1 + h) continue;
+      let hit = false;
+      for (let k = 0; k <= 800 && !hit; k++) {
+        const x = ax + ((bx - ax) * k) / 800, z = az + ((bz - az) * k) / 800;
+        hit = Math.hypot(Math.max(NO_ROAD.x0 - x, 0, x - NO_ROAD.x1), Math.max(NO_ROAD.z0 - z, 0, z - NO_ROAD.z1)) < h;
+      }
+      if (!hit) continue;
+      // the stretch of it clear of the open junctions at its ends: a car seen there is on the closed road, not crossing its end
+      const jr = (x, z) => { const n = G.nodeAt(x, z); return G.nodeAdj[n].length >= 3 ? Math.max(...G.nodeAdj[n].map((e) => R.width[e.road])) / 2 : 0; };
+      out.push({ p, name: nyc.roadName(r), ax, az, fx: (bx - ax) / L, fz: (bz - az) / L, h, s0: jr(ax, az) + HL + 1.5, s1: L - jr(bx, bz) - HL - 1.5, from: G.nodeAt(ax, az) });
+    }
+    return out;
+  };
+  const onClosed = (segs, c) => segs.find((q) => { const ex = c.x - q.ax, ez = c.z - q.az, s = ex * q.fx + ez * q.fz; return s > q.s0 && s < q.s1 && Math.abs(ez * q.fx - ex * q.fz) < q.h; });
+
+  it('on the map it is three segments of 7th Avenue and two of West 41st Street, entered from 7th x W 42nd and from Broadway x W 41st', () => {
+    const segs = reaching();
+    assert.deepEqual(segs.map((q) => q.p), [14279, 14344, 14356, 14386, 14395]);
+    assert.deepEqual(segs.map((q) => q.name), ['West 41st Street', '7th Avenue', '7th Avenue', '7th Avenue', 'West 41st Street']);
+    // Both are one-way, so each closed run has one way in: 7th Avenue from its crossing with W 42nd St, W 41st St from Broadway.
+    const R = nyc.roads, G = nyc.graph, closed = new Set(segs.map((q) => q.p)), entries = [];
+    for (const q of segs) {
+      assert.equal(R.oneway[R.segRoad[q.p]], 1);
+      if (!G.nodeAdj[q.from].some((e) => closed.has(e.seg) && e.dir === -1)) entries.push([q.p, q.from]); // no closed segment arrives at its start
+    }
+    assert.deepEqual(entries, [[14344, 7138], [14395, 7133]]);
+    assert.deepEqual([junctionAt(-1.4, 250.1).n, junctionAt(72, 334.1).n], [7138, 7133]);
+    // the closure comes from the layout's rectangle, not from a list of ids
+    const t = read('ts3d/traffic.js');
+    assert.match(t, /import \{ LAYOUT, NO_ROAD \} from '\.\/layout\.js\?v=[0-9a-z]+';/);
+    assert.equal(/14279|14344|14356|14386|14395|7138|7133|7111/.test(t), false);
+  });
+  it('no AI car is ever in it or on those roads: ten minutes with the player at the arch, with 46 cars about', () => {
+    const segs = reaching(), on = [], turned = new Map(), W42 = junctionAt(-1.4, 250.1);
+    let off7th = 0, waited = 0;
+    const r = watch({ quality: 'medium', seed: 51, player: onFoot(S.entry.x, S.entry.z), minutes: 10, each(cs) {
+      for (const c of cs) {
+        if (!c.ai) continue;
+        const q = onClosed(segs, c);
+        if (q && on.length < 3) on.push(`${q.name} (segment ${q.p}) at (${c.x.toFixed(1)}, ${c.z.toFixed(1)})`);
+        // cars coming down 7th Avenue toward the arch: they wait at the light and leave along W 42nd St, either way
+        if (Math.abs(c.x - W42.x) < 9 && c.z > W42.z - 60 && c.z < W42.z - W42.r) { turned.set(c.i, 1); if (c.still > 3) waited++; }
+        else if (turned.get(c.i) === 1 && Math.abs(c.z - W42.z) < 9 && Math.abs(c.x - W42.x) > 16) { turned.set(c.i, 2); off7th++; }
+        else if (Math.abs(c.z - W42.z) > 70) turned.delete(c.i);
+      }
+    } });
+    clean(r);
+    assert.deepEqual(on, []);
+    assert.ok(off7th >= 15, off7th + ' cars came down 7th Avenue and turned onto W 42nd St');
+    assert.ok(waited > 100, 'and waited at its light: ' + waited + ' frames');
+    assert.ok(r.seen.stillMax < 30, 'nobody is stuck in front of the arch: ' + r.seen.stillMax.toFixed(0) + ' s');
+  });
+  it('and none with the player far up the square (cars used to be put on 7th Avenue among the lots from there)', () => {
+    const segs = reaching(), on = [];
+    const r = watch({ seed: 52, player: onFoot(16, 150), minutes: 6, each(cs) { for (const c of cs) { const q = c.ai && onClosed(segs, c); if (q && on.length < 3) on.push(`${q.name} at (${c.x.toFixed(1)}, ${c.z.toFixed(1)})`); } } });
+    clean(r);
+    assert.deepEqual(on, []);
+  });
+  it('no signal pole stands in the street or between the arch\'s posts; the crossing in front of the arch keeps its three lights', () => {
+    const W = world('medium', 1);
+    W.traffic.warm(S.entry.x, S.entry.z);
+    W.traffic.update(1 / 30, 1, onFoot(S.entry.x, S.entry.z));
+    const poles = W.poles();
+    assert.ok(poles.length >= 12, poles.length + ' poles around');
+    for (const p of poles) {
+      assert.equal(inRect(NO_ROAD, p.x, p.z, 1), false, `a pole in the street at (${p.x.toFixed(1)}, ${p.z.toFixed(1)})`);
+      assert.equal(inRect(mouth, p.x, p.z, 1), false, `a pole in the way in at (${p.x.toFixed(1)}, ${p.z.toFixed(1)})`);
+    }
+    assert.deepEqual(mouth, { x0: S.x - S.arch.post - S.arch.r, x1: S.x + S.arch.post + S.arch.r, z0: S.arch.z - 10, z1: S.arch.z });
+    const round = (list) => list.map((p) => [+p.x.toFixed(1), +p.z.toFixed(1)]).sort((a, b) => a[0] - b[0]);
+    const near = (J, d) => round(poles.filter((p) => Math.hypot(p.x - J.x, p.z - J.z) < d));
+    // 7th Avenue x W 42nd St: the far-side poles for the avenue and for eastbound W 42nd St used to stand at (-10.9, 260.3)
+    // and (8.8, 259.6), 2 m in front of the arch between its posts (x +-13.2). They are 1.5 m outside the posts now.
+    const W42 = junctionAt(-1.4, 250.1), out = S.arch.post + S.arch.r + 1.5;
+    assert.deepEqual(near(W42, 22), [[-+out.toFixed(1), 260.3], [-11.7, 240.7], [+out.toFixed(1), 259.6]]);
+    for (const [x, z] of [[-10.9, 260.3], [8.8, 259.6]]) assert.deepEqual(W.traffic.collide(x, z + 0.25, 0.4), [x, z + 0.25], 'nothing to walk into where the pole was');
+    for (const [x, z] of [[-out, 260.33], [out, 259.63]]) { const [px, pz] = W.traffic.collide(x, z + 0.25, 0.4); assert.ok(Math.hypot(px - x, pz - z) > 0.6, 'the pole is solid where it stands now'); }
+    // 7th Avenue x W 41st St is inside the street: it had poles at (-10.5, 343.4) and (-11.2, 330.0)
+    assert.deepEqual(near({ x: -2.5, z: 334.9 }, 45), []);
+    // W 40th St x 7th Avenue, behind the stage: W 40th St keeps its light, the closed avenue has none
+    assert.deepEqual(near(junctionAt(-1.9, 412.9), 22), [[8.3, 417.9]]);
+    // the lights still switch for the cross street
+    const seen = new Set();
+    for (let t = 0; t < 36; t += 0.5) { W.traffic.update(0.5, t, onFoot(S.entry.x, S.entry.z)); seen.add(W.traffic.phase()); }
+    assert.deepEqual([...seen].sort(), ['ewG', 'ewY', 'nsG', 'nsY', 'red']);
+  });
+  it('the cab called to the 건물 구역 stand waits beside the entrance, on W 42nd St, and the game finds it from the stand', () => {
+    const stand = TAXI_STANDS[2];
+    assert.deepEqual([stand.name, stand.x, stand.z], ['건물 구역', S.x, 255]);
+    const W = world('low', 1), me = onFoot(stand.x, stand.z);
+    W.traffic.warm(me.x, me.z);
+    // as timesSquare3d.js does every frame a player stands at a stand: call one unless one is parked within 18 m
+    for (let k = 0; k < 120; k++) {
+      if (!W.traffic.nearestTaxi(stand.x, stand.z, 18, true)) W.traffic.callTaxi(stand);
+      W.traffic.update(1 / 30, k / 30, me);
+    }
+    const parked = W.traffic.positions().filter((p) => p.mode === 'parked');
+    assert.equal(parked.length, 1, 'one cab, not one a frame');
+    const i = W.traffic.nearestTaxi(stand.x, stand.z, 18, true).i, m = W.beams.instanceMatrix.array, o = i * 16;
+    const cab = { x: m[o + 12], z: m[o + 14], yaw: Math.atan2(m[o + 8], m[o + 10]) };
+    assert.ok(Math.hypot(cab.x - stand.x, cab.z - stand.z) < 17.5, `${Math.hypot(cab.x - stand.x, cab.z - stand.z).toFixed(1)} m from the stand`);
+    // outside the arch's span (its posts at x +-13.2), north of the arch, not in the street
+    for (const [x, z] of corners(cab)) {
+      assert.ok(Math.abs(x - S.x) > S.arch.post + S.arch.r + 0.5, `a corner at x ${x.toFixed(2)}`);
+      assert.ok(z < S.arch.z - 2 && !inRect(NO_ROAD, x, z, 1), `a corner at z ${z.toFixed(2)}`);
+    }
+    // along the south curb of W 42nd St (the open road beside the entrance), facing the way that side drives: east
+    const R = nyc.roads, hit = nyc.nearestRoad(cab.x, cab.z, 20, carRoad);
+    assert.equal(nyc.roadName(hit.road), 'West 42nd Street');
+    assert.ok(Math.abs(hit.d - (R.width[hit.road] / 2 - 0.75)) < 0.05 && cab.z > hit.pz);
+    assert.ok(Math.abs(wrap(cab.yaw - 90 * deg)) < 0.02);
+    // it was at (4.3, 255) facing into the arch, and without this at (0, 257.5), across the entrance
+    assert.equal(inRect(mouth, 4.3, 255), true); assert.equal(inRect(mouth, 0, 257.5), true);
   });
 });
 
