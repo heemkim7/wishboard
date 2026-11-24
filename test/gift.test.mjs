@@ -7,7 +7,7 @@ import {
   GIFT, GIFT_SCREENS, OCCASIONS, TIERS, TIER_NOTE, TIER_ASK, won, giftFault, paperFault, windowFor, windowText, startChoices, dayText, hourText,
   screenLoad, pickScreen, nextFree, placeGifts, turnOf, giftPhase, keepUntil, pruneDay, paperOpen, paperTakes, lockArm, refOf, keptRef, REF_MS,
   giftView, giftShareText, countdown, videoKind, rangeOf, pickRecordType, quietNow, kstDay, dayStart, addDays, giftScreen,
-  OCC_KEYS, REPLY_MSG, replyDraft, replyLabel, plazaLook, plazaNote, PLAZA_BTN, cpLen,
+  OCC_KEYS, REPLY_MSG, replyDraft, replyLabel, plazaLook, plazaNote, PLAZA_BTN, videoFirst, cpLen,
 } from '../giftrules.js';
 
 const src = (f) => fs.readFileSync(new URL('../' + f, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -420,6 +420,66 @@ describe('the reply board (답장 전광판) and the plaza replay', () => {
       assert.equal(frames().length, 1); assert.equal(frames()[0].kids.find((n) => n.tag === 'iframe').src, '/g/abcd1234?in=1');
       P.swOn.message({ data: { t: 'push', url: '/g/abcd1234' } }); assert.equal(frames().length, 1, 'one frame');
     } finally { P.done(); }
+  });
+});
+
+describe('the owner page leads with the real video only when the Worker stores videos', () => {
+  const g = view(), URL_ = 'https://sq.example/g/' + g.id, REC = '/?gb=' + g.id + '&rec=1';
+  const own = (o = {}, store = {}) => pageOf(o.gift || g, KST('2026-11-25T19:00:00'), { store: { masil_gt: GUEST(), kts_gmine: JSON.stringify([g.id]), ...store },
+    respond: (u) => (u === '/rt/gift/' + g.id ? { ok: true, gift: o.gift || g, own: true, mine: { kids: 0, vd: 0, at: 1, lk: 1, ...(o.re ? { re: o.re } : {}) }, media: !!o.media } : u.endsWith('/interest') ? { ok: true } : null) });
+  it('the rule: a video store, no video yet, the board not yet over', () => {
+    assert.equal(videoFirst({ media: true, vid: null, phase: 'live' }), true); assert.equal(videoFirst({ media: true, vid: null, phase: 'before' }), true);
+    assert.equal(videoFirst({ media: false, vid: null, phase: 'live' }), false, 'no store: the page stays as it is');
+    assert.equal(videoFirst({ media: true, vid: { t: 'mp4' }, phase: 'live' }), false); assert.equal(videoFirst({ media: true, vid: null, phase: 'after' }), false);
+    assert.equal(videoFirst(), false);
+  });
+  it('with a video store: the video card first, its button the gold one, and one nudge before the first share; sending is never blocked', async () => {
+    let P = own({ media: true });
+    try {
+      await P.load('giftpage.js');
+      assert.deepEqual(P.heads(), ['🎬 15초 축하 영상', '🔗 링크 보내기', '✨ 더 크게, 더 오래 걸고 싶다면', '📊 지금까지']);
+      const rec = P.btn(/진짜 15초 영상 만들기/);
+      assert.equal(rec.textContent, '🎬 광장에서 진짜 15초 영상 만들기 · 약 25초'); assert.equal(rec.className, 'btn gold'); assert.equal(rec.href, REC);
+      assert.equal(P.btn(/^공유하기$/).className, 'btn', 'one gold button');
+      assert.equal(P.says(/영상을 먼저 만들면/), false);
+      await P.press(P.btn(/^공유하기$/));
+      assert.deepEqual(P.copied, [], 'the first tap asks once');
+      assert.equal(P.says(/^영상을 먼저 만들면 받는 사람이 진짜 광장 영상을 봐요$/), true);
+      const first = P.btn(/영상 먼저 만들기/);
+      assert.equal(first.textContent, '🎬 영상 먼저 만들기'); assert.equal(first.tag, 'a'); assert.equal(first.href, REC);
+      assert.deepEqual(JSON.parse(P.store.kts_gnudge), { [g.id]: 1 });
+      await P.press(P.btn(/^그냥 보내기$/));
+      assert.equal(P.copied.length, 1); assert.ok(P.copied[0].endsWith(' ' + URL_), 'the share goes on (here: the copy fallback)');
+      assert.equal(P.says(/영상을 먼저 만들면/), false, 'the nudge is gone');
+      await P.press(P.btn(/^공유하기$/)); assert.equal(P.copied.length, 2, 'never asked twice');
+      await P.press(P.btn(/^링크 복사$/)); assert.deepEqual(P.copied[2], URL_);
+    } finally { P.done(); }
+    P = own({ media: true }, { kts_gnudge: JSON.stringify({ [g.id]: 1 }) }); // the page again later: this board was asked already
+    try { await P.load('giftpage.js'); await P.press(P.btn(/^링크 복사$/)); assert.deepEqual(P.copied, [URL_]); assert.equal(P.says(/영상을 먼저 만들면/), false); } finally { P.done(); }
+    P = own({ media: true }); // the copy button asks too, and "그냥 보내기" then copies
+    try {
+      await P.load('giftpage.js'); await P.press(P.btn(/^링크 복사$/));
+      assert.deepEqual(P.copied, []); assert.equal(P.says(/영상을 먼저 만들면/), true);
+      await P.press(P.btn(/^그냥 보내기$/)); assert.deepEqual(P.copied, [URL_]);
+    } finally { P.done(); }
+    P = own({ media: true, re: 'rrrrrrrr' });
+    try { await P.load('giftpage.js'); assert.deepEqual(P.heads().slice(0, 3), ['💌 답장이 도착했어요', '🎬 15초 축하 영상', '🔗 링크 보내기']); } finally { P.done(); }
+  });
+  it('without a video store, with a video already there, or after the window: the page is exactly as before', async () => {
+    const same = async (P, recText) => {
+      try {
+        await P.load('giftpage.js');
+        assert.deepEqual(P.heads(), ['🔗 링크 보내기', '✨ 더 크게, 더 오래 걸고 싶다면', '🎬 15초 축하 영상', '📊 지금까지']);
+        const rec = P.btn(/진짜 15초 영상 만들기/);
+        if (recText) { assert.equal(rec.textContent, recText); assert.equal(rec.className, 'btn pink'); } else assert.equal(rec, null);
+        assert.equal(P.btn(/^공유하기$/).className, 'btn gold');
+        await P.press(P.btn(/^공유하기$/));
+        assert.equal(P.copied.length, 1, 'shared at once'); assert.equal(P.says(/영상을 먼저 만들면/), false); assert.equal('kts_gnudge' in P.store, false);
+      } finally { P.done(); }
+    };
+    await same(own({ media: false }), '🎬 광장에서 진짜 15초 영상 만들기');
+    await same(own({ media: true, gift: view({ vid: { t: 'mp4', at: 1 } }) }), '🎬 광장에서 진짜 15초 영상 만들기');
+    await same(own({ media: true, gift: view({ phase: 'after' }) }), '');
   });
 });
 

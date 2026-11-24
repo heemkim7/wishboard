@@ -265,6 +265,9 @@ export function plazaNote(g, look, now = Date.now()) {
   if (look !== 'replay') return head + '!';
   return head + ' · ' + (now < Number(g?.a) ? `광장에는 ${clockText(Number(g.a))}에 걸려요` : '이 기기에서만 다시 보여 드려요');
 }
+// The owner page leads with "광장에서 진짜 영상 만들기" (and asks once before the link is sent without one) only when the Worker stores
+// videos (media: the R2 binding), the board has none yet and its window is not over. Otherwise the page is as it always was.
+export const videoFirst = ({ media, vid, phase } = {}) => !!media && !vid && phase !== 'after';
 // 21:00..08:00 KST: no advertising push goes out (the privacy policy's 알림), and no reply notice either (giftsrv.js make).
 export const quietNow = (now = Date.now()) => { const h = new Date(now + 9 * 36e5).getUTCHours(); return h >= GIFT.quiet[0] || h < GIFT.quiet[1]; };
 export const AD_LABEL = '(광고) ';
