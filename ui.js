@@ -302,8 +302,12 @@ export function createUI(root, hooks) {
   const todayBtn = h('button', { class: 'chip', type: 'button', text: '미션', onclick: (e) => { e.stopPropagation(); openToday(); } });
   const holdBtn = h('button', { class: 'chip', type: 'button', text: '내 전광판', onclick: (e) => { e.stopPropagation(); openHolds(); } });
   const tribeBtn = h('button', { class: 'chip', type: 'button', text: '응원 팀', onclick: (e) => { e.stopPropagation(); openTribeSheet(); } });
-  const walletEl = h('div', { class: 'glass wallet', role: 'button', tabindex: '0', title: '응원 포인트 · 정산 안내', onclick: () => openWalletInfo(), onkeydown: (e) => { if (e.key === 'Enter') openWalletInfo(); } }, coinIcon,
-    h('div', null, h('div', null, amtEl, h('span', { class: 'unit', text: '포인트' })), h('div', { class: 'sub' }, h('span', { class: 'sub-fixed' }, todayBtn, holdBtn, tribeBtn), h('span', { class: 'sub-live' }, pendingChip, protectLine), nextLine)));
+  // The card holds buttons (the chips, the goal), so it is not itself a button: a role="button" around other buttons
+  // cannot be told apart by a screen reader. The amount line is the keyboard's way to the wallet sheet (a real button);
+  // a mouse click anywhere else on the card still opens it.
+  const amtBtn = h('button', { class: 'wallet-amt', type: 'button', 'aria-label': '응원 포인트 · 지갑 열기', title: '응원 포인트 · 정산 안내', onclick: (e) => { e.stopPropagation(); openWalletInfo(); } }, amtEl, h('span', { class: 'unit', text: '포인트' }));
+  const walletEl = h('div', { class: 'glass wallet', onclick: () => openWalletInfo() }, coinIcon,
+    h('div', null, h('div', null, amtBtn), h('div', { class: 'sub' }, h('span', { class: 'sub-fixed' }, todayBtn, holdBtn, tribeBtn), h('span', { class: 'sub-live' }, pendingChip, protectLine), nextLine)));
   const rankRows = h('div', { class: 'rows' });
   const feedRows = h('div', { class: 'feed' });
   const liveBoard = h('div', { class: 'glass liveboard' },

@@ -177,7 +177,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .profile .name small { font-size: 12px; font-weight: 700; color: var(--muted); }
   .profile .status { margin-top: 3px; display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 500; color: var(--muted); }
   .profile .status [hidden] { display: none; }
-  .verified { flex: none; display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; margin-left: 4px; padding: 0 4px; border-radius: 999px; background: var(--ok); color: var(--bg); font: 800 11px/1 var(--font); font-style: normal; }
+  .verified { flex: none; display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; margin-left: 4px; padding: 0 4px; border-radius: 999px; background: var(--ok); color: var(--bg); font: 800 12px/1 var(--font); font-style: normal; }
   .profile .name .verified { margin-left: 6px; }
   .guestwarn { pointer-events: auto; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 14px; background: var(--surface-hud); border: 1px solid var(--line); }
   .guestwarn p { margin: 0; flex: 1; font-size: 12px; font-weight: 700; line-height: 1.35; color: var(--danger); }
@@ -331,7 +331,8 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
   .legend .tip { margin-left: auto; color: var(--muted); }
   .legend .osm { color: var(--muted); font-size: 12px; text-decoration: none; }
-  .quick { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 10px; scrollbar-width: none; }
+  /* The quick-jump row scrolls sideways and fades at its right end, which says there is more to scroll to. */
+  .quick { display: flex; gap: 6px; overflow-x: auto; padding: 0 24px 10px 0; scrollbar-width: none; -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); }
   .quick::-webkit-scrollbar { display: none; }
   .quick button { position: relative; flex: none; height: 32px; padding: 0 12px; border-radius: 999px; font-size: 12px; font-weight: 700; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); white-space: nowrap; }
   .quick button:hover { border-color: var(--line-strong); color: var(--text); }
@@ -408,7 +409,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .emote:active { transform: translateY(0) scale(.96); }
   .emote .e { font-size: 28px; line-height: 1; }
   .emote .l { font-size: 12px; font-weight: 700; color: var(--text-2); }
-  .emote .k { position: absolute; top: 5px; right: 6px; font: 700 11px/1 var(--font); color: var(--muted); }
+  .emote .k { position: absolute; top: 5px; right: 6px; font: 700 12px/1 var(--font); color: var(--muted); }
   .emote.fire { animation: fire .45s ease; }
   @keyframes fire { 30% { transform: translateY(-6px) scale(1.06); background: var(--line-strong); } }
   .dock .sep { width: 1px; margin: 8px 2px; background: var(--line); }
@@ -517,7 +518,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html.touch .sheet .more .swatch::after { inset: -9px -4px; }
   html.touch .reacts button::after { inset: -2px; }
   html.touch .wallet .chip::after, html.touch .wallet .protect::after, html.touch .nextgoal:not(.task)::after { inset: -6px 0 -3px; }
-  html.touch .wallet .sub-fixed .chip::after { inset: -14px 0 -3px; }
+  html.touch .wallet .sub-fixed .chip::after { inset: -5px 0 -3px; } /* up to the amount line above (a button of its own), not over it */
   html.touch .linkbtn::after { inset: -14px -8px; }
   /* Scrolling rows clip what leaves them: the row grows by the same amount it pulls back, so the hit area stays inside it. */
   html.touch .quick { padding-top: 6px; margin-top: -6px; }
@@ -615,7 +616,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .swatch { width: 32px; height: 32px; border-radius: 50%; border: 2px solid var(--line-strong); transition: transform .15s; }
   .swatch:hover { transform: scale(1.08); }
   .swatch.on { border-color: var(--bg); outline: 2px solid var(--text); outline-offset: 0; }
-  .swatches input[type=color] { width: 36px; height: 36px; border: 0; padding: 0; background: none; cursor: pointer; }
+  .swatches input[type=color] { -webkit-appearance: none; appearance: none; width: 40px; height: 40px; padding: 0; border: 2px solid var(--line-strong); border-radius: 50%; overflow: hidden; background: none; cursor: pointer; }
   .bid { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
   .bid .input { font-size: 20px; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
   .steps { display: flex; gap: 6px; }
@@ -649,7 +650,8 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .screen.cropping canvas:active { cursor: grabbing; }
   .chip.warn { color: var(--danger); border-color: var(--danger); }
   .wallet { cursor: pointer; }
-  .wallet:focus-visible { outline: none; box-shadow: var(--focus); }
+  /* The amount line is the card's one button of its own (ui.js amtBtn): it looks like the plain line it was. */
+  .wallet-amt { display: inline-flex; align-items: baseline; min-height: 24px; font: inherit; color: inherit; text-align: left; border-radius: 6px; }
   .note { margin-top: 10px; font-size: 12px; color: var(--muted); font-weight: 500; line-height: 1.5; }
   .sheet button.note { display: block; width: 100%; margin: 8px 0 0; padding: 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; font-weight: 500; line-height: 1.5; text-align: left; cursor: pointer; }
   .levels { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 4px; }
@@ -1420,6 +1422,8 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     /* Upright the dance panel is along the bottom too, so its notices also stay under the left column. */
     html.touch body:has(#ui > .rhythm.show) .toasts { top: var(--stack-top, 182px); }
     html.touch body:has(#ui > .rhythm.show) .toasts > * { align-self: flex-start; }
+    /* A 320px wide phone: the identity row is 114px, so the avatar picture steps aside and the name keeps what there is. */
+    @media (max-width: 359px) { html.touch .ident .avatar { display: none; } html.touch .ident .profile { padding-left: 12px; min-height: 44px; } }
     /* The tag and 시점 해제 are level with the action button (28 … 80px up). */
     html.touch .prompt { bottom: calc(36px + var(--safe-b)); }
     html.touch .stay-focus { bottom: calc(32px + var(--safe-b)); }
@@ -1443,6 +1447,9 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
        place instead, one row right against the column, and the tag steps aside. */
     html.touch .toasts > .farcard { position: fixed; left: calc(106px + var(--safe-l)); right: calc(72px + var(--safe-r)); bottom: calc(30px + var(--safe-b)); width: auto; max-width: 420px; margin: 0 0 0 auto; padding: 8px 10px; flex-wrap: nowrap; }
     html.touch body:has(.toasts > .farcard) #ui > .prompt { visibility: hidden; }
+    /* Under 641px wide the band between the left column and the icon row is narrower than the pill: there it sits above
+       the tag, right against the column (the jump button is beside it, not under it). */
+    @media (max-width: 640px) { html.touch .waypill { top: auto; bottom: calc(92px + var(--safe-b)); left: auto; right: calc(72px + var(--safe-r)); margin: 0; } }
     /* The ⋯ menu: three columns, so it is about 210px tall on a 375px screen (it took 302px). */
     html.touch .tools.open { grid-template-columns: repeat(3, minmax(0, 1fr)); width: min(440px, calc(100vw - 20px - var(--safe-l) - var(--safe-r))); }
   }
@@ -1466,7 +1473,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   /* A button that stands alone on its row in a sheet is as wide as the sheet's column (some were as wide as their text). */
   html.touch .sheet .content > .btn:not(.icon), .sheet.narrow .content > .btn:not(.icon) { display: flex; width: 100%; justify-content: center; }
   /* A sheet's box is focused when it opens so the keyboard starts inside it; that focus draws no ring around the sheet. */
-  html .sheet:not(#view):focus-visible { box-shadow: var(--shadow-sheet) !important; }
+  html div.sheet:not(#view):focus-visible { box-shadow: var(--shadow-sheet) !important; }
   /* Thumb-sized on touch: a fold's summary line, the shop row in the profile sheet, the two wish tabs, a tappable notice. */
   html.touch .sheet .more summary { padding: 12px 0; }
   html.touch .sheet .btn.shop-open { height: auto; min-height: 44px; }
@@ -1486,7 +1493,6 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html.touch .mapzoom button { width: 44px; height: 44px; }
   .mapzoom button.wide, html.touch .mapzoom button.wide { width: auto; padding: 0 10px; gap: 4px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; white-space: nowrap; }
   .mapzoom { align-items: flex-end; }
-  .quick { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); padding-right: 24px; }
   html.touch .quick { gap: 8px; }
   html.touch .quick button { height: 36px; }
   html.touch .quick button::after { inset: -4px 0; }
@@ -1494,7 +1500,6 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   /* Colour swatches: 40px circles everywhere (they were 32-38px), and the free colour picker is a circle like them. */
   .swatch { width: 40px; height: 40px; position: relative; }
   html.touch .swatch::after { content: ""; position: absolute; inset: -4px; }
-  .swatches input[type=color] { -webkit-appearance: none; appearance: none; width: 40px; height: 40px; padding: 0; border: 2px solid var(--line-strong); border-radius: 50%; overflow: hidden; background: none; }
   .swatches input[type=color]::-webkit-color-swatch-wrapper { padding: 0; }
   .swatches input[type=color]::-webkit-color-swatch { border: 0; border-radius: 50%; }
   .swatches input[type=color]::-moz-color-swatch { border: 0; border-radius: 50%; }
@@ -1528,9 +1533,6 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .rowlist > .switch[aria-pressed="true"] > em { color: var(--accent); }
   .idline { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 14px/1.4 var(--font); color: var(--text-2); }
 
-  /* Small text is at least 12px (the dock key hints, the verified tick and the 내 땅 mark were 11px). */
-  .emote .k { font-size: 12px; }
-  .verified { font-size: 12px; }
   /* The plot levels: a level not reached yet is dimmed by its picture, not by fading its name under 4.5:1. */
   .lv, .lv.done { opacity: 1; }
   .lv .i { opacity: .5; }
@@ -1621,6 +1623,8 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
 
   /* Desktop: rows that are buttons are at least 24px tall (WCAG 2.2 target size; they were 15-19px). */
   html:not(.touch) .liveboard :is(.livehead, button.rank, button.f), html:not(.touch) .stay-quest button, html:not(.touch) .wallet .nextgoal:not(.task) { min-height: 24px; }
+  /* A touch tablet keeps the full left column: its rows that are buttons are 32px tall there. */
+  html.touch .liveboard :is(.livehead, button.rank, button.f), html.touch .stay-quest button { min-height: 32px; }
   /* Desktop tool row: the first four carry their name beside the icon (twelve bare icons told nothing apart). */
   @media (min-width: 1240px) {
     html:not(.touch) .tools .btn:is(.named, .tool-gift) { width: auto; padding: 0 12px 0 10px; gap: 6px; border-radius: 999px; font-size: 13px; font-weight: 700; line-height: 1; }
