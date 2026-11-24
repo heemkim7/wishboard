@@ -1589,7 +1589,8 @@ void main(){
     cine = { t0: performance.now(), dur: o.dur || 700, back: false, until: o.until || 0, pin: !!o.pin, fov: o.fov || 0 };
     // A cut for a player who asked for less motion; not in a film (o.film: the gift show, which gift.js records for
     // someone else to watch: a cut there would join three stills).
-    if (!o.film) cine.dur = glideMs(cine.dur, calm.matches);
+    if (o.film) cine.film = true;
+    else cine.dur = glideMs(cine.dur, calm.matches);
   }
   /**
    * The one way out of a scripted camera: movement, a tap, Escape, a timed hold running out, 시점 해제, the lounge
@@ -1611,7 +1612,9 @@ void main(){
       }
       cineFrom.copy(camera.position);
       cineL0.copy(viewLook);
-      cine = { t0: now, dur: glideMs(RETURN_MS, calm.matches), back: true, ease: 'out', tell: false };
+      // The end of a film (the gift show) may still be on the recording (gift.js records a little past it): its way back
+      // glides even for a player who asked for less motion.
+      cine = { t0: now, dur: cine.film ? RETURN_MS : glideMs(RETURN_MS, calm.matches), back: true, ease: 'out', tell: false };
       opts.onFocus?.(false);
     } else if (cine && force && cine.t0 + cine.dur - now > RETURN_MS) {
       cineFrom.copy(camera.position);
@@ -1703,7 +1706,7 @@ void main(){
     const timers = [];
     const at = (t, fn) => timers.push(setTimeout(fn, t));
     // Cut to the high view, then two glides and the hold.
-    startCine(high, look, { dur: 1, pin: true }); cineFrom.copy(high); cineL0.copy(look); camera.position.copy(high); camera.lookAt(look); viewLook.set(look.x, look.y, look.z);
+    startCine(high, look, { dur: 1, pin: true, film: true }); cineFrom.copy(high); cineL0.copy(look); camera.position.copy(high); camera.lookAt(look); viewLook.set(look.x, look.y, look.z);
     me.root.visible = false; hidMe = true; opts.onFocus?.(true);
     // (film: the glides stay glides with reduced motion on. The way back at the end, endCine, is the player's own view
     // again and stays a cut for them.)
