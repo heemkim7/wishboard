@@ -108,6 +108,11 @@ export function ftueDue(flag, before, day) {
   if (playedEarlierDay(before, day)) return false;
   return !((before.earn | 0) || (before.bake | 0) || (before.play | 0));
 }
+// ---- 환영 전광판: the newcomer's first seconds. Their own name goes up on a street screen near them for WELCOME.ms, on this device only
+// (ts3d/screens.js pinWelcome, giftart.js paintWelcome), and the 지금 할 일 card then asks for a gift board for a friend.
+/** The welcome board runs once for a newcomer who came without a deep link. deep: any of ?gb= ?wish= ?focus= ?team= ?tribe=. */
+export function welcomeDue({ flag, before, day, deep } = {}) { return !deep && ftueDue(flag, before, day); }
+export const WELCOME = Object.freeze({ ms: 8000, line: '오늘 밤, 가상 타임스퀘어의 주인공', task: '🎁 친구 이름을 전광판에 걸어 보세요 (무료)' });
 
 // Newcomer mode: no board held and no kts_grad flag. It ends on the first claim, 30 points from cheering and watching today (balance.js
 // countsAsActivity; play pays none), or the tap.
@@ -181,7 +186,8 @@ export const WISH_STEP = '오늘의 소원 한 줄 걸기 (무료)';
 export function wishStep({ known, mine, skipped, busy } = {}) { return known && !mine && !skipped && !busy ? WISH_STEP : ''; }
 // Right after the arrival intro a newcomer gets the wish sheet once, unless a link brought them somewhere else, a wish is already up,
 // or the sheet was closed without a wish this session (kts_wish_skip): a skipped sheet does not come back on the next entry.
-export function wishAutoOpen({ newbie, known, mine, deep, skipped } = {}) { return !!newbie && !deep && !skipped && !(known && mine); }
+// With a welcome board this session the sheet does not open by itself either: the wish is the card's next step.
+export function wishAutoOpen({ newbie, known, mine, deep, skipped, welcomed } = {}) { return !!newbie && !deep && !skipped && !welcomed && !(known && mine); }
 // Boot card: a friend's wish from the link, else yesterday's winner, else today's count once it is big enough, else nothing.
 // The heart label only when a heart can follow: a wish from today (day unknown counts as today) and no ?focus= taking over.
 export function wishBootLine({ deep, king, count, day, focus } = {}) {

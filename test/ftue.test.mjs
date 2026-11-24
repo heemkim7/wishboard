@@ -2,7 +2,26 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { it } from 'node:test';
 import { BALANCE } from '../balance.js';
-import { claimWizard, lockCelebration, linesFault, LINES_ERR, airAsk, AIR_PRICE, photoVerdicts, PHOTO_WAIT_MS } from '../ftue.js';
+import { claimWizard, lockCelebration, linesFault, LINES_ERR, airAsk, AIR_PRICE, photoVerdicts, PHOTO_WAIT_MS, welcomeDue, WELCOME, wishAutoOpen } from '../ftue.js';
+
+// 환영 전광판: when the newcomer's welcome board runs (the painter and the pin are in test/welcome.test.mjs).
+it('the welcome board is due once: a newcomer who came without a link, never a second visit', () => {
+  const day = '2026-11-24';
+  assert.equal(welcomeDue({ flag: '', before: null, day }), true);
+  assert.equal(welcomeDue({ flag: '', before: { last: day, streak: 1 }, day }), true, 'this session already attended');
+  assert.equal(welcomeDue({ flag: '', before: null, day, deep: true }), false, '?gb= ?wish= ?focus= ?team= ?tribe= keep their own arrival');
+  assert.equal(welcomeDue({ flag: '1', before: null, day }), false, 'kts_ftue: shown (or skipped) before');
+  assert.equal(welcomeDue({ flag: '', before: { last: '2026-11-23', streak: 1 }, day }), false, 'played on an earlier day');
+  assert.equal(welcomeDue({ flag: '', before: { last: day, earn: 4 }, day }), false, 'already active today');
+  assert.deepEqual(WELCOME, { ms: 8000, line: '오늘 밤, 가상 타임스퀘어의 주인공', task: '🎁 친구 이름을 전광판에 걸어 보세요 (무료)' });
+  assert.equal(Object.isFrozen(WELCOME), true);
+});
+
+it('the wish sheet does not open by itself in a session where the welcome ran', () => {
+  assert.equal(wishAutoOpen({ newbie: true, welcomed: true }), false);
+  assert.equal(wishAutoOpen({ newbie: true }), true);
+  assert.equal(wishAutoOpen({ newbie: true, known: true, mine: false, welcomed: false }), true);
+});
 
 it('offers the four starter streets before a paid slot', () => {
   assert.deepEqual(BALANCE.starterSlots, ['STREET_8', 'STREET_9', 'STREET_10', 'STREET_11']);
