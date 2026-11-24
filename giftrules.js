@@ -436,17 +436,18 @@ export const cerUrl = (id) => '/?gb=' + id + '&cer=1';
 
 // ---- the recipient page (giftpage.js) ----
 /** The page's ceremony button: { label, act, href } or null (no fixed start, or past the late window). act 'early': before the window, a tap
- *  says CER_TEXT.early and opens the share sheet with cerInvite; 'go': href enters the plaza; 'busy' (budget hard): a tap says CER_TEXT.busy. */
-export function cerButton(g, now = Date.now(), { hard = false } = {}) {
-  const p = cerPhase(g, now);
+ *  says CER_TEXT.early and opens the share sheet with cerInvite; 'go': href enters the plaza; 'busy' (budget hard): a tap says CER_TEXT.busy.
+ *  start: the localhost seam's start in ms (cerDebugStart) in place of the board's own; 0 (the default) is the board's. */
+export function cerButton(g, now = Date.now(), { hard = false, start = 0 } = {}) {
+  const x = start || g, p = cerPhase(x, now);
   if (p === 'over') return null;
-  if (p === 'early') return { label: '🎆 점등식 같이 보기 · ' + cerWhen(g), act: 'early', href: '' };
-  const label = p === 'lit' ? '🎆 방금 켜졌어요 · 점등식 보러 가기' : '🎆 점등식 들어가기 · ' + cerClock(cerLeft(g, now)) + ' 남음';
+  if (p === 'early') return { label: '🎆 점등식 같이 보기 · ' + cerWhen(x), act: 'early', href: '' };
+  const label = p === 'lit' ? '🎆 방금 켜졌어요 · 점등식 보러 가기' : '🎆 점등식 들어가기 · ' + cerClock(cerLeft(x, now)) + ' 남음';
   return hard ? { label, act: 'busy', href: '' } : { label, act: 'go', href: cerUrl(g.id) };
 }
-/** The invitation for the share sheet (url: the recipient page), or null without a fixed start. */
-export function cerInvite(g, url) {
-  const when = cerWhen(g); if (!when) return null;
+/** The invitation for the share sheet (url: the recipient page), or null without a fixed start. start: as cerButton's. */
+export function cerInvite(g, url, start = 0) {
+  const when = cerWhen(start || g); if (!when) return null;
   const to = cerTo(g);
   return { title: `🎆 ${to}님 선물 전광판 점등식`, text: `${when}, 뉴욕 타임스퀘어 가상 광장에서 ${to}님의 전광판이 켜져요. 같이 보러 와요! ${CER_TEXT.early} 👉`, url: String(url || '') };
 }

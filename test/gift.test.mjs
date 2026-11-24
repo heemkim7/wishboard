@@ -589,6 +589,128 @@ describe('the reply notice opens the board as its owner on any device of the acc
   });
 });
 
+// ---- 점등식 on the recipient page (giftpage.js), the owner's share line, the admin columns -------------------------------------------
+import { CER_TEXT, cerInvite, cerButton } from '../giftrules.js';
+describe('점등식 on the recipient page', () => {
+  const g = view(), ID = g.id, URL_ = 'https://sq.example/g/' + ID; // the 25th, 18:00: a fixed start
+  const cerBox = (P) => P.all('div').find((n) => n.className === 'cer') || null;
+  const cerCtl = (P) => cerBox(P)?.kids[0] || null;
+  const cerLine = (P) => cerBox(P)?.kids[1] || null;
+  const sticky = (P) => P.all('div').find((n) => n.className === 'sticky');
+  it('the pure button and invitation take the localhost seam\'s start in place of the board\'s', () => {
+    const at = KST('2026-11-20T12:00:00');
+    assert.equal(cerButton(g, at).act, 'early');
+    const b = cerButton(g, at, { start: at + 75000 });
+    assert.deepEqual(b, { label: '🎆 점등식 들어가기 · 01:15 남음', act: 'go', href: '/?gb=' + ID + '&cer=1' });
+    assert.equal(cerButton(view({ a: KST('2026-11-25T12:20:00') }), at, { start: at - 30000 }).act, 'go', 'any board, even a "지금" one');
+    assert.deepEqual(cerInvite(g, URL_, 0), cerInvite(g, URL_));
+    assert.match(cerInvite(g, URL_, KST('2026-11-20T12:01:15')).text, /^11월 20일 12:01, /);
+  });
+  it('before the day: a gold button under the countdown; a tap says 10분 전부터 and opens the share sheet with the invitation', async () => {
+    const P = pageOf(g, KST('2026-11-20T12:00:00'));
+    try {
+      globalThis.navigator.share = async (o) => { P.shared.push(o); };
+      await P.load('giftpage.js');
+      const ctl = cerCtl(P), box = cerBox(P), col = sticky(P);
+      assert.ok(ctl, 'the ceremony button');
+      assert.deepEqual([ctl.tag, ctl.className, ctl.textContent, ctl.attrs.type], ['button', 'btn gold', '🎆 점등식 같이 보기 · 11월 25일 18:00', 'button']);
+      assert.equal(col.kids[col.kids.indexOf(box) - 1].className, 'card', 'right under the countdown card');
+      assert.equal(col.kids[col.kids.indexOf(box) + 1].tag, 'canvas', 'above the preview');
+      assert.equal(cerLine(P).textContent, '');
+      await P.press(ctl);
+      assert.equal(cerLine(P).textContent, CER_TEXT.early); assert.equal(cerLine(P).attrs.role, 'status');
+      assert.deepEqual(P.shared, [cerInvite(g, URL_)]);
+      assert.equal(P.shared[0].title, '🎆 민지님 선물 전광판 점등식');
+      assert.equal(P.loc.went, undefined, 'nothing navigates');
+    } finally { P.done(); }
+  });
+  it('without a share sheet the invitation is copied; a sheet the person closes says nothing more', async () => {
+    let P = pageOf(g, KST('2026-11-20T12:00:00'));
+    try {
+      await P.load('giftpage.js'); await P.press(cerCtl(P));
+      const inv = cerInvite(g, URL_);
+      assert.deepEqual(P.copied, [inv.text + ' ' + inv.url]);
+      assert.equal(cerLine(P).textContent, CER_TEXT.early + ' 초대 문구를 복사했어요. 카카오톡에 붙여 넣어 보내세요.');
+    } finally { P.done(); }
+    P = pageOf(g, KST('2026-11-20T12:00:00'));
+    try {
+      globalThis.navigator.share = async () => { throw Object.assign(new Error('closed'), { name: 'AbortError' }); };
+      await P.load('giftpage.js'); await P.press(cerCtl(P));
+      assert.deepEqual(P.copied, []); assert.equal(cerLine(P).textContent, CER_TEXT.early);
+    } finally { P.done(); }
+  });
+  it('inside the window: a link into the plaza whose time left ticks; on its day it stands under the where line while the rest waits for the film', async () => {
+    const P = pageOf(g, KST('2026-11-25T17:50:00'));
+    try {
+      await P.load('giftpage.js');
+      const ctl = cerCtl(P), col = sticky(P);
+      assert.deepEqual([ctl.tag, ctl.className, ctl.href, ctl.textContent], ['a', 'btn gold', '/?gb=' + ID + '&cer=1', '🎆 점등식 들어가기 · 10:00 남음']);
+      P.skew += 1000; P.tick();
+      assert.equal(cerCtl(P).textContent, '🎆 점등식 들어가기 · 09:59 남음');
+      const box = cerBox(P), where = col.kids[col.kids.indexOf(box) - 1];
+      assert.deepEqual([where.tag, where.className], ['p', 'sub'], 'directly under the where line');
+      assert.ok(col.kids.indexOf(box) < col.kids.indexOf(col.kids.find((n) => /^stage/.test(n.className))), 'above the film');
+      const acts = col.kids.find((n) => n.className === 'stack');
+      assert.equal(acts.hidden, true, 'the other buttons wait for the film'); assert.equal(P.shown(ctl), true);
+      await P.press(ctl);
+      assert.equal(P.seen(ID, 'go'), true, 'the plaza button\'s beacon'); assert.deepEqual(P.posted, []);
+    } finally { P.done(); }
+  });
+  it('the first two minutes after the start: 방금 켜졌어요; then no button, and the page as before', async () => {
+    let P = pageOf(g, KST('2026-11-25T18:00:30'));
+    try { await P.load('giftpage.js'); assert.deepEqual([cerCtl(P).tag, cerCtl(P).textContent], ['a', '🎆 방금 켜졌어요 · 점등식 보러 가기']); } finally { P.done(); }
+    P = pageOf(g, KST('2026-11-25T18:01:59.500'));
+    try {
+      await P.load('giftpage.js'); assert.ok(cerCtl(P));
+      P.skew += 1000; P.tick();
+      assert.equal(cerBox(P), null, 'gone once the late window is over'); assert.equal(P.btn(/점등식/), null);
+      assert.ok(P.btn(/직접 가서 보기/) || P.btn(/영상 건너뛰기/), 'the ordinary page stays');
+    } finally { P.done(); }
+    P = pageOf(g, KST('2026-11-25T18:02:00'));
+    try { await P.load('giftpage.js'); assert.equal(cerBox(P), null); assert.equal(P.btn(/점등식/), null); } finally { P.done(); }
+  });
+  it('a "지금" board, a page without data and a gone board have no ceremony button', async () => {
+    const now = view({ a: KST('2026-11-25T12:20:00'), b: KST('2026-11-25T18:20:00') });
+    let P = pageOf(now, KST('2026-11-25T12:30:00'));
+    try { await P.load('giftpage.js'); assert.equal(cerBox(P), null); assert.equal(P.btn(/점등식/), null); } finally { P.done(); }
+    P = pageOf(view({ phase: 'gone' }), KST('2026-11-25T17:55:00'));
+    try { await P.load('giftpage.js'); assert.equal(cerBox(P), null); } finally { P.done(); }
+    P = fakeDom({ path: '/g/' + ID, data: null, at: KST('2026-11-25T17:55:00') });
+    try { await P.load('giftpage.js'); assert.equal(P.loc.reloads, 1, 'as before: no data, the page asks again'); assert.equal(cerBox(P), null); } finally { P.done(); }
+  });
+  it('budget hard (the page data says hard): the label stays, the button enters nothing and says the plaza is busy', async () => {
+    const P = fakeDom({ path: '/g/' + ID, data: { id: ID, gift: g, now: KST('2026-11-25T17:55:00'), media: false, hard: true }, at: KST('2026-11-25T17:55:00'), store: { masil_gt: GUEST() } });
+    try {
+      await P.load('giftpage.js');
+      const ctl = cerCtl(P);
+      assert.deepEqual([ctl.tag, ctl.className, ctl.textContent, ctl.href || ''], ['button', 'btn gold', '🎆 점등식 들어가기 · 05:00 남음', '']);
+      await P.press(ctl);
+      assert.equal(cerLine(P).textContent, CER_TEXT.busy); assert.equal(cerLine(P).attrs.role, 'alert');
+      assert.equal(P.loc.went, undefined); assert.deepEqual(P.posted, []); assert.equal(P.seen(ID, 'go'), false);
+    } finally { P.done(); }
+  });
+  it('sent back from the plaza (?cer=busy, ?cer=early): the reason once under the button, and the address drops cer', async () => {
+    for (const [why, at] of [['busy', KST('2026-11-25T17:55:00')], ['early', KST('2026-11-25T17:30:00')]]) {
+      const P = pageOf(g, at, { search: '?cer=' + why });
+      try {
+        await P.load('giftpage.js');
+        assert.equal(cerLine(P).textContent, CER_TEXT[why], why); assert.equal(cerLine(P).attrs.role, 'status');
+        assert.equal(P.loc.search, '', 'a reload does not say it again'); assert.equal(P.loc.pathname, '/g/' + ID);
+      } finally { P.done(); }
+    }
+    const P = pageOf(g, KST('2026-11-25T17:55:00'), { search: '?cer=nope' });
+    try { await P.load('giftpage.js'); assert.equal(cerLine(P).textContent, ''); assert.equal(P.loc.search, '?cer=nope', 'not a reason: left alone'); } finally { P.done(); }
+  });
+  it('over the plaza (?in=1): the button tells the plaza instead of loading a second one', async () => {
+    const P = pageOf(g, KST('2026-11-25T17:55:00'), { search: '?in=1', embed: true });
+    try {
+      await P.load('giftpage.js');
+      await P.press(cerCtl(P));
+      assert.deepEqual(P.posted, [{ t: 'gift', act: 'cer', id: ID }]);
+    } finally { P.done(); }
+  });
+});
+
 // ---- gift.html's sheet, read as rules -------------------------------------------------------------------------------------------
 // The pages are not opened here, so what a phone needs from the sheet is checked on its text: a pressed state for every control,
 // places to press of 44px, no text under 12px, and the contrast of every text colour on the lightest surface it can sit on.
