@@ -400,6 +400,23 @@ describe('the photo card and the overlay follow the HUD rules (sheet)', () => {
     assert.match(css, /#kts-cer-n\{position:fixed;inset:0;[^}]*pointer-events:none;font:900 min\(42vw,42vh\)\/1/);
     assert.match(css, /@media \(prefers-reduced-motion: reduce\)\{#kts-cer-n\.a,#kts-cer-n\.b\{animation:none\}\}/);
   });
+  it('the number is unmistakable over any board: opaque white on a dark disc with a dark outline, never faded in', () => {
+    const rule = /#kts-cer-n\{([^}]*)\}/.exec(css.replace(/\$\{GIFT_SANS\}/g, 'sans-serif'))[1];
+    assert.match(rule, /color:#fff;/);
+    assert.doesNotMatch(rule, /opacity|-webkit-text-stroke/, 'no see-through glyph (a stroke eats into the white)');
+    assert.match(rule, /text-shadow:[^;]*0 0 \.\d+em rgba\(0,0,0,\.9\)/, 'a soft dark halo');
+    for (const k of css.match(/@keyframes kcer\d\{[^}]*\}[^}]*\}/g)) assert.doesNotMatch(k, /opacity/, k);
+    // The disc: its centre colour over a white board and over the teaser's purple, against the white digit (large text: 3:1).
+    const m = /background:radial-gradient\(circle,rgba\((\d+),(\d+),(\d+),([.\d]+)\) 0 (\d+)%/.exec(rule);
+    assert.ok(m, 'a dark disc behind the number');
+    const [r, g, b, a] = [+m[1], +m[2], +m[3], +m[4]];
+    const lum = ([x, y, z]) => { const f = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(x) + 0.7152 * f(y) + 0.0722 * f(z); };
+    for (const under of [[255, 255, 255], [192, 38, 211], [124, 58, 237], [255, 207, 90]]) {
+      const mix = [r, g, b].map((c, i) => c * a + under[i] * (1 - a));
+      assert.ok((1.05) / (lum(mix) + 0.05) >= 3, `white over the disc on rgb(${under}): ${(1.05 / (lum(mix) + 0.05)).toFixed(2)}`);
+    }
+    assert.ok(+m[5] >= 50, 'the disc reaches past the glyph');
+  });
   it('the card\'s buttons are 48 px tall, its ✕ 44 px, no text under 12 px', () => {
     assert.match(css, /#kts-cer-card \.b\{display:flex;width:100%;min-height:48px;/);
     assert.match(css, /#kts-cer-card \.x\{position:absolute;right:12px;top:12px;width:44px;height:44px;/);

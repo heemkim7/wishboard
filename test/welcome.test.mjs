@@ -533,6 +533,24 @@ describe('the ceremony pin: the teaser before the start, the gift card from it, 
     const extra = count(p.words(slot), '곧 켜져요') - base;
     assert.ok(extra >= 2 && extra <= 3, String(extra));
   });
+  it('at 60 fps the teaser\'s mm:ss and the countdown digit (gift.js, a 250 ms tick) never disagree by more than a second', async () => {
+    const p = await plaza();
+    const real = Date.now, t0 = real(), start = t0 + 12000, cam = new p.THREE.Vector3(p.xOf('STREET_5'), 5, 20);
+    const slot = p.boards.pinGift(cerGift(start), 180000, { cer: start });
+    let worst = 0;
+    try {
+      for (let f = 0; f * 1000 / 60 < 12000; f++) {
+        const now = t0 + f * 1000 / 60;
+        Date.now = () => now;
+        p.boards.update(1 / 60, cam);
+        const shown = p.words(slot).filter((w) => /^\d\d:\d\d$/.test(w)).at(-1);
+        const digitAt = t0 + Math.floor((f * 1000 / 60) / 250) * 250; // the overlay changes on the tick before this frame
+        const digit = Math.ceil((start - digitAt) / 1000);
+        if (start - now <= 10000) worst = Math.max(worst, Math.abs(Number(shown.slice(3)) + 60 * Number(shown.slice(0, 2)) - digit));
+      }
+    } finally { Date.now = real; }
+    assert.ok(worst <= 1, String(worst));
+  });
   it('a pin without cer is today\'s pin: the card at once, and the list\'s copy is what it shows', async () => {
     const p = await plaza();
     const start = Date.now() + 60000;

@@ -38,11 +38,11 @@ body.gift-rec #view{left:50%;right:auto;width:min(100vw,calc(100vh * 9 / 16));tr
 #kts-gift-done .b.gold:active{box-shadow:inset 0 0 0 99px rgba(70,36,0,.34)}
 #kts-gift-done .b.gold{border:0;color:#2a1800;background:linear-gradient(135deg,#ffe9a8,#ffcf5a 45%,#e6a52a)}
 body.gift-cer:not(.has-sheet) #ui{visibility:hidden}
-#kts-cer-n{position:fixed;inset:0;z-index:2147481900;display:grid;place-items:center;pointer-events:none;font:900 min(42vw,42vh)/1 ${GIFT_SANS};color:#fff;-webkit-text-stroke:max(3px,.7vmin) rgba(8,6,28,.88);paint-order:stroke fill;text-shadow:0 0 28px rgba(0,0,0,.6);font-variant-numeric:tabular-nums;user-select:none}
-#kts-cer-n.a{animation:kcer1 .85s ease-out}
-#kts-cer-n.b{animation:kcer2 .85s ease-out}
-@keyframes kcer1{from{transform:scale(1.3);opacity:.25}to{transform:none;opacity:1}}
-@keyframes kcer2{from{transform:scale(1.3);opacity:.25}to{transform:none;opacity:1}}
+#kts-cer-n{position:fixed;inset:0;margin:auto;width:min(56vw,56vh);height:min(56vw,56vh);z-index:2147481900;display:grid;place-items:center;pointer-events:none;font:900 min(42vw,42vh)/1 ${GIFT_SANS};color:#fff;border-radius:50%;background:radial-gradient(circle,rgba(6,4,20,.8) 0 56%,rgba(6,4,20,0) 71%);text-shadow:.045em .000em 0 #06041a,-.045em .000em 0 #06041a,.000em .045em 0 #06041a,.000em -.045em 0 #06041a,.032em .032em 0 #06041a,-.032em .032em 0 #06041a,.032em -.032em 0 #06041a,-.032em -.032em 0 #06041a,0 0 .12em rgba(0,0,0,.9);font-variant-numeric:tabular-nums;user-select:none}
+#kts-cer-n.a{animation:kcer1 .45s ease-out}
+#kts-cer-n.b{animation:kcer2 .45s ease-out}
+@keyframes kcer1{from{transform:scale(1.22)}to{transform:none}}
+@keyframes kcer2{from{transform:scale(1.22)}to{transform:none}}
 @media (prefers-reduced-motion: reduce){#kts-cer-n.a,#kts-cer-n.b{animation:none}}
 #kts-cer-card{position:fixed;inset:0;z-index:2147482100;background:rgba(4,4,14,.86);display:grid;place-items:center;padding:16px;font:15px/1.5 ${GIFT_SANS};color:#f3f1ff;outline:none}
 #kts-cer-card .box{position:relative;width:min(440px,100%);max-height:100%;overflow:auto;background:#100d2a;border:1px solid rgba(255,255,255,.14);border-radius:20px;padding:16px}
