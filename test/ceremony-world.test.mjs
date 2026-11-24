@@ -159,6 +159,22 @@ for (const [w, h] of SIZES) {
           assert.ok(Math.abs(q.x) <= 1 && Math.abs(q.y) <= 1 && q.z < 1, `the face corner ${u},${v} is in the frame: ${q.x.toFixed(2)}, ${q.y.toFixed(2)}`);
         }
         for (const y of [0.1, 1.9]) { const q = new THREE.Vector3(me.x, me.y + y, me.z).project(world.camera); assert.ok(Math.abs(q.x) <= 1 && Math.abs(q.y) <= 1, 'my avatar is in the frame'); }
+        // The photo's own pose (3:2): the same points seen with nothing in the way, the face whole, my avatar large above the band
+        // (pass 2: a board too wide or too high for that, here STREET_1/20/45 at 15 % and STREET_40, 21 m up, at about 10 %).
+        const ph = world.cerPhoto(id);
+        assert.ok(ph, 'a photo pose');
+        const pc = new THREE.PerspectiveCamera(ph.fov, 1.5, 0.2, 5000);
+        pc.position.set(ph.cam.x, ph.cam.y, ph.cam.z); pc.lookAt(ph.look.x, ph.look.y, ph.look.z); pc.updateMatrixWorld(); pc.updateProjectionMatrix();
+        const photoBlocked = pts.map(([name, p]) => [name, inTheWay(world, pc.position.clone(), p)]).filter(([, hits]) => hits.length).map(([n, hits]) => n + ': ' + hits.join(' '));
+        t.diagnostic(`${id}${built ? '+built' : ''} photo: ${ph.dist} m out, ${ph.yaw}° off, camera ${ph.cam.y.toFixed(1)} m up, fov ${ph.fov}°, people ${(ph.body * 100).toFixed(1)} %, pass ${ph.pass}, seen ${ph.seen}`);
+        assert.deepEqual(photoBlocked, [], `${id}: the photo's view`);
+        for (const [u, v] of [[-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5]]) {
+          const q = new THREE.Vector3(F.x + rx * u * F.w, F.y + v * F.h, F.z + rz * u * F.w).project(pc);
+          assert.ok(Math.abs(q.x) <= 1 && Math.abs(q.y) <= 1, `the photo has the face corner ${u},${v}: ${q.x.toFixed(2)}, ${q.y.toFixed(2)}`);
+        }
+        const feet = new THREE.Vector3(me.x, me.y, me.z).project(pc), head = new THREE.Vector3(me.x, me.y + 1.8, me.z).project(pc);
+        assert.ok(feet.y > -0.8 && head.y < 1 && Math.abs(feet.x) < 1, 'my avatar whole and above the band');
+        assert.ok((head.y - feet.y) / 2 >= (ph.pass === 1 ? 0.155 : 0.09), 'my avatar large: ' + ((head.y - feet.y) / 2).toFixed(3));
         // My avatar faces the camera (a local turn): its yaw points at it.
         const yaw = Math.atan2(cam.x - me.x, cam.z - me.z), d = Math.atan2(Math.sin(me.yaw - yaw), Math.cos(me.yaw - yaw));
         assert.ok(Math.abs(d) < 0.05, 'facing the camera: ' + d);
@@ -177,6 +193,29 @@ for (const [w, h] of SIZES) {
       drawn.length = 0;
       world.capture();
       assert.ok(drawn.includes('WISH BOARD · 모두의 전광판'));
+    });
+    it('the photo is its own render: the lit card even when no frame was drawn since the start, the names and the band on it', () => {
+      world.goToSlot('STREET_31');
+      run(0.2);
+      const real = Date.now, t0 = real();
+      const g = { id: 'cerphot1', to: '민지', from: '지수', occ: 'bday', msg: '비밀 문구 🤫', th: '', scr: 'STREET_31', a: t0 + 3000, b: t0 + 6 * 36e5, n: 0 };
+      const slot = world.pinGift(g, 180000, { cer: t0 + 3000 });
+      assert.ok(slot);
+      run(0.2); // the teaser is up
+      const camAt = world.camera.position.clone();
+      try {
+        Date.now = () => t0 + 11000; // the start passed: no frame drawn since
+        drawn.length = 0;
+        const blob = world.capture({ photo: slot, band: 'To. 민지 · 2026.11.24 · WISH BOARD 가상 광장' });
+        assert.equal(blob?.type, 'image/jpeg');
+        assert.ok(drawn.includes('비밀 문구 🤫'), 'the lit card was painted for the photo: ' + drawn.slice(0, 12).join(' | '));
+        assert.equal(drawn.includes('곧 켜져요'), false, 'never the teaser');
+        assert.ok(drawn.includes('시험'), 'my name drawn on the picture');
+        assert.ok(drawn.includes('To. 민지 · 2026.11.24 · WISH BOARD 가상 광장'));
+        assert.ok(world.camera.position.distanceTo(camAt) < 1e-6, 'the live camera is where it was');
+        globalThis.document.hidden = true;
+        assert.equal(world.capture({ photo: slot, band: 'x' }), null, 'refused while the page is hidden');
+      } finally { Date.now = real; globalThis.document.hidden = false; }
     });
     it('the pose ends by itself if nobody ends it; a board that is not on the map has none', () => {
       world.goToSlot('STREET_31');

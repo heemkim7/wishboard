@@ -337,6 +337,104 @@ export function cerShotPose({ pos, normal, w = 0, h = 0, front, aspect = 1, fov 
   }
   return best;
 }
+// ---- 점등식: the group photo's own frame (timesSquare3d.js capture({ photo })) ----------------------------------------------------
+// The photo is its own render at a fixed 3:2 (CER_PHOTO.w x .h), whatever the device's shape, composed for the people. In order:
+//   1. every avatar in the crowd box (the front point ±4 m to the side, 0..3 m out, 0..1.9 m tall, plus its name up to `tag` m) is
+//      whole in the frame and above the band line (the bottom `band` of the picture), and large: an avatar standing on the front
+//      row (the farthest from the camera) is at least `body` of the picture's height;
+//   2. the board is whole, in the upper part (its centre above the middle);
+//   3. the band is a strip at the bottom that covers none of the above.
+// The camera stands `behind` m or more behind the back row, at chest to eye height (`heights`), the lens from fovMin to fovMax
+// (vertical). The nearest distance and the narrowest lens that satisfy all of it win (the largest people). When a board is too wide
+// or too high for that, the people get smaller last: a second pass drops the size rule, a third opens the lens to fovWide. A blocked
+// view (block: cheap, sure: exact, as cerShotPose) is turned along the street (`yaws`) before giving up; then the pose that sees most.
+export const CER_PHOTO = { w: 1200, h: 800, band: 0.1, body: 0.16, behind: 2, tag: 2.45, fovMin: 36, fovMax: 60, fovWide: 74, heights: [1.6, 2.0, 2.6, 3.4], yaws: [0, 15, -15, 30, -30], far: 60, fit: 0.94, sure: 24, man: 1.8 };
+/**
+ * pos, normal, w, h, front, ground, block, sure: as cerShotPose. -> { cam, look, fov, dist, yaw, body, seen, pass } (body: the share of
+ * the picture's height a 1.8 m avatar on the front row takes; pass 1: as composed, 2: people smaller than `body`, 3: a wider lens).
+ */
+export function cerPhotoPose({ pos, normal, w = 0, h = 0, front, ground = 0, block = null, sure = null } = {}) {
+  const P = CER_PHOTO, a = P.w / P.h, px = num(pos?.x), py = num(pos?.y), pz = num(pos?.z), gy = num(ground);
+  let nx = num(normal?.x), nz = num(normal?.z, 1); const nl = Math.hypot(nx, nz) || 1; nx /= nl; nz /= nl;
+  const rx = nz, rz = -nx, W = Math.max(0, num(w)), H = Math.max(0, num(h));
+  const fd = Math.max(0, (num(front?.x, px + nx * 9) - px) * nx + (num(front?.z, pz + nz * 9) - pz) * nz);
+  const fx = px + nx * fd, fz = pz + nz * fd, bandY = -1 + 2 * P.band + 0.03;
+  const face = [], crowd = [];
+  for (const [u, v] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) face.push([px + rx * u * W / 2, py + v * H / 2, pz + rz * u * W / 2]);
+  for (const u of [-4, 4]) for (const d of [0, 3]) for (const y of [gy, gy + P.tag]) crowd.push([fx + rx * u + nx * d, y, fz + rz * u + nz * d]);
+  const men = [-4, 0, 4].map((u) => [fx + rx * u, gy, fz + rz * u]); // avatars on the front row, across it
+  // The pitch (rad) at which everything fits, the face centre nearest +0.5, or null; and the front-row avatar's share there.
+  const fit = (D, cy, vf, dx, dz, size) => {
+    const tv = Math.tan((vf * Math.PI) / 360), th = tv * a, cx = px + dx * D, cz = pz + dz * D, qx = dz, qz = -dx;
+    let best = null, gap = Infinity, body = 0;
+    for (let deg = -20; deg <= 45; deg += 1) {
+      const t = (deg * Math.PI) / 180, c = Math.cos(t), s = Math.sin(t);
+      const f0 = -dx * c, f1 = s, f2 = -dz * c, u0 = dx * s, u1 = c, u2 = dz * s;
+      const ndc = (x, y, z) => { const vx = x - cx, vy = y - cy, vz = z - cz, zz = vx * f0 + vy * f1 + vz * f2; return zz > 0.3 ? [(vx * qx + vz * qz) / (zz * th), (vx * u0 + vy * u1 + vz * u2) / (zz * tv), zz] : null; };
+      let ok = true;
+      for (const p of face) { const q = ndc(...p); if (!q || Math.abs(q[0]) > P.fit || q[1] > P.fit || q[1] < bandY) { ok = false; break; } }
+      if (ok) for (const p of crowd) { const q = ndc(...p); if (!q || Math.abs(q[0]) > P.fit || q[1] > P.fit || q[1] < bandY) { ok = false; break; } }
+      if (!ok) continue;
+      const c0 = ndc(px, py, pz);
+      if (!(c0[1] > 0)) continue; // the board in the upper part
+      let share = Infinity; for (const m of men) { const lo = ndc(...m), hi = ndc(m[0], m[1] + P.man, m[2]); share = Math.min(share, (hi[1] - lo[1]) / 2); }
+      if (size && share < P.body) continue;
+      const e = Math.abs(c0[1] - 0.5);
+      if (e < gap) { gap = e; best = t; body = share; }
+    }
+    return best == null ? null : { t: best, body };
+  };
+  const share = (fn, cx, cy, cz) => {
+    if (typeof fn !== 'function') return 1;
+    const pts = [];
+    for (const [u, v] of [[0, 0], [-0.42, -0.42], [0.42, -0.42], [-0.42, 0.42], [0.42, 0.42]]) pts.push([px + rx * u * W + nx * 0.6, py + v * H, pz + rz * u * W + nz * 0.6]);
+    for (const u of [-3, 0, 3]) for (const d of [0.5, 2.5]) pts.push([fx + rx * u + nx * d, gy + 1.2, fz + rz * u + nz * d]);
+    let n = 0; for (const [x, y, z] of pts) if (!(num(fn(cx, cy, cz, x, y, z), 1) < 0.999)) n++;
+    return n / pts.length;
+  };
+  let tried = 0, best = null;
+  const D0 = fd + 3 + P.behind;
+  for (const [pass, size, fovTop] of [[1, true, P.fovMax], [2, false, P.fovMax], [3, false, P.fovWide]]) {
+    for (const deg of P.yaws) {
+      const r = (deg * Math.PI) / 180, dx = nx * Math.cos(r) - nz * Math.sin(r), dz = nx * Math.sin(r) + nz * Math.cos(r);
+      for (let D = D0; D <= P.far; D += 1) {
+        for (const lift of P.heights) {
+          const cy = gy + lift;
+          let got = null, vf = P.fovMin;
+          for (; vf <= fovTop && !got; vf += 2) got = fit(D, cy, vf, dx, dz, size);
+          if (!got) continue;
+          vf -= 2;
+          const cx = px + dx * D, cz = pz + dz * D, c = Math.cos(got.t);
+          const pose = { cam: { x: cx, y: cy, z: cz }, look: { x: cx - dx * c * D, y: cy + Math.sin(got.t) * D, z: cz - dz * c * D }, fov: vf, dist: D, yaw: deg, body: got.body, pass };
+          let seen = share(block, cx, cy, cz);
+          if (seen === 1 && typeof sure === 'function') { if (tried >= P.sure) return best || { ...pose, seen: 0 }; tried++; seen = share(sure, cx, cy, cz); }
+          if (seen === 1) return { ...pose, seen };
+          if (!best || seen > best.seen) best = { ...pose, seen };
+        }
+      }
+    }
+  }
+  return best;
+}
+/**
+ * The names on the photo (drawn on the picture's canvas, fillText only): one label over each head that is in the frame, nearest first.
+ * items: [{ x, y, depth, text }] (the head's top in pixels of a W x H picture). size: the label's font size (px). measure(text, size)
+ * -> its width. A label that would overlap one already placed moves up by its own height, up to twice, else it is left out. Labels
+ * stay inside the frame and above the band. -> [{ text, x, y, w, h }] (x: the label's centre, y: its middle).
+ */
+export function cerLabels(items, W, H, size, measure = (t, s) => String(t).length * s * 0.62) {
+  const out = [], pad = size * 0.4, hh = size * 1.5, bandTop = H * (1 - CER_PHOTO.band);
+  const list = (items || []).filter((i) => i && i.text && Number.isFinite(i.x) && Number.isFinite(i.y) && i.x >= 0 && i.x <= W && i.y >= 0 && i.y <= bandTop).sort((p, q) => num(p.depth) - num(q.depth));
+  const hits = (b) => out.some((o) => Math.abs(o.x - b.x) < (o.w + b.w) / 2 && Math.abs(o.y - b.y) < (o.h + b.h) / 2);
+  for (const it of list) {
+    const w = measure(it.text, size) + pad * 2;
+    let b = { text: it.text, x: clamp(it.x, w / 2 + 2, W - w / 2 - 2), y: clamp(it.y - hh / 2 - 2, hh / 2 + 2, bandTop - hh / 2 - 2), w, h: hh };
+    for (let k = 0; k < 2 && hits(b); k++) b = { ...b, y: b.y - hh - 2 };
+    if (b.y - hh / 2 < 0 || hits(b)) continue;
+    out.push(b);
+  }
+  return out;
+}
 /** Where an arrival stands in front of the board, from a seed in [0, 1) (one per tab): u metres to the face's right (-4..4), n metres
  *  farther out along the normal than the front point (0..3). Friends who came by the same link do not stand inside each other. */
 export function cerSpread(seed) {

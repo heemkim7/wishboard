@@ -92,7 +92,8 @@ function fakeWorld(P, { slot = 'STREET_31', emote = [true], driving = false, wal
     cerPrep: (s) => { calls.push(['prep', s]); return {}; },
     cerPose: (s) => { calls.push(['pose', s, P.at - S]); return pose ? {} : false; },
     cerEnd: () => calls.push(['end']),
-    capture: (o) => { calls.push(['capture', P.at - S, o?.me === true, o?.band || '']); return new Blob(['jpeg'], { type: 'image/jpeg' }); },
+    // W.refuse: how many captures to refuse (null: the page hidden, the context lost) before one succeeds.
+    capture: (o) => { calls.push(['capture', P.at - S, o?.photo || '', o?.band || '']); if (W.refuse > 0) { W.refuse--; return null; } return new Blob(['jpeg'], { type: 'image/jpeg' }); },
     cheerAt: (s) => { if (W.throwOn === 'cheer') throw new Error('boom'); calls.push(['cheer', s, P.at - S]); },
     playEmote: (id) => { const ok = W.emote.length ? W.emote.shift() : true; calls.push(['emote', id, ok]); return ok; },
     isDriving: () => W.driving, walking: () => W.walk,
@@ -213,7 +214,7 @@ describe('the ceremony, step by step on one device', () => {
       const rounds = of(P, 'cheer').map((c) => c[2]);
       assert.equal(rounds.length, 6); rounds.forEach((t, k) => assert.ok(t >= k * CER.roundMs && t < k * CER.roundMs + 250, 'round ' + k + ' at ' + t)); // on the first tick of its moment
       assert.deepEqual(of(P, 'pose'), [['pose', 'STREET_31', CER.pose]]);
-      assert.deepEqual(of(P, 'capture'), [['capture', CER.shot, true, 'To. 민지 · 2026.12.25 · WISH BOARD 가상 광장']]);
+      assert.deepEqual(of(P, 'capture'), [['capture', CER.shot, 'STREET_31', 'To. 민지 · 2026.12.25 · WISH BOARD 가상 광장']], 'the ceremony photo of that board');
       assert.ok(kinds(P).indexOf('end') > kinds(P).indexOf('capture'), 'the pose ends after the shot');
       assert.equal(P.hudHidden(), false, 'the HUD is back for the card');
       const card = P.card(); assert.ok(card, 'the photo card');
@@ -352,6 +353,34 @@ describe('the photo card: save; the gather notice; the countdown camera', () => 
       const P = await plaza({ at: S - 30000, world: { driving, walking } });
       try { P.gift.arrive(); await P.settle(); const n = of(P, 'focus').length; P.run(-10000); assert.equal(of(P, 'focus').length - n, want ? 1 : 0, JSON.stringify({ driving, walking })); } finally { P.done(); }
     }
+  });
+});
+
+describe('a photo the world could not take is not claimed', () => {
+  it('refused twice (a hidden page): tried again on the next ticks, then taken; no error notice', async () => {
+    const P = await plaza({ at: S - 30000 });
+    try {
+      P.gift.arrive(); await P.settle(); P.world.refuse = 2;
+      P.run(CER.shot + 1000);
+      const caps = of(P, 'capture');
+      assert.equal(caps.length, 3); assert.ok(P.card(), 'the third try made the card');
+      assert.equal(P.notes.some((n) => n.k === 'err'), false);
+      assert.ok(kinds(P).lastIndexOf('end') > kinds(P).lastIndexOf('capture') - 1);
+    } finally { P.done(); }
+  });
+  it('refused until the slack runs out: no card, no claim, then the 📸 offer (and the offer takes it)', async () => {
+    const P = await plaza({ at: S - 30000 });
+    try {
+      P.gift.arrive(); await P.settle(); P.world.refuse = 1e9;
+      P.run(CER.shot + CER.shotSlack + 1000);
+      assert.equal(P.card(), null);
+      assert.ok(of(P, 'capture').length > 1);
+      const n = P.notes.find((x) => x.t === CER_TEXT.shotTake);
+      assert.ok(n?.fn, 'offered after the slack');
+      assert.equal(P.hudHidden(), false);
+      P.world.refuse = 0; n.fn(); await P.timers();
+      assert.ok(P.card());
+    } finally { P.done(); }
   });
 });
 

@@ -255,10 +255,20 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   // seam runs a ceremony on a live board): its teaser must not be replaced by the list's copy before the start.
   const giftAt = (b) => { const ids = b.gifts; if (!ids?.length) return null; const id = ids[turnOf(ids.length, Date.now())]; return (giftPin?.cer && giftPin.g.id === id ? giftPin.g : null) || gifts.get(id) || (giftPin?.g.id === id ? giftPin.g : null); };
   // The ceremony pin's teaser is up: before its start, on the pin's own entry. -> the shown time left ('mm:ss'), or '' (the card).
-  const cerShown = (g, now = nowMs()) => (giftPin?.cer && giftPin.g === g && now < giftPin.cer ? cerClock(giftPin.cer - now) : '');
+  const cerShown = (g, now = nowMs()) => (giftPin?.cer && !giftPin.lit && giftPin.g === g && now < giftPin.cer ? cerClock(giftPin.cer - now) : '');
   // The whole seconds the teaser shows (0: the card): compared every 0.08 s tick without making a string, so a slow frame rate does not
   // keep the teaser up past the start.
-  const cerSec = (now) => (giftPin?.cer && now < giftPin.cer ? Math.ceil((giftPin.cer - now) / 1000) : 0);
+  const cerSec = (now) => (giftPin?.cer && !giftPin.lit && now < giftPin.cer ? Math.ceil((giftPin.cer - now) / 1000) : 0);
+  /** The group photo (timesSquare3d.js cerPicture): the ceremony pin on this slot shows the lit card now, crossed here if it had not
+   *  been yet. -> true when the card is on that screen. */
+  function cerLit(slot) {
+    if (!giftPin?.cer || giftPin.slot !== slot) return false;
+    giftPin.lit = true;
+    const b = boards.get(slot);
+    if (!b?.gifts?.includes(giftPin.g.id)) return false;
+    if (b.giftKey !== giftPin.g.id || b.cerKey) paint(b);
+    return b.giftKey === giftPin.g.id && !b.cerKey;
+  }
   function cerStep() { const b = boards.get(giftPin.slot); if (b && b.giftKey === giftPin.g.id && cerSec(nowMs()) !== b.cerSec) paint(b); }
   function giftPlace() {
     giftDirty = false;
@@ -855,7 +865,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     }
   }
 
-  return { boards, ensure, mount, unmount, set, expire, get: (id) => boards.get(id), worldPos, face, setTicker, setOps, setSeason, repaintAll, update, accentOf, tickerCanvas, watchShow, setShow, setAir, setKing, setDecals, setWishes, pinWish, setGifts, pinGift, pinWelcome, giftSlot, setPrime, primeOf: (id) => { const b = boards.get(id); return b ? primeNow(b) : null; }, decalsOf: (id) => (boards.get(id)?.decals || []).slice(), setRim };
+  return { boards, ensure, mount, unmount, set, expire, get: (id) => boards.get(id), worldPos, face, setTicker, setOps, setSeason, repaintAll, update, accentOf, tickerCanvas, watchShow, setShow, setAir, setKing, setDecals, setWishes, pinWish, setGifts, pinGift, pinWelcome, giftSlot, cerLit, setPrime, primeOf: (id) => { const b = boards.get(id); return b ? primeNow(b) : null; }, decalsOf: (id) => (boards.get(id)?.decals || []).slice(), setRim };
 }
 
 // ---- ad-only screens AD_1..AD_5 (adsale.js) -------------------------------------------------------------------------

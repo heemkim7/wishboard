@@ -411,7 +411,7 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown }) {
       if (s.cheer && world.playEmote?.(3)) c.done.cheer = true; // refused by the cooldown: the next tick tries again (until +5 s)
       if (s.round >= 0) { c.done.rounds = s.round + 1; world.cheerAt?.(c.slot); }
       if (s.pose) { c.done.pose = true; c.posed = !!world.cerPose?.(c.slot); }
-      if (s.shot) { c.done.shot = true; shoot(c); }
+      if (s.shot && shoot(c)) c.done.shot = true; // refused (a hidden page, a lost context): tried again next tick, offered after the slack
       if (s.offer) {
         c.done.offer = true;
         note(CER_TEXT.shotTake, 'ok', () => takeLater(c), { ms: Math.max(4000, c.start + CER.late - now) });
@@ -427,17 +427,20 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown }) {
   // The offered photo (a late arrival, or the moment passed unseen): the same pose, the shot 1.5 s later, the same card.
   function takeLater(c) {
     if (!world?.cerPose?.(c.slot)) { note('지금은 단체 사진을 찍을 수 없어요. 택시에서 내린 뒤에 다시 해 주세요', 'err'); return; }
-    setTimeout(() => shoot(c), CER.shot - CER.pose);
+    setTimeout(() => { if (!shoot(c)) note('지금은 단체 사진을 찍을 수 없어요. 잠시 뒤에 다시 해 주세요', 'err'); }, CER.shot - CER.pose);
   }
+  // The photo is the world's own 3:2 render of the ceremony (timesSquare3d.js capture({ photo })): it does not wait for the live camera
+  // or for a frame to be drawn. -> true when there is a photo; false when the world refused (nothing is claimed).
   function shoot(c) {
     let blob = null;
-    try { blob = world.capture?.({ me: true, band: cerBand(c.g, c.start) }) || null; } catch { blob = null; }
+    try { blob = world.capture?.({ photo: c.slot, band: cerBand(c.g, c.start) }) || null; } catch { blob = null; }
+    if (!blob) return false;
     try { world.cerEnd?.(); } catch { /* the camera comes back by itself */ }
     if (cer === c) hud();
-    if (!blob) { note('단체 사진을 찍지 못했어요', 'err'); return; }
     // A sheet or a layer is open: the photo waits behind a notice (the card is the one modal layer).
     if (busy()) note(CER_TEXT.shotReady, 'ok', () => photoCard(c.g, blob), { ms: 60000 });
     else photoCard(c.g, blob);
+    return true;
   }
   // The photo card: one modal layer (ui.layer: Escape, the back button and ✕ close it; the HUD under it is inert).
   let cardEl = null, cardUrl = '';
