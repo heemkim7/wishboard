@@ -6,8 +6,8 @@
 // v6: Seoul project (ap-northeast-2). Rooms = 행정동 code + scene; a shared lobby presence channel gives per-dong head counts.
 import { GT_LS, SESSION_LS, isInAppWebView, returnUrl } from './plaza-account.js';
 import { setStarterSlots } from './balance.js';
-import { snapQuery, kakaoOf } from './share.js?v=202611230850';
-import { confirmState, mailReturn, otpDigits, signUpOutcome, unconfirmed } from './mailcode.js?v=202611230850';
+import { snapQuery, kakaoOf } from './share.js?v=202611241127';
+import { confirmState, mailReturn, otpDigits, signUpOutcome, unconfirmed } from './mailcode.js?v=202611241127';
 export const SUPA_URL = 'https://yxddhpacuyaffaoutxjn.supabase.co';
 export const SUPA_KEY = 'sb_publishable_Vd-7c6e2f2s3G1d5Jbx9vw_0UCuHm-B'; // publishable key: public by design
 // v13: QA/test clients (?qa=1) live in a separate namespace and never appear in real players' rooms, lobby counts or chat history
@@ -47,8 +47,8 @@ export async function doToken(sb, fresh) { try { const c = (window.G?.net?.sb ||
 // { err:'human', site } makes this page run the check once (human.js, loaded only then) and ask again with the token (ts). Renewals and handovers
 // never need it. HUMAN.site is the key /rt/config gave (loadConfig); run / say are replaced in tests. HUMAN.until: after the day cap (429 day)
 // this page makes no new guest for 10 minutes, so a reconnect loop neither repeats the request nor the card.
-export const HUMAN = { site: '', until: 0, run: (site) => import('./human.js?v=202611230850').then((m) => m.humanToken(site)).catch(() => ''), say: (code) => import('./human.js?v=202611230850').then((m) => m.humanSay(code)).catch(() => { }),
-  token: (site, action) => import('./human.js?v=202611230850').then((m) => m.humanToken(site, { action })).catch(() => '') }; // token: the coin rewards' check (humanCall)
+export const HUMAN = { site: '', until: 0, run: (site) => import('./human.js?v=202611241127').then((m) => m.humanToken(site)).catch(() => ''), say: (code) => import('./human.js?v=202611241127').then((m) => m.humanSay(code)).catch(() => { }),
+  token: (site, action) => import('./human.js?v=202611241127').then((m) => m.humanToken(site, { action })).catch(() => '') }; // token: the coin rewards' check (humanCall)
 // The coin rewards a scripted account could farm (docs/bot-protection.md): the held link reward (action 'link'), the share bonus ('bonus'), a VIP
 // code ('code'). While /rt/config names a site key (HUMAN.site) the call gets a fresh token of its own action first and sends it as ts, as a new
 // guest does; a 403 human (a spent token, or the switch turned on after this page loaded: the answer names the key) gets one more token and one
