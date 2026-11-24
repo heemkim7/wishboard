@@ -501,6 +501,10 @@ describe('the lots\' pedestrian street', needsMap, () => {
   const onClosed = (segs, c) => segs.find((q) => { const ex = c.x - q.ax, ez = c.z - q.az, s = ex * q.fx + ez * q.fz; return s > q.s0 && s < q.s1 && Math.abs(ez * q.fx - ex * q.fz) < q.h; });
 
   it('on the map it is three segments of 7th Avenue and two of West 41st Street, entered from 7th x W 42nd and from Broadway x W 41st', () => {
+    // NO_ROAD holds every lot and the stage, so "no car in NO_ROAD" is also "no car through a lot or over the dance floor"
+    for (const s of PLOT_SLOTS) assert.ok(inRect(NO_ROAD, s.x, s.z, -3), 'lot ' + s.id);
+    const G0 = LAYOUT.stage;
+    assert.ok(inRect(NO_ROAD, G0.x0, G0.z0 - 2.4) && inRect(NO_ROAD, G0.x1, G0.z1));
     const segs = reaching();
     assert.deepEqual(segs.map((q) => q.p), [14279, 14344, 14356, 14386, 14395]);
     assert.deepEqual(segs.map((q) => q.name), ['West 41st Street', '7th Avenue', '7th Avenue', '7th Avenue', 'West 41st Street']);
