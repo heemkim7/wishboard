@@ -300,7 +300,7 @@ describe('history bookkeeping (createBackKeeper)', () => {
     assert.match(ui, /class: 'x', type: 'button', 'aria-label': '닫기', onclick: \(\) => backSheet\(\)/);
     assert.match(ui, /else if \(sheet\) backSheet\(\);/);
     assert.equal(/history\.(back|go|pushState)\(/.test(ui), false);
-    assert.match(ui, /function syncBack\(\) \{ backKeeper\.want\(sheets\.length \+ proofLevel\(\)\); \}/);
+    assert.match(ui, /function syncBack\(\) \{ backKeeper\.want\(sheets\.length \+ proofLevel\(\) \+ \(ext \? 1 : 0\)\); \}/); // ext: gift.js's frame (ui.layer), test/ux-review.test.mjs
     assert.match(ui, /addEventListener\('pointerup', \(\) => backKeeper\.touch\(\), true\);/);
     assert.match(ui, /const proofLevel = \(\) => \(!proof\.hidden \|\| \(proofWait && !proofWait\.skip\) \? 1 : 0\);/);
     assert.match(ui, /note\('한 번 더 누르면 나가요', '', null, \{ ms: 2000 \}\)/);

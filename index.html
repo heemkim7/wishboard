@@ -930,6 +930,13 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html.touch .reacts button.stay-balloon .bn { flex: none; min-width: 28px; height: 24px; padding: 0 8px; border-radius: 12px; background: var(--accent); color: var(--on-accent); font: 800 13px/24px var(--font); text-align: center; white-space: nowrap; }
   html.touch .reacts button.stay-balloon:disabled { color: var(--text-2); }
   html.touch .reacts button.stay-balloon:disabled .bn { background: var(--bg); color: var(--text-2); }
+  /* After a throw from the panel, the next throws are one tap: a 52px circle left of 동작, level with it (ui.js pouchGo:
+     for 10 s after the last throw while the pouch is up), with the throws left as a badge. The column keeps its three. */
+  html.touch #ui > .pouchgo { position: absolute; right: calc(72px + var(--safe-r)); bottom: calc(160px + var(--safe-b)); z-index: 6; width: 52px; height: 52px; padding: 0; border-radius: 50%; display: grid; place-items: center; pointer-events: auto; color: var(--accent); background: var(--surface-hud); border: 1px solid var(--line-strong); }
+  html.touch #ui > .pouchgo[hidden] { display: none; }
+  html.touch #ui > .pouchgo svg.ico { width: 24px; height: 24px; }
+  html.touch #ui > .pouchgo .bn { position: absolute; top: -6px; left: -8px; min-width: 24px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--accent); color: var(--on-accent); font: 800 12px/20px var(--font); text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  html.touch #ui:is(.newbie, .lounging, .viewonly, :has(.bake.show, .rhythm.show)) > .pouchgo { display: none; }
   html.touch .toasts { bottom: calc(190px + var(--safe-b)); left: calc(72px + var(--safe-l)); right: calc(72px + var(--safe-r)); transform: none; }
   /* A desktop window lifts the toasts over the board's card; on touch the card is in the toasts' own column. */
   html:not(.touch) body.has-sponsor .toasts { bottom: calc(360px + var(--safe-b)); }
@@ -958,6 +965,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
        are) steps aside. */
     html.touch .acts { bottom: calc(30px + var(--safe-b)); gap: 6px; }
     html.touch .dock { left: auto; right: calc(12px + var(--safe-r)); bottom: calc(146px + var(--safe-b)); width: auto; justify-content: flex-end; }
+    html.touch #ui > .pouchgo { bottom: calc(146px + var(--safe-b)); }
     html.touch .locpill { display: none; }
     html.touch .act, html.touch .act.big { width: 52px; height: 52px; }
     /* The 동작 panel: ten columns (eight under 600px wide), so the pouch, the four actions and the 24 emoji are about
@@ -996,6 +1004,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     /* The column upright: the action from 28px up, jump, then 동작 from 152px (52px buttons 10px apart). */
     html.touch .acts { flex-direction: column-reverse; bottom: calc(28px + var(--safe-b)); }
     html.touch .dock { right: calc(12px + var(--safe-r)); bottom: calc(152px + var(--safe-b)); left: auto; }
+    html.touch #ui > .pouchgo { bottom: calc(152px + var(--safe-b)); }
     html.touch .reacts { bottom: calc(28px + var(--safe-b)); }
   }
   /* Touch: the 동작 panel is the pouch row, a '동작' row (four named buttons) and a '리액션' grid; the dock's one circle
@@ -1389,6 +1398,8 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   /* Fields: 16px text so the page does not zoom in when one is tapped. */
   html.touch :is(.input, textarea, select) { font-size: 16px; }
   html.touch .bid .input { font-size: 20px; }
+  /* The billboard sheet's emoji field: its own 15px rule is more specific than the one above (iOS zoomed in on it). */
+  html.touch .sheet .more .emo-row .input { font-size: 16px; }
   html.touch .lines .input { height: 44px; }
   /* Buttons in a sheet: at least a thumb tall, the label centred and allowed to wrap instead of running out of the button
      (lists of choices, the shop rows and the big call to action keep their own layout). */
@@ -1415,7 +1426,11 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   @media (orientation: portrait) and (max-width: 599px), (orientation: landscape) and (max-height: 520px) {
     html.touch .toasts { top: var(--stack-top, 182px); bottom: auto; left: calc(10px + var(--safe-l)); right: calc(10px + var(--safe-r)); flex-direction: column; align-items: flex-start; }
     html.touch .toasts > * { align-self: flex-start; margin-left: 0; max-width: 100%; translate: none; }
-    html.touch .toasts > .toast:has(~ .toast) { display: none; }
+    /* One notice at a time: the newest. A tappable one (.hit: a retry, 다시 로그인, a share) is the exception: while one
+       lives it is the one shown, over any plain notice that came after it (those are simply not seen), and of several
+       tappable ones the newest shows. A plain notice used to hide it for the rest of its life. */
+    html.touch .toasts > .toast:not(.hit):has(~ .toast), html.touch .toasts > .toast.hit:has(~ .toast.hit) { display: none; }
+    html.touch .toasts:has(> .toast.hit) > .toast:not(.hit) { display: none; }
     html.touch .toast { text-align: left; }
     html.touch .toasts > :is(.sponsor, .a2hs) { width: min(420px, 100%); }
     html.touch body.has-proof .toasts { top: calc(var(--app-top, 0px) + 10px + var(--safe-t)); }

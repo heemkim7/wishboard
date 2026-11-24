@@ -449,6 +449,7 @@ export function createUI(root, hooks) {
     if (!toolsEl) return;
     toolsEl.classList.toggle('open', !!open);
     toolsEl.querySelector('.tool-fold')?.setAttribute('aria-expanded', String(!!open));
+    holdToasts();
   }
   toolsEl?.addEventListener('click', (e) => { if (e.target.closest?.('.tool-more')) foldTools(false); });
   document.addEventListener('pointerdown', (e) => { if (toolsEl?.classList.contains('open') && !e.target.closest?.('.tools')) foldTools(false); });
@@ -521,6 +522,7 @@ export function createUI(root, hooks) {
     reactPanel.hidden = !open;
     moreBtn.classList.toggle('on', open);
     moreBtn.setAttribute('aria-expanded', String(open));
+    holdToasts();
     if (open) sfx.click();
   }
   // Pressed feedback (overlay.js PRESS, index.html "Pressed"): the control under the pointer keeps .tapped for 160 ms, so
@@ -949,8 +951,32 @@ export function createUI(root, hooks) {
     // theirs to drop.
     const shown = () => [...toasts.children].filter((c) => c.classList.contains('toast'));
     for (let list = shown(); list.length > 3; list = shown()) (list.find((c) => c !== t && !c.classList.contains('hit')) || list[0]).remove();
-    setTimeout(() => { if (!t.isConnected) return; t.classList.add('out'); setTimeout(() => t.remove(), 320); }, Number(opts?.ms) > 0 ? Number(opts.ms) : toastMs(say, !!click));
+    const ms = Number(opts?.ms) > 0 ? Number(opts.ms) : toastMs(say, !!click);
+    if (click) { t.kLeft = ms; armToast(t); } // a tappable one waits out an open menu (holdToasts)
+    else setTimeout(() => toastOut(t), ms);
     return t;
+  }
+  function toastOut(t) { if (!t.isConnected) return; t.classList.add('out'); setTimeout(() => t.remove(), 320); }
+  // While the ⋯ menu or (touch) the 동작 panel is open the toasts are hidden (index.html "nothing floats over them"). A
+  // tappable toast's clock stops there, and it gets at least TOAST_BACK_MS once the menu closes: it used to run out
+  // behind the menu with its only retry or link. A plain one keeps its clock.
+  const TOAST_BACK_MS = 4000;
+  let toastsHeld = false;
+  function armToast(t) {
+    clearTimeout(t.kTimer);
+    t.kTimer = 0;
+    if (toastsHeld) return;
+    t.kAt = Date.now();
+    t.kTimer = setTimeout(() => toastOut(t), t.kLeft);
+  }
+  function holdToasts() {
+    const held = !!toolsEl?.classList.contains('open') || (document.documentElement.classList.contains('touch') && !reactPanel.hidden);
+    if (held === toastsHeld) return;
+    toastsHeld = held;
+    for (const t of toasts.querySelectorAll(':scope > .toast.hit:not(.out)')) {
+      if (held) { if (t.kTimer) t.kLeft = Math.max(0, t.kLeft - (Date.now() - t.kAt)); armToast(t); }
+      else { t.kLeft = Math.max(t.kLeft, TOAST_BACK_MS); armToast(t); }
+    }
   }
   const newsQueue = [];
   let newsBusy = false;
@@ -1492,7 +1518,7 @@ export function createUI(root, hooks) {
     sheets.forEach((s, i) => {
       const under = i < sheets.length - 1;
       s.el.classList.toggle('under', under);
-      s.el.inert = under;
+      s.el.inert = under || !!ext;
     });
   }
   // A sheet is modal (aria-modal): while one is open the HUD and the canvas behind it are inert, so Tab and a screen
@@ -1503,12 +1529,35 @@ export function createUI(root, hooks) {
   // middle of one must not cut that pointer off without a pointerup. Movement is locked by lockInput either way.
   const viewEl = document.getElementById('view');
   function backInert(on) {
-    root.inert = !!on;
+    on = !!on || !!ext; // a dialog from outside (layer) keeps the HUD inert after the last sheet under it closes
+    root.inert = on;
     if (!viewEl) return;
     viewEl.tabIndex = on ? -1 : 0;
     if (on) viewEl.setAttribute('aria-hidden', 'true');
     else viewEl.removeAttribute('aria-hidden');
   }
+  // A dialog from outside ui.js over the whole plaza (gift.js's frame: ui.layer(el, close), ui.layer(null) when it has
+  // closed). While it is up the HUD, the sheets and the notices under it are inert and focus that walks out of it comes
+  // back; Escape (the keydown listener at the end) and the back button close it first and alone, and the plaza's keys do
+  // nothing. It is one level of the history, like a sheet. Its own Tab order is its owner's.
+  let ext = null;
+  function layer(el, close) {
+    ext = el && typeof close === 'function' ? { el, close } : null;
+    toasts.inert = !!ext;
+    showTop();
+    backInert(sheets.length > 0);
+    syncBack();
+  }
+  function closeLayer() {
+    const x = ext;
+    if (!x) return false;
+    try { x.close(); } finally { if (ext === x) layer(null); }
+    return true;
+  }
+  document.addEventListener('focusin', (e) => {
+    if (!ext || ext.el.contains(e.target)) return;
+    try { (ext.el.querySelector('button') || ext.el).focus({ preventScroll: true }); } catch { /* focus stays where it went */ }
+  });
   const TABBABLE = 'button, a[href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])';
   function trapTab(e, box) {
     if (e.key !== 'Tab') return;
@@ -1605,7 +1654,7 @@ export function createUI(root, hooks) {
   addEventListener('pointerup', () => backKeeper.touch(), true);
   addEventListener('keydown', (e) => { if (e.key !== 'Escape') backKeeper.touch(); }, true);
   const proofLevel = () => (!proof.hidden || (proofWait && !proofWait.skip) ? 1 : 0);
-  function syncBack() { backKeeper.want(sheets.length + proofLevel()); }
+  function syncBack() { backKeeper.want(sheets.length + proofLevel() + (ext ? 1 : 0)); }
   // Back during the celebration: the bar will not come up, only its notice.
   function skipProofWait() {
     if (!proofWait || proofWait.skip) return false;
@@ -1615,7 +1664,7 @@ export function createUI(root, hooks) {
   addEventListener('popstate', () => {
     const act = backKeeper.pop();
     if (act.back) {
-      for (let i = 0; i < act.back; i++) { if (!(sheet ? backSheet() : (leaveProof() || skipProofWait()))) break; }
+      for (let i = 0; i < act.back; i++) { if (!(closeLayer() || (sheet ? backSheet() : (leaveProof() || skipProofWait())))) break; }
       syncBack();
     } else if (act.exit) note('한 번 더 누르면 나가요', '', null, { ms: 2000 });
   });
@@ -5878,6 +5927,11 @@ export function createUI(root, hooks) {
   window.addEventListener('keydown', (e) => {
     const tag = e.target?.tagName;
     const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+    // A dialog from outside (layer) is on top of everything: Escape closes it and nothing under it, other keys do nothing here.
+    if (ext) {
+      if (e.key === 'Escape' && !e.isComposing) { e.preventDefault(); e.stopPropagation(); closeLayer(); }
+      return;
+    }
     if (dance) {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); endDance(true); return; }
       if (e.code in DANCE_KEYS) { e.preventDefault(); if (!e.repeat) danceHit(DANCE_KEYS[e.code]); }
@@ -5951,7 +6005,26 @@ export function createUI(root, hooks) {
     if (!coarse) return;
     toggleReacts(false);
     if (!balloonTold && balloonHp > 0) { balloonTold = true; note('복주머니를 맞혀 보세요'); }
+    pouchThrown();
   });
+  // Touch, after a throw from the panel: one round button left of 동작 (index.html .pouchgo), so each further throw is one
+  // tap with the balloon in view; the 100 throws used to be 200 taps with the panel opening each time. It shows the
+  // throws left and goes POUCH_GO_MS after the last throw, when the pouch is down, or while driving.
+  const POUCH_GO_MS = 10000;
+  let pouchAt = 0;
+  const pouchGo = coarse ? h('button', { class: 'pouchgo', type: 'button', hidden: true, title: '복주머니 던지기. 맞출 때마다 줄어요', onclick: () => { hooks.throwPouch?.(); pouchThrown(); } }) : null;
+  if (pouchGo) { root.append(pouchGo); holdTip(pouchGo, () => pouchGo.title); }
+  function pouchThrown() { pouchAt = Date.now(); paintPouchGo(); }
+  function paintPouchGo() {
+    if (!pouchGo) return;
+    const on = balloonHp > 0 && !driving && Date.now() - pouchAt < POUCH_GO_MS;
+    pouchGo.hidden = !on;
+    if (!on) return;
+    const left = Math.ceil(balloonHp / 10), text = left > 999 ? '999+' : String(left);
+    if (pouchGo.dataset.n !== text) { pouchGo.dataset.n = text; pouchGo.replaceChildren(icon('packet'), h('span', { class: 'bn', text })); }
+    const name = `복주머니 던지기 · ${left}번 남음`;
+    if (pouchGo.getAttribute('aria-label') !== name) pouchGo.setAttribute('aria-label', name);
+  }
   let loungeN = 0;
   let loungeWatch = false;
   const portraitMq = matchMedia('(orientation: portrait)');
@@ -6020,6 +6093,7 @@ export function createUI(root, hooks) {
       balloonText(`${left}초`);
       balloonName(`복주머니 · ${left}초 뒤에 다시 와요`);
     }
+    paintPouchGo();
   }
   setInterval(paintBalloon, 1000);
   paintQuests();
@@ -6037,6 +6111,7 @@ export function createUI(root, hooks) {
 
   return {
     sfx, note, pop, flyCoins, cooldownLeft, armCooldown, showResult,
+    layer,
     startBake, stopBake, startDance, endDance, openBillboard, openAd, openPlot, openHub, openCredits, openMap, openSettings, openWalletInfo, openVip, toggleReacts, showProof,
     mission(kind) { if (kind === 'wish' || kind === 'heart') missionBump(kind); }, // a cheer counts through quest (questBump)
     quest: questBump,
@@ -6069,6 +6144,7 @@ export function createUI(root, hooks) {
       driving = !!on;
       taxiHud.hidden = !driving;
       dock.hidden = driving;
+      paintPouchGo();
       if (driving) { toggleReacts(false); coachDone(); }
       // One short notice (the HUD's own line already says what to do next), and the key line for the first 8 s.
       if (driving) { closeSheet(); note('손님 기둥 앞에서 속도를 줄이세요', 'ok'); }
