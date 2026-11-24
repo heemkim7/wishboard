@@ -6143,6 +6143,9 @@ export function createUI(root, hooks) {
       paintBalloon();
     },
     isBusy: () => !!sheet || !!baking || !!dance,
+    // 점등식 (gift.js): a sheet or a layer (the gift frame, the photo card) is open: the countdown leaves the HUD up, the photo waits
+    // in a notice.
+    busy: () => sheets.length > 0 || !!ext,
     setDriving(on) {
       driving = !!on;
       taxiHud.hidden = !driving;

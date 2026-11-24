@@ -5,7 +5,8 @@
 // cheering crew (timesSquare3d.js giftShow), drawn into a 9:16 frame with the words and the free watermark, recorded with
 // MediaRecorder (MP4 where it can, WebM otherwise) and uploaded to the board when the Worker has the R2 store (else kept on the device).
 // main.js calls mountGift once and gift.apply(remote.gifts) with every world; ui.js is not touched (the button is put next to 🌠); the frame asks it for ui.layer.
-import { GIFT_ID, OCCASIONS, windowText, plazaLook, plazaNote } from './giftrules.js';
+import { GIFT_ID, OCCASIONS, windowText, plazaLook, plazaNote, CER, CER_TEXT, cerStart, cerArrive, cerBack, cerDebugStart, cerSteps, cerDigit, cerPinMs, cerArriveNote, cerBand, cerPhotoText, beaconOnce, kstDay } from './giftrules.js';
+import { nowMs, clockSkew } from './live.js';
 import { GIFT_SANS, fitSize } from './giftart.js?v=202611241625';
 import { recordCanvas, canRecord, saveBlob, fileName } from './giftfilm.js?v=202611241625';
 import { doToken } from './net.js?v=202611241625';
@@ -36,12 +37,68 @@ body.gift-rec #view{left:50%;right:auto;width:min(100vw,calc(100vh * 9 / 16));tr
 #kts-gift-done .b:active{background-color:rgba(255,255,255,.24);border-color:rgba(255,255,255,.55);transform:scale(.97);transition:none}
 #kts-gift-done .b.gold:active{box-shadow:inset 0 0 0 99px rgba(70,36,0,.34)}
 #kts-gift-done .b.gold{border:0;color:#2a1800;background:linear-gradient(135deg,#ffe9a8,#ffcf5a 45%,#e6a52a)}
+body.gift-cer:not(.has-sheet) #ui{visibility:hidden}
+#kts-cer-n{position:fixed;inset:0;z-index:2147481900;display:grid;place-items:center;pointer-events:none;font:900 min(42vw,42vh)/1 ${GIFT_SANS};color:#fff;-webkit-text-stroke:max(3px,.7vmin) rgba(8,6,28,.88);paint-order:stroke fill;text-shadow:0 0 28px rgba(0,0,0,.6);font-variant-numeric:tabular-nums;user-select:none}
+#kts-cer-n.a{animation:kcer1 .85s ease-out}
+#kts-cer-n.b{animation:kcer2 .85s ease-out}
+@keyframes kcer1{from{transform:scale(1.3);opacity:.25}to{transform:none;opacity:1}}
+@keyframes kcer2{from{transform:scale(1.3);opacity:.25}to{transform:none;opacity:1}}
+@media (prefers-reduced-motion: reduce){#kts-cer-n.a,#kts-cer-n.b{animation:none}}
+#kts-cer-card{position:fixed;inset:0;z-index:2147482100;background:rgba(4,4,14,.86);display:grid;place-items:center;padding:16px;font:15px/1.5 ${GIFT_SANS};color:#f3f1ff;outline:none}
+#kts-cer-card .box{position:relative;width:min(440px,100%);max-height:100%;overflow:auto;background:#100d2a;border:1px solid rgba(255,255,255,.14);border-radius:20px;padding:16px}
+#kts-cer-card h2{margin:0 52px 10px 0;font-size:18px;line-height:1.35}
+#kts-cer-card img{display:block;width:100%;max-height:52vh;object-fit:contain;border-radius:14px;background:#000}
+#kts-cer-card p{margin:8px 0 0;color:#a8a6c9;font-size:13px;min-height:1.5em}
+#kts-cer-card .b{display:flex;width:100%;min-height:48px;margin-top:8px;align-items:center;justify-content:center;border-radius:14px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.06);color:#fff;font:inherit;font-weight:900;text-decoration:none;cursor:pointer;box-shadow:inset 0 0 0 99px rgba(70,36,0,0);transition:background-color .25s,border-color .25s,box-shadow .25s,transform .25s}
+#kts-cer-card .b:active{background-color:rgba(255,255,255,.24);border-color:rgba(255,255,255,.55);transform:scale(.97);transition:none}
+#kts-cer-card .b.gold{border:0;color:#2a1800;background:linear-gradient(135deg,#ffe9a8,#ffcf5a 45%,#e6a52a)}
+#kts-cer-card .b.gold:active{box-shadow:inset 0 0 0 99px rgba(70,36,0,.34)}
+#kts-cer-card .x{position:absolute;right:12px;top:12px;width:44px;height:44px;border-radius:12px;display:grid;place-items:center;padding:0;color:var(--text-2,#b9bfdc);background:var(--surface-2,#1c2440);border:1px solid var(--line,#262d47);cursor:pointer;transition:background-color .25s,transform .25s}
+#kts-cer-card .x:active{background:#4a5380;transform:scale(.92);transition:none}
+#kts-cer-card .x svg{display:block;width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
 .tool-gift{font-size:20px;line-height:1}`;
+// ---- 점등식: the gate (spec ③, giftrules.js 점등식) -----------------------------------------------------------------------
+// /?gb=<id>&cer=1 (the recipient page's 🎆 button) asks for the board before the room is joined: once, from the moment this module
+// loads (main.js enter() waits for it before net.join; the boot card is not changed). The read is the existing GET /rt/gift/<id>;
+// its Date header gives the server's clock for this decision only (live.js clockSkew). Too early -> back to the page with
+// ?cer=early; budget hard inside the window (the read's optional `hard`, absent on an older Worker) -> ?cer=busy; both replace this
+// address and never resolve. A ceremony now -> { go, g, start }. Anything else (no fixed start, past the late window, gone, a failed
+// read, no answer in CER_WAIT ms) -> { go: false }: the ordinary ?gb= visit. start: the board's own (cerStart), or on a local
+// development host the ?cerin=<seconds> seam (cerDebugStart).
+const CER_WAIT = 4000;
+const CER_Q = (() => { try { return new URLSearchParams(location.search); } catch { return new URLSearchParams(''); } })();
+const CER_ID = GIFT_ID.test(CER_Q.get('gb') || '') && CER_Q.get('cer') === '1' ? CER_Q.get('gb') : '';
+const CER_SEARCH = CER_ID ? String(location.search || '') : '';
+function gateFor(id, search = '') {
+  return new Promise((resolve) => {
+    let settled = false;
+    const end = (v) => { if (!settled) { settled = true; resolve(v); } };
+    setTimeout(() => end({ go: false }), CER_WAIT);
+    const sent = Date.now();
+    fetch('/rt/gift/' + id, { cache: 'no-store' }).then(async (r) => {
+      const skew = clockSkew(r.headers?.get?.('date'), sent, Date.now());
+      const d = await r.json().catch(() => null);
+      if (settled) return; // too late: the ordinary visit already went ahead
+      const g = d?.ok && d.gift ? d.gift : null, t = Date.now() + skew;
+      const start = (g && cerDebugStart(search, location.hostname, t)) || cerStart(g);
+      const why = cerArrive(g, t, { hard: !!d?.hard, start });
+      if (why === 'early' || why === 'busy') { settled = true; location.replace(cerBack(id, why)); return; }
+      end(why === 'go' ? { go: true, g, start } : { go: false });
+    }).catch(() => end({ go: false }));
+  });
+}
+let cerGateP = null;
+/** The ceremony link's gate (resolved once; later calls get the same promise). Without ?gb=<id>&cer=1: { go: false } at once. */
+export function cerGate() {
+  if (!CER_ID) return Promise.resolve({ go: false });
+  return (cerGateP ||= gateFor(CER_ID, CER_SEARCH));
+}
+if (CER_ID) cerGate();
 
-export function mountGift({ world, ui, whenBuilt, introDone }) {
+export function mountGift({ world, ui, whenBuilt, introDone, budgetDown }) {
   const st = { list: [], busy: false };
   const style = document.createElement('style'); style.textContent = CSS; document.head.append(style);
-  const note = (t, k, fn) => { try { ui?.note?.(t, k, fn); } catch { /* no toast */ } };
+  const note = (t, k, fn, o) => { try { ui?.note?.(t, k, fn, o); } catch { /* no toast */ } };
   // The 🎁 button: right after 🌠, when the HUD is there (it is built before the world).
   const btn = document.createElement('button');
   btn.className = 'btn icon tool-gift'; btn.type = 'button'; btn.title = '선물 전광판'; btn.setAttribute('aria-label', '선물 전광판 걸기'); import('./uiicons.js?v=202611241625').then((m) => btn.replaceChildren(m.icon('gift'))).catch(() => { btn.textContent = '🎁'; }); // the line icon, like its neighbours (the emoji only if the icon set cannot be loaded)
@@ -96,8 +153,9 @@ export function mountGift({ world, ui, whenBuilt, introDone }) {
   // runs before mountGift) and closes the frame alone while ui.layer has it; this one is for a plaza without that hook. Keys pressed
   // inside the page come as its own 'close' message.
   window.addEventListener('keydown', (e) => {
-    if (!frame || e.key !== 'Escape' || e.isComposing) return;
-    e.preventDefault(); e.stopPropagation(); closeMaker();
+    if (e.key !== 'Escape' || e.isComposing) return;
+    if (frame) { e.preventDefault(); e.stopPropagation(); closeMaker(); }
+    else if (cardEl && typeof ui?.layer !== 'function') { e.preventDefault(); e.stopPropagation(); closeCard(); } // the photo card (ui.layer closes it first where it exists)
   }, true);
   window.addEventListener('message', (e) => {
     if (e.origin !== location.origin || e.data?.t !== 'gift') return;
@@ -105,6 +163,7 @@ export function mountGift({ world, ui, whenBuilt, introDone }) {
     if (e.data.act === 'close') closeMaker();
     else if (e.data.act === 'rec' && GIFT_ID.test(id)) { closeMaker(); record(id); }
     else if (e.data.act === 'go' && GIFT_ID.test(id)) { closeMaker(); land(id); }
+    else if (e.data.act === 'cer' && GIFT_ID.test(id)) { closeMaker(); arriveCer(id, ''); } // the page's 🎆 button over the plaza: no second plaza
   });
   // A tap on a reply notice ("…님이 답장 전광판을 걸었어요": worker.js pushUrl gives /g/<the answered board>) while the plaza is open: the
   // service worker hands this tab the address instead of opening a window (sw.js), so that board's page opens here, over the plaza.
@@ -246,17 +305,196 @@ export function mountGift({ world, ui, whenBuilt, introDone }) {
     return d || { ok: false };
   }
 
-  // ?gb=<id> (and &rec=1): after entering. True when it took the arrival (main.js then skips its intro and tutorial).
+  // ---- 점등식: the ceremony on this device ---------------------------------------------------------------------------------
+  // No server signal: a 250 ms tick (and at once when the tab is seen again or the page comes back from the back/forward cache) asks
+  // giftrules.js cerSteps what is due now and does each step once; a tab that was away resumes at the phase it is in (missed steps are
+  // not replayed). Nothing new goes to the room: the cheer is the existing emote (playEmote(3): its own E packet and cooldown) and the
+  // avatar's spread spot and turn are local moves sent in the ordinary position packets. Nothing is uploaded: the photo stays on this
+  // device until its owner saves or shares it. No reward. The HUD (#ui) hides from the countdown until the photo (or +12 s), only
+  // while no sheet and no layer is open and the player is not driving; every exit puts it back (hud() runs after every tick, stopCer
+  // on every way out).
+  let cer = null; // { g, id, start, slot, done, spot, posed, shot, timer }
+  const busy = () => { try { return !!ui?.busy?.(); } catch { return false; } };
+  const seat = () => {
+    let v = NaN; try { v = Number(sessionStorage.getItem('kts_cerseat')); } catch { /* private mode */ }
+    if (!(v >= 0 && v < 1)) { v = Math.random(); try { sessionStorage.setItem('kts_cerseat', String(v)); } catch { /* kept for this page only */ } }
+    return v;
+  };
+  // The recipient page's beacon rule (giftpage.js beacon, giftrules.js beaconOnce): one per board, event and KST day on this device.
+  const visitor = () => { let v = ''; try { v = localStorage.getItem('kts_gv') || ''; } catch { v = ''; } if (!/^[0-9a-f]{16}$/.test(v)) { const b = new Uint8Array(8); crypto.getRandomValues(b); v = [...b].map((x) => x.toString(16).padStart(2, '0')).join(''); try { localStorage.setItem('kts_gv', v); } catch { /* this page only */ } } return v; };
+  function beacon(id, e) {
+    let seen = {}; try { seen = JSON.parse(localStorage.getItem('kts_gseen') || '{}') || {}; } catch { seen = {}; }
+    const r = beaconOnce(seen, id, e, kstDay(nowMs()));
+    try { localStorage.setItem('kts_gseen', JSON.stringify(r.seen)); } catch { /* private mode: sent again next time */ }
+    if (!r.send) return;
+    const body = JSON.stringify({ v: visitor(), e });
+    try { if (navigator.sendBeacon?.('/rt/gift/' + id + '/seen', new Blob([body], { type: 'text/plain' }))) return; } catch { /* fetch below */ }
+    fetch('/rt/gift/' + id + '/seen', { method: 'POST', body, keepalive: true }).catch(() => { });
+  }
+  // The big number: white with a dark edge, no pointer; it only changes (no scale or fade) under prefers-reduced-motion (the CSS).
+  let digitEl = null;
+  function digit(n) {
+    if (!n) { digitEl?.remove(); digitEl = null; return; }
+    if (!digitEl) { digitEl = document.createElement('div'); digitEl.id = 'kts-cer-n'; digitEl.setAttribute('aria-hidden', 'true'); document.body.append(digitEl); }
+    const t = String(n);
+    if (digitEl.textContent !== t) { digitEl.textContent = t; digitEl.className = n % 2 ? 'a' : 'b'; }
+  }
+  // HUD hidden: from the countdown until the photo is taken or its moment passed, while no sheet or layer is open (the CSS also leaves
+  // it when body.has-sheet comes first) and the player is not driving.
+  function hud() {
+    const c = cer, now = nowMs();
+    const on = !!c && !!c.done.before && !c.done.shot && now >= c.start - CER.count && now < c.start + CER.shot + CER.shotSlack && !busy() && !world?.isDriving?.();
+    document.body.classList.toggle('gift-cer', on);
+  }
+  function stopCer() {
+    const c = cer;
+    cer = null;
+    if (c) { clearInterval(c.timer); if (c.posed && !c.done.shot) { try { world?.cerEnd?.(); } catch { /* the camera comes back by itself (CER_HOLD) */ } } }
+    digit(0);
+    document.body.classList.remove('gift-cer');
+  }
+  const onSeen = () => { if (cer && !document.hidden) tick(); };
+  document.addEventListener('visibilitychange', onSeen);
+  window.addEventListener('pageshow', onSeen);
+  function ceremony(g, start) {
+    stopCer();
+    whenBuilt(() => {
+      const now = nowMs();
+      const slot = world?.pinGift?.(g, cerPinMs(start, now), { cer: start });
+      if (!slot) { note('지금은 이 전광판을 보여 줄 화면이 비어 있지 않아요', 'err'); return; }
+      const c = { g, id: g.id, start, slot, done: {}, spot: null, posed: false, timer: 0 };
+      cer = c;
+      try {
+        c.spot = world.goToSlot?.(slot, { spread: seat() }) || null;
+        if (!world.isDriving?.()) world.focusSlot?.(slot, { hold: 3500, celebrate: false });
+      } catch { /* the board is up; the camera stays where it is */ }
+      note(cerArriveNote(g, now, start), 'ok');
+      beacon(g.id, 'cer');
+      setTimeout(() => { if (cer === c) { try { world?.cerPrep?.(slot); } catch { /* worked out at the pose instead */ } } }, 1200); // the photo pose, ahead of time
+      c.timer = setInterval(tick, 250);
+      tick();
+    }, () => note('광장을 불러오지 못했어요. 다시 해 주세요', 'err'));
+  }
+  function tick() {
+    const c = cer;
+    if (!c) return;
+    try {
+      const now = nowMs();
+      // The board left its screen (a lit claim, the pin replaced): nothing more to show.
+      if (world?.giftSlot && world.giftSlot(c.id) !== c.slot) { stopCer(); return; }
+      const s = cerSteps(c.start, now, c.done);
+      const before = s.phase === 'wait' || s.phase === 'count';
+      if (before) c.done.before = true;
+      // Budget hard learned after arriving (the room said down, /rt/gate said full) before the start: back to the page. After it, stay.
+      if (before && budgetDown?.()) { stopCer(); location.replace(cerBack(c.id, 'busy')); return; }
+      if (s.teaser) c.done.teaser = true; // pinned with its teaser at arrival
+      if (before && !c.done.gather && c.start - now <= 30000) {
+        c.done.gather = true;
+        const p = world?.getPlayer?.(), at = c.spot;
+        if (p && at && Math.hypot(p.x - at.x, p.z - at.z) > 25) note(CER_TEXT.gather, 'ok', () => { c.spot = world.goToSlot?.(c.slot, { spread: seat() }) || c.spot; });
+      }
+      if (s.count) {
+        c.done.count = true;
+        if (!world.isDriving?.() && !world.walking?.()) world.focusSlot?.(c.slot, { hold: Math.max(1000, c.start + CER.pose - now), celebrate: false });
+      }
+      digit(s.phase === 'count' ? cerDigit(c.start, now) : 0);
+      if (s.light) c.done.light = true; // the same screen shows the card from the start (ts3d/screens.js)
+      if (s.cheer && world.playEmote?.(3)) c.done.cheer = true; // refused by the cooldown: the next tick tries again (until +5 s)
+      if (s.round >= 0) { c.done.rounds = s.round + 1; world.cheerAt?.(c.slot); }
+      if (s.pose) { c.done.pose = true; c.posed = !!world.cerPose?.(c.slot); }
+      if (s.shot) { c.done.shot = true; shoot(c); }
+      if (s.offer) {
+        c.done.offer = true;
+        note(CER_TEXT.shotTake, 'ok', () => takeLater(c), { ms: Math.max(4000, c.start + CER.late - now) });
+      }
+      if (s.end) { c.done.end = true; stopCer(); return; }
+    } catch {
+      stopCer(); // a step that throws ends the ceremony here; the HUD is back
+      return;
+    } finally {
+      if (cer === c) hud();
+    }
+  }
+  // The offered photo (a late arrival, or the moment passed unseen): the same pose, the shot 1.5 s later, the same card.
+  function takeLater(c) {
+    if (!world?.cerPose?.(c.slot)) { note('지금은 단체 사진을 찍을 수 없어요. 택시에서 내린 뒤에 다시 해 주세요', 'err'); return; }
+    setTimeout(() => shoot(c), CER.shot - CER.pose);
+  }
+  function shoot(c) {
+    let blob = null;
+    try { blob = world.capture?.({ me: true, band: cerBand(c.g, c.start) }) || null; } catch { blob = null; }
+    try { world.cerEnd?.(); } catch { /* the camera comes back by itself */ }
+    if (cer === c) hud();
+    if (!blob) { note('단체 사진을 찍지 못했어요', 'err'); return; }
+    // A sheet or a layer is open: the photo waits behind a notice (the card is the one modal layer).
+    if (busy()) note(CER_TEXT.shotReady, 'ok', () => photoCard(c.g, blob), { ms: 60000 });
+    else photoCard(c.g, blob);
+  }
+  // The photo card: one modal layer (ui.layer: Escape, the back button and ✕ close it; the HUD under it is inert).
+  let cardEl = null, cardUrl = '';
+  function closeCard() {
+    if (!cardEl) return;
+    cardEl.remove(); cardEl = null;
+    if (cardUrl) { try { URL.revokeObjectURL(cardUrl); } catch { /* gone */ } cardUrl = ''; }
+    if (typeof ui?.layer === 'function') ui.layer(null);
+  }
+  function photoCard(g, blob) {
+    if (frame) return note(CER_TEXT.shotReady, 'ok', () => photoCard(g, blob), { ms: 60000 }); // the gift frame is the layer now
+    closeCard();
+    const id = g.id, name = 'wishboard-' + id + '.jpg';
+    const wrap = document.createElement('div'); wrap.id = 'kts-cer-card';
+    wrap.setAttribute('role', 'dialog'); wrap.setAttribute('aria-modal', 'true'); wrap.setAttribute('aria-label', '단체 사진'); wrap.setAttribute('tabindex', '-1');
+    const box = document.createElement('div'); box.className = 'box';
+    const h2 = document.createElement('h2'); h2.textContent = CER_TEXT.shotHead;
+    const img = document.createElement('img'); cardUrl = URL.createObjectURL(blob); img.src = cardUrl; img.alt = 'To. ' + (g.to || '') + ' 단체 사진';
+    const line = document.createElement('p'); line.setAttribute('role', 'status');
+    const save = document.createElement('button'); save.type = 'button'; save.className = 'b gold'; save.textContent = CER_TEXT.save;
+    save.addEventListener('click', async () => {
+      const how = await saveBlob(blob, name);
+      if (how === 'cancel') return;
+      beacon(id, 'cershot'); line.textContent = '사진을 저장했어요.';
+    });
+    const share = document.createElement('button'); share.type = 'button'; share.className = 'b'; share.textContent = CER_TEXT.share;
+    share.addEventListener('click', async () => {
+      const url = location.origin + '/g/' + id, text = cerPhotoText(g);
+      try {
+        let file = null; try { file = new File([blob], name, { type: 'image/jpeg' }); } catch { file = null; }
+        if (file && navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file], text, url });
+        else if (navigator.share) await navigator.share({ title: text, text, url });
+        else { await navigator.clipboard.writeText(text + ' ' + url); line.textContent = '링크를 복사했어요. 카카오톡에 붙여 넣어 보내세요.'; }
+        beacon(id, 'cershot');
+      } catch (e) { if (e?.name !== 'AbortError') line.textContent = '공유하지 못했어요. 사진 저장을 눌러 주세요.'; }
+    });
+    const page = document.createElement('a'); page.className = 'b'; page.href = '/g/' + id; page.textContent = CER_TEXT.page;
+    const x = document.createElement('button'); x.type = 'button'; x.className = 'x'; x.setAttribute('aria-label', '닫기'); x.addEventListener('click', closeCard);
+    const SVG = 'http://www.w3.org/2000/svg', ico = document.createElementNS(SVG, 'svg'), strokes = document.createElementNS(SVG, 'path');
+    ico.setAttribute('viewBox', '0 0 24 24'); ico.setAttribute('aria-hidden', 'true'); ico.setAttribute('focusable', 'false'); strokes.setAttribute('d', 'M6 6L18 18M18 6L6 18');
+    ico.append(strokes); x.append(ico);
+    box.append(x, h2, img, line, save, share, page); wrap.append(box); document.body.append(wrap);
+    cardEl = wrap;
+    if (typeof ui?.layer === 'function') ui.layer(wrap, closeCard);
+    try { wrap.focus({ preventScroll: true }); } catch { /* focus stays */ }
+    if (cer?.id === id) hud();
+  }
+  // The embedded recipient page's ceremony button ({ act: 'cer' }), or a ceremony link: the same gate, then the ceremony or the visit.
+  function arriveCer(id, search) {
+    const p = search == null ? cerGate() : gateFor(id, search);
+    p.then((r) => { if (r?.go) ceremony(r.g, r.start); else land(id); }).catch(() => land(id));
+  }
+
+  // ?gb=<id> (and &rec=1, or &cer=1: the ceremony): after entering. True when it took the arrival (main.js then skips its intro and tutorial).
   const q = new URLSearchParams(location.search), GB = GIFT_ID.test(q.get('gb') || '') ? q.get('gb') : '', REC = q.get('rec') === '1';
   function arrive() {
     if (!GB) return false;
-    try { const u = new URL(location.href); u.searchParams.delete('gb'); u.searchParams.delete('rec'); history.replaceState(null, '', u.pathname + u.search + u.hash); } catch { /* keep the address */ }
-    if (REC) record(GB); else land(GB);
+    try { const u = new URL(location.href); for (const k of ['gb', 'rec', 'cer', 'cerin']) u.searchParams.delete(k); history.replaceState(null, '', u.pathname + u.search + u.hash); } catch { /* keep the address */ }
+    if (CER_ID === GB) arriveCer(GB); else if (REC) record(GB); else land(GB);
     setTimeout(() => introDone?.(), 700);
     return true;
   }
   return {
     arrive, open: openMaker,
+    // main.js enter(): the room is joined only after the ceremony link's gate (at once without one).
+    cerHold: () => (CER_ID ? cerGate() : Promise.resolve({ go: false })),
     apply(list) { st.list = Array.isArray(list) ? list : []; world?.setGifts?.(st.list); },
   };
 }
