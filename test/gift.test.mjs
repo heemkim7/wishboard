@@ -729,6 +729,23 @@ describe('점등식 on the recipient page', () => {
     assert.equal(await shareText(view({ a: KST('2026-11-25T12:20:00'), b: KST('2026-11-25T18:20:00') }), KST('2026-11-25T12:21:00'), KST('2026-11-25T12:20:30')), BASE);
     assert.match(src('admin-gift.js'), /\['ev:go', '직접 가서 봄'\], \['ev:cer', '점등식 온 기기'\], \['ev:cershot', '단체 사진 저장·공유'\], /);
   });
+  it('the localhost seam: ?cerin=<s> on a local host runs the button against a start that far from load and carries the seconds on; elsewhere nothing', async () => {
+    const at = KST('2026-11-20T12:00:00'), on = async (host, search) => { const P = pageOf(g, at, { search }); P.loc.hostname = host; await P.load('giftpage.js'); return P; };
+    let P = await on('localhost', '?cerin=75');
+    try {
+      assert.deepEqual([cerCtl(P).tag, cerCtl(P).textContent, cerCtl(P).href], ['a', '🎆 점등식 들어가기 · 01:15 남음', '/?gb=' + ID + '&cer=1&cerin=75']);
+      P.skew += 1000; P.tick();
+      assert.deepEqual([cerCtl(P).textContent, cerCtl(P).href], ['🎆 점등식 들어가기 · 01:14 남음', '/?gb=' + ID + '&cer=1&cerin=74']);
+    } finally { P.done(); }
+    P = await on('127.0.0.1', '?cerin=-30');
+    try { assert.deepEqual([cerCtl(P).textContent, cerCtl(P).href], ['🎆 방금 켜졌어요 · 점등식 보러 가기', '/?gb=' + ID + '&cer=1&cerin=-30']); } finally { P.done(); }
+    P = await on('plaza.localhost', '?cerin=700');
+    try { assert.deepEqual([cerCtl(P).tag, cerCtl(P).textContent], ['button', '🎆 점등식 같이 보기 · 11월 20일 12:11']); } finally { P.done(); }
+    P = await on('studio.wishboard.workers.dev', '?cerin=75');
+    try { assert.deepEqual([cerCtl(P).tag, cerCtl(P).textContent], ['button', '🎆 점등식 같이 보기 · 11월 25일 18:00'], 'the real phase'); assert.equal(cerCtl(P).href || '', ''); } finally { P.done(); }
+    P = pageOf(g, KST('2026-11-25T17:55:00'), { search: '?cerin=75' }); P.loc.hostname = 'studio.wishboard.workers.dev';
+    try { await P.load('giftpage.js'); assert.equal(cerCtl(P).href, '/?gb=' + ID + '&cer=1', 'no cerin on the live site'); } finally { P.done(); }
+  });
 });
 
 // ---- gift.html's sheet, read as rules -------------------------------------------------------------------------------------------
