@@ -12,6 +12,8 @@ export const RETURN_MS = 450;
 export const easeOutCubic = (u) => 1 - (1 - clamp(num(u), 0, 1)) ** 3;
 export const easeInOutCubic = (u) => { const x = clamp(num(u), 0, 1); return x < 0.5 ? 4 * x * x * x : 1 - ((-2 * x + 2) ** 3) / 2; };
 export function tweenU(now, t0, dur) { return dur > 0 ? clamp((now - t0) / dur, 0, 1) : 1; }
+/** How long a scripted camera's glide takes: `ms`, or a cut (1 ms) for a player who asked the system for less motion. */
+export function glideMs(ms, calm = false) { return calm ? 1 : ms; }
 /** Point of the return tween at progress u (0 = where the scripted camera was, 1 = exactly the orbit pose). */
 export function returnPoint(from, to, u, out = {}) {
   const e = easeOutCubic(u);
@@ -98,6 +100,13 @@ export function stickFrame(st, angle) {
   st.ref = angle;
   st.lag *= Math.max(0, 1 - d / STICK_FRAME.full);
   return st;
+}
+// Dragging the view. OrbitControls turns it 2π x this for a drag as long as the frame is tall. A phone had 0.85: measured
+// on a 375 x 812 frame, a 96 px drag turned the view 31°, so half a turn took a drag one and a half screens wide. Touch
+// gets half as much again (96 px: about 47°); a mouse keeps what it had (0.85 in the low tier's small windows, else 0.6).
+export const DRAG_SPEED = { touch: 1.28, low: 0.85, mouse: 0.6 };
+export function dragSpeed({ touch = false, low = false } = {}) {
+  return touch ? DRAG_SPEED.touch : low ? DRAG_SPEED.low : DRAG_SPEED.mouse;
 }
 // A touch on the view that did not turn it (a tap on a board) is not a drag: it does not hold the follow rules above off.
 export const DRAG_MIN = 0.035;

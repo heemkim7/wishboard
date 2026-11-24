@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  RETURN_MS, easeOutCubic, easeInOutCubic, tweenU, returnPoint, focusOptions, cineCancels, behindCar,
+  RETURN_MS, glideMs, easeOutCubic, easeInOutCubic, tweenU, returnPoint, focusOptions, cineCancels, behindCar, DRAG_SPEED, dragSpeed,
   FOLLOW, followYawRate, CHASE, chaseYawRate, STICK_FRAME, stickFrame, DRAG_MIN, viewDragged, tallness, portraitFov, fitDistance,
   BALLOON_LOOK, balloonLook,
   DRIVE_CAM, reverseTime, driveView, driveWiden, driveCamera, easeCamDist, shortenFocus,
@@ -98,7 +98,7 @@ describe('scripted camera: one way back', () => {
     // the touch that ended the camera does not also open the board under it
     assert.match(w, /if \(moved > 7 \|\| !quick \|\| !inputEnabled \|\| cut\) return;/);
     assert.match(w, /if \(cine\.until && now >= cine\.until\) endCine\(\);/);
-    assert.match(w, /dur: RETURN_MS, back: true/);
+    assert.match(w, /dur: glideMs\(RETURN_MS, calm\.matches\), back: true/);
     // cancel-by-input no longer asks whether my avatar is drawn (it is not, in a taxi)
     assert.equal(/cine[^\n]*me\.root\.visible[^\n]*clear/.test(w), false);
     assert.match(w, /function focusSlot\(slotId, holdMsOrOpts = 0\)/);
@@ -298,6 +298,37 @@ describe('the touch stick: the view comes round behind the direction of travel',
     assert.equal(/\bnet\b/.test(cam), false);
     // getting into a taxi and a teleport start the stick's frame again
     assert.match(w, /travel\.on = false; stick\.ref = null; stick\.lag = 0;/);
+  });
+});
+
+describe('dragging the view, and less motion for those who ask for it', () => {
+  it('a finger turns the view half as fast again as it did; a mouse as before', () => {
+    assert.deepEqual(DRAG_SPEED, { touch: 1.28, low: 0.85, mouse: 0.6 });
+    assert.equal(dragSpeed({ touch: true, low: true }), 1.28);
+    assert.equal(dragSpeed({ touch: true }), 1.28);
+    assert.equal(dragSpeed({ low: true }), 0.85);
+    assert.equal(dragSpeed(), 0.6);
+    assert.ok(near(DRAG_SPEED.touch / DRAG_SPEED.low, 1.5, 0.01));
+    // OrbitControls: 2π x speed x drag / frame height. 96 px on an 812 px frame was 36° by the formula (31° measured);
+    // now 54° (about 47° measured the same way): half a turn is a drag of one screen width, not one and a half
+    const turn = (px, speed) => (2 * Math.PI * speed * px) / 812 / DEG;
+    assert.ok(near(turn(96, 0.85), 36.2, 0.1) && near(turn(96, 1.28), 54.5, 0.1));
+    assert.ok(180 / turn(1, 1.28) < 375 * 0.9);
+    const w = read('timesSquare3d.js');
+    assert.match(w, /controls\.rotateSpeed = dragSpeed\(\{ touch: isTouchUI\(\{ coarse: matchMedia\('\(pointer: coarse\)'\)\.matches, points: navigator\.maxTouchPoints \}\), low \}\);/);
+  });
+  it('prefers-reduced-motion: the scripted cameras cut where they used to glide', () => {
+    assert.equal(glideMs(700), 700);
+    assert.equal(glideMs(700, false), 700);
+    assert.equal(glideMs(700, true), 1);
+    assert.equal(glideMs(2200, true), 1);
+    const w = read('timesSquare3d.js');
+    assert.match(w, /const calm = matchMedia\('\(prefers-reduced-motion: reduce\)'\);/);
+    // every glide starts in startCine, the intro or the way back: a board focus, the lounge tour, the look at the balloon, the gift show
+    assert.match(w, /cine = \{ t0: performance\.now\(\), dur: glideMs\(o\.dur \|\| 700, calm\.matches\), back: false,/);
+    assert.match(w, /cine = \{ t0: performance\.now\(\), dur: glideMs\(2200, calm\.matches\), back: true, ease: 'inout', tell: true \};/);
+    assert.equal(w.match(/dur: glideMs\(RETURN_MS, calm\.matches\), back: true/g).length, 2);
+    assert.equal(/\bcine = \{[^}]*dur: (?!glideMs)/.test(w), false, 'no scripted camera sets a duration past the rule');
   });
 });
 

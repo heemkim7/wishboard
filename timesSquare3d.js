@@ -30,9 +30,9 @@ import { THROW, throwSize } from './ts3d/gestures.js?v=202611241127';
 import { seesAvatar, prefetchDelay, prefetchIds } from './ts3d/loadplan.js?v=202611241127';
 import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, paintLabel, fontsReady, chars, hashStr, FRAME_FX } from './ts3d/art.js?v=202611241127';
 import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=202611241127';
-import { taxiExit, EXIT_SLOW, nextOfferDelay, fareWait, AUTO_WALK, gridPath, walkSteer, walkStall, walkPace, autoWalkEnds } from './interact.js?v=202611241127';
+import { taxiExit, EXIT_SLOW, nextOfferDelay, fareWait, isTouchUI, AUTO_WALK, gridPath, walkSteer, walkStall, walkPace, autoWalkEnds } from './interact.js?v=202611241127';
 import { WELCOME } from './ftue.js?v=202611241127';
-import { RETURN_MS, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, chaseYawRate, CHASE, stickFrame, viewDragged, portraitFov, fitDistance, BALLOON_LOOK, balloonLook, reverseTime, driveView, driveWiden, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange, boardVantage, facesBlock } from './camrig.js?v=202611241127';
+import { RETURN_MS, glideMs, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, chaseYawRate, CHASE, stickFrame, dragSpeed, viewDragged, portraitFov, fitDistance, BALLOON_LOOK, balloonLook, reverseTime, driveView, driveWiden, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange, boardVantage, facesBlock } from './camrig.js?v=202611241127';
 
 export { paintBillboard, THEMES, LAYOUT, PLOT_SLOTS, groundHeight, EMOTES, AVATAR_COLORS, STARTER_COLORS, taxiTrainMult, applyTaxiHardHit };
 export const PLAZA = LAYOUT;
@@ -296,7 +296,10 @@ void main(){
   controls.enableDamping = true;
   controls.dampingFactor = 0.085;
   controls.enablePan = false;
-  controls.rotateSpeed = low ? 0.85 : 0.6;
+  // Half as fast again under a finger as it was (camrig.js DRAG_SPEED); a mouse turns the view as before.
+  controls.rotateSpeed = dragSpeed({ touch: isTouchUI({ coarse: matchMedia('(pointer: coarse)').matches, points: navigator.maxTouchPoints }), low });
+  // A player who asked the system for less motion gets cuts where the scripted cameras glide (camrig.js glideMs).
+  const calm = matchMedia('(prefers-reduced-motion: reduce)');
   controls.enableZoom = false;
   controls.minDistance = 2.8;
   controls.maxDistance = 26;
@@ -1571,7 +1574,7 @@ void main(){
     const pose = slotPose('MAIN_TOP', 28);
     cineFrom.copy(pose?.cam || new THREE.Vector3(LAYOUT.oneTimes.x, 42, LAYOUT.oneTimes.z + 30));
     cineL0.copy(pose?.look || new THREE.Vector3(LAYOUT.oneTimes.x, 26, LAYOUT.oneTimes.z));
-    cine = { t0: performance.now(), dur: 2200, back: true, ease: 'inout', tell: true };
+    cine = { t0: performance.now(), dur: glideMs(2200, calm.matches), back: true, ease: 'inout', tell: true };
   }
   /** Fly from wherever the view is now to `cam` looking at `look`, then hold (chains board to board without a cut). */
   function startCine(cam, look, o = {}) {
@@ -1579,7 +1582,7 @@ void main(){
     cineL0.copy(viewLook);
     cineTo.copy(cam);
     cineL1.copy(look);
-    cine = { t0: performance.now(), dur: o.dur || 700, back: false, until: o.until || 0, pin: !!o.pin, fov: o.fov || 0 };
+    cine = { t0: performance.now(), dur: glideMs(o.dur || 700, calm.matches), back: false, until: o.until || 0, pin: !!o.pin, fov: o.fov || 0 };
   }
   /**
    * The one way out of a scripted camera: movement, a tap, Escape, a timed hold running out, 시점 해제, the lounge
@@ -1601,12 +1604,12 @@ void main(){
       }
       cineFrom.copy(camera.position);
       cineL0.copy(viewLook);
-      cine = { t0: now, dur: RETURN_MS, back: true, ease: 'out', tell: false };
+      cine = { t0: now, dur: glideMs(RETURN_MS, calm.matches), back: true, ease: 'out', tell: false };
       opts.onFocus?.(false);
     } else if (cine && force && cine.t0 + cine.dur - now > RETURN_MS) {
       cineFrom.copy(camera.position);
       cineL0.copy(viewLook);
-      cine = { t0: now, dur: RETURN_MS, back: true, ease: 'out', tell: cine.tell };
+      cine = { t0: now, dur: glideMs(RETURN_MS, calm.matches), back: true, ease: 'out', tell: cine.tell };
     }
     if (wasLounge) opts.onLoungeEnd?.();
   }
