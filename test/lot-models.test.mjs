@@ -8,7 +8,8 @@ import assert from 'node:assert/strict';
 import { describe, it, before } from 'node:test';
 import { register } from 'node:module';
 import * as THREE from '../vendor/three/build/three.module.js';
-import { LAYOUT, LOT, PLOT_SLOTS, lotRect, streetPosts } from '../ts3d/layout.js';
+import { LAYOUT, LOT, PLOT_SLOTS, lotRect, streetPosts, groundHeight } from '../ts3d/layout.js';
+import { boardVantage, facesBlock, portraitFov, frameDistance } from '../camrig.js';
 import { LOT_MODEL_URL, LOTS_R, MODEL_URL, nearLots } from '../ts3d/loadplan.js';
 import { loadBudget } from '../tools/load-budget.mjs';
 
@@ -514,6 +515,15 @@ describe('the street with the models in (ts3d/landmarks.js with the real three a
         ray.set(sp.clone().addScaledVector(f.normal, 0.5), f.normal.clone().negate());
         const behind = ray.intersectObjects(rec.body, false)[0];
         if (level < 4) near(behind.distance - 0.5, 0.03 * SC, `${tag} plate behind the sign`, 0.005);
+        else {
+          // the tower: the crown is 1.9 m behind the sign, and the sign stands on the rim round the board (its top bar
+          // 0.17 under the sign's lower edge, in the lot's own metres)
+          assert.ok(behind.distance - 0.5 > 1.9, `${tag} ${behind.distance}`);
+          for (const u of [-0.45, 0, 0.45]) {
+            ray.set(rec.sign.localToWorld(new THREE.Vector3(u * spec.sign.w, -spec.sign.h / 2, 0)), new THREE.Vector3(0, -1, 0));
+            near(ray.intersectObjects(rec.body, false)[0].distance, 0.17 * SC, `${tag} rim under the sign`, 0.005);
+          }
+        }
         // the collider: lotRect's, inside the pad; the camera blocker over it, as tall as the level
         const c = lotsColliders.find((q) => q.plot === s.id);
         if (level) {
@@ -548,6 +558,98 @@ describe('the street with the models in (ts3d/landmarks.js with the real three a
       }
     });
   }
+
+  it('the street stays 27 m wide: on an upright phone the tower\'s board camera needs 20.1 m and has 6.6 m of street behind it', () => {
+    // The widest board (a tower's, 11.34 x 6.38 m in the world) seen whole on a 9:19.5 frame (37 degrees wide) from straight
+    // on. With the rows at x ± 17 the camera stands 6.3 m past the centre line, inside the clear width, 6.6 m before the far
+    // row's marquees. Rows 2.83 m nearer the centre line would put it outside the clear width, and the next test shows how
+    // little a narrower street gives a walker. So LAYOUT.street.lotX stays 17.
+    all(4);
+    const aspect = 9 / 19.5, vfov = portraitFov(aspect, 62);
+    near(vfov, 72);
+    const faces = new Map(PLOT_SLOTS.map((s) => [s.id, W.boards.face('PLOT_' + s.id)]));
+    for (const s of PLOT_SLOTS) {
+      const f = faces.get(s.id), toStreet = Math.sign(S.x - s.x);
+      near(frameDistance({ w: f.w, h: f.h, aspect, vfov }), 20.13, 'lot ' + s.id, 0.01);
+      const v = boardVantage({ face: { x: f.pos.x, y: f.pos.y, z: f.pos.z, nx: f.normal.x, nz: f.normal.z, w: f.w, h: f.h }, dist: 18, aspect, vfov, block: facesBlock([...faces.values()].filter((o) => o !== f)), ground: groundHeight });
+      assert.ok(v.fit >= 0.999 && v.seen >= 0.999 && v.yaw === 0, 'lot ' + s.id);
+      near((S.x - v.x) * toStreet, -6.33, 'lot ' + s.id, 0.01); // 6.33 m past the centre line
+      assert.ok(Math.abs(v.x - S.x) < S.half);
+      const farMarquee = S.lotX - LOT.reach * SC; // the far row's marquees, from the centre line
+      near(farMarquee - Math.abs(v.x - S.x), 6.61, 'lot ' + s.id, 0.01);
+      // moving both rows in by d moves the face in and the camera out by d while the clear half-width shrinks by d
+      near((S.half - Math.abs(v.x - S.x)) / 2, 2.83, 'lot ' + s.id, 0.01);
+    }
+    assert.equal(S.lotX, 17);
+  });
+
+  it('walking down the centre, an upright phone sees little of the lots at any width the street may have', () => {
+    // The share of a 9:19.5 frame (37 degrees wide, the walking camera 8.4 m behind and 1.25 m over the eye line) that the
+    // lots' models and boards cover, pads left out, with the player on the centre line at z 300. The real models are
+    // projected and filled into a 180 x 390 grid for rows at x ± 17 (as built), ± 15 and ± 13 (the narrowest that leaves
+    // 16 m clear). The fronts are parallel to the walk, so the frame's edges only reach them 37 m ahead and at 15 to 18
+    // degrees off their own plane, at every width: a narrower street is not clearly better, and at ± 13 the tower's board
+    // camera of the test above no longer fits in it.
+    const tris = LEVELS.map((level) => {
+      const out = [];
+      for (const g of W.marks.lots.get(level).parts.values()) {
+        const p = g.attributes.position, ix = g.index;
+        for (let i = 0; i < ix.count; i += 3) {
+          const t = [0, 1, 2].map((k) => new THREE.Vector3().fromBufferAttribute(p, ix.getX(i + k)));
+          if (t.some((v) => v.y >= 0.3)) out.push(t);
+        }
+      }
+      const b = LOT.faces[level].board, w = Math.min(b.w, (b.h * 16) / 9) / 2, h = Math.min(b.h, (b.w * 9) / 16) / 2;
+      const q = [[-w, -h], [w, -h], [w, h], [-w, h]].map(([x, y]) => new THREE.Vector3(b.x + x, b.y + y, b.z));
+      out.push([q[0], q[1], q[2]], [q[0], q[2], q[3]]);
+      return out;
+    });
+    const GW = 180, GH = 390, aspect = 9 / 19.5;
+    const cam = new THREE.PerspectiveCamera(portraitFov(aspect, 62), aspect, 0.2, 5200);
+    cam.position.set(S.x, 1.9 + 1.25, 300 - 8.4);
+    cam.lookAt(S.x, 1.9, 300);
+    cam.updateMatrixWorld(true);
+    const vp = new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+    const fill = (lotX, levelOf) => {
+      const mask = new Uint8Array(GW * GH), m = new THREE.Matrix4(), v = new THREE.Vector4();
+      for (const s of PLOT_SLOTS) {
+        m.compose(new THREE.Vector3(S.x + Math.sign(s.x - S.x) * lotX, 0, s.z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), s.rot), new THREE.Vector3(SC, SC, SC)).premultiply(vp);
+        for (const t of tris[levelOf(s.id)]) {
+          const a = [];
+          for (const p of t) {
+            v.set(p.x, p.y, p.z, 1).applyMatrix4(m);
+            if (v.w < 0.2) break; // beside or behind the camera: outside this narrow frame anyway
+            a.push((v.x / v.w * 0.5 + 0.5) * GW, (0.5 - v.y / v.w * 0.5) * GH);
+          }
+          if (a.length < 6) continue;
+          const [x0, y0, x1, y1, x2, y2] = a, area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
+          if (Math.abs(area) < 1e-9) continue;
+          const xa = Math.max(0, Math.floor(Math.min(x0, x1, x2))), xb = Math.min(GW - 1, Math.ceil(Math.max(x0, x1, x2)));
+          const ya = Math.max(0, Math.floor(Math.min(y0, y1, y2))), yb = Math.min(GH - 1, Math.ceil(Math.max(y0, y1, y2)));
+          for (let y = ya; y <= yb; y++) for (let x = xa; x <= xb; x++) {
+            const px = x + 0.5, py = y + 0.5;
+            const e0 = ((x1 - px) * (y2 - py) - (x2 - px) * (y1 - py)) / area, e1 = ((x2 - px) * (y0 - py) - (x0 - px) * (y2 - py)) / area;
+            if (e0 >= 0 && e1 >= 0 && e0 + e1 <= 1) mask[y * GW + x] = 1;
+          }
+        }
+      }
+      let n = 0;
+      for (const b of mask) n += b;
+      return (n / mask.length) * 100;
+    };
+    const MIX = [0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0, 0, 1, 2, 4, 3, 0, 0];
+    const table = [17, 15, 13].map((x) => [fill(x, () => 0), fill(x, (id) => MIX[id - 1]), fill(x, () => 4)]);
+    // percent of the frame: all lots empty, a mix of levels, all towers
+    for (const [row, want] of [[table[0], [1.0, 4.5, 9.6]], [table[1], [1.1, 4.8, 12.0]], [table[2], [1.6, 7.8, 15.4]]]) {
+      row.forEach((got, i) => assert.ok(Math.abs(got - want[i]) < 0.15, `${row.map((n) => n.toFixed(2))} vs ${want}`));
+    }
+    // at the width as built the lots abreast of the walker and the next two pairs are outside the frame: the nearest
+    // board whose centre is in it is 37 m ahead
+    const half = Math.tan((portraitFov(aspect, 62) * Math.PI) / 360) * aspect; // tan of half the frame's width
+    const faceX = S.lotX - LOT.faces[4].board.z * SC;
+    const first = PLOT_SLOTS.map((s) => s.z - 300).filter((d) => d > 0 && faceX / (d + 8.4) < half).sort((a, b) => a - b)[0];
+    assert.equal(first, 37);
+  });
 
   it('the street with a mix of levels: 3 or 4 draw calls a lot, the models\' own triangle counts', () => {
     const MIX = [0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0, 0, 1, 2, 4, 3, 0, 0];
