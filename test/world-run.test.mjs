@@ -2,8 +2,8 @@
 // that draws nothing and a page that is only what the world touches. Frames are stepped by hand on a fake clock, so the
 // four things the owner asked for on 2026-11-24 are exercised as the browser runs them: the stick's follow camera, the
 // auto-walk, the taxi camera and the pouch throw. Nothing here reaches a network (fetch only serves the map file).
-// If the world cannot start under this stub page (it began to use something the stub lacks), the suite is skipped, with
-// the reason, rather than failing work that has nothing to do with it.
+// Without the map file the suite is skipped. If the world cannot load under this stub page for any other reason (a broken
+// import, a renamed export, something the stub lacks), the first test fails with the error.
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
@@ -69,7 +69,7 @@ const run = (seconds, each) => { for (let i = 0, n = Math.round(seconds / 0.016)
 const wrap = (a) => ((((a % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
 const DEG = Math.PI / 180;
 
-let T = null, L = null, skip = existsSync(MAP) ? false : 'assets/nyc/manhattan.bin missing';
+let T = null, L = null, broken = null, skip = existsSync(MAP) ? false : 'assets/nyc/manhattan.bin missing';
 /** A world in a frame w x h: { world, cam, said (the notices), ways (what the HUD heard about the guide) }. */
 async function boot(w, h) {
   const { createTimesSquare } = T;
@@ -97,8 +97,15 @@ if (!skip) {
     };
     T = { THREE, ...(await import('../timesSquare3d.js')), ...(await import('../net.js')) };
     L = await import('../ts3d/layout.js');
-  } catch (e) { skip = 'the world did not load under the stub page: ' + (e?.message || e); }
+  } catch (e) { broken = e; }
 }
+// Only a missing map file skips (it is the one thing a checkout may lack). Any other failure to load the world (a renamed
+// export, a broken import, something the stub page lacks) fails here with its message, and the two suites below are
+// skipped pointing at it: they used to be skipped quietly with the suite green.
+it('the world loads under the stub page', { skip }, () => {
+  if (broken) assert.fail('the world did not load under the stub page: ' + (broken?.stack || broken?.message || broken));
+});
+if (broken) skip = 'the world did not load (see "the world loads under the stub page")';
 after(() => { for (const id of timers) clearTimeout(id); performance.now = real.now; Math.random = real.random; globalThis.setTimeout = real.setTimeout; });
 
 describe('the world, run in Node: an upright phone (375 x 812)', { skip }, () => {
