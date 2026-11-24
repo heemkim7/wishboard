@@ -109,8 +109,9 @@ function fakeNet(state) {
   return async (url, opt = {}) => {
     const u = String(url); state.calls.push({ url: u, body: opt.body });
     if (u.includes('/rpc/starter_slot_list')) {
-      if (state.list === 'missing') return json({ code: 'PGRST202', message: 'Could not find the function public.starter_slot_list(p_key) in the schema cache' }, 404);
       if (state.list === 'hang') return new Promise(() => {});
+      if (state.slowMs) await new Promise((r) => setTimeout(r, state.slowMs)); // a cold isolate's first call to Supabase
+      if (state.list === 'missing') return json({ code: 'PGRST202', message: 'Could not find the function public.starter_slot_list(p_key) in the schema cache' }, 404);
       return json({ ok: true, slots: state.list });
     }
     if (u.includes('/rest/v1/billboards')) return json([]);
@@ -190,6 +191,35 @@ describe('worker starter list', { concurrency: false }, () => {
       h.state.list = TWELVE; h.add(61e3);
       assert.deepEqual((await config(h)).starter, [...STARTER_DEFAULT]); // served stale, refreshed behind it
       assert.deepEqual((await config(h)).starter, TWELVE);
+    } finally { h.done(); }
+  });
+  it('a slow answer (2 s, past the 1.5 s) is still taken from the same ask: the next page gets the list, not the old one for 60 s', async () => {
+    const SLOW = ['STREET_3', 'STREET_4', 'STREET_5'];
+    const h = setup(SLOW, SLOW);
+    try {
+      h.add(11 * 6e4); // whatever the cases before left is stale
+      h.state.slowMs = 2000;
+      const n = h.asks();
+      const first = (await (await h.raw('/rt/config')).json()).starter;
+      assert.notDeepEqual(first, SLOW); // served at once, before the database answered
+      await h.settle(); // the 1.5 s run out, then the answer comes at 2 s and is kept (waitUntil)
+      assert.equal(h.asks(), n + 1);
+      assert.deepEqual((await config(h)).starter, SLOW); // within the 60 s: the late answer, not the miss
+      assert.equal(h.asks(), n + 1, 'no second request to the database');
+    } finally { h.done(); }
+  });
+  it('a slow failure (2 s, then no function) keeps the 60 s rule: the list stands and the database is asked again after 60 s', async () => {
+    const h = setup('missing');
+    try {
+      h.add(11 * 6e4);
+      h.state.slowMs = 2000;
+      const before = (await config(h)).starter, n = h.asks();
+      assert.deepEqual((await config(h)).starter, before);
+      h.add(59e3); await config(h);
+      assert.equal(h.asks(), n); // the miss is kept for 60 s
+      h.add(2e3); await config(h);
+      assert.equal(h.asks(), n + 1);
+      assert.deepEqual((await config(h)).starter, before);
     } finally { h.done(); }
   });
   it('keeps a good list for 10 minutes, and keeps it through a failed refresh', async () => {

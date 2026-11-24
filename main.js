@@ -211,6 +211,7 @@ const INBOX_SEEN_KEY = 'kts_inbox_seen', WISH_SEEN_KEY = 'kts_wish_seen', WISH_P
 function readJson(key, dflt) { try { const v = JSON.parse(recall(key) || 'null'); return v ?? dflt; } catch { return dflt; } }
 let focusedSlot = '', inboxRows = [], inboxHandled = new Set(), liveNews = [];
 let starterListKnown = false; // the free-slot list from /rt/config is the settled one (set where the config answer is read, below)
+let starterListSettled = false; // the re-reads of that list are over (below): the free-slot offer waits for it
 let introDone = () => {};
 let giftUi = null; // gift.js mountGift, once the world and ui exist
 const introReady = new Promise((resolve) => { introDone = resolve; });
@@ -260,6 +261,7 @@ const ui = createUI(document.getElementById('ui'), {
   profile: () => state.profile,
   starterUsed: () => state.starterUsed,
   starterListKnown: () => starterListKnown,
+  starterListSettled: () => starterListSettled,
   wear: (id) => wear(id),
   unwear: (kind) => unwear(kind),
   shop: () => loadShop(),
@@ -474,14 +476,25 @@ net.kakaoKey().then(() => { ui.setOperator(net.operator); maintShow(net.maint); 
 // The free-slot list in that answer. A Worker isolate that has not asked the database yet answers with the old four
 // (STARTER_DEFAULT) and asks behind the response (worker.js starterSlots, 1.5 s at most), so the next answer has the real
 // list. The same guest saw "무료 거리 칸" on one load and "건물 앞 전광판" on the next, depending on which answer it got.
-// When the first answer is exactly the old four it is asked once more, 2.5 s later; until then the HUD shows no goal
-// (hooks.starterListKnown, ui.js nextGoal). A database without starter_slot_list answers the old four both times.
+// When the first answer is exactly the old four it is asked again, 2.5 s, about 6 s and 20 s after the first answer
+// (STARTER_REREAD_MS, three plain GETs at most), stopping at the first answer that is not the old four: a cold isolate
+// can answer the old four for longer than the first re-read (its first call to Supabase can take more than 1.5 s). Until
+// the 2.5 s read the HUD shows no goal (hooks.starterListKnown, ui.js nextGoal); after it the goal line follows the list
+// as it changes (nextGoal reads BALANCE.starterSlots every second). The free-slot offer waits for the list to settle
+// (hooks.starterListSettled, ui.js maybeStarterToast), so it never offers from the old four and then cannot take it back.
+// A database without starter_slot_list answers the old four every time: the offer then comes after the last read.
+const STARTER_REREAD_MS = [2500, 6000, 20000];
 net.kakaoKey().catch(() => {}).then(async () => {
-  if (BALANCE.starterSlots.join() === STARTER_DEFAULT.join()) {
-    await new Promise((r) => setTimeout(r, 2500));
-    try { await net.loadConfig(); } catch { /* the first answer stands */ }
+  let waited = 0;
+  for (const at of STARTER_REREAD_MS) {
+    if (BALANCE.starterSlots.join() !== STARTER_DEFAULT.join()) break;
+    await new Promise((r) => setTimeout(r, at - waited));
+    waited = at;
+    try { await net.loadConfig(); } catch { /* the answer before stands */ }
+    starterListKnown = true;
   }
   starterListKnown = true;
+  starterListSettled = true;
 });
 
 world = createTimesSquare(document.getElementById('view'), {

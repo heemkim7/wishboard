@@ -2099,15 +2099,27 @@ async function supabaseRpc(name, args) {
 // Free first slots as the database enforces them (starter_slot_list). Per isolate: a good list for 10 minutes. A failure, a missing
 // function or no answer in 1.5 s keeps the last good list (or the old four if there never was one) and asks again after 60 s.
 // good=false means the list is only the fallback: then the starter claim checks just the STREET_ shape and claim_billboard decides.
+// A slow answer is not thrown away: when the 1.5 s run out, the same ask is still taken if it answers within STARTER_LATE_MS of
+// being sent (kept alive with ctx.waitUntil, no second request). A cold isolate's first call to Supabase can take longer than
+// 1.5 s, and the old four then stood for the next 60 s on every page that booted from this isolate.
+const STARTER_LATE_MS = 10000;
 let STARTER_C = { at: 0, ttl: 0, list: [...STARTER_DEFAULT], good: false, p: null };
-export function starterSlots(env) {
+export function starterSlots(env, ctx) {
   if (Date.now() - STARTER_C.at < STARTER_C.ttl) return Promise.resolve(STARTER_C);
   if (STARTER_C.p) return STARTER_C.p;
   const ask = supabaseRpc('starter_slot_list', { p_key: env.FLUSH_KEY || '' }).then((r) => (r.ok && r.data?.ok === true ? starterList(r.data.slots) : null), () => null);
-  let timer; const late = new Promise((res) => { timer = setTimeout(res, 1500, null); });
+  let timer; const late = new Promise((res) => { timer = setTimeout(res, 1500, 'late'); });
   return STARTER_C.p = Promise.race([ask, late]).then((list) => {
     clearTimeout(timer);
-    STARTER_C = list ? { at: Date.now(), ttl: 600000, list, good: true, p: null } : { ...STARTER_C, at: Date.now(), ttl: 60000, p: null };
+    const good = Array.isArray(list);
+    STARTER_C = good ? { at: Date.now(), ttl: 600000, list, good: true, p: null } : { ...STARTER_C, at: Date.now(), ttl: 60000, p: null };
+    if (list === 'late') {
+      // no answer yet (a failure, list null, keeps the 60 s rule): the same ask, adopted if it comes in time and nothing newer did
+      const kept = STARTER_C;
+      let t2; const cut = new Promise((res) => { t2 = setTimeout(res, STARTER_LATE_MS - 1500, null); });
+      const adopt = Promise.race([ask, cut]).then((l) => { clearTimeout(t2); if (l && STARTER_C === kept) STARTER_C = { at: Date.now(), ttl: 600000, list: l, good: true, p: null }; });
+      ctx?.waitUntil?.(adopt);
+    }
     return STARTER_C;
   });
 }
@@ -2537,7 +2549,7 @@ async function plaza(req, env, ctx, u) {
     if (isPrime(slot) && mode !== 'edit') return J({ ok: false, code: 'prime', error: BOARD_ERR.prime }, 400);
     if (mode === 'starter') {
       if (b.bid !== 0) return J({ ok: false, error: 'starter' }, 400);
-      const sc = await starterSlots(env); // without a list from the database, claim_billboard is the only judge
+      const sc = await starterSlots(env, ctx); // without a list from the database, claim_billboard is the only judge
       if (sc.good ? !sc.list.includes(slot) : !/^STREET_\d+$/.test(slot)) return J({ ok: false, error: '무료 칸은 계정당 한 번이고, 비어 있는 거리 칸만 돼요' }, 400);
       let held = false;
       try {
@@ -3050,7 +3062,7 @@ async function accountApi(req, env, ctx, u) {
     if (req.method !== 'GET') return J({ err: 'get' }, 405);
     const kakao = String(env.KAKAO_JS_KEY || '').trim(); // a public JavaScript key (not a secret); the share button exists only when it is set
     // On every visitor's boot path: never wait for Supabase. A stale list (or the old four, a subset) is safe; refresh behind the response.
-    if (Date.now() - STARTER_C.at >= STARTER_C.ttl) ctx?.waitUntil?.(starterSlots(env));
+    if (Date.now() - STARTER_C.at >= STARTER_C.ttl) ctx?.waitUntil?.(starterSlots(env, ctx));
     // forget: a withdrawal also deletes the login (forget_login is installed). The boot path gets what this isolate already knows and asks behind
     // the response; the withdrawal sheet asks with ?forget=1 and waits for the probe (1.5 s at most), so it never promises more than will happen.
     const asked = forgetProbe(env); if (u.searchParams.get('forget') === '1') await asked; else ctx?.waitUntil?.(asked);
