@@ -8,8 +8,9 @@ import { nowMs, kingCovers } from '../live.js';
 import { isPrime, primeAt, primeCard, primeKey, primeNotice } from '../primerules.js';
 import { ADS, adView, adWorld, linkHost } from '../adsale.js';
 import { SEASONS } from '../seasons.js';
-import { GIFT_ID, OCCASIONS, GIFT_THEMES, placeGifts, turnOf, giftScreen } from '../giftrules.js';
-import { paintGift } from '../giftart.js?v=202611230850';
+import { GIFT_ID, GIFT_SCREENS, OCCASIONS, GIFT_THEMES, placeGifts, turnOf, giftScreen } from '../giftrules.js';
+import { paintGift, paintWelcome } from '../giftart.js?v=202611230850';
+import { WELCOME } from '../ftue.js?v=202611230850';
 
 export const screenTime = { value: 0 };
 // Highest linear luminance a screen pixel may reach (see screenMaterial): just under the default bloom threshold.
@@ -245,12 +246,15 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   // sharing a screen take GIFT.cycleMs turns by the wall clock (turnOf), so every viewer sees the same one. Gifts win over wish cards and
   // the 9 pm king card; a lit board, a takeover (air) and the ad screens are never covered. b.gifts: the ids on this screen, or null.
   const gifts = new Map(); // id -> the public gift
-  let giftPin = null, giftDirty = false, giftPlan = new Map(); // giftPin: { g, slot, until } (a link visit or the sender's recording)
+  // giftPin: { g, slot, until } (a link visit or the sender's recording). g.welcome: the newcomer's welcome card (pinWelcome), which is no gift:
+  // its id is not a gift id, it is never in `gifts`, and it leaves a screen the moment that screen is no longer free.
+  let giftPin = null, giftDirty = false, giftPlan = new Map();
+  const WELCOME_ID = '!welcome';
   const giftFree = (slot) => { const b = boards.get(slot); return !!b && !b.shared && b.mounts.length > 0 && !live(b.row) && !airOn(); };
   const giftAt = (b) => { const ids = b.gifts; if (!ids?.length) return null; const id = ids[turnOf(ids.length, Date.now())]; return gifts.get(id) || (giftPin?.g.id === id ? giftPin.g : null); };
   function giftPlace() {
     giftDirty = false;
-    if (giftPin && giftPin.until <= Date.now()) giftPin = null;
+    if (giftPin && (giftPin.until <= Date.now() || (giftPin.g.welcome && !giftFree(giftPin.slot)))) giftPin = null;
     const plan = placeGifts([...gifts.values()], giftFree);
     if (giftPin) { for (const [s, ids] of plan) { const i = ids.indexOf(giftPin.g.id); if (i >= 0) ids.splice(i, 1); if (!ids.length) plan.delete(s); } plan.set(giftPin.slot, [giftPin.g.id]); }
     giftPlan = plan;
@@ -276,7 +280,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     if (sig === setGifts.sig) return false;
     setGifts.sig = sig;
     gifts.clear(); for (const g of next) gifts.set(g.id, g);
-    for (const b of boards.values()) if (b.gifts) b.giftKey = ''; // words may have changed
+    for (const b of boards.values()) if (b.gifts && b.giftKey !== WELCOME_ID) b.giftKey = ''; // words may have changed (never the welcome card's: it is not in the list)
     giftPlace();
     return true;
   }
@@ -288,6 +292,29 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     if (!slot) return '';
     giftPin = { g: c, slot, until: Date.now() + Math.max(1000, ms) };
     giftPlace();
+    return slot;
+  }
+  const WELCOME_FAR = 60;
+  /** 환영 전광판: shows the welcome card for `name` (cut to 12 code points) alone on the free gift screen nearest at { x, z } for ms. This
+   *  device only. Among the free street and lot screens (never a lit board, a prime screen or an ad screen) the nearest wins; one that shows
+   *  its back to `at`, or that carries a gift board, counts as WELCOME_FAR metres farther. A gift pin is left alone. -> the slot, or ''. */
+  function pinWelcome(name, ms = 8000, at = { x: 0, z: 0 }) {
+    const to = chars(String(name ?? '').trim(), 12).trim();
+    if (!to || (giftPin && !giftPin.g.welcome && giftPin.until > Date.now())) return '';
+    const ax = Number(at?.x) || 0, az = Number(at?.z) || 0;
+    let slot = '', best = Infinity;
+    for (const s of GIFT_SCREENS) {
+      if (!giftFree(s)) continue;
+      const f = face(s), dx = ax - f.pos.x, dz = az - f.pos.z;
+      const d = Math.hypot(dx, dz) + (dx * f.normal.x + dz * f.normal.z < 0 ? WELCOME_FAR : 0) + (giftPlan.has(s) && giftPin?.slot !== s ? WELCOME_FAR : 0);
+      if (d < best) { best = d; slot = s; }
+    }
+    if (!slot) return '';
+    const g = { id: WELCOME_ID, welcome: true, to };
+    giftPin = { g, slot, until: Date.now() + Math.max(1000, ms) };
+    giftPlace();
+    // The name in the plaza's own font once its glyphs are in (the first paint may be the fallback).
+    fontsReady(to + ' 님 ' + WELCOME.line).then(() => { const b = boards.get(slot); if (b && giftPin?.g === g && b.giftKey === WELCOME_ID) paint(b); });
     return slot;
   }
   const giftSlot = (id) => [...giftPlan].find(([, ids]) => ids.includes(String(id)))?.[0] || '';
@@ -343,7 +370,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     if (gift) {
       if (b.wish) dropWish(b);
       b.kingOn = 0; b.giftKey = gift.id;
-      paintGift(b.canvas, gift);
+      if (gift.welcome) paintWelcome(b.canvas, { name: gift.to, line: WELCOME.line }); else paintGift(b.canvas, gift);
       remember(b.canvas); b.tex.needsUpdate = true;
       return;
     }
@@ -556,7 +583,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   // The 10 nearest boards every 0.08 s; on the phone tier the 3 nearest every 0.16 s (every other tick: the 0.08 s tick
   // itself stays, so the king and wish cadences that count ticks are the same on every tier).
   const LIVE_HOT = quality === 'low' ? 3 : 10, LIVE_EVERY = quality === 'low' ? 2 : 1;
-  const TAGS = { prime: ['명당', '#ffb020', '#1c1300'], gift: ['선물', '#ff4fa3', '#ffffff'], king: ['소원왕', 'rgba(255,176,32,0.16)', '#ffb020'], wish: ['소원', 'rgba(255,176,32,0.16)', '#ffb020'], live: ['LIVE', '#ff4fa3', '#ffffff'], dark: ['꺼짐', '#1c2440', '#8f96b8'], free: ['빈칸', '#1c2440', '#b9bfdc'] };
+  const TAGS = { prime: ['명당', '#ffb020', '#1c1300'], gift: ['선물', '#ff4fa3', '#ffffff'], welcome: ['환영', '#48d6f0', '#06202a'], king: ['소원왕', 'rgba(255,176,32,0.16)', '#ffb020'], wish: ['소원', 'rgba(255,176,32,0.16)', '#ffb020'], live: ['LIVE', '#ff4fa3', '#ffffff'], dark: ['꺼짐', '#1c2440', '#8f96b8'], free: ['빈칸', '#1c2440', '#b9bfdc'] };
   function drawLive(b, t) {
     const canvas = b.canvas;
     const plate = plates.get(canvas) || remember(canvas);
@@ -576,7 +603,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     const held = !!b.row?.holder_id;
     const gift = b.gifts && b.giftKey ? gifts.get(b.giftKey) || (giftPin?.g.id === b.giftKey ? giftPin.g : null) : null;
     const team = b.primeKey ? b.primeName || '' : null;
-    const [tag, tagBg, tagInk] = TAGS[team != null ? 'prime' : gift ? 'gift' : kingOn ? 'king' : wishOn ? 'wish' : onAir ? 'live' : held ? 'dark' : 'free'];
+    const [tag, tagBg, tagInk] = TAGS[team != null ? 'prime' : gift ? (gift.welcome ? 'welcome' : 'gift') : kingOn ? 'king' : wishOn ? 'wish' : onAir ? 'live' : held ? 'dark' : 'free'];
     const ph = Math.max(16, th - 16 * k), pw = 92 * k, px = 12 * k;
     roundRect(g, px, body + (th - ph) / 2, pw, ph, ph / 2);
     g.fillStyle = tagBg;
@@ -598,7 +625,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     const cheers = Math.max(0, Math.floor(Number(b.data?.cheers) || 0));
     const clicks = Math.max(0, Math.floor(Number(b.data?.clicks) || 0));
     const notes = Array.isArray(b.data?.notes) ? b.data.notes.map((t) => chars(String(t || ''), 16)).filter(Boolean).slice(-5) : [];
-    const msg = team != null ? `응원 팀 명당   ·   ${team ? chars(team, 16) + '   ·   ' : ''}서로 다른 사람의 응원으로 정해요   ·   ${liveHead}` : gift ? `선물 전광판   ·   To. ${gift.to}   ·   ${(OCCASIONS[gift.occ] || OCCASIONS.bday).head}${gift.from ? '   ·   From. ' + gift.from : ''}${gift.n ? '   ·   💌 친구 메시지 ' + gift.n + '개' : ''}   ·   ${liveHead}` : kingOn ? `어제의 소원왕   ·   ${chars(b.kingNick || '', 16)}   ·   ${liveHead}` : wishOn ? `오늘의 소원   ·   ${b.wishMsg}   ·   ${liveHead}` : `택시 정차 ${views}회   ·   응원 ${cheers}회   ·   링크 클릭 ${clicks}회   ·   ${notes.length ? notes.join('   ·   ') + '   ·   ' : ''}${liveHead}`;
+    const msg = team != null ? `응원 팀 명당   ·   ${team ? chars(team, 16) + '   ·   ' : ''}서로 다른 사람의 응원으로 정해요   ·   ${liveHead}` : gift?.welcome ? `${gift.to}님, 가상 타임스퀘어에 오신 걸 환영해요   ·   ${liveHead}` : gift ? `선물 전광판   ·   To. ${gift.to}   ·   ${(OCCASIONS[gift.occ] || OCCASIONS.bday).head}${gift.from ? '   ·   From. ' + gift.from : ''}${gift.n ? '   ·   💌 친구 메시지 ' + gift.n + '개' : ''}   ·   ${liveHead}` : kingOn ? `어제의 소원왕   ·   ${chars(b.kingNick || '', 16)}   ·   ${liveHead}` : wishOn ? `오늘의 소원   ·   ${b.wishMsg}   ·   ${liveHead}` : `택시 정차 ${views}회   ·   응원 ${cheers}회   ·   링크 클릭 ${clicks}회   ·   ${notes.length ? notes.join('   ·   ') + '   ·   ' : ''}${liveHead}`;
     const tw = Math.max(8, g.measureText(msg).width);
     const x0 = sx + 6 * k - ((t * 90) % tw);
     g.fillText(msg, x0, body + th / 2 + 1);
@@ -807,7 +834,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     }
   }
 
-  return { boards, ensure, mount, unmount, set, expire, get: (id) => boards.get(id), worldPos, face, setTicker, setOps, setSeason, repaintAll, update, accentOf, tickerCanvas, watchShow, setShow, setAir, setKing, setDecals, setWishes, pinWish, setGifts, pinGift, giftSlot, setPrime, primeOf: (id) => { const b = boards.get(id); return b ? primeNow(b) : null; }, decalsOf: (id) => (boards.get(id)?.decals || []).slice(), setRim };
+  return { boards, ensure, mount, unmount, set, expire, get: (id) => boards.get(id), worldPos, face, setTicker, setOps, setSeason, repaintAll, update, accentOf, tickerCanvas, watchShow, setShow, setAir, setKing, setDecals, setWishes, pinWish, setGifts, pinGift, pinWelcome, giftSlot, setPrime, primeOf: (id) => { const b = boards.get(id); return b ? primeNow(b) : null; }, decalsOf: (id) => (boards.get(id)?.decals || []).slice(), setRim };
 }
 
 // ---- ad-only screens AD_1..AD_5 (adsale.js) -------------------------------------------------------------------------
