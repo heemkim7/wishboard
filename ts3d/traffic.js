@@ -587,7 +587,12 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk, 
   const slotAt = (i) => (i < N_TAXI ? { parts: taxiParts, k: i } : i < N_AI ? { parts: carParts, k: i - N_TAXI } : { parts: taxiParts, k: i - N_AI + N_TAXI });
   // place / hide / paintCab run for every vehicle every frame: the { parts, k } of each slot is built once (read only).
   const SLOTS = Array.from({ length: total }, (_, i) => slotAt(i));
-  const slotOf = (i) => SLOTS[i] || slotAt(i);
+  // A remote cab's row in the cab meshes is not fixed: it follows the last called-cab slot in use this frame (calledTop,
+  // set in update), so the model's meshes (drawn up to cabTop) never run over empty called-cab rows for one other
+  // player's taxi. Its headlight pool and wheels keep the fixed index i.
+  const REMOTE0 = N_AI + N_SPECIAL;
+  let calledTop = 0;
+  const slotOf = (i) => (i >= REMOTE0 && i < REMOTE0 + N_REMOTE ? { parts: taxiParts, k: N_TAXI + calledTop + (i - REMOTE0) } : SLOTS[i] || slotAt(i));
   const WHEELS = [[-0.86, 1.45], [0.86, 1.45], [-0.86, -1.45], [0.86, -1.45]];
   const tq = new THREE.Quaternion(), wq = new THREE.Quaternion(), tm = new THREE.Matrix4(), wm = new THREE.Matrix4();
   const tv = new THREE.Vector3(), wv = new THREE.Vector3(), ts = new THREE.Vector3(1, 1, 1), ws = new THREE.Vector3(1, 1, 1), XA = new THREE.Vector3(1, 0, 0);
@@ -1230,6 +1235,8 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk, 
     clockT = t;
     if (!asked && ++drawn > 2) { asked = true; whenIdle(askModel); }
     cabTop = 0;
+    calledTop = 0; // one past the last called-cab slot in use: the remote cabs' rows start there (slotOf)
+    for (let s = N_SPECIAL - 1; s >= 0; s--) if (veh[N_AI + s].mode !== 'off') { calledTop = s + 1; break; }
     dt = Math.min(dt, 0.1); // a tab that was away comes back with one long frame: the street does not jump ahead
     phase = signalPhase(t);
     paintSignals();
@@ -1252,6 +1259,7 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk, 
       }
       if (c.mode === 'parked') {
         place(c.i, c.x, c.z, c.yaw, c.spin);
+        if (c.i >= N_AI) paintCab(c.i, c.tint || ''); // its row may have carried a remote cab's colour last frame
         const far = Math.hypot(px - c.x, pz - c.z) > DROP_R;
         if (far && t - c.parkedAt > 20) { if (c.i < N_AI) spawn(c, px, pz); else { c.mode = 'off'; hide(c.i); } }
         continue;
@@ -1276,8 +1284,10 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk, 
       place(i, rc.x, rc.z, rc.yaw, rc.spin);
       paintCab(i, rc.tint || (rc.yellow ? TAXI_YELLOW : ''));
     }
-    // The model is 3,328 triangles a cab: its meshes stop at the last cab on the street, so the 16 slots kept for
-    // called and remote cabs cost nothing while they are empty. (The boxes draw every slot, as they always did.)
+    // rows a remote cab had in an earlier frame, past this frame's last remote row: hidden (the boxes draw every row)
+    for (let k = N_TAXI + calledTop + N_REMOTE; k < nTaxiSlots; k++) for (const p of taxiParts) p.setMatrixAt(k, ZERO);
+    // The model is 3,328 triangles a cab: its meshes stop at the last cab on the street. Remote cabs are drawn right
+    // after the last called cab in use, so the empty called-cab and remote rows cost nothing. (The boxes draw every slot.)
     const cabs = shape === 'model' ? cabTop : nTaxiSlots;
     for (const p of taxiParts) { p.count = cabs; p.instanceMatrix.needsUpdate = true; }
     for (const p of carParts) p.instanceMatrix.needsUpdate = true;
