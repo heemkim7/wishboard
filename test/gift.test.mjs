@@ -709,6 +709,26 @@ describe('점등식 on the recipient page', () => {
       assert.deepEqual(P.posted, [{ t: 'gift', act: 'cer', id: ID }]);
     } finally { P.done(); }
   });
+  it('the owner\'s 공유하기 adds the ceremony line until the start; a "지금" board never has it; admin lists the two beacons', async () => {
+    const LINE = ' 🎆 점등식 11월 25일 18:00에 같이 봐요!', BASE = '🎂 민지님을 위한 선물 전광판이 뉴욕 타임스퀘어 가상 광장에 걸려요! 친구들 메시지도 남겨 주세요 👉';
+    const owned = (b, at, made = KST('2026-11-20T10:00:00')) => pageOf(b, at, { store: { masil_gt: GUEST(), kts_gmine: JSON.stringify([b.id]) },
+      respond: (u) => (u === '/rt/gift/' + b.id ? { ok: true, gift: b, own: true, mine: { kids: 0, vd: 0, at: made, lk: 1 }, media: false } : u.endsWith('/interest') ? { ok: true } : null) });
+    const shareText = async (b, at, made, sheet = true) => {
+      const P = owned(b, at, made);
+      try {
+        if (sheet) globalThis.navigator.share = async (o) => { P.shared.push(o); };
+        await P.load('giftpage.js'); await P.press(P.btn(/^공유하기$/));
+        return sheet ? P.shared[0].text : P.copied[0];
+      } finally { P.done(); }
+    };
+    assert.equal(await shareText(g, KST('2026-11-24T12:00:00')), BASE + LINE, 'D-1: the line after the sentence, before the address');
+    assert.equal(await shareText(g, KST('2026-11-24T12:00:00'), undefined, false), BASE + LINE + ' ' + URL_, 'copied: the line, then the address');
+    assert.equal(await shareText(g, KST('2026-11-25T18:05:00')), BASE, 'after the start: without it');
+    const now = view({ a: KST('2026-11-25T12:00:00'), b: KST('2026-11-25T18:00:00') });
+    assert.equal(await shareText(now, KST('2026-11-25T12:05:00'), KST('2026-11-25T12:04:00')), BASE, 'made at its start ("지금" in the first 10 minutes after 12:00): the owner\'s read says so');
+    assert.equal(await shareText(view({ a: KST('2026-11-25T12:20:00'), b: KST('2026-11-25T18:20:00') }), KST('2026-11-25T12:21:00'), KST('2026-11-25T12:20:30')), BASE);
+    assert.match(src('admin-gift.js'), /\['ev:go', '직접 가서 봄'\], \['ev:cer', '점등식 온 기기'\], \['ev:cershot', '단체 사진 저장·공유'\], /);
+  });
 });
 
 // ---- gift.html's sheet, read as rules -------------------------------------------------------------------------------------------

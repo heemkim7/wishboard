@@ -39,7 +39,7 @@ async function api(path, body) {
   const d = await r.json().catch(() => ({})); if (!r.ok || d.ok === false) throw new Error(d.error || '처리하지 못했어요.');
   return d;
 }
-const COLS = [['made', '만든 보드'], ['made_ref', '페이지에서 와서 만든'], ['reply', '답장'], ['view', '새 방문자'], ['view_day', '그날 방문자'], ['return_day', '그날 다시 온'], ['msg', '메시지'], ['video', '영상'], ['ev:film', '그린 영상 재생'], ['ev:play', '저장 영상 재생'], ['ev:done', '끝까지 봄'], ['ev:save', '영상 저장'], ['ev:go', '직접 가서 봄'], ['ev:cta', '나도 걸기 누름'], ['ladder', '가격표 본 보드'], ['pick:1', '3,900 고름'], ['pick:2', '7,900 고름'], ['pick:3', '14,900 고름'], ['notify:1', '알림 1'], ['notify:2', '알림 2'], ['notify:3', '알림 3'], ['report', '신고']];
+const COLS = [['made', '만든 보드'], ['made_ref', '페이지에서 와서 만든'], ['reply', '답장'], ['view', '새 방문자'], ['view_day', '그날 방문자'], ['return_day', '그날 다시 온'], ['msg', '메시지'], ['video', '영상'], ['ev:film', '그린 영상 재생'], ['ev:play', '저장 영상 재생'], ['ev:done', '끝까지 봄'], ['ev:save', '영상 저장'], ['ev:go', '직접 가서 봄'], ['ev:cer', '점등식 온 기기'], ['ev:cershot', '단체 사진 저장·공유'], ['ev:cta', '나도 걸기 누름'], ['ladder', '가격표 본 보드'], ['pick:1', '3,900 고름'], ['pick:2', '7,900 고름'], ['pick:3', '14,900 고름'], ['notify:1', '알림 1'], ['notify:2', '알림 2'], ['notify:3', '알림 3'], ['report', '신고']];
 async function load() {
   say('불러오는 중…');
   try {

@@ -175,8 +175,10 @@ async function saveVideo(g, st, btn, note) {
   } catch { say(note, '영상을 저장하지 못했어요. 다시 해 주세요.'); }
   finally { btn.disabled = false; }
 }
-async function share(g, url, note) {
-  const o = OCCASIONS[g.occ] || OCCASIONS.bday, text = `${o.emoji} ${g.to}님을 위한 선물 전광판이 뉴욕 타임스퀘어 가상 광장에 걸려요! 친구들 메시지도 남겨 주세요 👉`;
+// made: the board's making time (only the owner's read has it): a "지금" board made in the first minutes after a start hour is no ceremony.
+async function share(g, url, note, made) {
+  const o = OCCASIONS[g.occ] || OCCASIONS.bday, text = `${o.emoji} ${g.to}님을 위한 선물 전광판이 뉴욕 타임스퀘어 가상 광장에 걸려요! 친구들 메시지도 남겨 주세요 👉`
+    + cerShareLine(made ? { ...g, at: made } : g, now()); // 점등식: ' 🎆 점등식 12월 25일 18:00에 같이 봐요!' until the start
   try { if (navigator.share) { await navigator.share({ title: `${g.to}님을 위한 선물 전광판`, text, url }); beacon(g.id, 'share'); return; } } catch (e) { if (e?.name === 'AbortError') return; }
   try { await navigator.clipboard.writeText(text + ' ' + url); beacon(g.id, 'share'); say(note, '링크를 복사했어요. 카카오톡에 붙여 넣어 보내세요.', true); } catch { say(note, '아래 주소를 길게 눌러 복사해 주세요.'); }
 }
@@ -336,7 +338,7 @@ function owner(g, { fresh = false, mine: extra = null, media = false } = {}) {
     h('div', { style: 'height:8px' }), saveBtn, saveNote, h('p', { class: 'fine', text: '미리보기 영상은 무료 버전이라 워터마크가 있어요.' }));
   const linkBox = h('div', { class: 'link', text: url });
   const shareCard = card(h('h2', { text: '🔗 링크 보내기' }),
-    h('div', { class: 'row' }, h('button', { class: vfirst ? 'btn' : 'btn gold', type: 'button', onclick: () => sendOr(() => share(g, url, note)) }, '공유하기'),
+    h('div', { class: 'row' }, h('button', { class: vfirst ? 'btn' : 'btn gold', type: 'button', onclick: () => sendOr(() => share(g, url, note, extra?.at)) }, '공유하기'),
       h('button', { class: 'btn', type: 'button', onclick: () => sendOr(async () => { try { await navigator.clipboard.writeText(url); say(note, '링크를 복사했어요.', true); } catch { say(note, '아래 주소를 길게 눌러 복사해 주세요.'); } }) }, '링크 복사')),
     vfirst ? nudge : null, linkBox, note,
     h('p', { class: 'fine', text: '친구들에게 먼저 보내 메시지를 모으고, 그날 ' + g.to + '님에게 보내세요. ' + (g.lk ? '메시지는 그날(' + dayText(g.day) + ') 0시에 함께 열려요.' : '메시지는 남기는 대로 바로 보여요.') }));
