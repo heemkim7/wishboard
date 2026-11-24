@@ -217,7 +217,7 @@ describe('the fleets, once the model is in', needsMap, () => {
       // paint: the very materials the boxes were painted with (the tier's coat), white under an instance colour
       assert.equal(cabs[0].material, kitPaint[0]); assert.equal(cars[0].material, kitPaint[1]);
       const coat = carPaintTier(q);
-      for (const m of [cabs[0], cars[0]]) { assert.equal(!!m.material.isMeshPhysicalMaterial, coat.clearcoat); assert.equal(m.material.vertexColors, false); assert.equal(m.material.color.getHex(), 0xffffff); assert.ok(m.instanceColor); }
+      for (const m of [cabs[0], cars[0]]) { assert.equal(!!m.material.isMeshPhysicalMaterial, coat.clearcoat); assert.equal(m.material.vertexColors, false); assert.equal(m.material.color.getHex(), 0xffffff); assert.ok(m.instanceColor); assert.deepEqual(Object.keys(m.geometry.attributes), ['position', 'normal']); }
       // the rest takes the file's colours from the vertices; only paint has a colour per instance
       const group = (list, names) => Object.fromEntries(names.map((k, i) => [k, list[i]]));
       const C = group(cabs, kit.taxi.map(([k]) => k)), K = group(cars, kit.car.map(([k]) => k));
@@ -260,31 +260,39 @@ describe('the fleets, once the model is in', needsMap, () => {
     S.traffic.warm(16, 28);
     S.run(30);
     const kit = S.now(), was = { cab: Array.from(kit.cabs[0].instanceColor.array), car: Array.from(kit.cars[0].instanceColor.array) };
+    // the shop's cab colours (balance.js SHOP kind 'cab'): what timesSquare3d.js cabTint hands to setCabTint
+    const { SHOP, shopItem, equippedOf } = await import('../balance.js');
+    assert.deepEqual(SHOP.filter((it) => it.kind === 'cab').map((it) => [it.id, it.tint]), [['cab_yellow', '#fff3a0'], ['cab_pink', '#ff6fb5'], ['cab_black', '#23252d']]);
+    const tint = (equip) => shopItem(equippedOf(equip, 'cab'))?.tint || '';
+    const PINK = tint(['hat_ribbon', 'cab_pink']), BLACK = tint(['cab_black']);
+    assert.match(read('timesSquare3d.js'), /const cabTint = \(list\) => shopItem\(equippedOf\(list, 'cab'\)\)\?\.tint \|\| '';/);
     const i = S.traffic.callTaxi(TAXI_STANDS[0]);
     assert.ok(S.traffic.takeTaxi(i));
-    S.traffic.setCabTint(i, '#3fe6ff'); // a cab_* item's tint (balance.js SHOP): timesSquare3d.js enterTaxi does this
+    S.traffic.setCabTint(i, PINK); // as enterTaxi does, here while the boxes are still drawn
     S.traffic.useModel(await parsed());
     const { cabs, cars } = S.now(), k = i - S.nCar; // slots: cabs, cars, then the called and remote cabs after the AI cabs
-    for (let c = 0; c < S.nCab; c++) assert.deepEqual(col3(cabs[0], c), c === k ? rgb('#3fe6ff') : YELLOW, 'cab slot ' + c);
+    for (let c = 0; c < S.nCab; c++) assert.deepEqual(col3(cabs[0], c), c === k ? rgb(PINK) : YELLOW, 'cab slot ' + c);
     assert.deepEqual(Array.from(cars[0].instanceColor.array), was.car);
     assert.ok(new Set(Array.from({ length: S.nCar }, (_, c) => col3(cars[0], c).join())).size >= 8, 'cars of many colours');
     for (let c = 0; c < S.nCar; c++) assert.notDeepEqual(col3(cars[0], c), YELLOW);
     // the tint lives on the model's paint from here on: another colour, then back to yellow when the player gets out
     S.traffic.driveTaxi(i, 20, 40, 0, 0);
     S.run(2, { x: 20, y: 0, z: 40, yaw: 0, driving: true }, 1);
-    assert.deepEqual(col3(cabs[0], k), rgb('#3fe6ff'));
-    S.traffic.setCabTint(i, '#ff3d9a');
-    assert.deepEqual(col3(cabs[0], k), rgb('#ff3d9a'));
-    S.traffic.setCabTint(i, 'red'); // not a colour: the fleet yellow
+    assert.deepEqual(col3(cabs[0], k), rgb(PINK));
+    S.traffic.setCabTint(i, BLACK); // the shop sheet's setEquip while driving
+    assert.deepEqual(col3(cabs[0], k), rgb(BLACK));
+    S.traffic.setCabTint(i, tint([])); // nothing worn: the fleet yellow (and so for anything that is not a colour)
     assert.deepEqual(col3(cabs[0], k), YELLOW);
-    S.traffic.setCabTint(i, '#ff3d9a');
-    S.traffic.setCabYellow(i, false);
+    S.traffic.setCabTint(i, 'red');
+    assert.deepEqual(col3(cabs[0], k), YELLOW);
+    S.traffic.setCabTint(i, BLACK);
+    S.traffic.setCabYellow(i, false); // exitTaxi: the cab left at the curb is a fleet cab again
     S.traffic.releaseTaxi(i, 20, 40, 0);
     assert.deepEqual(col3(cabs[0], k), YELLOW);
-    // a remote player's cab in their shop colour
-    S.traffic.setRemoteTaxis([{ x: 30, z: 40, yaw: 0, v: 0, tint: '#39f58a' }]);
+    // a remote player's cab in their shop colour (the first remote slot is after the eight called ones)
+    S.traffic.setRemoteTaxis([{ x: 30, z: 40, yaw: 0, v: 0, tint: tint(['cab_yellow']) }]);
     S.run(1, onFoot(16, 28), 2);
-    assert.deepEqual(col3(cabs[0], S.nTaxi + 8), rgb('#39f58a'));
+    assert.deepEqual(col3(cabs[0], S.nTaxi + 8), rgb('#fff3a0'));
     assert.equal(was.cab.length, S.nCab * 3);
   });
   it('the swap moves nothing: each new mesh starts with the pose the boxes had, and every part of a vehicle shares one matrix afterwards', async () => {

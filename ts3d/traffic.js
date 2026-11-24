@@ -308,6 +308,7 @@ export function taxiModelKit(root, quality = 'high', signAspect = 4) {
   };
   const tris = (g) => g.index.count / 3;
   const paint = merge(parts.paint), glow = merge(parts.glow), signGeo = modelSignGeometry(sign, signAspect);
+  paint.deleteAttribute('color'); // its colour is the instance's
   const shine = quality === 'low' ? [['shiny', merge(parts.chrome, parts.glass)]] : [['chrome', merge(parts.chrome)], ['glass', merge(parts.glass)]];
   const kit = {
     taxi: [['paint', paint], ['solid', merge(parts.solid, parts.checker)], ...shine, ['glow', glow], ['sign', signGeo]],
