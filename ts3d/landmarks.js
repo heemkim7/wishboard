@@ -677,9 +677,10 @@ export function buildLandmarks(ctx) {
 
   // ===== 가운데 거리 (WISH STREET): the lots' street =================================================
   // Pavers where world.js cuts the car road out (layout.js NO_ROAD), a thin lit centre line, the entrance arch with its
-  // name, and a number post at each lot's street corner. One Kit, five meshes: the pavers and the line join the ground
-  // stack (GROUND_LAYER, at the road's and its paint's heights, so avatar shadows and markers still show on them), the
-  // posts and the arch go into the shared metal and glow buckets, and the name and the 18 numbers are faces on one atlas.
+  // name, and a number post at each lot's street corner. One Kit, five meshes: the pavers (world.js mats.street) and the
+  // line join the ground stack (GROUND_LAYER, at a pedestrian road's and the road paint's heights, so avatar shadows and
+  // markers still show on them), the posts and the arch go into the shared metal and glow buckets, and the name and the
+  // 18 numbers are faces on one atlas.
   {
     const S = LAYOUT.street, A = S.arch, P = S.pave;
     const PINK = '#ff3d9a', CYAN = '#3fe6ff', GOLD = '#ffcf5a', DARK = '#16171c', NIGHT = '#07070d';
@@ -726,7 +727,7 @@ export function buildLandmarks(ctx) {
     for (const ry of [0, Math.PI]) kit.add(cropPlane(10.4, 2.6, crop(0, 0, AW, SH)), '#ffffff', { mat: 'faces', x: S.x, y: A.h - 0.5, z: A.z + Math.cos(ry) * 0.41, ry });
 
     const lineMat = new THREE.MeshBasicMaterial({ vertexColors: true, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
-    const street = kit.build({ ...kitMats, pave: ground.mats.pavers, line: lineMat, faces });
+    const street = kit.build({ ...kitMats, pave: ground.mats.street, line: lineMat, faces });
     street.name = 'wish-street';
     for (const m of street.children) if (m.name === 'pave' || m.name === 'line') { m.layers.set(GROUND_LAYER); m.renderOrder = m.name === 'pave' ? 1 : 2; }
     scene.add(street);

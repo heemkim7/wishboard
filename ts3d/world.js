@@ -245,6 +245,9 @@ export function createWorld(ctx) {
     land: surface('#565558', 0.8, { wet: 0.55, puddles: 0.5, reflect: 0.75, pave: [1.6, 1.6, 0.26, 0] }),
     asphalt: surface(low ? '#524f50' : '#4c4a4a', 0.62, { wet: 0.82, puddles: 1, reflect: 1, po: -2, vary: 0.05 }),
     pavers: surface('#585658', 0.74, { wet: 0.62, puddles: 0.7, reflect: 0.9, po: -1, pave: [2.0, 1.0, 0.24, 1] }),
+    // The lots' pedestrian street (landmarks.js lays it): a tone between the concrete and the road, wetter than the
+    // concrete so the boards on both sides mirror in it, in larger pavers laid across the street.
+    street: surface('#504e52', 0.68, { wet: 0.72, puddles: 0.85, reflect: 1, po: -1, pave: [2.4, 1.2, 0.26, 1] }),
     grass: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.96, metalness: 0, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 }),
     pool: patchWet(new THREE.MeshStandardMaterial({ color: '#0b1522', roughness: 0.05, metalness: 0.2, envMapIntensity: 1.2, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6 }), reflection, puddleTex, { wet: 1, puddles: 0, reflect: 1.25 }),
     paint: patchWet(new THREE.MeshStandardMaterial({ vertexColors: true, color: new THREE.Color(1, 1, 1).multiplyScalar(low ? 1.25 : 1), roughness: 0.55, metalness: 0, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 }), reflection, puddleTex, { wet: 0.55, puddles: 0.6, reflect: 0.35 }),
@@ -758,7 +761,7 @@ export function createWorld(ctx) {
       new THREE.Plane(new THREE.Vector3(0, 0, 1), -LOOP.z0),
       new THREE.Plane(new THREE.Vector3(0, 0, -1), LOOP.z1),
     ];
-    for (const m of [mats.land, mats.grass, mats.pavers, mats.pool, mats.river]) m.clippingPlanes = clips;
+    for (const m of [mats.land, mats.grass, mats.pavers, mats.street, mats.pool, mats.river]) m.clippingPlanes = clips;
     // No car road under the lots' pedestrian street (layout.js NO_ROAD, one rectangle): the asphalt and its paint are cut
     // out there, so the land shows and landmarks.js lays the street's pavers on it. Each plane is negative inside the
     // rectangle and clipIntersection drops only what all four clip. (Raising a slab over the paint instead would also
