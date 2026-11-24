@@ -361,7 +361,9 @@ describe('3. budget hard on open tabs', { concurrency: false }, () => {
     const log = fakeFetch((now) => (now < reset + 150000 ? { full: true } : { ok: true, cap: 50 })); // the server's day turns 2.5 min after ours
     try {
       cacheGuest(); const p = await page(); p.ws().ok(); await settle(); p.ws().msg({ t: 'down' }); await settle();
-      await clock.tick(600000 + 60000); // our 00:01: the reset try said full
+      // The reset try is 3 s after the reset plus up to RESET_SPREAD (60 s) of jitter (net.js hardDown): 70 s is past the latest one. This
+      // waited 60 s, so about one run in twenty (a jitter above 57 s) saw no try yet and failed.
+      await clock.tick(600000 + 70000); // our 00:01:10: the reset try said full
       const n = log.gate; assert.ok(n >= 1);
       await clock.tick(6 * 60000);
       assert.equal(p.ws().readyState, 0, 'reconnected after a few short retries'); assert.ok(log.gate - n <= 4, `${log.gate - n} more reads`);

@@ -495,7 +495,9 @@ void main(){
     let best = null;
     for (const s of spots) {
       const d = Math.hypot(s.x - x, s.z - z);
-      if (d < 18 && (!best || d < best.d)) best = { ...s, d };
+      // 6 m: every jump that means one of these spots aims within 3 m of it. The old 18 m pulled jumps to the lots next to the stage
+      // (17, 18) onto the stage's edge, and jumps to the first lots onto the taxi stand, once the lots stood along the street.
+      if (d < 6 && (!best || d < best.d)) best = { ...s, d };
     }
     return best;
   }
