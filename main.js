@@ -1399,7 +1399,7 @@ function guideStar() {
     const dd = me ? (s.x - me.x) ** 2 + (s.z - me.z) ** 2 : 0;
     if (dd < dist) { dist = dd; best = s; }
   }
-  world?.setWaypoint?.({ x: best.x, z: best.z });
+  world?.setWaypoint?.({ x: best.x, z: best.z, name: '별똥별' }); // the name goes on the guide pill
 }
 function startShower(seed, announce) {
   const key = seed >>> 0;
@@ -1407,7 +1407,8 @@ function startShower(seed, announce) {
   shower = { seed: key, started: performance.now(), taken: new Set() };
   world.startStars(starsFor(key));
   if (announce) {
-    ui.news('STAR');
+    // On a touch screen the tappable note below is the one row for it: the 속보 line said the same thing a row above.
+    if (!TOUCH) ui.news('STAR');
     // The guide is the cyan waypoint, so the line names no colour. Stars are play: no points.
     headline(`🌠 별똥별 10개 · ${Math.round(STAR_LIFE / 1000)}초 · 별똥별 빛기둥에 서 보세요`);
     ui.note(`별똥별 ${Math.round(STAR_LIFE / 1000)}초 · 누르면 가장 가까운 별똥별로 길안내`, 'ok', guideStar);

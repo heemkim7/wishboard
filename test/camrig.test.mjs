@@ -324,8 +324,13 @@ describe('dragging the view, and less motion for those who ask for it', () => {
     assert.equal(glideMs(2200, true), 1);
     const w = read('timesSquare3d.js');
     assert.match(w, /const calm = matchMedia\('\(prefers-reduced-motion: reduce\)'\);/);
-    // every glide starts in startCine, the intro or the way back: a board focus, the lounge tour, the look at the balloon, the gift show
-    assert.match(w, /fov: o\.fov \|\| 0 \};\n\s+cine\.dur = glideMs\(cine\.dur, calm\.matches\);/);
+    // every glide starts in startCine, the intro or the way back: a board focus, the lounge tour, the look at the balloon.
+    // Not the gift show's glides (film: true): gift.js records them for someone else, so they stay glides
+    // (test/world-run.test.mjs runs it with reduced motion on); its way back at the end is the player's own view and cuts.
+    assert.match(w, /fov: o\.fov \|\| 0 \};\n(\s+\/\/[^\n]*\n)*\s+if \(!o\.film\) cine\.dur = glideMs\(cine\.dur, calm\.matches\);/);
+    const show = w.slice(w.indexOf('  function giftShow('), w.indexOf('  const LOUNGE_IDS'));
+    assert.equal(show.match(/startCine\([^;]*film: true/g).length, 2);
+    assert.equal(w.match(/film: true/g).length, 2); // nothing else opts out
     assert.match(w, /cine = \{ t0: performance\.now\(\), dur: glideMs\(2200, calm\.matches\), back: true, ease: 'inout', tell: true \};/);
     assert.equal(w.match(/dur: glideMs\(RETURN_MS, calm\.matches\), back: true/g).length, 2);
     // the four places a scripted camera gets its duration: startCine, the intro and the two ways back

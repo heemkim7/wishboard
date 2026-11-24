@@ -476,7 +476,7 @@ describe('cabs called to the stands', needsMap, () => {
 // The 18 lots stand on both sides of one north-south street from the entrance arch (z 262) to the stage. On the map that
 // street is 7th Avenue (one-way south), with West 41st Street across it: layout.js NO_ROAD is where world.js draws no
 // roadway any more. No AI car drives there, no signal pole stands in it or in the way in, and the cab called to the
-// 건물 구역 stand in front of the arch waits beside the entrance. (The player's own cab may drive in: fares end at lots.)
+// 위시 스트리트 stand beside the arch waits beside the entrance. (The player's own cab may drive in: fares end at lots.)
 describe('the lots\' pedestrian street', needsMap, () => {
   before(city);
   const S = LAYOUT.street, mouth = streetMouth();
@@ -525,8 +525,8 @@ describe('the lots\' pedestrian street', needsMap, () => {
   });
   it('no AI car is ever in it or on those roads: ten minutes with the player at the arch, with 46 cars about', () => {
     const segs = reaching(), on = [], turned = new Map(), W42 = junctionAt(-1.4, 250.1);
-    // the 건물 구역 stand's post, 2 m before the arch: how near a car's body ever comes to it (it stood at z 255, in the
-    // outer eastbound lane of W 42nd St, and cars drove through it)
+    // the 위시 스트리트 stand's post, east of the arch on the pavement: how near a car's body ever comes to it (it stood
+    // at z 255, in the outer eastbound lane of W 42nd St, and cars drove through it)
     const stand = TAXI_STANDS[2];
     const toBody = (c, x, z) => { const fx = Math.sin(c.yaw), fz = Math.cos(c.yaw), ex = x - c.x, ez = z - c.z; return Math.hypot(Math.max(Math.abs(ex * fx + ez * fz) - HL, 0), Math.max(Math.abs(ez * fx - ex * fz) - HW, 0)); };
     let off7th = 0, waited = 0, nearStand = Infinity, nearOld = Infinity;
@@ -585,9 +585,9 @@ describe('the lots\' pedestrian street', needsMap, () => {
     for (let t = 0; t < 36; t += 0.5) { W.traffic.update(0.5, t, onFoot(S.entry.x, S.entry.z)); seen.add(W.traffic.phase()); }
     assert.deepEqual([...seen].sort(), ['ewG', 'ewY', 'nsG', 'nsY', 'red']);
   });
-  it('the cab called to the 건물 구역 stand waits beside the entrance, on W 42nd St, and the game finds it from the stand', () => {
+  it('the cab called to the 위시 스트리트 stand waits beside the entrance, on W 42nd St in front of the stand, and the game finds it from the stand', () => {
     const stand = TAXI_STANDS[2];
-    assert.deepEqual([stand.name, stand.x, stand.z], ['건물 구역', S.x, S.arch.z - 2]); // 2 m before the arch, south of W 42nd St's roadway
+    assert.deepEqual([stand.name, stand.x, stand.z], ['위시 스트리트', S.x + 22.5, S.arch.z - 2]); // east of the arch, south of W 42nd St's roadway
     const road = nyc.nearestRoad(stand.x, stand.z, 30, (r) => carRoad(r) && nyc.roadName(r) === 'West 42nd Street');
     assert.ok(road.d - nyc.roads.width[road.road] / 2 > 1 && stand.z > road.pz, `${(road.d - nyc.roads.width[road.road] / 2).toFixed(2)} m south of its south edge`);
     const W = world('low', 1), me = onFoot(stand.x, stand.z);
@@ -601,7 +601,9 @@ describe('the lots\' pedestrian street', needsMap, () => {
     assert.equal(parked.length, 1, 'one cab, not one a frame');
     const i = W.traffic.nearestTaxi(stand.x, stand.z, 18, true).i, m = W.beams.instanceMatrix.array, o = i * 16;
     const cab = { x: m[o + 12], z: m[o + 14], yaw: Math.atan2(m[o + 8], m[o + 10]) };
-    assert.ok(Math.hypot(cab.x - stand.x, cab.z - stand.z) < 17.5, `${Math.hypot(cab.x - stand.x, cab.z - stand.z).toFixed(1)} m from the stand`);
+    // at the curb right in front of the stand: a few metres north of it, not along the block
+    assert.ok(Math.hypot(cab.x - stand.x, cab.z - stand.z) < 4, `${Math.hypot(cab.x - stand.x, cab.z - stand.z).toFixed(1)} m from the stand`);
+    assert.ok(Math.abs(cab.x - stand.x) < 1.5 && cab.z < stand.z, `the cab at (${cab.x.toFixed(1)}, ${cab.z.toFixed(1)})`);
     // outside the arch's span (its posts at x +-13.2), north of the arch, not in the street
     for (const [x, z] of corners(cab)) {
       assert.ok(Math.abs(x - S.x) > S.arch.post + S.arch.r + 0.5, `a corner at x ${x.toFixed(2)}`);
@@ -612,8 +614,13 @@ describe('the lots\' pedestrian street', needsMap, () => {
     assert.equal(nyc.roadName(hit.road), 'West 42nd Street');
     assert.ok(Math.abs(hit.d - (R.width[hit.road] / 2 - 0.67)) < 0.05 && cab.z > hit.pz);
     assert.ok(Math.abs(wrap(cab.yaw - 90 * deg)) < 0.02);
-    // it was at (4.3, 255) facing into the arch, and without this at (0, 257.5), across the entrance
+    // it was at (4.3, 255) facing into the arch, and (with the stand in front of the arch, without the mouth rule) at
+    // (0, 257.5), across the entrance; the rule stays for any stand that comes near the arch
     assert.equal(inRect(mouth, 4.3, 255), true); assert.equal(inRect(mouth, 0, 257.5), true);
+    const j = W.traffic.callTaxi({ x: S.x, z: S.arch.z - 2 });
+    W.traffic.update(1 / 30, 5, me);
+    const cx = W.beams.instanceMatrix.array[j * 16 + 12];
+    assert.ok(j >= 0 && j !== i && Math.abs(cx - S.x) - HL > S.arch.post + S.arch.r, 'a cab called from the centre line still waits beside the arch: x ' + cx.toFixed(2));
   });
 });
 

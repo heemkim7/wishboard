@@ -48,7 +48,7 @@ export const LOT = {
 };
 
 // 가운데 거리 (WISH STREET): one north-south pedestrian street down the middle of the pad. People arrive at its north end
-// (the 건물 구역 taxi stand), walk in under the arch at z0 and reach the stage steps at z1. Nine lots stand on each side at
+// (from West 42nd Street; the 위시 스트리트 taxi stand is beside the entrance), walk in under the arch at z0 and reach the stage steps at z1. Nine lots stand on each side at
 // x ± lotX, every `step` metres from lot0. Each is turned about its own centre by `turn` toward the entrance, the east
 // row one way and the west row the mirror way (a chevron), so every front and billboard faces up the street at the
 // people walking in: an upright phone sees a board 31° off its plane instead of 13° edge-on (test/lot-models.test.mjs
@@ -82,7 +82,7 @@ export const LAYOUT = {
   // North tip of One Times Square (MAIN_S wraps it) and the tower roof for the ball.
   oneTimes: { x: 17.4, z: 192.9, roof: { x: 21.3, z: 225.6, h: 110.6 } },
   stage: STAGE,
-  // The lots' street (see STREET above). entry: where a jump to the lots lands, between the 건물 구역 stand and the arch.
+  // The lots' street (see STREET above). entry: where a jump to the lots lands, 1 m before the arch, facing down the street.
   // mid: the middle pair, for the map pin. arch: the entrance arch's posts at x ± post (1.2 m outside the clear width),
   // each a square of half-size r. pave: the paved strip from one row of pads to the other (into the teeth of turned
   // fronts), through to the pad's south edge under the stage.
@@ -98,9 +98,12 @@ export const LAYOUT = {
 export const TAXI_STANDS = [
   { x: 9.4, z: 72, axis: 'z', name: '타임스퀘어' },
   { x: -11.6, z: -40, axis: 'z', name: '더피 스퀘어' },
-  // On the street's centre line, on the pavement 2 m before the arch: the way in to the lots. (It stood at z 255, in
-  // the eastbound lane of West 42nd Street, whose south curb is at z 258.7: cars drove through its post.)
-  { x: STREET.x, z: STREET.z0 - 2, axis: 'z', name: '건물 구역' },
+  // Beside the way in to the lots: on the pavement south of West 42nd Street (its south curb is at z 258.7), 22.5 m east
+  // of the street's centre line, 11.8 m past the arch's east post. The called cab waits at the curb in front of it. Its
+  // sign lies along W 42nd St, seen from the crossing in front of the arch and along the curb. It stood on the centre
+  // line 2 m before the arch, where its sign filled the view of everyone walking in; and it stays 15.6 m (taxiStandR and
+  // a lot's 3.6 m) from lot 1's front, so E there opens the lot. (Before that it stood at z 255, in a lane of W 42nd St.)
+  { x: STREET.x + 22.5, z: STREET.z0 - 2, axis: 'x', name: '위시 스트리트' },
 ];
 
 // Walking in from the entrance (heading south, +Z) the odd numbers are on the left, which is east (+X), and the even
@@ -256,7 +259,7 @@ export const LANDMARKS = [
   { id: 'atm', ko: '황금 ATM', en: 'Golden ATM', x: LAYOUT.atm.x, z: LAYOUT.atm.z, g: '💰', major: true, side: 1 },
   { id: 'subway', ko: '타임스퀘어역', en: 'Times Sq Station', x: LAYOUT.subway.x, z: LAYOUT.subway.z, g: '🚇', major: true, side: 1 },
   { id: 'stage', ko: 'K-POP 스테이지', en: 'K-POP Stage', x: LAYOUT.stage.spot.x, z: LAYOUT.stage.spot.z, g: '💃', major: true },
-  { id: 'lots', ko: '건물 구역', en: 'Lots', x: LAYOUT.street.mid.x, z: LAYOUT.street.mid.z, g: '🏗️', major: true },
+  { id: 'lots', ko: '위시 스트리트', en: 'Wish Street', x: LAYOUT.street.mid.x, z: LAYOUT.street.mid.z, g: '🏗️', major: true },
   ...MAP_LANDMARKS.filter(l => !['timessq', 'ktown', 'bryant'].includes(l.id) && insideLoop(l.x, l.z, 0)).map(l => {
     if (l.id === 'rock') return { ...l, ko: '30 록펠러 플라자', en: '30 Rockefeller Plaza', x: 406, z: -328, g: '🏢', major: true };
     const mark = { esb: '🏙️', chrysler: '🏢', flatiron: '🏢', owtc: '🏙️', gct: '🚉', msg: '🏟️', un: '🏛️' }[l.id];

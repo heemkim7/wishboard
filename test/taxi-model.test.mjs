@@ -289,10 +289,21 @@ describe('the fleets, once the model is in', needsMap, () => {
     S.traffic.setCabYellow(i, false); // exitTaxi: the cab left at the curb is a fleet cab again
     S.traffic.releaseTaxi(i, 20, 40, 0);
     assert.deepEqual(col3(cabs[0], k), YELLOW);
-    // a remote player's cab in their shop colour (the first remote slot is after the eight called ones)
+    // a remote player's cab in their shop colour (its row is the one after the last called cab in use: this one, left
+    // at the curb in the first called slot)
     S.traffic.setRemoteTaxis([{ x: 30, z: 40, yaw: 0, v: 0, tint: tint(['cab_yellow']) }]);
     S.run(1, onFoot(16, 28), 2);
-    assert.deepEqual(col3(cabs[0], S.nTaxi + 8), rgb('#fff3a0'));
+    assert.deepEqual(col3(cabs[0], k + 1), rgb('#fff3a0'));
+    // rows are shared between called and remote cabs, so a called cab is painted again every frame: a second call takes
+    // the row the remote cab had, and it is the fleet yellow there, not the remote player's colour
+    S.traffic.setRemoteTaxis([{ x: 30, z: 40, yaw: 0, v: 0, tint: PINK }]);
+    S.run(1, onFoot(16, 28), 2.5);
+    assert.deepEqual(col3(cabs[0], k + 1), rgb(PINK));
+    const j = S.traffic.callTaxi(TAXI_STANDS[1]);
+    S.run(1, onFoot(16, 28), 3);
+    assert.equal(j, i + 1);
+    assert.deepEqual(col3(cabs[0], k + 1), YELLOW);
+    assert.deepEqual(col3(cabs[0], k + 2), rgb(PINK));
     assert.equal(was.cab.length, S.nCab * 3);
   });
   it('the swap moves nothing: each new mesh starts with the pose the boxes had, and every part of a vehicle shares one matrix afterwards', async () => {
@@ -331,12 +342,27 @@ describe('the fleets, once the model is in', needsMap, () => {
     assert.equal(lastCab(S), S.nTaxi + 1);
     assert.deepEqual(S.now().cabs.map((m) => m.count), Array(5).fill(S.nTaxi + 1));
     assert.notDeepEqual(mat16(S.now().cabs[0], S.nTaxi).slice(0, 3), [0, 0, 0]);
-    S.traffic.setRemoteTaxis([{ x: 30, z: 40, yaw: 0, v: 0 }]); // the first remote slot is after the eight called ones
+    // A remote player's cab is drawn in the row right after the last called cab in use, not after all eight called-cab
+    // slots: one other player's taxi used to make the eight empty slots run the vertex shader (26.6k triangles on a phone).
+    S.traffic.setRemoteTaxis([{ x: 30, z: 40, yaw: 0, v: 0 }]);
     S.run(1, onFoot(16, 28), 2.1);
-    assert.deepEqual(S.now().cabs.map((m) => m.count), Array(5).fill(S.nTaxi + 9));
+    assert.deepEqual(S.now().cabs.map((m) => m.count), Array(5).fill(S.nTaxi + 2));
+    assert.deepEqual(mat16(S.now().cabs[0], S.nTaxi + 1).slice(12, 15), [30, 0, 40]);
+    // the headlight pool keeps its fixed index (the street tests read cabs from it)
+    assert.deepEqual(mat16(S.beams, S.nTaxi + S.nCar + 8).slice(12, 15), [30, 0, 40]);
+    // the called cab gone: the remote one moves down to the first row after the AI cabs, and nothing is left drawn behind it
+    S.traffic.takeTaxi(i);
+    S.traffic.releaseTaxi(i, 20, 40, 0);
+    const far = onFoot(900, 900);
+    for (let t = 2.2; t < 26; t += 1) S.run(1, far, t); // parked and far for over 20 s: the slot is let go
+    S.traffic.setRemoteTaxis([{ x: 30, z: 40, yaw: 0, v: 0 }, { x: 34, z: 40, yaw: 0, v: 0 }]);
+    S.run(1, onFoot(16, 28), 27);
+    const top = S.now().cabs[0].count;
+    assert.ok(top <= S.nTaxi + 2, `drawn up to row ${top}`);
+    for (let k = top; k < S.nCab; k++) assert.deepEqual(mat16(S.now().cabs[0], k).slice(0, 3), [0, 0, 0], 'row ' + k + ' is hidden');
     S.traffic.setRemoteTaxis([]);
-    S.run(1, onFoot(16, 28), 2.2);
-    assert.deepEqual(S.now().cabs.map((m) => m.count), Array(5).fill(S.nTaxi + 1));
+    S.run(1, onFoot(16, 28), 28);
+    assert.ok(S.now().cabs[0].count <= S.nTaxi, String(S.now().cabs[0].count));
     assert.equal(S.beams.count, S.total); // (the pools are two triangles a car: all drawn, and read by the street tests)
   });
   it('a minute of the street drawn as the model on a phone: no two vehicles overlap as 4.98 x 2.06 m boxes', async () => {

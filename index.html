@@ -302,6 +302,9 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .waypill.going .arrow { display: none; }
   .waypill small { position: relative; flex: none; align-self: stretch; display: inline-flex; align-items: center; justify-content: center; width: 30px; margin: 0 -10px 0 -2px; }
   .waypill small::after { content: ''; position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
+  /* A tap on the pill starts the walk: on touch the whole pill takes taps 44px tall (3px over and under its 38px). It is
+     ::before, so the ✕ (small, positioned after it) stays on top of it and keeps its own taps. */
+  html.touch .waypill::before { content: ''; position: absolute; inset: -3px 0; }
   @media (orientation: portrait) and (max-width: 411px) { html.touch .waypill .go i { display: none; } }
   @media (orientation: portrait) and (max-width: 359px) { html.touch .waypill .arrow { display: none; } }
   .taxihud .job small { white-space: normal; }
@@ -1433,13 +1436,15 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     /* The street name under the minimap was always cut ("브로드웨…"); the minimap says where you are. */
     html.touch .hud-r .locpill { display: none; }
     /* From the top on the right: the icon row 8 … 56px, the map 62 … 120px, 멍때리기 and the eye 126 … 174px (126px wide),
-       the waypoint pill 180 … 218px. The 속보 line ends 8px left of the two tiles; the stack starts under both columns
-       (the left one ends at --hudl-b, the 속보 slot is 38px more) and under the pill while there is one. */
+       the waypoint pill from 180px (38px, its taps 44px). The 속보 line ends 8px left of the two tiles; a pill with a name
+       is wider than the gap beside it, so the pill also starts under the 속보 slot (--hudl-b + 8 + 30px, then 6px and the
+       3px of its taps): 187px on a 375px phone. The stack starts under both columns (the left one ends at --hudl-b, the
+       속보 slot is 38px more) and 8px under the pill while there is one. */
     html.touch .news { right: calc(142px + var(--safe-r)); }
     html.touch .toasts { --stack-top: max(calc(var(--hudl-b, 142px) + 46px), calc(182px + var(--safe-t))); }
-    html.touch body:has(#ui > .waypill:not([hidden])) .toasts { --stack-top: max(calc(var(--hudl-b, 142px) + 46px), calc(226px + var(--safe-t))); }
+    html.touch body:has(#ui > .waypill:not([hidden])) .toasts { --stack-top: max(calc(var(--hudl-b, 142px) + 93px), calc(226px + var(--safe-t))); }
     html.touch body:has(#ui > .taxihud:not([hidden])) .toasts { --stack-top: calc(282px + var(--safe-t)); }
-    html.touch .waypill { top: calc(180px + var(--safe-t)); bottom: auto; left: auto; right: calc(8px + var(--safe-r)); max-width: calc(100vw - 16px - var(--safe-l) - var(--safe-r)); margin: 0; }
+    html.touch .waypill { top: max(calc(180px + var(--safe-t)), calc(var(--hudl-b, 142px) + 47px)); bottom: auto; left: auto; right: calc(8px + var(--safe-r)); max-width: calc(100vw - 16px - var(--safe-l) - var(--safe-r)); margin: 0; }
     html.touch .taxihud { top: calc(182px + var(--safe-t)); }
     /* Upright the dance panel is along the bottom too, so its notices also stay under the left column. */
     html.touch body:has(#ui > .rhythm.show) .toasts { top: var(--stack-top, 182px); }
