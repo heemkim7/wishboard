@@ -1,14 +1,14 @@
 // Times Square dressing on the real buildings: the night photos (Wikimedia Commons, see
 // assets/times-square/credits.json), animated ad screens and blade signs on every facade facing the
 // bowtie — from street level up to the tower tops — MAIN_S wrapped around One Times Square, SUB_B1..4
-// on the canyon walls, the New Year's ball, steam stacks, and the Koreatown gate on W 32nd St.
+// on the canyon walls, the New Year's ball, steam stacks, and the K-food blade signs beside the lot pad.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { LAYOUT } from './layout.js?v=202611241127';
 import { Kit, cropPlane } from './kit.js?v=202611241127';
-import { makeCanvas, paintBlade, paintLabel, paintGlow, paintNeonSign, THEMES } from './art.js?v=202611241127';
+import { makeCanvas, paintBlade, paintLabel, paintGlow, THEMES } from './art.js?v=202611241127';
 import { addFrame } from './screens.js?v=202611241127';
-import { planBowtie, wallsIn, pickWall, STREET_OLD } from './bowtie.js?v=202611241127';
+import { planBowtie, wallsIn, STREET_OLD } from './bowtie.js?v=202611241127';
 import { ENV_PHOTOS, envPhotoUrl } from './loadplan.js?v=202611241127';
 
 const ONE = new THREE.Vector3(1, 1, 1);
@@ -136,40 +136,18 @@ export function buildTimesSquare(ctx) {
   scene.add(ball);
   updaters.push((dt) => { ball.rotation.y += dt * 0.3; });
 
-  // ---- Koreatown: neon gate, blade signs, its own big screen -------------------------------------------------------------
-  const K = LAYOUT.ktown;
+  // ---- K-food blade signs beside the lot pad ------------------------------------------------------------------------------
+  // The K-Town gate that stood on the old lot rows is gone with them: the lots' street has its own arch (landmarks.js).
+  // These blades stay where they were, on the walls just outside the pad's fence that look across it (three on today's map).
   {
-    const gx = K.x0 - 13, z0 = K.z - 7.6, z1 = K.z + 7.6;
-    for (const z of [z0, z1]) {
-      kit.box(0.9, 9, 0.9, '#7a0d1c', { x: gx, y: 4.5, z, mat: 'gloss' });
-      kit.box(1.1, 0.4, 1.1, '#ffcf5a', { x: gx, y: 9.1, z, glow: 1.6 });
-      colliders.push({ x0: gx - 0.5, x1: gx + 0.5, z0: z - 0.5, z1: z + 0.5 });
-    }
-    kit.box(0.7, 1.2, z1 - z0 + 1.6, '#16171c', { x: gx, y: 8.2, z: K.z, mat: 'metal' });
-    const c = makeCanvas(1024, 160);
-    paintNeonSign(c, 'K-TOWN 코리아타운', '#ff3d9a', 'KOREA WAY · W 32ND ST');
-    const sign = new THREE.Mesh(new THREE.PlaneGeometry(z1 - z0 + 1.2, 2.2), new THREE.MeshBasicMaterial({ map: toTex(c), transparent: true, color: new THREE.Color(1.25, 1.25, 1.25) }));
-    for (const s of [-1, 1]) {
-      const m = sign.clone();
-      m.position.set(gx + s * 0.38, 8.2, K.z);
-      m.rotation.y = s * Math.PI / 2;
-      scene.add(m);
-    }
-    const kw = walls(K.x0 - 70, K.x0 + (K.n - 1) * K.step + 70, K.z - 30, K.z + 30, 12).filter(w => Math.abs(w.nz) > 0.8 && Math.sign(w.nz) === Math.sign(K.z - w.mz));
+    const B = { x0: -114, x1: 114, z0: 275, z1: 335, z: 305 };
+    const kw = walls(B.x0, B.x1, B.z0, B.z1, 12).filter(w => Math.abs(w.nz) > 0.8 && Math.sign(w.nz) === Math.sign(B.z - w.mz));
     let n = 0;
     for (const w of kw) {
       if (n > 14) break;
       const p = new THREE.Vector3(w.mx + w.nx * 1.55, 0, w.mz + w.nz * 1.55);
       bladeAt(BLADES[5 + (n % 7)], p.x + w.tx * (w.len / 2 - 2.5), 9.5 + (n % 3), p.z + w.tz * (w.len / 2 - 2.5), Math.atan2(w.nx, w.nz) + Math.PI / 2, 9);
       n++;
-    }
-    const end = walls(K.x0 + K.n * K.step + 8, K.x0 + K.n * K.step + 120, K.z - 14, K.z + 14, 14);
-    const sw = pickWall(end, K.x0 + K.n * K.step + 60, K.z, -1, 0, 9, 18);
-    if (sw) {
-      const g = new THREE.Group();
-      g.position.set(sw.mx + sw.nx * 0.5, 0, sw.mz + sw.nz * 0.5);
-      g.rotation.y = Math.atan2(sw.nx, sw.nz);
-      scene.add(g);
     }
   }
 
