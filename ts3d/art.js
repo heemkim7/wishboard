@@ -650,39 +650,51 @@ export function paintMenuBoard(canvas) {
   return canvas;
 }
 
+// The cab's roof light (1.0 x 0.25 m): one word, as large as the light. From 10 to 40 m on a phone the whole light is
+// 56 to 14 pixels wide, where a second word (it used to carry a medallion number too) was only speckle.
 export function paintTaxiSign(canvas) {
   const g = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height, k = H / 64;
   g.fillStyle = '#fff6c9';
   g.fillRect(0, 0, W, H);
   g.fillStyle = '#1a1a1a';
-  g.font = `900 ${Math.round(38 * k)}px ${SANS}`;
+  g.font = `900 ${Math.round(50 * k)}px ${SANS}`;
   g.textAlign = 'center';
   g.textBaseline = 'middle';
-  g.fillText('TAXI  7K42', W / 2, H / 2 + 2 * k);
+  g.fillText('TAXI', W / 2, H / 2 + 2 * k);
   return canvas;
 }
 
+// Where things are on the cab's door decal, as fractions of the canvas (ts3d/traffic.js maps it onto a 3.4 x 0.42 m
+// plane): the checker stripe is the top half, in cells of 1/16 of the width and 1/4 of the height; the lettering is in
+// the bottom half and stays between text0 and text1 of the width, which is the stretch of door between the wheels.
+export const TAXI_DECAL = { cols: 16, rows: 2, band: 0.5, text0: 0.19, text1: 0.81 };
+
+// The stripe is two rows of 21 x 10.5 cm cells (the old one had 10.6 x 4.6 cm cells: on a phone those are 1.5 x 0.6
+// pixels at 40 m and crawl as the cab moves). Every cell edge is on a power-of-two texel (64 x 32 at 1024 x 128), so
+// each mipmap level down to 1/32 is still an exact checker and the next one is an even grey: nothing beats against
+// the texel grid on the way down. The light squares are a soft grey: the decal is unlit and the street is dark.
 export function paintTaxiDecal(canvas) {
   const g = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height, k = H / 128;
+  const D = TAXI_DECAL, cw = W / D.cols, ch = H * D.band / D.rows;
   g.clearRect(0, 0, W, H);
-  for (let i = 0; i < 32; i++) {
-    g.fillStyle = i % 2 ? '#111111' : '#f2f2f2';
-    g.fillRect(i * W / 32, 0, W / 32, 14 * k);
-    g.fillStyle = i % 2 ? '#f2f2f2' : '#111111';
-    g.fillRect(i * W / 32, 14 * k, W / 32, 14 * k);
+  for (let j = 0; j < D.rows; j++) for (let i = 0; i < D.cols; i++) {
+    g.fillStyle = (i + j) % 2 ? '#16161a' : '#dcdce0';
+    g.fillRect(i * cw, j * ch, cw, ch);
   }
-  g.fillStyle = '#111111';
-  g.font = `900 ${Math.round(46 * k)}px ${SANS}`;
+  const y = H * (D.band + (1 - D.band) / 2) + 2 * k, x0 = W * D.text0, x1 = W * D.text1;
   g.textBaseline = 'middle';
   g.textAlign = 'left';
-  g.fillText('NYC', 70 * k, 76 * k);
+  g.font = `900 ${Math.round(46 * k)}px ${SANS}`;
+  g.fillStyle = '#111111';
+  g.fillText('NYC', x0, y);
   g.fillStyle = '#0a3d91';
-  g.fillText('TAXI', 172 * k, 76 * k);
+  g.fillText('TAXI', x0 + g.measureText('NYC ').width, y);
+  g.textAlign = 'right';
   g.fillStyle = '#111111';
   g.font = `800 ${Math.round(26 * k)}px ${SANS}`;
-  g.fillText('WISH BOARD', W - 280 * k, 78 * k);
+  g.fillText('WISH BOARD', x1, y + 2 * k);
   return canvas;
 }
 
