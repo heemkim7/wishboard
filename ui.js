@@ -3248,7 +3248,7 @@ export function createUI(root, hooks) {
           h('img', { src: LEVELS[lv].src, alt: LEVELS[lv].t, draggable: 'false' }), h('span', { class: 'n', text: String(s.id) }));
         plots.append(b);
       }
-      const lotCenter = { x: LAYOUT.ktown.x0 + (LAYOUT.ktown.n - 1) * LAYOUT.ktown.step / 2, z: LAYOUT.ktown.z };
+      const lotCenter = { x: LAYOUT.street.entry.x, z: LAYOUT.street.entry.z }; // the entrance of the lots' street
       const mine = myPlots();
       const where = h('div', { class: 'place' },
         h('div', { class: 'where' },
@@ -5210,7 +5210,7 @@ export function createUI(root, hooks) {
     { ico: 'ring', ko: '황금 링', x: RINGS[0].x, z: RINGS[0].z - 4 },
     { ico: 'taxi', ko: '승강장', x: TAXI_STANDS[0].x, z: TAXI_STANDS[0].z },
     { ico: 'music', ko: 'K-POP 스테이지', x: LAYOUT.stage.spot.x, z: LAYOUT.stage.spot.z - 5 },
-    { ico: 'building', ko: '건물 구역', x: 0, z: 305 },
+    { ico: 'building', ko: '건물 구역', x: LAYOUT.street.entry.x, z: LAYOUT.street.entry.z },
     ...['esb', 'rock', 'cpark', 'gct', 'owtc', 'flatiron', 'vessel', 'washsq', 'bklyn', 'harlem'].map(id => LANDMARKS.find(l => l.id === id)).filter(Boolean).map(l => ({ ko: l.ko, x: l.x, z: l.z })),
   ].filter((q) => insideLoop(q.x, q.z, 0));
   function starQuick() {
