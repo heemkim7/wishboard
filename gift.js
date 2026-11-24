@@ -4,7 +4,7 @@
 // sender's 15-second video (?gb=<id>&rec=1, or 🎬 in the frame): a scripted night fly-through to the board with fireworks and a
 // cheering crew (timesSquare3d.js giftShow), drawn into a 9:16 frame with the words and the free watermark, recorded with
 // MediaRecorder (MP4 where it can, WebM otherwise) and uploaded to the board when the Worker has the R2 store (else kept on the device).
-// main.js calls mountGift once and gift.apply(remote.gifts) with every world; ui.js is not touched (the button is put next to 🌠).
+// main.js calls mountGift once and gift.apply(remote.gifts) with every world; ui.js is not touched (the button is put next to 🌠); the frame asks it for ui.layer.
 import { GIFT_ID, OCCASIONS, windowText, plazaLook, plazaNote } from './giftrules.js';
 import { GIFT_SANS, fitSize } from './giftart.js?v=202611241127';
 import { recordCanvas, canRecord, saveBlob, fileName } from './giftfilm.js?v=202611241127';
@@ -67,18 +67,32 @@ export function mountGift({ world, ui, whenBuilt, introDone }) {
     const SVG = 'http://www.w3.org/2000/svg', ico = document.createElementNS(SVG, 'svg'), strokes = document.createElementNS(SVG, 'path');
     ico.setAttribute('viewBox', '0 0 24 24'); ico.setAttribute('aria-hidden', 'true'); ico.setAttribute('focusable', 'false'); strokes.setAttribute('d', 'M6 6L18 18M18 6L6 18');
     ico.append(strokes); x.append(ico);
-    frame.append(ifr, x); document.body.append(frame);
+    // Tab goes round the close button and the page inside: on from ✕ into the page, back from the page's first field (the
+    // stop in front of it) to ✕, and back from the frame itself to ✕. ui.layer makes everything under the frame inert, takes
+    // Escape and the back button first, and stops the plaza's keys.
+    const lead = document.createElement('span'); lead.tabIndex = 0; lead.addEventListener('focus', () => x.focus({ preventScroll: true }));
+    frame.addEventListener('keydown', (e) => {
+      if (e.key !== 'Tab') return;
+      const at = document.activeElement;
+      if (!e.shiftKey && at === x) { e.preventDefault(); ifr.focus(); }
+      else if (e.shiftKey && at === frame) { e.preventDefault(); x.focus({ preventScroll: true }); }
+    });
+    frame.append(lead, ifr, x); document.body.append(frame);
+    try { ui?.layer?.(frame, closeMaker); } catch { /* an older ui.js: the frame is still modal by its own Escape listener */ }
     world?.setInputEnabled?.(false);
     try { frame.focus({ preventScroll: true }); } catch { /* focus stays where it was */ }
   }
   function closeMaker() {
     if (!frame) return;
-    frame.remove(); frame = null; world?.setInputEnabled?.(true);
+    frame.remove(); frame = null;
+    try { ui?.layer?.(null); } catch { /* nothing to undo */ }
+    world?.setInputEnabled?.(true);
     const back = opener && opener.isConnected ? opener : btn; opener = null;
     try { back.focus({ preventScroll: true }); } catch { /* focus stays where the browser put it */ }
   }
-  // Escape with the cursor in the plaza's own document (the frame, its close button). Before the plaza's other Escape listeners, and
-  // not passed on: one press closes this and nothing under it. Keys pressed inside the page come as its own 'close' message.
+  // Escape with the cursor in the plaza's own document (the frame, its close button). ui.js's keydown listener comes first (createUI
+  // runs before mountGift) and closes the frame alone while ui.layer has it; this one is for a plaza without that hook. Keys pressed
+  // inside the page come as its own 'close' message.
   window.addEventListener('keydown', (e) => {
     if (!frame || e.key !== 'Escape' || e.isComposing) return;
     e.preventDefault(); e.stopPropagation(); closeMaker();

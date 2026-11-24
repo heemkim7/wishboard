@@ -140,7 +140,7 @@ describe('zoom and focus', () => {
   });
   it('a sheet is modal: the HUD is inert and the canvas out of the tab order behind it, and Tab goes round inside it', () => {
     // the canvas is not made inert (the world keeps its own pointer state for a camera drag): it only leaves the tab order
-    assert.match(ui, /function backInert\(on\) \{\n\s+root\.inert = !!on;\n\s+if \(!viewEl\) return;\n\s+viewEl\.tabIndex = on \? -1 : 0;\n\s+if \(on\) viewEl\.setAttribute\('aria-hidden', 'true'\);\n\s+else viewEl\.removeAttribute\('aria-hidden'\);\n\s+\}/);
+    assert.match(ui, /function backInert\(on\) \{\n\s+on = !!on \|\| !!ext;[^\n]*\n\s+root\.inert = on;\n\s+if \(!viewEl\) return;\n\s+viewEl\.tabIndex = on \? -1 : 0;\n\s+if \(on\) viewEl\.setAttribute\('aria-hidden', 'true'\);\n\s+else viewEl\.removeAttribute\('aria-hidden'\);\n\s+\}/);
     assert.match(html, /<canvas id="view" aria-label="타임스퀘어 3D 광장" tabindex="0"><\/canvas>/);
     // a sheet that opens while the thumb is on the stick takes the pointer away with no pointerup: the stick lets go
     assert.match(ui, /joyZone\.addEventListener\('lostpointercapture', end\);/);
