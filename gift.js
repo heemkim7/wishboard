@@ -69,11 +69,15 @@ const CER_WAIT = 4000;
 const CER_Q = (() => { try { return new URLSearchParams(location.search); } catch { return new URLSearchParams(''); } })();
 const CER_ID = GIFT_ID.test(CER_Q.get('gb') || '') && CER_Q.get('cer') === '1' ? CER_Q.get('gb') : '';
 const CER_SEARCH = CER_ID ? String(location.search || '') : '';
-function gateFor(id, search = '') {
-  return new Promise((resolve) => {
-    let settled = false;
+// The CER_WAIT ms count from when something waits on the answer (arm: main.js enter(), the arrival), not from the read itself: the read
+// starts at import, while a slow phone is still busy building the plaza, and the visitor only waits once the boot card is tapped.
+function gateFor(id, search = '', { armed = true } = {}) {
+  let arm = () => {};
+  const p = new Promise((resolve) => {
+    let settled = false, timer = 0;
     const end = (v) => { if (!settled) { settled = true; resolve(v); } };
-    setTimeout(() => end({ go: false }), CER_WAIT);
+    arm = () => { if (!timer && !settled) timer = setTimeout(() => end({ go: false }), CER_WAIT); };
+    if (armed) arm();
     const sent = Date.now();
     fetch('/rt/gift/' + id, { cache: 'no-store' }).then(async (r) => {
       const skew = clockSkew(r.headers?.get?.('date'), sent, Date.now());
@@ -86,13 +90,18 @@ function gateFor(id, search = '') {
       end(why === 'go' ? { go: true, g, start } : { go: false });
     }).catch(() => end({ go: false }));
   });
+  p.arm = arm;
+  return p;
 }
 let cerGateP = null;
 /** The ceremony link's gate (resolved once; later calls get the same promise). Without ?gb=<id>&cer=1: { go: false } at once. */
 export function cerGate() {
   if (!CER_ID) return Promise.resolve({ go: false });
-  return (cerGateP ||= gateFor(CER_ID, CER_SEARCH));
+  cerGateP ||= gateFor(CER_ID, CER_SEARCH, { armed: false });
+  return cerGateP;
 }
+/** The same promise, with its CER_WAIT ms started now (the visitor waits on it from here). */
+const cerWait = () => { const p = cerGate(); p.arm?.(); return p; };
 if (CER_ID) cerGate();
 
 export function mountGift({ world, ui, whenBuilt, introDone, budgetDown }) {
@@ -478,7 +487,7 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown }) {
   }
   // The embedded recipient page's ceremony button ({ act: 'cer' }), or a ceremony link: the same gate, then the ceremony or the visit.
   function arriveCer(id, search) {
-    const p = search == null ? cerGate() : gateFor(id, search);
+    const p = search == null ? cerWait() : gateFor(id, search);
     p.then((r) => { if (r?.go) ceremony(r.g, r.start); else land(id); }).catch(() => land(id));
   }
 
@@ -494,7 +503,7 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown }) {
   return {
     arrive, open: openMaker,
     // main.js enter(): the room is joined only after the ceremony link's gate (at once without one).
-    cerHold: () => (CER_ID ? cerGate() : Promise.resolve({ go: false })),
+    cerHold: () => (CER_ID ? cerWait() : Promise.resolve({ go: false })),
     apply(list) { st.list = Array.isArray(list) ? list : []; world?.setGifts?.(st.list); },
   };
 }

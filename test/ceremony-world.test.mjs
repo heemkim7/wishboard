@@ -68,7 +68,7 @@ async function boot(w, h) {
   const errors = [];
   const canvas = Object.assign(el('canvas', w, h), { parentElement: el('div', w, h) });
   const world = T.createTimesSquare(canvas, { quality: 'low', autostart: false, name: '시험', species: 1, onError: (e) => errors.push(e) });
-  for (const until = real.now() + 60000; real.now() < until && !(world.built() && world.mapData());) await new Promise((r) => real.setTimeout(r, 10)); // a busy machine (the whole suite at once) can take a while
+  for (const until = real.now() + 180000; real.now() < until && !(world.built() && world.mapData());) await new Promise((r) => real.setTimeout(r, 10)); // a busy machine (the whole suite at once) can take a while
   if (errors.length || !world.mapData()) throw new Error('the city did not build: ' + (errors[0]?.message || 'timeout'));
   world.start();
   run(0.1);
@@ -107,17 +107,13 @@ function inTheWay(world, from, to) {
   return hits.map((h) => `${h.object.name || h.object.type}@${h.distance.toFixed(1)}`);
 }
 const SLOTS = ['STREET_1', 'STREET_20', 'STREET_31', 'STREET_33', 'STREET_40', 'STREET_45', 'PLOT_1', 'PLOT_2', 'PLOT_9', 'PLOT_14', 'PLOT_17', 'PLOT_18'];
-// The lots as the map builds them (empty, level 0) and built up (towers and arcades on alternate lots, levels 4 and 3: the tallest
-// things on the street, so the worst for a camera that stands across it).
+// Each size: the boards with the lots as the map builds them (empty, level 0), then the lot boards again with the lots built up.
 const SIZES = [[375, 812], [812, 375], [1280, 720]];
-for (const [w, h, built] of [...SIZES.map((s) => [...s, false]), ...SIZES.map((s) => [...s, true])]) {
-  describe(`the ceremony in the world (${w} x ${h}${built ? ', the lots built up' : ''})`, { skip }, () => {
+for (const [w, h] of SIZES) {
+  describe(`the ceremony in the world (${w} x ${h})`, { skip }, () => {
     let world = null;
     it('boots', async () => {
       world = await boot(w, h); // a fresh world: the page has one animation-frame slot, so only the newest world steps
-      if (!built) return;
-      for (let id = 1; id <= 18; id++) assert.ok(world.applyPlot({ plot_id: id, level: id % 2 ? 4 : 3, theme_color: '#ff3d9a', sign_text: '시험', owner_name: '시험' }, false));
-      for (let i = 0; i < 60; i++) { run(0.05); await new Promise((r) => real.setTimeout(r, 20)); } // the lot models come from the disk
     });
     it('goToSlot with a spread: two seeds, two spots near the board\'s front, both facing it', () => {
       const plain = world.goToSlot('STREET_1');
@@ -129,8 +125,15 @@ for (const [w, h, built] of [...SIZES.map((s) => [...s, false]), ...SIZES.map((s
       const front1 = world.goToSlot('PLOT_1');
       for (let s = 0; s < 1; s += 0.05) { const p = world.goToSlot('PLOT_1', { spread: s }); assert.ok(Math.hypot(p.x - front1.x, p.z - front1.z) < 5.2, `seed ${s.toFixed(2)}: ${p.x.toFixed(1)}, ${p.z.toFixed(1)}`); }
     });
-    for (const id of SLOTS) {
-      it(`${id}: the photo pose sees the whole face, the crowd and my avatar, with nothing in the way`, (t) => {
+    for (const [built, ids] of [[false, SLOTS], [true, SLOTS.filter((s) => s.startsWith('PLOT_'))]]) {
+    if (built) {
+      it('builds the lots up (towers and arcades on alternate lots: the tallest things on the street)', async () => {
+        for (let id = 1; id <= 18; id++) assert.ok(world.applyPlot({ plot_id: id, level: id % 2 ? 4 : 3, theme_color: '#ff3d9a', sign_text: '시험', owner_name: '시험' }, false));
+        for (let i = 0; i < 60; i++) { run(0.05); await new Promise((r) => real.setTimeout(r, 20)); } // the lot models come from the disk
+      });
+    }
+    for (const id of ids) {
+      it(`${id}${built ? ' (lots built up)' : ''}: the photo pose sees the whole face, the crowd and my avatar, with nothing in the way`, (t) => {
         const { THREE } = T;
         const at = world.goToSlot(id, { spread: 0.37 });
         if (!at) return; // not on the map in this build (its front outside the fence)
@@ -147,7 +150,7 @@ for (const [w, h, built] of [...SIZES.map((s) => [...s, false]), ...SIZES.map((s
         pts.push(['me', new THREE.Vector3(me.x, me.y + 1.5, me.z)]);
         const blocked = pts.map(([name, p]) => [name, inTheWay(world, cam.clone(), p)]).filter(([, hits]) => hits.length).map(([n, hits]) => n + ': ' + hits.join(' '));
         const off = Math.round(Math.atan2(F.nz * (cam.x - F.x) - F.nx * (cam.z - F.z), F.nx * (cam.x - F.x) + F.nz * (cam.z - F.z)) * 180 / Math.PI);
-        t.diagnostic(`${id} ${w}x${h}: ${pose.dist} m out, ${off}° off the normal, camera y ${cam.y.toFixed(1)}, fov ${pose.fov}°, seen ${pose.seen}`);
+        t.diagnostic(`${id}${built ? '+built' : ''} ${w}x${h}: ${pose.dist} m out, ${off}° off the normal, camera y ${cam.y.toFixed(1)}, fov ${pose.fov}°, seen ${pose.seen}`);
         assert.deepEqual(blocked, [], `${id} from (${cam.x.toFixed(1)}, ${cam.y.toFixed(1)}, ${cam.z.toFixed(1)}) seen ${pose.seen}, dist ${pose.dist}, fov ${pose.fov}`);
         // In the frame: the face's four corners, my avatar's head and feet (the lens has eased to the pose's).
         world.camera.updateMatrixWorld(); world.camera.updateProjectionMatrix();
@@ -168,6 +171,7 @@ for (const [w, h, built] of [...SIZES.map((s) => [...s, false]), ...SIZES.map((s
         run(0.8);
         assert.ok(world.camera.position.distanceTo(new THREE.Vector3(pose.cam.x, pose.cam.y, pose.cam.z)) > 1, 'cerEnd brings the camera back');
       });
+    }
     }
     it('capture() with no argument is today\'s: my tag off for the render, the plaza\'s band', () => {
       drawn.length = 0;

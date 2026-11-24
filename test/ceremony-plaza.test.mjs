@@ -15,7 +15,7 @@ const board = (o = {}) => ({ id: 'abcd1234', to: '민지', from: '지수', occ: 
 
 let LOADS = 0;
 // The page: just what gift.js touches. P.at is the device clock (Date.now); P.tick() runs the intervals once, P.timers() the timeouts.
-function fakeDom({ search = '?gb=abcd1234&cer=1', at = S - 5 * 60000, host = 'studio.wishboard.workers.dev', gift = board(), hard = false, store = {}, hidden = false, share = null, date = '' } = {}) {
+function fakeDom({ search = '?gb=abcd1234&cer=1', at = S - 5 * 60000, host = 'studio.wishboard.workers.dev', gift = board(), hard = false, store = {}, hidden = false, share = null, date = '', never = false } = {}) {
   const sent = [], timeouts = [], ticks = [], winOn = {}, docOn = {}, beacons = [], shared = [], copied = [];
   const P = { sent, timeouts, ticks, winOn, docOn, beacons, shared, copied, store, replaced: null, at };
   const text = (v) => ({ nodeType: 3, textContent: String(v), parent: null });
@@ -50,6 +50,7 @@ function fakeDom({ search = '?gb=abcd1234&cer=1', at = S - 5 * 60000, host = 'st
     navigator: { userAgent: 'test', sendBeacon: (url, body) => { beacons.push({ url, body }); return true; }, clipboard: { async writeText(t) { copied.push(t); } }, share: share ? async (d) => { shared.push(d); } : undefined, canShare: share === 'files' ? () => true : undefined, serviceWorker: { addEventListener() {} } },
     fetch: async (url, opt = {}) => {
       sent.push({ url: String(url), method: opt.method || 'GET' });
+      if (never && /^\/rt\/gift\/[0-9a-z]{8}$/.test(String(url))) return new Promise(() => {}); // no answer at all
       if (/^\/rt\/gift\/[0-9a-z]{8}$/.test(String(url))) { const body = gift ? { ok: true, gift, own: false, ...(hard ? { hard: true } : {}) } : { ok: false }; return { ok: !!gift, status: gift ? 200 : 404, headers: { get: (k) => (k === 'date' ? date : null) }, json: async () => body }; }
       return { ok: false, status: 404, headers: { get: () => null }, json: async () => ({ ok: false }) };
     },
@@ -150,6 +151,20 @@ describe('the gate: /?gb=<id>&cer=1 asks for the board before the room is joined
     const at = S - 13 * 60000; // the device thinks it is 17:47; the server says 17:54
     const P = await plaza({ at, date: new Date(S - 6 * 60000).toUTCString() });
     try { assert.equal((await P.gift.cerHold()).go, true); assert.equal(P.replaced, null); } finally { P.done(); }
+  });
+  it('no answer: the 4 s start when the visitor waits (enter, the arrival), not at the read; then the ordinary visit', async () => {
+    const P = await plaza({ at: S - 60000, never: true });
+    try {
+      assert.equal(P.timeouts.filter((t) => t.ms === 4000).length, 0, 'not armed by the read at import');
+      let r = null; P.gift.cerHold().then((v) => { r = v; });
+      P.gift.arrive();
+      assert.equal(P.timeouts.filter((t) => t.ms === 4000).length, 1, 'armed once');
+      await P.timers(4000);
+      assert.deepEqual(r, { go: false });
+      assert.equal(of(P, 'pin').length, 0, 'no ceremony pin');
+      assert.equal(P.sent.filter((s) => s.url === '/rt/gift/abcd1234').length, 2, 'the ordinary visit asks again (land)');
+      assert.equal(P.replaced, null);
+    } finally { P.done(); }
   });
   it('without cer=1 nothing is read before the room and ?gb= is today\'s', async () => {
     const P = await plaza({ search: '?gb=abcd1234', at: S - 60000 });

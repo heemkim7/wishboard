@@ -256,6 +256,10 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   const giftAt = (b) => { const ids = b.gifts; if (!ids?.length) return null; const id = ids[turnOf(ids.length, Date.now())]; return (giftPin?.cer && giftPin.g.id === id ? giftPin.g : null) || gifts.get(id) || (giftPin?.g.id === id ? giftPin.g : null); };
   // The ceremony pin's teaser is up: before its start, on the pin's own entry. -> the shown time left ('mm:ss'), or '' (the card).
   const cerShown = (g, now = nowMs()) => (giftPin?.cer && giftPin.g === g && now < giftPin.cer ? cerClock(giftPin.cer - now) : '');
+  // The whole seconds the teaser shows (0: the card): compared every 0.08 s tick without making a string, so a slow frame rate does not
+  // keep the teaser up past the start.
+  const cerSec = (now) => (giftPin?.cer && now < giftPin.cer ? Math.ceil((giftPin.cer - now) / 1000) : 0);
+  function cerStep() { const b = boards.get(giftPin.slot); if (b && b.giftKey === giftPin.g.id && cerSec(nowMs()) !== b.cerSec) paint(b); }
   function giftPlace() {
     giftDirty = false;
     if (giftPin && (giftPin.until <= Date.now() || (giftPin.g.welcome && !giftFree(giftPin.slot)))) giftPin = null;
@@ -273,9 +277,6 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   // The 0.64 s cadence: re-place when a screen's state changed, then turn shared screens (at most 4 repaints, nearest first).
   function giftTick() {
     if (giftDirty || (giftPin && giftPin.until <= Date.now())) giftPlace();
-    // The ceremony pin: its teaser's time left, repainted when the shown second changes (at most once a second), and the card in the
-    // pass that crosses the start (same canvas, same screen: no re-placement, no blank frame).
-    if (giftPin?.cer) { const b = boards.get(giftPin.slot); if (b && b.giftKey === giftPin.g.id && cerShown(giftPin.g) !== b.cerKey) paint(b); }
     let left = quality === 'low' ? 2 : 4;
     // A screen whose gift changed turn, or whose words came new with the list (setGifts blanks giftKey; a board alone on its screen has no turn to wait for).
     for (let i = 0; i < lastNear.length && left > 0; i++) { const b = lastNear[i].b, g = b.gifts ? giftAt(b) : null; if (g && g.id !== b.giftKey) { paint(b); left--; } }
@@ -383,7 +384,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     if (gift) {
       if (b.wish) dropWish(b);
       const now = nowMs();
-      b.kingOn = 0; b.giftKey = gift.id; b.cerKey = cerShown(gift, now);
+      b.kingOn = 0; b.giftKey = gift.id; b.cerKey = cerShown(gift, now); b.cerSec = b.cerKey ? cerSec(now) : 0;
       if (gift.welcome) paintWelcome(b.canvas, { name: gift.to, line: WELCOME.line });
       else if (b.cerKey) paintTeaser(b.canvas, cerTeaser(gift, now, giftPin.cer));
       else paintGift(b.canvas, gift);
@@ -683,6 +684,9 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     near.sort(byDist);
     lastNear = near;
     if (kingDirty) kingStep();
+    // The ceremony pin: its teaser's time left, repainted when the shown second changes (at most once a second), and the card in the
+    // tick that crosses the start (same canvas, same screen: no re-placement, no blank frame).
+    if (giftPin?.cer) cerStep();
     // The strip is a canvas redraw and a texture upload per board: LIVE_HOT boards, every LIVE_EVERY-th tick.
     const draw = liveTick % LIVE_EVERY === 0;
     const hot = hotSet;
