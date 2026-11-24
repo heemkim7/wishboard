@@ -39,7 +39,7 @@ globalThis.document ||= { createElement: () => canvasStub() };
 const THREE = await import('three');
 const { createNYC, ROAD } = await import('../ts3d/nyc.js');
 const { kitMaterials } = await import('../ts3d/kit.js');
-const { createTraffic, signalPhase, RULES, taxiTextureTier, streetMouth } = await import('../ts3d/traffic.js');
+const { createTraffic, signalPhase, RULES, taxiTextureTier, carPaintTier, streetMouth } = await import('../ts3d/traffic.js');
 const { paintTaxiDecal, paintTaxiSign, TAXI_DECAL } = await import('../ts3d/art.js');
 const { LAYOUT, NO_ROAD, PLOT_SLOTS, TAXI_STANDS } = await import('../ts3d/layout.js');
 const read = (f) => readFileSync(new URL('../' + f, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -608,9 +608,27 @@ describe('the taxi\'s textures', needsMap, () => {
     const W = world(quality, 1);
     const mapped = W.inst.filter((m) => m.material.map && m !== W.beams);
     const decal = mapped.find((m) => m.material.transparent), sign = mapped.find((m) => !m.material.transparent);
-    const body = W.inst.find((m) => m.material.isMeshPhysicalMaterial && m.count === decal.count);
-    return { W, decal, sign, body };
+    const body = W.inst.find((m) => m.count === decal.count); // the cabs' paint is the first of their six parts
+    const carBody = W.inst.find((m) => m.count === W.nAI - (decal.count - 16));
+    return { W, decal, sign, body, carBody };
   };
+  it('the paint: the sharp clearcoat only where the frame is multisampled, a soft one on medium, none on a phone', () => {
+    assert.deepEqual(carPaintTier('low'), { clearcoat: false, roughness: 0 });
+    assert.deepEqual(carPaintTier('medium'), { clearcoat: true, roughness: 0.3 });
+    assert.deepEqual(carPaintTier('high'), { clearcoat: true, roughness: 0 });
+    const of = (q) => { const { body, carBody } = meshes(q); return [body.material, carBody.material]; };
+    for (const m of of('low')) { assert.equal(m.isMeshStandardMaterial, true); assert.equal(!!m.isMeshPhysicalMaterial, false); }
+    assert.deepEqual(of('medium').map((m) => [m.isMeshPhysicalMaterial, m.clearcoat, m.clearcoatRoughness]), [[true, 1, 0.3], [true, 1, 0.3]]);
+    assert.deepEqual(of('high').map((m) => [m.isMeshPhysicalMaterial, m.clearcoat, m.clearcoatRoughness]), [[true, 1, 0.08], [true, 1, 0.1]]);
+    // the colour under the coat is the same on every tier, and each cab still takes its own tint
+    for (const q of ['low', 'medium', 'high']) {
+      const [taxi, car] = of(q);
+      assert.deepEqual([taxi.roughness, taxi.metalness, car.roughness, car.metalness], [0.32, 0.25, 0.3, 0.45]);
+      assert.ok(meshes(q).body.instanceColor, 'a colour per cab');
+    }
+    // only the tier that pays for multisampling keeps the sharp coat (timesSquare3d.js: samples 4 on high, 0 otherwise)
+    assert.match(read('timesSquare3d.js'), /samples: quality === 'high' \? 4 : 0/);
+  });
   it('what each tier pays', () => {
     assert.deepEqual(taxiTextureTier('low', 16), { decalW: 512, decalH: 64, signW: 256, signH: 64, anisotropy: 2 });
     assert.deepEqual(taxiTextureTier('medium', 16), { decalW: 1024, decalH: 128, signW: 256, signH: 64, anisotropy: 4 });

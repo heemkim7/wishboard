@@ -188,6 +188,14 @@ export function taxiTextureTier(quality, maxAnisotropy = 1) {
   const low = quality === 'low';
   return { decalW: low ? 512 : 1024, decalH: low ? 64 : 128, signW: 256, signH: 64, anisotropy: Math.max(1, Math.min(low ? 2 : quality === 'medium' ? 4 : 8, maxAnisotropy)) };
 }
+/**
+ * The clearcoat on the cars' paint by tier. high (4x multisampled): the sharp coat as it was (0.08 on cabs, 0.1 on
+ * cars). medium (no multisampling): a soft coat, 0.3. low (phones): none, a plain standard material: one highlight
+ * lobe less per light on every car pixel, and no pinpoint highlights at all.
+ */
+export function carPaintTier(quality) {
+  return quality === 'low' ? { clearcoat: false, roughness: 0 } : { clearcoat: true, roughness: quality === 'medium' ? 0.3 : 0 };
+}
 
 export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }) {
   const low = quality === 'low';
@@ -314,13 +322,20 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
   const WALKER = { mode: 'walker', x: 0, z: 1e6, hx: 0, hz: 1, hl: 0.5, hw: 0.5, v: 0 };
 
   const kits = vehicleKits();
-  const paintTaxi = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0.25, clearcoat: 1, clearcoatRoughness: 0.08 });
+  // Car paint. A clearcoat as sharp as 0.08 mirrors a street light as a pinpoint far over the bloom threshold, and the
+  // body is flat facets (its 3.5 cm bevel facets are one pixel wide at 20 m on a phone): the pinpoint jumps from facet to
+  // facet as the car moves, and only the multisampled tier averages it out. So the coat goes by tier (carPaintTier).
+  const coat = carPaintTier(quality);
+  const paint = (roughness, metalness, sharp) => (coat.clearcoat
+    ? new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness, metalness, clearcoat: 1, clearcoatRoughness: Math.max(sharp, coat.roughness) })
+    : new THREE.MeshStandardMaterial({ color: 0xffffff, roughness, metalness }));
+  const paintTaxi = paint(0.32, 0.25, 0.08);
   const TAXI_BODY = new THREE.Color(0xffc21a);
   const TAXI_YELLOW = '#fff3a0';
   // A player's own cab in its shop colour (balance.js SHOP kind 'cab' tint): '' is the plain fleet yellow.
   const TINTS = new Map();
   const tintOf = (hex) => { if (!hex) return TAXI_BODY; let c = TINTS.get(hex); if (!c) { c = new THREE.Color(hex); TINTS.set(hex, c); } return c; };
-  const paintCar = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.3, metalness: 0.45, clearcoat: 1, clearcoatRoughness: 0.1 });
+  const paintCar = paint(0.3, 0.45, 0.1);
   // Canvas textures of the cabs: mipmaps with trilinear filtering (a cab at 10 to 40 m shows these 4 to 20 times
   // smaller than they are painted), anisotropy by tier. premultiply: the decal is see-through, and mipmaps of
   // straight alpha average the transparent texels in as black (a dark rim around the stripe and the letters).
