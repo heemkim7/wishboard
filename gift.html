@@ -37,7 +37,7 @@
   a { color: var(--gold); }
   :is(a, button, summary, [tabindex]):focus-visible { outline: 2px solid var(--gold2); outline-offset: 2px; }
   .top { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 0 10px; }
-  html.embed .top { padding-right: 52px; } /* the plaza's close button (gift.js) is 38px wide, 10px in */
+  html.embed .top { padding-right: 42px; } /* the plaza's close button (gift.js) is 38px wide, 10px in: 48 - the page's 16px edge + 10 clear */
   .brand { position: relative; display: inline-block; font-weight: 900; font-size: 13px; line-height: 20px; letter-spacing: .08em; color: var(--gold2); text-decoration: none; border-radius: 8px; }
   .brand::after { content: ""; position: absolute; inset: -12px -6px; } /* a 44px tall place to press (20 + 12 + 12); the row keeps its height */
   .brand small { color: var(--muted); font-weight: 700; font-size: 12px; letter-spacing: 0; margin-left: 6px; }

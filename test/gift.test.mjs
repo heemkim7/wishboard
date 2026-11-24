@@ -977,6 +977,11 @@ describe('the gift page over the plaza is a dialog like the sheets (gift.js)', (
     for (const p of ['width', 'height']) assert.equal(mineIco[p], ico[p], 'icon ' + p);
     for (const p of ['fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin']) assert.equal(mineIco[p], line[p], 'icon ' + p);
   });
+  it('the page inside leaves the close button its corner (its top line ends short of it)', () => {
+    const x = GCSS['#kts-gift-frame button'], inset = Number(/^max\((\d+)px,/.exec(x.right)[1]), edge = Number(/max\((\d+)px, env\(safe-area-inset-right\)\)/.exec(SHEET.get('main', 'padding'))[1]);
+    assert.deepEqual([inset, edge], [10, 16]);
+    assert.ok(edge + px(SHEET.get('html.embed .top', 'padding-right')) >= inset + px(x.width) + 8, 'the brand line and the button do not meet');
+  });
   it('the plaza-side gift controls have a pressed state too: the close button, the buttons under the finished video, 취소 while it records', () => {
     const x = GCSS['#kts-gift-frame button'], down = GCSS['#kts-gift-frame button:active'];
     assert.ok(down.background && down.color && down.transition === 'none');
