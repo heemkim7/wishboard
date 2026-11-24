@@ -32,6 +32,7 @@ import { qrEncode, paintQr } from './qr.js?v=202611241625';
 import { icon } from './uiicons.js?v=202611241625';
 import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, proofOffers, proofPlan, TOAST, touchTag, goalKnown, PRESS, TOOL_ORDER, hintLeft, sameNews } from './overlay.js?v=202611241625';
 import { linesFault, LINES_ERR } from './ftue.js?v=202611241625'; // the board-line checks
+import { TODO_TEXT, todoList, todoSettled, todoProgress, todoNext, todoSnap, todoDiff, allDue, momentHold, itemNote, allNote, attendNote, footLine, cardText, pillPlan, markStamp, stampRow, stampName, giftSeen, giftDone, weekStart, todoKeep } from './todo.js?v=202611241625';
 
 const LEVELS = [
   { src: 'icons/lot.jpg?v=2', t: '빈 땅' },
@@ -209,6 +210,9 @@ export function createUI(root, hooks) {
     boost: () => tone(play('boost') ? [] : [{ f: 160, to: 640, d: 0.3, type: 'sawtooth', g: 0.04 }, { f: 1175, d: 0.16, type: 'sine', g: 0.03, at: 0.1 }]),
     jackpot: () => tone([{ f: 523 }, { f: 659 }, { f: 784 }, { f: 1047, d: 0.45 }, { f: 1319, d: 0.35, at: 0.36 }, { f: 1568, d: 0.5, at: 0.5, type: 'sine', g: 0.05 }], { gap: 0.09, type: 'square', g: 0.05 }),
     drum: () => tone([{ f: 90, d: 0.12, type: 'sine', g: 0.08 }, { f: 110, d: 0.12, at: 0.14, type: 'sine', g: 0.08 }, { f: 130, d: 0.4, at: 0.28, type: 'triangle', g: 0.06 }]),
+    // 오늘 할 일: a row done is a short two-note chime, the whole list a longer rising one (both follow the 소리 setting, as every tone).
+    todo: () => tone([{ f: 1047, d: 0.12, type: 'sine', g: 0.06 }, { f: 1568, d: 0.3, type: 'sine', g: 0.055 }], { gap: 0.1 }),
+    todoAll: () => tone([{ f: 784, d: 0.16, type: 'sine', g: 0.06 }, { f: 988, d: 0.16, type: 'sine', g: 0.06 }, { f: 1175, d: 0.18, type: 'sine', g: 0.06 }, { f: 1568, d: 0.7, type: 'sine', g: 0.06 }, { f: 2093, d: 0.6, type: 'triangle', g: 0.03, at: 0.42 }], { gap: 0.12 }),
     siren: () => tone([{ f: 740, d: 0.16, type: 'sawtooth', g: 0.06 }, { f: 460, d: 0.16, type: 'sawtooth', g: 0.06, at: 0.18 }, { f: 740, d: 0.16, type: 'sawtooth', g: 0.05, at: 0.36 }, { f: 460, d: 0.22, type: 'sawtooth', g: 0.05, at: 0.54 }]),
   };
   bindSfx(sfx);
@@ -300,7 +304,8 @@ export function createUI(root, hooks) {
   const pendingChip = h('span', { class: 'chip gold pulse', hidden: true });
   const protectLine = h('button', { type: 'button', class: 'protect', hidden: true, onclick: (e) => protectGo(e) });
   const nextLine = h('button', { type: 'button', class: 'nextgoal', onclick: (e) => { e.stopPropagation(); goTask(); } });
-  const todayBtn = h('button', { class: 'chip', type: 'button', text: '미션', onclick: (e) => { e.stopPropagation(); openToday(); } });
+  // 오늘 할 일's chip: '출석 N일' (the streak) once attendance is known; the wallet sheet's row says '오늘 할 일 · 출석 N일' (dataset.row).
+  const todayBtn = h('button', { class: 'chip', type: 'button', text: TODO_TEXT.title, onclick: (e) => { e.stopPropagation(); openToday(); } });
   const holdBtn = h('button', { class: 'chip', type: 'button', text: '내 전광판', onclick: (e) => { e.stopPropagation(); openHolds(); } });
   const tribeBtn = h('button', { class: 'chip', type: 'button', text: '응원 팀', onclick: (e) => { e.stopPropagation(); openTribeSheet(); } });
   // The card holds buttons (the chips, the goal), so it is not itself a button: a role="button" around other buttons
@@ -842,8 +847,10 @@ export function createUI(root, hooks) {
     }
     syncNewbie();
     const goalText = nextGoal().text;
+    // The compact phone HUD's pill carries 오늘 할 일 (todo.js pillPlan): the first board first, then 할 일 n/N, then done or the goal.
+    const pill = !newbieOn && compactNow() ? phonePill(goalText) : null;
     // No line while there is nothing to say yet (the goal waits for what it reads: nextGoal).
-    const none = newbieOn ? !newcomerTask()?.text : !goalText;
+    const none = newbieOn ? !newcomerTask()?.text : pill ? pill.kind === 'none' : !goalText;
     if (nextLine.hidden !== none) nextLine.hidden = none;
     if (none) return;
     if (newbieOn) {
@@ -852,8 +859,18 @@ export function createUI(root, hooks) {
         nextLine.dataset.task = task;
         nextLine.replaceChildren(h('small', { text: '지금 할 일' }), h('span', { text: task }), h('i', { 'aria-hidden': 'true' }, icon('chevronRight')));
       }
-    } else if (nextLine.dataset.task || nextLine.textContent !== goalText) {
+    } else if (pill && (pill.kind === 'todo' || pill.kind === 'done')) {
+      // '할 일' (or '오늘 할 일') is a small tag like 목표, then '2/5 · 소원 한 줄 걸기'. A tap opens the 오늘 할 일 sheet (goTask).
+      if (nextLine.dataset.pill !== pill.text) {
+        delete nextLine.dataset.task;
+        nextLine.dataset.pill = pill.text;
+        nextLine.setAttribute('aria-label', pill.text);
+        nextLine.replaceChildren(h('span', { class: 'ng-t', text: pill.tag }), document.createTextNode(pill.rest));
+      }
+    } else if (nextLine.dataset.task || nextLine.dataset.pill || nextLine.textContent !== goalText) {
       delete nextLine.dataset.task;
+      delete nextLine.dataset.pill;
+      nextLine.removeAttribute('aria-label');
       // "다음 목표: " is its own span so the compact pill can swap it for a small 목표 tag (index.html .ng-k).
       const m = goalText.match(/^(다음 목표: )([\s\S]*)$/);
       if (m) nextLine.replaceChildren(h('span', { class: 'ng-k', text: m[1] }), document.createTextNode(m[2]));
@@ -871,7 +888,13 @@ export function createUI(root, hooks) {
   function newcomerTask() { return firstStep(NEWCOMER_STEPS); }
   function goTask() {
     if (newbieOn) (newcomerTask()?.go || nextGoalGo)();
+    else if (nextLine.dataset.pill) openToday();
     else nextGoalGo();
+  }
+  // The phone pill's plan: the list as it is now, the first board first while the goal is the free street slot.
+  function phonePill(goal) {
+    const d = today(), g = nextGoal(), held = myBoards().length;
+    return pillPlan({ known: held > 0 || !g.undecided, held, freeOpen: !!g.free, goal, list: todoList(todoSignals(d)), doneHere: todoDoneHere && d.allDay === d.day, streak: d.streak });
   }
   // The tutorial's own step: the gift maker (the one the 🎁 button opens). main.js opens it, ends the step ('gift') and counts the tap.
   function tutorialGo() { hooks.openGift?.(); }
@@ -1493,7 +1516,7 @@ export function createUI(root, hooks) {
   // opts.kind: what decides "the same sheet again" (default: the title).
   function openSheet(titleIn, badge, build, narrow, variant, opts) {
     const [titleIcon, title] = Array.isArray(titleIn) ? titleIn : ['', titleIn];
-    if (quietBlock && (title === '미션' || title === '계정 연결' || String(title || '').includes('알림'))) return;
+    if (quietBlock && (title === TODO_TEXT.title || title === '계정 연결' || String(title || '').includes('알림'))) return;
     // The proof bar and a sheet are never up together: opening a sheet leaves the bar first (input and history are settled there).
     if (!proof.hidden) leaveProof({ quiet: true });
     if (dance) endDance('sheet'); // a sheet ends 같이 춤추기
@@ -1807,6 +1830,7 @@ export function createUI(root, hooks) {
       ...backFields(prev, day), // back: days since the last attended day on a later day; backSent: return_visit already went out today
       score: prev.week === week ? (prev.score || 0) : 0,
       play: prev.week === week ? (Number.isFinite(Number(prev.play)) ? Number(prev.play) : (Number(prev.earn) || 0)) : 0,
+      ...todoKeep(prev, day), // 오늘 할 일: the week's stamps (14 days), the day the whole list was done and its card shown, the gift suggestion
     };
     return dayState;
   }
@@ -1827,7 +1851,8 @@ export function createUI(root, hooks) {
       d.last = d.day;
       saveDay(d);
     }
-    if (d.streak > 0) todayBtn.textContent = `미션 · ${d.streak}일`;
+    if (d.stamps?.[d.day] !== 2 && d.stamps?.[d.day] !== 1) { d.stamps = markStamp(d.stamps, d.day, 1); saveDay(d); } // the pale stamp: here today
+    paintTodayChip(d.streak);
     store(VISITS_KEY, bumpVisits(recall(VISITS_KEY, null), d.day)); // days visited, for the home-screen card (install.js)
     wkNoteDay(d.streak); // and the week's record for the Monday card (recap.js)
     a2hs.enteredAt = Date.now();
@@ -1848,7 +1873,7 @@ export function createUI(root, hooks) {
         paid[missionWait] = 1;
         missionWait = '';
         saveDay(d);
-        note('이 미션 포인트는 오늘 이미 받았거나, 지금 광장에 연결되지 않았어요', 'err');
+        note('이 포인트는 오늘 이미 받았거나, 지금 광장에 연결되지 않았어요', 'err');
       } else missionWait = '';
       dueAt = performance.now() + 3000;
       return;
@@ -1876,14 +1901,9 @@ export function createUI(root, hooks) {
     d.paid[key] = 1;
     d.score = (d.score || 0) + BALANCE.season.mission;
     saveDay(d);
-    note(`오늘 미션 +${Math.max(0, Math.floor(Number(amount) || 0))} 포인트`, 'ok');
-  }
-  function attendWeek(streak) {
-    const n = Math.max(0, Math.floor(Number(streak) || 0));
-    const filled = n <= 0 ? 0 : ((n - 1) % 7) + 1;
-    const row = h('div', { class: 'attend-week' });
-    for (let i = 1; i <= 7; i++) row.append(h('span', { class: 'attend-day' + (i <= filled ? ' on' : ''), text: String(i) }));
-    return row;
+    // No notice of its own: the row that earned it already said '✓ … · +15 포인트' when it was done (renderTodo). amount is the pay.
+    void amount;
+    renderTodo();
   }
   function askShot() {
     queuePushOffer();
@@ -1907,7 +1927,8 @@ export function createUI(root, hooks) {
     d.paid = d.paid || {};
     d.paid.attend = 1;
     saveDay(d);
-    todayBtn.textContent = `미션 · ${n}일`;
+    paintTodayChip(n);
+    renderTodo();
   }
   function noteAttend(streak) {
     const d = today();
@@ -1918,44 +1939,198 @@ export function createUI(root, hooks) {
     d.paid = d.paid || {};
     d.paid.attend = 1;
     saveDay(d);
-    todayBtn.textContent = `미션 · ${n}일`;
+    paintTodayChip(n);
+    renderTodo();
   }
   const RINGS = [{ x: 16, z: 52 }, { x: 16, z: 90 }];
-  // A mission row's tap: the wish sheet for the wish and heart missions, the nearest lit board for a cheer.
+  // A row's tap (the card, the sheet, a 오늘 할 일 notice): the wish sheet for the wish and heart rows, the 응원 팀 sheet for the team row,
+  // the week's stamps for attendance, and for a cheer the nearest lit board of someone else, walked to by itself (자동으로 가기).
   function guideQuest(key) {
-    if (key === 'wish' || key === 'heart') { openWish(); return; }
+    if (key === 'wish' || key === 'heart') { openWish({ from: 'todo' }); return; }
+    if (key === 'team') { openTribeSheet(); return; }
+    if (key === 'attend') { openToday({ at: 'week' }); return; }
     if (key !== 'cheer') return;
-    const rows = (world.billboards || []).filter(boardActive);
+    const me = hooks.actorId?.() || '';
+    const rows = (world.billboards || []).filter((b) => boardActive(b) && (!me || b.holder_id !== me));
     const pool = rows.length ? rows : (world.billboards || []);
-    const me = hooks.minimap?.()?.me;
+    const at = hooks.minimap?.()?.me;
     let best = null, dist = Infinity;
     for (const b of pool) {
       const card = hooks.slotCard?.(b.slot_id);
       if (!Number.isFinite(card?.x) || !Number.isFinite(card?.z)) continue;
-      const d = me ? (card.x - me.x) ** 2 + (card.z - me.z) ** 2 : 0;
+      const d = at ? (card.x - at.x) ** 2 + (card.z - at.z) ** 2 : 0;
       if (d < dist) { dist = d; best = { x: card.x, z: card.z, name: '전광판' }; }
     }
     if (!best) { note('길안내할 전광판이 없어요', 'err'); return; }
-    hooks.setWaypoint?.(best);
+    hooks.setWaypoint?.({ ...best, auto: rows.length > 0 });
     note(`전광판 길안내를 시작해요. 켜진 남의 전광판을 눌러 응원하면 응원 포인트 +${PAY.cheer.base}, 멀리서도 돼요`, 'ok');
   }
-  function openToday() {
-    if (quietBlock) return;
+
+  // ---- 오늘 할 일 (todo.js holds the rules; docs/superpowers/specs/2026-11-24-today-todo-design.md) ---------------------------------
+  // The list is built from what the plaza already knows: kts_daily (attendance, cheers, what was paid), the wish state, the team state
+  // (main.js setTeamToday: null while /rt/team/me is asked, false when teams are not usable now). The pays are unchanged (payDue, QUEST,
+  // BONUS); what is new is where the list shows (the card under the wallet, the phone's goal pill, this sheet), one keyed notice per row
+  // finished, and once a day per device the whole-list moment (the local card on a street screen through hooks.todoCard).
+  let teamToday = null, teamAsked = 0, todoSnapPrev = null, todoSnapDay = '', todoSawOpen = false, todoDoneHere = false, todoCardTry = -1e9, todoSheetPaint = null, todoPop = '';
+  const TEAM_WAIT_MS = 10000; // no answer from /rt/team/me by then: the list goes on without the team row (N is 4)
+  function teamSignal() {
+    if (teamToday === null && teamAsked && performance.now() - teamAsked > TEAM_WAIT_MS) teamToday = false;
+    return teamToday;
+  }
+  function todoSignals(d = today()) {
+    const wishKnown = wishView.known && !wishView.busy;
+    return {
+      attendPts: BALANCE.attend[Math.min(Math.max(1, d.streak || 1) - 1, BALANCE.attend.length - 1)],
+      cheer: d.cheer || 0,
+      cheerDone: !!(d.qPaid || {}).cheer,
+      wish: (d.wish || 0) >= 1 || !!wishView.mine ? true : wishKnown ? false : null,
+      heart: (d.heart || 0) >= 1 || wishView.given.length > 0 ? true : wishKnown ? false : null,
+      team: teamSignal(),
+    };
+  }
+  const todoTomorrow = (d) => BALANCE.attend[Math.min(Math.max(0, d.streak || 0), BALANCE.attend.length - 1)];
+  function paintTodayChip(n) {
+    const k = Math.max(0, Math.floor(Number(n) || 0));
+    if (!k) return;
+    todayBtn.textContent = `출석 ${k}일`;
+    todayBtn.dataset.row = `${TODO_TEXT.title} · 출석 ${k}일`;
+  }
+  // The card under the wallet (desktop and tablets; hidden on the compact phone HUD, where the goal pill carries it): the head line
+  // (오늘 할 일, n / N, the bar), the rows with the next one marked, the week's stamps and the foot line. At low window heights the
+  // stylesheet keeps the head and the next row only (index.html .todo-card).
+  const todoEl = h('div', { class: 'glass todo-card', role: 'group', 'aria-label': TODO_TEXT.title });
+  let todoSig = '';
+  function stampCells(d) {
+    return h('div', { class: 'todo-week', role: 'list', 'aria-label': TODO_TEXT.week },
+      ...stampRow({ day: d.day, stamps: d.stamps, streak: d.streak, last: d.last }).map((c) => h('span', { class: 'stamp ' + c.state, role: 'listitem', 'aria-label': stampName(c), title: stampName(c) }, h('i', { 'aria-hidden': 'true', text: c.wd }))));
+  }
+  function todoRow(r, next, onTap, big) {
+    const isNext = !!next && r.id === next.id;
+    return h('button', { type: 'button', class: 'todo-row' + (r.done ? ' done' : '') + (isNext ? ' next' : '') + (r.done && todoPop === r.id ? ' pop' : '') + (big ? ' big' : ''), 'aria-label': `${r.label} · ${r.value}${r.done ? ' · 끝' : isNext ? ' · 다음에 할 일' : ''}`, onclick: (e) => { e.stopPropagation(); onTap(r.id); } },
+      h('span', { class: 'ck', 'aria-hidden': 'true' }, icon(r.done ? 'checkCircle' : 'todo')),
+      h('span', { class: 'lb', text: r.label }),
+      h('span', { class: 'vl tnum', text: r.value }),
+      isNext ? h('span', { class: 'go', 'aria-hidden': 'true' }, icon('chevronRight')) : null);
+  }
+  function todoBar(p) {
+    return h('span', { class: 'todo-bar', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': String(p.N), 'aria-valuenow': String(p.n), 'aria-label': `${TODO_TEXT.title} ${p.n} / ${p.N}` }, h('i', { style: { width: `${Math.round(p.frac * 100)}%` } }));
+  }
+  function paintTodoCard(d, list) {
+    const p = todoProgress(list), next = todoNext(list);
+    const foot = footLine({ all: p.all, streak: d.streak, tomorrow: todoTomorrow(d) });
+    const sig = JSON.stringify([list.map((r) => [r.id, r.label, r.value, r.done]), d.stamps, d.streak, foot, todoPop]);
+    if (sig === todoSig) return false;
+    todoSig = sig;
+    const tap = (id) => { if (id === 'attend') openToday({ at: 'week' }); else guideQuest(id); };
+    todoEl.classList.toggle('all', p.all);
+    todoEl.replaceChildren(
+      h('button', { type: 'button', class: 'todo-head', 'aria-label': `${TODO_TEXT.title} ${p.n} / ${p.N} · 열기`, onclick: (e) => { e.stopPropagation(); openToday(); } },
+        h('b', { text: TODO_TEXT.title }), h('span', { class: 'n tnum', text: `${p.n} / ${p.N}` }), todoBar(p)),
+      h('div', { class: 'todo-rows' }, ...list.map((r) => todoRow(r, next, tap))),
+      h('div', { class: 'todo-foot' }, h('small', { text: TODO_TEXT.week }), stampCells(d), h('p', { class: 'todo-line', text: foot })),
+    );
+    return true;
+  }
+  // What tapping a 오늘 할 일 notice does: the next row's action, or the sheet when nothing is left.
+  const todoGo = (next) => () => { if (next) guideQuest(next.id); else openToday(); };
+  // Every change of a signal comes here (and the 1 s HUD tick): the rows finished since the last look get their notice, the whole
+  // list its moment once a day, the stamp its gold, and the card, the sheet and the pill their new state.
+  function renderTodo() {
     const d = today();
-    const go = (key, done, text) => h('button', { type: 'button', class: 'note', onclick: () => { closeSheet(); guideQuest(key); } }, ...withIcon(done ? 'checkCircle' : 'todo', text));
-    const tomorrow = BALANCE.attend[Math.min(d.streak, BALANCE.attend.length - 1)];
-    const paid = d.paid || {}, mr = BALANCE.missionReward;
-    openSheet('미션', '매일 0시', (host) => {
-      host.append(attendWeek(d.streak || 0));
-    host.append(
-        go('cheer', !!paid.cheer, `켜진 전광판 응원 1번 +${mr}`),
-        go('wish', !!paid.wish, `오늘의 소원 걸기 +${mr}`),
-        go('heart', !!paid.heart, `다른 사람 소원에 하트 1개 +${mr}`),
-        go('cheer', !!(d.qPaid || {}).cheer, `전광판 응원 (${Math.min(d.cheer || 0, 3)}/3) +${PAY.quest.cheer}`),
-        h('p', { class: 'note', text: `출석 ${d.streak || 0}일 · 내일 접속하면 +${tomorrow} 포인트` }),
-        h('p', { class: 'note', text: todayFacts(d) }),
-      );
-    }, true);
+    const s = todoSignals(d), list = todoList(s), settled = todoSettled(s), p = todoProgress(list);
+    const snap = todoSnap(list);
+    // A new day under an open page starts over: nothing from yesterday is announced.
+    const fresh = todoSnapPrev && todoSnapDay === d.day ? todoDiff(todoSnapPrev, snap) : [];
+    if (todoSnapDay !== d.day) { todoSawOpen = false; todoDoneHere = false; todoPop = ''; }
+    todoSnapPrev = snap;
+    todoSnapDay = d.day;
+    if (list.some((r) => r.known && !r.done)) todoSawOpen = true;
+    const due = entered && allDue({ list, settled, day: d.day, allDay: d.allDay, sawOpen: todoSawOpen });
+    for (const id of fresh) trackEvent('todo_done', { kind: id });
+    if (fresh.length) todoPop = fresh[fresh.length - 1];
+    if (due) {
+      d.allDay = d.day;
+      d.stamps = markStamp(d.stamps, d.day, 2);
+      saveDay(d);
+      todoDoneHere = true;
+      note(allNote(d.streak), 'ok', () => openToday(), { key: 'todo' });
+      sfx.todoAll();
+      trackEvent('todo_all', { streak: Math.max(1, d.streak || 1) });
+    } else if (fresh.length && entered) {
+      const row = list.find((r) => r.id === fresh[fresh.length - 1]), next = todoNext(list);
+      note(itemNote(row, next), 'ok', todoGo(next), { key: 'todo' });
+      sfx.todo();
+    }
+    if (settled && p.all && d.stamps?.[d.day] !== 2) { d.stamps = markStamp(d.stamps, d.day, 2); saveDay(d); } // done on another device too: gold, no moment
+    if (paintTodoCard(d, list)) todoSheetPaint?.(); // the open sheet is redrawn only when something on it changed
+    pumpTodoCard(d);
+    return list;
+  }
+  // The whole list's card on a street screen waits for the screen to be free (todo.js momentHold), the same day; one try every 2 s.
+  function pumpTodoCard(d = today()) {
+    if (d.allDay !== d.day || d.cardDay === d.day || !entered) return;
+    const hold = momentHold({
+      cer: document.body.classList.contains('gift-cer'), rec: document.body.classList.contains('gift-rec'), lounge: root.classList.contains('lounging'),
+      driving, busy: sheets.length > 0 || !!ext, baking: !!baking, proof: !proof.hidden,
+    });
+    if (hold || performance.now() - todoCardTry < 2000) return;
+    todoCardTry = performance.now();
+    if (!hooks.todoCard?.(cardText(hooks.nick(), d.streak))) return; // the city is not built yet: a later tick tries again
+    d.cardDay = d.day;
+    saveDay(d);
+  }
+  // Day attendance paid (main.js PAY attend): one keyed line in place of 출석 +N 포인트.
+  function attendPaid(streak, got) {
+    const list = renderTodo(), next = todoNext(list);
+    note(attendNote(streak, got, next), 'ok', todoGo(next), { key: 'todo' });
+    trackEvent('todo_done', { kind: 'attend' });
+  }
+  // 응원 팀 (main.js): v = { has, done } from /rt/team/me or a write, false when teams cannot be used now, 'ask' when the ask went out.
+  function setTeamToday(v) {
+    if (v === 'ask') { if (teamToday === null && !teamAsked) teamAsked = performance.now(); return; }
+    teamToday = v && typeof v === 'object' ? { has: !!v.has, done: !!(v.has && v.done) } : v === false ? false : teamToday;
+    renderTodo();
+    renderGoal();
+  }
+  // 이번 주 · 선물 전광판: the gift pages keep the ids made on this device (kts_gmine, giftpage.js); a new one since the plaza last looked
+  // ticks this week. Read on load, when another document (the maker in its frame, a gift tab) writes it, and when the maker's layer closes.
+  function checkGifts() {
+    const d = today();
+    const r = giftSeen(d.gs, recall('kts_gmine', []));
+    const gw = r.fresh ? weekStart(d.day) : d.gw;
+    if (JSON.stringify(d.gs) === JSON.stringify(r.seen) && gw === d.gw) return;
+    d.gs = r.seen; d.gw = gw;
+    saveDay(d);
+    todoSheetPaint?.();
+  }
+  addEventListener('storage', (e) => { if (e.key === 'kts_gmine') checkGifts(); });
+  let layerWas = false; // the 1 s tick reads kts_gmine again when a layer (the gift maker's frame) has just closed
+  function openToday(opts = {}) {
+    if (quietBlock) return;
+    openSheet(['mission', TODO_TEXT.title], null, (host) => {
+      const paint = () => {
+        const d = today(), list = todoList(todoSignals(d)), p = todoProgress(list), next = todoNext(list);
+        const week = h('div', { class: 'todo-weekbox', tabindex: '-1' }, h('b', { text: TODO_TEXT.week }), stampCells(d));
+        const tap = (id) => { if (id === 'attend') { week.scrollIntoView?.({ block: 'center' }); week.focus?.({ preventScroll: true }); return; } closeSheet(); guideQuest(id); };
+        const giftOk = giftDone(d.gw, d.day);
+        const goal = nextGoal();
+        host.replaceChildren(
+          h('p', { class: 'note todo-sub', text: TODO_TEXT.sub }),
+          h('div', { class: 'todo-prog' }, h('span', { class: 'n tnum', text: `${p.n} / ${p.N}` }), todoBar(p)),
+          h('div', { class: 'todo-rows' }, ...list.map((r) => todoRow(r, next, tap, true))),
+          h('button', { type: 'button', class: 'todo-row big extra' + (giftOk ? ' done' : ''), 'aria-label': `${TODO_TEXT.gift}${giftOk ? ' · 끝' : ''}`, onclick: () => { closeSheet(); hooks.openGiftMaker?.(); } },
+            h('span', { class: 'ck', 'aria-hidden': 'true' }, icon(giftOk ? 'checkCircle' : 'gift')), h('span', { class: 'lb', text: TODO_TEXT.gift }), h('span', { class: 'go', 'aria-hidden': 'true' }, icon('chevronRight'))),
+          week,
+          h('p', { class: 'note todo-line', text: footLine({ all: p.all, streak: d.streak, tomorrow: todoTomorrow(d) }) }),
+          ...(goal.text ? [h('button', { type: 'button', class: 'todo-goal', onclick: () => { closeSheet(); nextGoalGo(); } }, h('span', { text: goal.text }), icon('chevronRight'))] : []),
+          h('p', { class: 'note', text: todayFacts(d) }),
+        );
+        if (opts.at === 'week') { opts.at = ''; setTimeout(() => { week.scrollIntoView?.({ block: 'center' }); week.focus?.({ preventScroll: true }); }, 0); }
+      };
+      paint();
+      todoSheetPaint = paint;
+      return () => { if (todoSheetPaint === paint) todoSheetPaint = null; };
+    }, true, 'todo-sheet', { kind: 'today' });
   }
   // Each crowd number shows only from its threshold (ftue.js PUBLIC_MIN); the week's cheer and watch points always stay.
   function todayFacts(d) {
@@ -2159,6 +2334,7 @@ export function createUI(root, hooks) {
       busy: n.busy === true,
     };
     wishDot.hidden = !(wishView.known && !wishView.mine && !wishView.busy);
+    renderTodo();
     renderGoal();
     wishRepaint?.();
   }
@@ -3338,7 +3514,7 @@ export function createUI(root, hooks) {
       const waitCell = stat('정산 중', waitEl), ticketCell = stat('VIP 티켓', ticketEl);
       // The compact phone HUD has no wallet chips: they are these rows at the top of the sheet, with the same labels and
       // the same taps (index.html shows .wal-quick only there). Each opens its sheet over this one.
-      const quickRow = (chip, go) => h('button', { class: 'btn ghost', type: 'button', onclick: go }, h('span', { text: chip.textContent }), icon('chevronRight'));
+      const quickRow = (chip, go) => h('button', { class: 'btn ghost', type: 'button', onclick: go }, h('span', { text: chip.dataset.row || chip.textContent }), icon('chevronRight'));
       const quick = h('div', { class: 'wal-quick' });
       const fillQuick = () => quick.replaceChildren(
         quickRow(todayBtn, () => openToday()),
@@ -3346,7 +3522,7 @@ export function createUI(root, hooks) {
         quickRow(tribeBtn, () => openTribeSheet()),
         ...(protectLine.hidden ? [] : [h('button', { class: 'btn ghost wide', type: 'button', onclick: (e) => protectGo(e) }, h('span', { text: protectLine.textContent }), icon('chevronRight'))]),
       );
-      const quickSig = () => [todayBtn, holdBtn, tribeBtn, protectLine].map((el) => (el.hidden ? '' : el.textContent)).join('|');
+      const quickSig = () => [todayBtn, holdBtn, tribeBtn, protectLine].map((el) => (el.hidden ? '' : el.dataset.row || el.textContent)).join('|');
       let quickNow = '';
       const fill = () => {
         if (quickSig() !== quickNow) { quickNow = quickSig(); fillQuick(); }
@@ -5803,7 +5979,7 @@ export function createUI(root, hooks) {
     if (left > 0) coolSvg.fg.setAttribute('stroke-dashoffset', String(69.1 * (left / COOLDOWN)));
     if (now - mapAt > 125 && !document.hidden) { mapAt = now; drawMini(hooks.minimap?.()); }
     if (now - hudAt > 66 && !document.hidden) { hudAt = now; renderHud(hooks.hud?.()); }
-    if (now - rankAt > 1000 && !document.hidden) { rankAt = now; paintLive(); renderGoal(); maybeStarterToast(); payDue(); pumpLink(now); pumpTaken(now); if (pushQueued) maybeOfferPush(); }
+    if (now - rankAt > 1000 && !document.hidden) { rankAt = now; paintLive(); if (layerWas !== !!ext) { layerWas = !!ext; if (!ext) checkGifts(); } renderTodo(); renderGoal(); maybeStarterToast(); payDue(); pumpLink(now); pumpTaken(now); if (pushQueued) maybeOfferPush(); }
     if (now - homeAt > 1000 && !document.hidden) { homeAt = now; wkTick(now); pumpRecap(); pumpHome(now); } // the week record, last week's card, the home-screen card
     requestAnimationFrame(frame);
   }
@@ -5839,7 +6015,6 @@ export function createUI(root, hooks) {
   bakeEl.addEventListener('pointerdown', (e) => { if (e.target.closest('button')) return; stopBake(); });
 
   const loungeEl = h('div', { class: 'stay-lounge', hidden: true });
-  const questEl = h('div', { class: 'stay-quest' });
   const balloonEl = h('button', { class: 'stay-balloon', type: 'button', hidden: true, onclick: () => hooks.throwPouch?.() });
   const loungeBtn = h('button', { class: 'stay-lounge-btn', type: 'button', title: `전광판 관람. 8초마다 다른 전광판, ${Math.round(PAY.lounge.gapMs / 1000)}초마다 응원 포인트 +${PAY.lounge.base}(하루 ${PAY.lounge.perDay}번까지). 움직이면 끝`, onclick: () => hooks.toggleLounge?.() },
     h('span', { class: 'e' }, icon('coffee')), h('span', { class: 'l', text: '멍때리기' }));
@@ -5857,7 +6032,7 @@ export function createUI(root, hooks) {
     loungeBtn.after(danceGo);
     root.querySelector('.hud-r')?.append(balloonEl);
   }
-  root.querySelector('.hud-l')?.append(questEl);
+  walletEl.after(todoEl); // 오늘 할 일 sits right under the wallet card, above the 9 pm banner and the live board
   root.append(loungeEl, focusBtn);
   // A title tooltip never shows on a touch screen. Where the tap already means something, a long press says the same
   // text as a notice (and that press does not also count as the tap).
@@ -5925,18 +6100,6 @@ export function createUI(root, hooks) {
     // One short line at the top of the screen (index.html .stay-lounge): what is on, and what it has paid so far.
     if (on) setIconText(loungeEl, 'coffee', `전광판 관람 중 · 관람 포인트 +${loungeN}`);
   }
-  function paintQuests() {
-    const d = today();
-    const paid = d.qPaid || {};
-    const row = (key, need, label) => {
-      const done = !!paid[key];
-      return h('button', { type: 'button', class: done ? 'ok' : '', onclick: () => guideQuest(key) }, ...withIcon(done ? 'checkCircle' : 'todo', `${label} (${Math.min(d[key] || 0, need)}/${need})`));
-    };
-    questEl.replaceChildren(
-      h('b', { text: '오늘의 응원' }),
-      row('cheer', 3, `켜진 전광판 응원 3번 +${PAY.quest.cheer} 포인트`),
-    );
-  }
   function questBump(key) {
     const d = today();
     const need = { cheer: 3 }[key];
@@ -5945,9 +6108,9 @@ export function createUI(root, hooks) {
     if (d.qPaid[key]) return;
     d[key] = (d[key] || 0) + 1;
     saveDay(d);
-    paintQuests();
+    renderTodo();
     if (d[key] < need) return;
-    if (!hooks.claimQuest?.(key)) note('광장에 연결되면 미션 포인트가 들어와요', 'err', null, { key: 'offline' });
+    if (!hooks.claimQuest?.(key)) note('광장에 연결되면 오늘 할 일 포인트가 들어와요', 'err', null, { key: 'offline' });
   }
   let balloonHp = 0, balloonWait = 25000, balloonWaitAt = 0;
   // The pouch icon, then the text in its own span: on touch the button is a circle with the icon and the span is the
@@ -5979,7 +6142,8 @@ export function createUI(root, hooks) {
     paintPouchGo();
   }
   setInterval(paintBalloon, 1000);
-  paintQuests();
+  checkGifts();
+  renderTodo();
 
   // Someone who played on an earlier day keeps the full HUD; read before this session's attend().
   // kts_ftue is set for every earlier player (the old tutorial bug) and for a new one only after the bake step.
@@ -5996,7 +6160,7 @@ export function createUI(root, hooks) {
     sfx, note, pop, flyCoins, cooldownLeft, armCooldown, showResult,
     layer,
     startBake, stopBake, startDance, endDance, danceInvite, openBillboard, openAd, openPlot, openHub, openCredits, openMap, openSettings, openWalletInfo, openVip, toggleReacts, showProof,
-    mission(kind) { if (kind === 'wish' || kind === 'heart') missionBump(kind); }, // a cheer counts through quest (questBump)
+    mission(kind) { if (kind === 'wish' || kind === 'heart') { missionBump(kind); renderTodo(); } }, // a cheer counts through quest (questBump)
     quest: questBump,
     markDaily,
     markQuest(key) {
@@ -6004,8 +6168,12 @@ export function createUI(root, hooks) {
       d.qPaid = d.qPaid || {};
       if (key === 'cheer') d.qPaid.cheer = 1;
       saveDay(d);
-      paintQuests();
+      renderTodo();
     },
+    // 오늘 할 일: the day's attendance pay (its keyed notice), the team signal (main.js teamMe / teamOp), the open sheet.
+    attendPaid,
+    setTeamToday,
+    openToday,
     lounge(on, n) { if (on) endDance('lounge'); paintLounge(on, n); loungeWatch = !!on; syncWatchPortrait(); if (on) lofiStart(); else lofiStop(); if (!on && awayWant) setTimeout(pumpQueued, 0); if (!on) pumpNews(); },
     // #ui.focusing (index.html): on a phone the goal and guest pills and the 속보 line step aside while one board is in view.
     focusLock(on) { focusOn = !!on; focusBtn.hidden = !on; root.classList.toggle('focusing', focusOn); renderPrompt(); if (!on) { setTimeout(pumpQueued, 0); pumpNews(); } },

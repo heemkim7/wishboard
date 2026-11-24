@@ -37,6 +37,8 @@ export const EVENT_NAMES = Object.freeze([
   'dance_start', // 같이 춤추기 (dance.js): kind stage | panel | join
   'dance_end',   // span: how long, as a bucket (dance.js spanBucket)
   'bake_start',
+  'todo_done',   // 오늘 할 일 (todo.js): kind = the row's id (attend | cheer | wish | heart | team)
+  'todo_all',    // the whole list, once a day per device: streak
 ]);
 const GUEST_SUB = /^g-[0-9a-f-]{36}$/i;
 const TICKET = /^h1\.[A-Za-z0-9_-]{20,200}\.[A-Za-z0-9_-]{20,90}$/;

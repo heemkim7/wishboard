@@ -61,7 +61,8 @@ describe('the card\'s last step', () => {
     assert.match(ui, /if \(!goalReady\(\)\) return \{ text: '', undecided: true,/);
     assert.match(ui, /if \(g\.undecided\) return;/);
     // no line on screen while there is nothing to say, and no free-slot offer from a list that may change
-    assert.match(ui, /const none = newbieOn \? !newcomerTask\(\)\?\.text : !goalText;\s+if \(nextLine\.hidden !== none\) nextLine\.hidden = none;/);
+    // (the phone pill's plan says 'none' until the goal is known too: todo.js pillPlan)
+    assert.match(ui, /const none = newbieOn \? !newcomerTask\(\)\?\.text : pill \? pill\.kind === 'none' : !goalText;\s+if \(nextLine\.hidden !== none\) nextLine\.hidden = none;/);
     assert.match(ui, /if \(!goalReady\(\)\) return; \/\/ the same wait as the goal line/);
     // main.js: an answer that is exactly the old four is asked again (below), and the offer waits for the list to settle
     assert.match(main, /starterListKnown: \(\) => starterListKnown,/);
@@ -188,7 +189,7 @@ describe('newcomer mode', () => {
     assert.match(ui, /메뉴 모두 보기/);
     assert.match(ui, /지금 할 일/);
     const html = read('index.html');
-    for (const sel of ['.liveboard', '.stay-quest', '.stay-balloon', '.channel-card']) {
+    for (const sel of ['.liveboard', '.todo-card', '.stay-balloon', '.channel-card']) {
       assert.ok(html.includes(`#ui.newbie ${sel}`), sel);
     }
     // the coin-2x gauge and the draw line are gone (no points for play, no lottery)

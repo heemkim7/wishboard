@@ -235,9 +235,6 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .wallet .protect { position: relative; font: inherit; font-size: 12px; font-weight: 700; color: var(--muted); white-space: nowrap; background: none; border: 0; padding: 0; cursor: pointer; }
   .chip { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; font-size: 12px; font-weight: 700; padding: 0 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2); }
   .chip.gold { color: var(--accent); background: var(--accent-weak); }
-  .attend-week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin: 4px 0 12px; }
-  .attend-day { display: grid; place-items: center; height: 36px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); font-weight: 800; color: var(--muted); }
-  .attend-day.on { background: var(--accent-weak); color: var(--accent); }
   .chip.pulse { animation: chipPulse 1.4s ease-in-out infinite; }
   @keyframes chipPulse { 50% { opacity: .6; } }
   .wallet.bump .amt { animation: bump .5s cubic-bezier(.2,1.6,.4,1); }
@@ -957,7 +954,6 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
      place: the tag is down while dancing). */
   html.touch .dancebar { bottom: calc(44px + var(--safe-b)); left: calc(122px + var(--safe-l)); right: calc(72px + var(--safe-r)); width: fit-content; max-width: none; margin: 0 auto; transform: none; }
   @media (orientation: landscape) and (max-height: 520px) {
-    html.touch .stay-quest { display: none; }
     /* The left column is at most min(240px, 40vw) wide and starts 10-14px in, so everything in the middle that shares its
        height (the taxi HUD, the look-around hint, the toasts) starts 26px past that width: 12px clear of the identity
        card. */
@@ -1004,7 +1000,8 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     html.touch .taxihud { top: calc(62px + var(--safe-t)); left: calc(10px + var(--safe-l)); right: calc(204px + var(--safe-r)); }
   }
   @media (orientation: portrait) {
-    html.touch .stay-quest { display: none; }
+    /* 오늘 할 일 on an upright tablet: the head line and the next row only (a phone has the goal pill instead). */
+    html.touch .todo-card .todo-row:not(.next), html.touch .todo-card .todo-foot { display: none; } html.touch .todo-card.all .todo-foot { display: grid; } html.touch .todo-card.all .todo-foot > :not(.todo-line) { display: none; }
     html.touch .nextgoal { font-size: 12px; }
     html.touch .hud-l { width: auto; max-width: calc(100vw - 188px); }
     html.touch .minimap { width: 58px; height: 58px; }
@@ -1063,10 +1060,58 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .dock .stay-lounge-btn .l { font-size: 12px; font-weight: 700; color: var(--text-2); }
   .dock .stay-lounge-btn.on .l { color: var(--accent); }
   .dock .stay-lounge-btn.on { color: var(--accent); background: var(--accent-weak); border-color: var(--line-strong); }
-  .hud-l .stay-quest { pointer-events: none; padding: 10px 12px; border-radius: 14px; background: var(--surface-hud); border: 1px solid var(--line); font: 500 12px/1.45 var(--font); color: var(--text); }
-  .stay-quest button { pointer-events: auto; display: flex; align-items: center; gap: 6px; width: 100%; margin: 0; padding: 0; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
-  .stay-quest b { display: block; margin-bottom: 4px; font-weight: 800; color: var(--text); }
-  .stay-quest .ok { color: var(--ok); }
+  /* 오늘 할 일 (ui.js todoEl, todo.js): right under the wallet card. The head line (name, n / N, the bar) opens the sheet; each row is
+     a button (its action), the next one tinted with an arrow; the week's stamps and the foot line close it. */
+  .hud-l .todo-card { pointer-events: auto; display: grid; gap: 6px; padding: 10px 12px; border-radius: 14px; font: 500 12px/1.4 var(--font); color: var(--text); }
+  .todo-head { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 5px 8px; width: 100%; min-height: 24px; margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .todo-head b { font-size: 13px; font-weight: 800; }
+  .todo-head .n, .todo-prog .n { font-weight: 800; color: var(--accent); }
+  .todo-bar { grid-column: 1 / -1; display: block; height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+  .todo-bar i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), #ffd36a); transition: width .45s ease; }
+  .todo-rows { display: grid; gap: 2px; }
+  .todo-row { position: relative; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto auto; align-items: center; gap: 6px; width: calc(100% + 12px); min-height: 24px; margin: 0 -6px; padding: 2px 6px; border: 0; border-radius: 8px; background: none; color: var(--text-2); font: inherit; text-align: left; cursor: pointer; }
+  .todo-row .ck { display: grid; place-items: center; color: var(--muted); }
+  .todo-row .ck svg { width: 16px; height: 16px; }
+  .todo-row .lb { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .todo-row .vl { color: var(--accent); font-weight: 700; white-space: nowrap; }
+  .todo-row .go { display: grid; place-items: center; color: var(--accent); }
+  .todo-row .go svg { width: 14px; height: 14px; }
+  .todo-row.done { color: var(--muted); }
+  .todo-row.done .ck { color: var(--ok); }
+  .todo-row.done .vl { color: var(--muted); font-weight: 500; }
+  .todo-row.next { background: var(--accent-weak); color: var(--text); font-weight: 700; }
+  .todo-row:hover { background: rgba(255, 255, 255, .06); }
+  .todo-row.next:hover { background: rgba(255, 176, 32, .22); }
+  .todo-row.pop .ck { animation: todoPop .5s cubic-bezier(.2, 1.6, .4, 1); }
+  @keyframes todoPop { 0% { transform: scale(.4); } 60% { transform: scale(1.35); } 100% { transform: scale(1); } }
+  .todo-foot { display: grid; gap: 4px; }
+  .todo-foot small { color: var(--muted); font-size: 12px; font-weight: 700; }
+  .todo-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+  .stamp { display: grid; place-items: center; height: 24px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); font-size: 12px; font-weight: 800; }
+  .stamp i { font-style: normal; }
+  .stamp.attend { background: rgba(255, 176, 32, .16); border-color: rgba(255, 176, 32, .4); color: #ffd98a; }
+  .stamp.all { background: linear-gradient(135deg, #ffe08a, #ffb020); border-color: #ffcf5a; color: #1c1300; box-shadow: 0 0 10px rgba(255, 176, 32, .45); }
+  .stamp.today { background: none; border: 1px dashed var(--accent); color: var(--text); }
+  .stamp.later { background: none; }
+  .todo-line { margin: 0; color: var(--text-2); font-size: 12px; }
+  .todo-card.all .todo-line { color: var(--accent); font-weight: 700; }
+  /* The 오늘 할 일 sheet: the same rows at 44px, the bar, the week's stamps (36px), the gift suggestion, the goal, the facts. */
+  .todo-sheet .todo-sub { margin: 0 0 10px; }
+  .todo-prog { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; margin: 0 0 10px; font-size: 14px; }
+  .todo-prog .todo-bar { grid-column: auto; height: 8px; }
+  .todo-sheet .todo-rows { gap: 4px; margin: 0 0 4px; }
+  .todo-row.big { width: 100%; min-height: 44px; margin: 0; padding: 6px 10px; font-size: 14px; border: 1px solid var(--line); background: var(--surface-2); }
+  .todo-row.big .ck svg { width: 18px; height: 18px; }
+  .todo-row.big.next { background: var(--accent-weak); border-color: rgba(255, 176, 32, .45); }
+  .todo-row.big.extra { grid-template-columns: 18px minmax(0, 1fr) auto; margin: 8px 0 12px; border-style: dashed; color: var(--text-2); }
+  .todo-row.big.extra.done { border-style: solid; color: var(--muted); }
+  .todo-row.big .lb { white-space: normal; }
+  .todo-weekbox { display: grid; gap: 6px; margin: 0 0 10px; outline: none; }
+  .todo-weekbox:focus-visible { box-shadow: var(--focus); border-radius: 10px; }
+  .todo-weekbox b { font-size: 13px; }
+  .todo-weekbox .stamp { height: 36px; border-radius: 10px; font-size: 13px; }
+  .todo-sheet .todo-line { margin: 0 0 10px; }
+  .todo-sheet .todo-goal { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 44px; margin: 0 0 10px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; background: none; color: var(--info); font: inherit; font-weight: 700; text-align: left; cursor: pointer; }
   #ui > .stay-balloon, #ui > .stay-focus { pointer-events: auto; }
   .stay-balloon, .stay-lounge { position: absolute; left: 50%; transform: translateX(-50%); z-index: 6; width: min(520px, calc(100% - 300px)); max-width: calc(100% - 24px); }
   /* A neutral HUD pill (not the primary action): only the packet icon is amber. */
@@ -1156,12 +1201,13 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   body:has(#ui .tools.open) .toasts, html.touch body:has(#ui > .reacts:not([hidden])) .toasts { visibility: hidden; }
   /* Desktop at short heights: the 오늘의 드라이버 panel would run under the emote dock, so it goes, and the left column stops above the dock (18px + 88px from the bottom, plus a gap). */
   @media (max-height: 640px) {
-    html:not(.touch) .stay-quest { display: none; }
+    /* 오늘 할 일 is never hidden: at these heights it keeps its head line and the next row (or, all done, the foot line). */
+    html:not(.touch) .todo-card .todo-row:not(.next), html:not(.touch) .todo-card .todo-foot { display: none; } html:not(.touch) .todo-card.all .todo-foot { display: grid; } html:not(.touch) .todo-card.all .todo-foot > :not(.todo-line) { display: none; }
     html:not(.touch) .hud-l { max-height: calc(var(--app-h, 100dvh) - 136px - var(--safe-t) - var(--safe-b)); overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; }
     html:not(.touch) .hud-l > * { flex-shrink: 0; }
   }
   /* Newcomer focus mode: ui.js toggles #ui.newbie until kts_grad is set. Hidden, not removed. */
-  #ui.newbie .liveboard, #ui.newbie .stay-quest, #ui.newbie .stay-balloon, #ui.newbie .channel-card, #ui.newbie .tool-adv, #ui.newbie .guestwarn, #ui.newbie .nextline { display: none !important; }
+  #ui.newbie .liveboard, #ui.newbie .todo-card, #ui.newbie .stay-balloon, #ui.newbie .channel-card, #ui.newbie .tool-adv, #ui.newbie .guestwarn, #ui.newbie .nextline { display: none !important; }
   .newbie-more { display: none; }
   #ui.newbie .newbie-more { display: inline-flex; align-items: center; align-self: flex-start; min-height: 40px; pointer-events: auto; padding: 0 14px; border-radius: 999px; background: var(--surface-hud); border: 1px solid var(--line); color: var(--text); font: 700 12px/1.3 var(--font); cursor: pointer; }
   .newbie-more:focus-visible, #ui .nextgoal.task:focus-visible { outline: none; box-shadow: var(--focus); }
@@ -1170,7 +1216,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   #ui .nextgoal.task span { flex: 1; min-width: 0; }
   #ui .nextgoal.task i { flex: none; font-style: normal; font-size: 20px; line-height: 1; color: var(--info); }
   #ui .nextgoal.task:hover { border-color: var(--line-strong); }
-  #ui.reveal .liveboard, #ui.reveal .stay-quest, #ui.reveal .stay-balloon, #ui.reveal .tool-adv { animation: revealIn .8s ease-out both; }
+  #ui.reveal .liveboard, #ui.reveal .todo-card, #ui.reveal .stay-balloon, #ui.reveal .tool-adv { animation: revealIn .8s ease-out both; }
   @keyframes revealIn { from { opacity: 0; } to { opacity: 1; } }
   /* The waypoint pill would sit on the bake panel in portrait; it hides while it is open (the proof bar already hides it). */
   #ui:has(.bake.show) .waypill, #ui:has(.bake.show) .help { display: none; }
@@ -1263,7 +1309,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .claimline .input { flex: 1; min-width: 0; }
   .claimline .count { flex: none; min-width: 38px; text-align: right; font-size: 12px; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
   /* Touch: the left column always sits on a dark panel, never bare text over the scene. No blur: it redraws over WebGL every frame. */
-  html.touch .hud-l > .glass, html.touch .hud-l > .nextline, html.touch .hud-l > .stay-quest { background: var(--surface-hud); }
+  html.touch .hud-l > .glass, html.touch .hud-l > .nextline, html.touch .hud-l > .todo-card { background: var(--surface-hud); }
   html.touch .hud-l > .guestwarn { background: var(--surface-hud); }
   html.touch #ui .nextgoal.task { padding: 8px 10px; font-size: 13px; }
   html.touch #ui .nextgoal.task small { font-size: 12px; }
@@ -1274,7 +1320,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html.touch .hud-l > * { flex-shrink: 0; }
   @media (orientation: landscape) and (max-height: 760px) {
     /* Tablet landscape: the 오늘의 드라이버 panel does not fit above the joystick, so it goes like it does on phones. */
-    html.touch .stay-quest { display: none; }
+    html.touch .todo-card .todo-row:not(.next), html.touch .todo-card .todo-foot { display: none; } html.touch .todo-card.all .todo-foot { display: grid; } html.touch .todo-card.all .todo-foot > :not(.todo-line) { display: none; }
   }
   @media (orientation: portrait) {
     html.touch .hud-l { min-width: 0; max-width: min(56vw, calc(100vw - 188px)); }
@@ -1300,7 +1346,6 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .sheet h2 .badge { margin-left: 4px; }
   .bake h3, .vipcard h4, .wish-hearts { display: flex; align-items: center; gap: 6px; }
   .chip-btn, .quick button, .wish-heart { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
-  .stay-quest > div { display: flex; align-items: center; gap: 6px; }
   .verified svg.ico { width: 12px; height: 12px; stroke-width: 2.5; vertical-align: 0; }
   .verified:has(svg.ico) { padding: 0 2px; }
   .ico-missing { display: none !important; }
@@ -1328,6 +1373,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     html.touch .hud-l { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; width: min(62vw, 240px, 40vmax); min-width: 0; max-width: min(62vw, 240px, 40vmax); }
     html.touch .hud-l > * { grid-column: 1 / -1; justify-self: start; max-width: 100%; }
     html.touch .hud-l > .wallet, html.touch .hud-l > .liveboard { display: none; }
+    html.touch .hud-l > .todo-card { display: none; } /* the goal pill carries 오늘 할 일 here (ui.js phonePill) */
     html.touch .hud-l > .ident { grid-row: 1; border-radius: 22px; max-width: min(100%, calc(100vw - 206px - var(--safe-l) - var(--safe-r))); }
     html.touch #ui:has(.tool-inbox:not([hidden])) .hud-l > .ident { max-width: min(100%, calc(100vw - 250px - var(--safe-l) - var(--safe-r))); }
     html.touch .ident .profile { flex: 0 1 auto; gap: 7px; padding: 7px 7px 7px 6px; }
@@ -1346,6 +1392,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     html.touch .ident .profile .status > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     html.touch .hud-l > .nextgoal:not(.task) { grid-column: 1; display: block; width: auto; padding: 6px 10px; border-radius: 999px; background: var(--surface-hud); border: 1px solid var(--line); font-size: 12px; line-height: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: auto; }
     html.touch .hud-l > .nextgoal:not(.task) .ng-k { font-size: 0; line-height: 0; vertical-align: top; }
+    html.touch .hud-l > .nextgoal:not(.task) .ng-t { display: inline-block; vertical-align: top; margin: 3px 6px 0 0; padding: 0 5px; border-radius: 6px; background: rgba(255, 176, 32, .2); color: var(--accent); font-size: 12px; line-height: 16px; }
     html.touch .hud-l > .nextgoal:not(.task) .ng-k::before { content: "목표"; display: inline-block; vertical-align: top; margin: 3px 6px 0 0; padding: 0 5px; border-radius: 6px; background: color-mix(in srgb, var(--info) 20%, transparent); font-size: 12px; line-height: 16px; }
     html.touch .hud-l > .guestwarn { width: auto; padding: 0; border: 0; border-radius: 0; background: none; }
     html.touch .hud-l > .guestwarn p { display: none; }
@@ -1702,9 +1749,9 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   }
 
   /* Desktop: rows that are buttons are at least 24px tall (WCAG 2.2 target size; they were 15-19px). */
-  html:not(.touch) .liveboard :is(.livehead, button.rank, button.f), html:not(.touch) .stay-quest button, html:not(.touch) .wallet .nextgoal:not(.task) { min-height: 24px; }
+  html:not(.touch) .liveboard :is(.livehead, button.rank, button.f), html:not(.touch) .todo-card :is(.todo-head, .todo-row), html:not(.touch) .wallet .nextgoal:not(.task) { min-height: 24px; }
   /* A touch tablet keeps the full left column: its rows that are buttons are 32px tall there. */
-  html.touch .liveboard :is(.livehead, button.rank, button.f), html.touch .stay-quest button { min-height: 32px; }
+  html.touch .liveboard :is(.livehead, button.rank, button.f), html.touch .todo-card .todo-row:not(.big) { min-height: 32px; }
   /* Desktop tool row (2026-11-24, the owner: "some have text and some do not; make them one"). From 1024px every tool in
      the row carries its name beside the icon, in the order of use (overlay.js TOOL_ORDER); the ones that do not fit at
      that width are in ⋯ (더보기), which opens a menu of every tool as an icon + name row, as on a phone. Inline from:
@@ -1762,6 +1809,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .sheet .login-terms { margin-top: var(--group-gap); }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+    .todo-row.pop .ck { animation: none; } /* 오늘 할 일: the check just changes */
   }
 </style>
 <script>
