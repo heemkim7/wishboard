@@ -1039,7 +1039,12 @@ describe('the gift pages on a phone: what the page script builds (giftpage.js)',
     P = pageOf(view({ paper: [{ id: 'p00001', nick: '친구', txt: '축하해' }] }), AT);
     try { await P.load('giftpage.js'); await P.press(P.btn(/영상 건너뛰기/)); assert.ok(P.btn(/^신고$/)); sweep(P, 'the recipient page'); } finally { P.done(); }
     P = pageOf(view({ phase: 'before' }), KST('2026-11-24T12:00:00'));
-    try { await P.load('giftpage.js'); sweep(P, 'the page before the day'); } finally { P.done(); }
+    try { await P.load('giftpage.js'); assert.ok(P.btn(/점등식 같이 보기/), 'the ceremony button before the day'); sweep(P, 'the page before the day'); } finally { P.done(); }
+    // 점등식 inside its window: the link into the plaza, and the button that says the plaza is busy (budget hard).
+    for (const hard of [false, true]) {
+      P = fakeDom({ path: '/g/abcd1234', data: { id: 'abcd1234', gift: view(), now: KST('2026-11-25T17:55:00'), media: false, ...(hard ? { hard } : {}) }, at: KST('2026-11-25T17:55:00'), store: { masil_gt: GUEST() } });
+      try { await P.load('giftpage.js'); assert.equal(P.btn(/점등식 들어가기/).tag, hard ? 'button' : 'a'); sweep(P, 'the page in the ceremony window' + (hard ? ' at budget hard' : '')); } finally { P.done(); }
+    }
     P = fakeDom({ path: '/g/abcd1234', data: { id: 'abcd1234', gift: null, now: AT, media: false }, at: AT });
     try { await P.load('giftpage.js'); assert.deepEqual(P.heads('h1'), ['기념 페이지가 끝났거나 가려졌어요']); sweep(P, 'the page that is gone'); } finally { P.done(); }
     assert.deepEqual([...seen].sort(), Object.keys(RULE).sort(), 'and every kind of control was met');
