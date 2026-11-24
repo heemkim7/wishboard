@@ -645,8 +645,9 @@ describe('small rules', () => {
     assert.match(shot, /document\.body\.classList\.remove\('posing'\)/);
     const w = read('timesSquare3d.js');
     assert.match(w, /if \(document\.body\.classList\.contains\('posing'\)\) return;/);
-    const cap = w.slice(w.indexOf('capture() {'), w.indexOf("g.fillText('WISH BOARD"));
-    assert.ok(cap.indexOf('me.tag.visible = false;') < cap.indexOf('composer.render()'));
+    const cap = w.slice(w.indexOf("capture({ me: withMe = false, band = '' } = {}) {"), w.indexOf('g.fillText(words'));
+    assert.ok(cap.indexOf('me.tag.visible = !!withMe;') > 0 && cap.indexOf('me.tag.visible = !!withMe;') < cap.indexOf('composer.render()'), 'without { me: true } my tag is off for the render');
+    assert.match(cap, /const words = String\(band \|\| ''\) \|\| 'WISH BOARD · 모두의 전광판';/, 'the default band is today\'s');
     assert.match(cap, /finally \{ me\.tag\.visible = tagOn; \}/);
   });
   it('rings are quiet while their gap runs (no points: PLAY.ring), and a lost context is handled', () => {
@@ -955,8 +956,10 @@ describe('deep link and lounge wiring', () => {
     assert.match(arrive, /if \(GIFT\) \{\n\s+world\?\.giftPop\?\.\(FOCUS, true\);/);
     assert.match(arrive, /introDone\(\); \}, 700\);/);
     const w = read('timesSquare3d.js');
-    const go = w.slice(w.indexOf('goToSlot(slotId) {'), w.indexOf('cineOn:'));
-    assert.match(go, /api\.teleport\(pose\.front\.x, pose\.front\.z\);/);
+    const go = w.slice(w.indexOf('goToSlot(slotId, { spread } = {}) {'), w.indexOf('cineOn:'));
+    // The front point itself, unless a ceremony arrival asks for its spread spot (and that spot is inside the fence).
+    assert.match(go, /let tx = pose\.front\.x, tz = pose\.front\.z;\n      if \(spread != null && Number\.isFinite\(Number\(spread\)\)\) \{/);
+    assert.match(go, /if \(insideLoop\(sx, sz, 0\) && !approachOf\(sx, sz\)\) \{ tx = sx; tz = sz; break; \}\n        \}\n      \}\n      api\.teleport\(tx, tz\);/);
     assert.match(go, /insideLoop\(pose\.front\.x, pose\.front\.z, 0\)/);
   });
   it('the lounge tour chains board to board and refuses in a taxi', () => {
@@ -981,5 +984,88 @@ describe('a reached waypoint', () => {
     assert.match(w, /if \(waypoint && !autoWalk && Math\.hypot\(pos\.x - waypoint\.x, pos\.z - waypoint\.z\) < 7\) setWaypoint\(null\);/);
     assert.equal(w.includes("'arrive'"), false);
     assert.equal(/'arrive'|ftueApi|onWaypoint\?\.\(info\)/.test(read('main.js')), false);
+  });
+});
+
+// ---- 점등식: the group photo's pose and where each arrival stands (plan decisions 14 and 16) ------------------------------------------
+import { cerShotPose, cerSpread, CER_SHOT } from '../camrig.js';
+// Project p for a camera at cam looking at look with the vertical fov (deg) in a frame of this aspect: [x, y] in NDC, or null behind it.
+function shotNdc(p, { cam, look, fov }, aspect) {
+  const f = [look.x - cam.x, look.y - cam.y, look.z - cam.z], fl = Math.hypot(...f); f[0] /= fl; f[1] /= fl; f[2] /= fl;
+  const r = [-f[2], 0, f[0]], rl = Math.hypot(...r); r[0] /= rl; r[2] /= rl; // f x up
+  const u = [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]]; // r x f
+  const v = [p.x - cam.x, p.y - cam.y, p.z - cam.z], z = v[0] * f[0] + v[1] * f[1] + v[2] * f[2];
+  if (!(z > 0)) return null;
+  const tv = Math.tan((fov * Math.PI) / 360), th = tv * aspect;
+  return [(v[0] * r[0] + v[2] * r[2]) / (z * th), (v[0] * u[0] + v[1] * u[1] + v[2] * u[2]) / (z * tv)];
+}
+const SHOT_FACES = {
+  street: { pos: { x: 40, y: 9, z: -20 }, normal: { x: -1, z: 0 }, w: 12, h: 6.75 }, // a wall face on the avenue
+  lot: { pos: { x: 12, y: 7, z: 300 }, normal: { x: -Math.cos(0.35), z: -Math.sin(0.35) }, w: 20, h: 11 }, // turned 20° toward the entrance
+};
+const SHOT_ASPECTS = { '9:19.5': 9 / 19.5, '9:16': 9 / 16, '16:9': 16 / 9, '19.5:9': 19.5 / 9 };
+// The face's corners, the front point 9 m out, and the crowd box: ±4 m to the side, 0..3 m out, 0..1.9 m up.
+function shotScene(F) {
+  const { pos, normal: n, w, h } = F, r = { x: n.z, z: -n.x }, front = { x: pos.x + n.x * 9, z: pos.z + n.z * 9 };
+  const face = [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([a, b]) => ({ x: pos.x + r.x * a * w / 2, y: pos.y + b * h / 2, z: pos.z + r.z * a * w / 2 }));
+  const crowd = [];
+  for (const u of [-4, 4]) for (const d of [0, 3]) for (const y of [0, 1.9]) crowd.push({ x: front.x + r.x * u + n.x * d, y, z: front.z + r.z * u + n.z * d });
+  return { front, face, crowd };
+}
+const inFrame = (q) => !!q && Math.abs(q[0]) <= 0.95 + 1e-9 && Math.abs(q[1]) <= 0.95 + 1e-9;
+describe('cerShotPose: the board whole and the crowd in front of it, from behind the crowd', () => {
+  for (const [kind, F] of Object.entries(SHOT_FACES)) {
+    for (const [name, aspect] of Object.entries(SHOT_ASPECTS)) {
+      it(`${kind} face, ${name}: every corner of the face and of the crowd inside NDC ±0.95, the camera behind the crowd on the normal`, () => {
+        const { front, face, crowd } = shotScene(F);
+        const pose = cerShotPose({ ...F, front, aspect, fov: 55 });
+        assert.ok(pose && pose.cam && pose.look && pose.fov > 0);
+        for (const p of [...face, ...crowd]) assert.ok(inFrame(shotNdc(p, pose, aspect)), `${JSON.stringify(p)} -> ${shotNdc(p, pose, aspect)}`);
+        const along = (pose.cam.x - F.pos.x) * F.normal.x + (pose.cam.z - F.pos.z) * F.normal.z;
+        const off = Math.abs((pose.cam.x - F.pos.x) * F.normal.z - (pose.cam.z - F.pos.z) * F.normal.x);
+        assert.ok(off <= 0.01, 'on the normal: ' + off);
+        assert.ok(along > 9 + 3, 'farther out than the front point and the crowd\'s back row: ' + along);
+        assert.ok(pose.cam.y > 1.7, 'above eye level');
+        if (aspect < 1) assert.ok(shotNdc(F.pos, pose, aspect)[1] > 0, 'portrait: the face centre above the middle of the screen');
+        // The board is the subject, not lost in the frame.
+        const span = Math.abs(shotNdc(face[1], pose, aspect)[0] - shotNdc(face[0], pose, aspect)[0]) / 2;
+        assert.ok(span >= (aspect < 1 ? 0.5 : 0.25), `the face spans ${span.toFixed(2)} of the width`);
+      });
+    }
+  }
+  it('portrait stands farther back than landscape for the same face (the full width at 90 % of the narrow frame)', () => {
+    const F = SHOT_FACES.street, { front } = shotScene(F);
+    const d = (a) => { const p = cerShotPose({ ...F, front, aspect: a, fov: 55 }); return Math.hypot(p.cam.x - F.pos.x, p.cam.z - F.pos.z); };
+    assert.ok(d(9 / 19.5) > d(16 / 9));
+  });
+  it('with something in the way it keeps the face and the crowd in view: nearer, higher or wider, never on the far side of the wall', () => {
+    const F = SHOT_FACES.street, { front, face, crowd } = shotScene(F), aspect = 9 / 16;
+    const free = cerShotPose({ ...F, front, aspect, fov: 55 });
+    const D = Math.hypot(free.cam.x - F.pos.x, free.cam.z - F.pos.z);
+    // A wall across the normal 3 m nearer the face than the free pose: a segment that crosses it is cut there.
+    const wx = F.pos.x - (D - 3);
+    const block = (ax, ay, az, bx) => ((ax - wx) * (bx - wx) > 0 ? 1 : Math.abs((ax - wx) / (bx - ax)));
+    const pose = cerShotPose({ ...F, front, aspect, fov: 55, block });
+    assert.ok(pose.cam.x > wx, 'on the board\'s side of the wall: ' + pose.cam.x);
+    assert.equal(pose.seen, 1, 'every sample point seen');
+    for (const p of [...face, ...crowd]) assert.ok(inFrame(shotNdc(p, pose, aspect)), String(shotNdc(p, pose, aspect)));
+    assert.ok(pose.fov >= free.fov && pose.fov <= free.fov + CER_SHOT.widen);
+    // Nothing clear from anywhere: still a pose (the free one), and it says how much it saw.
+    const wall = cerShotPose({ ...F, front, aspect, fov: 55, block: () => 0 });
+    assert.ok(wall.cam && wall.seen === 0);
+  });
+  it('a block that never blocks gives the free pose', () => {
+    const F = SHOT_FACES.lot, { front } = shotScene(F);
+    assert.deepEqual(cerShotPose({ ...F, front, aspect: 16 / 9, fov: 55, block: () => 1 }), cerShotPose({ ...F, front, aspect: 16 / 9, fov: 55 }));
+  });
+});
+describe('cerSpread: where each device stands in front of the board', () => {
+  it('stays in range, and two seeds give two spots', () => {
+    for (const s of [0, 0.5, 0.999, 0.25, 0.75, 0.123, NaN, -1, 1, 7.5, undefined]) {
+      const p = cerSpread(s);
+      assert.ok(p.u >= -4 && p.u <= 4 && p.n >= 0 && p.n <= 3, String(s) + ' ' + JSON.stringify(p));
+    }
+    const a = cerSpread(0.2), b = cerSpread(0.7);
+    assert.ok(Math.hypot(a.u - b.u, a.n - b.n) > 0.5);
   });
 });

@@ -592,7 +592,7 @@ world = createTimesSquare(document.getElementById('view'), {
 window.G.world = world;
 window.G.ui = ui;
 errlogCtx({ tier: String(world?.quality || '') });
-giftUi = mountGift({ world, ui, whenBuilt, introDone: () => introDone() }); // 선물 전광판: the 🎁 button, ?gb= links, the 15-second video (gift.js)
+giftUi = mountGift({ world, ui, whenBuilt, introDone: () => introDone(), budgetDown: () => !!(net.budgetDown || net.gateDown) }); // 선물 전광판: the 🎁 button, ?gb= links (and the 점등식), the 15-second video (gift.js)
 
 // ---- 환영 전광판: the newcomer's first seconds --------------------------------------------------------------------------
 // Once the arrival intro has landed (or a sheet a link opened has closed), a newcomer who came without a link sees their own nickname on a free
@@ -2264,6 +2264,9 @@ async function enter({ nick, color, species }) {
   setTimeout(() => { ensureInvite().catch(() => {}); }, ui.isNewbie?.() ? 90000 : 20000);
   inviteGiftOnEntry(); // a gift that waited for a full day shows on the next entry
   if (ready === false) { ui.setStatus('혼자 걷는 중', 'off'); return; }
+  // 점등식: a /?gb=<id>&cer=1 link joins the room only once gift.js has read the board (at once for every other entry); too early or at
+  // budget hard it sends the visitor back to the recipient page and this never returns.
+  try { await giftUi?.cerHold?.(); } catch { /* the gate does not throw; the room is joined as ever */ }
   try {
     await net.join('square', world.netState());
     bindTake();
