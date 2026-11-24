@@ -1,4 +1,4 @@
-// Plaza UI: glass HUD, wallet, news wire, emote dock, prompts, bungeo-ppang timing game, K-POP rhythm game,
+// Plaza UI: glass HUD, wallet, news wire, emote dock, prompts, bungeo-ppang timing game, 같이 춤추기 (dance.js),
 // taxi HUD, city map + minimap, billboard / plot / ATM / settings / credits sheets, onboarding, touch controls, SFX.
 import { paintBillboard, paintNeonSign, THEMES, makeCanvas, chars, fontsReady, tierOf, boardPhoto, photoReady, paintNameTag, paintRingFx, paintFrameSwatch } from './ts3d/art.js?v=202611241625';
 import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, LANDMARKS } from './ts3d/layout.js?v=202611241625';
@@ -22,8 +22,9 @@ import { policyDoc } from './legal.js?v=202611241625';
 import { setOperator, operatorInfo } from './legal.js?v=202611241625';
 import { SUPPORT_KINDS, SUPPORT_TEXT, SUPPORT_CONSENT, SUP, supportFault, textLen, maintOf, maintLines, operatorLine } from './opsrules.js';
 import { subscribePush, resendPush } from './push.js?v=202611241625';
-import { bindSfx, bindMusic, duckMusic, play, setSound, haptic, musicVisible } from './audio.js?v=202611241625';
+import { bindSfx, bindMusic, play, setSound, haptic, musicVisible } from './audio.js?v=202611241625';
 import { createBgm } from './bgm.js?v=202611241625';
+import { radioAt, spanBucket } from './dance.js?v=202611241625';
 import { stickVec, isTouchUI, STICK_W, STICK_H, STICK_THROW, STICK_ENGAGE, bakeFlip, bakeBest, BAKE_FLIPS, BAKE_ROUND_MS, COMPACT_HUD_Q } from './interact.js?v=202611241625';
 import { AD, AD_TEMPLATES, adSums, adBars } from './adreport.js';
 import { adScreenName, linkHost } from './adsale.js';
@@ -357,9 +358,10 @@ export function createUI(root, hooks) {
     soundOn = !!on;
     store('kts_sound', soundOn);
     setSound(soundOn);
-    if (!soundOn) { cityStop(); lofiStop(); stopDanceAudio(); return; } // a dance in progress goes on without its music
+    if (!soundOn) { cityStop(); lofiStop(); danceSong = ''; return; } // a dance goes on without its music (audio.js stopped the synth)
     cityStart();
     if (!loungeEl.hidden) lofiStart();
+    if (dance) danceMusic(radioAt(nowMs(), danceRadio));
     sfx.click();
   }
   const fsOn = () => document.fullscreenElement || document.webkitFullscreenElement;
@@ -499,10 +501,15 @@ export function createUI(root, hooks) {
   root.append(dock);
   const reactPanel = h('div', { class: 'glass reacts', hidden: true, role: 'menu', 'aria-label': '리액션 이모지' },
     ...REACTIONS.map((r, i) => h('button', { type: 'button', text: r.g, 'aria-label': r.g, onclick: () => { hooks.reactEmoji(i); toggleReacts(false); } })));
+  // 같이 춤추기 from anywhere: a row under the four actions in the touch 동작 panel, a button beside them in a desktop dock.
+  const danceGo = coarse
+    ? h('button', { class: 'dance-go', type: 'button', onclick: () => { toggleReacts(false); startDance('panel'); } }, icon('music'), h('span', { class: 'dl', text: '같이 춤추기' }))
+    : h('button', { class: 'emote dance-go', type: 'button', title: '같이 춤추기', onclick: () => startDance('panel') }, h('span', { class: 'e' }, icon('music')), h('span', { class: 'l', text: '같이 춤추기' }));
+  if (!coarse) dock.querySelector('.sep')?.before(danceGo);
   // Touch: the four actions (1-4 on a keyboard) live in this panel, under a '동작' heading with their names, above the
   // '리액션' emoji. The dock button says '동작' too: as bare line icons in the first emoji row they were not found.
   if (coarse) {
-    reactPanel.prepend(h('p', { class: 'rh', text: '동작' }), ...dock.querySelectorAll('.emote:not(.more)'), h('p', { class: 'rh', text: '리액션' }));
+    reactPanel.prepend(h('p', { class: 'rh', text: '동작' }), ...dock.querySelectorAll('.emote:not(.more)'), danceGo, h('p', { class: 'rh', text: '리액션' }));
     dock.querySelector('.sep')?.remove();
     moreBtn.title = '동작 · 리액션';
     moreBtn.setAttribute('aria-label', '동작 · 리액션');
@@ -662,17 +669,14 @@ export function createUI(root, hooks) {
   const resultEl = h('div', { class: 'result' }, resultB, resultS);
   root.append(resultEl);
 
-  const rhythmCanvas = h('canvas', { width: 960, height: 560 });
-  const rhythmScore = h('b', { class: 'tnum', text: '0%' });
-  const rhythmCombo = h('span', { class: 'tnum' });
-  const lanePads = h('div', { class: 'pads' }, ...['←', '↓', '↑', '→'].map((t, i) => h('button', { type: 'button', text: t, onpointerdown: (e) => { e.preventDefault(); danceHit(i); } })));
-  // The key line names the keys only: the dance pays nothing (the reward steps it used to list were removed 2026-11-23).
-  const rhythmEl = h('div', { class: 'glass rhythm', role: 'dialog', 'aria-hidden': 'true', 'aria-label': 'K-POP 댄스 챌린지', inert: true },
-    h('header', null, h('h3', null, ...withIcon('music', 'K-POP 댄스 챌린지')), h('div', { class: 'acc' }, rhythmCombo, rhythmScore, h('button', { class: 'x', type: 'button', text: '그만두기', onclick: () => endDance(true) }))),
-    rhythmCanvas,
-    coarse ? lanePads : h('p', { class: 'hint', text: '←↓↑→ 또는 D F J K' }),
-  );
-  root.append(rhythmEl);
+  // 같이 춤추기: a strip along the bottom while dancing (no panel, no score): what the plaza radio plays, how many dance
+  // here, and 그만 추기. The stick and the right-hand buttons stay; moving ends the dance.
+  const danceSongEl = h('span', { class: 'song' });
+  const danceMatesEl = h('span', { class: 'mates' });
+  const danceEl = h('div', { class: 'glass dancebar', role: 'group', 'aria-label': '같이 춤추기', hidden: true },
+    h('span', { class: 'txt' }, danceSongEl, danceMatesEl),
+    h('button', { class: 'stop', type: 'button', text: '그만 추기', onclick: () => endDance('stop') }));
+  root.append(danceEl);
 
   // touch controls
   const knob = h('div', { class: 'knob' });
@@ -1035,7 +1039,7 @@ export function createUI(root, hooks) {
     crowd: ['같이 함성', '옆에 사람이 있어야 해요', '함성'],
     cart: ['붕어빵 굽기', '세 번 뒤집어요', '굽기!'],
     atm: ['황금 ATM', '내 건물 · 전광판 걸기', '열기'],
-    stage: ['댄스 시작', '', '댄스!'],
+    stage: ['같이 춤추기', '모두 같은 음악에 같은 춤', '춤추기'],
     taxi: ['정차한 택시 탑승', '', '탑승'],
     stand: ['택시 호출', '오면 그 자리에서 탑승', '호출'],
     fountain: ['포춘쿠키 열기', '빨간 계단 앞 분수', '열기'],
@@ -1194,6 +1198,7 @@ export function createUI(root, hooks) {
   }
   function startBake() {
     if (baking || sheet) return false;
+    if (dance) endDance('bake');
     if (near?.kind !== 'cart') { note('붕어빵 포차 앞으로 가까이 가세요', 'err'); return false; }
     const left = cooldownLeft();
     if (left > 0) { note(`붕어빵 틀이 식는 중… ${(left / 1000).toFixed(1)}초`); return false; }
@@ -1206,6 +1211,7 @@ export function createUI(root, hooks) {
     sfx.click();
     bakeRound();
     paintBakeMarks();
+    trackEvent('bake_start'); // how many bake (2026-11-24: measured for two weeks before deciding whether 붕어빵 stays)
     return true;
   }
   function flipBake(burnt) {
@@ -1265,225 +1271,66 @@ export function createUI(root, hooks) {
     if (cancel) { closeBake(); return; }
     flipBake(false);
   }
-  // ---------------------------------------------------------------- K-POP rhythm game
-  const LANE_COLORS = ['#ff3d9a', '#3fe6ff', '#39f58a', '#ffcf5a'];
-  const DANCE_KEYS = { ArrowLeft: 0, KeyD: 0, ArrowDown: 1, KeyF: 1, ArrowUp: 2, KeyJ: 2, ArrowRight: 3, KeyK: 3 };
-  const flashLane = [0, 0, 0, 0];
-  let danceCool = 0, noiseBuf = null;
-  const midi = (n) => 440 * Math.pow(2, (n - 69) / 12);
-  function noise(ctx) {
-    if (noiseBuf) return noiseBuf;
-    noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
-    const d = noiseBuf.getChannelData(0);
-    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-    return noiseBuf;
+  // ---------------------------------------------------------------- 같이 춤추기 (dance.js)
+  // No score, no judging, no picker: the plaza radio (the clock, live.js nowMs) gives the track and the bar, the world plays
+  // the bar's move on every dancer (timesSquare3d.js setDancing) and re-sends the K-댄스 reaction, which is all the others
+  // get. Moving, a sheet, a taxi, 순간이동, 멍때리기, the tab going away and a lighting ceremony's countdown end it. Nothing
+  // is paid or stored; dance_start / dance_end count its use.
+  const danceRadio = {};
+  let danceSong = ''; // the dance track bgm.js lays over the square's track now ('' none)
+  function danceMusic(r) {
+    if (!soundOn || lofi || danceSong === r.id) return;
+    danceSong = r.id;
+    bgm.over(r.id, r.posMs / 1000);
   }
-  function drum(ctx, t, kind, dest) {
-    const g = ctx.createGain();
-    g.connect(dest || audio.master);
-    if (kind === 'kick') {
-      const o = ctx.createOscillator();
-      o.frequency.setValueAtTime(140, t);
-      o.frequency.exponentialRampToValueAtTime(42, t + 0.14);
-      g.gain.setValueAtTime(0.8, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
-      o.connect(g);
-      o.start(t);
-      o.stop(t + 0.3);
-      return;
-    }
-    const src = ctx.createBufferSource();
-    src.buffer = noise(ctx);
-    const f = ctx.createBiquadFilter();
-    f.type = kind === 'snare' ? 'bandpass' : 'highpass';
-    f.frequency.value = kind === 'snare' ? 1800 : 7000;
-    g.gain.setValueAtTime(kind === 'snare' ? 0.45 : 0.14, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + (kind === 'snare' ? 0.18 : 0.05));
-    src.connect(f);
-    f.connect(g);
-    src.start(t);
-    src.stop(t + 0.25);
+  function danceMusicOff() {
+    if (!danceSong) return;
+    danceSong = '';
+    if (!lofi) bgm.over(null);
   }
-  function synth(ctx, t, freq, dur, type, vol, cutoff, dest) {
-    const o = ctx.createOscillator(), g = ctx.createGain();
-    o.type = type;
-    o.frequency.setValueAtTime(freq, t);
-    let node = o;
-    if (cutoff) { const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = cutoff; o.connect(f); node = f; }
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(vol, t + 0.01);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    node.connect(g);
-    g.connect(dest || audio.master);
-    o.start(t);
-    o.stop(t + dur + 0.05);
-  }
-  let danceBus = null;
-  function stopDanceAudio() {
-    const bus = danceBus;
-    danceBus = null;
-    if (!bus) return;
-    try { bus.gain.setValueAtTime(0, audio.ctx?.currentTime || 0); bus.disconnect(); } catch { /* already stopped */ }
-    duckMusic(false);
-  }
-  function startDance() {
+  const ceremonyOn = () => document.body.classList.contains('gift-cer'); // gift.js: from a ceremony's countdown to its photo
+  // kind: 'stage' (the stage's round button / E), 'panel' (the 동작 row, the dock button), 'join' (the notice).
+  function startDance(kind = 'panel') {
+    if (dance) { endDance('stop'); return false; }
     if (sheet || baking || driving) return false;
-    if (dance) { endDance(true); return false; }
-    if (near?.kind !== 'stage') { note('K-POP 스테이지 위 핑크 원 안으로 올라가세요', 'err'); return false; }
-    if (performance.now() < danceCool) { note('숨 고르는 중… 잠시 후 다시 도전해요'); return false; }
-    stopDanceAudio();
-    const D = BALANCE.dance;
-    const bpm = D.bpm, beat = 60 / bpm, lead = 4, beats = D.beats;
-    const notes = [];
-    let last = -1;
-    for (let b = 0; b < beats; b++) {
-      let lane = (Math.random() * 4) | 0;
-      if (lane === last) lane = (lane + 1 + ((Math.random() * 3) | 0)) % 4;
-      last = lane;
-      notes.push({ t: (lead + b) * beat, lane, hit: null });
-    }
-    const delay = 0.25;
-    const ctx = soundOn ? ac() : null;
-    const dest = ctx ? ctx.createGain() : null;
-    if (dest) { dest.connect(audio.master); danceBus = dest; duckMusic(true); }
-    if (ctx && dest) {
-      const t0 = ctx.currentTime + delay;
-      const chords = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];
-      for (let b = 0; b < lead + beats + 2; b++) {
-        const t = t0 + b * beat;
-        if (b < lead) { synth(ctx, t, b === lead - 1 ? 1320 : 880, 0.09, 'square', 0.05, 0, dest); continue; }
-        drum(ctx, t, 'kick', dest);
-        if (b % 2 === 1) drum(ctx, t, 'snare', dest);
-        drum(ctx, t, 'hat', dest);
-        drum(ctx, t + beat / 2, 'hat', dest);
-        const ch = chords[Math.floor((b - lead) / 4) % 4];
-        synth(ctx, t, midi(ch[0] - 24), beat * 0.9, 'sawtooth', 0.11, 520, dest);
-        synth(ctx, t + beat / 2, midi(ch[b % 3] + 12), beat * 0.42, 'square', 0.03, 0, dest);
-      }
-    }
-    dance = { notes, beat, lead, t0: performance.now() + delay * 1000, end: (lead + beats + 1) * beat, judge: '', judgeAt: 0, combo: 0, max: 0, score: 0 };
-    rhythmEl.classList.add('show');
-    rhythmEl.setAttribute('aria-hidden', 'false');
-    rhythmEl.inert = false;
-    hooks.lockInput(true, 'dance');
-    hooks.danceStart?.();
+    if (ceremonyOn()) { note('점등식이 끝나면 같이 춰요'); return false; }
+    if (loungeWatch) { note('멍때리기를 끝내면 같이 출 수 있어요'); return false; }
+    if (hooks.danceStart?.(kind) !== true) return false;
+    dance = { at: performance.now(), kind, song: '', n: 0, tick: 0 };
+    danceEl.hidden = false;
+    tickDance(dance.at, true);
     renderPrompt();
+    trackEvent('dance_start', { kind });
     return true;
   }
-  const danceNow = () => (performance.now() - dance.t0) / 1000;
-  function judge(n, err) {
-    const a = Math.abs(err);
-    const [label, pts] = a <= BALANCE.dance.perfect ? ['PERFECT', 100] : a <= BALANCE.dance.great ? ['GREAT', 75] : a <= BALANCE.dance.good ? ['GOOD', 45] : ['MISS', 0];
-    n.hit = label;
-    dance.score += pts;
-    dance.combo = pts ? dance.combo + 1 : 0;
-    dance.max = Math.max(dance.max, dance.combo);
-    dance.judge = label;
-    dance.judgeAt = performance.now();
-    if (pts) tone([{ f: [523, 659, 784, 1047][n.lane], d: 0.07, g: 0.03, type: 'sine' }]);
+  // Four times a second: the track name (and its music when the radio moves on), the count, the ceremony.
+  function tickDance(now, force) {
+    if (!dance || (!force && now - dance.tick < 250)) return;
+    dance.tick = now;
+    if (ceremonyOn()) { endDance('ceremony'); return; }
+    const r = radioAt(nowMs(), danceRadio);
+    if (dance.song !== r.id) { dance.song = r.id; danceSongEl.textContent = '♪ ' + r.name; danceMusic(r); }
+    const n = Math.max(1, Math.floor(Number(hooks.danceCount?.()) || 1));
+    if (n !== dance.n) { dance.n = n; danceMatesEl.textContent = n > 1 ? `지금 ${n}명이 같이 춰요` : '지금 혼자 춰요'; }
   }
-  function danceHit(lane) {
+  function endDance(why = 'stop') {
     if (!dance) return;
-    flashLane[lane] = performance.now();
-    const now = danceNow();
-    let best = null;
-    for (const n of dance.notes) {
-      if (n.hit || n.lane !== lane || Math.abs(now - n.t) > BALANCE.dance.window) continue;
-      if (!best || Math.abs(now - n.t) < Math.abs(now - best.t)) best = n;
-    }
-    if (best) judge(best, now - best.t);
-  }
-  function endDance(cancel) {
-    if (!dance) { stopDanceAudio(); return; }
     const d = dance;
     dance = null;
-    stopDanceAudio();
-    rhythmEl.classList.remove('show');
-    rhythmEl.setAttribute('aria-hidden', 'true');
-    rhythmEl.inert = true; // a closed panel is out of the tab order
-    hooks.lockInput(false, 'dance');
-    danceCool = performance.now() + 2500;
+    danceEl.hidden = true;
+    danceMusicOff();
+    hooks.danceEnd?.(why);
     renderPrompt();
+    trackEvent('dance_end', { span: spanBucket(performance.now() - d.at) });
     if (awayWant) setTimeout(pumpQueued, 1500);
-    if (cancel) { hooks.danceEnd?.(null); return; }
-    const acc = d.score / (d.notes.length * 100);
-    const pct = Math.round(acc * 100);
-    hooks.danceEnd?.(pct);
-    sfx.crit();
-    showResult(acc >= 0.9 ? 'ALL KILL!' : acc >= 0.75 ? 'GREAT!' : 'NICE!', `정확도 ${pct}% · 최대 ${d.max}콤보`);
-    note('한 곡 더', 'ok', () => startDance());
   }
-  const rctx = rhythmCanvas.getContext('2d');
-  function drawArrow(g, x, y, lane, color, s, hollow) {
-    g.save();
-    g.translate(x, y);
-    g.rotate([-Math.PI / 2, Math.PI, 0, Math.PI / 2][lane]);
-    g.beginPath();
-    g.moveTo(0, -s);
-    g.lineTo(s * 0.9, 0);
-    g.lineTo(s * 0.38, 0);
-    g.lineTo(s * 0.38, s * 0.85);
-    g.lineTo(-s * 0.38, s * 0.85);
-    g.lineTo(-s * 0.38, 0);
-    g.lineTo(-s * 0.9, 0);
-    g.closePath();
-    if (hollow) { g.lineWidth = 4; g.strokeStyle = color; g.stroke(); }
-    else { g.shadowColor = color; g.shadowBlur = 18; g.fillStyle = color; g.fill(); g.shadowBlur = 0; g.lineWidth = 3; g.strokeStyle = '#ffffff'; g.stroke(); }
-    g.restore();
+  // Someone within 15 m keeps dancing (the world asks once per player): one tappable notice, never over a sheet or a game.
+  function danceInvite(name) {
+    if (dance || screenBusy() || ceremonyOn() || ext) return false;
+    note(`${chars(String(name || '익명'), 12)}님이 춤추고 있어요 · 같이 춤추기`, 'ok', () => startDance('join'), { key: 'dance-near' }); // key: one row (note() may ignore it)
+    return true;
   }
-  function drawDance() {
-    const d = dance, g = rctx, W = rhythmCanvas.width, H = rhythmCanvas.height;
-    const now = danceNow();
-    for (const n of d.notes) if (!n.hit && now - n.t > BALANCE.dance.window) judge(n, 1);
-    g.clearRect(0, 0, W, H);
-    const lw = W / 4, hitY = H - 90, speed = 520;
-    for (let i = 0; i < 4; i++) {
-      const x = i * lw;
-      const gr = g.createLinearGradient(0, 0, 0, H);
-      gr.addColorStop(0, 'rgba(255,255,255,0)');
-      gr.addColorStop(1, LANE_COLORS[i] + '30');
-      g.fillStyle = gr;
-      g.fillRect(x + 6, 0, lw - 12, H);
-      const fl = Math.max(0, 1 - (performance.now() - flashLane[i]) / 180);
-      if (fl > 0) { g.globalAlpha = fl * 0.55; g.fillStyle = LANE_COLORS[i]; g.fillRect(x + 6, hitY - 44, lw - 12, 88); g.globalAlpha = 1; }
-      drawArrow(g, x + lw / 2, hitY, i, 'rgba(255,255,255,0.4)', 34, true);
-    }
-    for (const n of d.notes) {
-      if (n.hit && n.hit !== 'MISS') continue;
-      const y = hitY - (n.t - now) * speed;
-      if (y < -60 || y > H + 60) continue;
-      drawArrow(g, n.lane * lw + lw / 2, y, n.lane, n.hit === 'MISS' ? 'rgba(120,120,140,0.55)' : LANE_COLORS[n.lane], 34, false);
-    }
-    const age = (performance.now() - d.judgeAt) / 1000;
-    if (d.judge && age < 0.6) {
-      g.save();
-      g.globalAlpha = 1 - age / 0.6;
-      g.font = `900 ${Math.round(70 - age * 24)}px "Pretendard Variable", Pretendard, sans-serif`;
-      g.textAlign = 'center';
-      g.textBaseline = 'middle';
-      g.fillStyle = d.judge === 'PERFECT' ? '#ffe9a8' : d.judge === 'GREAT' ? '#3fe6ff' : d.judge === 'GOOD' ? '#39f58a' : '#ff6b81';
-      g.shadowColor = g.fillStyle;
-      g.shadowBlur = 24;
-      g.fillText(d.judge, W / 2, H * 0.36);
-      g.restore();
-    }
-    if (now < d.lead * d.beat) {
-      const n = Math.ceil(d.lead - now / d.beat);
-      g.font = '900 120px "Pretendard Variable", Pretendard, sans-serif';
-      g.textAlign = 'center';
-      g.textBaseline = 'middle';
-      g.fillStyle = 'rgba(255,255,255,0.88)';
-      g.fillText(n > 1 ? String(n - 1) : 'GO!', W / 2, H * 0.42);
-    }
-    g.fillStyle = 'rgba(255,255,255,0.12)';
-    g.fillRect(0, 0, W, 6);
-    g.fillStyle = '#ff3d9a';
-    g.fillRect(0, 0, W * Math.min(1, now / d.end), 6);
-    const judged = d.notes.filter(n => n.hit).length;
-    rhythmScore.textContent = `${judged ? Math.round(d.score / judged) : 100}%`;
-    rhythmCombo.textContent = d.combo > 1 ? `${d.combo} COMBO` : '';
-    if (now > d.end) endDance(false);
-  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') endDance('hidden'); });
 
   // ---------------------------------------------------------------- sheets
   function openChannels() {
@@ -1616,6 +1463,7 @@ export function createUI(root, hooks) {
     if (quietBlock && (title === '미션' || title === '계정 연결' || String(title || '').includes('알림'))) return;
     // The proof bar and a sheet are never up together: opening a sheet leaves the bar first (input and history are settled there).
     if (!proof.hidden) leaveProof({ quiet: true });
+    if (dance) endDance('sheet'); // a sheet ends 같이 춤추기
     const kind = String(opts?.kind || title || '');
     const opener = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
     const plan = sheetPlan(sheets.map((s) => s.kind), kind);
@@ -5916,7 +5764,7 @@ export function createUI(root, hooks) {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     if (baking) stepBake(now, dt);
-    if (dance) drawDance();
+    if (dance) tickDance(now);
     const left = cooldownLeft();
     promptCool.hidden = !(left > 0 && near);
     if (left > 0) coolSvg.fg.setAttribute('stroke-dashoffset', String(69.1 * (left / COOLDOWN)));
@@ -5935,16 +5783,12 @@ export function createUI(root, hooks) {
       if (e.key === 'Escape' && !e.isComposing) { e.preventDefault(); e.stopPropagation(); closeLayer(); }
       return;
     }
-    if (dance) {
-      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); endDance(true); return; }
-      if (e.code in DANCE_KEYS) { e.preventDefault(); if (!e.repeat) danceHit(DANCE_KEYS[e.code]); }
-      return;
-    }
+    // 같이 춤추기: Escape stops it; the movement keys walk, and walking ends it in the world.
+    if (dance && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); endDance('stop'); return; }
     if (e.key === 'Escape') {
       if (!proof.hidden) { leaveProof(); e.preventDefault(); e.stopPropagation(); return; }
-      const open = dance || baking || !reactPanel.hidden || !!sheet;
-      if (dance) endDance(true);
-      else if (!reactPanel.hidden) toggleReacts(false);
+      const open = baking || !reactPanel.hidden || !!sheet;
+      if (!reactPanel.hidden) toggleReacts(false);
       else if (baking) stopBake(true);
       else if (sheet) backSheet();
       if (open) { e.preventDefault(); e.stopPropagation(); }
@@ -6115,7 +5959,7 @@ export function createUI(root, hooks) {
   return {
     sfx, note, pop, flyCoins, cooldownLeft, armCooldown, showResult,
     layer,
-    startBake, stopBake, startDance, endDance, openBillboard, openAd, openPlot, openHub, openCredits, openMap, openSettings, openWalletInfo, openVip, toggleReacts, showProof,
+    startBake, stopBake, startDance, endDance, danceInvite, openBillboard, openAd, openPlot, openHub, openCredits, openMap, openSettings, openWalletInfo, openVip, toggleReacts, showProof,
     mission(kind) { if (kind === 'wish' || kind === 'heart') missionBump(kind); }, // a cheer counts through quest (questBump)
     quest: questBump,
     markDaily,
@@ -6126,7 +5970,7 @@ export function createUI(root, hooks) {
       saveDay(d);
       paintQuests();
     },
-    lounge(on, n) { paintLounge(on, n); loungeWatch = !!on; syncWatchPortrait(); if (on) lofiStart(); else lofiStop(); if (!on && awayWant) setTimeout(pumpQueued, 0); if (!on) pumpNews(); },
+    lounge(on, n) { if (on) endDance('lounge'); paintLounge(on, n); loungeWatch = !!on; syncWatchPortrait(); if (on) lofiStart(); else lofiStop(); if (!on && awayWant) setTimeout(pumpQueued, 0); if (!on) pumpNews(); },
     // #ui.focusing (index.html): on a phone the goal and guest pills and the 속보 line step aside while one board is in view.
     focusLock(on) { focusOn = !!on; focusBtn.hidden = !on; root.classList.toggle('focusing', focusOn); renderPrompt(); if (!on) { setTimeout(pumpQueued, 0); pumpNews(); } },
     // A board of mine was taken (socket TAKE): queued as a tappable notice, see queueTaken.
@@ -6151,7 +5995,7 @@ export function createUI(root, hooks) {
       taxiHud.hidden = !driving;
       dock.hidden = driving;
       paintPouchGo();
-      if (driving) { toggleReacts(false); coachDone(); }
+      if (driving) { toggleReacts(false); coachDone(); endDance('taxi'); }
       // One short notice (the HUD's own line already says what to do next), and the key line for the first 8 s.
       if (driving) { closeSheet(); note('손님 기둥 앞에서 속도를 줄이세요', 'ok'); }
       clearTimeout(taxiKeysTimer);

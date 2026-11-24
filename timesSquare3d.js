@@ -32,6 +32,8 @@ import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, 
 import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=202611241625';
 import { taxiExit, EXIT_SLOW, nextOfferDelay, fareWait, isTouchUI, AUTO_WALK, gridPath, walkSteer, walkStall, walkPace, autoWalkEnds } from './interact.js?v=202611241625';
 import { WELCOME } from './ftue.js?v=202611241625';
+import { radioAt, seenDancer, isDancing, isSustained, nearDancers, resendDue, NEAR_M } from './dance.js?v=202611241625';
+import { nowMs } from './live.js';
 import { RETURN_MS, glideMs, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, chaseYawRate, CHASE, stickFrame, dragSpeed, viewDragged, portraitFov, fitDistance, BALLOON_LOOK, balloonLook, reverseTime, driveView, driveWiden, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange, boardVantage, facesBlock, cerShotPose, cerSpread, cerPhotoPose, cerLabels, CER_PHOTO } from './camrig.js?v=202611241625';
 
 export { paintBillboard, THEMES, LAYOUT, PLOT_SLOTS, groundHeight, EMOTES, AVATAR_COLORS, STARTER_COLORS, taxiTrainMult, applyTaxiHardHit };
@@ -195,11 +197,11 @@ void main(){
   const westLight = new THREE.PointLight(0xff3d9a, low ? 760 : 520, 85, 2);
   westLight.position.set(low ? 16 : -22, 16, low ? 60 : -40);
   scene.add(mainLight, stallLight, westLight);
-  let eastLight = null;
+  let eastLight = null, stageLight = null; // stageLight: 같이 춤추기 on the stage pulses it on the beat (stepDance); not on low
   if (!low) {
     eastLight = new THREE.PointLight(0x3fe6ff, 700, 85, 2);
     eastLight.position.set(30, 16, 95);
-    const stageLight = new THREE.PointLight(0xff3d9a, 210, 30, 2);
+    stageLight = new THREE.PointLight(0xff3d9a, 210, 30, 2);
     stageLight.position.set(LAYOUT.stage.cx, 7, LAYOUT.stage.z0 - 2);
     scene.add(eastLight, stageLight);
   }
@@ -277,7 +279,7 @@ void main(){
   const pos0 = opts.start && Number.isFinite(opts.start.x) ? opts.start : LAYOUT.spawn;
   const pos = new THREE.Vector3(pos0.x, groundHeight(pos0.x, pos0.z), pos0.z);
   const vel = new THREE.Vector3();
-  let yaw = Number.isFinite(pos0.yaw) ? pos0.yaw : LAYOUT.spawn.yaw, animSpeed = 0, sitTimer = 0, inputEnabled = true, dancing = false, danceAt = 0;
+  let yaw = Number.isFinite(pos0.yaw) ? pos0.yaw : LAYOUT.spawn.yaw, animSpeed = 0, sitTimer = 0, inputEnabled = true, dancing = false;
   let name = chars(opts.name || '네온손님', 16);
   let color = COLOR_RE.test(opts.color || '') ? opts.color : STARTER_COLORS[0];
   let species = speciesId(opts.species);
@@ -360,6 +362,8 @@ void main(){
   // are its pose this frame, and every ending eases back to it (endCine). hidMe: frameBillboard hid my avatar, which is
   // not the same thing as sitting in a taxi.
   const homePos = camera.position.clone(), homeLook = follow.clone(), viewLook = follow.clone();
+  const radio = {}, danceRows = [], danceAsked = new Set(); // 같이 춤추기: the radio this frame (dance.js radioAt), the others dancing, who was offered
+  let myDanceKey = -1, danceSentAt = -1e9, danceNear = 0;
   let hidMe = false, clipDist = Infinity, reverseT = 0, lastEmote = -1e9, stuntAt = -1e9, ringDim = false, boardAt = 0, boardNear = null;
   // The follow cameras (camrig.js). travel: the heading the walk is asked to take this frame (the stick or the auto-walk), which
   // the view comes round behind. stick: the stick's frame (stickFrame). backT: ms the walk has pointed back toward the lens.
@@ -827,6 +831,7 @@ void main(){
     job.nextAt = clockT + nextOfferDelay(fareAt == null ? null : clockT - fareAt, { min: 0.4 });
     netState.equip = 'taxi';
     traffic?.setCabTint(i, cabTint(myEquip));
+    if (dancing) { setDancing(false); opts.onDanceEnd?.('taxi'); } // a taxi ends 같이 춤추기
     opts.onDrive?.(true);
     return true;
   }
@@ -897,8 +902,23 @@ void main(){
   function remoteFor(id) { return remotes.get(id)?.av || null; }
   const seeFrustum = new THREE.Frustum(), seeM = new THREE.Matrix4(), seeP = new THREE.Vector3();
   const seenPeers = new Set(), UNSET = {};
+  // A remote dancer: the same move as mine for this bar; walking or a taxi ends it (their own screen ended it too). One
+  // notice per player who keeps dancing within NEAR_M while I am not (opts.onDancerNear answers whether it showed).
+  function stepRemoteDance(id, r, inCar) {
+    const now = performance.now();
+    if (inCar || r.spd > 0.6) { r.lastSeen = 0; r.danceKey = -1; return; }
+    if (!isDancing(r, now)) { r.danceKey = -1; return; }
+    danceRows.push(r);
+    if (r.danceKey !== radio.key) { r.danceKey = radio.key; danceMove(r.av, radio.clip, radio.barMs + 400); }
+    if (dancing || danceAsked.has(id) || !(now >= (r.askAt || 0)) || !isSustained(r, now)) return;
+    if ((r.x - pos.x) ** 2 + (r.z - pos.z) ** 2 > NEAR_M * NEAR_M) return;
+    if (opts.onDancerNear?.(id, r.nm) === true) danceAsked.add(id);
+    else r.askAt = now + 3000;
+  }
   function syncRemotes(dt, t) {
     remoteCars.length = 0;
+    danceRows.length = 0;
+    radioAt(nowMs(), radio); // the bar every dancer is on this frame (stepRemoteDance, then stepDance for mine)
     frameSig = '';
     if (!net?.peers) { traffic?.setRemoteTaxis(remoteCars); return; }
     const seen = seenPeers;
@@ -956,6 +976,7 @@ void main(){
       if (r.av.modelSpecies !== r.av.species && !r.av.asked && !inCar && seesAvatar(camera.position.distanceTo(r.av.root.position), seeFrustum.containsPoint(seeP.set(r.x, r.y + 1, r.z)))) r.av.want();
       r.av.holder.rotation.y = r.yaw;
       r.av.setMotion(inCar ? 0 : Math.min(r.spd, 9), !inCar && s.anim === 'sit' && r.spd < 0.3);
+      if (r.lastSeen) stepRemoteDance(id, r, inCar);
       r.av.update(dt, t);
       if (inCar) remoteCars.push({ x: r.x, z: r.z, yaw: r.yaw, v: r.spd, tint: cabTint(cosmetics) });
       const fr = r.fr;
@@ -971,6 +992,8 @@ void main(){
       const av = remoteFor(p.id);
       const e = EMOTES[p.e];
       if (!av || !e) return;
+      // K-댄스 marks the player dancing (dance.js); a re-send while they are is not shown again, the bar's move goes on.
+      if (p.e === 4 && !seenDancer(remotes.get(p.id), performance.now())) return;
       av.emote(e.anim, e.hold);
       av.say(e.glyph);
       if (p.e === 2) { const r = remotes.get(p.id); launch(r.x, r.z, r.y + 9, PALETTE[(Math.random() * PALETTE.length) | 0], 0.25); }
@@ -1364,7 +1387,7 @@ void main(){
     pos.z = nz;
     pos.y += (groundHeight(pos.x, pos.z) - pos.y) * (1 - Math.exp(-dt * 16));
     animSpeed += (Math.min(actual, top + 0.5) - animSpeed) * (1 - Math.exp(-dt * 12));
-    if (Math.hypot(vel.x, vel.z) > 0.3 && moving) { yaw = dampAngle(yaw, Math.atan2(vel.x, vel.z), 13, dt); if (dancing) setDancing(false); }
+    if (Math.hypot(vel.x, vel.z) > 0.3 && moving) { yaw = dampAngle(yaw, Math.atan2(vel.x, vel.z), 13, dt); if (dancing) { setDancing(false); opts.onDanceEnd?.('move'); } }
     if (onStairs(pos.x, pos.z) && !moving && animSpeed < 0.2) sitTimer += dt; else sitTimer = 0;
     const sitting = sitTimer > 1.2 && !dancing;
     if (sitting) yaw = dampAngle(yaw, 0, 5, dt);
@@ -2146,7 +2169,7 @@ void main(){
     netState.outfit = color;
     netState.av = species;
     if (net) { try { net.tick(netState); } catch { /* transport hiccup */ } }
-    if (dancing && now - danceAt > 6000) { danceAt = now; try { net?.sendEmoji?.(4); } catch { /* offline */ } }
+    if (dancing) sendDance(now);
 
     // Camera: OrbitControls drives a wanted orbit; past the floor the view tilts upward instead.
     prevFollow.copy(follow);
@@ -2335,6 +2358,7 @@ void main(){
     for (const m of markerList) if (m.g.visible) { m.icon.position.y = 6 + Math.sin(t * 2.4) * 0.4; m.ring.scale.setScalar(1 + Math.sin(t * 3) * 0.06); }
 
     syncRemotes(dt, t);
+    stepDance(now);
     stepWalkers(t);
     stepGhosts(now);
     if (nyc) nyc.ensureSolid(pos.x, pos.z);
@@ -2521,14 +2545,43 @@ void main(){
     if (go && waypoint) beginAutoWalk();
     sayGuide();
   }
+  // 같이 춤추기 (dance.js): every dancer, mine and the others', plays the radio's move for the bar the clock is at, so the
+  // same moment is the same move on every screen. Mine sends the K-댄스 reaction now and every RESEND_MS (it waits out the
+  // emote cooldown), which is all the others get: no new message. Moving ends it here and tells ui.js (onDanceEnd).
+  // -> whether I am dancing now (false in a taxi).
   function setDancing(on) {
-    if (on === dancing || drive) return;
+    on = !!on;
+    if (on && drive) return false;
+    if (on === dancing) return dancing;
     dancing = on;
-    if (on) {
-      me.emote('Dance', 600);
-      danceAt = performance.now();
-      try { net?.sendEmoji?.(4); } catch { /* offline */ }
-    } else me.danceUntil = 0;
+    myDanceKey = -1;
+    if (on) { danceSentAt = -1e9; sendDance(performance.now()); }
+    else me.danceUntil = 0;
+    return dancing;
+  }
+  function sendDance(now) {
+    if (!resendDue(now, danceSentAt, lastEmote, EMOTE_GAP_MS)) return;
+    danceSentAt = now;
+    lastEmote = now;
+    try { net?.sendEmoji?.(4); } catch { /* offline */ }
+  }
+  // One move: the Dance loop is the base between the others for the bar (and a little over, so the next bar takes over
+  // without a gap); a move other than Dance plays once on top of it.
+  function danceMove(av, clip, ms) {
+    av.danceUntil = performance.now() + ms;
+    if (clip !== 'Dance') av.emote(clip);
+    else if (av.base !== 'Dance') av.emote('Dance', ms / 1000);
+  }
+  // Every frame, after syncRemotes has filled `radio` (radioAt, no allocation) and danceRows. The count is me (when dancing) and the others dancing within NEAR_M.
+  function stepDance(now) {
+    if (dancing && myDanceKey !== radio.key) { myDanceKey = radio.key; danceMove(me, radio.clip, radio.barMs + 400); }
+    danceNear = (dancing ? 1 : 0) + nearDancers(danceRows, now, pos.x, pos.z);
+    // On the stage the pink light pulses on the beat (this device only); not under prefers-reduced-motion.
+    if (stageLight) {
+      const G = LAYOUT.stage.spot, on = dancing && !calm.matches && (pos.x - G.x) ** 2 + (pos.z - G.z) ** 2 < 144;
+      const want = on ? 210 * (0.6 + 1.1 * (1 - radio.phase) ** 3) : 210;
+      if (stageLight.intensity !== want) stageLight.intensity = want;
+    }
   }
 
   // Street names for the HUD: the street underfoot and the nearest cross street.
@@ -2977,6 +3030,7 @@ void main(){
     setGlow(v) { glow = clamp(Number(v) || 0, 0, 1); applyGlow(); },
     setExposure(v) { renderer.toneMappingExposure = clamp(Number(v) || 0.95, 0.5, 1.5); },
     setDancing,
+    danceCount: () => danceNear, // 같이 춤추기: me and the others dancing within 15 m (stepDance)
     playIntro: playIntroSweep,
     focusSlot,
     slotCard(id) {
@@ -3129,6 +3183,7 @@ void main(){
     balloonUp: () => !!(balloon && balloon.hp > 0),
     teleport(x, z) {
       if (drive) exitTaxi();
+      if (dancing) { setDancing(false); opts.onDanceEnd?.('teleport'); } // 순간이동 ends 같이 춤추기
       endAutoWalk(); // the route was planned from the old place
       stick.ref = null; stick.lag = 0;
       let tx = clamp(Number(x) || 0, LOOP.x0 + 4, LOOP.x1 - 4), tz = clamp(Number(z) || 0, LOOP.z0 + 4, LOOP.z1 - 4);

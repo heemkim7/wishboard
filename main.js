@@ -433,8 +433,10 @@ const ui = createUI(document.getElementById('ui'), {
   },
   mapData: () => world?.mapData(),
   onLand: (x, z) => world?.onLand(x, z) ?? true,
-  danceStart: () => world?.setDancing(true),
-  danceEnd: () => world?.setDancing(false), // the dance pays nothing: the score stays on the page
+  // 같이 춤추기 (dance.js): the world plays the clock's moves and re-sends the K-댄스 reaction; nothing is scored or stored.
+  danceStart: () => world?.setDancing(true) === true,
+  danceEnd: () => world?.setDancing(false),
+  danceCount: () => world?.danceCount?.() || 0,
   settings: () => ({ ...gfx }),
   setGlow(v) { gfx.glow = v; world?.setGlow(v); saveGfx(); },
   setExposure(v) { gfx.exposure = v; world?.setExposure(v); saveGfx(); },
@@ -534,7 +536,7 @@ world = createTimesSquare(document.getElementById('view'), {
     // E at a board opens what a tap on that board opens.
     else if (kind === 'board') ui.openAd(id);
     else if (kind === 'plot') ui.openPlot(id);
-    else if (kind === 'stage') ui.startDance();
+    else if (kind === 'stage') ui.startDance('stage');
     else if (kind === 'crowd') {
       const left = ui.cooldownLeft();
       if (left > 0) ui.note(`다음 함성까지 ${(left / 1000).toFixed(0)}초`);
@@ -558,6 +560,9 @@ world = createTimesSquare(document.getElementById('view'), {
   onBump: () => { ui.sfx.bump(); haptic(20); },
   onBoost: () => ui.sfx.boost(),
   onJump: () => ui.sfx.whoosh(),
+  // 같이 춤추기: moving, a taxi or 순간이동 ended mine; someone near me keeps dancing (one notice each, ui.js answers if it showed).
+  onDanceEnd: (why) => ui.endDance?.(why),
+  onDancerNear: (id, name) => ui.danceInvite?.(name) === true,
   // Getting in starts the engine (it had no sound); getting out is a door whoosh. Music follows the sound setting (audio.js).
   onDrive: (on) => { if (on) ui.sfx.engine(); else ui.sfx.whoosh(); ui.setDriving(on); startMusic(on ? 'drive' : (ballShown ? 'night' : 'plaza')); },
   // The rings, a high five between cabs and the pouch are play without points: only the feedback.

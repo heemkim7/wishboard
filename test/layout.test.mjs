@@ -124,7 +124,7 @@ describe('touch: the right thumb column is three round buttons', () => {
     assert.match(ui, /toggleReacts\(false\);\n\s+if \(!balloonTold && balloonHp > 0\) \{ balloonTold = true; note\('복주머니를 맞혀 보세요'\); \}/);
   });
   it('the panel names its four actions, and every caption is at least 12px', () => {
-    assert.match(ui, /reactPanel\.prepend\(h\('p', \{ class: 'rh', text: '동작' \}\), \.\.\.dock\.querySelectorAll\('\.emote:not\(\.more\)'\), h\('p', \{ class: 'rh', text: '리액션' \}\)\);/);
+    assert.match(ui, /reactPanel\.prepend\(h\('p', \{ class: 'rh', text: '동작' \}\), \.\.\.dock\.querySelectorAll\('\.emote:not\(\.more\)'\), danceGo, h\('p', \{ class: 'rh', text: '리액션' \}\)\);/);
     assert.match(ui, /if \(cap\) cap\.textContent = '동작';/);
     assert.match(css, /html\.touch \.reacts \.rh \{ grid-column: 1 \/ -1; margin: 4px 2px 0; font: 700 12px\/1\.2 var\(--font\);/);
     for (const sel of ['html.touch .reacts button.emote .l', 'html.touch .dock button.emote.more .l']) {
@@ -145,20 +145,16 @@ describe('touch: the right thumb column is three round buttons', () => {
     assert.ok(30 + 12 + 44 + 48 + 3 * 44 + 6 * 4 + 2 <= 375 - 62);
     assert.match(rule(LAND_BLOCK, 'html.touch .reacts'), /max-height: calc\(var\(--app-h, 100dvh\) - 96px/);
   });
-  it('the bake and dance panels take the bottom of a touch screen: the stick, the column and the tag step aside', () => {
-    assert.match(css, /html\.touch #ui:has\(\.bake\.show, \.rhythm\.show\) > :is\(\.dock, \.acts, \.joy, \.prompt, \.reacts\) \{ visibility: hidden !important; \}/);
-    assert.match(css, /html\.touch #ui:has\(\.bake\.show, \.rhythm\.show\) \.viewrow \{ visibility: hidden !important; \}/);
-    assert.equal(px(rule(css, 'html.touch .bake, html.touch .rhythm'), 'bottom'), 24);
-    // on its side the dance panel's lanes are as tall as the screen leaves (it was 455px on a 375px screen, 176px off the top)
-    const canvas = rule(LAND_BLOCK, 'html.touch .rhythm canvas');
-    assert.match(canvas, /width: auto; height: calc\(var\(--app-h, 100dvh\) - 150px/);
-    assert.equal(px(rule(LAND_BLOCK, 'html.touch .bake, html.touch .rhythm'), 'bottom'), 8);
-    // 375px tall: header about 44px, canvas 225px, pads 10 + 48px, padding 16px and the border: about 345px from 8px up
-    assert.ok(8 + 44 + (375 - 150) + 10 + px(rule(LAND_BLOCK, 'html.touch .rhythm .pads button'), 'height') + 16 + 2 <= 375);
+  it('the bake panel takes the bottom of a touch screen: the stick, the column and the tag step aside (the dance strip hides nothing)', () => {
+    assert.match(css, /html\.touch #ui:has\(\.bake\.show\) > :is\(\.dock, \.acts, \.joy, \.prompt, \.reacts\) \{ visibility: hidden !important; \}/);
+    assert.match(css, /html\.touch #ui:has\(\.bake\.show\) \.viewrow \{ visibility: hidden !important; \}/);
+    assert.equal(px(rule(css, 'html.touch .bake'), 'bottom'), 24);
+    assert.equal(px(rule(LAND_BLOCK, 'html.touch .bake'), 'bottom'), 8);
+    assert.equal(/\.rhythm|dancebar[^{]*\) > :is\(/.test(css), false, 'nothing steps aside for the dance');
     // a closed panel is invisible, inert and out of the tab order
-    assert.match(css, /\.bake:not\(\.show\), \.rhythm:not\(\.show\) \{ visibility: hidden; \}/);
-    for (const [el, open, close] of [['bakeEl', 'function startBake()', 'function closeBake()'], ['rhythmEl', 'function startDance()', 'function endDance(']]) {
-      assert.match(ui, new RegExp(`const ${el} = h\\('div', \\{ class: 'glass (bake|rhythm)', role: 'dialog', 'aria-hidden': 'true', 'aria-label': '[^']+', inert: true \\}`));
+    assert.match(css, /\.bake:not\(\.show\) \{ visibility: hidden; \}/);
+    for (const [el, open, close] of [['bakeEl', 'function startBake()', 'function closeBake()']]) {
+      assert.match(ui, new RegExp(`const ${el} = h\\('div', \\{ class: 'glass (bake)', role: 'dialog', 'aria-hidden': 'true', 'aria-label': '[^']+', inert: true \\}`));
       assert.match(ui.slice(ui.indexOf(open), ui.indexOf(open) + 3600), new RegExp(`${el}\\.inert = false;`));
       assert.match(ui.slice(ui.indexOf(close), ui.indexOf(close) + 700), new RegExp(`${el}\\.inert = true;`));
     }
@@ -430,8 +426,8 @@ describe('the floating stack: the hint, a far-board card, 홈 화면 추가, a b
     assert.match(css, /\.toasts:has\(> \.farcard\) > \.a2hs \{ display: none; \}/);
     // the ⋯ menu and the 동작 panel are menus: nothing floats over them (a toast lay on 전체 화면, the hint on the first emoji row)
     assert.match(css, /body:has\(#ui \.tools\.open\) \.toasts, html\.touch body:has\(#ui > \.reacts:not\(\[hidden\]\)\) \.toasts \{ visibility: hidden; \}/);
-    assert.match(css, /body\.has-sheet \.toasts > :not\(\.toast\), body\.has-proof \.toasts > :not\(\.toast\), body:has\(#ui > \.bake\.show\) \.toasts > :not\(\.toast\), body:has\(#ui > \.rhythm\.show\) \.toasts > :not\(\.toast\) \{ display: none; \}/);
-    const top = css.match(/html\.touch body\.has-sheet \.toasts > \*, html\.touch body\.has-proof \.toasts > \*, html\.touch body:has\(#ui > \.bake\.show\) \.toasts > \*, html\.touch body:has\(#ui > \.rhythm\.show\) \.toasts > \* \{([^}]*)\}/);
+    assert.match(css, /body\.has-sheet \.toasts > :not\(\.toast\), body\.has-proof \.toasts > :not\(\.toast\), body:has\(#ui > \.bake\.show\) \.toasts > :not\(\.toast\) \{ display: none; \}/);
+    const top = css.match(/html\.touch body\.has-sheet \.toasts > \*, html\.touch body\.has-proof \.toasts > \*, html\.touch body:has\(#ui > \.bake\.show\) \.toasts > \* \{([^}]*)\}/);
     assert.ok(top, 'no reset for the toasts at the top');
     assert.match(top[1], /align-self: center; margin-left: 0; max-width: 100%; translate: none;/);
     assert.ok(css.indexOf(top[0]) > css.indexOf('html.touch .toasts > * {'));
@@ -709,10 +705,11 @@ describe('멍때리기 clears the view', () => {
 });
 
 describe('toasts and the game panels', () => {
-  it('while the bake or the dance panel is up the toasts go to the top, as they do over a sheet', () => {
+  it('while the bake panel is up the toasts go to the top, as they do over a sheet (the dance strip leaves them where they are)', () => {
     const m = css.match(/body\.has-sheet \.toasts,([^{]*)\{([^}]*)\}/);
     assert.ok(m, 'no toast-at-top rule');
-    for (const sel of ['body.has-proof .toasts', 'body:has(#ui > .bake.show) .toasts', 'body:has(#ui > .rhythm.show) .toasts']) assert.ok(m[1].includes(sel), sel);
+    for (const sel of ['body.has-proof .toasts', 'body:has(#ui > .bake.show) .toasts']) assert.ok(m[1].includes(sel), sel);
+    assert.equal(m[1].includes('rhythm') || m[1].includes('dancebar'), false);
     assert.match(m[2], /bottom: auto !important;/);
     // the bake panel is 112px up and about 170px tall: the default toast line (196px up) is inside it
     const bake = px(rule(css, '.bake'), 'bottom'), toasts = px(rule(css, '.toasts'), 'bottom');
@@ -721,10 +718,8 @@ describe('toasts and the game panels', () => {
   it('on a phone the panels are along the bottom, so a notice keeps its place under the left column', () => {
     const phone = media('(orientation: portrait) and (max-width: 599px), (orientation: landscape) and (max-height: 520px)', '--stack-top');
     assert.match(rule(phone, 'html.touch body:has(#ui > .bake.show) .toasts'), /top: var\(--stack-top, 182px\);/);
-    // the dance panel reaches that place on a phone on its side (it is centred and 350px tall): only upright
-    const up = media('(orientation: portrait) and (max-width: 599px)', '--stack-top');
-    assert.match(rule(up, 'html.touch body:has(#ui > .rhythm.show) .toasts'), /top: var\(--stack-top, 182px\);/);
-    assert.equal(phone.includes('.rhythm.show'), false);
+    // the dance is a strip along the bottom (no panel): nothing moves the notices for it
+    assert.equal(css.includes('.rhythm'), false);
   });
 });
 
@@ -858,7 +853,7 @@ describe('compact phone HUD (a touch phone upright or on its side)', () => {
     assert.ok(m, 'no #ui.viewonly rule');
     const hidden = m[1].split(', ');
     for (const gone of ['.hud-l', '.news', '.prompt', '.waypill', '.dock', '.reacts']) assert.ok(hidden.includes(gone), gone);
-    for (const kept of ['.joy', '.acts', '.toasts', '.proof', '.bake', '.rhythm', '.taxihud']) assert.equal(hidden.includes(kept), false, kept);
+    for (const kept of ['.joy', '.acts', '.toasts', '.proof', '.bake', '.dancebar', '.taxihud']) assert.equal(hidden.includes(kept), false, kept);
     assert.match(m[2], /visibility: hidden !important;/);
     // the hiding rule is inside the compact block: a tablet or a desktop window never hides its HUD
     assert.equal(css.replace(box, '').includes('#ui.viewonly'), false);
