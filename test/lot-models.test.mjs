@@ -904,5 +904,8 @@ describe('the level pictures are renders of the same models', () => {
     assert.ok(at, 'SIGN_AT');
     const sign = LOT.faces[4].sign;
     assert.deepEqual(at.slice(1).map(Number), [sign.x, sign.y, sign.z]);
+    // and the empty lot in the unowned colour the game gives its kerb, not in an owner's
+    assert.match(py, /^TINT_OF = dict\(lot0_empty="#ffe2a8"\)/m);
+    assert.match(read('ts3d/lotmodels.js'), /export const EMPTY_ACCENT = '#ffe2a8', EMPTY_GLOW = 0\.55;/);
   });
 });

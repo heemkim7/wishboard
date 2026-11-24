@@ -8,7 +8,8 @@
 #   blender --background --factory-startup --python tools/blender/render_props.py -- lot2_pocha taxi [--dummy]
 #   options: --glb <dir>     where the GLBs are (default out/blender/glb)
 #            --out <dir>     where the pictures go (default out/blender/renders)
-#            --tint #rrggbb  the owner's colour put on the `Accent` material (default #ff5a3c)
+#            --tint #rrggbb  the owner's colour put on the `Accent` material (default #ff5a3c; the empty lot has no
+#                            owner and is always drawn with the game's unowned colour, TINT_OF below)
 #            --dummy         add a plain 1.6 m figure for scale and write <name>_dummy.png instead of the final files
 #            --bare          leave out the stand-in screen and name sign (shows the bare mounts)
 #            --no-sheets     skip sheet.png and compare_buildings.png
@@ -83,6 +84,8 @@ def lin(hexcol):
 
 BG_IN, BG_OUT = "#101a3a", "#0a0e1c"       # backdrop: lighter in the middle, darker at the corners
 TINT = lin(OPT["--tint"])
+# An empty lot has no owner: the game colours its kerb sand (EMPTY_ACCENT in ts3d/lotmodels.js), whatever --tint says.
+TINT_OF = dict(lot0_empty="#ffe2a8")
 CAB_YELLOW = "#ffc21a"                     # TAXI_BODY in ts3d/traffic.js: the taxi's `Paint` is exported neutral
 
 # ====================================================================================================== pictures as arrays
@@ -332,7 +335,7 @@ def screen_off_material():
     nt.links.new(em.outputs["Emission"], out.inputs["Surface"])
     return m
 
-def stand_ins(anchors, name=""):
+def stand_ins(anchors, name="", tint=TINT):
     """The screen (with the game's frame) and the name sign, where the game mounts them. Returns light hints."""
     hints = []
     b = anchors.get("BoardAnchor")
@@ -354,14 +357,14 @@ def stand_ins(anchors, name=""):
             gx, gy, gz = SIGN_AT[name]
             c = Vector((gx, -gz, gy))
         w, h = s.scale.x, s.scale.z
-        glow = emission("StandInSign", TINT, 3.2)
+        glow = emission("StandInSign", tint, 3.2)
         add_box("SignBar", (w * 0.62, 0.02, h * 0.30), (c.x, c.y - 0.012, c.z), glow)
         t = max(0.025, h * 0.06)
         for sz in (-1, 1):
             add_box("SignEdge", (w * 0.94, 0.02, t), (c.x, c.y - 0.012, c.z + sz * (h * 0.40)), glow)
         for sx in (-1, 1):
             add_box("SignEdge", (t, 0.02, h * 0.80 + t), (c.x + sx * (w * 0.47), c.y - 0.012, c.z), glow)
-        hints.append((Vector((c.x, c.y - 0.3, c.z)), TINT, w * h * 1.5))
+        hints.append((Vector((c.x, c.y - 0.3, c.z)), tint, w * h * 1.5))
     return hints
 
 def glow_lamps(meshes, centre, size, extra):
@@ -503,13 +506,14 @@ def render_asset(name):
             pass
         scene.frame_set(int(round(act.frame_range[0] + (act.frame_range[1] - act.frame_range[0]) * float(OPT["--frame"]))))
     bpy.context.view_layer.update()
+    tint = lin(TINT_OF[name]) if name in TINT_OF else TINT
     for m in bpy.data.materials:                               # what the game tints: the owner's colour, the cab's paint
         if not m.use_nodes:
             continue
         b = m.node_tree.nodes.get("Principled BSDF")
         if b is not None and m.name.split(".")[0] == "Accent":
-            b.inputs["Base Color"].default_value = (*TINT, 1)
-            b.inputs["Emission Color"].default_value = (*TINT, 1)
+            b.inputs["Base Color"].default_value = (*tint, 1)
+            b.inputs["Emission Color"].default_value = (*tint, 1)
             b.inputs["Emission Strength"].default_value = 0.55
         if b is not None and m.name.split(".")[0] == "Paint":
             b.inputs["Base Color"].default_value = (*lin(CAB_YELLOW), 1)
@@ -517,7 +521,7 @@ def render_asset(name):
     lo, hi = pts.min(0), pts.max(0)
     centre = Vector((lo + hi) / 2)
     size = float(max(hi - lo))
-    hints = [] if BARE else stand_ins(anchors, name)
+    hints = [] if BARE else stand_ins(anchors, name, tint)
     if name not in LOTS:                                       # a plain round floor for the things that have no pad
         r = float(max(hi[0] - lo[0], hi[1] - lo[1])) * 0.54 + 0.2
         bpy.ops.mesh.primitive_cylinder_add(vertices=64, radius=r, depth=0.12, location=(centre.x, centre.y, lo[2] - 0.06))
