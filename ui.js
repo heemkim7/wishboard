@@ -1544,6 +1544,7 @@ export function createUI(root, hooks) {
   function layer(el, close) {
     ext = el && typeof close === 'function' ? { el, close } : null;
     toasts.inert = !!ext;
+    hooks.lockInput(!!ext, 'layer'); // its own owner: closing it leaves the lock to a sheet or the proof bar still up
     showTop();
     backInert(sheets.length > 0);
     syncBack();

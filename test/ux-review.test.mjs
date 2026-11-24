@@ -8,7 +8,7 @@
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { toastMs, toastText } from '../overlay.js';
+import { toastMs, toastText, createInputLock } from '../overlay.js';
 
 const read = (p) => readFileSync(new URL('../' + p, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const styleOf = (page) => { let out = ''; for (const m of page.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)) out += m[1] + '\n'; return out.replace(/\/\*[\s\S]*?\*\//g, ''); };
@@ -155,20 +155,49 @@ function phoneShows(kinds) {
   return toasts.map((t, i) => (chains.some((c) => matches(t, c)) ? -1 : i)).filter((i) => i >= 0);
 }
 
-describe('1. a phone: one notice at a time, and a tappable one is not hidden by a plain one', () => {
-  it('plain notices: only the newest shows (as before)', () => {
+describe('1. a phone: at most two notices, the newest plain one and the newest tappable one', () => {
+  it('plain notices: only the newest shows (as before); tappable ones: only the newest', () => {
     assert.deepEqual(phoneShows(['plain']), [0]);
+    assert.deepEqual(phoneShows(['plain', 'plain']), [1]);
     assert.deepEqual(phoneShows(['plain', 'plain', 'plain']), [2]);
-  });
-  it('a tappable notice stays the one in view while plain ones come after it (it used to vanish under the next one)', () => {
-    assert.deepEqual(phoneShows(['hit', 'plain']), [0]); // e.g. 연결 보상 … 눌러서 다시 받아 주세요, then a coin line
-    assert.deepEqual(phoneShows(['plain', 'hit', 'plain', 'plain']), [1]);
-    assert.deepEqual(phoneShows(['plain', 'hit']), [1]);
-  });
-  it('of several tappable notices the newest shows, and there is never more than one', () => {
     assert.deepEqual(phoneShows(['hit', 'hit']), [1]);
-    assert.deepEqual(phoneShows(['hit', 'plain', 'hit', 'plain']), [2]);
-    for (const k of [['hit', 'hit', 'hit'], ['plain', 'hit', 'hit', 'plain'], ['hit', 'plain', 'plain']]) assert.equal(phoneShows(k).length, 1, k.join(' '));
+    assert.deepEqual(phoneShows(['hit', 'hit', 'hit']), [2]);
+  });
+  it('a tappable notice then a plain one: both (a plain one used to hide the retry for its whole life)', () => {
+    assert.deepEqual(phoneShows(['hit', 'plain']), [0, 1]); // e.g. 연결 보상 … 눌러서 다시 받아 주세요, then a coin line
+    assert.deepEqual(phoneShows(['hit', 'plain', 'plain']), [0, 2]);
+  });
+  it('a plain notice then a tappable one: both (an error is not swallowed by 한 곡 더 or the star-shower note)', () => {
+    assert.deepEqual(phoneShows(['plain', 'hit']), [0, 1]);
+    assert.deepEqual(phoneShows(['plain', 'hit', 'hit']), [0, 2]);
+  });
+  it('an error, or 한 번 더 누르면 나가요, raised while a tappable notice is up is on screen', () => {
+    assert.deepEqual(phoneShows(['hit', 'plain']), [0, 1]); // the err after a failed purchase within 8 s of 한 곡 더
+    assert.deepEqual(phoneShows(['plain', 'hit', 'plain']), [1, 2]); // the exit warning during a star shower: the newest plain
+  });
+  it('the tappable row is the upper one, and two rows fit between the left column and the stick on a phone on its side', () => {
+    assert.match(rule(media(PHONE_Q, '--stack-top'), 'html.touch .toasts > .toast:not(.hit)'), /order: 1;/);
+    const land = media('(orientation: landscape) and (max-height: 520px)', 'width: min(300px');
+    assert.match(land, /html\.touch \.toasts \{ gap: 6px; \}\n\s+html\.touch \.toast \{ padding: 6px 12px; line-height: 1\.3; \}/);
+    assert.match(land, /@media \(max-height: 340px\) \{\n\s+html\.touch \.toasts \{ gap: 4px; \}\n\s+html\.touch \.toast \{ padding: 3px 10px; font-size: 12px; line-height: 1\.25; \}/);
+    // two lines of each (13px x 1.3, and 12px x 1.25 under 341px tall), a 1px border, a tappable row at least 44px
+    const row = (fs, lh, pad) => 2 * fs * lh + 2 * pad + 2;
+    const two = (fs, lh, pad, gap) => Math.max(44, row(fs, lh, pad)) + gap + row(fs, lh, pad);
+    // stack top (the left column with the guest pill ends 100-104px down, + 8px) and the stick's top, measured in Chrome
+    for (const [h, top, stick, fs, lh, pad, gap] of [[375, 112, 251, 13, 1.3, 6, 6], [360, 112, 236, 13, 1.3, 6, 6], [320, 108, 196, 12, 1.25, 3, 4]]) {
+      assert.ok(top + two(fs, lh, pad, gap) <= stick, `${h}px tall: ${top + two(fs, lh, pad, gap)} > ${stick}`);
+    }
+  });
+  it('never more than two rows, never two of the same kind, always the newest of each kind', () => {
+    const kinds = ['hit', 'plain'];
+    for (let n = 1; n <= 5; n++) {
+      for (let m = 0; m < 2 ** n; m++) {
+        const k = Array.from({ length: n }, (_, i) => kinds[(m >> i) & 1]);
+        const idx = phoneShows(k), shown = idx.map((i) => k[i]);
+        assert.ok(shown.length <= 2 && new Set(shown).size === shown.length, k.join(' '));
+        for (const kind of kinds) if (k.includes(kind)) assert.equal(idx.find((i) => k[i] === kind), k.lastIndexOf(kind), k.join(' '));
+      }
+    }
   });
   it('note() still drops the oldest plain toast over three, so a tappable one is kept in the list', () => {
     const note = ui.slice(ui.indexOf('  function note('), ui.indexOf('  const newsQueue = []'));
@@ -484,10 +513,10 @@ describe('5. the gift frame over the plaza: Escape closes it alone, the HUD is i
     const sheetsList = [{ el: { classList: { toggle() {} }, inert: false } }];
     const wants = [];
     const toasts = { inert: false };
-    const make = new Function('sheets', 'root', 'toasts', 'syncBack', 'document', block + '\nreturn { layer, closeLayer, backInert, get ext() { return ext; } };');
+    const make = new Function('sheets', 'root', 'toasts', 'syncBack', 'document', 'hooks', block + '\nreturn { layer, closeLayer, backInert, get ext() { return ext; } };');
     const root = { set inert(v) { rootInert = v; }, get inert() { return rootInert; } };
     const viewEl = { set tabIndex(v) { viewTab = v; }, setAttribute() {}, removeAttribute() {} };
-    const api = make(sheetsList, root, toasts, () => wants.push('sync'), { getElementById: (id) => (id === 'view' ? viewEl : null), addEventListener() {} });
+    const api = make(sheetsList, root, toasts, () => wants.push('sync'), { getElementById: (id) => (id === 'view' ? viewEl : null), addEventListener() {} }, { lockInput() {} });
     let closed = 0;
     api.layer({ contains: () => false, querySelector: () => null }, () => { closed++; api.layer(null); });
     assert.equal(rootInert, true);
@@ -514,14 +543,73 @@ describe('5. the gift frame over the plaza: Escape closes it alone, the HUD is i
   });
   it('gift.js hands its frame to ui.layer on open, takes it back before focus returns, and keeps Tab between ✕ and the page', () => {
     const open = gift.slice(gift.indexOf('  function openMaker('), gift.indexOf('  function closeMaker('));
-    assert.match(open, /frame\.append\(lead, ifr, x\); document\.body\.append\(frame\);\n\s+try \{ ui\?\.layer\?\.\(frame, closeMaker\); \}/);
+    assert.match(open, /frame\.append\(lead, ifr, x\); document\.body\.append\(frame\);\n[^\n]*\n\s+if \(typeof ui\?\.layer === 'function'\) ui\.layer\(frame, closeMaker\);\n\s+else world\?\.setInputEnabled\?\.\(false\);/);
     assert.match(open, /if \(!e\.shiftKey && at === x\) \{ e\.preventDefault\(\); ifr\.focus\(\); \}/);
     assert.match(open, /else if \(e\.shiftKey && at === frame\) \{ e\.preventDefault\(\); x\.focus\(\{ preventScroll: true \}\); \}/);
     assert.match(open, /lead\.tabIndex = 0; lead\.addEventListener\('focus', \(\) => x\.focus\(\{ preventScroll: true \}\)\);/);
     const close = gift.slice(gift.indexOf('  function closeMaker('), gift.indexOf("  window.addEventListener('keydown'"));
-    assert.ok(close.indexOf('ui?.layer?.(null)') > 0 && close.indexOf('ui?.layer?.(null)') < close.indexOf('back.focus('), 'the HUD is live again before focus goes back to it');
+    assert.ok(close.indexOf('ui.layer(null)') > 0 && close.indexOf('ui.layer(null)') < close.indexOf('back.focus('), 'the HUD is live again before focus goes back to it');
     // ui.js's Escape listener is registered first (createUI runs before mountGift), so it is the one that must know the frame
     const main = read('main.js');
     assert.ok(main.indexOf('createUI(document.getElementById') < main.indexOf('mountGift({'));
+  });
+  // gift.js's openMaker/closeMaker and ui.js's layer, lifted out and joined as in the page: ui.js's owner-based input lock
+  // (overlay.js createInputLock, ui.js hooks.lockInput) in front of a world whose movement is on or off (main.js lockInput).
+  function frameRig() {
+    const world = { on: true, setInputEnabled(v) { world.on = !!v; } };
+    const inputLock = createInputLock((locked) => world.setInputEnabled(!locked));
+    const hooks = { lockInput: (on, owner) => inputLock.set(owner, !!on) };
+    const block = ui.slice(ui.indexOf('  function showTop('), ui.indexOf('  const TABBABLE'));
+    const sheets = [];
+    const doc = { activeElement: null, body: null, getElementById: () => null, addEventListener() {} };
+    const el = () => {
+      const n = { kids: [], parent: null, attrs: {}, classList: { toggle() {} } };
+      n.setAttribute = (k, v) => { n.attrs[k] = v; }; n.addEventListener = () => {}; n.focus = () => { doc.activeElement = n; };
+      n.append = (...cs) => { for (const c of cs) { c.parent = n; n.kids.push(c); } };
+      n.remove = () => { if (n.parent) n.parent.kids = n.parent.kids.filter((k) => k !== n); n.parent = null; };
+      n.contains = (o) => { for (let x = o; x; x = x.parent) if (x === n) return true; return false; };
+      n.querySelector = () => null;
+      Object.defineProperty(n, 'isConnected', { get: () => { for (let x = n; x; x = x.parent) if (x === doc.body) return true; return false; } });
+      return n;
+    };
+    doc.createElement = el; doc.createElementNS = () => el();
+    doc.body = el();
+    const uiApi = new Function('sheets', 'root', 'toasts', 'syncBack', 'document', 'hooks', block + '\nreturn { layer, closeLayer };')(sheets, {}, {}, () => {}, doc, hooks);
+    const src = gift.slice(gift.indexOf('  let frame = null, opener = null;'), gift.indexOf('  // Escape with the cursor'));
+    const btn = el(); doc.body.append(btn);
+    const g = new Function('document', 'world', 'ui', 'btn', src + '\nreturn { openMaker, closeMaker, get frame() { return frame; } };')(doc, world, uiApi, btn);
+    return { world, hooks, inputLock, g, ui: uiApi };
+  }
+  it('the frame over a sheet, then closed: movement stays locked by the sheet (WASD walked behind it)', () => {
+    const r = frameRig();
+    r.hooks.lockInput(true, 'sheet');
+    r.g.openMaker('/g/abcd1234?o=1');
+    assert.equal(r.world.on, false);
+    assert.deepEqual(r.inputLock.owners().sort(), ['layer', 'sheet']);
+    r.g.closeMaker();
+    assert.equal(r.g.frame, null);
+    assert.equal(r.world.on, false, 'the sheet still holds the lock');
+    assert.deepEqual(r.inputLock.owners(), ['sheet']);
+    r.hooks.lockInput(false, 'sheet');
+    assert.equal(r.world.on, true);
+  });
+  it('the frame alone: locked while open, free after it closes (by its close button or by Escape through closeLayer)', () => {
+    const r = frameRig();
+    r.g.openMaker();
+    assert.equal(r.world.on, false);
+    r.g.closeMaker();
+    assert.equal(r.world.on, true);
+    assert.deepEqual(r.inputLock.owners(), []);
+    r.g.openMaker();
+    assert.equal(r.ui.closeLayer(), true);
+    assert.equal(r.world.on, true);
+    assert.equal(r.g.frame, null);
+  });
+  it('a sheet that opens while the frame is up and is still open when the frame closes keeps the lock', () => {
+    const r = frameRig();
+    r.g.openMaker();
+    r.hooks.lockInput(true, 'sheet');
+    r.g.closeMaker();
+    assert.equal(r.world.on, false);
   });
 });

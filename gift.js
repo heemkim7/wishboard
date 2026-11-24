@@ -78,15 +78,17 @@ export function mountGift({ world, ui, whenBuilt, introDone }) {
       else if (e.shiftKey && at === frame) { e.preventDefault(); x.focus({ preventScroll: true }); }
     });
     frame.append(lead, ifr, x); document.body.append(frame);
-    try { ui?.layer?.(frame, closeMaker); } catch { /* an older ui.js: the frame is still modal by its own Escape listener */ }
-    world?.setInputEnabled?.(false);
+    // ui.layer also locks movement as its own owner of ui.js's input lock; only a plaza without it is switched off here.
+    if (typeof ui?.layer === 'function') ui.layer(frame, closeMaker);
+    else world?.setInputEnabled?.(false);
     try { frame.focus({ preventScroll: true }); } catch { /* focus stays where it was */ }
   }
   function closeMaker() {
     if (!frame) return;
     frame.remove(); frame = null;
-    try { ui?.layer?.(null); } catch { /* nothing to undo */ }
-    world?.setInputEnabled?.(true);
+    // Through ui.layer the lock is released as the layer's owner only, so a sheet still open under the frame keeps it.
+    if (typeof ui?.layer === 'function') ui.layer(null);
+    else world?.setInputEnabled?.(true);
     const back = opener && opener.isConnected ? opener : btn; opener = null;
     try { back.focus({ preventScroll: true }); } catch { /* focus stays where the browser put it */ }
   }
