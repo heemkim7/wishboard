@@ -3,6 +3,7 @@
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
+const wrap = (a) => ((((a % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
 
 // ---- scripted cameras (focus, lounge tour, intro) -----------------------------------------------------------
 // Every scripted camera ends the same way: an ease-out back to the orbit the player left. The orbit itself keeps
@@ -40,9 +41,10 @@ export function behindCar(follow, yaw, dist, polar = 1.2) {
 }
 
 // ---- on-foot follow ------------------------------------------------------------------------------------------
+// Keys (WASD and the arrows, with a mouse for the view): the view turns with the sideways keys.
 export const FOLLOW = { idleMs: 1500, rate: 1.2 };
 /**
- * How fast the on-foot camera turns toward the heading, in rad/s; positive = toward the player's right.
+ * How fast the on-foot camera turns toward the heading under the keys, in rad/s; positive = toward the player's right.
  * f / r are the camera-relative input (forward, right). Nothing while dragging or within idleMs of the last drag,
  * nothing when walking straight back toward the lens, and less the more the input points backward.
  */
@@ -54,11 +56,64 @@ export function followYawRate({ f = 0, r = 0, idleMs = 0, dragging = false } = {
   const back = f < 0 ? Math.min(1, -f / n) : 0;
   return FOLLOW.rate * side * (1 - back);
 }
+// The touch stick and the auto-walk (interact.js): the view comes round behind the direction of travel and stays there, so a
+// walk needs no second finger on the view. The stick used the rule above: it turns only by the stick's sideways part, so the
+// heading stays as far off the view's axis as the thumb is off straight up. An upright phone shows 37° across (72° tall), so
+// any push more than 18° off straight up walked out of the frame (straight sideways: 2.7 m of ground ahead), and a walk back
+// never turned the view at all.
+//   holdMs    a drag of the view wins: nothing for this long after one
+//   gain/max  the turn is gain x the angle left (rad/s per rad), at most max rad/s (103°/s): a walk 90° to the side has the
+//             view within 5° of straight behind in 1.3 s, a walk straight back (after backMs) in 2.8 s
+//   backAngle a walk back toward the lens (more than this off the view) turns only once it has lasted backMs: a few steps
+//             back from a board keep the board in view
+export const CHASE = { holdMs: 2500, gain: 2.5, max: 1.8, dead: 0.02, backAngle: 2.1, backMs: 600 };
+/**
+ * How fast the view turns toward the direction of travel, in rad/s of heading (+ = counter-clockwise seen from above).
+ * err: the travel heading minus the view's heading (rad, wrapped). idleMs: since the last drag of the view ended.
+ * scripted: a scripted camera (a board focus, the lounge tour, the photo frame) is on. backMs: how long the walk has been
+ * pointing back toward the lens.
+ */
+export function chaseYawRate({ err = 0, idleMs = Infinity, dragging = false, scripted = false, backMs = Infinity } = {}) {
+  if (scripted || dragging || !(idleMs > CHASE.holdMs)) return 0;
+  const e = num(err), a = Math.abs(e);
+  if (!(a > CHASE.dead)) return 0;
+  if (a > CHASE.backAngle && !(backMs >= CHASE.backMs)) return 0;
+  return Math.sign(e) * Math.min(CHASE.max, CHASE.gain * a);
+}
+// The stick is read against the view as it was before the chase turned it: `lag` is how far the chase has turned the view
+// since the thumb last moved. A thumb held still therefore walks one straight line while the view comes round behind it
+// (read against the live view, the heading would turn with the view and the walk would never stop circling). Moving the
+// thumb takes the lag back out: a move under `dead` is steering on the line being walked, a move of `full` or more reads the
+// stick against the live view again, in between a share of the lag stays.
+export const STICK_FRAME = { dead: 0.14, full: Math.PI / 4 };
+/**
+ * One frame of the stick's frame. st: { ref, lag } (ref null: the stick was at rest; this function writes it).
+ * angle: where the thumb points now (rad from straight up), null at rest. Returns st.
+ */
+export function stickFrame(st, angle) {
+  if (angle == null || !Number.isFinite(angle)) { st.ref = null; st.lag = 0; return st; }
+  if (st.ref == null) { st.ref = angle; st.lag = 0; return st; }
+  const d = Math.abs(wrap(angle - st.ref));
+  if (d <= STICK_FRAME.dead) return st;
+  st.ref = angle;
+  st.lag *= Math.max(0, 1 - d / STICK_FRAME.full);
+  return st;
+}
+// A touch on the view that did not turn it (a tap on a board) is not a drag: it does not hold the follow rules above off.
+export const DRAG_MIN = 0.035;
+/** Did a touch turn the view? dYaw, dPolar: how far the orbit moved between its start and its end (rad). */
+export function viewDragged(dYaw, dPolar) {
+  return Math.abs(wrap(num(dYaw))) > DRAG_MIN || Math.abs(num(dPolar)) > DRAG_MIN;
+}
+/** 0 in a landscape or square frame, 1 once the frame is clearly upright (0.75 wide to 1 tall or narrower), blended in between. */
+export function tallness(aspect) {
+  const a = Number(aspect);
+  return a > 0 ? clamp((1 - a) / 0.25, 0, 1) : 0;
+}
 /** Vertical FOV for the frame: `base` in landscape, `tall` once the frame is clearly portrait, blended in between. */
 export function portraitFov(aspect, base, tall = 72) {
-  const a = Number(aspect);
-  if (!(a > 0) || !(tall > base)) return base;
-  return base + (tall - base) * clamp((1 - a) / 0.25, 0, 1);
+  if (!(tall > base)) return base;
+  return base + (tall - base) * tallness(aspect);
 }
 /** Distance that keeps a subject the same size when the vertical FOV changes from fovFrom to fovTo (degrees). */
 export function fitDistance(dist, fovFrom, fovTo) {
@@ -178,12 +233,44 @@ export function facesBlock(faces) {
 }
 
 // ---- driving camera ------------------------------------------------------------------------------------------
-export const DRIVE_CAM = { swingMin: 3, reverseHold: 1.2 };
+// The view is fixed to the car: behind it, turning with it, at any speed (it used to wait for 3 m/s and for 1.5 s after a
+// touch, then close the gap at 2.4 / s: in a full-lock turn, 1.9 rad/s, the view trailed the car by 45°, and an upright phone
+// shows only 18.5° either side, so the road the car was turning into was off the screen).
+//   ride       the share of the car's own turn the view takes at once; the rest of the way to "straight behind" closes at
+//              gain / s, at most max rad/s. A full-lock turn trails by (1 - ride) x 1.9 / gain = 0.114 rad (6.5°).
+//   holdMs     a drag looks around; this long after it ends the view starts back. From 180° off it is within 5° in
+//              about 1.1 s (60° off: 0.6 s).
+//   polar      the orbit's angle from straight up (1.2: 21° above the car). An upright frame is narrow and tall, so there
+//              the view stands higher and farther back (polarTall, distTall) and the lens opens widenTall° more.
+//   reverse    the view stays behind the car, so the stick steers the way the screen shows; after reverseHold s in reverse
+//              it rises to reversePolar and shows the ground behind the car instead of swinging round to its nose.
+export const DRIVE_CAM = { ride: 0.7, gain: 5, max: 5, holdMs: 250, polar: 1.2, polarTall: 1.08, polarRate: 3, dist: 11.5, distTall: 13, widenTall: 6, speedWiden: 10, speedTop: 30, reverseHold: 0.6, reversePolar: 0.8 };
 /** Seconds spent reversing without a break. */
 export function reverseTime(t, v, dt) { return v < -0.3 ? num(t) + dt : 0; }
-/** swing: may the camera turn by itself (never under 3 m/s); front: look back over the car (only after 1.2 s in reverse). */
-export function driveCamera({ v = 0, reverseT = 0 } = {}) {
-  return { swing: Math.abs(v) >= DRIVE_CAM.swingMin, front: v < 0 && reverseT > DRIVE_CAM.reverseHold };
+/** Where the orbit sits behind a car in a frame of this shape: dist (set on getting in; a pinch may change it) and polar. */
+export function driveView({ aspect = 1, reverseT = 0 } = {}) {
+  const k = tallness(aspect), C = DRIVE_CAM;
+  return { dist: C.dist + (C.distTall - C.dist) * k, polar: reverseT > C.reverseHold ? C.reversePolar : C.polar + (C.polarTall - C.polar) * k };
+}
+/** Degrees the lens opens while driving, on top of the frame's own FOV: for an upright frame, and with speed (m/s). */
+export function driveWiden(aspect, speed = 0) {
+  return DRIVE_CAM.widenTall * tallness(aspect) + clamp(Math.abs(num(speed)) / DRIVE_CAM.speedTop, 0, 1) * DRIVE_CAM.speedWiden;
+}
+/**
+ * One frame of the driving orbit. theta: the heading from the car to the camera, phi: its angle from straight up (rad).
+ * yaw: the car's heading now, turned: how far the car turned this frame. idleMs: since the last drag ended.
+ * Writes the new theta and phi into out. While dragging (and for holdMs after) the view only rides the car's turn.
+ */
+export function driveCamera({ theta = 0, phi = DRIVE_CAM.polar, yaw = 0, turned = 0, dt = 0, idleMs = Infinity, dragging = false, aspect = 1, reverseT = 0 } = {}, out = {}) {
+  const ride = DRIVE_CAM.ride * num(turned);
+  out.theta = theta + ride;
+  out.phi = phi;
+  if (dragging || !(idleMs > DRIVE_CAM.holdMs) || !(dt > 0)) return out;
+  const left = wrap(yaw + Math.PI - out.theta);
+  const pull = clamp(DRIVE_CAM.gain * left, -DRIVE_CAM.max, DRIVE_CAM.max) * dt;
+  out.theta += Math.abs(pull) > Math.abs(left) ? left : pull;
+  out.phi = phi + (driveView({ aspect, reverseT }).polar - phi) * (1 - Math.exp(-dt * DRIVE_CAM.polarRate));
+  return out;
 }
 
 // ---- collision -----------------------------------------------------------------------------------------------

@@ -31,7 +31,7 @@ import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, 
 import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=202611241127';
 import { taxiExit, EXIT_SLOW, nextOfferDelay, fareWait, AUTO_WALK, gridPath, walkSteer, walkStall, walkPace, autoWalkEnds } from './interact.js?v=202611241127';
 import { WELCOME } from './ftue.js?v=202611241127';
-import { RETURN_MS, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, portraitFov, fitDistance, reverseTime, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange, boardVantage, facesBlock } from './camrig.js?v=202611241127';
+import { RETURN_MS, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, chaseYawRate, CHASE, stickFrame, viewDragged, portraitFov, fitDistance, reverseTime, driveView, driveWiden, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange, boardVantage, facesBlock } from './camrig.js?v=202611241127';
 
 export { paintBillboard, THEMES, LAYOUT, PLOT_SLOTS, groundHeight, EMOTES, AVATAR_COLORS, STARTER_COLORS, taxiTrainMult, applyTaxiHardHit };
 export const PLAZA = LAYOUT;
@@ -333,8 +333,14 @@ void main(){
     controls.update();
   }, { signal, passive: false });
   canvas.addEventListener('touchend', () => { pinch = null; }, { signal });
-  controls.addEventListener('start', () => { orbiting = true; });
-  controls.addEventListener('end', () => { orbiting = false; orbitEnd = performance.now(); });
+  // A touch that turned the view is a drag: the follow rules (camrig.js CHASE, FOLLOW, DRIVE_CAM) hold off for a while after it.
+  // A tap that left the view where it was (on a board, on the ATM) is not one.
+  let orbitYaw0 = 0, orbitPolar0 = 0;
+  controls.addEventListener('start', () => { orbiting = true; orbitYaw0 = controls.getAzimuthalAngle(); orbitPolar0 = controls.getPolarAngle(); });
+  controls.addEventListener('end', () => {
+    orbiting = false;
+    if (viewDragged(controls.getAzimuthalAngle() - orbitYaw0, controls.getPolarAngle() - orbitPolar0)) orbitEnd = performance.now();
+  });
   let eye = EYE;
   const follow = new THREE.Vector3(pos.x, pos.y + eye, pos.z);
   controls.target.copy(follow);
@@ -802,7 +808,9 @@ void main(){
     pos.set(t.x, 0, t.z);
     eye = CAR_EYE;
     follow.set(pos.x, eye, pos.z);
-    rescaleOrbit(11.5);
+    // Farther back in an upright frame (camrig.js driveView); from wherever the view was, it swings in behind the car (step()).
+    rescaleOrbit(driveView({ aspect: camera.aspect }).dist);
+    driveYaw0 = t.yaw;
     clearRide();
     exitArmed = 0;
     // The next passenger waits for the Room's fare gap (interact.js nextOfferDelay), counted from the last fare sent.
@@ -834,8 +842,11 @@ void main(){
     me.root.visible = true;
     me.root.position.copy(pos);
     eye = EYE;
+    // Back to the walking view, on the side the driving view was on: 8.4 m back and 1.25 m above the eye line (8.5 m away),
+    // not at the driving view's height (in an upright frame, and after a reverse, that looks down on the avatar).
+    const side = Math.atan2(camWant.x - follow.x, camWant.z - follow.z);
     follow.set(pos.x, pos.y + eye, pos.z);
-    rescaleOrbit(8.5);
+    camWant.set(follow.x + Math.sin(side) * 8.4, follow.y + 1.25, follow.z + Math.cos(side) * 8.4);
     // The driving FOV eases back in step() (fovGoal); nothing snaps here.
     clearRide();
     netState.equip = '';
@@ -1303,6 +1314,10 @@ void main(){
     fwd.y = 0;
     if (fwd.lengthSq() < 1e-6) fwd.set(0, 0, -1);
     fwd.normalize();
+    // The stick is read against the view as it was before the follow camera turned it (camrig.js stickFrame), so a thumb held
+    // still walks one straight line while the view comes round behind it. Keys read the live view, as before.
+    stickFrame(stick, input.joy && !auto ? Math.atan2(input.r, input.f) : null);
+    if (stick.lag) fwd.applyAxisAngle(UP, -stick.lag);
     right.set(-fwd.z, 0, fwd.x);
     if (auto) wish.set(auto.dx, 0, auto.dz);
     else wish.set(0, 0, 0).addScaledVector(fwd, input.f).addScaledVector(right, input.r);
@@ -1310,6 +1325,8 @@ void main(){
     if (mag > 1e-4) wish.normalize();
     const top = auto ? auto.top : input.walk ? WALK : input.joy ? WALK + (RUN - WALK) * clamp((mag - 0.45) / 0.45, 0, 1) : RUN;
     const moving = mag > 0.08;
+    travel.on = moving && (input.joy || !!auto);
+    if (travel.on) travel.yaw = Math.atan2(wish.x, wish.z);
     const k = 1 - Math.exp(-dt * (moving ? 10 : 13));
     vel.x += ((moving ? wish.x * top : 0) - vel.x) * k;
     vel.z += ((moving ? wish.z * top : 0) - vel.z) * k;
@@ -1556,8 +1573,9 @@ void main(){
     if (cine && !cine.back) {
       if (drive) {
         // In a car the view comes back behind it, at the distance the orbit already had.
-        const d = clamp(tmp.subVectors(camWant, follow).length() || 11.5, controls.minDistance, controls.maxDistance);
-        const p = behindCar(follow, drive.yaw, d);
+        const seat = driveView({ aspect: camera.aspect });
+        const d = clamp(tmp.subVectors(camWant, follow).length() || seat.dist, controls.minDistance, controls.maxDistance);
+        const p = behindCar(follow, drive.yaw, d, seat.polar);
         camWant.set(p.x, p.y, p.z);
       }
       cineFrom.copy(camera.position);
@@ -1929,24 +1947,29 @@ void main(){
     camera.position.copy(camWant).add(tmp2.subVectors(follow, prevFollow));
     // FOV: wider in a portrait frame, wider again with speed in a taxi; every change (rotation, getting out) is eased.
     // A board camera that had to open the lens to fit the face (boardVantage) holds that FOV until it heads back.
-    const fovGoal = (cine && !cine.back && cine.fov) || portraitFov(camera.aspect, baseFov) + (drive ? clamp(Math.abs(drive.v) / 30, 0, 1) * 10 : 0);
+    const fovGoal = (cine && !cine.back && cine.fov) || portraitFov(camera.aspect, baseFov) + (drive ? driveWiden(camera.aspect, drive.v) : 0);
     if (Math.abs(camera.fov - fovGoal) > 0.05) { camera.fov += (fovGoal - camera.fov) * (1 - Math.exp(-dt * (drive ? 4 : 6))); camera.updateProjectionMatrix(); }
-    const driveCam = drive ? driveCamera({ v: drive.v, reverseT }) : null;
-    if (drive && !orbiting && now - orbitEnd > 1500 && driveCam.swing) {
+    if (drive) {
+      // Fixed to the car (camrig.js driveCamera): behind it and turning with it at any speed, in reverse too. A drag still looks
+      // around; a quarter second after the finger lifts the view is on its way back.
       off.subVectors(camera.position, follow);
-      const r = off.length();
-      const theta = Math.atan2(off.x, off.z);
-      const phi = Math.acos(clamp(off.y / r, -1, 1));
-      // Behind the car, also for a short reverse (steering stays car-relative); in front only after 1.2 s of reversing.
-      const want = driveCam.front ? drive.yaw : drive.yaw + Math.PI;
-      const nt = dampAngle(theta, want, 2.4, dt);
-      const np = phi + (1.2 - phi) * (1 - Math.exp(-dt * 1.2));
-      camera.position.set(follow.x + r * Math.sin(np) * Math.sin(nt), follow.y + r * Math.cos(np), follow.z + r * Math.sin(np) * Math.cos(nt));
-    } else if (!drive && !(cine && !cine.back)) {
-      // On foot the view turns gently toward where the stick steers, so a turn does not need a second finger.
-      const turn = followYawRate({ f: input.f, r: input.r, idleMs: now - orbitEnd, dragging: orbiting });
+      const r = off.length() || 1;
+      const o = driveCamera({ theta: Math.atan2(off.x, off.z), phi: Math.acos(clamp(off.y / r, -1, 1)), yaw: drive.yaw, turned: wrapAngle(drive.yaw - driveYaw0), dt, idleMs: now - orbitEnd, dragging: orbiting, aspect: camera.aspect, reverseT }, driveOrbit);
+      driveYaw0 = drive.yaw;
+      camera.position.set(follow.x + r * Math.sin(o.phi) * Math.sin(o.theta), follow.y + r * Math.cos(o.phi), follow.z + r * Math.sin(o.phi) * Math.cos(o.theta));
+    } else {
+      // On foot. The stick and the auto-walk: the view comes round behind the direction of travel (chaseYawRate), so walking
+      // needs no second finger on the view. Keys: the view turns with the sideways keys, as before (followYawRate).
+      const scripted = !!(cine && !cine.back);
+      let turn = 0; // rad/s of heading: + = counter-clockwise seen from above
+      if (travel.on) {
+        const err = wrapAngle(travel.yaw - Math.atan2(follow.x - camera.position.x, follow.z - camera.position.z));
+        backT = Math.abs(err) > CHASE.backAngle ? backT + dt * 1000 : 0;
+        turn = chaseYawRate({ err, idleMs: now - orbitEnd, dragging: orbiting, scripted, backMs: autoWalk ? Infinity : backT });
+        if (stick.ref != null) stick.lag += turn * dt; // the stick keeps reading against the view as it was (stepWalk)
+      } else if (!scripted) turn = -followYawRate({ f: input.f, r: input.r, idleMs: now - orbitEnd, dragging: orbiting });
       if (turn) {
-        off.subVectors(camera.position, follow).applyAxisAngle(UP, -turn * dt);
+        off.subVectors(camera.position, follow).applyAxisAngle(UP, turn * dt);
         camera.position.copy(follow).add(off);
       }
     }
