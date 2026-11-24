@@ -55,6 +55,7 @@ def lin(hexcol):
 
 BG_IN, BG_OUT = "#101a3a", "#0a0e1c"       # backdrop: lighter in the middle, darker at the corners
 TINT = lin(OPT["--tint"])
+CAB_YELLOW = "#ffc21a"                     # TAXI_BODY in ts3d/traffic.js: the taxi's `Paint` is exported neutral
 
 # ====================================================================================================== pictures as arrays
 def write_png(path, rgb):
@@ -421,12 +422,16 @@ def render_asset(name):
             pass
         scene.frame_set(int(act.frame_range[0] + (act.frame_range[1] - act.frame_range[0]) * 0.2))
     bpy.context.view_layer.update()
-    for m in bpy.data.materials:                               # the owner's colour
-        if m.name.split(".")[0] == "Accent" and m.use_nodes:
-            b = m.node_tree.nodes["Principled BSDF"]
+    for m in bpy.data.materials:                               # what the game tints: the owner's colour, the cab's paint
+        if not m.use_nodes:
+            continue
+        b = m.node_tree.nodes.get("Principled BSDF")
+        if b is not None and m.name.split(".")[0] == "Accent":
             b.inputs["Base Color"].default_value = (*TINT, 1)
             b.inputs["Emission Color"].default_value = (*TINT, 1)
             b.inputs["Emission Strength"].default_value = 0.55
+        if b is not None and m.name.split(".")[0] == "Paint":
+            b.inputs["Base Color"].default_value = (*lin(CAB_YELLOW), 1)
     pts = world_points(meshes)
     lo, hi = pts.min(0), pts.max(0)
     centre = Vector((lo + hi) / 2)
@@ -460,8 +465,9 @@ def render_asset(name):
     tgt = (centre.x, centre.y, centre.z)
     area_light("Key", (centre.x - 0.95 * D, centre.y - 1.25 * D, centre.z + 1.25 * D), tgt, 26.0 * k, (1.0, 0.95, 0.88), size * 0.7)
     area_light("Fill", (centre.x + 1.5 * D, centre.y - 0.9 * D, centre.z + 0.35 * D), tgt, 8.0 * k, (0.55, 0.66, 1.0), size * 0.9)
-    area_light("RimMagenta", (centre.x - 1.3 * D, centre.y + 1.1 * D, centre.z + 0.9 * D), tgt, 30.0 * k, (1.0, 0.08, 0.62), size * 0.5, 80)
-    area_light("RimCyan", (centre.x + 1.25 * D, centre.y + 1.2 * D, centre.z + 0.9 * D), tgt, 30.0 * k, (0.05, 0.85, 1.0), size * 0.5, 80)
+    rim = 22.0 if name in LOTS else 7.0                         # glossy paint and thin garlands take less
+    area_light("RimMagenta", (centre.x - 1.3 * D, centre.y + 1.1 * D, centre.z + 0.9 * D), tgt, rim * k, (1.0, 0.08, 0.62), size * 0.5, 80)
+    area_light("RimCyan", (centre.x + 1.25 * D, centre.y + 1.2 * D, centre.z + 0.9 * D), tgt, rim * k, (0.05, 0.85, 1.0), size * 0.5, 80)
     area_light("Top", (centre.x, centre.y - 0.2 * D, centre.z + 1.8 * D), tgt, 7.0 * k, (0.62, 0.72, 1.0), size * 1.2)
     n_glow = 0 if "--no-spill" in FLAGS else glow_lamps(meshes, centre, size, hints)
     cam_data = bpy.data.cameras.new("Cam")

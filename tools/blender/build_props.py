@@ -382,6 +382,7 @@ class Geo:
     def ball(self, mat, r, x=0.0, y=0.0, z=0.0, seg=6, rings=3, scale=(1.0, 1.0, 1.0), **kw):
         prof = [(r * math.sin(PI * k / rings), -r * math.cos(PI * k / rings)) for k in range(rings + 1)]
         prof[0], prof[-1] = (0.0, -r), (0.0, r)
+        kw.setdefault("soft", True)             # a ball has no hard edges, however few sides it has
         self.lathe(mat, prof, x, y, z, seg=seg, scale=scale, **kw)
 
     def tube(self, mat, pts, r, seg=4, closed=False):
@@ -454,11 +455,12 @@ PALETTE = {
     "Gem":      ("#ffcf5a", 0.18, 0.3, "#ffb52e", 1.3),   # the gem over an empty lot: facets, not a flat glow
 }
 MATS = {}
+LOCAL = {}            # an asset's own materials (the taxi, the tree, the air dancer): they win over PALETTE
 
 def material(name):
     if name in MATS:
         return MATS[name]
-    base, rough, metal, glow, strength = PALETTE[name]
+    base, rough, metal, glow, strength = LOCAL.get(name) or PALETTE[name]
     m = bpy.data.materials.new(name)
     m.use_nodes = True
     m.use_backface_culling = True          # every part is a closed shell: single-sided in the GLB
@@ -543,7 +545,7 @@ def export(name, objects, skin=False, anim=False):
         export_skins=skin, export_all_influences=False, export_def_bones=False, export_morph=False,
         export_animations=anim, export_animation_mode="ACTIONS", export_force_sampling=True,
         export_frame_range=False, export_anim_single_armature=True, export_reset_pose_bones=True,
-        export_optimize_animation_size=False,
+        export_optimize_animation_size=True,       # drops the channels that never change; the turning bones keep every frame
     )
     return path
 
@@ -687,13 +689,13 @@ def lot0_empty():
             g.box("Trim" if k % 2 == 0 else "Cone", 0.355, 0.14, 0.07, -0.89 + k * 0.356, 0.42, 0.11, b=0.02)
         g.box("Body", 0.16, 0.1, 0.12, 0.0, 1.02, 0.0, soft=True)
         g.ball("NeonGold", 0.1, 0.0, 1.15, 0.0, seg=8, rings=4)
-    with g.at(1.2, top, -2.55, ry=-8):                                              # planks and blocks waiting for the builder
+    with g.at(0.75, top, -2.7, ry=-5):                                              # planks and blocks waiting for the builder
         for k, (dx, ry) in enumerate(((0.0, 0), (0.05, 3), (-0.04, -2), (0.03, 5))):
             g.box("Wood", 2.3, 0.09, 0.34, dx, 0.05 + k * 0.095, (k % 2) * 0.12 - 0.06, b=0.02, ry=ry)
         g.box("Stone", 0.5, 0.22, 0.26, -0.5, 0.11, 0.62, b=0.03, ry=12)
         g.box("Stone", 0.5, 0.22, 0.26, 0.12, 0.11, 0.66, b=0.03, ry=-6)
         g.box("Stone", 0.5, 0.22, 0.26, -0.2, 0.33, 0.64, b=0.03, ry=4)
-    with g.at(-1.9, top, -2.2):                                                     # gravel and a shovel stuck in it
+    with g.at(2.9, top, -2.3):                                                      # gravel and a shovel stuck in it
         g.lathe("Stone", [(0.0, -0.02), (0.95, -0.02), (0.86, 0.12), (0.55, 0.36), (0.22, 0.5), (0.0, 0.53)], seg=10,
                 radial=lambda a, r, y: r * (1.0 + 0.09 * math.sin(3 * a + 1.0) + 0.05 * math.sin(5 * a)))
         g.beam("Wood", (0.25, 0.3, 0.2), (0.62, 1.42, 0.42), 0.06, 0.06)
@@ -906,10 +908,12 @@ def lot2_pocha():
     g.lathe(["Metal", "Metal", "Metal", "Body", "Metal", "Metal", "Metal", "Lantern", "Lantern"],
             [(0.0, 0.0), (0.15, 0.0), (0.18, 0.04), (0.18, 0.28), (0.18, 0.33), (0.18, 0.62), (0.13, 0.74), (0.06, 0.78), (0.05, 0.9), (0.0, 0.91)],
             x=3.93, y=top, z=-0.95, seg=8)
-    g.cyl("Metal", 0.11, 2.6, -2.95, y0, -0.95, seg=8, b=0.0)
-    g.lathe("Metal", [(0.0, 0.0), (0.24, 0.0), (0.24, 0.03), (0.0, 0.2)], x=-2.95, y=3.82, z=-0.95, seg=8)
-    for px, py, pr in ((-2.92, 4.2, 0.15), (-2.82, 4.48, 0.2)):
-        g.ball("Cloth", pr, px, py, -0.95, seg=6, rings=3)
+    g.cyl("Metal", 0.11, 2.6, 2.85, y0, -1.0, seg=8, b=0.0)                          # the flue, on the side the steam shows
+    g.lathe("Metal", [(0.0, 0.0), (0.24, 0.0), (0.24, 0.03), (0.0, 0.2)], x=2.85, y=3.82, z=-1.0, seg=8)
+    for px, py, pr in ((2.88, 4.22, 0.16), (2.98, 4.52, 0.22), (2.86, 4.84, 0.15)):
+        g.ball("Cloth", pr, px, py, -1.0, seg=6, rings=3)
+    g.box("Glass", 6.0, 0.05, 0.1, -0.1, 1.94, 1.52, soft=True)                      # a warm strip light under the header
+    g.box("Glass", 0.1, 0.05, 2.3, 0.0, 2.5, 0.1, soft=True)                         # and one under the roof
     with g.at(3.45, top, 3.05, ry=-28):
         g.box("Body", 0.62, 0.95, 0.05, 0.0, 0.46, 0.13, b=0.02, rx=-15)
         g.box("Body", 0.62, 0.95, 0.05, 0.0, 0.46, -0.13, b=0.02, rx=15)
@@ -1026,8 +1030,8 @@ def lot3_shop():
             ca, sa = math.cos(PI / 4 + a * PI / 2), math.sin(PI / 4 + a * PI / 2)
             g.beam("Trim", (0.78 * ca, 0.0, 0.78 * sa), (0.6 * ca, 0.8, 0.6 * sa), 0.09, 0.09, soft=True)
         g.lathe(["Trim", "Trim", "Trim", "Trim", "Body", "Trim", "Body", "Trim", "Body", "Trim", "Body", "Body", "Body", "Body"],
-                [(0.0, 0.78), (0.86, 0.78), (0.86, 0.86), (0.76, 0.86), (0.76, 1.04), (0.775, 1.09), (0.76, 1.4), (0.775, 1.45), (0.76, 1.74), (0.775, 1.79),
-                 (0.76, 1.96), (0.86, 1.96), (0.86, 2.0), (0.08, 2.46), (0.0, 2.48)], seg=12)
+                [(0.0, 0.78), (0.86, 0.78), (0.86, 0.86), (0.76, 0.86), (0.76, 1.04), (0.76, 1.1), (0.76, 1.38), (0.76, 1.44), (0.76, 1.72), (0.76, 1.78),
+                 (0.76, 1.96), (0.86, 1.96), (0.86, 2.0), (0.08, 2.46), (0.0, 2.48)], seg=12)       # a pale tank with three dark hoops
         g.ball("NeonGold", 0.07, 0.0, 2.54, 0.0, seg=5, rings=3)
     g.box("Trim", 1.7, 0.14, 1.2, 0.2, Y2, -0.45, b=0.03, base=True)                 # skylight
     g.lid("Glass", -0.55, 0.95, -0.95, 0.05, Y2 + 0.14, Y2 + 0.21, 0.05)
@@ -1128,6 +1132,310 @@ def lot4_tower():
         g.box("Trim", 1.0, 0.5, 0.8, sx * 2.3, Y2 + 0.1, 2.1, b=0.04, base=True)
     return dict(geos=[g], anchors=dict(BoardAnchor=board, SignAnchor=sign), budget=(8000, 150))
 
+# ====================================================================================================== taxi
+def taxi():
+    """A chunky yellow cab on the footprint of the box kit in ts3d/traffic.js: it drives toward +z (headlights at +z,
+    as the kit does), its left side is +x. Nodes: Body, Glass, Wheel_FL/FR/RL/RR (origins on the axles, they turn
+    about x), RoofSign, HeadLights, TailLights."""
+    WR, WX, WZ, RA = 0.36, 0.85, 1.45, 0.44          # wheel radius, half track, half wheelbase, arch radius
+    body = Geo("Body")
+    # ---- the lower body: one skin lofted from tail to nose. The underside lifts over the axles to make the arches.
+    def top(z):                                       # the bonnet falls a little toward the nose
+        return 1.0 if z < 1.1 else 1.0 - 0.06 * (z - 1.1) / 0.81
+    rows = [(-2.31, 0.72, 0.44, 0.78), (-2.28, 0.82, 0.38, 0.88), (-2.20, 0.90, 0.33, 0.95), (-2.06, 0.94, 0.31, 0.985)]
+    for zc in (-WZ, WZ):
+        rows.append((zc - RA - 0.02, 0.95, 0.30, top(zc - RA - 0.02)))
+        for dz in (-0.42, -0.34, -0.2, 0.0, 0.2, 0.34, 0.42):
+            rows.append((zc + dz, 0.95, WR + math.sqrt(RA * RA - dz * dz), top(zc + dz)))
+        rows.append((zc + RA + 0.02, 0.95, 0.30, top(zc + RA + 0.02)))
+    rows += [(2.08, 0.94, 0.31, 0.915), (2.22, 0.90, 0.33, 0.88), (2.30, 0.82, 0.38, 0.82), (2.34, 0.72, 0.44, 0.74)]
+    def ring(z, hw, y0, y1):
+        rt = min(0.11, (y1 - y0) * 0.45)
+        rb = min(0.05, (y1 - y0) * 0.2)
+        half = [(0.0, y0), (hw - rb, y0), (hw, y0 + rb), (hw, y1 - rt)]
+        half += [(hw - rt + rt * math.cos(a), y1 - rt + rt * math.sin(a)) for a in (PI / 6, PI / 3)]
+        half += [(hw - rt, y1), (0.0, y1)]
+        pts = half + [(-x, y) for x, y in reversed(half[1:-1])]
+        return [(x, y, z) for x, y in pts]
+    dark = {0, 1, 12, 13}                             # underside and sill
+    body.loft("Paint", [ring(*r) for r in rows], pick=lambda si, k: "Trim" if (0 <= si < len(rows) - 1 and k in dark) else None)
+    # ---- the cabin: a skin lofted upward; the window band is split off into the Glass node
+    levels = [(0.96, 0.88, 1.16, -1.68, 0.22), (1.07, 0.87, 1.10, -1.62, 0.22), (1.42, 0.76, 0.62, -1.24, 0.20),
+              (1.50, 0.72, 0.52, -1.14, 0.22), (1.54, 0.60, 0.38, -1.00, 0.20)]
+    def cab_ring(y, hx, zf, zr, rc):
+        q = rc * math.sqrt(0.5)
+        za, zb = zf - rc, zr + rc
+        half = [(0.0, zf), (hx - rc, zf), (hx - rc + q, zf - rc + q), (hx, za), (hx, za + (zb - za) * 0.47), (hx, za + (zb - za) * 0.55),
+                (hx, zb), (hx - rc + q, zr + rc - q), (hx - rc, zr), (0.0, zr)]
+        pts = half + [(-x, z) for x, z in reversed(half[1:-1])]
+        return [(x, y, z) for x, z in pts]
+    panes = {0, 17, 3, 5, 8, 9, 12, 14}
+    v, f, at = g_loft([cab_ring(*l) for l in levels], True, True, True)
+    f = recalc(v, f)
+    paint = [fc for fc, (si, k) in zip(f, at) if not (si == 1 and k in panes)]
+    glass_f = [fc for fc, (si, k) in zip(f, at) if si == 1 and k in panes]
+    body.emit(v, paint, "Paint", fix=None)
+    glass = Geo("Glass")
+    glass.emit(v, glass_f, "Glass", fix=None)
+    # ---- bumpers, grille, lamp rims, plates, mirrors, the roof-sign foot
+    for z in (2.31, -2.28):
+        body.box("Trim", 1.74, 0.16, 0.18, 0.0, 0.41, z, b=0.055)
+    body.box("Trim", 0.62, 0.19, 0.06, 0.0, 0.62, 2.335, b=0.02)
+    for gy in (0.58, 0.66):
+        body.box("Chrome", 0.66, 0.028, 0.07, 0.0, gy, 2.34, soft=True)
+    for s in (-1, 1):
+        body.cyl("Chrome", 0.155, 0.06, s * 0.55, 0.615, 2.30, seg=10, b=0.015, axis="z")
+        body.box("Trim", 0.36, 0.2, 0.05, s * 0.5, 0.63, -2.30, b=0.02)
+        body.box("Paint", 0.07, 0.1, 0.16, s * 0.985, 1.1, 0.92, b=0.03)
+        body.box("Trim", 0.14, 0.035, 0.05, s * 0.92, 1.07, 0.95, soft=True)
+        body.box("Chrome", 0.025, 0.03, 0.13, s * 0.944, 0.945, 0.35, soft=True)
+        body.box("Chrome", 0.025, 0.03, 0.13, s * 0.944, 0.945, -0.62, soft=True)
+        body.box("Trim", 0.012, 0.56, 0.016, s * 0.952, 0.64, -0.1, soft=True)        # door line
+    body.box("White", 0.42, 0.13, 0.03, 0.0, 0.41, 2.405, soft=True)
+    body.box("White", 0.42, 0.13, 0.03, 0.0, 0.66, -2.325, soft=True)
+    body.box("Trim", 0.56, 0.05, 0.22, 0.0, 1.55, -0.3, b=0.02)
+    # ---- the checker stripe along the doors: a pale band with dark squares of 12 cm standing proud of it
+    for s in (-1, 1):
+        body.box("White", 0.03, 0.26, 1.94, s * 0.955, 0.78, 0.0, soft=True)
+        for col in range(16):
+            for row in range(2):
+                if (col + row) % 2 == 0:
+                    body.box("Trim", 0.03, 0.12, 0.12, s * 0.966, 0.72 + row * 0.12, -0.9 + col * 0.12, soft=True)
+    # ---- the lit parts, each its own node: the roof sign (no lettering: the game draws it), head and tail lamps
+    sign = Geo("RoofSign")
+    sign.box("RoofSign", 0.9, 0.26, 0.22, 0.0, 1.70, -0.3, b=0.06)
+    head = Geo("HeadLights")
+    tail = Geo("TailLights")
+    for s in (-1, 1):
+        head.lathe("LightFront", [(0.0, 0.0), (0.125, 0.0), (0.125, 0.05), (0.08, 0.09), (0.0, 0.1)], x=s * 0.55, y=0.615, z=2.32, seg=10, rx=90.0)
+        tail.box("LightRear", 0.3, 0.14, 0.07, s * 0.5, 0.63, -2.315, b=0.03)
+    # ---- wheels: tyre and hub cap in one turned shape; the outside face looks away from the car
+    wheels = []
+    for name, sx, sz in (("Wheel_FL", 1, 1), ("Wheel_FR", -1, 1), ("Wheel_RL", 1, -1), ("Wheel_RR", -1, -1)):
+        w = Geo(name, origin=(sx * WX, WR, sz * WZ))
+        w.lathe(["Trim", "Trim", "Trim", "Trim", "Trim", "Chrome", "Chrome", "Chrome"],
+                [(0.0, -0.13), (0.31, -0.13), (WR, -0.07), (WR, 0.07), (0.31, 0.13), (0.225, 0.13), (0.2, 0.085), (0.11, 0.125), (0.0, 0.135)],
+                seg=12, rz=-90.0 * sx)
+        wheels.append(w)
+    palette = {
+        "Paint":      ("#f2f2f2", 0.32, 0.25, None, 0.0),          # neutral: the game tints it (cab yellow #ffc21a, or the owner's colour)
+        "Trim":       ("#14161c", 0.55, 0.0, None, 0.0),           # tyres, bumpers, underside, the dark squares
+        "Chrome":     ("#c9cfd8", 0.25, 0.8, None, 0.0),
+        "White":      ("#ecebe6", 0.5, 0.0, None, 0.0),
+        "Glass":      ("#0d1a30", 0.08, 0.4, "#20406e", 0.3),
+        "RoofSign":   ("#fff3a0", 0.4, 0.0, "#fff3a0", 1.6),
+        "LightFront": ("#fff6da", 0.3, 0.0, "#fff6da", 3.0),
+        "LightRear":  ("#ff2018", 0.3, 0.0, "#ff2018", 2.2),
+    }
+    return dict(geos=[body, glass] + wheels + [sign, head, tail], palette=palette, budget=(3500, 120))
+
+# ====================================================================================================== the plaza tree
+def xmas_tree():
+    """A 9 m Christmas tree in a wooden tub: six tiers of boughs with a zigzag rim, baubles under the tips, a garland
+    with bulbs on every tier (material `Lights`, so the game can blink them), gift boxes at the foot, the star as its
+    own node `Star`."""
+    g = Geo("Tree")
+    g.lathe(["Wood", "Wood", "Wood", "Gold", "Gold", "Gold", "Wood"],
+            [(0.0, 0.0), (1.0, 0.0), (1.08, 0.06), (1.2, 0.62), (1.27, 0.66), (1.27, 0.82), (1.17, 0.86), (0.0, 0.82)], seg=16)
+    g.cyl("Gold", 1.13, 0.07, 0.0, 0.22, 0.0, seg=16, b=0.02)
+    g.cyl("Wood", 0.3, 1.3, 0.0, 0.8, 0.0, seg=8, r2=0.2, b=0.0)
+    LOBES, SEG = 9, 18
+    tiers = [(1.45, 2.75, 2.0), (2.6, 2.4, 1.9), (3.7, 2.0, 1.8), (4.75, 1.62, 1.65), (5.75, 1.25, 1.5), (6.65, 0.9, 1.45)]
+    orn = ("Pink", "Gold", "Cyan")
+    count = 0
+    for k, (y, R, h) in enumerate(tiers):
+        turn = (k * 0.41) % 1.0                       # each tier is turned a little against the one below
+        ph = 2 * PI * turn / SEG                      # the angle of its first tip
+        wob = lambda a, r, yy, R=R, ph=ph: r * (1.0 + 0.13 * math.cos(LOBES * (a - ph)) * min(1.0, (r / R) ** 2))
+        g.lathe("Leaf", [(0.0, y + 0.34), (R * 0.72, y + 0.14), (R, y), (R * 0.93, y + 0.17), (R * 0.56, y + h * 0.5), (R * 0.22, y + h * 0.92), (0.0, y + h)],
+                seg=SEG, radial=wob, phase=turn)
+        for j in range(LOBES):                                                      # a bauble under every other tip
+            if (j + k) % 2:
+                continue
+            a = ph + 2 * PI * j / LOBES
+            r = 0.2 - 0.012 * k
+            g.ball(orn[count % 3], r, R * 1.1 * math.cos(a), y - r * 0.55, R * 1.1 * math.sin(a), seg=6, rings=4)
+            g.box("Gold", 0.06, 0.07, 0.06, R * 1.1 * math.cos(a), y + r * 0.5, R * 1.1 * math.sin(a), soft=True)
+            count += 1
+        n = max(6, round(2 * PI * 0.8 * R / 0.62))                                  # the garland with its bulbs, low on the tier where it shows
+        ring = []
+        for j in range(n):
+            a = 2 * PI * j / n + ph * 0.5
+            rr = R * 0.80 + 0.07
+            ring.append((rr * math.cos(a), y + h * 0.28 + 0.07 * math.cos(4 * a), rr * math.sin(a)))
+        g.tube("Gold", ring, 0.03, seg=3, closed=True)
+        for p in ring:
+            g.lathe("Lights", [(0.0, -0.085), (0.085, 0.0), (0.0, 0.085)], x=p[0] * 1.03, y=p[1] + 0.02, z=p[2] * 1.03, seg=4, soft=True)
+    g.lathe("Leaf", [(0.0, 7.62), (0.42, 7.5), (0.5, 7.52), (0.2, 8.0), (0.0, 8.42)], seg=10)
+    g.cyl("Gold", 0.05, 0.3, 0.0, 8.3, 0.0, seg=5, b=0.0, soft=True)
+    # ---- gifts round the tub
+    gifts = [(2.3, 20, 0.8, 0.55, 0.7, "Pink"), (2.45, 62, 0.6, 0.6, 0.6, "Cyan"), (2.25, 105, 0.95, 0.45, 0.6, "Gold"), (2.5, 150, 0.55, 0.8, 0.55, "Pink"),
+             (2.3, 208, 0.75, 0.5, 0.75, "Cyan"), (2.4, 255, 0.6, 0.42, 0.9, "Gold"), (2.45, 300, 0.85, 0.65, 0.6, "Pink"), (2.25, 340, 0.5, 0.5, 0.5, "Cyan")]
+    for dist, ang, w, h, d, mat in gifts:
+        with g.at(dist * math.cos(rad(ang)), 0.0, dist * math.sin(rad(ang)), ry=-ang + 15):
+            g.box(mat, w, h, d, 0.0, 0.0, 0.0, b=0.04, base=True)
+            g.box("Ribbon", w + 0.02, h + 0.02, 0.12, 0.0, -0.005, 0.0, soft=True, base=True)
+            g.box("Ribbon", 0.12, h + 0.02, d + 0.02, 0.0, -0.005, 0.0, soft=True, base=True)
+            for s in (-1, 1):
+                g.box("Ribbon", 0.2, 0.1, 0.1, s * 0.11, h + 0.06, 0.0, soft=True, rz=s * 28)
+    # ---- the star: five points, thick in the middle, its own node
+    star = Geo("Star", origin=(0.0, 8.5, 0.0))
+    pts = [((0.5 if j % 2 == 0 else 0.21) * math.sin(PI * j / 5), (0.5 if j % 2 == 0 else 0.21) * math.cos(PI * j / 5)) for j in range(10)]
+    v = [(x, y, 0.0) for x, y in pts] + [(0.0, 0.0, 0.15), (0.0, 0.0, -0.15)]
+    f = [(j, (j + 1) % 10, 10) for j in range(10)] + [((j + 1) % 10, j, 11) for j in range(10)]
+    star.emit(v, f, "Star", flat=True)
+    palette = {
+        "Leaf":   ("#1c7a48", 0.80, 0.0, None, 0.0),
+        "Wood":   ("#8a5a35", 0.78, 0.0, None, 0.0),
+        "Gold":   ("#ffc94a", 0.30, 0.6, "#ffb52e", 0.35),
+        "Pink":   ("#ff3d9a", 0.25, 0.2, "#ff3d9a", 0.5),
+        "Cyan":   ("#3fe6ff", 0.25, 0.2, "#3fe6ff", 0.45),
+        "Ribbon": ("#f4efe2", 0.60, 0.0, None, 0.0),
+        "Star":   ("#ffd86a", 0.30, 0.2, "#ffcf5a", 2.6),
+        "Lights": ("#fff1c8", 0.40, 0.0, "#ffe7a0", 3.0),
+    }
+    return dict(geos=[g, star], palette=palette, budget=(5000, 140))
+
+# ====================================================================================================== the air dancer
+def air_dancer():
+    """A 4 m inflatable tube figure on a blower, for shop openings. One skinned mesh `Dancer` on eight bones (Body1,
+    Body2, Body3, Head, ArmL1, ArmL2, ArmR1, ArmR2) and a 2 second looping clip `Wave` with a key on every frame at
+    30 fps. The blower `Base` is a plain node that does not move. It faces +z; its left arm is at +x."""
+    SH_Y, ARM_L, UP = 2.5, 1.3, rad(35.0)
+    sstep = lambda a, b, x: (lambda t: t * t * (3 - 2 * t))(min(1.0, max(0.0, (x - a) / (b - a))))
+    weights = []                                    # one {bone: weight} per vertex of the Dancer mesh, in order
+    g = Geo("Dancer")
+    def emit(make, skin):
+        n0 = len(g.v)
+        make()
+        weights.extend(skin(p) for p in g.v[n0:])
+    def body_w(p):
+        t1, t2, t3 = sstep(0.85, 1.25, p.y), sstep(1.6, 2.0, p.y), sstep(2.35, 2.75, p.y)
+        return {"Body1": 1 - t1, "Body2": t1 * (1 - t2), "Body3": t1 * t2 * (1 - t3), "Head": t1 * t2 * t3}
+    head_w = lambda p: {"Head": 1.0}
+    # ---- the tube: a skirt on the blower, two stripes, a round top
+    ys = [0.3 + 0.15 * k for k in range(21)]
+    prof = [(0.0, 0.3), (0.4, 0.3)] + [(0.345 - 0.014 * (y - 0.3), y) for y in ys[1:]] + [(0.27, 3.42), (0.17, 3.51), (0.0, 3.55)]
+    mats = ["Tube"] * (len(prof) - 1)
+    for k in (8, 9, 13, 14):
+        mats[k] = "Stripe"
+    emit(lambda: g.lathe(mats, prof, seg=12), body_w)
+    # ---- the face and the fringe ride the head
+    def face():
+        for s in (-1, 1):
+            with g.at(ry=s * 24.0):                  # the eyes lie on the round of the tube
+                g.cyl("Eye", 0.095, 0.035, 0.0, 3.03, 0.285, seg=8, b=0.0, axis="z", soft=True)
+                g.cyl("Face", 0.045, 0.03, -s * 0.012, 3.02, 0.305, seg=6, b=0.0, axis="z", soft=True)
+        r = 0.305
+        g.tube("Face", [(x, 2.8 - 0.07 * math.cos(x / 0.17 * PI / 2), math.sqrt(r * r - x * x) + 0.012) for x in (-0.17, -0.09, 0.0, 0.09, 0.17)], 0.022, seg=3)
+        for j, a in enumerate((-62, -40, -18, 0, 18, 40, 62)):
+            dx, dy = math.sin(rad(a)), math.cos(rad(a))
+            g.beam("Stripe", (dx * 0.1, 3.46, 0.0), (dx * 0.52, 3.46 + dy * 0.5, 0.06 * (j % 2) - 0.03), 0.07, 0.025, soft=True)
+    emit(face, head_w)
+    # ---- arms: tubes from the shoulders, three streamers at each hand
+    bones = [("Body1", (0, 0.3, 0), (0, 1.05, 0), None), ("Body2", (0, 1.05, 0), (0, 1.8, 0), "Body1"),
+             ("Body3", (0, 1.8, 0), (0, 2.55, 0), "Body2"), ("Head", (0, 2.55, 0), (0, 3.55, 0), "Body3")]
+    for side, sx in (("L", 1), ("R", -1)):
+        S = Vector((sx * 0.22, SH_Y, 0.0))
+        d = Vector((sx * math.cos(UP), math.sin(UP), 0.0))
+        def arm_w(p, S=S, d=d, side=side):
+            s = (p - S).dot(d)
+            t1, t2 = sstep(0.02, 0.3, s), sstep(0.5, 0.8, s)
+            return {"Body3": 1 - t1, "Arm" + side + "1": t1 * (1 - t2), "Arm" + side + "2": t1 * t2}
+        emit(lambda: g.tube("Stripe", [S + d * (ARM_L * k / 8) for k in range(9)], lambda t: 0.145 - 0.035 * t, seg=8), arm_w)
+        tip = S + d * ARM_L
+        def streamers():
+            for a in (-30, 0, 30):
+                q = Matrix.Rotation(rad(a), 3, "Z") @ d
+                g.beam("Tube", tip - d * 0.03, tip + q * 0.34, 0.07, 0.025, soft=True)
+        emit(streamers, lambda p, side=side: {"Arm" + side + "2": 1.0})
+        mid = S + d * (ARM_L / 2)
+        bones.append(("Arm" + side + "1", tuple(S), tuple(mid), "Body3"))
+        bones.append(("Arm" + side + "2", tuple(mid), tuple(tip), "Arm" + side + "1"))
+    # ---- the blower: a drum on feet with a steel collar and a handle; it does not move
+    base = Geo("Base")
+    base.cyl("Base", 0.48, 0.3, 0.0, 0.06, 0.0, seg=12, b=0.05)
+    base.cyl("Metal", 0.41, 0.06, 0.0, 0.34, 0.0, seg=12, b=0.02)
+    for a in (30, 150, 270):
+        base.box("Base", 0.2, 0.08, 0.14, 0.42 * math.cos(rad(a)), 0.04, 0.42 * math.sin(rad(a)), soft=True, ry=-a)
+    base.tube("Metal", [(-0.2, 0.2, 0.47), (-0.2, 0.2, 0.58), (0.2, 0.2, 0.58), (0.2, 0.2, 0.47)], 0.022, seg=4)
+    for a in range(0, 360, 45):
+        base.box("Metal", 0.03, 0.2, 0.02, 0.485 * math.cos(rad(a + 100)), 0.2, 0.485 * math.sin(rad(a + 100)), soft=True, ry=-(a + 100) + 90)
+
+    def rig(obs):
+        mesh, base_ob = obs[0], obs[1]
+        ad = bpy.data.armatures.new("AirDancer")
+        arm = bpy.data.objects.new("AirDancer", ad)
+        bpy.context.scene.collection.objects.link(arm)
+        bpy.context.view_layer.update()
+        for o in bpy.context.scene.objects:
+            o.select_set(o is arm)
+        bpy.context.view_layer.objects.active = arm
+        bpy.ops.object.mode_set(mode="EDIT")
+        for name, head, tail, parent in bones:
+            eb = ad.edit_bones.new(name)
+            eb.head, eb.tail = to_blender(head), to_blender(tail)
+            if parent:
+                eb.parent, eb.use_connect = ad.edit_bones[parent], False
+        bpy.ops.object.mode_set(mode="OBJECT")
+        assert len(weights) == len(mesh.data.vertices), (len(weights), len(mesh.data.vertices))
+        groups = {name: mesh.vertex_groups.new(name=name) for name, *_ in bones}
+        for vi, w in enumerate(weights):
+            tot = sum(w.values())
+            for bone, val in w.items():
+                if val / tot > 1e-3:
+                    groups[bone].add([vi], val / tot, "REPLACE")
+        mesh.parent = arm
+        mod = mesh.modifiers.new("Armature", "ARMATURE")
+        mod.object = arm
+        # ---- the clip: the body sways as a wave that climbs the tube, the arms flap twice per sway
+        act = bpy.data.actions.new("Wave")
+        arm.animation_data_create()
+        arm.animation_data.action = act
+        FRONT, SIDE, UPAX = (0.0, 0.0, 1.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)
+        w = 2 * PI
+        def about(axis, deg):
+            from mathutils import Quaternion
+            return Quaternion(Vector(to_blender(axis)), rad(deg))
+        def pose(t):
+            s, c = math.sin, math.cos
+            return {
+                "Body1": about(FRONT, 9 * s(w * t)) @ about(SIDE, 5 * s(2 * w * t + 0.6)),
+                "Body2": about(FRONT, 14 * s(w * t - 0.9)) @ about(SIDE, 7 * s(2 * w * t + 0.1)),
+                "Body3": about(FRONT, 16 * s(w * t - 1.8)) @ about(SIDE, 8 * s(2 * w * t - 0.5)),
+                "Head":  about(FRONT, 18 * s(w * t - 2.7)) @ about(SIDE, 12 * s(2 * w * t - 1.1)) @ about(UPAX, 10 * s(w * t + 0.4)),
+                "ArmL1": about(FRONT, 12 + 38 * s(2 * w * t + 0.3)) @ about(UPAX, 22 * s(w * t + 1.0)),
+                "ArmL2": about(FRONT, 48 * s(2 * w * t - 0.8)),
+                "ArmR1": about(FRONT, -12 - 38 * s(2 * w * t + 2.0)) @ about(UPAX, 22 * s(w * t + 2.4)),
+                "ArmR2": about(FRONT, -48 * s(2 * w * t + 0.9)),
+            }
+        rest = {b.name: b.matrix_local.to_quaternion() for b in ad.bones}
+        for pb in arm.pose.bones:
+            pb.rotation_mode = "QUATERNION"
+        prev = {}
+        for fr in range(61):                         # frame 60 repeats frame 0: the loop closes
+            for name, q in pose(fr / 60.0).items():
+                pb = arm.pose.bones[name]
+                r = rest[name].inverted() @ q @ rest[name]
+                if name in prev and prev[name].dot(r) < 0:
+                    r.negate()
+                prev[name] = r.copy()
+                pb.rotation_quaternion = r
+                pb.keyframe_insert("rotation_quaternion", frame=fr)
+        bpy.context.scene.frame_start, bpy.context.scene.frame_end = 0, 60
+        bpy.context.scene.frame_set(0)
+        return [arm, mesh, base_ob]
+
+    palette = {
+        "Tube":   ("#ff3d9a", 0.55, 0.0, "#ff3d9a", 0.25),          # the figure's colour (the game may set its own)
+        "Stripe": ("#3fe6ff", 0.55, 0.0, "#3fe6ff", 0.25),
+        "Eye":    ("#ffffff", 0.5, 0.0, None, 0.0),
+        "Face":   ("#16131c", 0.5, 0.0, None, 0.0),
+        "Base":   ("#262d42", 0.6, 0.0, None, 0.0),
+        "Metal":  ("#aeb7c6", 0.36, 0.65, None, 0.0),
+    }
+    return dict(geos=[g, base], palette=palette, post=rig, skin=True, anim=True, budget=(1500, 120))
+
 # ====================================================================================================== main
 ASSETS = {
     "lot0_empty": lot0_empty,
@@ -1135,11 +1443,16 @@ ASSETS = {
     "lot2_pocha": lot2_pocha,
     "lot3_shop": lot3_shop,
     "lot4_tower": lot4_tower,
+    "taxi": taxi,
+    "xmas_tree": xmas_tree,
+    "air_dancer": air_dancer,
 }
 
 def build(name):
     new_scene()
     spec = ASSETS[name]()
+    LOCAL.clear()
+    LOCAL.update(spec.get("palette", {}))
     obs = [finish(g) for g in spec["geos"]]
     for an, sp in spec.get("anchors", {}).items():
         obs.append(anchor(an, sp))

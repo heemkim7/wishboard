@@ -51,6 +51,9 @@ if (process.argv.includes('--anims')) {
     const times = a.samplers.map(s => json.accessors[s.input]);
     const tmax = Math.max(...times.map(t => t.max[0]));
     console.log('   ', a.name, 'channels', a.channels.length, 'duration', tmax.toFixed(3));
+    const byPath = {};
+    for (const c of a.channels) (byPath[c.target.path] ||= []).push(json.accessors[a.samplers[c.sampler].input].count);
+    console.log('      ', Object.entries(byPath).map(([p, n]) => `${p}: ${n.length} channel(s), ${Math.min(...n)}-${Math.max(...n)} keys`).join(' | '));
   }
 }
 
