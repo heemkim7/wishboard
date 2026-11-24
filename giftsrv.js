@@ -24,7 +24,7 @@
 //   gi(uid, t, at, sent)                       "열리면 알림" opt-ins (consented) per paid tier; sent: when the opening notice went
 //   grp(g, m, ip)                              reports per board ('') or line (its id), one per network
 //   gc(g, jpg, at)                             the link-preview card (JPEG the sender's device drew)
-import { GIFT, GIFT_ID, PAPER_ID, VISITOR_ID, GIFT_ERR, giftFault, paperFault, pickScreen, nextFree, giftPhase, paperTakes, lockArm, giftView, giftShareText, refOf, kstDay, addDays, pruneDay, quietNow, AD_LABEL, videoKind, VIDEO_TYPE, rangeOf, windowText, OCCASIONS, TIERS } from './giftrules.js';
+import { GIFT, GIFT_ID, PAPER_ID, VISITOR_ID, GIFT_ERR, giftFault, paperFault, pickScreen, nextFree, giftPhase, paperTakes, lockArm, giftView, giftShareText, refOf, kstDay, addDays, pruneDay, quietNow, AD_LABEL, videoKind, VIDEO_TYPE, rangeOf, windowText, OCCASIONS, TIERS, CER_BEACONS } from './giftrules.js';
 import { opsRate } from './ops.js';
 
 const J = (o, s = 200, h = {}) => new Response(JSON.stringify(o), { status: s, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...h } });
@@ -298,19 +298,22 @@ export const giftDb = {
     return { ok: false, error: 'op' };
   },
 };
-const SEEN_EV = new Set(['open', 'film', 'play', 'done', 'save', 'go', 'share', 'cta', 'reply', 'paper_open']); // reply: the recipient page's 답장 button
+// reply: the recipient page's 답장 button; cer, cershot (점등식): a device came to a ceremony, it saved or shared the group photo.
+const SEEN_EV = new Set(['open', 'film', 'play', 'done', 'save', 'go', 'share', 'cta', 'reply', 'paper_open', ...CER_BEACONS]);
 
 // ---- isolate caches ------------------------------------------------------------------------------------------------------
 const ONE = new Map(); // id -> { at, v: stored board | null }
 const oneTtl = (h) => (h ? 600000 : 20000);
 const oneKeep = (id, v) => { ONE.delete(id); if (ONE.size >= 500) ONE.delete(ONE.keys().next().value); ONE.set(id, { at: Date.now(), v }); return v; };
 export const giftDrop = (id) => { ONE.delete(id); NOW.at = 0; CARD.delete(id); };
-async function loadGift(env, k, id) {
+// -> { v: the stored board | null, h: the budget hard level this read asked anyway (the two reads pass it out as `hard`: no second ask) }.
+async function loadGiftH(env, k, id) {
   const hit = ONE.get(id), now = Date.now(), h = await hard(k, env);
-  if (hit && now - hit.at < oneTtl(h) && now >= hit.at) return hit.v;
-  let v = null; try { v = await giftM(env).giftGet(id, now); } catch { if (hit) return hit.v; throw new Error('down'); }
-  return oneKeep(id, v || null);
+  if (hit && now - hit.at < oneTtl(h) && now >= hit.at) return { v: hit.v, h };
+  let v = null; try { v = await giftM(env).giftGet(id, now); } catch { if (hit) return { v: hit.v, h }; throw new Error('down'); }
+  return { v: oneKeep(id, v || null), h };
 }
+const loadGift = async (env, k, id) => (await loadGiftH(env, k, id)).v;
 // /rt/world's gifts: one DO call per isolate per 2 minutes at most (5 while none is up); at hard the last copy; a failed read keeps the last copy.
 // A board made in this isolate shows at once; one made in another isolate shows within that time.
 const NOW = { at: 0, v: null }, NOW_TTL = 120000, NOW_IDLE = 300000;
@@ -375,11 +378,12 @@ export async function giftApi(req, env, ctx, u, k) {
   if (sub === 'delete') return remove(req, env, ctx, id, k);
   if (req.method !== 'GET') return J({ err: 'get' }, 405);
   if (!(await opsRate(env, req, 'gread', 120, env.EVENT_RL))) return no('rate', 429);
-  let g; try { g = await loadGift(env, k, id); } catch { return no('down', 503); }
+  let g, h; try { ({ v: g, h } = await loadGiftH(env, k, id)); } catch { return no('down', 503); }
   const now = Date.now();
   if (!g || giftPhase(g, now) === 'gone') return no('gone', 404);
   const actor = k.tokenOf(req) ? await actorOf(req, k, env) : null, own = isOwner(g, actor);
-  return J({ ok: true, gift: giftView(g, now), own, ...(own ? { mine: ownerExtras(g), media: mediaOn(env) } : {}) });
+  // hard: budget hard (점등식: the page's button and the plaza's arrival stay out of the room). Only at level 2; an old page ignores it.
+  return J({ ok: true, gift: giftView(g, now), own, ...(own ? { mine: ownerExtras(g), media: mediaOn(env) } : {}), ...(h ? { hard: true } : {}) });
 }
 
 // POST /rt/gift { to, from, occ, msg, th, day, at, ref, re, ts }: a guest token is enough. Checks, cheapest first: token, the account's
@@ -626,7 +630,7 @@ export async function giftPage(req, env, ctx, u, k) {
   const id = u.pathname.slice(3).replace(/\/+$/, '');
   if (!GIFT_ID.test(id)) return Response.redirect(new URL('/gift', req.url).href, 302);
   if (!(await opsRate(env, req, 'gpage', 120, env.EVENT_RL))) return Response.redirect(new URL('/gift', req.url).href, 302);
-  let g = null, down = false; try { g = await loadGift(env, k, id); } catch { down = true; }
+  let g = null, down = false, h = false; try { ({ v: g, h } = await loadGiftH(env, k, id)); } catch { down = true; }
   const now = Date.now(), live = !!g && giftPhase(g, now) !== 'gone', origin = new URL(req.url).origin;
   const view = live ? giftView(g, now) : null;
   const words = live ? giftShareText(view) : { title: down ? '잠시 뒤에 다시 열어 주세요 · WISH BOARD' : '선물 전광판 · WISH BOARD', text: down ? '지금은 광장이 붐벼요.' : '뉴욕 타임스퀘어를 본뜬 가상 광장에 친구를 위한 전광판을 6시간 무료로 걸어 보세요.' };
@@ -636,7 +640,7 @@ export async function giftPage(req, env, ctx, u, k) {
     + '<meta property="og:type" content="website"><meta property="og:site_name" content="WISH BOARD"><meta property="og:title" content="' + esc(words.title) + '"><meta property="og:description" content="' + esc(desc) + '">'
     + '<meta property="og:url" content="' + esc(origin + '/g/' + id) + '"><meta property="og:image" content="' + esc(img) + '"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">'
     + '<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="' + esc(words.title) + '"><meta name="twitter:description" content="' + esc(desc) + '"><meta name="twitter:image" content="' + esc(img) + '">';
-  const data = { id, gift: view, now, media: mediaOn(env), down: !!down, occ: live ? OCCASIONS[view.occ]?.name || '' : '' };
+  const data = { id, gift: view, now, media: mediaOn(env), down: !!down, occ: live ? OCCASIONS[view.occ]?.name || '' : '', ...(h ? { hard: true } : {}) };
   const html = (await shell(env, req)).replace(META_BLOCK, meta).replace('<!--GIFT_DATA-->', jsonTag(data));
   return new Response(req.method === 'HEAD' ? null : html, { status: live ? 200 : down ? 503 : 404, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': live ? 'public, max-age=20' : 'no-store', 'x-robots-tag': 'noindex, nofollow', 'referrer-policy': 'strict-origin-when-cross-origin' } });
 }
