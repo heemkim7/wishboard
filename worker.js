@@ -1610,7 +1610,7 @@ function pushUrl(row) {
   if ((row?.kind === 'taken' || row?.kind === 'dark') && SLOT_RE.test(slot)) return '/?focus=' + slot;
   if ((row?.kind === 'wish' || row?.kind === 'wishwin') && WISH_ID.test(wid)) return '/?wish=' + wid;
   if (row?.kind === 'giftopen') return '/gift';
-  if (row?.kind === 'giftreply') return GIFT_ID.test(String(row.gid || '')) ? '/g/' + row.gid : '/gift'; // the answered board's own page: its owner sees the reply card there
+  if (row?.kind === 'giftreply') return GIFT_ID.test(String(row.gid || '')) ? '/g/' + row.gid + '?o=1' : '/gift'; // the answered board's own page, asked as its owner (giftpage.js board): the reply card is there on any device of that account
   return '';
 }
 // Avatar species, presence field av: 1..SPECIES_MAX (ts3d/avatars.js SPECIES), anything else is 1 (the mouse).

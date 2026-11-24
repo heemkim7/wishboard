@@ -210,7 +210,7 @@ describe('the welcome pin on the plaza screens', () => {
     one.boards.setGifts([gift('aaaaaaa2', 'STREET_1')]);
     assert.equal(one.boards.pinWelcome('민지', 8000, { x: 0, z: 12 }), 'STREET_1');
     assert.equal(one.shows('STREET_1'), true);
-    await later(9000, () => { one.tick(new one.THREE.Vector3(0, 5, 12)); assert.ok(one.words('STREET_1').includes('To. 민지'), 'the gift is back after the card'); });
+    await later(9000, () => { one.tick(new one.THREE.Vector3(0, 5, 12)); assert.equal(one.boards.get('STREET_1').giftKey, 'aaaaaaa2', 'the gift is back after the card'); assert.ok(one.words('STREET_1').includes('To. 민지')); });
   });
   it('is never in the server list and never takes a gift pin\'s place; a gift pin takes its place', async () => {
     const p = await plaza();
@@ -443,5 +443,14 @@ describe('the entry flow shows it once (main.js, ui.js: source checks)', () => {
     assert.ok(seen > 300, String(seen));
     // The reader of exports agrees with the real modules where Node can load them.
     for (const f of ['ftue.js', 'giftart.js']) assert.deepEqual([...exportsOf(f)].sort(), Object.keys(await import('../' + f)).sort(), f);
+  });
+});
+
+describe('the gift step is a step of the newcomer card (ui.js: source checks)', () => {
+  const u = read('ui.js');
+  it('someone known to be no newcomer (an account with boards on a fresh browser) never gets it as words on the plain line that nothing can end', () => {
+    assert.match(u, /const on = ev === 'start' && newbieOn === false \? false : tutorialNext\(tutorialOn, ev\);/, 'it does not start once newcomer mode is known to be off');
+    assert.match(u, /function setTutorialLine\(text\) \{\r?\n    if \(newbieOn === false\) return;/, 'and its words are not put on the plain line');
+    assert.match(u, /\n    if \(!on\) setTutorial\('grad'\);/, 'a step started before that was known ends when it is (not only on leaving newcomer mode)');
   });
 });

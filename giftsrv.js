@@ -55,7 +55,7 @@ const limAdd = (q, k, d) => q.exec('insert into gr(k, d, n) values(?, ?, 1) on c
 function dropBoards(q, ids) {
   for (const id of ids) for (const t of ['gm', 'gv', 'grp', 'gc']) q.exec(`delete from ${t} where g = ?`, id);
   for (const id of ids) {
-    q.exec('delete from gr where k = ?', 'vb:' + id);
+    q.exec('delete from gr where k = ?', 'vb:' + id); q.exec('delete from gr where k = ?', 'rn:' + id);
     q.exec("update gb set re = '' where id = (select ref from gb where id = ?) and re = ?", id, id);
     q.exec('delete from gb where id = ?', id);
   }
@@ -93,8 +93,10 @@ export const giftDb = {
   },
   // o: { uid, ip, v (giftFault's), ref, re, split }. -> { ok: true, row, gone, reply? } | { ok: false, code: 'mine' | 'net' | 'full', next, gone }.
   // 답장 전광판: with o.re and a kept ref (the answered board exists and is another account's) the answered board keeps this board's id
-  // in re: the first reply stays, a later one changes nothing. reply: { to: the answered board's owner, gid: its id } only when that mark
-  // was set now (the Worker sends that owner one notice); a later reply is an ordinary board made from the page (kids, made_ref).
+  // in re: the first reply stays, a later one changes nothing. reply: { gid: the answered board's id, to: its owner } only when that mark
+  // was set now; `to` (the Worker sends that owner the notice) and the day's `reply` count come once per answered board for good (gr
+  // 'rn:<id>', kept until the board goes): a reply taken down and hung again, or one that took a hidden reply's place, tells nobody twice.
+  // A later reply is an ordinary board made from the page (kids, made_ref).
   make(q, o, now = Date.now()) {
     const gone = this.prune(q, now), d = kstDay(now), v = o.v;
     if (lim(q, 'u:' + o.uid, d) >= GIFT.dayPerActor) return { ok: false, code: 'mine', gone };
@@ -115,7 +117,10 @@ export const giftDb = {
     // while the reply in it can be opened too: a reply that was hidden or is over does not keep later ones out.
     let reply = null;
     if (ref && o.re && giftPhase(parent, now) !== 'gone' && giftPhase(parent.re ? rowOf(q.exec('select * from gb where id = ?', parent.re).toArray()[0]) : null, now) === 'gone') {
-      q.exec('update gb set re = ? where id = ?', id, ref); bump(q, d, 'reply'); reply = { to: parent.uid, gid: ref };
+      q.exec('update gb set re = ? where id = ?', id, ref);
+      const first = lim(q, 'rn:' + ref, '*') === 0;
+      if (first) { limAdd(q, 'rn:' + ref, '*'); bump(q, d, 'reply'); }
+      reply = { gid: ref, ...(first ? { to: parent.uid } : {}) };
     }
     return { ok: true, row: this.get(q, id, now, false), gone, ...(reply ? { reply } : {}) };
   },
@@ -401,7 +406,7 @@ async function make(req, env, ctx, k) {
   oneKeep(r.row.id, r.row); NOW.at = 0;
   if (r.reply) {
     ONE.delete(r.reply.gid); // the answered board's copy here has no re yet
-    if (!quietNow(now) && k.pushNow) k.pushNow(env, ctx, r.reply.to, { kind: 'giftreply', from_name: f.v.from, gid: r.reply.gid });
+    if (r.reply.to && !quietNow(now) && k.pushNow) k.pushNow(env, ctx, r.reply.to, { kind: 'giftreply', from_name: f.v.from, gid: r.reply.gid }); // to: only the board's first reply ever
   }
   return J({ ok: true, id: r.row.id, url: new URL('/g/' + r.row.id, req.url).href, gift: giftView(r.row, now), mine: ownerExtras(r.row), media: mediaOn(env) });
 }

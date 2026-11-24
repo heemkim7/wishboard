@@ -433,9 +433,12 @@ describe('the reply board (답장 전광판) and the plaza replay', () => {
       for (const url of ['/?focus=STREET_5', '/?wish=abcdefghij', '/gift', '/g/BAD', 'https://evil.example/g/abcd1234', '']) P.swOn.message({ data: { t: 'push', url } });
       P.swOn.message({ data: { t: 'other', url: '/g/abcd1234' } });
       assert.equal(frames().length, 0, 'only a board page of this site');
-      P.swOn.message({ data: { t: 'push', url: '/g/abcd1234' } });
-      assert.equal(frames().length, 1); assert.equal(frames()[0].kids.find((n) => n.tag === 'iframe').src, '/g/abcd1234?in=1');
-      P.swOn.message({ data: { t: 'push', url: '/g/abcd1234' } }); assert.equal(frames().length, 1, 'one frame');
+      P.swOn.message({ data: { t: 'push', url: '/g/abcd1234?o=1' } });
+      assert.equal(frames().length, 1); assert.equal(frames()[0].kids.find((n) => n.tag === 'iframe').src, '/g/abcd1234?o=1&in=1', 'asked as the owner, in the frame');
+      P.swOn.message({ data: { t: 'push', url: '/g/abcd1234?o=1' } }); assert.equal(frames().length, 1, 'one frame');
+      // The maker is up when the notice is tapped: the board's page takes its place (it used to do nothing).
+      P.swOn.message({ data: { t: 'push', url: '/g/wxyz5678?o=1' } });
+      assert.equal(frames().length, 1); assert.equal(frames()[0].kids.find((n) => n.tag === 'iframe').src, '/g/wxyz5678?o=1&in=1');
     } finally { P.done(); }
   });
 });
@@ -547,5 +550,33 @@ describe('the video', () => {
     assert.equal(pickRecordType((t) => t.startsWith('video/webm')), 'video/webm;codecs=vp9');
     assert.equal(pickRecordType((t) => t === 'video/mp4'), 'video/mp4');
     assert.equal(pickRecordType(() => false), '');
+  });
+});
+
+describe('the reply notice opens the board as its owner on any device of the account (?o=1)', () => {
+  const g = view();
+  const page = (own) => pageOf(g, KST('2026-11-25T19:00:00'), { search: '?o=1',
+    respond: (u) => (u === '/rt/gift/' + g.id ? { ok: true, gift: g, own, ...(own ? { mine: { kids: 1, vd: 0, at: 1, lk: 1, re: 'rrrrrrrr' }, media: false } : {}) } : u.endsWith('/interest') ? { ok: true } : null) });
+  it('the owner, on a device that did not make the board: the owner page with the reply card, and the device remembers the board', async () => {
+    const P = page(true);
+    try {
+      await P.load('giftpage.js');
+      assert.equal(P.heads()[0], '💌 답장이 도착했어요');
+      assert.deepEqual(JSON.parse(P.store.kts_gmine), [g.id]);
+      assert.equal(P.sent.find((x) => x.url === '/rt/gift/' + g.id).auth, 'Bearer g1.test.token', 'the Worker decides who the owner is');
+    } finally { P.done(); }
+  });
+  it('anyone else with that address: the public page, nothing remembered', async () => {
+    const P = page(false);
+    try {
+      await P.load('giftpage.js');
+      assert.equal(P.heads().includes('💌 답장이 도착했어요'), false);
+      assert.ok(P.heads().includes('💌 롤링페이퍼'), P.heads().join(' | '));
+      assert.equal('kts_gmine' in P.store, false);
+    } finally { P.done(); }
+  });
+  it('without ?o=1 a device that did not make the board does not ask as the owner (as before)', async () => {
+    const P = pageOf(g, KST('2026-11-25T19:00:00'), { respond: () => null });
+    try { await P.load('giftpage.js'); assert.equal(P.sent.some((x) => x.url === '/rt/gift/' + g.id && x.auth), false); } finally { P.done(); }
   });
 });

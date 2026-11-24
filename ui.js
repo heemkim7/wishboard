@@ -791,7 +791,8 @@ export function createUI(root, hooks) {
   // The tutorial's own step: the gift maker (the one the 🎁 button opens). main.js opens it, ends the step ('gift') and counts the tap.
   function tutorialGo() { hooks.openGift?.(); }
   function setTutorial(ev) {
-    const on = tutorialNext(tutorialOn, ev);
+    // The step lives on the newcomer card. Someone known to be no newcomer (an account with boards on a fresh browser) has no card: it never starts.
+    const on = ev === 'start' && newbieOn === false ? false : tutorialNext(tutorialOn, ev);
     if (on === tutorialOn) return;
     tutorialOn = on;
     if (!on) {
@@ -802,9 +803,10 @@ export function createUI(root, hooks) {
     renderGoal();
   }
   function setTutorialLine(text) {
+    if (newbieOn === false) return; // no card to put it on, and on the plain line it would be words nothing can end
     tutorialLine = String(text || '');
     if (newbieOn) renderGoal();
-    else setNextLine(tutorialLine);
+    else setNextLine(tutorialLine); // not known yet: syncNewbie moves it to the card, or takes it away ('grad')
   }
   function syncNewbie() {
     if (!newbieReady) return;
@@ -822,8 +824,8 @@ export function createUI(root, hooks) {
       starterToastShown = true;
       root.classList.add('reveal');
       setTimeout(() => root.classList.remove('reveal'), 1600);
-      setTutorial('grad');
     }
+    if (!on) setTutorial('grad'); // also when it is first known to be off: a step started before that goes with its line
     renderGoal();
   }
   // Where the goal line sits: the newcomer card above the wallet, the line inside the wallet card, or on the compact

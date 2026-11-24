@@ -254,12 +254,15 @@ async function board() {
   // (the page of the answered board, then the maker, then the reply's own page) and the visitor goes back.
   const at = location.pathname.slice(3, 11), g = [CUR, DATA?.gift].find((x) => x && x.id === at) || CUR || DATA?.gift;
   if (!g) return gone();
-  if (mine().includes(g.id)) {
+  // The owner's view: on the device that made the board (kts_gmine), or when the address asks for it (?o=1, the reply notice's link: the
+  // notice can arrive on another device of the same account). The Worker decides who the owner is; anyone else gets the public page.
+  const asked = (() => { try { return new URLSearchParams(location.search).get('o') === '1'; } catch { return false; } })();
+  if (mine().includes(g.id) || asked) {
     const tok = await token(false);
     if (tok) {
       try {
         const r = await fetch('/rt/gift/' + g.id, { headers: { authorization: 'Bearer ' + tok }, cache: 'no-store' }).then((x) => x.json());
-        if (r?.own) return owner(r.gift, { mine: r.mine, media: !!r.media });
+        if (r?.own) { if (asked) addMine(g.id); return owner(r.gift, { mine: r.mine, media: !!r.media }); }
       } catch { /* the public page */ }
     }
   }

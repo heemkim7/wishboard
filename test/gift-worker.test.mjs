@@ -458,7 +458,7 @@ describe('답장 전광판 on the Worker', { concurrency: false }, () => {
       assert.equal(db(env).prepare('select ref from gb where id = ?').get(reply.id).ref, first.id);
       assert.equal(state.pushes.length, 1, 'one notice to the answered board\'s owner');
       assert.equal(state.pushes[0].url, s.endpoint);
-      assert.deepEqual(await decrypt(state.pushes[0].body, s), { body: '민지님이 답장 전광판을 걸었어요', url: '/g/' + first.id });
+      assert.deepEqual(await decrypt(state.pushes[0].body, s), { body: '민지님이 답장 전광판을 걸었어요', url: '/g/' + first.id + '?o=1' }); // ?o=1: opened as the owner on whichever device gets it
       // A second reply (minutes later, another account) leaves the first and tells nobody.
       clock.add(5 * 60000);
       assert.equal((await H.post('/rt/gift', REPLY(first.id, { from: '수아' }), C.token, '3.3.3.3')).status, 200);
@@ -485,6 +485,13 @@ describe('답장 전광판 on the Worker', { concurrency: false }, () => {
       assert.equal((await H.post('/rt/gift/' + reply.id + '/delete', {}, B.token, '2.2.2.2')).status, 200);
       assert.equal(reOf(env, first.id), '');
       assert.equal('re' in (await (await H.get('/rt/gift/' + first.id, A.token)).json()).mine, false);
+      // Hung again (a typo fixed, or someone pinging the owner by reply, delete, reply): the place is taken again, the owner is not told
+      // again and the board is not counted again. Once per answered board, for good.
+      clock.add(61000);
+      const D = await H.guest('4.4.4.4'), again = await (await H.post('/rt/gift', REPLY(first.id, { from: '다시' }), D.token, '4.4.4.4')).json();
+      assert.equal(again.ok, true); assert.equal(reOf(env, first.id), again.id);
+      assert.equal((await (await H.get('/rt/gift/' + first.id, A.token)).json()).mine.re, again.id, 'the owner sees the reply that is there now');
+      assert.equal(state.pushes.length, 1, 'no second notice'); assert.equal(dayCounts(env).reply, 1, 'no second count');
     } finally { done(); }
   });
 
@@ -502,7 +509,7 @@ describe('답장 전광판 on the Worker', { concurrency: false }, () => {
       const day = await (await H.post('/rt/gift', FORM({ at: 9 }), A.token)).json();
       const r2 = await (await H.post('/rt/gift', REPLY(day.id, { from: '' }), B.token, '2.2.2.2')).json();
       assert.equal(reOf(env, day.id), r2.id); assert.equal(state.pushes.length, 1);
-      assert.deepEqual(await decrypt(state.pushes[0].body, s), { body: '답장 전광판이 도착했어요', url: '/g/' + day.id });
+      assert.deepEqual(await decrypt(state.pushes[0].body, s), { body: '답장 전광판이 도착했어요', url: '/g/' + day.id + '?o=1' });
     } finally { done(); }
   });
 

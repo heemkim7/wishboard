@@ -63,7 +63,7 @@ export function mountGift({ world, ui, whenBuilt, introDone }) {
   // service worker hands this tab the address instead of opening a window (sw.js), so that board's page opens here, over the plaza.
   // Only a board page of this site; the plaza's own links (?focus=, ?wish=) stay main.js's.
   const pushBoard = (url) => { try { const u = new URL(String(url || ''), location.origin); return u.origin === location.origin ? (/^\/g\/([0-9a-z]{8})$/.exec(u.pathname) || [])[1] || '' : ''; } catch { return ''; } };
-  try { navigator.serviceWorker?.addEventListener('message', (e) => { const id = e.data?.t === 'push' ? pushBoard(e.data.url) : ''; if (id && !st.busy) openMaker('/g/' + id); }); } catch { /* no service worker here */ }
+  try { navigator.serviceWorker?.addEventListener('message', (e) => { const id = e.data?.t === 'push' ? pushBoard(e.data.url) : ''; if (id && !st.busy) { closeMaker(); openMaker('/g/' + id + '?o=1'); } }); } catch { /* no service worker here */ }
 
   async function fetchGift(id) {
     let tok = ''; try { tok = await doToken(); } catch { tok = ''; }
