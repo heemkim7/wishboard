@@ -6,7 +6,7 @@
 // MediaRecorder (MP4 where it can, WebM otherwise) and uploaded to the board when the Worker has the R2 store (else kept on the device).
 // main.js calls mountGift once and gift.apply(remote.gifts) with every world; ui.js is not touched (the button is put next to 🌠); the frame asks it for ui.layer.
 import { GIFT_ID, OCCASIONS, windowText, plazaLook, plazaNote, CER, CER_TEXT, cerStart, cerArrive, cerBack, cerDebugStart, cerSteps, cerDigit, cerPinMs, cerArriveNote, cerBand, cerPhotoText, beaconOnce, kstDay } from './giftrules.js';
-import { nowMs, clockSkew } from './live.js';
+import { nowMs, clock, skewOf } from './live.js';
 import { GIFT_SANS, fitSize } from './giftart.js?v=202611241625';
 import { recordCanvas, canRecord, saveBlob, fileName } from './giftfilm.js?v=202611241625';
 import { doToken } from './net.js?v=202611241625';
@@ -61,12 +61,18 @@ body.gift-cer:not(.has-sheet) #ui{visibility:hidden}
 // ---- 점등식: the gate (spec ③, giftrules.js 점등식) -----------------------------------------------------------------------
 // /?gb=<id>&cer=1 (the recipient page's 🎆 button) asks for the board before the room is joined: once, from the moment this module
 // loads (main.js enter() waits for it before net.join; the boot card is not changed). The read is the existing GET /rt/gift/<id>;
-// its Date header gives the server's clock for this decision only (live.js clockSkew). Too early -> back to the page with
+// its Date header gives the server's clock (live.js skewOf: no 12 h bound, like the page's own server time, so a device a day off is
+// not sent back and forth). One clock for the whole ceremony: when it lets a visitor in and measured an offset that the plaza's
+// (clock.off, from the boot read) lacks or differs from by more than 2 s, it becomes the plaza's offset (clock.kept: the boot read
+// does not overwrite it), so the teaser, the steps, the 9 pm show and the dance all read the gate's clock. Too early -> back to the page with
 // ?cer=early; budget hard inside the window (the read's optional `hard`, absent on an older Worker) -> ?cer=busy; both replace this
 // address and never resolve. A ceremony now -> { go, g, start }. Anything else (no fixed start, past the late window, gone, a failed
 // read, no answer in CER_WAIT ms) -> { go: false }: the ordinary ?gb= visit. start: the board's own (cerStart), or on a local
 // development host the ?cerin=<seconds> seam (cerDebugStart).
 const CER_WAIT = 4000;
+// The ceremony's own notices (gift.js only): its screen moved, it had no screen left, the connection is down while it waits.
+const CER_MOVED = '🎆 점등식 전광판이 옆 화면으로 옮겨 갔어요', CER_GONE = '점등식 전광판을 보여 줄 화면이 없어서 점등식을 마쳤어요';
+const CER_NET = '광장 연결이 잠시 끊겼어요. 점등식은 이 기기에서 그대로 이어져요';
 const CER_Q = (() => { try { return new URLSearchParams(location.search); } catch { return new URLSearchParams(''); } })();
 const CER_ID = GIFT_ID.test(CER_Q.get('gb') || '') && CER_Q.get('cer') === '1' ? CER_Q.get('gb') : '';
 const CER_SEARCH = CER_ID ? String(location.search || '') : '';
@@ -81,13 +87,14 @@ function gateFor(id, search = '', { armed = true } = {}) {
     if (armed) arm();
     const sent = Date.now();
     fetch('/rt/gift/' + id, { cache: 'no-store' }).then(async (r) => {
-      const skew = clockSkew(r.headers?.get?.('date'), sent, Date.now());
+      const skew = skewOf(r.headers?.get?.('date'), sent, Date.now());
       const d = await r.json().catch(() => null);
       if (settled) return; // too late: the ordinary visit already went ahead
-      const g = d?.ok && d.gift ? d.gift : null, t = Date.now() + skew;
+      const g = d?.ok && d.gift ? d.gift : null, t = skew == null ? nowMs() : Date.now() + skew;
       const start = (g && cerDebugStart(search, location.hostname, t)) || cerStart(g);
       const why = cerArrive(g, t, { hard: !!d?.hard, start });
       if (why === 'early' || why === 'busy') { settled = true; location.replace(cerBack(id, why)); return; }
+      if (why === 'go' && skew != null) { if (!clock.off || Math.abs(skew - clock.off) > 2000) clock.off = skew; clock.kept = true; }
       end(why === 'go' ? { go: true, g, start } : { go: false });
     }).catch(() => end({ go: false }));
   });
@@ -105,7 +112,9 @@ export function cerGate() {
 const cerWait = () => { const p = cerGate(); p.arm?.(); return p; };
 if (CER_ID) cerGate();
 
-export function mountGift({ world, ui, whenBuilt, introDone, budgetDown }) {
+// budgetDown: a real budget-hard signal (net.js budgetHard), the only thing that sends a waiting ceremony visitor back; netDown: the
+// connection is down for another reason (net.js gateDown), which the ceremony only mentions once (the pin and the clock are local).
+export function mountGift({ world, ui, whenBuilt, introDone, budgetDown, netDown }) {
   const st = { list: [], busy: false };
   const style = document.createElement('style'); style.textContent = CSS; document.head.append(style);
   const note = (t, k, fn, o) => { try { ui?.note?.(t, k, fn, o); } catch { /* no toast */ } };
@@ -122,8 +131,10 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown }) {
   // closes it, and focus goes back to what opened it (the 🎁 button when nothing else did). Its close button is the sheets' (index.html
   // .x: 38px, 10px corners, the same colours, 44px to press) with the same two-stroke icon (uiicons.js close).
   let frame = null, opener = null;
-  function openMaker(path = '/gift') {
+  let frameAfter = null; // run once the frame closes (the photo card comes back over the plaza when its 받는 사람 페이지로 opened the page here)
+  function openMaker(path = '/gift', after = null) {
     if (frame) return;
+    frameAfter = typeof after === 'function' ? after : null;
     const name = path.startsWith('/g/') ? '선물 전광판' : '선물 전광판 만들기';
     const active = document.activeElement;
     opener = active && active !== document.body && typeof active.focus === 'function' ? active : null;
@@ -158,6 +169,8 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown }) {
     else world?.setInputEnabled?.(true);
     const back = opener && opener.isConnected ? opener : btn; opener = null;
     try { back.focus({ preventScroll: true }); } catch { /* focus stays where the browser put it */ }
+    const after = frameAfter; frameAfter = null;
+    if (after) { try { after(); } catch { /* the plaza stays as it is */ } }
   }
   // Escape with the cursor in the plaza's own document (the frame, its close button). ui.js's keydown listener comes first (createUI
   // runs before mountGift) and closes the frame alone while ui.layer has it; this one is for a plaza without that hook. Keys pressed
@@ -191,7 +204,7 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown }) {
   // nothing is sent to the room or the Worker), so it takes no screen from anyone. Before the day the link only says when it hangs.
   async function land(id) {
     const up = st.list.find((g) => g.id === id); // the world's copy has no day: it is live by being there
-    const g = up || (await fetchGift(id))?.gift, t = Date.now(), look = up ? 'live' : plazaLook(g, t);
+    const g = up || (await fetchGift(id))?.gift, t = nowMs(), look = up ? 'live' : plazaLook(g, t);
     if (!g || look === 'gone') { note('없어졌거나 가려진 선물 전광판이에요', 'err'); return; }
     if (look === 'wait') { note(`이 선물 전광판은 ${windowText(g.a, g.b)}에 걸려요`, 'ok', () => { location.href = '/g/' + id; }); return; }
     whenBuilt(() => {
@@ -385,18 +398,36 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown }) {
       tick();
     }, () => note('광장을 불러오지 못했어요. 다시 해 주세요', 'err'));
   }
+  // The ceremony's screen changed under it: someone lit it, so ts3d/screens.js moved the pin to the nearest free screen. The ceremony
+  // goes on there: the gather spot (before the photo pose), the camera, the photo's pose worked out again, the pose itself if it is up.
+  function follow(c, slot) {
+    c.slot = slot;
+    if (!c.done.pose && !world.isDriving?.()) {
+      c.spot = world.goToSlot?.(slot, { spread: seat() }) || c.spot;
+      world.focusSlot?.(slot, { hold: 3500, celebrate: false });
+    }
+    try { world.cerPrep?.(slot); } catch { /* worked out at the pose instead */ }
+    if (c.posed && !c.done.shot) c.posed = !!world.cerPose?.(slot);
+    note(CER_MOVED, 'ok', null, { key: 'cer-move' });
+  }
   function tick() {
     const c = cer;
     if (!c) return;
     try {
       const now = nowMs();
-      // The board left its screen (a lit claim, the pin replaced): nothing more to show.
-      if (world?.giftSlot && world.giftSlot(c.id) !== c.slot) { stopCer(); return; }
+      // The board left its screen: moved to another one (a lit claim), or gone (no free screen, the pin replaced): followed, or the end.
+      const at = world?.giftSlot ? world.giftSlot(c.id) : c.slot;
+      if (at !== c.slot) {
+        if (!at) { stopCer(); note(CER_GONE, 'err', null, { key: 'cer-move' }); return; }
+        follow(c, at);
+      }
       const s = cerSteps(c.start, now, c.done);
       const before = s.phase === 'wait' || s.phase === 'count';
       if (before) c.done.before = true;
-      // Budget hard learned after arriving (the room said down, /rt/gate said full) before the start: back to the page. After it, stay.
+      // Budget hard learned after arriving (net.js budgetHard: the room's 'down', /rt/gate full without err) before the start: back to the
+      // page. After it, stay. A connection that is only failing keeps the visitor here (the pin and the clock are on this device).
       if (before && budgetDown?.()) { stopCer(); location.replace(cerBack(c.id, 'busy')); return; }
+      if (before && !c.done.net && netDown?.()) { c.done.net = true; note(CER_NET, '', null, { key: 'cer-net' }); }
       if (s.teaser) c.done.teaser = true; // pinned with its teaser at arrival
       if (before && !c.done.gather && c.start - now <= 30000) {
         c.done.gather = true;
@@ -417,7 +448,7 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown }) {
         c.done.offer = true;
         note(CER_TEXT.shotTake, 'ok', () => takeLater(c), { ms: Math.max(4000, c.start + CER.late - now) });
       }
-      if (s.end) { c.done.end = true; stopCer(); return; }
+      if (s.end || s.phase === 'over') { c.done.end = true; stopCer(); return; } // over: also a ceremony that began past its late window
     } catch {
       stopCer(); // a step that throws ends the ceremony here; the HUD is back
       return;
@@ -426,9 +457,12 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown }) {
     }
   }
   // The offered photo (a late arrival, or the moment passed unseen): the same pose, the shot 1.5 s later, the same card.
+  // One at a time: taps while a shot is on its way do nothing.
   function takeLater(c) {
+    if (c.taking) return;
     if (!world?.cerPose?.(c.slot)) { note('지금은 단체 사진을 찍을 수 없어요. 택시에서 내린 뒤에 다시 해 주세요', 'err'); return; }
-    setTimeout(() => { if (!shoot(c)) note('지금은 단체 사진을 찍을 수 없어요. 잠시 뒤에 다시 해 주세요', 'err'); }, CER.shot - CER.pose);
+    c.taking = true;
+    setTimeout(() => { c.taking = false; if (!shoot(c)) note('지금은 단체 사진을 찍을 수 없어요. 잠시 뒤에 다시 해 주세요', 'err'); }, CER.shot - CER.pose);
   }
   // The photo is the world's own 3:2 render of the ceremony (timesSquare3d.js capture({ photo })): it does not wait for the live camera
   // or for a frame to be drawn. -> true when there is a photo; false when the world refused (nothing is claimed).
@@ -444,16 +478,21 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown }) {
     return true;
   }
   // The photo card: one modal layer (ui.layer: Escape, the back button and ✕ close it; the HUD under it is inert).
-  let cardEl = null, cardUrl = '';
+  // Closing gives focus back to what had it when the card opened (a notice, a HUD button), like the sheets and the gift frame.
+  let cardEl = null, cardUrl = '', cardBack = null;
   function closeCard() {
     if (!cardEl) return;
     cardEl.remove(); cardEl = null;
     if (cardUrl) { try { URL.revokeObjectURL(cardUrl); } catch { /* gone */ } cardUrl = ''; }
     if (typeof ui?.layer === 'function') ui.layer(null);
+    const back = cardBack; cardBack = null;
+    if (back && back.isConnected) { try { back.focus({ preventScroll: true }); } catch { /* focus stays where the browser put it */ } }
   }
   function photoCard(g, blob) {
     if (frame) return note(CER_TEXT.shotReady, 'ok', () => photoCard(g, blob), { ms: 60000 }); // the gift frame is the layer now
     closeCard();
+    const active = document.activeElement;
+    cardBack = active && active !== document.body && typeof active.focus === 'function' ? active : null;
     const id = g.id, name = 'wishboard-' + id + '.jpg';
     const wrap = document.createElement('div'); wrap.id = 'kts-cer-card';
     wrap.setAttribute('role', 'dialog'); wrap.setAttribute('aria-modal', 'true'); wrap.setAttribute('aria-label', '단체 사진'); wrap.setAttribute('tabindex', '-1');
@@ -478,7 +517,10 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown }) {
         beacon(id, 'cershot');
       } catch (e) { if (e?.name !== 'AbortError') line.textContent = '공유하지 못했어요. 사진 저장을 눌러 주세요.'; }
     });
+    // The recipient page opens over the plaza in the gift frame (the 🎁 button's): the plaza and this photo stay; closing the frame
+    // brings the card back. The card closes first (ui.layer holds one layer). The href stays for a new tab.
     const page = document.createElement('a'); page.className = 'b'; page.href = '/g/' + id; page.textContent = CER_TEXT.page;
+    page.addEventListener('click', (e) => { e?.preventDefault?.(); closeCard(); openMaker('/g/' + id, () => photoCard(g, blob)); });
     const x = document.createElement('button'); x.type = 'button'; x.className = 'x'; x.setAttribute('aria-label', '닫기'); x.addEventListener('click', closeCard);
     const SVG = 'http://www.w3.org/2000/svg', ico = document.createElementNS(SVG, 'svg'), strokes = document.createElementNS(SVG, 'path');
     ico.setAttribute('viewBox', '0 0 24 24'); ico.setAttribute('aria-hidden', 'true'); ico.setAttribute('focusable', 'false'); strokes.setAttribute('d', 'M6 6L18 18M18 6L6 18');
@@ -491,6 +533,7 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown }) {
   }
   // The embedded recipient page's ceremony button ({ act: 'cer' }), or a ceremony link: the same gate, then the ceremony or the visit.
   function arriveCer(id, search) {
+    if (cer && cer.id === id) return; // that board's ceremony is on here: a second 🎆 tap changes nothing (it would make a late arrival)
     const p = search == null ? cerWait() : gateFor(id, search);
     p.then((r) => { if (r?.go) ceremony(r.g, r.start); else land(id); }).catch(() => land(id));
   }

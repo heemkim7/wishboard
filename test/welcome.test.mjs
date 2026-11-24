@@ -400,7 +400,7 @@ describe('the entry flow shows it once (main.js, ui.js: source checks)', () => {
   it('the card: the gift step in front, a tap goes through the hook main.js wires to the maker', () => {
     assert.match(ui, /function tutorialGo\(\) \{ hooks\.openGift\?\.\(\); \}/);
     assert.match(main, /\n  openGift: \(\) => openGiftFromCard\(\),\n/);
-    assert.match(main, /giftUi = mountGift\(\{ world, ui, whenBuilt, introDone: \(\) => introDone\(\), budgetDown: \(\) => !!\(net\.budgetDown \|\| net\.gateDown\) \}\);/); // budgetDown: the 점등식's send-back
+    assert.match(main, /giftUi = mountGift\(\{ world, ui, whenBuilt, introDone: \(\) => introDone\(\), budgetDown: \(\) => !!net\.budgetHard, netDown: \(\) => !!net\.gateDown \}\);/); // budgetDown: the 점등식's send-back
   });
   it('the bake guide is gone from the plaza: no line, no waypoint to the cart, no panel opening by itself, no walk to the free slot', () => {
     for (const [name, src] of [['main.js', main], ['ui.js', ui], ['ftue.js', read('ftue.js')]]) {

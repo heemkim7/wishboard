@@ -126,10 +126,11 @@ function paintBootLive(data, here) {
     crowd ? `지금 광장 ${crowd}명` : '',
   ].filter(Boolean).join(' · ');
 }
-// Server clock minus this clock (live.js clock.off) from the boot /rt/world Date header (clockSkew; 0 when unknown or noisy).
+// Server clock minus this clock (live.js clock.off) from the boot /rt/world Date header (clockSkew; 0 when unknown or noisy). Not over the
+// 점등식 gate's own measurement (clock.kept, gift.js gateFor): the ceremony, the 9 pm show and the dance then read one clock.
 const bootSent = Date.now();
 Promise.all([
-  fetch('/rt/world', { cache: 'no-store' }).then((r) => { clock.off = clockSkew(r.headers.get('date'), bootSent, Date.now()); return r.json(); }).catch(() => null),
+  fetch('/rt/world', { cache: 'no-store' }).then((r) => { const off = clockSkew(r.headers.get('date'), bootSent, Date.now()); if (!clock.kept) clock.off = off; return r.json(); }).catch(() => null),
   fetch('/rt/here', { cache: 'no-store' }).then((r) => r.json()).catch(() => null),
 ]).then(([data, here]) => {
   paintBootLive(data, here);
@@ -599,7 +600,7 @@ world = createTimesSquare(document.getElementById('view'), {
 window.G.world = world;
 window.G.ui = ui;
 errlogCtx({ tier: String(world?.quality || '') });
-giftUi = mountGift({ world, ui, whenBuilt, introDone: () => introDone(), budgetDown: () => !!(net.budgetDown || net.gateDown) }); // 선물 전광판: the 🎁 button, ?gb= links (and the 점등식), the 15-second video (gift.js)
+giftUi = mountGift({ world, ui, whenBuilt, introDone: () => introDone(), budgetDown: () => !!net.budgetHard, netDown: () => !!net.gateDown }); // 선물 전광판: the 🎁 button, ?gb= links (and the 점등식), the 15-second video (gift.js)
 
 // ---- 환영 전광판: the newcomer's first seconds --------------------------------------------------------------------------
 // Once the arrival intro has landed (or a sheet a link opened has closed), a newcomer who came without a link sees their own nickname on a free

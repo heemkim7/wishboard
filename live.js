@@ -13,7 +13,8 @@ export function nextBallUntil(now, open) {
 // on the ordinary boards. balance.js ballOpen still names the 21:00-21:10 show (the crystal ball, the hologram).
 const DAY_MS = 864e5, H21 = 21 * 3600e3;
 // The browser's server offset (main.js sets clock.off once from clockSkew). The Worker never sets it, so nowMs() is Date.now().
-export const clock = { off: 0 };
+// kept: the 점등식 gate (gift.js) set it from its own read; the boot read that answers later does not overwrite it (main.js).
+export const clock = { off: 0, kept: false };
 export function nowMs() { return Date.now() + clock.off; }
 // overLit: the king's minute also covers boards a holder has lit; false keeps it to boards with no live holder (the owner's switch).
 export const NINE = Object.freeze({ pre: H21 - 600e3, open: H21, king: H21 + 60e3, close: H21 + 600e3, overLit: true });
@@ -44,10 +45,16 @@ export function kingCovers(lit, overLit = NINE.overLit) { return !!overLit || !l
  *  Under 2 s it is noise and gives 0; more than 12 h is a broken header and gives 0. A round trip over 3 s gives 0 too:
  *  the error can be half of it. */
 export function clockSkew(date, sentAt, gotAt) {
+  const skew = skewOf(date, sentAt, gotAt);
+  return skew == null || Math.abs(skew) > 12 * 3600e3 ? 0 : skew;
+}
+/** The same measurement without the 12 h bound, and null when nothing was measured (no or a broken header, a round trip over
+ *  3 s): the 점등식 gate (gift.js), which must agree with the recipient page (its server time from the page data, any size). */
+export function skewOf(date, sentAt, gotAt) {
   const s = Date.parse(String(date || ''));
-  if (!Number.isFinite(s) || !Number.isFinite(sentAt) || !Number.isFinite(gotAt) || gotAt - sentAt > 3000) return 0;
+  if (!Number.isFinite(s) || !Number.isFinite(sentAt) || !Number.isFinite(gotAt) || gotAt - sentAt > 3000) return null;
   const skew = Math.round(s + 500 - (sentAt + gotAt) / 2);
-  return Math.abs(skew) < 2000 || Math.abs(skew) > 12 * 3600e3 ? 0 : skew;
+  return Math.abs(skew) < 2000 ? 0 : skew;
 }
 /** A main tower face nobody keeps lit, else the lowest (kept for old callers; the banner now opens the prime screen sheet). */
 export function nineSlot(rows, now = Date.now()) {

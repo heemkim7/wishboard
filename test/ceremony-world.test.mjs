@@ -67,7 +67,10 @@ let T = null, broken = null, skip = existsSync(MAP) ? false : 'assets/nyc/manhat
 async function boot(w, h) {
   const errors = [];
   const canvas = Object.assign(el('canvas', w, h), { parentElement: el('div', w, h) });
-  const world = T.createTimesSquare(canvas, { quality: 'low', autostart: false, name: '시험', species: 1, onError: (e) => errors.push(e) });
+  // The room as the world reads it (peers, sample): empty unless a test puts someone in it. asked: onDancerNear calls.
+  const net = { id: 'me', peers: new Map(), sample: (p) => p.s, tick() {}, on() {} }, asked = [];
+  const world = T.createTimesSquare(canvas, { quality: 'low', autostart: false, name: '시험', species: 1, net, onDancerNear: (id) => { asked.push(id); return false; }, onError: (e) => errors.push(e) });
+  Object.assign(world, { testNet: net, testAsked: asked, testCanvas: canvas });
   for (const until = real.now() + 180000; real.now() < until && !(world.built() && world.mapData());) await new Promise((r) => real.setTimeout(r, 10)); // a busy machine (the whole suite at once) can take a while
   if (errors.length || !world.mapData()) throw new Error('the city did not build: ' + (errors[0]?.message || 'timeout'));
   world.start();
@@ -216,6 +219,43 @@ for (const [w, h] of SIZES) {
         globalThis.document.hidden = true;
         assert.equal(world.capture({ photo: slot, band: 'x' }), null, 'refused while the page is hidden');
       } finally { Date.now = real; globalThis.document.hidden = false; }
+    });
+    if (w === 375) it('the photo has no effect outside itself, and no guide or reward beam is in it (the star shower, the golden rings, the markers)', () => {
+      const { THREE } = T;
+      world.goToSlot('STREET_31');
+      run(0.3);
+      const real = Date.now, t0 = real();
+      const g = { id: 'cerphot2', to: '민지', from: '지수', occ: 'bday', msg: '비밀 문구 🤫', th: '', scr: 'STREET_31', a: t0 + 3000, b: t0 + 6 * 36e5, n: 0 };
+      const slot = world.pinGift(g, 180000, { cer: t0 + 3000 });
+      const me = world.getPlayer(), net = world.testNet, U = (m) => Math.round(m * 20 + 1500); // net.js toNetUnits
+      net.peers.set('p1', { id: 'p1', name: '친구', outfit: '#ff3d9a', av: 1, s: { x: U(me.x + 6), y: U(me.z), face: '0', anim: 'idle', vx: 0, vy: 0 } });
+      world.startStars([{ i: 7, x: me.x + 3, z: me.z + 4 }]);
+      run(4); // the friend is drawn where the room says; the star has landed
+      // The guide beams' texture (paintBeam on a 64 x 256 canvas; the cars' headlights, instanced, have one of the same size), and the star's gem.
+      let BT = null; world.scene.traverse((o) => { if (!BT && o.isMesh && !o.isInstancedMesh && o.material?.map?.image?.width === 64 && o.material.map.image.height === 256) BT = o.material.map; });
+      const beams = () => { const out = []; world.scene.traverseVisible((o) => { const m = o.material; if (o.isMesh && m && !Array.isArray(m) && (m.map === BT || o.geometry?.parameters?.radius === 0.42)) out.push(o); }); return out; };
+      const lit = beams().length;
+      assert.ok(lit >= 2, 'the golden rings\' beams (and the star) are up before the photo: ' + lit);
+      const friend = world.minimap().peers[0];
+      assert.ok(friend, 'the friend is in the world');
+      net.peers.get('p1').s = { ...net.peers.get('p1').s, x: U(me.x + 16) }; // the room has them 10 m on since the last frame
+      const yaw = me.yaw, asked = world.testAsked.length;
+      let during = null;
+      ctx2d.drawImage = (src, ...a) => { if (src === world.testCanvas && !during) during = { beams: beams().length, friendAt: world.scene.children.some((o) => Math.abs(o.position.x - (me.x + 16)) < 0.05 && Math.abs(o.position.z - me.z) < 0.05) }; };
+      try {
+        Date.now = () => t0 + 11000;
+        assert.ok(world.capture({ photo: slot, band: 'x' }));
+      } finally { Date.now = real; delete ctx2d.drawImage; }
+      assert.ok(during, 'the photo was rendered');
+      assert.equal(during.beams, 0, 'no beam, gem or ring of a guide or a reward in the picture');
+      assert.equal(during.friendAt, true, 'the friend stands where the room last said, in the picture');
+      assert.equal(beams().length, lit, 'all of them back after it');
+      const after = world.minimap().peers[0];
+      assert.ok(Math.abs(after.x - friend.x) < 1e-9 && Math.abs(after.z - friend.z) < 1e-9, 'the friend\'s own smoothing was not moved on by the photo');
+      assert.equal(world.testAsked.length, asked, 'no dance invite (or any other callback) from the photo');
+      run(0.05);
+      assert.ok(Math.abs(world.getPlayer().yaw - yaw) < 1e-9, 'my avatar keeps its own turn after the photo');
+      net.peers.clear(); world.clearStars(); run(0.1);
     });
     it('the pose ends by itself if nobody ends it; a board that is not on the map has none', () => {
       world.goToSlot('STREET_31');

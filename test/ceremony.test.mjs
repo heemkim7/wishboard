@@ -74,7 +74,7 @@ describe('cerPhase: every edge exactly and 1 ms either side', () => {
     const off = 7000, device = S - 5000; // the device is 7 s slow: the server is already past the start
     assert.equal(cerPhase(g, device), 'count');
     assert.equal(cerPhase(g, device + off), 'lit');
-    assert.equal(cerDigit(g, S - 3000 - off + off), 3);
+    assert.deepEqual([cerDigit(g, S - 3000 - off), cerDigit(g, S - 3000 - off + off)], [10, 3]); // the device alone says 10; with the offset, 3
   });
 });
 

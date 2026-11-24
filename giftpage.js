@@ -417,26 +417,33 @@ async function pushOn(tok) {
 // [답장 전광판 걸기] [영상 저장] [직접 가서 보기 / 광장에서 미리 보기 / 광장에서 다시 보기] [나도 누군가에게 걸어 주기], the messages, and a
 // line about when and where it hangs. A 점등식 board (a fixed start) keeps the before look until its start (giftrules.js revealAt,
 // pageLook): the lighting is the reveal, and the page turns into the board by itself at that second.
-function visit(g, { preview = false } = {}) {
-  clear(); CUR = g;
-  if (!preview) beacon(g.id, 'open');
+// swap: the page turning by itself (the lighting, or 00:00 of the day on a 점등식 board): { left, right, paper } of the page that is up.
+// Then only the left column is built again (and the 📺 card put above the 롤링페이퍼); the 롤링페이퍼 card, the right column, the top, the
+// footer and the scroll position stay as they are, so a half-written message, its caret and the focus are never lost, and the page does
+// not jump to the top. While a 롤링페이퍼 field has the focus or holds text, the card keeps its place on the screen (the column above it
+// changed height).
+function visit(g, { preview = false, swap = null } = {}) {
+  if (!swap) clear(); CUR = g;
+  if (!preview && !swap) beacon(g.id, 'open');
   const O = OCCASIONS[g.occ] || OCCASIONS.bday;
   const phase = () => pageLook(g, now(), CER_DEBUG);
-  const back = preview ? h('button', { class: 'btn sm', type: 'button', onclick: () => board() }, '← 내 관리 화면으로') : null;
-  const cer = cerCard(g, preview ? '' : cerBackOnce()); // 점등식: under the countdown before the day, under the where line from the day
+  const back = preview && !swap ? h('button', { class: 'btn sm', type: 'button', onclick: () => board() }, '← 내 관리 화면으로') : null;
+  const cer = cerCard(g, preview || swap ? '' : cerBackOnce()); // 점등식: under the countdown before the day, under the where line from the day
+  const paper = swap?.paper || paperCard(g);
   if (phase() === 'before') {
     const words = () => hiddenWords(g, now(), CER_DEBUG), w0 = words(); // a 점등식 board on its day counts to the lighting
     const cd = live(h('div', { class: 'big count' }), () => words().count);
     const label = live(h('div', { class: 'label', text: w0.label }), () => words().label), fine = live(h('p', { class: 'fine', text: w0.fine }), () => words().fine);
     const prev = h('canvas', { class: 'preview', width: 1024, height: 576, 'aria-label': '전광판 미리보기' }); paintGift(prev, { ...g, msg: w0.hush, n: g.n });
-    put(top(), back, h('div', { class: 'cols' },
-      h('div', { class: 'sticky' }, h('h1', { text: O.emoji + ' ' + g.to + '님을 위한 선물 전광판' }), h('p', { class: 'sub', text: '뉴욕 타임스퀘어 가상 광장에 ' + windowText(g.a, g.b) + ' 걸려요.' }),
-        card(label, cd, fine), cer, prev),
-      h('div', {}, paperCard(g), cta(g))), foot());
+    const left = h('div', { class: 'sticky' }, h('h1', { text: O.emoji + ' ' + g.to + '님을 위한 선물 전광판' }), h('p', { class: 'sub', text: '뉴욕 타임스퀘어 가상 광장에 ' + windowText(g.a, g.b) + ' 걸려요.' }),
+      card(label, cd, fine), cer, prev);
+    const right = swap?.right || h('div', {}, paper, cta(g));
+    if (swap) swapLeft(swap, left, null);
+    else put(top(), back, h('div', { class: 'cols' }, left, right), foot());
     // A 점등식 board: at its start the page becomes the board (the reveal), and at midnight of its day the hidden preview says the time.
     // Any other board stays as it always was (the page built before 00:00 of its day stays until it is opened again).
     if (CER_DEBUG || cerStart(g)) {
-      const turn = () => { if (!prev.isConnected) { TICK.delete(turn); return; } if (phase() !== 'before' || words().hush !== w0.hush) { TICK.delete(turn); visit(g, { preview }); } };
+      const turn = () => { if (!prev.isConnected) { TICK.delete(turn); return; } if (phase() !== 'before' || words().hush !== w0.hush) { TICK.delete(turn); visit(g, { preview, swap: { left, right, paper } }); } };
       TICK.add(turn);
     }
     return;
@@ -459,10 +466,24 @@ function visit(g, { preview = false } = {}) {
   const skip = h('button', { class: 'linkbtn', type: 'button', onclick: () => { acts.hidden = false; skip.remove(); } }, '영상 건너뛰기');
   st.ends.add(() => { acts.hidden = false; skip.remove(); });
   const rp = twoTap(h('button', { class: 'linkbtn', type: 'button' }, '이 전광판 신고'), '한 번 더 누르면 신고해요', async () => { const r = await fetch('/rt/gift/' + g.id + '/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then((x) => x.json()).catch(() => null); rp.textContent = r?.ok ? '신고했어요' : '신고하지 못했어요'; rp.disabled = true; });
-  put(top(), back, h('div', { class: 'cols' },
-    h('div', { class: 'sticky' }, h('h1', { text: O.emoji + ' ' + g.to + '님, ' + O.head + '!' }), where, cer, st.box, acts.hidden ? skip : null, h('div', { style: 'height:10px' }), acts),
-    h('div', {}, card(h('h2', { text: '📺 광장에 걸린 글' }), h('p', { class: 'big', style: 'font-size:22px', text: 'To. ' + g.to }), h('p', { style: 'font-weight:800;margin:4px 0', text: g.msg || O.hint }), g.from ? h('p', { class: 'sub', text: 'From. ' + g.from }) : null, rp),
-      paperCard(g), cta(g))), foot());
+  const left = h('div', { class: 'sticky' }, h('h1', { text: O.emoji + ' ' + g.to + '님, ' + O.head + '!' }), where, cer, st.box, acts.hidden ? skip : null, h('div', { style: 'height:10px' }), acts);
+  const posted = card(h('h2', { text: '📺 광장에 걸린 글' }), h('p', { class: 'big', style: 'font-size:22px', text: 'To. ' + g.to }), h('p', { style: 'font-weight:800;margin:4px 0', text: g.msg || O.hint }), g.from ? h('p', { class: 'sub', text: 'From. ' + g.from }) : null, rp);
+  if (swap) swapLeft(swap, left, posted);
+  else put(top(), back, h('div', { class: 'cols' }, left, h('div', {}, posted, paper, cta(g))), foot());
+}
+// The page turning by itself (visit swap): the new left column in place of the old one, the 📺 card (or nothing) at the top of the right
+// column. The 롤링페이퍼 card is never taken out of the page. When the person is in it (a field focused or holding text) it is kept where
+// it was on the screen; otherwise the scroll position is left alone (never the jump to the top that a new page makes).
+function swapLeft(swap, left, lead) {
+  const fields = [];
+  (function walk(n) { if (!n) return; if (n.tagName === 'INPUT' || n.tagName === 'TEXTAREA' || n.tag === 'input' || n.tag === 'textarea') fields.push(n); for (const k of n.children || n.kids || []) walk(k); })(swap.paper);
+  const at = document.activeElement, inPaper = fields.some((f) => f === at || String(f.value || '') !== '');
+  const y0 = inPaper ? swap.paper.getBoundingClientRect?.().top : NaN;
+  swap.left.after(left); swap.left.remove();
+  if (lead) swap.right.prepend(lead);
+  const y1 = inPaper ? swap.paper.getBoundingClientRect?.().top : NaN;
+  if (Number.isFinite(y0) && Number.isFinite(y1) && y1 !== y0) { try { window.scrollBy(0, y1 - y0); } catch { /* the page stays where it is */ } }
+  if (at && fields.includes(at) && document.activeElement !== at) { try { at.focus({ preventScroll: true }); } catch { /* focus stays */ } }
 }
 // 점등식: the button for a board with a fixed start (giftrules.js cerButton), with the line under it, or null. Before the window a tap says
 // when it opens and shares the invitation; inside it (and for the 2 lit minutes) a link to the plaza (over the plaza: a message to it);

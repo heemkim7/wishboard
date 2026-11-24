@@ -270,9 +270,28 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     return b.giftKey === giftPin.g.id && !b.cerKey;
   }
   function cerStep() { const b = boards.get(giftPin.slot); if (b && b.giftKey === giftPin.g.id && cerSec(nowMs()) !== b.cerSec) paint(b); }
+  // A ceremony pin lasts up to ~13 minutes, so it does not cover a screen someone lights meanwhile: it moves to the nearest screen nobody
+  // has lit (one without another gift first) within CER_MOVE_M of the old one, or goes (gift.js follows it with giftSlot, or ends).
+  const CER_MOVE_M = 80;
+  const unlit = (slot) => { const b = boards.get(slot); return !!b && !b.shared && b.mounts.length > 0 && !live(b.row); };
+  function cerMove(from) {
+    const f = face(from);
+    if (!f) return '';
+    let best = '', bestD = Infinity;
+    for (const s of GIFT_SCREENS) {
+      if (s === from || !unlit(s)) continue;
+      const o = face(s); if (!o) continue;
+      const d = o.pos.distanceTo(f.pos);
+      if (d > CER_MOVE_M) continue;
+      const score = d + (giftPlan.has(s) ? WELCOME_FAR : 0);
+      if (score < bestD) { bestD = score; best = s; }
+    }
+    return best;
+  }
   function giftPlace() {
     giftDirty = false;
     if (giftPin && (giftPin.until <= Date.now() || (giftPin.g.welcome && !giftFree(giftPin.slot)))) giftPin = null;
+    if (giftPin?.cer) { const b = boards.get(giftPin.slot); if (b && live(b.row)) { const to = cerMove(giftPin.slot); if (to) giftPin.slot = to; else giftPin = null; } }
     const plan = placeGifts([...gifts.values()], giftFree);
     if (giftPin) { for (const [s, ids] of plan) { const i = ids.indexOf(giftPin.g.id); if (i >= 0) ids.splice(i, 1); if (!ids.length) plan.delete(s); } plan.set(giftPin.slot, [giftPin.g.id]); }
     giftPlan = plan;
