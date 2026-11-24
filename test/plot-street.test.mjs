@@ -13,6 +13,7 @@ import {
   lotFacing, lotRect, streetPosts, groundHeight, insideLoop,
 } from '../ts3d/layout.js';
 import { createNYC, ROAD } from '../ts3d/nyc.js';
+import { boardVantage, facesBlock, portraitFov } from '../camrig.js';
 
 register(new URL('./nine-three-hook.mjs', import.meta.url)); // 'three' -> the vendored build, so ts3d/landmarks.js loads in Node
 
@@ -496,6 +497,18 @@ describe('the built street (ts3d/landmarks.js with the real three)', () => {
       }
       assert.deepEqual(W.colliders.filter(inStrip), [], 'level ' + level);
       across.push(W.boards.face('PLOT_1').pos.x - W.boards.face('PLOT_2').pos.x);
+      // the board camera (camrig.js boardVantage, as slotPose calls it for 보기): with every other lot's face in the way it
+      // still frames the whole board straight on, from inside the street, on a desktop window and on a phone held upright
+      const faces = new Map(PLOT_SLOTS.map((s) => [s.id, W.boards.face('PLOT_' + s.id)]));
+      for (const [aspect, baseFov] of [[16 / 9, 55], [9 / 19.5, 62]]) for (const s of PLOT_SLOTS) {
+        const f = faces.get(s.id), tag = `PLOT_${s.id}@${level} ${aspect.toFixed(2)}`;
+        const block = facesBlock([...faces.values()].filter((o) => o !== f));
+        const v = boardVantage({ face: { x: f.pos.x, y: f.pos.y, z: f.pos.z, nx: f.normal.x, nz: f.normal.z, w: f.w, h: f.h }, dist: 18, aspect, vfov: portraitFov(aspect, baseFov), block, ground: groundHeight });
+        assert.equal(v.yaw, 0, tag);
+        assert.ok(v.fit >= 0.999 && v.seen >= 0.999, `${tag} fit ${v.fit} seen ${v.seen}`);
+        assert.ok(Math.abs(v.x - S.x) < S.half && Math.abs(v.z - s.z) < 1e-6, `${tag} cam ${v.x},${v.z}`);
+        assert.ok((v.x - f.pos.x) * f.normal.x > 5.9, tag); // before the face (camrig.js FRAME.near is 6 m to its centre)
+      }
       for (const s of PLOT_SLOTS.slice(2)) near(Math.abs(W.boards.face('PLOT_' + s.id).pos.x), Math.abs(W.boards.face('PLOT_1').pos.x), 'lot ' + s.id);
     }
     // the street between the two rows of faces: 29.1 m before empty lots, 27.6 m between two towers (33.3, 30.3 and 28.3 m between)
