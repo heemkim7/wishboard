@@ -1060,7 +1060,7 @@ void main(){
     const beam = new THREE.Mesh(ringBeamGeo, ringBeamMat);
     beam.position.set(s.x, 0, s.z);
     scene.add(ring, beam);
-    s.ry = ring;
+    s.ry = ring; s.beam = beam;
     s.inside = false;
   }
   let balloon = null;
@@ -1852,7 +1852,21 @@ void main(){
     const shot = cerPhoto(slotId);
     if (!shot || !boards.cerLit?.(slotId)) return null; // the lit card on the board now (crossed here if this board had not yet)
     const W = low ? 960 : CER_PHOTO.w, H = Math.round(W * CER_PHOTO.h / CER_PHOTO.w);
-    if (remotes.size) syncRemotes(0.5, performance.now() / 1000); // the people where the room last said they are
+    // The photo has no effect outside itself. The people the room has: each avatar put where the room last said it is (net.sample),
+    // for this render only (no smoothing step, no animation step, no dance step, no callback, nobody added or removed). Mine: at my
+    // place, shown and turned to the photo camera. Everything it touches is put back in the finally below.
+    const placed = [];
+    if (net?.peers) for (const [id, r] of remotes) {
+      const peer = net.peers.get(id), s = peer && net.sample(peer);
+      const x = s && fromNetUnits(s.x), z = s && fromNetUnits(s.y);
+      placed.push([r.av.root, r.av.root.position.clone()]);
+      if (Number.isFinite(x) && Number.isFinite(z)) r.av.root.position.set(x, groundHeight(x, z), z);
+    }
+    const mine = { p: me.root.position.clone(), vis: me.root.visible, yaw, hy: me.holder.rotation.y };
+    // Nothing that guides or rewards in the picture: the star shower's gems, beams and pads, the golden rings and their beams, the
+    // guide markers (waypoint, taxi pickup and drop-off), my board's beacon and the crown's beam.
+    const quiet = [...[...stars.values()].map((s) => s.g), ...STUNTS.flatMap((s) => [s.ry, s.beam]), ...markerList.map((m) => m.g), beaconGroup, crown].filter(Boolean);
+    const shown = quiet.map((o) => o.visible);
     me.root.position.copy(pos);
     if (!drive) {
       me.root.visible = true;
@@ -1865,6 +1879,7 @@ void main(){
     const out = document.createElement('canvas'); out.width = W; out.height = H;
     const g = out.getContext('2d'), heads = [];
     try {
+      for (const o of quiet) o.visible = false;
       for (const [av] of people) av.tag.visible = false; // the names are drawn on the picture instead, large enough to read
       camera.position.set(shot.cam.x, shot.cam.y, shot.cam.z);
       camera.fov = shot.fov; camera.aspect = W / H; camera.up.set(0, 1, 0);
@@ -1888,6 +1903,9 @@ void main(){
       }
     } finally {
       people.forEach(([av], i) => { av.tag.visible = tags[i]; });
+      quiet.forEach((o, i) => { o.visible = shown[i]; });
+      for (const [root, p] of placed) root.position.copy(p);
+      me.root.position.copy(mine.p); me.root.visible = mine.vis; yaw = mine.yaw; me.holder.rotation.y = mine.hy;
       resize();
       camera.position.copy(was.p); camera.quaternion.copy(was.q); camera.fov = was.fov; camera.aspect = was.aspect; camera.updateProjectionMatrix();
     }

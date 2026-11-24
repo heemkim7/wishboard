@@ -5,6 +5,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { CER, CER_TEXT, windowFor, cerPinMs } from '../giftrules.js';
+import { clock } from '../live.js'; // gift.js's own: the gate may set the shared offset (clock.kept); every page starts with none
 
 const src = (f) => fs.readFileSync(new URL('../' + f, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const KST = (s) => Date.parse(s + '+09:00');
@@ -65,7 +66,7 @@ function fakeDom({ search = '?gb=abcd1234&cer=1', at = S - 5 * 60000, host = 'st
   const walk = (n, out = []) => { if (n.nodeType === 1) { out.push(n); for (const k of n.kids) walk(k, out); } return out; };
   Object.assign(P, {
     doc, loc, settle,
-    done() { Date.now = real; for (const [k, d] of Object.entries(before)) { if (d) Object.defineProperty(globalThis, k, d); else delete globalThis[k]; } },
+    done() { Date.now = real; clock.off = 0; clock.kept = false; for (const [k, d] of Object.entries(before)) { if (d) Object.defineProperty(globalThis, k, d); else delete globalThis[k]; } },
     async load() { const m = await import('../gift.js?cer=' + (++LOADS)); await settle(); return m; },
     tick() { for (const f of ticks) f?.(); },
     /** Move the clock to ms after the start, ticking every 250 ms on the way (a visible tab). */
@@ -98,7 +99,7 @@ function fakeWorld(P, { slot = 'STREET_31', emote = [true], driving = false, wal
     playEmote: (id) => { const ok = W.emote.length ? W.emote.shift() : true; calls.push(['emote', id, ok]); return ok; },
     isDriving: () => W.driving, walking: () => W.walk,
     getPlayer: () => player || { x: 10, z: 20 },
-    giftSlot: () => (W.gone ? '' : slot),
+    giftSlot: () => (W.gone ? '' : W.at || slot), // W.at: the pin moved to another screen (ts3d/screens.js giftPlace)
     setGifts() {}, setInputEnabled() {},
   };
   return W;
@@ -110,10 +111,12 @@ async function plaza(o = {}) {
   P.layer = [];
   P.busy = false;
   P.down = false;
+  P.netdown = false;
+  P.built = []; // o.later: whenBuilt holds its callbacks here until the test runs them
   const { mountGift, cerGate } = await P.load();
   P.cerGate = cerGate;
-  const ui = { note: (t, k, fn, opts) => { P.notes.push({ t, k, fn, ms: opts?.ms }); return {}; }, busy: () => P.busy, layer: (el, close) => P.layer.push(el ? ['on', el.id] : ['off']) };
-  P.gift = mountGift({ world: P.world, ui, whenBuilt: (f) => f(), introDone() {}, budgetDown: () => P.down });
+  const ui = { note: (t, k, fn, opts) => { P.notes.push({ t, k, fn, ms: opts?.ms, key: opts?.key }); return {}; }, busy: () => P.busy, layer: (el, close) => P.layer.push(el ? ['on', el.id] : ['off']) };
+  P.gift = mountGift({ world: P.world, ui, whenBuilt: (f) => (o.later ? P.built.push(f) : f()), introDone() {}, budgetDown: () => P.down, netDown: () => P.netdown });
   P.base = P.ticks.filter(Boolean).length; // the intervals that were there before any ceremony (the 🎁 button's place)
   return P;
 }
@@ -466,8 +469,8 @@ describe('the entry waits for the ceremony gate (main.js, ui.js)', () => {
     const hold = enter.indexOf('await giftUi?.cerHold?.();'), join = enter.indexOf("await net.join('square', world.netState());");
     assert.ok(hold > 0 && join > hold, 'the gate before net.join');
   });
-  it('mountGift hears about budget hard from the room and the gate', () => {
-    assert.match(main, /giftUi = mountGift\(\{ world, ui, whenBuilt, introDone: \(\) => introDone\(\), budgetDown: \(\) => !!\(net\.budgetDown \|\| net\.gateDown\) \}\);/);
+  it('mountGift hears about budget hard (net.js budgetHard only) and, apart, about a connection that is down', () => {
+    assert.match(main, /giftUi = mountGift\(\{ world, ui, whenBuilt, introDone: \(\) => introDone\(\), budgetDown: \(\) => !!net\.budgetHard, netDown: \(\) => !!net\.gateDown \}\);/);
   });
   it('a ceremony link is a deep link: no welcome board, no intro (main.js DEEP_LINK reads ?gb=)', () => {
     const a = main.indexOf('const DEEP_LINK = (() => {'), deep = main.slice(a, main.indexOf('})();', a));
@@ -476,5 +479,139 @@ describe('the entry waits for the ceremony gate (main.js, ui.js)', () => {
   });
   it('ui.busy(): a sheet or a layer is open', () => {
     assert.match(src('ui.js'), /\n    busy: \(\) => sheets\.length > 0 \|\| !!ext,\n/);
+  });
+});
+
+// ---- the review's findings (2026-11-25) ------------------------------------------------------------------------------------------
+describe('review fixes: one clock, the network, a moved screen, repeats, the photo card', () => {
+  it('a connection that fails while waiting (net.js gateDown without budgetHard) keeps the visitor, with one keyed notice; budget hard still sends back', async () => {
+    const P = await plaza({ at: S - 120000 });
+    try {
+      P.gift.arrive(); await P.settle();
+      P.netdown = true; P.run(-60000);
+      assert.equal(P.replaced, null, 'not sent back for a socket or a gate poll that failed');
+      const n = P.notes.filter((x) => x.t === '광장 연결이 잠시 끊겼어요. 점등식은 이 기기에서 그대로 이어져요');
+      assert.equal(n.length, 1, 'said once'); assert.equal(n[0].key, 'cer-net'); assert.equal(n[0].fn, null, 'a plain notice');
+      P.run(CER.shot + 100);
+      assert.equal(of(P, 'capture').length, 1, 'the lighting and the photo happen on this device');
+    } finally { P.done(); }
+    const Q = await plaza({ at: S - 120000 });
+    try { Q.gift.arrive(); await Q.settle(); Q.netdown = true; Q.down = true; Q.run(-60000); assert.equal(Q.replaced, '/g/abcd1234?cer=busy'); } finally { Q.done(); }
+  });
+  it('one clock: a device 7 minutes slow whose boot read gave no offset counts and lights on the server\'s time (the gate\'s Date header)', async () => {
+    const at = S - 13 * 60000; // the device: 17:47; the server: 17:54
+    const P = await plaza({ at, date: new Date(S - 6 * 60000).toUTCString() }); // the boot read measured nothing (clock.off 0)
+    try {
+      P.gift.arrive(); await P.settle();
+      assert.equal(of(P, 'pin').length, 1);
+      P.run(-7 * 60000 - 5000); // the device says 17:52:55; the server 17:59:55
+      assert.equal(P.digit(), '5', 'the countdown is the server\'s');
+      assert.equal(P.hudHidden(), true);
+      P.run(-7 * 60000 + CER.shot);
+      assert.equal(of(P, 'capture').length, 1, 'the photo 8 s after the server\'s start');
+      assert.ok(Math.abs(clock.off - 7 * 60000) <= 1000, 'the plaza\'s offset is the gate\'s: ' + clock.off);
+      assert.equal(clock.kept, true, 'the boot read does not overwrite it');
+    } finally { P.done(); }
+  });
+  it('the gate\'s offset is used only when the plaza has none or a different one (more than 2 s)', async () => {
+    clock.off = 7 * 60000 - 1500; // the boot read, before the gate's (read at import)
+    let P = await plaza({ at: S - 13 * 60000, date: new Date(S - 6 * 60000).toUTCString() });
+    try { await P.gift.cerHold(); assert.equal(clock.off, 7 * 60000 - 1500, 'within 2 s: the boot read stays'); } finally { P.done(); }
+    clock.off = 60000;
+    P = await plaza({ at: S - 13 * 60000, date: new Date(S - 6 * 60000).toUTCString() });
+    try { await P.gift.cerHold(); assert.ok(Math.abs(clock.off - 7 * 60000) <= 1000, String(clock.off)); } finally { P.done(); }
+  });
+  it('a device more than 12 hours off is let in on the server\'s time (the page uses the server\'s too): no loop between the page and the plaza', async () => {
+    const at = S - 13 * 36e5 - 5 * 60000; // 13 h slow; the server says 17:55
+    const P = await plaza({ at, date: new Date(S - 5 * 60000).toUTCString() });
+    try {
+      let r = null; P.gift.cerHold().then((v) => { r = v; }); await P.settle(); // a send-back never resolves: do not wait on it
+      assert.equal(P.replaced, null, 'not sent back as early'); assert.equal(r?.go, true);
+      P.gift.arrive(); await P.settle();
+      P.run(-13 * 36e5 - 5000); assert.equal(P.digit(), '5');
+    } finally { P.done(); }
+  });
+  it('the ceremony follows its board to another screen (a holder lit the first one); with no screen left it ends with a notice and the HUD back', async () => {
+    const P = await plaza({ at: S - 60000 });
+    try {
+      P.gift.arrive(); await P.settle();
+      P.run(-20000);
+      P.world.at = 'STREET_33'; P.run(-19000);
+      assert.deepEqual(of(P, 'go').at(-1), ['go', 'STREET_33', true], 'the gather spot follows');
+      assert.deepEqual(of(P, 'prep').at(-1), ['prep', 'STREET_33'], 'the photo pose is worked out again');
+      assert.equal(P.notes.filter((n) => n.t === '🎆 점등식 전광판이 옆 화면으로 옮겨 갔어요').length, 1);
+      P.run(CER.shot + 100);
+      assert.deepEqual(of(P, 'pose').map((c) => c[1]), ['STREET_33']);
+      assert.deepEqual(of(P, 'capture').map((c) => c[2]), ['STREET_33'], 'the photo of the screen it moved to');
+      assert.ok(of(P, 'cheer').length > 0 && of(P, 'cheer').every((c) => c[1] === 'STREET_33'));
+    } finally { P.done(); }
+    const Q = await plaza({ at: S - 30000 });
+    try {
+      Q.gift.arrive(); await Q.settle(); Q.run(-5000); assert.equal(Q.hudHidden(), true);
+      Q.world.gone = true; Q.tick();
+      assert.equal(Q.hudHidden(), false); assert.equal(Q.digit(), ''); assert.equal(Q.ticks.filter(Boolean).length, Q.base, 'ended');
+      assert.ok(Q.notes.some((n) => n.t === '점등식 전광판을 보여 줄 화면이 없어서 점등식을 마쳤어요'));
+    } finally { Q.done(); }
+  });
+  it('a second 🎆 for the board whose ceremony is on changes nothing (no second pin, the photo still taken by itself)', async () => {
+    const P = await plaza({ at: S - 60000 });
+    try {
+      P.gift.arrive(); await P.settle(); P.run(-30000);
+      for (const f of P.winOn.message) f({ origin: P.loc.origin, data: { t: 'gift', act: 'cer', id: 'abcd1234' } });
+      await P.settle(); P.tick();
+      assert.equal(of(P, 'pin').length, 1);
+      P.run(CER.shot + 100);
+      assert.equal(of(P, 'capture').length, 1, 'still the one who waited'); assert.ok(P.card());
+    } finally { P.done(); }
+  });
+  it('the photo card: ✕ gives focus back; repeated 📸 taps take one photo; 받는 사람 페이지로 opens the page over the plaza and the card comes back', async () => {
+    const P = await plaza({ at: S - 30000 });
+    try {
+      const hud = P.doc.createElement('button'); P.doc.body.append(hud); hud.focus();
+      P.gift.arrive(); await P.settle(); P.run(9000);
+      assert.ok(P.card()); assert.equal(P.doc.activeElement?.id, 'kts-cer-card');
+      await P.press(P.btn(/^닫기$/, P.card()));
+      assert.equal(P.doc.activeElement, hud, 'focus back where it was');
+    } finally { P.done(); }
+    const L = await plaza({ at: S + 30000 });
+    try {
+      L.gift.arrive(); await L.settle(); L.run(40000);
+      const n = L.notes.find((x) => x.t === CER_TEXT.shotTake);
+      n.fn(); n.fn(); n.fn();
+      assert.equal(of(L, 'pose').length, 1, 'one pose');
+      await L.timers();
+      assert.equal(of(L, 'capture').length, 1, 'one photo');
+      n.fn(); assert.equal(of(L, 'pose').length, 2, 'a new tap after it is a new photo');
+    } finally { L.done(); }
+    const F = await plaza({ at: S - 30000 });
+    try {
+      F.gift.arrive(); await F.settle(); F.run(9000);
+      await F.press(F.btn(/^받는 사람 페이지로$/, F.card()));
+      assert.equal(F.card(), null, 'the card closes first (one layer)');
+      const walk = (n, out = []) => { if (n.nodeType === 1) { out.push(n); for (const k of n.kids) walk(k, out); } return out; };
+      const fr = walk(F.doc.body).find((x) => x.id === 'kts-gift-frame');
+      assert.ok(fr, 'the gift frame over the plaza'); assert.equal(walk(fr).find((x) => x.tag === 'iframe').src, '/g/abcd1234?in=1');
+      assert.equal(F.loc.went, undefined, 'the plaza tab stays');
+      for (const f of F.winOn.message) f({ origin: F.loc.origin, data: { t: 'gift', act: 'close' } });
+      assert.ok(F.card(), 'the photo is still there');
+    } finally { F.done(); }
+  });
+  it('a ceremony that only starts past its late window ends at once (its tick stops)', async () => {
+    const P = await plaza({ at: S + CER.late - 500, later: true });
+    try {
+      P.gift.arrive(); await P.settle();
+      P.at = S + CER.late + 500; for (const f of P.built.splice(0)) f();
+      assert.ok(of(P, 'pin').length === 1, 'it did start');
+      assert.equal(P.ticks.filter(Boolean).length, P.base);
+    } finally { P.done(); }
+  });
+  it('a ?gb= visit reads the plaza\'s clock (nowMs), not the device\'s', async () => {
+    const P = await plaza({ search: '', at: S - 3 * 60000, gift: board({ phase: 'live' }) });
+    try {
+      clock.off = 5 * 60000; // the device is 5 minutes slow: the board is up already
+      for (const f of P.winOn.message) f({ origin: P.loc.origin, data: { t: 'gift', act: 'go', id: 'abcd1234' } });
+      await P.settle();
+      assert.equal(of(P, 'pin')[0]?.[2], 60000, 'pinned: live by the server\'s time');
+    } finally { P.done(); }
   });
 });

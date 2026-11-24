@@ -140,7 +140,7 @@ class DOChan {
 export function rtPatch(sb, net) { if (!DO_MODE || !sb || sb.__do) return sb; const chans = new Set(), base = { POS: Net.POS_MS, FAR: Net.FAR_MS };
   const rt = { net, sb, ev(ch, g) { if (g.ok && ch.downSent) { ch.downSent = false; if (net) net.gateDown = false; } if (g.ok && net && ch.topic === net.topic) { net.hardClear?.(); if (net.parked) { net.parked = 0; net.emit('unpark'); } } /* back in a room after a park (any room: a full one bumps to the next) */ if (net && ch.topic === net.topic) { if (g.ok) net.emit('gate', { ok: true, live: g.live, cap: g.cap }); else { net.pos = g.pos; net.emit('gate', g); } } },
     cfg(m) { Net.POS_MS = m.lean ? base.POS * 2 : base.POS; Net.FAR_MS = m.lean ? base.FAR * 2 : base.FAR; Net.LEAN = !!m.lean; }, // LEAN: the DO send rule's gap and keepalive (Net.tick)
-    down(ch, budget) { if (net && (ch.topic === net.topic || !net.ch)) { net.gateDown = true; net.setStatus('offline'); net.emit('gate', { down: true }); if (budget) net.hardDown(); } },
+    down(ch, budget) { if (net && (ch.topic === net.topic || !net.ch)) { net.gateDown = true; net.setStatus('offline'); net.emit('gate', { down: true }); if (budget) { net.budgetHard = true; net.hardDown(); } } },
     parked() { if (net) net.parked ||= Date.now(); },
     away: () => document.hidden && hidAt > 0 && Date.now() - hidAt >= HIDE_MS - 2000 }; // a socket that would open now, out of sight that long, stays parked
   sb.channel = (t, c) => { const ch = new DOChan(rt, t, c); chans.add(ch); return ch; };
@@ -190,7 +190,7 @@ export class Net {
           if (now - this._gfail >= FAIL_MS && !this.gateDown && !document.hidden) { this.gateDown = true; this.emit('gate', { down: true }); } // sustained failure only
           await new Promise(res => setTimeout(res, this.gateDown ? DO_CAP : 5000)); continue; }
         if (r.stale) continue;
-        if (r.full) { this.gateDown = true; this._gate = null; this.emit('gate', { down: true, full: true }); this.hardDown(); return false; }
+        if (r.full) { this.gateDown = true; this._gate = null; if (!r.err) this.budgetHard = true; this.emit('gate', { down: true, full: true }); this.hardDown(); return false; } // err: the gate's own 503 (worker.js), not the budget
         if (r.ok) { this.admitted = true; this.gateDown = false; if (this.lobbyMe) this.lobby(this.lobbyMe.dong, this.lobbyMe.name, this.lobbyMe.shard); this.emit('gate', { ok: true, live: r.live, cap: r.cap, lean: !!r.lean }); clearInterval(this._hb); if (!DO_MODE) this._hb = setInterval(() => this.gateHeart(), Net.GATE_BEAT); return true; }
         this.pos = r.pos; this.emit('gate', { pos: r.pos, live: r.live, cap: r.cap, guard: r.guard }); await new Promise(res => setTimeout(res, Net.GATE_POLL)); } })(); }
   // Heartbeat while admitted. If the server no longer holds our slot (expired after sleep/network loss) we drop Realtime and re-queue instead of silently over-filling.
@@ -200,6 +200,8 @@ export class Net {
     try { const body = JSON.stringify({ p_cid: id }), u = SUPA_URL + '/rest/v1/rpc/gate_leave'; // keepalive so a tab close still frees the slot at once
       fetch(u, { method: 'POST', keepalive: true, headers: { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY, 'Content-Type': 'application/json' }, body }).catch(() => { }); } catch { } }
   goSolo() { this.solo = true; this.emit('gate', { solo: true }); }
+  // budgetHard: true only on a real budget signal (the room's 'down', /rt/gate's full without err), never for a socket or a gate poll that
+  // keeps failing (gateDown alone); hardClear (in a room again) clears it. The 점등식 sends a waiting visitor back only on it (gift.js).
   // Budget hard (the room said 'down', /rt/gate said full). The tab used to stay offline until reloaded, past the 00:00 UTC (09:00 KST) reset.
   // Now it tries again at the reset, spread over RESET_SPREAD. Still full in the hour after this clock's reset (the server's clock may be behind,
   // or the day was spent at once): again after 30 s, doubling to HARD_PROBE, ±20%. Any other time a visible tab also asks once per HARD_PROBE
@@ -213,7 +215,7 @@ export class Net {
     this._hardAt = 0; this.gateDown = false; this.admitted = false; this._gate = null; const want = this.room || this._want || 'square';
     this.leave(true).catch(() => { }).then(() => this.join(want, this.me)); }
   hardWake() { if (this.budgetDown && this._hardAt && Date.now() >= this._hardAt) this.hardTry(); }
-  hardClear() { this.budgetDown = 0; this.hardN = 0; this._hardAt = 0; clearTimeout(this._hardT); } // in the room again
+  hardClear() { this.budgetDown = 0; this.budgetHard = false; this.hardN = 0; this._hardAt = 0; clearTimeout(this._hardT); } // in the room again
   bumpShard() {
     const n = (this.shard || 1) + 1;
     if (n > 8) return false;

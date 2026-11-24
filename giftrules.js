@@ -352,6 +352,9 @@ export function giftView(g, now = Date.now()) {
     n: Number(g.n) || 0, v: Number(g.v) || 0, vid: g.vid ? { t: String(g.vid.t || ''), at: Number(g.vid.at) || 0 } : null,
     paper: open ? (Array.isArray(g.paper) ? g.paper : []).map((p) => ({ id: String(p.id), nick: String(p.nick || ''), txt: String(p.txt || '') })) : null,
     open: !!open, takes: paperTakes(g, now),
+    // fx: the board was made before its window began (a scheduled hour, not "지금"), from the stored making time; the view of a row
+    // without one (and an older cached view) has no fx, and cerStart then keeps its old rule.
+    ...(Number(g.at) > 0 ? { fx: Number(g.at) < Number(g.a) ? 1 : 0 } : {}),
   };
 }
 // The link preview words.
@@ -426,8 +429,8 @@ export const CER_TEXT = Object.freeze({
 const CER_BAND = 'WISH BOARD 가상 광장';
 
 // The fixed start in ms, or 0: a "지금" board (rounded to 10 minutes: a start hour only when made in the first 10 minutes after one, which
-// the owner's read tells apart by `at`, its making time; the public view cannot, and such a board is past its lit minutes before anyone
-// could gather), a hidden or gone board, a window that is not a start hour of the board's day. /rt/world's rows have no day: `a` decides.
+// the owner's read tells apart by `at`, its making time, and the public view by `fx` (giftView; an older cached view without it is taken
+// for a ceremony board, and in the first 2 minutes after the hour it would show the late arrival's button), a hidden or gone board, a window that is not a start hour of the board's day. /rt/world's rows have no day: `a` decides.
 export function cerStart(g) {
   if (!g || (g.st != null && g.st !== 'live') || g.phase === 'gone') return 0;
   const a = Number(g.a);
@@ -435,6 +438,7 @@ export function cerStart(g) {
   if (!GIFT.starts.includes(new Date(a + 9 * 36e5).getUTCHours())) return 0;
   if (g.day != null && g.day !== '' && kstDay(a) !== String(g.day)) return 0;
   if (g.at != null && Number(g.at) >= a) return 0; // made at or after its start: a "지금" board
+  if (g.fx === 0) return 0; // the public view says so (giftView fx: made at or after its start)
   return a;
 }
 const startOf = (x) => (typeof x === 'number' ? (Number.isFinite(x) && x > 0 ? x : 0) : cerStart(x));
