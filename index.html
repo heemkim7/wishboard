@@ -1151,9 +1151,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   #ui .nextgoal.task:hover { border-color: var(--line-strong); }
   #ui.reveal .liveboard, #ui.reveal .stay-quest, #ui.reveal .stay-balloon, #ui.reveal .tool-adv { animation: revealIn .8s ease-out both; }
   @keyframes revealIn { from { opacity: 0; } to { opacity: 1; } }
-  .waypill.nudge { animation: wayNudge .9s ease-out; }
-  @keyframes wayNudge { from { border-color: var(--info); } to { border-color: var(--line); } }
-  /* The tutorial waypoint pill would sit on the bake and dance panels in portrait; it hides while they are open (the proof bar already hides it). */
+  /* The waypoint pill would sit on the bake and dance panels in portrait; it hides while they are open (the proof bar already hides it). */
   #ui:has(.bake.show) .waypill, #ui:has(.rhythm.show) .waypill, #ui:has(.bake.show) .help, #ui:has(.rhythm.show) .help { display: none; }
   /* 오늘의 소원: the 🌠 tool (never folded behind ⋯), and its sheet. Buttons stay ≥ 40px tall on phones. */
   .tools .tool-wish { position: relative; }

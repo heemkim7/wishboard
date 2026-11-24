@@ -4,7 +4,7 @@ import { paintBillboard, paintNeonSign, THEMES, makeCanvas, chars, fontsReady, t
 import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, LANDMARKS } from './ts3d/layout.js?v=202611230850';
 import { BALANCE, PAY, chainBoost, floorOf, slotName, josa, STREET_N, SLOT_SOON, slotOpen, SHOP_KINDS, shopTiles, shopItem, isPrimeSlot } from './balance.js';
 import { createTeamUI } from './teamui.js?v=202611230850';
-import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, tutorialTap, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611230850';
+import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611230850';
 import { WISH, WISH_ERR, cleanWish, wishRejected, wishShareText } from './wish.js';
 import { botNick } from './league.js';
 import { backFields, returnGap } from './growth.js?v=202611230850';
@@ -132,10 +132,9 @@ export function createUI(root, hooks) {
   let wallet = { confirmed: 0, pending: 0, earned: 0 };
   let earnedSeen = 0;
   let plazaReady = false, starterToastShown = false;
-  // Newcomer focus mode (#ui.newbie): kts_grad is set once and never cleared. tutorialOn holds back the starter toast and the draw popup.
+  // Newcomer focus mode (#ui.newbie): kts_grad is set once and never cleared. tutorialOn / tutorialLine: the card's first step after the
+  // welcome board (main.js armFtue: hang a gift board for a friend), until the maker was opened from the card (ftue.js tutorialNext).
   let grad = !!recall('kts_grad', 0), newbieOn = null, newbieReady = false, tutorialOn = false, tutorialLine = '';
-  // tutorialWp: the last waypoint the tutorial set. tutorialBaked: bake pay done; tutorialWalk: walking to the free slot it pointed at.
-  let tutorialWp = null, tutorialBaked = false, tutorialWalk = false;
   // 오늘의 소원 as main.js last reported it (ui.setWish). wishSkipped: the sheet was closed without a wish this browser session.
   let wishView = { known: false, day: '', board: [], king: null, count: 0, mine: null, left: 0, given: [], top: [], recent: [], yesterday: [], focus: null };
   let wishSkipped = (() => { try { return sessionStorage.getItem('kts_wish_skip') === '1'; } catch { return false; } })();
@@ -145,7 +144,7 @@ export function createUI(root, hooks) {
   let people = 1, peopleCh = 1, statusKind = 'warn', statusText = '연결 중';
   let near = null, world = { billboards: [], plots: [] };
   let coolUntil = 0, baking = null, sheet = null, soundOn = recall('kts_sound', true);
-  let dance = null, driving = false, waypoint = null, rideLine = '', offerTold = 0;
+  let dance = null, driving = false, rideLine = '', offerTold = 0;
   // Movement is locked by owner (overlay.js): 'sheet', 'bake', 'dance', 'proof', 'city' (entered before the city is built).
   // It comes back only when no owner is left. A caller that names no owner shares the 'other' slot; nothing here uses it.
   const inputLock = createInputLock(typeof hooks.lockInput === 'function' ? hooks.lockInput.bind(hooks) : () => {});
@@ -588,8 +587,7 @@ export function createUI(root, hooks) {
 
   const needle = h('div', { class: 'needle' });
   // One bake = BAKE_FLIPS flips, one per BAKE_ROUND_MS (interact.js); the best flip is the session's result.
-  const BAKE_STOP = coarse ? '버튼을 눌러 뒤집으세요' : 'Space · Enter · 클릭으로 뒤집기';
-  const bakeHint = h('span', { class: 'hint', text: BAKE_STOP });
+  const bakeHint = h('span', { class: 'hint', text: coarse ? '버튼을 눌러 뒤집으세요' : 'Space · Enter · 클릭으로 뒤집기' });
   const bakeMarks = h('span', { class: 'tnum' });
   const bakeBtn = h('button', { class: 'btn gold stop', type: 'button', onclick: () => stopBake(), text: '지금 뒤집기!' });
   const bakeEl = h('div', { class: 'glass bake', role: 'dialog', 'aria-hidden': 'true', 'aria-label': '붕어빵 굽기' },
@@ -778,10 +776,11 @@ export function createUI(root, hooks) {
     }
   }
   // Newcomer card: the first of NEWCOMER_STEPS that returns { text, go } wins. Put a new step in front to take over the card.
-  // Order: today's wish (until posted, or the sheet was closed once) → tutorial line (until the first claim) → next goal.
+  // Order: the tutorial line (a gift board for a friend, after the welcome board; until the maker was opened from the card) → today's wish
+  // (until posted, or the sheet was closed once) → next goal.
   const NEWCOMER_STEPS = [
-    () => { const text = wishStep({ known: wishView.known, mine: !!wishView.mine, skipped: wishSkipped, busy: wishView.busy }); return text ? { text, go: () => openWish({ from: 'card' }) } : null; },
     () => (tutorialOn && tutorialLine ? { text: tutorialLine, go: tutorialGo } : null),
+    () => { const text = wishStep({ known: wishView.known, mine: !!wishView.mine, skipped: wishSkipped, busy: wishView.busy }); return text ? { text, go: () => openWish({ from: 'card' }) } : null; },
     () => ({ text: nextGoal().text.replace(/^다음 목표: /, ''), go: nextGoalGo }),
   ];
   function newcomerTask() { return firstStep(NEWCOMER_STEPS); }
@@ -789,22 +788,9 @@ export function createUI(root, hooks) {
     if (newbieOn) (newcomerTask()?.go || nextGoalGo)();
     else nextGoalGo();
   }
-  // The tutorial's own step: bake when at the cart, put back a waypoint the pill tap cleared, point at the pill, else the next goal.
-  function tutorialGo() {
-    const act = tutorialTap({ atCart: near?.kind === 'cart' && !baking && !sheet, waypoint, tutorialWp });
-    if (act === 'bake') { startBake(); return; }
-    if (act === 'waypoint') { hooks.setWaypoint?.(tutorialWp); return; }
-    if (act === 'goal') { nextGoalGo(); return; }
-    wayPill.classList.remove('nudge');
-    void wayPill.offsetWidth;
-    wayPill.classList.add('nudge');
-  }
-  function setTutorialWaypoint(p) {
-    tutorialWp = p && Number.isFinite(p.x) && Number.isFinite(p.z) ? { x: p.x, z: p.z } : null;
-    if (tutorialOn && tutorialBaked && tutorialWp) tutorialWalk = true;
-  }
+  // The tutorial's own step: the gift maker (the one the 🎁 button opens). main.js opens it, ends the step ('gift') and counts the tap.
+  function tutorialGo() { hooks.openGift?.(); }
   function setTutorial(ev) {
-    if (ev === 'bakePay') tutorialBaked = true;
     const on = tutorialNext(tutorialOn, ev);
     if (on === tutorialOn) return;
     tutorialOn = on;
@@ -812,8 +798,6 @@ export function createUI(root, hooks) {
       // A .nextline that still shows the tutorial text (copied there on graduation) goes with it.
       if (tutorialLine && nextLineEl.textContent === tutorialLine) setNextLine('');
       tutorialLine = '';
-      tutorialWp = null;
-      tutorialWalk = false;
     }
     renderGoal();
   }
@@ -1084,12 +1068,12 @@ export function createUI(root, hooks) {
 
   // ---------------------------------------------------------------- bake minigame
   // One bake is BAKE_FLIPS rounds of BAKE_ROUND_MS: one flip per round (a round with no flip burns), the best flip is the
-  // result. It pays nothing (WISH BOARD is not a game). { wait: true } (the tutorial) parks the needle until the first tap.
+  // result. It pays nothing (WISH BOARD is not a game). The rounds start when the panel opens.
   const MARK = { gold: '★', good: '●', miss: '✕' };
   function paintBakeMarks() {
     if (!baking) return;
     const marks = Array.from({ length: BAKE_FLIPS }, (_, i) => MARK[baking.flips[i]] || '○').join(' ');
-    bakeMarks.textContent = baking.live ? `${marks} · 초록에서 멈추면 바삭, 정중앙이면 황금 붕어빵` : `${marks} · 세 번 뒤집어요`;
+    bakeMarks.textContent = `${marks} · 초록에서 멈추면 바삭, 정중앙이면 황금 붕어빵`;
   }
   function bakeRound() {
     baking.held = false;
@@ -1098,36 +1082,23 @@ export function createUI(root, hooks) {
     baking.speed = 0.42 + Math.random() * 0.12 + baking.flips.length * 0.05;
     needle.style.opacity = '';
   }
-  function startBake(o = {}) {
+  function startBake() {
     if (baking || sheet) return false;
     if (near?.kind !== 'cart') { note('붕어빵 포차 앞으로 가까이 가세요', 'err'); return false; }
     const left = cooldownLeft();
     if (left > 0) { note(`붕어빵 틀이 식는 중… ${(left / 1000).toFixed(1)}초`); return false; }
-    baking = { flips: [], pos: 0.08, dir: 1, speed: 0.42, live: false, held: false, roundAt: 0, doneAt: 0 };
+    baking = { flips: [], pos: 0.08, dir: 1, speed: 0.42, held: false, roundAt: performance.now(), doneAt: 0 };
     bakeEl.classList.add('show');
     bakeEl.setAttribute('aria-hidden', 'false');
     hooks.lockInput(true, 'bake');
     renderPrompt();
     sfx.click();
-    if (o.wait) {
-      needle.style.left = `${baking.pos * 100}%`;
-      bakeHint.textContent = coarse ? '버튼을 누르면 바늘이 움직여요' : 'Space · Enter · 클릭으로 시작';
-      bakeBtn.textContent = '굽기 시작';
-      paintBakeMarks();
-    } else beginRounds();
+    bakeRound();
+    paintBakeMarks();
     return true;
   }
-  function beginRounds() {
-    if (!baking || baking.live) return;
-    baking.live = true;
-    baking.roundAt = performance.now();
-    bakeRound();
-    bakeHint.textContent = BAKE_STOP;
-    bakeBtn.textContent = '지금 뒤집기!';
-    paintBakeMarks();
-  }
   function flipBake(burnt) {
-    if (!baking?.live || baking.held || baking.doneAt) return;
+    if (!baking || baking.held || baking.doneAt) return;
     baking.held = true;
     const r = burnt ? 'miss' : bakeFlip(baking.pos);
     baking.flips.push(r);
@@ -1143,7 +1114,7 @@ export function createUI(root, hooks) {
   // frame(): needle, burnt rounds, next round, the end.
   function stepBake(now, dt) {
     const b = baking;
-    if (!b?.live) return;
+    if (!b) return;
     if (b.doneAt) { if (now >= b.doneAt) finishBakeRounds(); return; }
     if (now - b.roundAt >= BAKE_ROUND_MS) {
       if (!b.held) flipBake(true);
@@ -1175,14 +1146,11 @@ export function createUI(root, hooks) {
     if (result === 'miss') { sfx.miss(); showResult('MISS', '앗, 세 판 모두 타버렸어요…', true); note('다음 판', 'ok', () => startBake()); return; }
     if (result === 'gold') { sfx.crit(); showResult('PERFECT!', '황금 붕어빵'); }
     else { sfx.hit(); showResult('GOOD!', '바삭한 붕어빵'); }
-    hooks.finishBake?.(result);
   }
-  // The stop button, Space / Enter / E and a tap on the panel: start the rounds (tutorial) or flip this round.
-  // cancel (Escape, a refused session): close without a result.
+  // The stop button, Space / Enter / E and a tap on the panel flip this round. cancel (Escape): close without a result.
   function stopBake(cancel) {
     if (!baking) return;
     if (cancel) { closeBake(); return; }
-    if (!baking.live) { beginRounds(); return; }
     flipBake(false);
   }
   // ---------------------------------------------------------------- K-POP rhythm game
@@ -5910,13 +5878,7 @@ export function createUI(root, hooks) {
       else if (ev.type === 'done') { rideLine = ''; jobEl.classList.remove('talk'); sfx.cash(); jobTitle.textContent = '손님 찾는 중'; showSponsor(ev); }
       else if (ev.type === 'focus') showSponsor(ev);
     },
-    setWaypoint(wp) {
-      waypoint = wp || null;
-      wayPill.hidden = !waypoint;
-      // The walk to the free slot ends when that waypoint is reached or cleared.
-      if (!waypoint && tutorialWalk) { tutorialWalk = false; setTutorial('walkDone'); }
-    },
-    setTutorialWaypoint,
+    setWaypoint(wp) { wayPill.hidden = !wp; },
     setWallet(next, { bump = false, defer = false } = {}) {
       wallet = {
         confirmed: Math.max(0, Number(next.confirmed) || 0),
@@ -6002,15 +5964,12 @@ export function createUI(root, hooks) {
     },
     // { force: true }: post the subscription again even if this session already did (the actor changed: main.js becomeGuest).
     resendPush: (opts) => resendPush(opts),
-    openClaimStep,
     setNextLine,
     photoNews,
-    nextGoal,
     isNewbie: () => !!newbieOn,
     graduate,
     setTutorialLine,
     tutorial: setTutorial,
-    nearKind() { return near?.kind || ''; },
     setQuietBlock,
     noteAttend,
     noteServerAttend,

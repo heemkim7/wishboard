@@ -7,35 +7,41 @@ import { WISH, cleanWish } from '../wish.js';
 import { EVENT_NAMES } from '../plaza-account.js';
 import {
   WISH_STEP, wishStep, wishAutoOpen, wishBootLine, wishHeart, wishDraft, shareWish, firstStep, PUBLIC_MIN,
-  tutorialNext, tutorialTap, silentGrad, newcomerKnown, startFtue,
+  tutorialNext, silentGrad, newcomerKnown, WELCOME,
 } from '../ftue.js';
 
 const read = (f) => readFileSync(new URL('../' + f, import.meta.url), 'utf8');
 const DAY = '2026-11-20';
 
 describe('newcomer card order', () => {
-  // Same shape as ui.js NEWCOMER_STEPS: wish → tutorial line → next goal.
+  // Same shape as ui.js NEWCOMER_STEPS: tutorial line (a gift board for a friend, after the welcome board) → wish → next goal.
   const steps = (s) => [
-    () => { const text = wishStep(s); return text ? { text, k: 'wish' } : null; },
     () => (s.tutorialOn && s.tutorialLine ? { text: s.tutorialLine, k: 'tutorial' } : null),
+    () => { const text = wishStep(s); return text ? { text, k: 'wish' } : null; },
     () => ({ text: '다음 목표', k: 'goal' }),
   ];
-  it('asks for a wish first while the server says there is none', () => {
-    assert.deepEqual(firstStep(steps({ known: true, mine: false, skipped: false, tutorialOn: true, tutorialLine: '붕어빵 포차로 가 보세요' })), { text: WISH_STEP, k: 'wish' });
-    assert.equal(WISH_STEP, '오늘의 소원 한 줄 걸기 (무료)');
+  it('asks for the gift board first while that step is on, wish or no wish', () => {
+    assert.deepEqual(firstStep(steps({ known: true, mine: false, skipped: false, tutorialOn: true, tutorialLine: WELCOME.task })), { text: '🎁 친구 이름을 전광판에 걸어 보세요 (무료)', k: 'tutorial' });
+    assert.equal(firstStep(steps({ known: true, mine: true, tutorialOn: true, tutorialLine: WELCOME.task })).k, 'tutorial');
   });
-  it('yields to the tutorial once a wish is up, or after the sheet was closed once', () => {
-    assert.equal(firstStep(steps({ known: true, mine: true, tutorialOn: true, tutorialLine: 'T' })).k, 'tutorial');
-    assert.equal(firstStep(steps({ known: true, mine: false, skipped: true, tutorialOn: true, tutorialLine: 'T' })).k, 'tutorial');
+  it('then asks for a wish while the server says there is none and the sheet was not closed', () => {
+    // tutorialNext(true, 'gift') is false: the maker was opened from the card, the step is over.
+    const on = tutorialNext(true, 'gift');
+    assert.deepEqual(firstStep(steps({ known: true, mine: false, skipped: false, tutorialOn: on, tutorialLine: '' })), { text: WISH_STEP, k: 'wish' });
+    assert.equal(WISH_STEP, '오늘의 소원 한 줄 걸기 (무료)');
+    // No welcome this session (a second visit, a link): the wish is the first step, as before.
+    assert.equal(firstStep(steps({ known: true, mine: false, tutorialOn: false })).k, 'wish');
   });
   it('then the next goal; and never asks before the wish list answered', () => {
     assert.equal(firstStep(steps({ known: true, mine: true, tutorialOn: false })).k, 'goal');
+    assert.equal(firstStep(steps({ known: true, mine: false, skipped: true, tutorialOn: false })).k, 'goal');
     assert.equal(firstStep(steps({ known: false, mine: false, tutorialOn: false })).k, 'goal');
   });
-  it('ui.js puts the wish step at the front and sets the skip flag on close', () => {
+  it('ui.js puts the tutorial line in front of the wish step and sets the skip flag on close', () => {
     const ui = read('ui.js');
     const block = ui.slice(ui.indexOf('const NEWCOMER_STEPS = ['), ui.indexOf('function newcomerTask()'));
-    assert.ok(block.indexOf('wishStep(') > 0 && block.indexOf('wishStep(') < block.indexOf('tutorialOn && tutorialLine'));
+    assert.ok(block.indexOf('tutorialOn && tutorialLine') > 0 && block.indexOf('tutorialOn && tutorialLine') < block.indexOf('wishStep('));
+    assert.ok(block.indexOf('wishStep(') < block.indexOf('nextGoal()'));
     assert.match(ui, /sessionStorage\.setItem\('kts_wish_skip', '1'\)/);
   });
 });
@@ -55,9 +61,14 @@ describe('auto-open after the intro', () => {
     const main = read('main.js');
     const fn = main.slice(main.indexOf('async function afterIntro()'), main.indexOf('let crownSig'));
     assert.match(fn, /sessionStorage\.getItem\('kts_wish_skip'\) === '1'/);
-    assert.match(fn, /wishAutoOpen\(\{[^}]*skipped \}\)/);
+    assert.match(fn, /wishAutoOpen\(\{[^}]*skipped, welcomed: welcomeNow \}\)/);
   });
-  it('main.js holds the bake tutorial until that sheet closes', () => {
+  it('not in a session with a welcome board: the wish is the card\'s next step', () => {
+    assert.equal(wishAutoOpen({ newbie: true, known: true, mine: false, deep: false, welcomed: true }), false);
+    assert.equal(wishAutoOpen({ newbie: true, known: false, mine: false, deep: false, skipped: false, welcomed: true }), false);
+    assert.equal(wishAutoOpen({ newbie: true, known: true, mine: false, deep: false, welcomed: false }), true);
+  });
+  it('main.js holds armFtue until a wish sheet that opened on arrival closes', () => {
     const main = read('main.js');
     assert.match(main, /if \(ftueArmed \|\| !entered \|\| !world \|\| wishHold\) return;/);
     assert.match(main, /setTimeout\(\(\) => \{ introDone\(\); afterIntro\(\); \}, 3000\)/);
@@ -189,29 +200,19 @@ describe('wiring', () => {
 });
 
 describe('first-minute review fixes', () => {
-  it('tapping the tutorial line bakes at the cart, restores a cleared waypoint, pulses a live one, else the goal', () => {
-    assert.equal(tutorialTap({ atCart: true, waypoint: null, tutorialWp: { x: 1, z: 2 } }), 'bake');
-    assert.equal(tutorialTap({ atCart: false, waypoint: null, tutorialWp: { x: 1, z: 2 } }), 'waypoint');
-    assert.equal(tutorialTap({ atCart: false, waypoint: { x: 1, z: 2 }, tutorialWp: { x: 1, z: 2 } }), 'pulse');
-    assert.equal(tutorialTap({ atCart: false, waypoint: null, tutorialWp: null }), 'goal');
-  });
-  it('the at-cart line does not mention the E key on touch', () => {
-    const run = (touch) => {
-      const lines = [];
-      startFtue({ ui: { setNextLine: (t) => lines.push(t), startBake: () => {} }, world: { setWaypoint: () => {} }, touch }).onArrive();
-      return lines.at(-1);
-    };
-    assert.equal(run(true), '여기서 붕어빵을 구워 보세요');
-    assert.equal(run(false), '여기서 E를 눌러 붕어빵을 구우세요');
-  });
-  it('the tutorial stays on through bake pay and ends on claim, graduation, or the end of the walk', () => {
-    assert.equal(tutorialNext(true, 'bakePay'), true);
-    for (const ev of ['claim', 'grad', 'walkDone', 'skip']) assert.equal(tutorialNext(true, ev), false, ev);
+  it('tapping the tutorial line opens the gift maker through the hook; no bake, no waypoint, no pulse', () => {
     const ui = read('ui.js');
-    assert.match(ui, /if \(!waypoint && tutorialWalk\) \{ tutorialWalk = false; setTutorial\('walkDone'\); \}/);
+    assert.match(ui, /function tutorialGo\(\) \{ hooks\.openGift\?\.\(\); \}/);
+    assert.equal(/tutorialTap|tutorialWp|tutorialWalk|tutorialBaked|setTutorialWaypoint|classList\.add\('nudge'\)/.test(ui), false);
+    assert.equal(/nudge/.test(read('index.html')), false, 'the pulse rule went with it');
+  });
+  it('the step ends on the card\'s gift tap, a claim, graduation or a skip, and its line leaves the news line with it', () => {
+    for (const ev of ['gift', 'claim', 'grad', 'skip']) assert.equal(tutorialNext(true, ev), false, ev);
+    const ui = read('ui.js');
     assert.match(ui, /if \(tutorialLine && nextLineEl\.textContent === tutorialLine\) setNextLine\(''\);/);
     const main = read('main.js');
-    assert.ok(main.indexOf("ui.tutorial?.('bakePay');") < main.indexOf('ftueApi?.onBakePay();'));
+    const fn = main.slice(main.indexOf('function openGiftFromCard()'), main.indexOf('// ---- wallet'));
+    assert.ok(fn.indexOf('giftUi.open();') > 0 && fn.indexOf('giftUi.open();') < fn.indexOf("ui.tutorial?.('gift');"));
   });
   it('a claim ends the tutorial before graduating', () => {
     const main = read('main.js');

@@ -11,7 +11,6 @@ import {
   FRAME, frameDistance, boardRange, SPARK, sparkGlide, sparkDrop,
   CELEBRATE_GAP_MS, celebrationDue, faceAbove, PARTY, celebrationPlan, fanVelocity,
 } from '../camrig.js';
-import { walkArrival, startFtue } from '../ftue.js';
 
 const read = (p) => readFileSync(new URL('../' + p, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const near = (a, b, eps = 1e-9) => Math.abs(a - b) <= eps;
@@ -683,59 +682,12 @@ describe('deep link and lounge wiring', () => {
   });
 });
 
-describe('tutorial arrival at the free slot', () => {
-  const free = { id: 'STREET_11', x: 3, z: 4 };
-  it('opens only for the waypoint the tutorial set, and only while the slot is still free', () => {
-    assert.equal(walkArrival({ at: { x: 3, z: 4 }, free }), 'open');
-    assert.equal(walkArrival({ at: { x: 3, z: 4, driving: true }, free }), 'park');
-    assert.equal(walkArrival({ at: { x: 40, z: 4 }, free }), '');
-    assert.equal(walkArrival({ at: { x: 3, z: 4 }, free, taken: true }), '');
-    assert.equal(walkArrival({ at: { x: 3, z: 4 }, free, starterOk: false }), '');
-    assert.equal(walkArrival({ at: { x: 3, z: 4 }, free, busy: true }), '');
-    assert.equal(walkArrival({ at: { x: 3, z: 4 }, free: null }), '');
-    assert.equal(walkArrival({ at: null, free }), '');
-  });
-  const make = (over = {}) => {
-    const calls = [];
-    const api = startFtue({
-      ui: {
-        setNextLine: () => {},
-        openClaimStep: (n, model) => calls.push(['wizard', n, model.slot]),
-        note: (t) => calls.push(['note', t]),
-        isBusy: () => !!over.busy,
-        nextGoal: () => over.goal ?? null,
-      },
-      world: {
-        setWaypoint: (p) => calls.push(['wp', p]),
-        boardView: (id) => (over.taken ? { holder_id: 'guest:x' } : id === 'STREET_11' ? {} : { holder_id: 'x' }),
-        slotCard: (id) => (id === 'STREET_11' ? { x: 3, z: 4 } : null),
-      },
-    });
-    return { api, calls };
-  };
-  it('startFtue opens the claim wizard for that slot once', () => {
-    const { api, calls } = make();
-    assert.equal(api.onWaypoint({ x: 21, z: 118 }), ''); // the cart waypoint: not the free slot
-    api.onBakePay();
-    assert.equal(api.onWaypoint({ x: 99, z: 99 }), '');
-    assert.equal(api.onWaypoint({ x: 3, z: 4 }), 'open');
-    assert.deepEqual(calls.filter((c) => c[0] === 'wizard'), [['wizard', 1, 'STREET_11']]);
-    assert.equal(api.onWaypoint({ x: 3, z: 4 }), ''); // once
-  });
-  it('says to get out when reached in a taxi, and stays quiet when the screen is busy', () => {
-    const a = make();
-    a.api.onBakePay();
-    assert.equal(a.api.onWaypoint({ x: 3, z: 4, driving: true }), 'park');
-    assert.equal(a.calls.some((c) => c[0] === 'wizard'), false);
-    assert.equal(a.calls.some((c) => c[0] === 'note'), true);
-    const b = make({ busy: true });
-    b.api.onBakePay();
-    assert.equal(b.api.onWaypoint({ x: 3, z: 4 }), '');
-    assert.equal(b.calls.some((c) => c[0] === 'wizard'), false);
-  });
-  it('the world reports a reached waypoint and main passes it to the tutorial', () => {
+describe('a reached waypoint', () => {
+  // The bake tutorial opened the claim wizard at the free slot's waypoint; with it gone nothing waits for an arrival.
+  it('the guide goes out when the player is within 7 m, and nobody is told', () => {
     const w = read('timesSquare3d.js');
-    assert.match(w, /setWaypoint\(null\);\n\s+opts\.onInteract\?\.\('arrive', null, \{ x: at\.x, z: at\.z, driving: !!drive \}\);/);
-    assert.match(read('main.js'), /if \(kind === 'arrive'\) \{ ftueApi\?\.onWaypoint\?\.\(info\); return; \}/);
+    assert.match(w, /if \(waypoint && Math\.hypot\(pos\.x - waypoint\.x, pos\.z - waypoint\.z\) < 7\) setWaypoint\(null\);/);
+    assert.equal(w.includes("'arrive'"), false);
+    assert.equal(/'arrive'|ftueApi|onWaypoint\?\.\(info\)/.test(read('main.js')), false);
   });
 });

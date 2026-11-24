@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import * as ftue from '../ftue.js';
-import { ftueDue, playedEarlierDay, newcomer, graduation, GRAD_EARN, crowdFacts, PUBLIC_MIN, peopleTag, goalLine, startFtue, tutorialNext, firstStep, kstDay, newcomerKnown } from '../ftue.js';
+import { ftueDue, playedEarlierDay, newcomer, graduation, GRAD_EARN, crowdFacts, PUBLIC_MIN, peopleTag, tutorialNext, firstStep, kstDay, newcomerKnown } from '../ftue.js';
 
 const read = (f) => readFileSync(new URL('../' + f, import.meta.url), 'utf8');
 const DAY = '2026-11-20';
@@ -27,50 +27,20 @@ describe('tutorial start', () => {
   it('main.js decides from a snapshot taken before this session attends', () => {
     const main = read('main.js');
     assert.match(main, /const DAILY_BEFORE = /);
-    assert.match(main, /ftueDue\(recall\('kts_ftue'\), DAILY_BEFORE, kstDay\(\)\)/);
+    // The tutorial is the welcome board now (ftue.js welcomeDue = ftueDue and no deep link): one decision, in arrive().
+    assert.match(main, /welcomeNow = welcomeDue\(\{ flag: recall\('kts_ftue'\), before: DAILY_BEFORE, day: kstDay\(\), deep: DEEP_LINK \}\);/);
+    assert.equal(main.split('welcomeDue(').length - 1, 1, 'decided once');
     assert.ok(main.indexOf('const DAILY_BEFORE') < main.indexOf('const ui = createUI('));
   });
 });
 
-describe('tutorial last step', () => {
-  const run = (goal, taken) => {
-    const calls = [];
-    const api = startFtue({
-      ui: { setNextLine: (t) => calls.push(['line', t]), nextGoal: () => goal },
-      world: {
-        setWaypoint: (p) => calls.push(['wp', p]),
-        boardView: (id) => (taken.includes(id) ? { holder_id: 'x' } : {}),
-        slotCard: () => ({ x: 3, z: 4 }),
-      },
-    });
-    api.onBakePay();
-    return calls;
-  };
-  it('guides to a free starter slot when one is open', () => {
-    const calls = run({ free: true, slot: 'STREET_11', name: '무료 거리 칸', left: 0 }, ['STREET_8', 'STREET_9', 'STREET_10']);
-    assert.deepEqual(calls.at(-2), ['wp', { x: 3, z: 4 }]);
-    assert.deepEqual(calls.at(-1), ['line', '하늘색 기둥을 따라 무료 칸으로 가세요']);
-  });
-  it('names the cheapest slot and the points left when no starter slot is free', () => {
-    const all = ['STREET_8', 'STREET_9', 'STREET_10', 'STREET_11'];
-    const calls = run({ free: false, slot: 'PLOT_1', name: '분양 전광판', left: 140 }, all);
-    assert.deepEqual(calls.at(-2), ['wp', null]);
-    assert.equal(calls.at(-1)[1], '분양 전광판까지 140포인트 더 모으면 걸 수 있어요');
-    assert.equal(calls.some(([, t]) => typeof t === 'string' && t.includes('무료')), false);
-  });
-  it('does not promise a free slot when the starter was already used', () => {
-    const calls = run({ free: false, slot: 'PLOT_1', name: '분양 전광판', left: 0 }, []);
-    assert.deepEqual(calls.at(-2), ['wp', null]);
-    assert.equal(calls.at(-1)[1], '분양 전광판에 이름을 걸 수 있어요');
-  });
-  it('goalLine formats with thousands separators and falls back without a goal', () => {
-    assert.equal(goalLine({ name: '메인거리', left: 1200 }), '메인거리까지 1,200포인트 더 모으면 걸 수 있어요');
-    assert.equal(goalLine(null), '응원 포인트를 모아 전광판에 이름을 걸어 보세요');
-  });
-  it('ui exposes nextGoal with name and left', () => {
+describe('the card\'s last step', () => {
+  // The bake tutorial's last step (a walk to the free slot, ftue.js goalLine) is gone; the card ends on ui.js nextGoal as before.
+  it('ui.js nextGoal names the free street slot first, else the cheapest slot and the points left', () => {
     const ui = read('ui.js');
-    assert.match(ui, /nextGoal,/);
+    assert.match(ui, /if \(firstOpenStarter\(\)\) \{ slot = firstOpenStarter\(\); price = 0; name = '무료 거리 칸'; \}/);
     assert.match(ui, /return \{ text: left \?[^\n]*name, left/);
+    assert.match(ui, /\(\) => \(\{ text: nextGoal\(\)\.text\.replace\(\/\^다음 목표: \/, ''\), go: nextGoalGo \}\),/);
   });
 });
 
@@ -137,22 +107,25 @@ describe('newcomer mode', () => {
 });
 
 describe('tutorial lifecycle', () => {
-  it('starts, and ends on skip, the first claim, graduation, or the end of the walk to the free slot', () => {
+  it('starts, and ends on skip, the first claim, graduation, or the gift maker opened from the card', () => {
     assert.equal(tutorialNext(false, 'start'), true);
     assert.equal(tutorialNext(true, 'skip'), false);
-    assert.equal(tutorialNext(true, 'bakePay'), true);
+    assert.equal(tutorialNext(true, 'gift'), false);
     assert.equal(tutorialNext(true, 'grad'), false);
-    assert.equal(tutorialNext(true, 'walkDone'), false);
     assert.equal(tutorialNext(true, 'claim'), false);
     assert.equal(tutorialNext(true, 'other'), true);
     assert.equal(tutorialNext(false, 'other'), false);
+    // the bake tutorial's events are no events any more
+    assert.equal(tutorialNext(true, 'bakePay'), true);
+    assert.equal(tutorialNext(true, 'walkDone'), true);
   });
   it('main.js drives every edge and marks the starter used on a starter claim', () => {
     const main = read('main.js');
     assert.match(main, /ui\.tutorial\?\.\('start'\)/);
     assert.match(main, /ui\.tutorial\?\.\('skip'\)/);
-    assert.match(main, /ui\.tutorial\?\.\('bakePay'\)/);
+    assert.match(main, /ui\.tutorial\?\.\('gift'\)/);
     assert.match(main, /ui\.tutorial\?\.\('claim'\)/);
+    assert.equal(/ui\.tutorial\?\.\('(bakePay|walkDone)'\)/.test(main + read('ui.js')), false);
     assert.match(main, /if \(mode === 'starter'\) state\.starterUsed = true;/);
   });
   it('graduation marks the starter toast as shown, and newcomers never get it', () => {
@@ -174,11 +147,12 @@ describe('one instruction at a time', () => {
   });
   it('the card reads the tutorial line first, and the tutorial writes through its own hook', () => {
     const ui = read('ui.js');
-    assert.match(ui, /const NEWCOMER_STEPS = \[/);
+    assert.match(ui, /const NEWCOMER_STEPS = \[\r?\n\s+\(\) => \(tutorialOn && tutorialLine \? \{ text: tutorialLine, go: tutorialGo \} : null\),/);
     assert.match(ui, /function newcomerTask\(\)/);
     assert.match(ui, /setTutorialLine/);
     assert.ok(read('index.html').includes('#ui.newbie .nextline'));
-    assert.match(read('main.js'), /setNextLine: \(t\) => ui\.setTutorialLine\(t\)/);
+    // The line is the welcome's gift step; other setNextLine callers (news, notices) never write the card.
+    assert.match(read('main.js'), /ui\.setTutorialLine\?\.\(WELCOME\.task\);/);
   });
 });
 

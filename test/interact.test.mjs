@@ -132,7 +132,6 @@ describe('touch controls', () => {
     assert.match(read('ui.js'), /const coarse = isTouchUI\(\{ coarse: matchMedia\('\(pointer: coarse\)'\)\.matches, points: navigator\.maxTouchPoints \}\);/);
     const main = read('main.js');
     assert.match(main, /const TOUCH = isTouchUI\(\{ coarse: matchMedia\('\(pointer: coarse\)'\)\.matches, points: navigator\.maxTouchPoints \}\);/);
-    assert.match(main, /touch: TOUCH \}\);/);
     assert.equal(/E를 누르세요'/.test(main.replace("TOUCH ? '탑승 버튼을 누르세요' : 'E를 누르세요'", '')), false);
   });
   it('phone prompts do not name keys', () => {
@@ -158,22 +157,26 @@ describe('bake: three flips in one session', () => {
     assert.equal(BAKE_FLIPS, 3);
     assert.ok(total >= 7000 && total <= 8000, String(total));
   });
-  // The bake and the dance pay nothing: no session goes to the room, the page never waits for a PAY, and a finished bake only moves the tutorial.
-  it('no SESS and no coins: a finished bake moves the tutorial on, the dance only animates', () => {
+  // The bake and the dance pay nothing: no session goes to the room, the page never waits for a PAY, and a finished bake tells nobody
+  // (the bake tutorial it used to move on is gone: the newcomer's first step is the welcome board, test/welcome.test.mjs).
+  it('no SESS and no coins: a finished bake ends on the page, the dance only animates', () => {
     const main = read('main.js');
     assert.doesNotMatch(main, /sendSess|bakeWait|bakeEnding|BAKE_MISS|DANCE_MISS|beginBake|finishDance/);
-    assert.match(main, /  finishBake: \(\) => noteBakePay\(\),/);
+    assert.doesNotMatch(main, /finishBake|noteBakePay|bakeGuided/);
+    assert.match(main, /  bakeFlip: \(result\) => world\?\.bake\?\.\(result === 'gold'\),/);
     assert.match(main, /  danceStart: \(\) => world\?\.setDancing\(true\),/);
     assert.match(main, /  danceEnd: \(\) => world\?\.setDancing\(false\),/);
     assert.doesNotMatch(read('net.js'), /sendSess|t: 'SESS'/);
     assert.match(main, /const got = creditNow\(m\?\.amount, countsAsActivity\(m\?\.kind\)\);/);
   });
-  it('the tutorial opens the panel with the needle parked until the first tap', () => {
-    assert.match(read('ftue.js'), /ui\.startBake\?\.\(\{ wait: true \}\);/);
+  it('the rounds start when the panel opens: no parked needle (that was the tutorial\'s), and nothing goes to the room', () => {
+    assert.equal(/startBake/.test(read('ftue.js')), false);
     const ui = read('ui.js');
-    assert.match(ui, /if \(!baking\.live\) \{ beginRounds\(\); return; \}/);
-    // nothing goes to the room when the rounds start (no session)
-    assert.equal(/hooks\.beginBake|hooks\.bakeBusy|bakeChip/.test(ui), false);
+    assert.match(ui, /baking = \{ flips: \[\], pos: 0\.08, dir: 1, speed: 0\.42, held: false, roundAt: performance\.now\(\), doneAt: 0 \};/);
+    assert.equal(/baking\.live|beginRounds|굽기 시작|wait: true|바늘이 움직여요/.test(ui), false);
+    assert.match(ui, /function stopBake\(cancel\) \{\n\s+if \(!baking\) return;\n\s+if \(cancel\) \{ closeBake\(\); return; \}\n\s+flipBake\(false\);\n\s+\}/);
+    // nothing goes to the room when the rounds start or end (no session)
+    assert.equal(/hooks\.beginBake|hooks\.bakeBusy|bakeChip|hooks\.finishBake/.test(ui), false);
   });
 });
 

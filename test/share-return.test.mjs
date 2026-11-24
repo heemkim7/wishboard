@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import {
-  pushAsk, PUSH_BACKOFF, PUSH_WHY, awayRows, AWAY_MAX, inboxUnread, seenAdd, present, msgText, shareWish, wishBootLine, startFtue,
+  pushAsk, PUSH_BACKOFF, PUSH_WHY, awayRows, AWAY_MAX, inboxUnread, seenAdd, present, msgText, shareWish, wishBootLine,
 } from '../ftue.js';
 import { snapQuery, vipShareLink, dropParams, DEEP_KEYS, cardUrl } from '../share.js';
 import { resendPush, PUSH_DONE } from '../push.js';
@@ -292,20 +292,6 @@ describe('wish UI review fixes', () => {
     assert.equal(old.kind, 'deep');
     assert.equal(old.enter, '');
     assert.equal(wishBootLine({ deep: { ...deep, day: '' }, day: DAY }).enter, '입장해서 하트 보내기');
-  });
-  it('I5: with no walk after the bake pay, the tutorial ends right after the goal line', () => {
-    const calls = [];
-    startFtue({
-      ui: { setNextLine: (t) => calls.push(['line', t]), tutorial: (ev) => calls.push(['tut', ev]), nextGoal: () => ({ free: false, name: '메인거리', left: 20 }) },
-      world: { setWaypoint: () => {}, boardView: () => ({ holder_id: 'x' }), slotCard: () => null },
-    }).onBakePay();
-    assert.deepEqual(calls.slice(-2), [['line', '메인거리까지 20포인트 더 모으면 걸 수 있어요'], ['tut', 'walkDone']]);
-    const walk = [];
-    startFtue({
-      ui: { setNextLine: () => {}, tutorial: (ev) => walk.push(ev) },
-      world: { setWaypoint: () => {}, boardView: (id) => (id === 'STREET_11' ? {} : { holder_id: 'x' }), slotCard: (id) => (id === 'STREET_11' ? { x: 1, z: 2 } : null) },
-    }).onBakePay();
-    assert.deepEqual(walk, [], 'a walk still ends it later');
   });
   it('I1/M1/M2/M3: the wish GET has a timeout; loads share a promise only per id; misses are cached; a new day goes unknown', () => {
     const net = read('net.js');

@@ -122,7 +122,7 @@ export function newcomer({ grad, held } = {}) { return !grad && !(held > 0); }
 // net.id starts as a temporary client id; only guest:/user: ids say whose boards to count.
 export function newcomerKnown({ plazaReady, actor } = {}) { return !!(plazaReady && /^(guest|user):/.test(String(actor || ''))); }
 // Silent graduation at load: someone who played on an earlier day, or an old player whose kts_daily predates the `last` field.
-// A kts_ftue written today (armFtue writes it when the tutorial is not due) is not enough on its own.
+// A kts_ftue written today (armFtue writes it once the welcome board was shown, or was not due) is not enough on its own.
 export function silentGrad({ ftue, daily, day } = {}) {
   if (playedEarlierDay(daily, day)) return true;
   return !!ftue && !(daily && typeof daily === 'object' && daily.last);
@@ -133,20 +133,11 @@ export function graduation({ grad, held, earn } = {}) {
   return (Number(earn) || 0) >= GRAD_EARN ? 'earn' : '';
 }
 
-// Tutorial flag lifecycle: on at start; off when armFtue skips it, on the first claim, on graduation,
-// or when the walk to the free slot after the bake pay ends (waypoint reached or cleared). Bake pay itself keeps it on,
-// so the line that points at the free slot stays on the card.
+/** Tutorial flag (the card's gift step): on at 'start'; off at 'skip', 'claim', 'grad', 'gift' (the gift maker was opened from the card). */
 export function tutorialNext(on, ev) {
   if (ev === 'start') return true;
-  if (ev === 'skip' || ev === 'claim' || ev === 'grad' || ev === 'walkDone') return false;
+  if (ev === 'skip' || ev === 'claim' || ev === 'grad' || ev === 'gift') return false;
   return !!on;
-}
-// What tapping the tutorial line does: bake at the cart, put back a cleared tutorial waypoint, else the next goal.
-export function tutorialTap({ atCart, waypoint, tutorialWp } = {}) {
-  if (atCart) return 'bake';
-  if (tutorialWp && !waypoint) return 'waypoint';
-  if (waypoint) return 'pulse';
-  return 'goal';
 }
 
 // The newcomer card shows the first step that has something to say.
@@ -173,15 +164,9 @@ export function peopleTag(n) {
   return v > 1 ? `${v}명` : '';
 }
 
-export function goalLine(goal) {
-  if (!goal?.name) return '응원 포인트를 모아 전광판에 이름을 걸어 보세요';
-  const left = Math.max(0, Math.floor(Number(goal.left) || 0));
-  return left ? `${goal.name}까지 ${left.toLocaleString('ko-KR')}포인트 더 모으면 걸 수 있어요` : `${goal.name}에 이름을 걸 수 있어요`;
-}
-
 // ---- 오늘의 소원: decisions the wish screens make, kept here so they can be tested without a DOM.
-// The newcomer card asks for a wish first, but only once the server said there is none and the sheet was not closed this session.
-// Not while the server is saving its budget (busy): the sheet would have no form.
+// The newcomer card asks for a wish (after its gift step), but only once the server said there is none and the sheet was not closed this
+// session. Not while the server is saving its budget (busy): the sheet would have no form.
 export const WISH_STEP = '오늘의 소원 한 줄 걸기 (무료)';
 export function wishStep({ known, mine, skipped, busy } = {}) { return known && !mine && !skipped && !busy ? WISH_STEP : ''; }
 // Right after the arrival intro a newcomer gets the wish sheet once, unless a link brought them somewhere else, a wish is already up,
@@ -377,61 +362,6 @@ export function seenAdd(seen, ids, cap = 60) {
   return out.slice(-cap);
 }
 
-// The walk to the free slot ends at its waypoint. `at` is the waypoint the world says was reached (not one cleared by
-// hand), `free` the slot the tutorial pointed at. 'open' = open the claim wizard for it; 'park' = reached in a taxi,
-// so say to get out; '' = not this waypoint, the slot was taken meanwhile, the starter is used, or the screen is busy.
-export function walkArrival({ at, free, taken, starterOk = true, busy = false } = {}) {
-  if (!free?.id || !at || !Number.isFinite(at.x) || !Number.isFinite(at.z)) return '';
-  if (Math.hypot(at.x - free.x, at.z - free.z) > 1) return '';
-  if (taken || !starterOk || busy) return '';
-  return at.driving ? 'park' : 'open';
-}
-
-export function startFtue(ctx) {
-  const { ui, world, balance, touch } = ctx;
-  ui.setNextLine?.('붕어빵 포차로 가 보세요');
-  world.setWaypoint?.(balance ? { x: 21, z: 118 } : { x: 21, z: 118 });
-  let here = false;
-  let free = null; // the free slot the last waypoint points at: { id, x, z }
-  return {
-    // main.js passes the world's "waypoint reached" here. At the free slot the claim wizard opens by itself.
-    onWaypoint(at) {
-      const goal = ui.nextGoal?.() || null;
-      const act = walkArrival({ at, free, taken: !!world.boardView?.(free?.id)?.holder_id, starterOk: !goal || !!goal.free, busy: !!ui.isBusy?.() });
-      if (!act) return '';
-      const id = free.id;
-      free = null;
-      if (act === 'open') ui.openClaimStep?.(1, claimWizard(id));
-      else ui.note?.('무료 칸 앞이에요. 택시에서 내린 뒤 E를 누르면 걸 수 있어요', 'ok');
-      return act;
-    },
-    onArrive() {
-      if (here) return;
-      here = true;
-      ui.setNextLine?.(touch ? '여기서 붕어빵을 구워 보세요' : '여기서 E를 눌러 붕어빵을 구우세요');
-      // The panel opens with the needle parked; it starts moving (and the session starts) on the player's first tap.
-      ui.startBake?.({ wait: true });
-    },
-    onBakePay() {
-      // ui.nextGoal() knows whether this player may still take a starter slot; without it, trust the boards.
-      const goal = ui.nextGoal?.() || null;
-      const starterOk = !goal || goal.free;
-      const id = starterOk ? BALANCE.starterSlots.find((slot) => !world.boardView?.(slot)?.holder_id) : '';
-      const card = id ? world.slotCard?.(id) : null;
-      if (card && Number.isFinite(card.x) && Number.isFinite(card.z)) {
-        free = { id, x: card.x, z: card.z };
-        world.setWaypoint?.({ x: card.x, z: card.z });
-        ui.setNextLine?.('하늘색 기둥을 따라 무료 칸으로 가세요');
-        return;
-      }
-      world.setWaypoint?.(null);
-      ui.setNextLine?.(id ? '메인거리 무료 칸에 이름을 걸어 보세요' : goalLine(goal && !goal.free ? goal : null));
-      // No walk to wait for, so 'walkDone' would never come: end the tutorial here and let the card show the next goal.
-      ui.tutorial?.('walkDone');
-    },
-  };
-}
-
 if (typeof process !== 'undefined' && process.argv[1]?.includes('ftue.js')) {
   const day = '2026-11-20';
   if (ftueDue('', null, day) !== true) throw new Error('new');
@@ -439,15 +369,4 @@ if (typeof process !== 'undefined' && process.argv[1]?.includes('ftue.js')) {
   if (ftueDue('', { last: day, earn: 2 }, day) !== false) throw new Error('earn');
   if (ftueDue('', { last: day, streak: 1 }, day) !== true) throw new Error('streak today');
   if (ftueDue('', { last: '2026-11-19', streak: 1 }, day) !== false) throw new Error('earlier day');
-const calls = [];
-startFtue({
-  ui: { setNextLine: (t) => calls.push(t) },
-  world: {
-    setWaypoint: (p) => calls.push(p),
-    boardView: (id) => (id === 'STREET_11' ? {} : { holder_id: 'x' }),
-    slotCard: (id) => (id === 'STREET_11' ? { x: 3, z: 4 } : null),
-  },
-}).onBakePay();
-if (!calls.some((c) => c && c.x === 3 && c.z === 4)) throw new Error('wp');
-if (calls.at(-1) !== '하늘색 기둥을 따라 무료 칸으로 가세요') throw new Error('line');
 }

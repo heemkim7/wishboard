@@ -6,8 +6,10 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { register } from 'node:module';
+import { runInNewContext } from 'node:vm';
 import { paintGift, paintWelcome } from '../giftart.js';
 import { WELCOME } from '../ftue.js';
+import { cineCancels } from '../camrig.js';
 
 register(new URL('./nine-three-hook.mjs', import.meta.url)); // 'three' -> the vendored build, so ts3d/screens.js loads in Node
 const read = (f) => readFileSync(new URL('../' + f, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -237,10 +239,16 @@ describe('the welcome pin on the plaza screens', () => {
 // ---- the world and the entry flow: source checks (they need WebGL and a page) -------------------------------------------------------------
 describe('the world shows the welcome (timesSquare3d.js)', () => {
   const w = read('timesSquare3d.js');
-  it('pins near where the avatar stands and looks at it once; no camera on the phone tier, in a taxi or when told not to', () => {
+  it('pins near where the avatar stands and looks at it once; no camera on the phone tier, in a taxi, for a player already walking or when told not to', () => {
     const fn = body(w, '  function welcome(');
     assert.match(fn, /const slot = boards\.pinWelcome\(name, WELCOME\.ms, \{ x: pos\.x, z: pos\.z \}\);/);
-    assert.match(fn, /if \(slot && cam && !low && !drive && focusSlot\(slot, \{ hold: 3500, celebrate: false \}\)\) setTimeout\(\(\) => cheerAt\(slot\), 900\);/);
+    // The same rule that ends a scripted camera decides not to start one (camrig.js cineCancels): keys or the stick, unless input is locked.
+    assert.match(fn, /const walking = cineCancels\(\{ active: true, keys: keys\.size, joy: Math\.hypot\(joy\.x, joy\.y\), locked: !inputEnabled \}\);/);
+    assert.equal(cineCancels({ active: true, keys: 1, joy: 0, locked: false }), true);
+    assert.equal(cineCancels({ active: true, keys: 0, joy: 0.5, locked: false }), true);
+    assert.equal(cineCancels({ active: true, keys: 0, joy: 0, locked: false }), false);
+    assert.equal(cineCancels({ active: true, keys: 1, joy: 1, locked: true }), false, 'entered before the city is built: movement is locked, the camera may go');
+    assert.match(fn, /if \(slot && cam && !low && !drive && !walking && focusSlot\(slot, \{ hold: 3500, celebrate: false \}\)\) setTimeout\(\(\) => cheerAt\(slot\), 900\);/);
     assert.match(fn, /return slot;/);
     assert.match(w, /import \{ WELCOME \} from '\.\/ftue\.js\?v=[0-9a-z]+';/);
     assert.match(w, /\n    pinGift\(g, ms\) \{ return boards\.pinGift\(g, ms\); \},\n    welcome,\n/, 'in the world api, next to pinGift');
@@ -248,5 +256,153 @@ describe('the world shows the welcome (timesSquare3d.js)', () => {
   it('moves the camera only: the avatar is not teleported and nothing goes to the room', () => {
     const fn = body(w, '  function welcome(');
     assert.equal(/teleport|goToSlot|pos\.(set|copy|x =|z =)|me\.root\.position|net\b|\.send|raw\(/.test(fn), false);
+  });
+});
+
+// main.js from `let ftueArmed` to the wallet section, run with stubs: what armFtue and the card's gift step do, in order.
+function entry({ due = true, entered = true, hold = false, built = true, slot = 'STREET_3', busy = false, frame = false, gift = true } = {}) {
+  const main = read('main.js');
+  const a = main.indexOf('\nlet ftueArmed = false, welcomeNow = false;'), b = main.indexOf('\n// ---- wallet & 응원 포인트');
+  assert.ok(a > 0 && b > a);
+  const calls = [], timers = [];
+  const ctx = {
+    WELCOME,
+    state: { nick: '민지' },
+    keep: (k, v) => calls.push(['keep', k, v]),
+    trackEvent: (name, p) => calls.push(p ? ['event', name, p] : ['event', name]),
+    ui: {
+      isBusy: () => busy, note: (text, tone) => calls.push(['note', text, tone]),
+      setTutorialLine: (t) => calls.push(['line', t]), tutorial: (ev) => calls.push(['tutorial', ev]),
+    },
+    world: { welcome: (name, o) => { calls.push(['welcome', name, o]); return slot; } },
+    whenBuilt: (run, giveUp) => (built ? run() : giveUp()),
+    giftUi: gift ? { open: (...args) => calls.push(['maker', ...args]) } : null,
+    document: { getElementById: (id) => (frame && id === 'kts-gift-frame' ? {} : null) },
+    setTimeout: (fn) => { timers.push(fn); return 0; },
+  };
+  runInNewContext(`let entered = ${entered}, wishHold = ${hold};\n${main.slice(a, b)}\nwelcomeNow = ${due};\nthis.api = { armFtue, openGiftFromCard, release() { wishHold = false; armFtue(); } };`, ctx);
+  // The calls as plain data (objects made inside the context have its prototypes, which deepEqual would tell apart).
+  return { get calls() { return JSON.parse(JSON.stringify(calls)); }, api: ctx.api, run() { for (const fn of timers.splice(0)) fn(); } };
+}
+
+describe('the entry flow shows it once (main.js, run with stubs)', () => {
+  it('due: the card\'s gift step, then kts_ftue with the board, the toast and one event', () => {
+    const e = entry();
+    e.api.armFtue();
+    assert.deepEqual(e.calls, [['line', WELCOME.task], ['tutorial', 'start']], 'the board waits for the frame to end; kts_ftue for the board');
+    e.run();
+    assert.deepEqual(e.calls.slice(2), [
+      ['keep', 'kts_ftue', '1'],
+      ['welcome', '민지', { cam: true }],
+      ['note', '👋 민지님 이름이 전광판에 걸렸어요!', 'ok'],
+      ['event', 'welcome_show', { found: 1 }],
+    ]);
+    // Once: the intro's landing, a closing sheet and afterIntro all call armFtue.
+    e.api.armFtue(); e.run();
+    assert.equal(e.calls.length, 6);
+  });
+  it('no free screen, or a city that never came: the card still asks, no toast, the event says so', () => {
+    const none = entry({ slot: '' });
+    none.api.armFtue(); none.run();
+    assert.deepEqual(none.calls, [['line', WELCOME.task], ['tutorial', 'start'], ['keep', 'kts_ftue', '1'], ['welcome', '민지', { cam: true }], ['event', 'welcome_show', { found: 0 }]]);
+    const late = entry({ built: false });
+    late.api.armFtue(); late.run();
+    assert.deepEqual(late.calls, [['line', WELCOME.task], ['tutorial', 'start'], ['keep', 'kts_ftue', '1'], ['event', 'welcome_show', { found: 0 }]]);
+  });
+  it('a sheet or the gift maker over the plaza: the card goes up, the camera stays', () => {
+    for (const over of [{ busy: true }, { frame: true }]) {
+      const e = entry(over);
+      e.api.armFtue(); e.run();
+      assert.deepEqual(e.calls.find((c) => c[0] === 'welcome'), ['welcome', '민지', { cam: false }], JSON.stringify(over));
+    }
+  });
+  it('not due (a second visit, a link): kts_ftue and the skip, nothing shown, nothing counted', () => {
+    const e = entry({ due: false });
+    e.api.armFtue(); e.run();
+    assert.deepEqual(e.calls, [['keep', 'kts_ftue', '1'], ['tutorial', 'skip']]);
+  });
+  it('waits for the plaza to be entered and for a wish sheet a link opened to close', () => {
+    const out = entry({ entered: false });
+    out.api.armFtue(); out.run();
+    assert.deepEqual(out.calls, []);
+    const held = entry({ hold: true });
+    held.api.armFtue(); held.run();
+    assert.deepEqual(held.calls, []);
+    held.api.release(); held.run();
+    assert.equal(held.calls.at(-1)[1], 'welcome_show');
+  });
+  it('the card\'s gift step opens the maker the 🎁 button opens, ends the step and counts the tap', () => {
+    const e = entry();
+    e.api.openGiftFromCard();
+    assert.deepEqual(e.calls, [['maker'], ['tutorial', 'gift'], ['event', 'welcome_cta']]);
+    const none = entry({ gift: false });
+    none.api.openGiftFromCard();
+    assert.deepEqual(none.calls, [], 'no maker, so the step stays');
+  });
+});
+
+describe('the entry flow shows it once (main.js, ui.js: source checks)', () => {
+  const main = read('main.js'), ui = read('ui.js');
+  it('is decided once in arrive(), after a ?gb= link took the arrival, with every link that brings its own', () => {
+    const arrive = main.slice(main.indexOf('  arrive() {'), main.indexOf('  focusShot:'));
+    const gb = arrive.indexOf('if (giftUi?.arrive()) return;'), due = arrive.indexOf('welcomeNow = welcomeDue({ flag: recall(\'kts_ftue\'), before: DAILY_BEFORE, day: kstDay(), deep: DEEP_LINK });');
+    assert.ok(gb > 0 && due > gb, 'a gift link returns before the welcome is even asked');
+    assert.ok(due > arrive.indexOf('if (!FOCUS) {') && due < arrive.indexOf('if (WISH_ID) { landWish(); return; }'));
+    assert.match(arrive, /if \(welcomeNow\) \{ ui\.setTutorialLine\?\.\(WELCOME\.task\); ui\.tutorial\?\.\('start'\); \}/);
+    // DEEP_LINK, run with the page's address: read at load, before the keys are taken out of it.
+    const src = main.slice(main.indexOf('const DEEP_LINK = (() => {'), main.indexOf('let bootData = null'));
+    const deep = (search, FOCUS = '', WISH_ID = '') => runInNewContext(src + '\nDEEP_LINK;', { location: { search }, FOCUS, WISH_ID, GIFT_ID: /^[0-9a-z]{8}$/, URLSearchParams });
+    assert.equal(deep(''), false);
+    assert.equal(deep('?inv=abc123&q=high&season=xmas'), false, 'an invite, a quality or a preview key is no arrival of its own');
+    assert.equal(deep('?gb=abcd1234'), true);
+    assert.equal(deep('?gb=abcd1234&rec=1'), true);
+    assert.equal(deep('?team=abcd1234'), true);
+    assert.equal(deep('?tribe=abcd1234'), true);
+    assert.equal(deep('', 'STREET_3'), true);
+    assert.equal(deep('', '', 'abcdefghij'), true);
+    assert.equal(deep('?gb=nope&team=x'), false, 'a broken id opens nothing, so the welcome runs');
+    assert.match(main, /^import \{ GIFT_ID \} from '\.\/giftrules\.js';$/m);
+  });
+  it('the wish sheet stays closed after it, and the intro hands over as before', () => {
+    const fn = main.slice(main.indexOf('async function afterIntro()'), main.indexOf('let crownSig'));
+    assert.match(fn, /wishAutoOpen\(\{[^}]*deep: !!\(WISH_ID \|\| FOCUS\), skipped, welcomed: welcomeNow \}\)/);
+    assert.match(main, /setTimeout\(\(\) => \{ introDone\(\); afterIntro\(\); \}, 3000\)/);
+    assert.match(main, /onFocus: \(on\) => \{ if \(!on\) focusedSlot = ''; ui\.focusLock\(on\); if \(!on\) armFtue\(\); \},/);
+  });
+  it('sends nothing but the two events: no room message, no Worker call, no stored name', () => {
+    const fn = main.slice(main.indexOf('\nlet ftueArmed = false, welcomeNow = false;'), main.indexOf('\n// ---- wallet & 응원 포인트'));
+    assert.equal(/\bnet\.|fetch\(|\.raw\(|\.send\(|sendBonus|authed\(|localStorage|sessionStorage/.test(fn.replace(/^\s*\/\/.*$/gm, '')), false);
+    assert.deepEqual([...fn.matchAll(/trackEvent\('([a-z_]+)'/g)].map((m) => m[1]), ['welcome_show', 'welcome_cta']);
+    assert.deepEqual([...new Set([...fn.matchAll(/keep\('([a-z_]+)'/g)].map((m) => m[1]))], ['kts_ftue'], 'the one thing kept is the done flag, never the name');
+  });
+  it('the card: the gift step in front, a tap goes through the hook main.js wires to the maker', () => {
+    assert.match(ui, /function tutorialGo\(\) \{ hooks\.openGift\?\.\(\); \}/);
+    assert.match(main, /\n  openGift: \(\) => openGiftFromCard\(\),\n/);
+    assert.match(main, /giftUi = mountGift\(\{ world, ui, whenBuilt, introDone: \(\) => introDone\(\) \}\);/);
+  });
+  it('the bake guide is gone from the plaza: no line, no waypoint to the cart, no panel opening by itself, no walk to the free slot', () => {
+    for (const [name, src] of [['main.js', main], ['ui.js', ui], ['ftue.js', read('ftue.js')]]) {
+      for (const s of ['붕어빵 포차로 가 보세요', '무료 칸으로 가세요', '여기서 붕어빵을', '무료 칸 앞이에요']) assert.equal(src.includes(s), false, name + ': ' + s);
+      assert.equal(/startFtue|ftueApi|noteBakePay|bakeGuided|walkArrival|tutorialTap|setTutorialWaypoint|nearKind|\bfinishBake\b/.test(src), false, name);
+    }
+    assert.match(main, /\n  onProximity: \(near\) => ui\.setNear\(near\),\n/);
+    // The cart, the bake play and the 📢 claim wizard stay.
+    assert.match(main, /if \(kind === 'cart'\) \{\n\s+if \(info\?\.near === false\) ui\.note\('붕어빵 포차 앞으로 가까이 가면 구울 수 있어요'\);\n\s+else ui\.startBake\(\);/);
+    assert.match(ui, /function startBake\(\) \{/);
+    assert.match(ui, /function openClaimStep\(n, model\) \{/);
+  });
+  it('the two events are on the allow-list (the Worker and analytics.js read the same list)', async () => {
+    const { EVENT_NAMES } = await import('../plaza-account.js');
+    for (const n of ['welcome_show', 'welcome_cta']) assert.ok(EVENT_NAMES.includes(n), n);
+  });
+  it('every name the plaza imports from ftue.js and giftart.js is exported there (no test loads main.js or ui.js)', async () => {
+    const mods = { 'ftue.js': await import('../ftue.js'), 'giftart.js': await import('../giftart.js') };
+    let seen = 0;
+    for (const file of ['main.js', 'ui.js', 'timesSquare3d.js', 'ts3d/screens.js', 'gift.js', 'giftfilm.js', 'giftpage.js']) {
+      for (const m of read(file).matchAll(/^import \{([^}]+)\} from '(?:\.\.?\/)+(ftue|giftart)\.js(?:\?v=[0-9a-z]+)?';/gm)) {
+        for (const name of m[1].split(',').map((s) => s.trim().split(/\s+as\s+/)[0]).filter(Boolean)) { seen++; assert.ok(name in mods[m[2] + '.js'], `${file}: ${name} from ${m[2]}.js`); }
+      }
+    }
+    assert.ok(seen > 40, String(seen));
   });
 });

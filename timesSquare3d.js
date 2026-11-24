@@ -1532,10 +1532,12 @@ void main(){
   // The newcomer's own name alone on the free street screen nearest to where they stand, for WELCOME.ms, on this device only (boards.pinWelcome:
   // nothing is sent and nobody else sees it). The camera looks at that screen once, like focusSlot (a drag, a step or Escape ends it; it comes
   // back by itself after 3.5 s), with one round of the cheer fireworks around the face. The avatar stays where it is. cam: false, the phone
-  // tier (low) and a taxi leave the camera alone: the card is up and that is all. -> the slot, or '' when no screen is free.
+  // tier (low), a taxi and a player who is already walking (the first step would end the camera at once) leave the camera alone: the card
+  // is up and that is all. -> the slot, or '' when no screen is free.
   function welcome(name, { cam = true } = {}) {
     const slot = boards.pinWelcome(name, WELCOME.ms, { x: pos.x, z: pos.z });
-    if (slot && cam && !low && !drive && focusSlot(slot, { hold: 3500, celebrate: false })) setTimeout(() => cheerAt(slot), 900);
+    const walking = cineCancels({ active: true, keys: keys.size, joy: Math.hypot(joy.x, joy.y), locked: !inputEnabled });
+    if (slot && cam && !low && !drive && !walking && focusSlot(slot, { hold: 3500, celebrate: false })) setTimeout(() => cheerAt(slot), 900);
     return slot;
   }
   // ---- 선물 전광판 15-second show (gift.js records it) ---------------------------------------------------------------
@@ -2007,12 +2009,7 @@ void main(){
     if (key !== lastNearKey) { lastNearKey = key; near = nk; opts.onProximity?.(nk); }
     marks?.stall.setNear(near?.kind === 'cart', t);
     marks?.stage.setNear(near?.kind === 'stage', t);
-    if (waypoint && Math.hypot(pos.x - waypoint.x, pos.z - waypoint.z) < 7) {
-      // Reached (not cleared by hand): the tutorial opens the claim wizard from this.
-      const at = waypoint;
-      setWaypoint(null);
-      opts.onInteract?.('arrive', null, { x: at.x, z: at.z, driving: !!drive });
-    }
+    if (waypoint && Math.hypot(pos.x - waypoint.x, pos.z - waypoint.z) < 7) setWaypoint(null); // reached: the guide goes out
     for (const m of markerList) if (m.g.visible) { m.icon.position.y = 6 + Math.sin(t * 2.4) * 0.4; m.ring.scale.setScalar(1 + Math.sin(t * 3) * 0.06); }
 
     syncRemotes(dt, t);

@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { it } from 'node:test';
 import { BALANCE } from '../balance.js';
-import { claimWizard, lockCelebration, linesFault, LINES_ERR, airAsk, AIR_PRICE, photoVerdicts, PHOTO_WAIT_MS, welcomeDue, WELCOME, wishAutoOpen } from '../ftue.js';
+import * as ftue from '../ftue.js';
+import { claimWizard, lockCelebration, linesFault, LINES_ERR, airAsk, AIR_PRICE, photoVerdicts, PHOTO_WAIT_MS, welcomeDue, WELCOME, wishAutoOpen, tutorialNext } from '../ftue.js';
 
 // 환영 전광판: when the newcomer's welcome board runs (the painter and the pin are in test/welcome.test.mjs).
 it('the welcome board is due once: a newcomer who came without a link, never a second visit', () => {
@@ -21,6 +22,24 @@ it('the wish sheet does not open by itself in a session where the welcome ran', 
   assert.equal(wishAutoOpen({ newbie: true, welcomed: true }), false);
   assert.equal(wishAutoOpen({ newbie: true }), true);
   assert.equal(wishAutoOpen({ newbie: true, known: true, mine: false, welcomed: false }), true);
+});
+
+it('the gift step ends when the maker was opened from the card; nothing about the bake or a walk ends it', () => {
+  assert.equal(tutorialNext(false, 'start'), true);
+  assert.equal(tutorialNext(true, 'gift'), false);
+  for (const ev of ['skip', 'claim', 'grad']) assert.equal(tutorialNext(true, ev), false, ev);
+  assert.equal(tutorialNext(true, 'bakePay'), true);
+  assert.equal(tutorialNext(true, 'walkDone'), true, 'no longer an end');
+  assert.equal(tutorialNext(false, 'gift'), false);
+});
+
+it('the bake tutorial is gone: no guide to the cart, no walk to the free slot', () => {
+  for (const name of ['startFtue', 'walkArrival', 'tutorialTap', 'goalLine']) assert.equal(name in ftue, false, name);
+  const src = readFileSync(new URL('../ftue.js', import.meta.url), 'utf8');
+  for (const line of ['붕어빵 포차로', '붕어빵을 구워 보세요', '붕어빵을 구우세요', '무료 칸으로 가세요', '무료 칸에 이름을 걸어 보세요']) assert.equal(src.includes(line), false, line);
+  assert.equal(/startBake|setWaypoint|onBakePay|onArrive/.test(src), false);
+  // The file's own check still runs: `node ftue.js` throws when ftueDue is wrong.
+  assert.match(src, /if \(ftueDue\('', null, day\) !== true\) throw new Error\('new'\);/);
 });
 
 it('offers the four starter streets before a paid slot', () => {

@@ -18,7 +18,8 @@ import { authErrorText, cleanAddress, externalRoutes, oauthErrorText, oauthMessa
 import { invCode, inviteFrom, inviteView } from './invite.js';
 import { saveClip, dropParams } from './share.js?v=202611230850';
 import { mountGift } from './gift.js?v=202611230850';
-import { ftueDue, crowdFacts, kstDay, lockCelebration, startFtue, wishAutoOpen, wishBootLine, awayRows, inboxUnread, seenAdd, liveKey, liveSeenAdd } from './ftue.js?v=202611230850';
+import { GIFT_ID } from './giftrules.js';
+import { welcomeDue, WELCOME, crowdFacts, kstDay, lockCelebration, wishAutoOpen, wishBootLine, awayRows, inboxUnread, seenAdd, liveKey, liveSeenAdd } from './ftue.js?v=202611230850';
 import { photoVerdicts } from './ftue.js?v=202611230850';
 import { WISH, cleanWish } from './wish.js';
 import { seasonFor, seasonPreview } from './seasons.js';
@@ -69,6 +70,12 @@ const WISH_RE = /^[0-9a-z]{10}$/;
 const WISH_ID = (() => {
   const w = new URLSearchParams(location.search).get('wish') || '';
   return WISH_RE.test(w) ? w : '';
+})();
+// A link that brings its own arrival: ?focus= (a board), ?wish= (a wish), ?gb= (a gift board, gift.js), ?team= / ?tribe= (a team page,
+// openTeamLink). The newcomer's welcome board is not shown over it (ftue.js welcomeDue). Read once at load: the keys leave the address later.
+const DEEP_LINK = (() => {
+  const q = new URLSearchParams(location.search);
+  return !!(FOCUS || WISH_ID || GIFT_ID.test(q.get('gb') || '') || /^[a-z0-9]{8}$/.test(q.get('team') || q.get('tribe') || ''));
 })();
 let bootData = null, bootHere = null, deepWish = null, deepDay = '';
 // 계절 소원 테마 (seasons.js): the KST day's theme, with the ops calendar's theme for today (/rt/world `ops.theme`) laid over the built-in table.
@@ -274,9 +281,7 @@ const ui = createUI(document.getElementById('ui'), {
   forgetLogin: () => net.forgetLogin(), // asked again when the withdrawal sheet opens
   signOut: () => signOutAccount(),
   handoverFired: () => handoverFired(),
-  // 붕어빵 pays nothing (WISH BOARD is not a game): the round ends on the page, and the tutorial moves on from there.
-  finishBake: () => noteBakePay(),
-  // A good flip pops a fish from the stall.
+  // 붕어빵 pays nothing (WISH BOARD is not a game): the round ends on the page. A good flip pops a fish from the stall.
   bakeFlip: (result) => world?.bake?.(result === 'gold'),
   claim: (payload) => claim(payload),
   relight: (slot) => relight(slot),
@@ -374,9 +379,11 @@ const ui = createUI(document.getElementById('ui'), {
     if (giftUi?.arrive()) return; // ?gb=<id>: that gift board (and &rec=1: its 15-second video), instead of the intro
     if (!FOCUS) {
       world?.playIntro();
-      // Mark the tutorial before ui's enter handler runs maybeStarterToast, so the two do not compete.
-      if (ftueDue(recall('kts_ftue'), DAILY_BEFORE, kstDay())) ui.tutorial?.('start');
-      // A shared wish link opens that wish instead; a newcomer without a wish gets the wish sheet before the bake tutorial.
+      // 환영 전광판: decided once, here (armFtue shows it when the intro has landed). The card asks for the gift board from the first frame,
+      // and afterIntro leaves the wish sheet closed in a session with a welcome.
+      welcomeNow = welcomeDue({ flag: recall('kts_ftue'), before: DAILY_BEFORE, day: kstDay(), deep: DEEP_LINK });
+      if (welcomeNow) { ui.setTutorialLine?.(WELCOME.task); ui.tutorial?.('start'); }
+      // A shared wish link opens that wish instead; a newcomer with no welcome this session and no wish gets the wish sheet.
       if (WISH_ID) { landWish(); return; }
       setTimeout(() => { introDone(); afterIntro(); }, 3000);
       return;
@@ -406,6 +413,7 @@ const ui = createUI(document.getElementById('ui'), {
     ui.setPeople(1, ch);
   },
   slotCard: (id) => world?.slotCard(id),
+  openGift: () => openGiftFromCard(),
   frameBillboard: (slot) => { const ok = world?.frameBillboard?.(slot); if (ok) focusedSlot = String(slot || ''); return ok; },
   giftPop: (slot) => world?.giftPop?.(slot),
   shareBonus: async () => { const r = await humanCall('bonus', (ts) => net.shareBonus(ts)); refreshWallet(); return r; }, // a token first only while Turnstile is on
@@ -477,10 +485,9 @@ world = createTimesSquare(document.getElementById('view'), {
   onBillboard: (slotId) => ui.openAd(slotId),
   onPlot: (id) => ui.openPlot(id),
   onInteract(kind, id, info) {
-    // The world also reports through this hook: a notice line, a tap on a far board, a reached waypoint.
+    // The world also reports through this hook: a notice line, a tap on a far board.
     if (kind === 'notice') { ui.note(info?.text || '', info?.tone || '', info?.reload ? () => location.reload() : undefined); return; }
     if (kind === 'board-far') { ui.farBoard?.(id, info); return; }
-    if (kind === 'arrive') { ftueApi?.onWaypoint?.(info); return; }
     if (kind === 'cart') {
       if (info?.near === false) ui.note('붕어빵 포차 앞으로 가까이 가면 구울 수 있어요');
       else ui.startBake();
@@ -509,7 +516,7 @@ world = createTimesSquare(document.getElementById('view'), {
     else if (kind === 'lounge') setLounge(true);
     else if (kind === 'adscreen') ui.adCard?.({ ...(world?.adInfo?.(id) || {}), id }, openAdLink);
   },
-  onProximity: (near) => { ui.setNear(near); if (near?.kind === 'cart') ftueApi?.onArrive?.(); },
+  onProximity: (near) => ui.setNear(near),
   onStarTouch: (i) => takeStar(i),
   onHonk: () => ui.sfx.honk(),
   onHorn: () => ui.sfx.honk(),
@@ -552,29 +559,37 @@ window.G.ui = ui;
 errlogCtx({ tier: String(world?.quality || '') });
 giftUi = mountGift({ world, ui, whenBuilt, introDone: () => introDone() }); // 선물 전광판: the 🎁 button, ?gb= links, the 15-second video (gift.js)
 
-let ftueApi = null;
-let ftueArmed = false;
-let bakeGuided = false;
+// ---- 환영 전광판: the newcomer's first seconds --------------------------------------------------------------------------
+// Once the arrival intro has landed (or a sheet a link opened has closed), a newcomer who came without a link sees their own nickname on a free
+// street screen near them for WELCOME.ms (world.welcome: drawn on this device only, nothing goes to the room or the Worker but the two events
+// below), and the 지금 할 일 card asks them to hang a gift board for a friend. welcomeNow is decided once, in arrive(). kts_ftue is written when
+// the welcome is shown, or at once when it is not due, so it runs once per browser; without one the card has no gift step.
+let ftueArmed = false, welcomeNow = false;
+// Something lies over the plaza (a sheet, a mini-game, the gift maker's frame of gift.js): the welcome leaves the camera where it is.
+const welcomeCovered = () => !!(ui.isBusy?.() || document.getElementById('kts-gift-frame'));
 function armFtue() {
   if (ftueArmed || !entered || !world || wishHold) return;
   ftueArmed = true;
-  if (!ftueDue(recall('kts_ftue'), DAILY_BEFORE, kstDay())) { keep('kts_ftue', '1'); ui.tutorial?.('skip'); return; }
-  // Tutorial lines go to the newcomer card, so other setNextLine callers cannot overwrite them.
-  const tutorUi = Object.assign(Object.create(ui), { setNextLine: (t) => ui.setTutorialLine(t) });
-  // Tutorial waypoints are remembered by ui, so a tap on the card can put a cleared one back and the free-slot walk can end the tutorial.
-  const tutorWorld = { setWaypoint: (p) => { ui.setTutorialWaypoint?.(p); world?.setWaypoint?.(p); }, boardView: (id) => world?.boardView?.(id), slotCard: (id) => world?.slotCard?.(id) };
-  ftueApi = startFtue({ ui: tutorUi, world: tutorWorld, net, balance: BALANCE, touch: TOUCH });
+  if (!welcomeNow) { keep('kts_ftue', '1'); ui.tutorial?.('skip'); return; }
+  ui.setTutorialLine?.(WELCOME.task);
   ui.tutorial?.('start');
-  if (ui.nearKind?.() === 'cart') ftueApi.onArrive();
-  if (bakeGuided) ftueApi.onBakePay();
+  // The screens' places come from the built city: the board waits for it (whenBuilt), and is left out when the city does not come.
+  const show = (built) => {
+    keep('kts_ftue', '1');
+    const nick = state.nick, slot = (built && world.welcome?.(nick, { cam: !welcomeCovered() })) || '';
+    if (slot) ui.note('👋 ' + nick + '님 이름이 전광판에 걸렸어요!', 'ok');
+    trackEvent('welcome_show', { found: slot ? 1 : 0 }); // found: a screen took the card (the key is on analytics.js GA_PARAMS)
+  };
+  // After this frame: the intro's landing calls here from inside the world's own step.
+  setTimeout(() => whenBuilt(() => show(true), () => show(false)), 0);
 }
-function noteBakePay() {
-  if (bakeGuided) return;
-  bakeGuided = true;
-  keep('kts_ftue', '1');
-  // ui marks bake pay before the tutorial points at the free slot, so that waypoint counts as the last walk.
-  ui.tutorial?.('bakePay');
-  ftueApi?.onBakePay();
+// The card's gift step (ui.js tutorialGo): the maker the 🎁 button opens. Opening it from the card is what ends the step; the card then
+// asks for today's wish, then shows the next goal.
+function openGiftFromCard() {
+  if (!giftUi) return;
+  giftUi.open();
+  ui.tutorial?.('gift');
+  trackEvent('welcome_cta');
 }
 
 // ---- wallet & 응원 포인트 -----------------------------------------------------------------
@@ -1305,7 +1320,7 @@ function dropWishParam() {
     history.replaceState(history.state, '', u.pathname + u.search + u.hash);
   } catch { /* the link just stays */ }
 }
-// While the wish sheet that opened on arrival is up, the bake tutorial waits; it starts once that sheet closes.
+// While the wish sheet that opened on arrival is up, armFtue waits; it runs once that sheet closes.
 let wishHold = false, wishBoot = null;
 function releaseWish() { wishHold = false; armFtue(); }
 async function landWish() {
@@ -1322,7 +1337,8 @@ async function afterIntro() {
   // kts_wish_skip: the wish sheet was closed without a wish earlier this session; it does not open by itself again.
   let skipped = false;
   try { skipped = sessionStorage.getItem('kts_wish_skip') === '1'; } catch { /* private mode: the card still asks */ }
-  if (wishAutoOpen({ newbie: ui.isNewbie?.(), known: state.wish.known, mine: !!state.wish.mine, deep: !!(WISH_ID || FOCUS), skipped })) {
+  // welcomed: this session showed the welcome board, so the wish is the card's next step and its sheet stays closed.
+  if (wishAutoOpen({ newbie: ui.isNewbie?.(), known: state.wish.known, mine: !!state.wish.mine, deep: !!(WISH_ID || FOCUS), skipped, welcomed: welcomeNow })) {
     if (!state.wish.known) await Promise.race([wishBoot || loadWishes(), sleep(2500)]).catch(() => {});
     if (!state.wish.mine && !ui.isBusy?.() && ui.openWish) {
       wishHold = true;
