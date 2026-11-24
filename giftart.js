@@ -40,18 +40,18 @@ export function seeded(seed) { let h = 2166136261 >>> 0; for (const c of String(
 
 export function themeOf(g) { return GIFT_THEMES[g?.th] || GIFT_THEMES[OCCASIONS[g?.occ]?.th] || GIFT_THEMES.party; }
 
-// g: { id, to, from, occ, msg, th, n, lk }. opts: { strip: a bottom line, chip: false to drop the "선물 전광판" chip, brand: the card's
-// bottom bar, glow: 0..1 (the film pulses it) }.
-export function paintGift(canvas, g = {}, opts = {}) {
-  const c = canvas.getContext('2d'), W = canvas.width, H = canvas.height, k = Math.min(W / 1024, H / 576);
-  const T = themeOf(g), O = OCCASIONS[g.occ] || OCCASIONS.bday, rnd = seeded(g.id || g.to || 'gift');
+// The ground the plaza cards share (paintGift, paintWelcome): theme T's two colours across the face, a soft light from the top left (glow 0..1
+// brightens it), a darker edge, confetti from `seed` and the frame. The context is saved here and left with textBaseline 'middle': the painter
+// draws its words and restores it. -> { c, W, H, k, pad }
+function paintGround(canvas, T, seed, glowBy = 0) {
+  const c = canvas.getContext('2d'), W = canvas.width, H = canvas.height, k = Math.min(W / 1024, H / 576), rnd = seeded(seed);
   c.save();
   c.setTransform(1, 0, 0, 1, 0, 0);
   // Ground: the theme's two colours across the face, a soft light from the top left, a darker frame.
   const bg = c.createLinearGradient(0, 0, W, H); bg.addColorStop(0, T.a); bg.addColorStop(1, T.b);
   c.fillStyle = bg; c.fillRect(0, 0, W, H);
   const glow = c.createRadialGradient(W * 0.28, H * 0.18, 0, W * 0.28, H * 0.18, W * 0.75);
-  glow.addColorStop(0, `rgba(255,255,255,${0.22 + 0.12 * (opts.glow || 0)})`); glow.addColorStop(1, 'rgba(255,255,255,0)');
+  glow.addColorStop(0, `rgba(255,255,255,${0.22 + 0.12 * glowBy})`); glow.addColorStop(1, 'rgba(255,255,255,0)');
   c.fillStyle = glow; c.fillRect(0, 0, W, H);
   const vig = c.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, W * 0.72); vig.addColorStop(0, 'rgba(0,0,0,0)'); vig.addColorStop(1, 'rgba(0,0,0,0.38)');
   c.fillStyle = vig; c.fillRect(0, 0, W, H);
@@ -68,15 +68,24 @@ export function paintGift(canvas, g = {}, opts = {}) {
   const pad = 30 * k;
   rr(c, pad * 0.5, pad * 0.5, W - pad, H - pad, 26 * k); c.lineWidth = Math.max(2, 5 * k); c.strokeStyle = T.hi; c.globalAlpha = 0.8; c.stroke(); c.globalAlpha = 1;
   c.textBaseline = 'middle';
+  return { c, W, H, k, pad };
+}
+// A pill in a top corner: its left edge at x, or its right edge when `right`.
+function paintChip(c, k, text, x, y, right, bgc, ink) {
+  c.font = `800 ${Math.round(26 * k)}px ${GIFT_SANS}`;
+  const w = c.measureText(text).width + 34 * k, h = 46 * k, x0 = right ? x - w : x;
+  rr(c, x0, y, w, h, h / 2); c.fillStyle = bgc; c.fill();
+  c.fillStyle = ink; c.textAlign = 'center'; c.fillText(text, x0 + w / 2, y + h / 2 + 1);
+}
+
+// g: { id, to, from, occ, msg, th, n, lk }. opts: { strip: a bottom line, chip: false to drop the "선물 전광판" chip, brand: the card's
+// bottom bar, glow: 0..1 (the film pulses it) }.
+export function paintGift(canvas, g = {}, opts = {}) {
+  const T = themeOf(g), O = OCCASIONS[g.occ] || OCCASIONS.bday;
+  const { c, W, H, k, pad } = paintGround(canvas, T, g.id || g.to || 'gift', opts.glow || 0);
   // Chips: "🎁 선물 전광판" left, the day's words right.
-  const chip = (text, x, y, right, bgc, ink) => {
-    c.font = `800 ${Math.round(26 * k)}px ${GIFT_SANS}`;
-    const w = c.measureText(text).width + 34 * k, h = 46 * k, x0 = right ? x - w : x;
-    rr(c, x0, y, w, h, h / 2); c.fillStyle = bgc; c.fill();
-    c.fillStyle = ink; c.textAlign = 'center'; c.fillText(text, x0 + w / 2, y + h / 2 + 1);
-  };
-  if (opts.chip !== false) chip('🎁 선물 전광판', pad * 1.3, pad * 1.25, false, 'rgba(8,6,28,0.55)', '#ffffff');
-  chip(O.emoji + ' ' + O.head, W - pad * 1.3, pad * 1.25, true, T.hi, T.deep);
+  if (opts.chip !== false) paintChip(c, k, '🎁 선물 전광판', pad * 1.3, pad * 1.25, false, 'rgba(8,6,28,0.55)', '#ffffff');
+  paintChip(c, k, O.emoji + ' ' + O.head, W - pad * 1.3, pad * 1.25, true, T.hi, T.deep);
   // To. name: the biggest line. Then the message (two lines at most), then From.
   const to = 'To. ' + (String(g.to || '').trim() || '당신');
   c.textAlign = 'center';
@@ -107,6 +116,24 @@ export function paintGift(canvas, g = {}, opts = {}) {
     c.fillStyle = '#ffe7a8'; c.textAlign = 'left'; c.font = `800 ${Math.round(bh * 0.4)}px ${GIFT_SANS}`;
     c.fillText('WISH BOARD · 뉴욕 타임스퀘어 가상 광장', bh * 0.5, H - bh / 2);
   }
+  c.restore();
+}
+
+// 환영 전광판 (ts3d/screens.js pinWelcome): the newcomer's own name on a plaza screen, drawn on their device only. name is cut to 12 code
+// points here; line is the fixed words under it (ftue.js WELCOME.line). The gift board's ground, frame and fonts, in the 밤하늘 theme.
+export function paintWelcome(canvas, { name, line } = {}) {
+  const T = GIFT_THEMES.night, who = arr(name).slice(0, 12).join('').trim();
+  const { c, W, H, k, pad } = paintGround(canvas, T, who || 'welcome');
+  paintChip(c, k, '👋 환영해요', pad * 1.3, pad * 1.25, false, 'rgba(8,6,28,0.55)', '#ffffff');
+  paintChip(c, k, 'WISH BOARD', W - pad * 1.3, pad * 1.25, true, T.hi, T.deep);
+  const big = who ? who + ' 님' : '환영해요';
+  c.textAlign = 'center';
+  const ts = fitSize(c, big, W - pad * 4, 118 * k, 46 * k, 900);
+  c.font = `900 ${ts}px ${GIFT_SANS}`;
+  c.lineWidth = Math.max(3, ts * 0.09); c.strokeStyle = 'rgba(10,4,30,0.35)'; c.strokeText(big, W / 2, H * 0.43);
+  c.fillStyle = T.hi; c.fillText(big, W / 2, H * 0.43);
+  const sub = String(line ?? '').trim();
+  if (sub) { c.font = `800 ${fitSize(c, sub, W - pad * 4, 50 * k, 26 * k)}px ${GIFT_SANS}`; c.fillStyle = T.ink; c.fillText(sub, W / 2, H * 0.65); }
   c.restore();
 }
 
