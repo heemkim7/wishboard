@@ -562,8 +562,9 @@ giftUi = mountGift({ world, ui, whenBuilt, introDone: () => introDone() }); // �
 // ---- 환영 전광판: the newcomer's first seconds --------------------------------------------------------------------------
 // Once the arrival intro has landed (or a sheet a link opened has closed), a newcomer who came without a link sees their own nickname on a free
 // street screen near them for WELCOME.ms (world.welcome: drawn on this device only, nothing goes to the room or the Worker but the two events
-// below), and the 지금 할 일 card asks them to hang a gift board for a friend. welcomeNow is decided once, in arrive(). kts_ftue is written when
-// the welcome is shown, or at once when it is not due, so it runs once per browser; without one the card has no gift step.
+// below), and the 지금 할 일 card asks them to hang a gift board for a friend. welcomeNow is decided once, in arrive(), which also puts the gift
+// step on the card (not here: someone who already took that step in the first seconds is not asked again). kts_ftue is written when the
+// welcome is shown, or at once when it is not due, so it runs once per browser; without one the card has no gift step.
 let ftueArmed = false, welcomeNow = false;
 // Something lies over the plaza (a sheet, a mini-game, the gift maker's frame of gift.js): the welcome leaves the camera where it is.
 const welcomeCovered = () => !!(ui.isBusy?.() || document.getElementById('kts-gift-frame'));
@@ -571,8 +572,6 @@ function armFtue() {
   if (ftueArmed || !entered || !world || wishHold) return;
   ftueArmed = true;
   if (!welcomeNow) { keep('kts_ftue', '1'); ui.tutorial?.('skip'); return; }
-  ui.setTutorialLine?.(WELCOME.task);
-  ui.tutorial?.('start');
   // The screens' places come from the built city: the board waits for it (whenBuilt), and is left out when the city does not come.
   const show = (built) => {
     keep('kts_ftue', '1');

@@ -286,28 +286,30 @@ function entry({ due = true, entered = true, hold = false, built = true, slot = 
 }
 
 describe('the entry flow shows it once (main.js, run with stubs)', () => {
-  it('due: the card\'s gift step, then kts_ftue with the board, the toast and one event', () => {
+  it('due: after the frame, kts_ftue with the board, the toast and one event; the card is not touched again', () => {
     const e = entry();
     e.api.armFtue();
-    assert.deepEqual(e.calls, [['line', WELCOME.task], ['tutorial', 'start']], 'the board waits for the frame to end; kts_ftue for the board');
+    assert.deepEqual(e.calls, [], 'the board waits for the frame to end; kts_ftue waits for the board');
     e.run();
-    assert.deepEqual(e.calls.slice(2), [
+    assert.deepEqual(e.calls, [
       ['keep', 'kts_ftue', '1'],
       ['welcome', '민지', { cam: true }],
       ['note', '👋 민지님 이름이 전광판에 걸렸어요!', 'ok'],
       ['event', 'welcome_show', { found: 1 }],
     ]);
+    // arrive() put the gift step on the card; armFtue never starts it again (the maker may already have been opened from it).
+    assert.equal(e.calls.some((c) => c[0] === 'line' || c[0] === 'tutorial'), false);
     // Once: the intro's landing, a closing sheet and afterIntro all call armFtue.
     e.api.armFtue(); e.run();
-    assert.equal(e.calls.length, 6);
+    assert.equal(e.calls.length, 4);
   });
-  it('no free screen, or a city that never came: the card still asks, no toast, the event says so', () => {
+  it('no free screen, or a city that never came: no toast, and the event says so', () => {
     const none = entry({ slot: '' });
     none.api.armFtue(); none.run();
-    assert.deepEqual(none.calls, [['line', WELCOME.task], ['tutorial', 'start'], ['keep', 'kts_ftue', '1'], ['welcome', '민지', { cam: true }], ['event', 'welcome_show', { found: 0 }]]);
+    assert.deepEqual(none.calls, [['keep', 'kts_ftue', '1'], ['welcome', '민지', { cam: true }], ['event', 'welcome_show', { found: 0 }]]);
     const late = entry({ built: false });
     late.api.armFtue(); late.run();
-    assert.deepEqual(late.calls, [['line', WELCOME.task], ['tutorial', 'start'], ['keep', 'kts_ftue', '1'], ['event', 'welcome_show', { found: 0 }]]);
+    assert.deepEqual(late.calls, [['keep', 'kts_ftue', '1'], ['event', 'welcome_show', { found: 0 }]]);
   });
   it('a sheet or the gift maker over the plaza: the card goes up, the camera stays', () => {
     for (const over of [{ busy: true }, { frame: true }]) {
