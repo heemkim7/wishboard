@@ -315,7 +315,8 @@ describe('the floating stack: the hint, a far-board card, 홈 화면 추가, a b
     assert.match(s, /flex-direction: column; align-items: flex-start;/);
     assert.equal(px(s, 'left'), 10);
     assert.match(rule(PHONE, 'html.touch .toasts > *'), /align-self: flex-start; margin-left: 0; max-width: 100%; translate: none;/);
-    assert.match(rule(PHONE, 'html.touch .toasts > .toast:not(.hit):has(~ .toast), html.touch .toasts > .toast.hit:has(~ .toast.hit)'), /display: none;/); // only the newest shows (a tappable one wins over plain ones: test/ux-review.test.mjs)
+    assert.match(rule(PHONE, 'html.touch .toasts > .toast:not(.hit):has(~ .toast:not(.hit)), html.touch .toasts > .toast.hit:has(~ .toast.hit)'), /display: none;/); // the newest plain and the newest tappable one (test/ux-review.test.mjs)
+    assert.equal(css.includes('html.touch .toasts:has(> .toast.hit) > .toast:not(.hit)'), false); // a tappable one no longer hides every plain one
     assert.match(rule(PHONE, 'html.touch .toast'), /text-align: left;/);
     // ui.js keeps the left column's bottom edge on the root element: the toasts live in <body>, not in #ui
     assert.match(ui, /document\.documentElement\.style\.setProperty\('--hudl-b', Math\.round\(col\.offsetTop \+ col\.offsetHeight\) \+ 'px'\)/);

@@ -1429,11 +1429,13 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   @media (orientation: portrait) and (max-width: 599px), (orientation: landscape) and (max-height: 520px) {
     html.touch .toasts { top: var(--stack-top, 182px); bottom: auto; left: calc(10px + var(--safe-l)); right: calc(10px + var(--safe-r)); flex-direction: column; align-items: flex-start; }
     html.touch .toasts > * { align-self: flex-start; margin-left: 0; max-width: 100%; translate: none; }
-    /* One notice at a time: the newest. A tappable one (.hit: a retry, 다시 로그인, a share) is the exception: while one
-       lives it is the one shown, over any plain notice that came after it (those are simply not seen), and of several
-       tappable ones the newest shows. A plain notice used to hide it for the rest of its life. */
-    html.touch .toasts > .toast:not(.hit):has(~ .toast), html.touch .toasts > .toast.hit:has(~ .toast.hit) { display: none; }
-    html.touch .toasts:has(> .toast.hit) > .toast:not(.hit) { display: none; }
+    /* At most two notices: the newest plain one and the newest tappable one (.hit: a retry, 다시 로그인, a share, 한 곡 더).
+       A plain notice is hidden only by a newer plain one, a tappable one only by a newer tappable one, so an error or
+       "한 번 더 누르면 나가요" shows while a tappable notice is up, and a tappable one is not lost under a plain one. */
+    html.touch .toasts > .toast:not(.hit):has(~ .toast:not(.hit)), html.touch .toasts > .toast.hit:has(~ .toast.hit) { display: none; }
+    /* With both up the tappable one is the upper row and the plain one under it (it takes no touches, so on a short phone
+       on its side, where it comes nearest the stick, a thumb on the stick's edge still reaches the stick). */
+    html.touch .toasts > .toast:not(.hit) { order: 1; }
     html.touch .toast { text-align: left; }
     html.touch .toasts > :is(.sponsor, .a2hs) { width: min(420px, 100%); }
     html.touch body.has-proof .toasts { top: calc(var(--app-top, 0px) + 10px + var(--safe-t)); }
@@ -1478,6 +1480,15 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     html.touch .news { top: calc(10px + var(--safe-t)); left: calc(min(240px, 40vmax) + 18px + var(--safe-l)); right: calc(196px + var(--safe-r)); margin: 0 auto; }
     html.touch .waypill { top: calc(46px + var(--safe-t)); bottom: auto; left: calc(min(240px, 40vmax) + 18px + var(--safe-l)); right: calc(196px + var(--safe-r)); margin: 0 auto; }
     html.touch .toasts { --stack-top: calc(var(--hudl-b, 142px) + 8px); right: auto; width: min(300px, calc(100vw - 20px - var(--safe-l) - var(--safe-r))); }
+    /* Two notices (a tappable one and a plain one, two lines each) fit between the left column and the stick: tighter rows
+       here (2 x 46px + 6px from 112px down ends 210px down, the stick starts 236px down at 360px tall), and on a 320px tall
+       phone 12px rows (44 + 4 + 38px from 108px down end 194px down, the stick starts 196px down). */
+    html.touch .toasts { gap: 6px; }
+    html.touch .toast { padding: 6px 12px; line-height: 1.3; }
+    @media (max-height: 340px) {
+      html.touch .toasts { gap: 4px; }
+      html.touch .toast { padding: 3px 10px; font-size: 12px; line-height: 1.25; }
+    }
     /* The tag is level with the action button (30 … 82px up) and at most 240px wide, so it no longer covers the street. */
     html.touch .prompt { left: calc(106px + var(--safe-l)); bottom: calc(38px + var(--safe-b)); max-width: 240px; }
     html.touch .stay-focus { bottom: calc(34px + var(--safe-b)); }

@@ -435,7 +435,8 @@ describe('input lock', () => {
     assert.match(ui, /hooks\.lockInput = \(on, owner\) => inputLock\.set\(owner, !!on\);/);
     const calls = [...ui.matchAll(/hooks\.lockInput\??\.?\(([^)]*)\)/g)].map((m) => m[1]);
     assert.ok(calls.length >= 8, String(calls.length));
-    for (const args of calls) assert.match(args, /, '(sheet|proof|bake|dance|city)'$/, `lockInput(${args}) names no owner`);
+    assert.match(ui, /hooks\.lockInput\(!!ext, 'layer'\);/); // gift.js's frame (ui.layer): test/ux-review.test.mjs
+    for (const args of calls) assert.match(args, /, '(sheet|proof|bake|dance|city|layer)'$/, `lockInput(${args}) names no owner`);
     // The city lock is released as soon as the city is built, whatever else holds a lock then (it used to stay forever behind a bake).
     const built = ui.slice(ui.indexOf('function lockUntilBuilt()'), ui.indexOf("if (!window.__ktsLand"));
     assert.match(built, /hooks\.lockInput\(true, 'city'\);/);
