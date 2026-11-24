@@ -539,7 +539,7 @@ world = createTimesSquare(document.getElementById('view'), {
     else if (kind === 'stage') ui.startDance('stage');
     else if (kind === 'crowd') {
       const left = ui.cooldownLeft();
-      if (left > 0) ui.note(`다음 함성까지 ${(left / 1000).toFixed(0)}초`);
+      if (left > 0) ui.note(`다음 함성까지 ${(left / 1000).toFixed(0)}초`, '', null, { key: 'shout-wait' });
       else {
         const mates = info?.n || 0;
         ui.armCooldown();
@@ -591,7 +591,7 @@ world = createTimesSquare(document.getElementById('view'), {
     if (!dropped) return;
     fareStreak += 1;
     trackEvent('taxi_dropoff', { streak: fareStreak });
-    ui.note(`하차 완료 · ${ev.riders || 1}명 · 연속 ${fareStreak}명`, 'ok');
+    ui.note(`하차 완료 · ${ev.riders || 1}명 · 연속 ${fareStreak}명`, 'ok', null, { key: 'taxi-drop' });
   },
 });
 window.G.world = world;
@@ -667,7 +667,7 @@ function setLounge(on) {
     // Nothing is watched in a hidden tab: no 관람 points then. After 5 min hidden net.js also closes the socket (park), so the room has no seat
     // that could be paid. After today's PAY.lounge.perDay (the room answers why 'full') nothing is asked again this visit.
     if (!loungeOn || document.hidden || loungeFull) return;
-    if (!payBonus('lounge', PAY.lounge.base) && !loungeTold) { loungeTold = true; ui.note('광장에 연결되어야 관람 포인트가 들어와요', 'err'); }
+    if (!payBonus('lounge', PAY.lounge.base) && !loungeTold) { loungeTold = true; ui.note('광장에 연결되어야 관람 포인트가 들어와요', 'err', null, { key: 'offline' }); }
   }, PAY.lounge.gapMs);
 }
 // 밤 9시 (live.js): the countdown banner 20:50–21:10 and yesterday's wish king on the boards 21:00–21:01, from this clock
@@ -700,7 +700,7 @@ function adClick(slot, url) {
   const go = () => {
     trackEvent('outlink_click', { slot: String(slot || '') });
     window.open(url, '_blank', 'noopener');
-    if (!net.sendAdClick(state.nick, slot)) { ui.note('링크는 열렸고, 방문 포인트는 광장 연결 후 기록됩니다', 'err'); return; }
+    if (!net.sendAdClick(state.nick, slot)) { ui.note('링크는 열렸고, 방문 포인트는 광장 연결 후 기록됩니다', 'err', null, { key: 'offline' }); return; }
   };
   // In-app browsers (KakaoTalk, Instagram, ...) often open the link over the game in the same view. Save where the avatar
   // stands first, and ask with one tappable line; the tap is the gesture that opens it.
@@ -726,7 +726,7 @@ const FORTUNES = [
 ];
 function drawFortune() {
   const left = ui.cooldownLeft();
-  if (left > 0) { ui.note(`다음 포춘쿠키까지 ${(left / 1000).toFixed(0)}초`); return; }
+  if (left > 0) { ui.note(`다음 포춘쿠키까지 ${(left / 1000).toFixed(0)}초`, '', null, { key: 'fortune-wait' }); return; }
   world?.fountainSplash?.();
   const line = FORTUNES[(Math.random() * FORTUNES.length) | 0];
   ui.note(line, 'ok');
@@ -738,17 +738,17 @@ function cheer(slot, phraseId) {
   const { p } = msg;
   const row = state.billboards.find((b) => b.slot_id === slot);
   if (row && (!live(row) || row.holder_id === net.id)) {
-    ui.note('켜져 있는 다른 사람 전광판에만 응원할 수 있어요');
+    ui.note('켜져 있는 다른 사람 전광판에만 응원할 수 있어요', '', null, { key: 'cheer-dark' });
     return;
   }
   const wait = PAY.cheer.gapMs - (Date.now() - (cheerAt.get(slot) || 0));
-  if (wait > 0) { ui.note(`다음 응원까지 ${Math.ceil(wait / 1000)}초`); return; }
-  if (!net.ch?.raw?.(msg)) { ui.note('광장 서버에 연결되면 응원이 기록됩니다', 'err'); return; }
+  if (wait > 0) { ui.note(`다음 응원까지 ${Math.ceil(wait / 1000)}초`, '', null, { key: 'cheer-wait' }); return; }
+  if (!net.ch?.raw?.(msg)) { ui.note('광장 서버에 연결되면 응원이 기록됩니다', 'err', null, { key: 'offline' }); return; }
   cheerAt.set(slot, Date.now());
   world?.cheerAt?.(slot);
   trackEvent('wish_cheer', { slot });
   paintCrown();
-  ui.note(`🙏 ${CHEER_PHRASES[p - 1]}`, 'ok');
+  ui.note(`🙏 ${CHEER_PHRASES[p - 1]}`, 'ok', null, { key: 'cheer-sent' });
   ui.sfx.hit();
 }
 const cheerAt = new Map();
@@ -800,7 +800,7 @@ function replyCheer(slot, phraseId, to) {
     return false;
   }
   if (!net.ch?.raw?.({ t: 'REPLY', slot, p, to })) {
-    ui.note('광장 서버에 연결되면 답례가 전달됩니다', 'err');
+    ui.note('광장 서버에 연결되면 답례가 전달됩니다', 'err', null, { key: 'offline' });
     return false;
   }
   return true;
@@ -1448,7 +1448,7 @@ function takeStar(i) {
   if (!shower || shower.taken.has(i)) return;
   const told = performance.now() - (takeStar.at || 0) > 1200;
   if (ui.isBusy()) {
-    if (told) { takeStar.at = performance.now(); ui.note('별똥별은 지금 동작을 끝내고 주워요'); }
+    if (told) { takeStar.at = performance.now(); ui.note('별똥별은 지금 동작을 끝내고 주워요', '', null, { key: 'star-busy' }); }
     return;
   }
   shower.taken.add(i);
@@ -1488,14 +1488,14 @@ net.on('pay', (m) => {
     if (!capTold.has('full:' + m.kind)) { capTold.add('full:' + m.kind); ui.note(m.kind === 'cheer' ? '오늘 받을 수 있는 응원 포인트는 다 받았어요. 응원은 그대로 전해져요' : '오늘 받을 수 있는 관람 포인트는 다 받았어요', 'err'); }
     return;
   }
-  if (m?.why === 'dark') { ui.note('켜져 있는 다른 사람 전광판에만 응원할 수 있어요', 'err'); return; }
-  if (m?.why === 'wait') { ui.note('잠시 뒤 다시 응원해 주세요', 'err'); return; }
+  if (m?.why === 'dark') { ui.note('켜져 있는 다른 사람 전광판에만 응원할 수 있어요', 'err', null, { key: 'cheer-dark' }); return; }
+  if (m?.why === 'wait') { ui.note('잠시 뒤 다시 응원해 주세요', 'err', null, { key: 'cheer-wait' }); return; }
   if (m?.why === 'soon') {
     const wait = {
       lounge: `관람 포인트는 ${Math.round(PAY.lounge.gapMs / 1000)}초마다 들어와요`,
       cheer: `같은 전광판 응원은 ${Math.round(PAY.cheer.gapMs / 1000)}초 뒤에 다시 할 수 있어요`,
     }[m.kind] || '조금 뒤에 다시 받을 수 있어요';
-    ui.note(wait, 'err');
+    ui.note(wait, 'err', null, { key: m.kind === 'cheer' ? 'cheer-wait' : 'pay-soon' });
     return;
   }
   if (m?.why === 'cap' || m?.why === 'day') {
@@ -1506,7 +1506,7 @@ net.on('pay', (m) => {
   const got = creditNow(m?.amount, countsAsActivity(m?.kind));
   if (m?.kind === 'lounge' && got) { loungeSum += got; ui.lounge(true, loungeSum); }
   if (m?.kind === 'shot' && got) { ui.noteShot?.(); ui.note(`공유 +${got} 포인트`, 'ok'); }
-  if (m?.kind === 'cheer' && got) { ui.quest?.('cheer'); ui.note(`응원 +${got} 포인트`, 'ok'); }
+  if (m?.kind === 'cheer' && got) { ui.quest?.('cheer'); ui.note(`응원 +${got} 포인트`, 'ok', null, { key: 'cheer-paid' }); }
   if (m?.kind === 'click' && got) ui.note(`링크 방문 +${got} 포인트`, 'ok');
   if (m?.kind === 'quest' && got) { ui.markQuest?.(m.key); ui.note(`오늘의 응원 미션 완료 +${got} 포인트`, 'ok'); }
   if (m?.kind === 'mission' && got) ui.markDaily?.(got);

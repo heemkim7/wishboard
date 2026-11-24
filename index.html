@@ -433,7 +433,6 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   @keyframes fire { 30% { transform: translateY(-6px) scale(1.06); background: var(--line-strong); } }
   .dock .sep { width: 1px; margin: 8px 2px; background: var(--line); }
   .emote.more.on { border-color: var(--line-strong); background: var(--accent-weak); color: var(--accent); }
-  .emote.dance-go svg.ico { width: 26px; height: 26px; }
   /* 같이 춤추기 in the touch 동작 panel: a whole row under the four actions, like the pouch row above them. */
   html.touch .reacts button.dance-go { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; width: auto; height: 44px; padding: 0 12px; border-radius: 10px; font: 700 14px/1.2 var(--font); color: var(--text); background: var(--surface-2); border: 1px solid var(--line); }
   html.touch .reacts button.dance-go svg.ico { width: 22px; height: 22px; color: var(--accent); }
@@ -508,6 +507,11 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .toast.err::before { background: var(--danger); }
   .toast.ok::before { background: var(--ok); }
   .toast.out { animation: toastOut .3s ease forwards; }
+  /* The same notice again (ui.js note: the same key or text) takes its old row without a second entrance. */
+  .toast.again:not(.out) { animation: none; }
+  /* At most two notices on every screen, as on a phone (the "Phone layout" block): the newest plain one and the newest
+     tappable one. A desktop window and a tablet used to stack three, the same cooldown line two or three times. */
+  .toasts > .toast:not(.hit):has(~ .toast:not(.hit)), .toasts > .toast.hit:has(~ .toast.hit) { display: none; }
   /* A tappable toast ends in a chevron. */
   .toast .go { display: inline-block; margin-left: 6px; font-style: normal; color: var(--text-2); }
   .toast .go svg.ico { width: 15px; height: 15px; vertical-align: -3px; }
@@ -1098,6 +1102,15 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     html:not(.touch) .news { top: auto; bottom: calc(10px + var(--safe-b)); left: calc(10px + var(--safe-l)); right: calc(10px + var(--safe-r)); }
     html:not(.touch) .waypill { top: auto; bottom: calc(58px + var(--safe-b)); left: calc(10px + var(--safe-l)); right: calc(10px + var(--safe-r)); }
   }
+  /* From 1024px the slot and the pill are on the screen's own centre (the owner: "the auto-walk pill is not in the middle";
+     the band's centre was 50% + 78px). Their box is the band between the left column (378px) and the same distance from
+     the right edge, so it is symmetric: the pill is centred while it is narrower than 100vw - 756px (268px at 1024, 524px
+     at 1280), and a longer place name ends in "…". 820-1023px keep the band between the two columns (centre 50% + 78px):
+     a symmetric band there is 64-267px, narrower than a named pill. */
+  @media (min-width: 1024px) {
+    html:not(.touch) .news, html:not(.touch) .waypill { left: calc(378px + var(--safe-l)); right: calc(378px + var(--safe-r)); }
+    html:not(.touch) .waypill .way { overflow: hidden; }
+  }
   /* Touch bottom lane (these are the tablet values; a phone's are in "Phone layout" at the end). Between the resting
      stick (104px wide, 10px in) and the right-hand column (52px wide, 12px from the right) there is only the context
      tag: 122px … right 72px, right-aligned against the amber action button. The waypoint pill is above it (142px up) and
@@ -1326,7 +1339,11 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     html.touch .id-coin .pend.warn { color: var(--danger); }
     html.touch .id-coin.bump > span:first-of-type { animation: bump .5s cubic-bezier(.2,1.6,.4,1); }
     html.touch .hud-l > .nextgoal { grid-row: 2; }
-    @media (orientation: portrait) and (max-width: 399px) { html.touch .id-coin img { display: none; } }
+    /* Under 400px upright the coin stays (a bare "201" read like an ID number); the row gets tighter around it and the
+       name gives way, ending in "…" (.profile .name > span). */
+    @media (orientation: portrait) and (max-width: 399px) { html.touch .ident .id-coin { padding: 0 8px 0 5px; } html.touch .id-coin img { margin-right: 0; } }
+    @media (orientation: portrait) and (max-width: 359px) { html.touch .ident .id-coin { padding: 0 6px 0 4px; font-size: 14px; } html.touch .ident .profile { padding-right: 4px; } }
+    html.touch .ident .profile .status > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     html.touch .hud-l > .nextgoal:not(.task) { grid-column: 1; display: block; width: auto; padding: 6px 10px; border-radius: 999px; background: var(--surface-hud); border: 1px solid var(--line); font-size: 12px; line-height: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: auto; }
     html.touch .hud-l > .nextgoal:not(.task) .ng-k { font-size: 0; line-height: 0; vertical-align: top; }
     html.touch .hud-l > .nextgoal:not(.task) .ng-k::before { content: "목표"; display: inline-block; vertical-align: top; margin: 3px 6px 0 0; padding: 0 5px; border-radius: 6px; background: color-mix(in srgb, var(--info) 20%, transparent); font-size: 12px; line-height: 16px; }
@@ -1339,7 +1356,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     html.touch #ui.viewonly > :is(.hud-l, .news, .prompt, .waypill, .dock, .reacts, .help, .sponsor), html.touch #ui.viewonly > .hud-r > :not(.viewrow), html.touch #ui.viewonly > .hud-r > .viewrow > :not(.view-btn) { visibility: hidden !important; pointer-events: none !important; }
     html.touch body:has(> #ui.viewonly) .toasts > :is(.coach, .sponsor) { display: none !important; }
     html.touch #ui.viewonly > .hud-r .view-btn { color: var(--on-accent); background: var(--accent); border-color: transparent; }
-    html.touch .wal-quick { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0 0 12px; }
+    html.touch .wal-quick { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--tap-gap); margin: 0 0 12px; }
     html.touch .wal-quick .btn { justify-content: space-between; gap: 6px; height: auto; min-height: 44px; padding: 8px 10px 8px 12px; font-size: 13px; text-align: left; white-space: normal; }
     html.touch .wal-quick .btn.wide { grid-column: 1 / -1; }
     html.touch .sheet .phone-only { display: flex; width: 100%; margin-top: 12px; justify-content: center; }
@@ -1415,7 +1432,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html.touch .sheet .seg { flex-wrap: nowrap; max-width: 100%; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
   html.touch .sheet .seg::-webkit-scrollbar { display: none; }
   html.touch .sheet .seg button { flex: none; min-height: 44px; white-space: nowrap; }
-  html.touch .sheet .chips { gap: 8px; }
+  html.touch .sheet .chips { gap: var(--tap-gap); }
   html.touch .sheet .chips button { min-height: 44px; padding: 7px 14px; font-size: 13px; }
 
   /* ---------- Phone layout (2026-11-24, after the screen-by-screen audit) ----------
@@ -1479,8 +1496,12 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     /* A phone on its side has no height to spare under the left column for the 속보 line: it is the top centre banner,
        between the left column (at most min(240px, 40vmax) wide) and the icon row (180px, 8px in), and the waypoint pill
        is centred under it. The stack hangs under the left column, as wide as a notice needs (at most 300px). */
-    html.touch .news { top: calc(10px + var(--safe-t)); left: calc(min(240px, 40vmax) + 18px + var(--safe-l)); right: calc(196px + var(--safe-r)); margin: 0 auto; }
-    html.touch .waypill { top: calc(46px + var(--safe-t)); bottom: auto; left: calc(min(240px, 40vmax) + 18px + var(--safe-l)); right: calc(196px + var(--safe-r)); margin: 0 auto; }
+    /* The band is symmetric (the left column's width + 18px on both sides, more than the icon row's 196px), so the slot and
+       the pill sit on the screen's centre: they were 31px right of it at 812px (the middle of the left column … icon row).
+       Under 641px a symmetric band is 78px, so there the 속보 slot keeps the band up to the icon row (127px at 568). */
+    html.touch .news { top: calc(10px + var(--safe-t)); left: calc(min(240px, 40vmax) + 18px + max(var(--safe-l), var(--safe-r))); right: calc(min(240px, 40vmax) + 18px + max(var(--safe-l), var(--safe-r))); margin: 0 auto; }
+    html.touch .waypill { top: calc(46px + var(--safe-t)); bottom: auto; left: calc(min(240px, 40vmax) + 18px + max(var(--safe-l), var(--safe-r))); right: calc(min(240px, 40vmax) + 18px + max(var(--safe-l), var(--safe-r))); margin: 0 auto; }
+    html.touch .waypill .way { overflow: hidden; }
     html.touch .toasts { --stack-top: calc(var(--hudl-b, 142px) + 8px); right: auto; width: min(300px, calc(100vw - 20px - var(--safe-l) - var(--safe-r))); }
     /* Two notices (a tappable one and a plain one, two lines each) fit between the left column and the stick: tighter rows
        here (2 x 46px + 6px from 112px down ends 210px down, the stick starts 236px down at 360px tall), and on a 320px tall
@@ -1505,7 +1526,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     html.touch body:has(.toasts > .farcard) #ui > .prompt { visibility: hidden; }
     /* Under 641px wide the band between the left column and the icon row is narrower than the pill: there it sits above
        the tag, right against the column (the jump button is beside it, not under it). */
-    @media (max-width: 640px) { html.touch .waypill { top: auto; bottom: calc(92px + var(--safe-b)); left: auto; right: calc(72px + var(--safe-r)); margin: 0; } }
+    @media (max-width: 640px) { html.touch .waypill { top: auto; bottom: calc(92px + var(--safe-b)); left: auto; right: calc(72px + var(--safe-r)); margin: 0; } html.touch .news { right: calc(196px + var(--safe-r)); } }
     /* The ⋯ menu: three columns, so it is about 210px tall on a 375px screen (it took 302px). */
     html.touch .tools.open { grid-template-columns: repeat(3, minmax(0, 1fr)); width: min(440px, calc(100vw - 20px - var(--safe-l) - var(--safe-r))); }
   }
@@ -1539,7 +1560,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html.touch .sheet .more .swatches input[type=color] { width: 40px; height: 40px; }
   html.touch .sheet .btn.shop-open { height: auto; min-height: 44px; }
   html.touch .wish-tab { min-height: 44px; }
-  html.touch .wish-tabs { gap: 8px; }
+  html.touch .wish-tabs { gap: var(--tap-gap); }
   html.touch .toast.hit { min-height: 44px; }
   html.touch .legend .osm { display: inline-flex; align-items: center; min-height: 44px; }
   /* Sliders: the track is 6px in a taller box, so the thumb can be caught anywhere along a 44px row on touch. */
@@ -1684,12 +1705,31 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html:not(.touch) .liveboard :is(.livehead, button.rank, button.f), html:not(.touch) .stay-quest button, html:not(.touch) .wallet .nextgoal:not(.task) { min-height: 24px; }
   /* A touch tablet keeps the full left column: its rows that are buttons are 32px tall there. */
   html.touch .liveboard :is(.livehead, button.rank, button.f), html.touch .stay-quest button { min-height: 32px; }
-  /* Desktop tool row: the first four carry their name beside the icon (twelve bare icons told nothing apart). */
-  @media (min-width: 1240px) {
-    html:not(.touch) .tools .btn:is(.named, .tool-gift) { width: auto; padding: 0 12px 0 10px; gap: 6px; border-radius: 999px; font-size: 13px; font-weight: 700; line-height: 1; }
-    html:not(.touch) .tools .btn:is(.named, .tool-gift)::after { content: attr(aria-label); white-space: nowrap; }
-    html:not(.touch) .tools .btn.named :is(.wish-dot, .inbox-dot) { top: 4px; right: 4px; }
+  /* Desktop tool row (2026-11-24, the owner: "some have text and some do not; make them one"). From 1024px every tool in
+     the row carries its name beside the icon, in the order of use (overlay.js TOOL_ORDER); the ones that do not fit at
+     that width are in ⋯ (더보기), which opens a menu of every tool as an icon + name row, as on a phone. Inline from:
+     1024px 전광판 걸기, 선물 전광판, 오늘의 소원, 응원 순위, 받은 소식 (while unread); 1280px + 사진 찍어 공유, 공유·코드;
+     1440px + 내 건물, 조작 안내; 1680px + 전체 화면, 설정, and no ⋯. Under 1024px the row is icons only, all of them
+     (820-1023px) or folded (under 820px): one form either way. It used to be four named pills and seven bare icons. */
+  @media (min-width: 1024px) {
+    html:not(.touch) .bar { position: relative; min-height: 46px; }
+    html:not(.touch) .tools { gap: 4px; }
+    html:not(.touch) .tools > .btn { width: auto; padding: 0 12px 0 10px; gap: 6px; border-radius: 999px; font-size: 13px; font-weight: 700; line-height: 1; }
+    html:not(.touch) .tools > .btn::after { content: attr(aria-label); white-space: nowrap; }
+    html:not(.touch) .tools > .tool-gift::after { content: "선물 전광판"; }
+    html:not(.touch) .tools > .tool-fold { display: inline-flex; }
+    html:not(.touch) .tools > .tool-fold::after { content: "더보기"; }
+    html:not(.touch) .tools > .btn :is(.wish-dot, .inbox-dot) { top: 4px; right: 4px; }
+    html:not(.touch) .tools:not(.open) > :is(.t-1280, .t-1440, .t-1680) { display: none; }
+    /* Open: one column of rows over the minimap, the same tools in the same order, ⋯ becomes 닫기 at the bottom. */
+    html:not(.touch) .tools.open { position: absolute; top: 0; right: 0; z-index: 9; display: grid; grid-template-columns: 1fr; gap: 2px; width: 220px; height: auto; padding: 6px; border-radius: 18px; background: var(--surface); border: 1px solid var(--line-strong); box-shadow: var(--shadow-sheet); }
+    html:not(.touch) .tools.open > .btn { display: inline-flex; width: 100%; height: 40px; justify-content: flex-start; border-radius: 12px; }
+    html:not(.touch) .tools.open > .tool-fold::after { content: "닫기"; }
+    html:not(.touch) .tools.open :is(.wish-dot, .inbox-dot) { position: static; order: 1; flex: none; margin-left: -2px; outline: 0; }
   }
+  @media (min-width: 1280px) { html:not(.touch) .tools:not(.open) > .t-1280 { display: inline-flex; } }
+  @media (min-width: 1440px) { html:not(.touch) .tools:not(.open) > .t-1440 { display: inline-flex; } }
+  @media (min-width: 1680px) { html:not(.touch) .tools:not(.open) > .t-1680 { display: inline-flex; } html:not(.touch) .tools:not(.open) > .tool-fold { display: none; } }
   /* The board's card over the dock (a desktop window): its phrase chips are one row that scrolls, as on touch. */
   #ui > .sponsor .chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
   #ui > .sponsor .chips button { flex: none; white-space: nowrap; }
@@ -1704,6 +1744,22 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     html:not(.touch) .sheet.narrow .content { padding-bottom: 18px; }
   }
   html.touch #ui.newbie .newbie-more { min-height: 44px; }
+  /* ---------- Sheet spacing (2026-11-24, the owner: "the board sheet's sticker and link buttons are stuck together") ----------
+     One rhythm in every sheet: buttons, chips, tabs and swatches next to each other are --tap-gap apart (8px with a mouse,
+     12px on touch), and a group of them stands --group-gap (16px) under what is above it. A sheet's button row (.row) had
+     no rule at all, so 링크 열기 · 이 전광판 보기 · 빈 전광판 찾기 · 신고 and the four 네온 스티커 touched (0px); chips were 6px
+     apart with a mouse, tabs and the lot grid 4-6px. The buttons of one row share one height and wrap as a group. */
+  :root { --tap-gap: 8px; --group-gap: 16px; }
+  html.touch { --tap-gap: 12px; }
+  .sheet .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); align-items: stretch; gap: var(--tap-gap); margin-top: var(--group-gap); }
+  .sheet .row > .btn { width: 100%; justify-content: center; margin: 0; }
+  .sheet .field > .row { margin-top: 0; }
+  .sheet :is(.chips, .seg, .place .go, .themes, .swatches, .colors, .plots, .species-grid, .wish-tabs, .shot-row, .wiz-nav, .wal-quick, .linkrow, .rowlist, .lines, .emo-row, .quick, .mapzoom, .login-form, .team-form, .vipcard .air-row) { gap: var(--tap-gap); }
+  .sheet :is(.chips, .holder, .field) { margin-top: var(--group-gap); }
+  /* Buttons stacked straight in a sheet (Google로 계속 over the terms links, 로그인 over 처음이면 가입, a card's field and button). */
+  .sheet .content > .btn, .sheet .vipcard :is(.btn, .input) { margin-top: max(10px, var(--tap-gap)); }
+  /* The sign-in sheet's terms line (two links) under Google로 계속 is its own group (its links were 10px under the button). */
+  .sheet .login-terms { margin-top: var(--group-gap); }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
   }
