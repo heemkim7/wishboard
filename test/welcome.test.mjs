@@ -260,7 +260,7 @@ describe('the world shows the welcome (timesSquare3d.js)', () => {
   const w = read('timesSquare3d.js');
   it('pins near where the avatar stands and looks at it once on every tier; no camera in a taxi, for a player already walking or when told not to', () => {
     const fn = body(w, '  function welcome(');
-    assert.match(fn, /const slot = boards\.pinWelcome\(name, WELCOME\.ms, \{ x: pos\.x, z: pos\.z \}\);/);
+    assert.match(fn, /const slot = boards\.pinWelcome\(name, WELCOME\.ms, \{ x: pos\.x, z: pos\.z \}, card\);/); // card: 오늘 할 일's words (null: the welcome's)
     // The same rule that ends a scripted camera decides not to start one (camrig.js cineCancels): keys or the stick, unless input is locked.
     assert.match(fn, /const walking = cineCancels\(\{ active: true, keys: keys\.size, joy: Math\.hypot\(joy\.x, joy\.y\), locked: !inputEnabled \}\);/);
     assert.equal(cineCancels({ active: true, keys: 1, joy: 0, locked: false }), true);

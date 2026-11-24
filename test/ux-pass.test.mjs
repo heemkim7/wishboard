@@ -104,7 +104,7 @@ describe('sizes: what a thumb presses is at least 44px', () => {
     assert.match(ui, /h\('div', \{ class: 'field' \}, h\('div', null, h\('label', \{ class: 'agree' \}, box, h\('span', null, '방문 통계 보내지 않기'\)\)\), said\);/);
   });
   it('desktop rows that are buttons are at least 24px tall', () => {
-    assert.match(css, /html:not\(\.touch\) \.liveboard :is\(\.livehead, button\.rank, button\.f\), html:not\(\.touch\) \.stay-quest button, html:not\(\.touch\) \.wallet \.nextgoal:not\(\.task\) \{ min-height: 24px; \}/);
+    assert.match(css, /html:not\(\.touch\) \.liveboard :is\(\.livehead, button\.rank, button\.f\), html:not\(\.touch\) \.todo-card :is\(\.todo-head, \.todo-row\), html:not\(\.touch\) \.wallet \.nextgoal:not\(\.task\) \{ min-height: 24px; \}/);
   });
 });
 

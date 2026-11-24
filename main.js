@@ -419,6 +419,8 @@ const ui = createUI(document.getElementById('ui'), {
   },
   slotCard: (id) => world?.slotCard(id),
   openGift: () => openGiftFromCard(),
+  openGiftMaker: () => giftUi?.open(), // 오늘 할 일's week suggestion: the maker the 🎁 button opens (no tutorial step, no welcome_cta)
+  todoCard: (card) => todoCard(card),
   frameBillboard: (slot) => { const ok = world?.frameBillboard?.(slot); if (ok) focusedSlot = String(slot || ''); return ok; },
   giftPop: (slot) => world?.giftPop?.(slot),
   shareBonus: async () => { const r = await humanCall('bonus', (ts) => net.shareBonus(ts)); refreshWallet(); return r; }, // a token first only while Turnstile is on
@@ -785,14 +787,37 @@ async function reportBoard(slot, reason) {
 async function teamMe() {
   const me = await net.teamGet('/rt/team/me');
   state.team = me?.team ? { id: me.team.id, name: me.team.name } : null;
+  ui.setTeamToday?.(teamToday(me));
   return me;
 }
+// 오늘 할 일's team row (ui.js setTeamToday): a team of mine, and whether today's cheer for it is on record (teamsrv.js me: today.here).
+const teamToday = (me) => ({ has: !!me?.team, done: !!(me?.team && me.today && me.today.here !== false) });
 async function teamOp(body) {
   const r = await net.authed('/rt/team', body);
   if (r?.team?.id) state.team = { id: r.team.id, name: r.team.name };
   else if (body?.op === 'leave') state.team = null;
+  if (body?.op === 'cheer' && r?.ok !== false) ui.setTeamToday?.({ has: true, done: true }); // recorded (counted or not): the row is done
+  else if (body?.op === 'leave') ui.setTeamToday?.({ has: false, done: false });
+  else if ((body?.op === 'join' || body?.op === 'create') && state.team) ui.setTeamToday?.({ has: true, done: false });
   return r;
 }
+// Once per entry: is the team row in today's list? Teams are usable when /rt/team/me answers; at budget hard, or with no answer, the list
+// goes on without it (N is 4). The sheet's own reads (teamui.js) update it later through teamMe.
+function askTeamToday() {
+  if (net.budgetDown || net.gateDown) { ui.setTeamToday?.(false); return; }
+  ui.setTeamToday?.('ask');
+  teamMe().catch(() => ui.setTeamToday?.(false));
+}
+// ---- 오늘 할 일: the whole list's card (ui.js pumpTodoCard calls this once the screen is free) ----------------------------------------------
+// The welcome board's path (world.welcome): the card on the nearest free street screen for 8 s with its own chip and bottom line (todo.js
+// cardText), the camera's one look and one round of fireworks, or the fireworks alone when no screen is free. Drawn on this device only:
+// nothing goes to the room or the Worker. -> false while the city is not built (asked again later), else true.
+function todoCard(card) {
+  if (!world?.welcome || !world.built?.()) return false;
+  world.welcome(state.nick, { cam: !welcomeCovered(), card: { chip: card?.chip, line: card?.line, strip: card?.strip }, fx: true });
+  return true;
+}
+
 function replyCheer(slot, phraseId, to) {
   const p = Math.floor(Number(phraseId));
   if (p < 1 || p > 12 || !to) {
@@ -1508,12 +1533,12 @@ net.on('pay', (m) => {
   if (m?.kind === 'shot' && got) { ui.noteShot?.(); ui.note(`공유 +${got} 포인트`, 'ok'); }
   if (m?.kind === 'cheer' && got) { ui.quest?.('cheer'); ui.note(`응원 +${got} 포인트`, 'ok', null, { key: 'cheer-paid' }); }
   if (m?.kind === 'click' && got) ui.note(`링크 방문 +${got} 포인트`, 'ok');
-  if (m?.kind === 'quest' && got) { ui.markQuest?.(m.key); ui.note(`오늘의 응원 미션 완료 +${got} 포인트`, 'ok'); }
+  if (m?.kind === 'quest' && got) ui.markQuest?.(m.key); // 오늘 할 일 said '✓ 전광판 응원 3번 …' when the third cheer landed (ui.js renderTodo)
   if (m?.kind === 'mission' && got) ui.markDaily?.(got);
   if (m?.kind === 'hello') { keep('kts_hello', '1'); if (got) ui.note(`첫 방문 +${got} 포인트`, 'ok'); }
   if (m?.kind === 'attend') {
     ui.noteAttend?.(m?.key);
-    if (got) ui.note(`출석 +${got} 포인트`, 'ok');
+    if (got) ui.attendPaid?.(m?.key, got); // '출석 N일 · +M 포인트 · 다음: …', the 오늘 할 일 notice (todo.js attendNote)
     const streak = Math.floor(Number(m?.key));
     if (streak > 0 && streak % 7 === 0) {
       pullProfile();
@@ -2265,6 +2290,7 @@ async function enter({ nick, color, species }) {
   try { ready = await netReady; } catch { ready = false; }
   // Once, after the guest token exists: my wish today, hearts left, hearts given (and the linked wish).
   wishBoot = loadWishes(WISH_ID, true).catch(() => state.wish);
+  askTeamToday(); // 오늘 할 일: whether the team row is in today's list
   // My invite code, lazily: not in a newcomer's first minute (a fresh wish asks for it sooner).
   setTimeout(() => { ensureInvite().catch(() => {}); }, ui.isNewbie?.() ? 90000 : 20000);
   inviteGiftOnEntry(); // a gift that waited for a full day shows on the next entry

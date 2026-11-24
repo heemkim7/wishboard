@@ -1692,10 +1692,13 @@ void main(){
   // is up and that is all. -> the slot, or '' when no screen is free.
   // Every quality tier gets the camera: on a phone the card can hang out of sight and only the toast would say so (link arrivals move the
   // camera on the phone tier too).
-  function welcome(name, { cam = true } = {}) {
-    const slot = boards.pinWelcome(name, WELCOME.ms, { x: pos.x, z: pos.z });
+  // 오늘 할 일 (ui.js / main.js todoMoment) takes the same path with card: { chip, line, strip } (todo.js cardText) and fx: its one round
+  // of fireworks goes off even when the camera stays (around the screen, or over the avatar when no screen was free).
+  function welcome(name, { cam = true, card = null, fx = false } = {}) {
+    const slot = boards.pinWelcome(name, WELCOME.ms, { x: pos.x, z: pos.z }, card);
     const walking = cineCancels({ active: true, keys: keys.size, joy: Math.hypot(joy.x, joy.y), locked: !inputEnabled });
     if (slot && cam && !drive && !walking && focusSlot(slot, { hold: 3500, celebrate: false })) setTimeout(() => cheerAt(slot), 900);
+    else if (fx) setTimeout(() => { if (slot) cheerAt(slot); else if (!drive) for (let i = 0; i < 3; i++) launch(pos.x + (i - 1) * 2.5, pos.z, pos.y + 9 + i, PALETTE[i % PALETTE.length], 0.2 * i); }, 900);
     return slot;
   }
   // ---- 선물 전광판 15-second show (gift.js records it) ---------------------------------------------------------------

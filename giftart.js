@@ -121,10 +121,11 @@ export function paintGift(canvas, g = {}, opts = {}) {
 
 // 환영 전광판 (ts3d/screens.js pinWelcome): the newcomer's own name on a plaza screen, drawn on their device only. name is cut to 12 code
 // points here; line is the fixed words under it (ftue.js WELCOME.line). The gift board's ground, frame and fonts, in the 밤하늘 theme.
-export function paintWelcome(canvas, { name, line } = {}) {
+// chip: the top-left pill (the 오늘 할 일 card's '🎉 오늘 할 일 완료', todo.js cardText); without one it is the welcome's own.
+export function paintWelcome(canvas, { name, line, chip } = {}) {
   const T = GIFT_THEMES.night, who = arr(name).slice(0, 12).join('').trim();
   const { c, W, H, k, pad } = paintGround(canvas, T, who || 'welcome');
-  paintChip(c, k, '👋 환영해요', pad * 1.3, pad * 1.25, false, 'rgba(8,6,28,0.55)', '#ffffff');
+  paintChip(c, k, String(chip || '👋 환영해요'), pad * 1.3, pad * 1.25, false, 'rgba(8,6,28,0.55)', '#ffffff');
   paintChip(c, k, 'WISH BOARD', W - pad * 1.3, pad * 1.25, true, T.hi, T.deep);
   const big = who ? who + ' 님' : '환영해요';
   c.textAlign = 'center';
