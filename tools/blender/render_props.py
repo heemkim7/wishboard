@@ -12,7 +12,10 @@
 #            --dummy         add a plain 1.6 m figure for scale and write <name>_dummy.png instead of the final files
 #            --bare          leave out the stand-in screen and name sign (shows the bare mounts)
 #            --no-sheets     skip sheet.png and compare_buildings.png
-#            --az <deg> --pitch <deg>   camera for the big picture (default 35 and 20; the icons use 35 and 28)
+#            --no-spill      leave out the small coloured lamps beside the glowing parts
+#            --frame <0..1>  where in its clip a rigged model is shown (default 0.2); given explicitly it writes a small
+#                            <name>_fNNN.png instead of the final files, to check the motion frame by frame
+#            --az <deg> --pitch <deg>   camera for the big picture (default 35 and 20; the icons use 35 and 26)
 #
 # Writes <name>.png (768 x 768), <name>_icon.png (256 x 256, buildings only), sheet.png, compare_buildings.png.
 #
@@ -31,7 +34,8 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 ROOT = REPO.split(os.sep + ".claude" + os.sep + "worktrees" + os.sep)[0]
 argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 OPT = {"--glb": os.path.join(ROOT, "out", "blender", "glb"), "--out": os.path.join(ROOT, "out", "blender", "renders"),
-       "--tint": "#ff5a3c", "--az": "35", "--pitch": "20"}
+       "--tint": "#ff5a3c", "--az": "35", "--pitch": "20", "--frame": "0.2"}
+FRAME_GIVEN = "--frame" in argv
 FLAGS, names, i = set(), [], 0
 while i < len(argv):
     if argv[i] in OPT:
@@ -420,7 +424,7 @@ def render_asset(name):
                 arm.animation_data.action_slot = act.slots[0]
         except Exception:
             pass
-        scene.frame_set(int(act.frame_range[0] + (act.frame_range[1] - act.frame_range[0]) * 0.2))
+        scene.frame_set(int(round(act.frame_range[0] + (act.frame_range[1] - act.frame_range[0]) * float(OPT["--frame"]))))
     bpy.context.view_layer.update()
     for m in bpy.data.materials:                               # what the game tints: the owner's colour, the cab's paint
         if not m.use_nodes:
@@ -438,7 +442,7 @@ def render_asset(name):
     size = float(max(hi - lo))
     hints = [] if BARE else stand_ins(anchors)
     if name not in LOTS:                                       # a plain round floor for the things that have no pad
-        r = float(max(hi[0] - lo[0], hi[1] - lo[1])) * 0.62 + 0.4
+        r = float(max(hi[0] - lo[0], hi[1] - lo[1])) * 0.54 + 0.2
         bpy.ops.mesh.primitive_cylinder_add(vertices=64, radius=r, depth=0.12, location=(centre.x, centre.y, lo[2] - 0.06))
         floor = bpy.context.object
         floor.data.materials.append(plain("Floor", lin("#232a3d"), 0.8))
@@ -465,7 +469,7 @@ def render_asset(name):
     tgt = (centre.x, centre.y, centre.z)
     area_light("Key", (centre.x - 0.95 * D, centre.y - 1.25 * D, centre.z + 1.25 * D), tgt, 26.0 * k, (1.0, 0.95, 0.88), size * 0.7)
     area_light("Fill", (centre.x + 1.5 * D, centre.y - 0.9 * D, centre.z + 0.35 * D), tgt, 8.0 * k, (0.55, 0.66, 1.0), size * 0.9)
-    rim = 22.0 if name in LOTS else 7.0                         # glossy paint and thin garlands take less
+    rim = 22.0 if name in LOTS else 5.0                         # glossy paint and thin garlands take less
     area_light("RimMagenta", (centre.x - 1.3 * D, centre.y + 1.1 * D, centre.z + 0.9 * D), tgt, rim * k, (1.0, 0.08, 0.62), size * 0.5, 80)
     area_light("RimCyan", (centre.x + 1.25 * D, centre.y + 1.2 * D, centre.z + 0.9 * D), tgt, rim * k, (0.05, 0.85, 1.0), size * 0.5, 80)
     area_light("Top", (centre.x, centre.y - 0.2 * D, centre.z + 1.8 * D), tgt, 7.0 * k, (0.62, 0.72, 1.0), size * 1.2)
@@ -491,17 +495,22 @@ def render_asset(name):
 
     if DUMMY:
         shot(float(OPT["--az"]), float(OPT["--pitch"]), 768, 0.06, name + "_dummy.png")
+    elif FRAME_GIVEN:                                           # a look at one moment of a clip, not a final picture
+        shot(float(OPT["--az"]), float(OPT["--pitch"]), 384, 0.06, name + "_f%03d.png" % round(float(OPT["--frame"]) * 100))
     else:
         if "--icons-only" not in FLAGS:
             shot(float(OPT["--az"]), float(OPT["--pitch"]), 768, 0.06, name + ".png")
         if name in LOTS:
-            shot(35.0, 28.0, 256, 0.10, name + "_icon.png")
+            shot(35.0, 26.0, 256, 0.05, name + "_icon.png")
     print("RENDERED", name, engine, "glow lamps", n_glow)
     return True
 
 # ====================================================================================================== sheets
 def canvas(h, w):
-    return np.round(to_srgb(backdrop(h, w) * 0.0 + np.array(lin(BG_OUT), np.float32)) * 255).astype(np.uint8) * np.ones((h, w, 3), np.uint8)
+    """A sheet filled with the backdrop's corner colour."""
+    img = np.empty((h, w, 3), np.uint8)
+    img[:] = np.round(to_srgb(np.array(lin(BG_OUT), np.float32)) * 255).astype(np.uint8)
+    return img
 
 def make_sheet():
     have = [n for n in ALL if os.path.exists(os.path.join(OUT, n + ".png"))]
@@ -544,6 +553,6 @@ if __name__ == "__main__":
     if "--sheets-only" not in FLAGS:
         for n in todo:
             render_asset(n)
-    if "--no-sheets" not in FLAGS and not DUMMY:
+    if "--no-sheets" not in FLAGS and not DUMMY and not FRAME_GIVEN:
         make_sheet()
         make_compare()

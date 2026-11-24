@@ -19,13 +19,17 @@
 #     sign that buildPlot mounts for that level, scaled (width, height, 1), looking toward +z. The model keeps a dark
 #     flat plate behind each (0.24 m behind the screen plane: the game's own board frame is 0.22 deep; 0.03 m behind
 #     the sign plane) and nothing in front of it.
-#   - the taxi drives toward +z like the kit in vehicleKits (headlights at +z); its left wheels are at +x.
-#   - materials are flat colours. `Accent` is what the game tints with the owner's colour: it is exported neutral
-#     light grey with a mild glow of the same grey, so set both color and emissive to the theme colour.
+#   - the taxi drives toward +z like the kit in vehicleKits (headlights at +z); its left wheels are at +x. Wheel
+#     nodes sit on the axles at (+-0.85, 0.36, +-1.45), radius 0.36 (the kit: +-0.86, 0.34, +-1.45, radius 0.34).
+#   - materials are flat colours, single-sided. `Accent` is what the game tints with the owner's colour: it is
+#     exported neutral light grey with a mild glow of the same grey (emissive 0.45 of the colour), so set both color
+#     and emissive to the theme colour. The taxi's `Paint` is exported near-white for the same reason.
 #     Neon materials (NeonPink, NeonCyan, NeonGold, Glass, Lantern, Lights, ...) carry an emissive strength above 1
 #     (KHR_materials_emissive_strength, which three.js reads as emissiveIntensity).
-#   - shading: every hard edge has a small chamfer and the normals are weighted by face area, so the big faces stay
-#     flat and the chamfers catch the light. No texture coordinates are written.
+#   - shading: hard edges have a small chamfer and the normals are weighted by face area, so the big faces stay
+#     flat and the chamfers catch the light. Parts too small to show a chamfer are plain boxes shaded round
+#     (`soft`): 8 vertices instead of 24 in the file. No texture coordinates are written.
+#   - budgets are printed after every build (triangles, KB, materials); a line ending in OVER BUDGET needs trimming.
 import bpy, bmesh, os, sys, math, random, time
 from contextlib import contextmanager
 from mathutils import Vector, Matrix
@@ -911,7 +915,7 @@ def lot2_pocha():
     g.cyl("Metal", 0.11, 2.6, 2.85, y0, -1.0, seg=8, b=0.0)                          # the flue, on the side the steam shows
     g.lathe("Metal", [(0.0, 0.0), (0.24, 0.0), (0.24, 0.03), (0.0, 0.2)], x=2.85, y=3.82, z=-1.0, seg=8)
     for px, py, pr in ((2.88, 4.22, 0.16), (2.98, 4.52, 0.22), (2.86, 4.84, 0.15)):
-        g.ball("Cloth", pr, px, py, -1.0, seg=6, rings=3)
+        g.ball("Cloth", pr, px, py, -1.0, seg=8, rings=4)
     g.box("Glass", 6.0, 0.05, 0.1, -0.1, 1.94, 1.52, soft=True)                      # a warm strip light under the header
     g.box("Glass", 0.1, 0.05, 2.3, 0.0, 2.5, 0.1, soft=True)                         # and one under the roof
     with g.at(3.45, top, 3.05, ry=-28):
@@ -1117,18 +1121,20 @@ def lot4_tower():
             g.beam("Trim", (sx * 6.25, y, zf - 0.3), (sx * (HX + 0.02), y, ZC + 0.6), 0.12, 0.12)
     # ---- the top: a terrace behind the board, the crown with the name plate on its face, tiers, a spire
     CZ = -0.75
-    g.box("Body", 6.6, 1.25, 3.7, 0.0, Y2 + 0.1, CZ, b=0.05, base=True)
+    # Heights: shaft roof 15.8, crown block to 17.05 (it has to reach above the name sign at 15.85 .. 16.75), band in the
+    # owner's colour to 17.2, two low tiers to 17.9, the spire and its beacon to 18.5.
+    g.box("Body", 6.6, 1.15, 3.7, 0.0, Y2 + 0.1, CZ, b=0.05, base=True)
     sign_mount(g, sign, rim="Trim")
-    g.box("Accent", 6.9, 0.2, 4.0, 0.0, Y2 + 1.35, CZ, b=0.05, base=True)
-    g.box("Body", 5.2, 0.6, 2.8, 0.0, Y2 + 1.55, CZ, b=0.05, base=True)
-    g.tube("NeonGold", [(-2.68, Y2 + 2.17, CZ - 1.48), (-2.68, Y2 + 2.17, CZ + 1.48), (2.68, Y2 + 2.17, CZ + 1.48), (2.68, Y2 + 2.17, CZ - 1.48)], 0.04, seg=4, closed=True)
-    g.box("Trim", 3.2, 0.4, 1.7, 0.0, Y2 + 2.15, CZ, b=0.05, base=True)
-    g.lathe("Trim", [(0.0, 0.0), (0.24, 0.0), (0.2, 0.08), (0.09, 0.26), (0.05, 0.5), (0.0, 0.52)], y=Y2 + 2.55, z=CZ, seg=8)
-    g.ball("NeonPink", 0.09, 0.0, Y2 + 3.11, CZ, seg=6, rings=3)
+    g.box("Accent", 6.9, 0.16, 4.0, 0.0, Y2 + 1.25, CZ, b=0.05, base=True)
+    g.box("Body", 5.2, 0.4, 2.8, 0.0, Y2 + 1.41, CZ, b=0.05, base=True)
+    g.tube("NeonGold", [(-2.68, Y2 + 1.83, CZ - 1.48), (-2.68, Y2 + 1.83, CZ + 1.48), (2.68, Y2 + 1.83, CZ + 1.48), (2.68, Y2 + 1.83, CZ - 1.48)], 0.04, seg=4, closed=True)
+    g.box("Trim", 3.2, 0.26, 1.7, 0.0, Y2 + 1.81, CZ, b=0.05, base=True)
+    g.lathe("Trim", [(0.0, 0.0), (0.24, 0.0), (0.2, 0.08), (0.09, 0.24), (0.05, 0.44), (0.0, 0.46)], y=Y2 + 2.07, z=CZ, seg=8)
+    g.ball("NeonPink", 0.09, 0.0, Y2 + 2.61, CZ, seg=6, rings=3)
     for sx in (-1, 1):
         for sz in (-1, 1):
-            g.box("Trim", 0.3, 0.75, 0.3, sx * 3.1, Y2 + 1.55, CZ + sz * 1.65, b=0.04, base=True)
-            g.ball("NeonGold", 0.1, sx * 3.1, Y2 + 2.4, CZ + sz * 1.65, seg=6, rings=3)
+            g.box("Trim", 0.3, 0.5, 0.3, sx * 3.1, Y2 + 1.41, CZ + sz * 1.65, b=0.04, base=True)
+            g.ball("NeonGold", 0.1, sx * 3.1, Y2 + 2.01, CZ + sz * 1.65, seg=6, rings=3)
         g.box("Trim", 1.0, 0.5, 0.8, sx * 2.3, Y2 + 0.1, 2.1, b=0.04, base=True)
     return dict(geos=[g], anchors=dict(BoardAnchor=board, SignAnchor=sign), budget=(8000, 150))
 
