@@ -40,7 +40,7 @@ function fakeDom({ path = '/gift', search = '', data = null, store = {}, at = 0,
       contains(o) { for (let x = o; x; x = x.parent) if (x === n) return true; return false; },
       setAttribute(k, v) { n.attrs[k] = String(v); if (REFLECT.has(k)) n[k] = k === 'hidden' || k === 'disabled' ? true : String(v); if (k === 'width' || k === 'height') n[k] = Number(v); },
       getAttribute: (k) => n.attrs[k] ?? null, addEventListener(t, f) { (n.on[t] ||= []).push(f); }, removeEventListener() {},
-      focus() { doc.activeElement = n; }, matches: () => false, getContext: () => ink, canPlayType: () => '', play: () => Promise.resolve(), pause() {}, showPicker() {},
+      focus(o) { doc.activeElement = n; n.focused = o || {}; }, matches: () => false, getContext: () => ink, canPlayType: () => '', play: () => Promise.resolve(), pause() {}, showPicker() {},
     });
     Object.defineProperty(n, 'textContent', { get: () => n.kids.map((k) => k.textContent).join(''), set(v) { n.replaceChildren(); if (v != null && v !== '') n.append(String(v)); } });
     Object.defineProperty(n, 'isConnected', { get: () => { for (let x = n; x; x = x.parent) if (x === app || x === doc.body) return true; return false; } });
@@ -737,5 +737,152 @@ describe('gift.html on a phone: pressed states, places to press, text size and c
     const side = S.media.find((m) => /orientation: landscape/.test(m.q));
     assert.equal(side.q, '(orientation: landscape) and (max-height: 520px) and (min-width: 600px) and (max-width: 899px)');
     assert.equal(side.rules.find((r) => r.sels.includes('.cols')).decl.display, 'grid');
+  });
+});
+
+describe('the gift pages on a phone: what the page script builds (giftpage.js)', () => {
+  const g = view(), AT = KST('2026-11-25T19:00:00');
+  const made = (o = {}) => (u, opt) => (u === '/rt/gift' && opt.method === 'POST' ? { ok: true, id: 'nnnnnnnn', gift: view({ id: 'nnnnnnnn', to: '수아', from: '' }), mine: { kids: 0, vd: 0, at: 1, lk: 1 }, media: false, ...o } : u.endsWith('/interest') ? { ok: true } : null);
+  const maker = (o = {}) => fakeDom({ path: '/gift', at: AT, store: { masil_gt: GUEST() }, respond: made(), ...o });
+  const own = (o = {}) => pageOf(o.gift || g, AT, { rec: !!o.media, store: { masil_gt: GUEST(), kts_gmine: JSON.stringify([g.id]) },
+    respond: (u) => (u === '/rt/gift/' + g.id ? { ok: true, gift: o.gift || g, own: true, mine: { kids: 0, vd: 0, at: 1, lk: 1 }, media: !!o.media } : u.endsWith('/interest') ? { ok: true } : null) });
+  const flat = (P) => { const out = []; const walk = (n) => { out.push(n); for (const k of n.kids || []) walk(k); }; walk(P.app); return out; };
+  const cardOf = (P, head) => P.all('section').find((c) => c.kids[0]?.tag === 'h2' && c.kids[0].textContent === head);
+  // The first control under the page's top line, in reading order (the film's own play button is hidden while the film plays).
+  const firstControl = (P) => P.controls().filter((n) => n.className !== 'brand')[0];
+
+  it('nothing takes the cursor when the maker opens on a phone (no keyboard over the preview); with a mouse it waits in the name, the page still at its top', async () => {
+    let P = maker({ touch: true });
+    try {
+      await P.load('giftpage.js');
+      assert.deepEqual(P.heads('h1'), ['친구를 위해 뉴욕 타임스퀘어에 전광판을 걸어요']);
+      assert.equal(P.timeouts.length, 0); await P.timers(); assert.equal(P.doc.activeElement, null);
+      // A refused form still puts the cursor where the fault is: that is the person's own tap.
+      await P.submit(); assert.equal(P.doc.activeElement, P.input('to'));
+    } finally { P.done(); }
+    P = pageOf(view({ from: '' }), KST('2026-11-26T09:00:00'), { touch: true }); // a reply to a board without a sender: the name is still to write, by hand
+    try {
+      await P.load('giftpage.js'); await P.press(P.btn(/영상 건너뛰기/)); await P.press(P.btn(/고마워 전광판 걸기/));
+      assert.deepEqual(P.heads('h1'), ['💌 답장 전광판을 걸어요']); assert.equal(P.timeouts.length, 0); assert.equal(P.doc.activeElement, null);
+    } finally { P.done(); }
+    P = maker();
+    try {
+      await P.load('giftpage.js'); assert.equal(P.timeouts.length, 1); assert.equal(P.timeouts[0].ms, 50);
+      await P.timers(); assert.equal(P.doc.activeElement, P.input('to')); assert.deepEqual(P.input('to').focused, { preventScroll: true });
+    } finally { P.done(); }
+  });
+  it('in the plaza\'s frame, Escape in the page asks the plaza to close it; not while Hangul is being composed, and not on a page of its own', async () => {
+    let P = maker({ search: '?in=1', embed: true });
+    try {
+      await P.load('giftpage.js');
+      await P.key(P.docOn, 'a'); await P.key(P.docOn, 'Escape', { isComposing: true }); await P.key(P.docOn, 'Process', { keyCode: 229 }); await P.key(P.docOn, 'Escape', { keyCode: 229 });
+      assert.deepEqual(P.posted, [], 'typing, and Escape that only drops a half-typed syllable');
+      await P.key(P.docOn, 'Escape');
+      assert.deepEqual(P.posted, [{ t: 'gift', act: 'close', id: '' }]);
+    } finally { P.done(); }
+    P = maker();
+    try { await P.load('giftpage.js'); assert.equal((P.docOn.keydown || []).length, 0); assert.ok((P.docOn.touchstart || []).length >= 1, 'iOS shows :active only on a page that listens for touches'); } finally { P.done(); }
+  });
+  it('a refused field is read out and marked, until it is typed in again (the maker and the 롤링페이퍼)', async () => {
+    let P = maker();
+    try {
+      await P.load('giftpage.js'); await P.submit();
+      const to = P.input('to'), line = P.input('err-to');
+      assert.equal(line.textContent, '받는 사람 이름을 적어 주세요.'); assert.equal(line.attrs.role, 'alert');
+      assert.equal(to.attrs['aria-invalid'], 'true'); assert.equal(to.attrs['aria-describedby'], 'err-to');
+      for (const id of ['msg', 'from']) { assert.equal(P.input(id).attrs['aria-describedby'], 'err-' + id); assert.equal(P.input('err-' + id).attrs.role, 'alert'); assert.equal(P.input(id).attrs['aria-invalid'], 'false'); }
+      to.value = '수아'; for (const f of to.on.input) f();
+      assert.equal(to.attrs['aria-invalid'], 'false'); assert.equal(line.textContent, '');
+      P.input('msg').value = 'https://evil.example/x'; for (const f of P.input('msg').on.input) f();
+      await P.submit();
+      assert.equal(P.input('msg').attrs['aria-invalid'], 'true'); assert.equal(to.attrs['aria-invalid'], 'false'); assert.equal(P.doc.activeElement, P.input('msg'));
+      assert.equal(P.sent.some((s) => s.method === 'POST'), false);
+    } finally { P.done(); }
+    P = pageOf(view({ phase: 'before' }), KST('2026-11-24T12:00:00'));
+    try {
+      await P.load('giftpage.js'); await P.submit();
+      const txt = P.all('textarea')[0], line = P.input('paper-msg');
+      assert.equal(line.attrs.role, 'alert'); assert.ok(line.textContent.length > 0); assert.equal(txt.attrs['aria-invalid'], 'true'); assert.equal(txt.attrs['aria-describedby'], 'paper-msg');
+      for (const f of txt.on.input) f(); assert.equal(txt.attrs['aria-invalid'], 'false');
+    } finally { P.done(); }
+  });
+  it('the maker: two short lines under the button; the other rules are kept, at the foot of the page', async () => {
+    const P = maker();
+    try {
+      await P.load('giftpage.js');
+      const form = P.all('form')[0], send = P.btn(/무료로 걸기/);
+      assert.deepEqual(form.kids.filter((n) => n.className === 'fine').map((n) => n.textContent), ['결제는 없어요. 문구는 광장에서 누구나 볼 수 있어요.']);
+      assert.ok(form.kids.indexOf(send) < form.kids.findIndex((n) => n.className === 'fine'));
+      const foot = P.all('footer')[0].textContent;
+      for (const re of [/글자만 걸고 사진은 받지 않아요\./, /받는 사람의 연락처는 적지 않아요\./, /신고가 쌓이면 문구가 가려지고/, /기념 페이지는 그날이 지나고 7일 뒤에 지워져요\./, /뉴욕 타임스퀘어를 본뜬 가상 광장이에요\. 실제 타임스퀘어와는 관계가 없어요\./, /약관과 개인정보처리방침은 광장의 설정 › 정보에 있어요\./]) assert.match(foot, re);
+      const home = P.btn(/^광장 가기$/); assert.equal(home.tag, 'a'); assert.equal(home.className, 'linkbtn', 'a 44px place to press, not a word in a sentence');
+      assert.equal(P.all('div').find((n) => n.attrs['aria-label'] === '색').className, 'chips sws');
+    } finally { P.done(); }
+  });
+  it('the owner page: the title, a small preview, then 공유하기 and 링크 복사 with nothing to read first (also right after hanging a board)', async () => {
+    const check = (P, title) => {
+      assert.deepEqual(P.heads('h1'), [title]);
+      const all = flat(P), at = (n) => all.indexOf(n), stage = P.all('div').find((n) => /^stage/.test(n.className)), share = cardOf(P, '🔗 링크 보내기');
+      assert.equal(stage.className, 'stage sm', 'the preview is the small one');
+      assert.equal(stage.parent.kids.at(-1), stage, 'nothing between the preview and the first card');
+      assert.deepEqual(share.kids[1].kids.map((n) => [n.tag, n.textContent, n.className]), [['button', '공유하기', 'btn gold'], ['button', '링크 복사', 'btn']], 'the buttons come right under the card\'s title');
+      assert.ok(at(P.all('h1')[0]) < at(stage) && at(stage) < at(share) && at(share) < at(P.btn(/^공유하기$/)));
+      assert.equal(firstControl(P).textContent, '공유하기', 'the first thing to press on the page');
+      const words = share.kids.filter((n) => n.tag === 'p' && n.className === 'fine').map((n) => n.textContent);
+      assert.deepEqual(words, ['친구들에게 먼저 보내 메시지를 모으고, 그날 ' + (title === '🎉 걸었어요!' ? '수아' : '민지') + '님에게 보내세요. 메시지는 그날(11월 25일 (수)) 0시에 함께 열려요.'], 'how to use the link: kept, small, under the buttons');
+      assert.ok(share.kids.indexOf(share.kids.find((n) => n.className === 'link')) > 1, 'the address under the buttons');
+      assert.deepEqual(P.heads(), ['🔗 링크 보내기', '✨ 더 크게, 더 오래 걸고 싶다면', '🎬 15초 축하 영상', '📊 지금까지']);
+      assert.equal(P.says(/^미리보기 영상은 무료 버전이라 워터마크가 있어요\.$/), true); assert.equal(P.says(/^아래는 준비 중인 상품이에요\. 지금은 결제가 없고, 고르면 "열리면 알림"을 받을 수 있어요\.$/), true, 'no payment: still said');
+    };
+    let P = own();
+    try { await P.load('giftpage.js'); check(P, '🎂 민지님을 위한 선물 전광판'); } finally { P.done(); }
+    P = maker({ touch: true });
+    try {
+      await P.load('giftpage.js'); P.input('to').value = '수아'; for (const f of P.input('to').on.input) f();
+      await P.submit(); check(P, '🎉 걸었어요!');
+    } finally { P.done(); }
+    // The recipient's page keeps the whole film: it is what that page is for.
+    P = pageOf(g, AT);
+    try { await P.load('giftpage.js'); assert.equal(P.all('div').find((n) => /^stage/.test(n.className)).className, 'stage'); } finally { P.done(); }
+  });
+  it('video first (the Worker stores videos): the video card still leads and starts with its gold button; after the window it starts with why there is none', async () => {
+    let P = own({ media: true });
+    try {
+      await P.load('giftpage.js');
+      assert.deepEqual(P.heads(), ['🎬 15초 축하 영상', '🔗 링크 보내기', '✨ 더 크게, 더 오래 걸고 싶다면', '📊 지금까지']);
+      const vid = cardOf(P, '🎬 15초 축하 영상');
+      assert.deepEqual([vid.kids[1].tag, vid.kids[1].className, vid.kids[1].textContent], ['a', 'btn gold', '🎬 광장에서 진짜 15초 영상 만들기 · 약 25초']);
+      assert.equal(firstControl(P), vid.kids[1], 'the first thing to press on the page');
+      assert.deepEqual(vid.kids.filter((n) => n.className === 'fine').map((n) => n.textContent), ['광장에서 이 전광판 앞의 폭죽과 환호를 세로 영상으로 찍어요. 이 기기에서 만들고, 1~2분 걸릴 수 있어요.', '찍은 영상은 받는 사람 페이지에 올라가요. 그날이 지나고 7일 뒤에 지워져요.', '미리보기 영상은 무료 버전이라 워터마크가 있어요.']);
+      assert.equal(P.all('div').find((n) => /^stage/.test(n.className)).className, 'stage sm');
+      assert.deepEqual(cardOf(P, '🔗 링크 보내기').kids[1].kids.map((n) => n.className), ['btn', 'btn'], 'one gold button on the page');
+    } finally { P.done(); }
+    P = own({ media: true, gift: view({ phase: 'after' }) });
+    try {
+      await P.load('giftpage.js');
+      const vid = cardOf(P, '🎬 15초 축하 영상');
+      assert.deepEqual(vid.kids.filter((n) => n.className === 'fine').map((n) => n.textContent).slice(0, 2), ['광장에서 내려온 전광판은 새 영상을 찍을 수 없어요.', '찍은 영상은 받는 사람 페이지에 올라가요. 그날이 지나고 7일 뒤에 지워져요.']);
+    } finally { P.done(); }
+  });
+  it('every button and link the pages build carries a class that has a pressed state in the sheet', async () => {
+    const RULE = { btn: '.btn:not(:disabled):active', chip: '.chip:not(:disabled):active', sw: '.sw:active', tier: '.tier:active', linkbtn: '.linkbtn:active', brand: '.brand:active', rp: '.note .rp:active', play: '.stage .play:active span' };
+    for (const sel of Object.values(RULE)) assert.ok(SHEET.rules.some((r) => r.sels.includes(sel)), sel);
+    const seen = new Set();
+    const sweep = (P, where) => { for (const n of [...P.all('button'), ...P.all('a')]) { const c = n.className.split(/\s+/).find((x) => RULE[x]); assert.ok(c, `${where}: "${n.textContent}" (${n.className || 'no class'}) has no pressed state`); seen.add(c); } };
+    let P = maker();
+    try { await P.load('giftpage.js'); sweep(P, 'the maker'); } finally { P.done(); }
+    P = own({ media: true });
+    try {
+      await P.load('giftpage.js'); await P.press(P.btn(/^공유하기$/)); await P.press(P.all('button').find((n) => n.className === 'tier' && /축하 영상 세트/.test(n.textContent)));
+      assert.ok(P.btn(/그냥 보내기/) && P.btn(/열리면 알림 받기/) && P.btn(/무료로 둘게요/), 'the nudge and the notice box are up');
+      sweep(P, 'the owner page');
+    } finally { P.done(); }
+    P = pageOf(view({ paper: [{ id: 'p00001', nick: '친구', txt: '축하해' }] }), AT);
+    try { await P.load('giftpage.js'); await P.press(P.btn(/영상 건너뛰기/)); assert.ok(P.btn(/^신고$/)); sweep(P, 'the recipient page'); } finally { P.done(); }
+    P = pageOf(view({ phase: 'before' }), KST('2026-11-24T12:00:00'));
+    try { await P.load('giftpage.js'); sweep(P, 'the page before the day'); } finally { P.done(); }
+    P = fakeDom({ path: '/g/abcd1234', data: { id: 'abcd1234', gift: null, now: AT, media: false }, at: AT });
+    try { await P.load('giftpage.js'); assert.deepEqual(P.heads('h1'), ['기념 페이지가 끝났거나 가려졌어요']); sweep(P, 'the page that is gone'); } finally { P.done(); }
+    assert.deepEqual([...seen].sort(), Object.keys(RULE).sort(), 'and every kind of control was met');
   });
 });
