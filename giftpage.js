@@ -284,8 +284,9 @@ function owner(g, { fresh = false, mine: extra = null, media = false } = {}) {
   const rec = recLink(vfirst ? 'btn gold' : 'btn pink', '🎬 광장에서 진짜 15초 영상 만들기' + (vfirst ? ' · 약 25초' : ''));
   const nudge = h('div', { class: 'ask', hidden: true });
   const sendOr = (run) => {
+    if (!vfirst) return run();
     const kept = json('kts_gnudge', null), asked = kept && typeof kept === 'object' && !Array.isArray(kept) ? kept : {};
-    if (!vfirst || asked[g.id]) return run();
+    if (asked[g.id]) return run();
     const ks = Object.keys(asked); if (ks.length > 100) for (const k of ks.slice(0, 50)) delete asked[k];
     asked[g.id] = 1; ls.set('kts_gnudge', JSON.stringify(asked));
     nudge.replaceChildren(h('p', { style: 'margin:0 0 10px;font-weight:800', text: '영상을 먼저 만들면 받는 사람이 진짜 광장 영상을 봐요' }),

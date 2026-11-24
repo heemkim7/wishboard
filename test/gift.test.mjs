@@ -1,5 +1,7 @@
 // 선물 전광판: the pure rules (giftrules.js) — the form, windows, scheduling, the plaza placement, phases and the 롤링페이퍼 lock,
-// attribution, the price ladder, quiet hours, the video's type and ranges.
+// attribution, the price ladder, quiet hours, the video's type and ranges, the reply board's draft and the plaza replay rule — and
+// what the light pages (giftpage.js) and the plaza glue (gift.js) show and send for the reply board, the replay and the video-first
+// owner page, run in a small fake document (no browser).
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
