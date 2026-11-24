@@ -70,7 +70,8 @@ describe('the card\'s last step', () => {
   });
   // The re-reads in main.js, run as they are written there, against a /rt/config that answers from a list of answers. A cold
   // Worker isolate answered the old four for longer than the one read 2.5 s later, and the guest kept the wrong goal all session.
-  it('main.js reads /rt/config again while it answers the old four: at 2.5, 6 and 20 s at most, stopping at the first real list', async () => {
+  // (timeout: a loop that waits on a read that never answers fails here instead of holding the suite)
+  it('main.js reads /rt/config again while it answers the old four: at 2.5, 6 and 20 s at most, stopping at the first real list', { timeout: 10000 }, async () => {
     const main = read('main.js');
     const from = main.indexOf('net.kakaoKey().catch(() => {}).then(async () => {'), to = main.indexOf('\n});', from) + 4;
     assert.ok(from > 0 && to > from);
@@ -84,8 +85,10 @@ describe('the card\'s last step', () => {
       B.setStarterSlots(null);
       give(answers[0]);
       const st = { reads: [], t: 0, known: false, settled: false };
-      const net = { kakaoKey: () => Promise.resolve(), loadConfig: async () => { st.reads.push(st.t); give(answers[st.reads.length]); } };
-      const setTimeout = (f, ms) => { st.t += ms; f(); };
+      // 'hang': a /rt/config read that never answers
+      // the clock: a wait between reads passes at once; the 8 s cap on a read (STARTER_READ_MS) runs out only for a read that hangs
+      const net = { kakaoKey: () => Promise.resolve(), loadConfig: () => { st.reads.push(st.t); const a = answers[st.reads.length]; if (a === 'hang') { queueMicrotask(() => { st.t += 8000; st.cap?.(); }); return new Promise(() => {}); } give(a); return Promise.resolve(); } };
+      const setTimeout = (f, ms) => { if (ms === 8000) { st.cap = f; return 0; } st.t += ms; f(); return 0; };
       const body = (consts + '\n' + main.slice(from, to)).replace(/starterListKnown = true;/g, 'st.known = true;').replace(/starterListSettled = true;/g, 'st.settled = true;').replace(/^net\.kakaoKey\(\)/m, 'return net.kakaoKey()');
       try {
         await new Function('net', 'BALANCE', 'STARTER_DEFAULT', 'starterFromDb', 'setTimeout', 'st', body)(net, B.BALANCE, B.STARTER_DEFAULT, B.starterFromDb ?? (() => false), setTimeout, st);
@@ -103,6 +106,10 @@ describe('the card\'s last step', () => {
     assert.deepEqual(await run(['old', 'old', 'old', 'real']), { reads: [2500, 6000, 20000], real: true, known: true, settled: true });
     // a database without starter_slot_list: the old four every time, three reads and no more
     assert.deepEqual(await run(['old', 'old', 'old', 'old', 'real']), { reads: [2500, 6000, 20000], real: false, known: true, settled: true });
+    // a read that never answers is given 8 s and counts as "the answer before stands": the loop still ends (and with it the
+    // wait of the free-slot offer), worst case about 20 s + 8 s after the first answer
+    assert.deepEqual(await run(['old', 'hang', 'old', 'real']), { reads: [2500, 14000, 28000], real: true, known: true, settled: true });
+    assert.deepEqual(await run(['old', 'old', 'old', 'hang']), { reads: [2500, 6000, 20000], real: false, known: true, settled: true });
     // a Worker from before the flag answers the old four unmarked: still read again, as before
     assert.deepEqual(await run(['oldw', 'oldw', 'real']), { reads: [2500, 6000], real: true, known: true, settled: true });
     // the database's list at once, then a cold isolate's fallback on a later read (main.js maintTick): the list stays
@@ -112,6 +119,25 @@ describe('the card\'s last step', () => {
       B2.setStarterSlots([...B2.STARTER_DEFAULT], true);
       assert.deepEqual(B2.BALANCE.starterSlots, ['STREET_20', 'STREET_21']);
     } finally { B2.setStarterSlots(null); }
+  });
+});
+
+describe('the star shower\'s announcement (main.js startShower)', () => {
+  // Run as written in main.js, with the page around it stubbed: the 속보 line on a desktop; on a touch screen only the tappable
+  // note, which plays the 속보 line's chime itself (sfx.news, which follows the 🔊 setting inside ui.js tone).
+  const main = read('main.js');
+  const from = main.indexOf('function startShower(seed, announce) {'), to = main.indexOf('\n}', from) + 2;
+  const run = (touch) => {
+    const said = [];
+    const ui = { news: (k) => said.push('news ' + k), note: (t, kind, tap) => said.push('note ' + (typeof tap === 'function' ? 'tappable' : 'plain')), sfx: { news: () => said.push('chime') } };
+    const world = { startStars() {} };
+    new Function('ui', 'world', 'TOUCH', 'STAR_LIFE', 'starsFor', 'headline', 'guideStar', 'let shower = null;\n' + main.slice(from, to) + '\nstartShower(7, true); startShower(7, true);')(ui, world, touch, 60000, () => [], () => {}, () => {});
+    return said;
+  };
+  it('a desktop: the 속보 line (with its chime) and the note; a touch screen: the note and the same chime, once', () => {
+    assert.ok(from > 0 && to > from);
+    assert.deepEqual(run(false), ['news STAR', 'note tappable']);
+    assert.deepEqual(run(true), ['chime', 'note tappable']);
   });
 });
 

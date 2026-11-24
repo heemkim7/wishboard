@@ -592,7 +592,15 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk, 
   // player's taxi. Its headlight pool and wheels keep the fixed index i.
   const REMOTE0 = N_AI + N_SPECIAL;
   let calledTop = 0;
-  const slotOf = (i) => (i >= REMOTE0 && i < REMOTE0 + N_REMOTE ? { parts: taxiParts, k: N_TAXI + calledTop + (i - REMOTE0) } : SLOTS[i] || slotAt(i));
+  // One { parts, k } per remote slot, built once; slotOf only sets its row (no object per call in the frame loop). taxiParts
+  // is the same array for good: useModel empties and refills it in place, so these stay valid for both shapes.
+  const RSLOT = Array.from({ length: N_REMOTE }, () => ({ parts: taxiParts, k: 0 }));
+  const slotOf = (i) => {
+    if (i < REMOTE0 || i >= REMOTE0 + N_REMOTE) return SLOTS[i] || slotAt(i);
+    const r = RSLOT[i - REMOTE0];
+    r.k = N_TAXI + calledTop + (i - REMOTE0);
+    return r;
+  };
   const WHEELS = [[-0.86, 1.45], [0.86, 1.45], [-0.86, -1.45], [0.86, -1.45]];
   const tq = new THREE.Quaternion(), wq = new THREE.Quaternion(), tm = new THREE.Matrix4(), wm = new THREE.Matrix4();
   const tv = new THREE.Vector3(), wv = new THREE.Vector3(), ts = new THREE.Vector3(1, 1, 1), ws = new THREE.Vector3(1, 1, 1), XA = new THREE.Vector3(1, 0, 0);

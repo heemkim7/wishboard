@@ -485,14 +485,19 @@ net.kakaoKey().then(() => { ui.setOperator(net.operator); maintShow(net.maint); 
 // as it changes (nextGoal reads BALANCE.starterSlots every second). The free-slot offer waits for the list to settle
 // (hooks.starterListSettled, ui.js maybeStarterToast), so it never offers from the old four and then cannot take it back.
 // A database without starter_slot_list answers the old four every time: the offer then comes after the last read.
-const STARTER_REREAD_MS = [2500, 6000, 20000];
+const STARTER_REREAD_MS = [2500, 6000, 20000], STARTER_READ_MS = 8000;
 net.kakaoKey().catch(() => {}).then(async () => {
   let waited = 0;
   for (const at of STARTER_REREAD_MS) {
     if (starterFromDb() && BALANCE.starterSlots.join() !== STARTER_DEFAULT.join()) break;
     await new Promise((r) => setTimeout(r, at - waited));
     waited = at;
-    try { await net.loadConfig(); } catch { /* the answer before stands */ }
+    // Each read is given STARTER_READ_MS: one that hangs counts as "the answer before stands", so the loop always ends and
+    // the free-slot offer (which waits for starterListSettled) comes. (net.loadConfig itself has no timeout: it is on the
+    // boot path and brings the Supabase keys.)
+    let cut;
+    try { await Promise.race([net.loadConfig(), new Promise((r) => { cut = setTimeout(r, STARTER_READ_MS); })]); } catch { /* the answer before stands */ }
+    clearTimeout(cut);
     starterListKnown = true;
   }
   starterListKnown = true;
@@ -1422,8 +1427,10 @@ function startShower(seed, announce) {
   shower = { seed: key, started: performance.now(), taken: new Set() };
   world.startStars(starsFor(key));
   if (announce) {
-    // On a touch screen the tappable note below is the one row for it: the 속보 line said the same thing a row above.
+    // On a touch screen the tappable note below is the one row for it: the 속보 line said the same thing a row above. The
+    // 속보 line's chime comes with the note instead (ui.sfx follows the 🔊 setting as pushNews's does).
     if (!TOUCH) ui.news('STAR');
+    else ui.sfx.news();
     // The guide is the cyan waypoint, so the line names no colour. Stars are play: no points.
     headline(`🌠 별똥별 10개 · ${Math.round(STAR_LIFE / 1000)}초 · 별똥별 빛기둥에 서 보세요`);
     ui.note(`별똥별 ${Math.round(STAR_LIFE / 1000)}초 · 누르면 가장 가까운 별똥별로 길안내`, 'ok', guideStar);
