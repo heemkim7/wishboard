@@ -17,17 +17,22 @@
 #                            <name>_fNNN.png instead of the final files, to check the motion frame by frame
 #            --frames <n>    for a rigged model: n evenly spaced frames of its clip on one sheet, <name>_frames.png
 #            --icons-only    skip the big picture
+#            --jpg <dir>     also write each building's interface icon as a JPEG into <dir> under the name the game
+#                            asks for (lot.jpg, tent.jpg, pocha.jpg, shop.jpg, tower.jpg; 256 x 256, at most 20 KB):
+#                            --jpg icons from the repository root replaces the pictures ui.js LEVELS shows
 #            --az <deg> --pitch <deg>   camera for the big picture (default 35 and 20)
 #
 # Writes <name>.png (768 x 768), sheet.png, compare_buildings.png and, for the buildings, two 256 x 256 icons:
 #   <name>_icon.png       for the interface: framed on the building itself (the FOCUS box below) from closer and lower
-#                         (32 degrees to the side, 14 to 21 up), the stand-in screen dimmed; the tent's and the
+#                         (32 degrees to the side, 14 to 21 up), the stand-in screen switched off (dark navy, at most
+#                         12% bright: "a screen goes here") so the building is the subject; the tent's and the
 #                         stall's board runs out of the top of the picture
-#   <name>_icon_full.png  the whole lot with its board, as the game shows it (35 degrees to the side, 26 up)
+#   <name>_icon_full.png  the whole lot with its board lit, as the game shows it (35 degrees to the side, 26 up)
 #
 # What is in the picture besides the model:
-#   - a stand-in screen and a stand-in name sign where BoardAnchor and SignAnchor say the game mounts them (a soft
-#     gradient and a glowing bar: no artwork, no lettering), with the game's own 0.16 m board frame;
+#   - a stand-in screen and a stand-in name sign where the game mounts them (a soft gradient and a glowing bar: no
+#     artwork, no lettering), with the game's own 0.16 m board frame. That is where BoardAnchor and SignAnchor say,
+#     but for the tower's sign, which the game stands on the board's top rim (SIGN_AT below, ts3d/layout.js LOT.faces);
 #   - for the assets that have no lot pad, a plain round floor so they do not float;
 #   - small coloured lamps next to the model's glowing parts, because Eevee does not let a glowing surface light its
 #     surroundings, and a bloom added afterwards. Engine: Eevee Next; PROPS_CYCLES=1 falls back to Cycles on the CPU.
@@ -40,7 +45,7 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 ROOT = REPO.split(os.sep + ".claude" + os.sep + "worktrees" + os.sep)[0]
 argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 OPT = {"--glb": os.path.join(ROOT, "out", "blender", "glb"), "--out": os.path.join(ROOT, "out", "blender", "renders"),
-       "--tint": "#ff5a3c", "--az": "35", "--pitch": "20", "--frame": "0.2", "--frames": "0"}
+       "--tint": "#ff5a3c", "--az": "35", "--pitch": "20", "--frame": "0.2", "--frames": "0", "--jpg": ""}
 FRAME_GIVEN = "--frame" in argv
 FLAGS, names, i = set(), [], 0
 while i < len(argv):
@@ -60,7 +65,12 @@ FOCUS = dict(lot0_empty=(-2.7, 2.7, 0.0, 5.05, 0.3, 3.0), lot1_tent=(-3.1, 3.1, 
              lot2_pocha=(-4.15, 4.0, 0.0, 4.2, -1.6, 3.0), lot3_shop=(-4.5, 5.0, 0.0, 9.0, -3.3, 3.5),
              lot4_tower=(-4.2, 4.2, 0.0, 19.0, -3.3, 4.3))
 ICON_PITCH = dict(lot0_empty=16.0, lot1_tent=21.0, lot2_pocha=21.0, lot3_shop=16.0, lot4_tower=14.0)   # the low ones from a little higher: their pad fills the picture's foot
-ICON_SCREEN = 0.3                          # the stand-in screen is drawn this much dimmer in the icons (1 = as in the big picture)
+ICON_SCREEN = ("#0a1020", "#151e36")       # the stand-in screen in the interface icons: switched off, dark navy from its foot to its top (at most 12% bright)
+# Where the game draws a name sign that is not at the model's SignAnchor, in the game's axes (ts3d/layout.js LOT.faces):
+# the tower's plate is on its crown, behind the board; the game stands the sign on the board's top rim.
+SIGN_AT = dict(lot4_tower=(0.0, 17.1, 3.4))
+JPG_DIR = os.path.abspath(OPT["--jpg"]) if OPT["--jpg"] else ""
+JPG_MAX = 20000                            # bytes: the quality goes down from 92 until the icon fits
 FRAMES = int(OPT["--frames"])
 DUMMY, BARE = "--dummy" in FLAGS, "--bare" in FLAGS
 TMP = os.path.join(tempfile.gettempdir(), "kts-props")
@@ -85,6 +95,24 @@ def write_png(path, rgb):
     with open(path, "wb") as f:
         f.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
                 + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
+
+def write_jpg(path, rgb, max_bytes=JPG_MAX):
+    """rgb: (h, w, 3) uint8, top row first. Saved as stored (no view transform), at the best quality that fits."""
+    h, w = rgb.shape[:2]
+    px = np.ones((h, w, 4), np.float32)
+    px[..., :3] = rgb[::-1].astype(np.float32) / 255.0
+    img = bpy.data.images.new("icon_jpg", w, h, alpha=False)
+    img.pixels.foreach_set(px.ravel())
+    img.file_format = "JPEG"
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    quality = 92
+    while True:
+        img.save(filepath=path, quality=quality)
+        if os.path.getsize(path) <= max_bytes or quality <= 60:
+            break
+        quality -= 4
+    bpy.data.images.remove(img)
+    return quality, os.path.getsize(path)
 
 def read_image(path):
     """(h, w, 4) float32, top row first, values as stored (linear for EXR, sRGB for PNG and JPG)."""
@@ -277,8 +305,35 @@ def screen_material():
     nt.links.new(em.outputs["Emission"], out.inputs["Surface"])
     return m
 
-def stand_ins(anchors):
-    """The screen (with the game's frame) and the name sign, where the anchors say they go. Returns light hints."""
+def screen_off_material():
+    """The stand-in screen switched off, for the interface icons: dark navy, a little lighter toward the top. It gives
+    off no light to speak of, so the building carries the picture and the panel reads as the place of a screen."""
+    m = bpy.data.materials.new("StandInScreenOff")
+    m.use_nodes = True
+    nt = m.node_tree
+    for n in list(nt.nodes):
+        nt.nodes.remove(n)
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    em = nt.nodes.new("ShaderNodeEmission")
+    tc = nt.nodes.new("ShaderNodeTexCoord")
+    sep = nt.nodes.new("ShaderNodeSeparateXYZ")
+    up = nt.nodes.new("ShaderNodeMath")                           # object space of a unit box: z -0.5 (foot) .. 0.5 (top)
+    up.operation = "ADD"
+    up.inputs[1].default_value = 0.5
+    ramp = nt.nodes.new("ShaderNodeValToRGB")
+    el = ramp.color_ramp.elements
+    el[0].position, el[0].color = 0.0, (*lin(ICON_SCREEN[0]), 1)
+    el[1].position, el[1].color = 1.0, (*lin(ICON_SCREEN[1]), 1)
+    nt.links.new(tc.outputs["Object"], sep.inputs["Vector"])
+    nt.links.new(sep.outputs["Z"], up.inputs[0])
+    nt.links.new(up.outputs["Value"], ramp.inputs["Fac"])
+    nt.links.new(ramp.outputs["Color"], em.inputs["Color"])
+    em.inputs["Strength"].default_value = 1.0
+    nt.links.new(em.outputs["Emission"], out.inputs["Surface"])
+    return m
+
+def stand_ins(anchors, name=""):
+    """The screen (with the game's frame) and the name sign, where the game mounts them. Returns light hints."""
     hints = []
     b = anchors.get("BoardAnchor")
     if b is not None:
@@ -295,6 +350,9 @@ def stand_ins(anchors):
     s = anchors.get("SignAnchor")
     if s is not None:
         c = s.matrix_world.translation
+        if name in SIGN_AT:                                    # game axes (x, y up, z front) -> Blender (x, -z, y)
+            gx, gy, gz = SIGN_AT[name]
+            c = Vector((gx, -gz, gy))
         w, h = s.scale.x, s.scale.z
         glow = emission("StandInSign", TINT, 3.2)
         add_box("SignBar", (w * 0.62, 0.02, h * 0.30), (c.x, c.y - 0.012, c.z), glow)
@@ -459,7 +517,7 @@ def render_asset(name):
     lo, hi = pts.min(0), pts.max(0)
     centre = Vector((lo + hi) / 2)
     size = float(max(hi - lo))
-    hints = [] if BARE else stand_ins(anchors)
+    hints = [] if BARE else stand_ins(anchors, name)
     if name not in LOTS:                                       # a plain round floor for the things that have no pad
         r = float(max(hi[0] - lo[0], hi[1] - lo[1])) * 0.54 + 0.2
         bpy.ops.mesh.primitive_cylinder_add(vertices=64, radius=r, depth=0.12, location=(centre.x, centre.y, lo[2] - 0.06))
@@ -504,16 +562,16 @@ def render_asset(name):
     exr = os.path.join(TMP, name + ".exr")
     scene.render.filepath = exr
 
-    screen_mat = bpy.data.materials.get("StandInScreen")
-    screen_em = next((n for n in screen_mat.node_tree.nodes if n.type == "EMISSION"), None) if screen_mat else None
-    screen_full = screen_em.inputs["Strength"].default_value if screen_em else 0.0
+    screen_obj = bpy.data.objects.get("BoardScreen")
+    screen_lit = screen_obj.data.materials[0] if screen_obj else None
+    screen_off = screen_off_material() if screen_obj else None
     screen_lamps = [(L, L.energy) for L in bpy.data.lights if L.name.startswith("GlowScreen")]
 
-    def shot(az, pitch, size_px, margin, out_name, pts=None, screen=1.0, save=True, lift=0.0):
-        if screen_em:                                          # the icons draw the stand-in screen dimmer
-            screen_em.inputs["Strength"].default_value = screen_full * screen
+    def shot(az, pitch, size_px, margin, out_name, pts=None, screen=True, save=True, lift=0.0):
+        if screen_obj:                                         # the interface icons show the stand-in screen switched off
+            screen_obj.data.materials[0] = screen_lit if screen else screen_off
             for L, e in screen_lamps:
-                L.energy = e * screen
+                L.energy = e if screen else 0.0
         fit_camera(cam, fpts if pts is None else pts, az, pitch, margin, lift=lift)
         scene.render.resolution_x = scene.render.resolution_y = size_px * 2
         bpy.ops.render.render(write_still=True)
@@ -556,11 +614,15 @@ def render_asset(name):
             shot(az, pitch, 768, 0.06, name + ".png")
         if name in LOTS:
             # two icons: the whole lot as the game shows it, and the one for the interface, framed on the building
-            # from closer and lower, the stand-in screen dimmed so the building carries the picture
+            # from closer and lower, the stand-in screen switched off so the building carries the picture
             shot(35.0, 26.0, 256, 0.05, name + "_icon_full.png")
             x0, x1, y0, y1, z0, z1 = FOCUS[name]
             box = np.array([(x, -z, y) for x in (x0, x1) for y in (y0, y1) for z in (z0, z1)])
-            shot(32.0, ICON_PITCH[name], 256, 0.03, name + "_icon.png", pts=box, screen=ICON_SCREEN, lift=0.5)
+            icon = shot(32.0, ICON_PITCH[name], 256, 0.03, name + "_icon.png", pts=box, screen=False, lift=0.5)
+            if JPG_DIR:
+                jpg = os.path.join(JPG_DIR, OLD_ICON[name])
+                q, size = write_jpg(jpg, icon)
+                print("ICON", jpg, "quality", q, size, "bytes")
     print("RENDERED", name, engine, "glow lamps", n_glow)
     return True
 
