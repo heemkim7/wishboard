@@ -16,7 +16,7 @@ registerHooks({
 globalThis.WebSocketRequestResponsePair = class { constructor(req, res) { this.req = req; this.res = res; } };
 const { Meter, Room } = await import('../worker.js');
 const worker = (await import('../worker.js')).default;
-const { GIFT, kstDay, addDays } = await import('../giftrules.js');
+const { GIFT, REPLY_MSG, kstDay, addDays } = await import('../giftrules.js');
 const { giftSeenFlush, vidKey } = await import('../giftsrv.js');
 
 function sqliteStorage(db = new DatabaseSync(':memory:')) {
@@ -56,9 +56,11 @@ function makeEnv(extra = {}) {
   return env;
 }
 const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json' } });
+const PUSH_HOST = 'https://fcm.googleapis.com/';
 function fakeNet(state) {
   return async (url, opt = {}) => {
     const u = String(url); state.calls.push(u);
+    if (u.startsWith(PUSH_HOST)) { state.pushes.push({ url: u, body: opt.body }); return new Response('', { status: 201 }); } // the push service
     if (u.includes('/.well-known/jwks.json')) return json({ keys: state.jwks || [] });
     if (u.includes('/rest/v1/billboards')) return json([]);
     if (u.includes('/rest/v1/plots')) return json([]);
@@ -80,7 +82,7 @@ function harness(env) {
 let clockBase = Date.parse('2027-05-01T03:00:00Z'); // 12:00 KST
 function setup() {
   clockBase += 60 * 864e5; let t = clockBase; const orig = Date.now; Date.now = () => t;
-  const prevFetch = globalThis.fetch, state = { calls: [] };
+  const prevFetch = globalThis.fetch, state = { calls: [], pushes: [] };
   globalThis.fetch = fakeNet(state); globalThis.caches = { default: { async match() {}, async put() {}, async delete() { return true; } } };
   return { clock: { add: (ms) => { t += ms; }, now: () => t }, state, done: () => { globalThis.fetch = prevFetch; Date.now = orig; } };
 }
@@ -97,6 +99,35 @@ const db = (env) => env.meter('gift').sql.db;
 const VIS = (n) => String(n).padStart(16, 'a');
 const MP4 = () => { const u8 = new Uint8Array(30000); u8.set([0, 0, 0, 0x20, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d]); return u8; };
 const JPEG = () => { const u8 = new Uint8Array(5000); u8[0] = 0xff; u8[1] = 0xd8; return u8; };
+// The gift DO's methods as the Worker calls them, in order (a write refused at the hard level must add none).
+function spyGift(env) {
+  const calls = [], real = env.METER.get;
+  env.METER.get = (n) => { const m = real(n); return n !== 'gift' ? m : new Proxy(m, { get: (t, k) => (typeof t[k] === 'function' ? (...a) => { calls.push(k); return t[k](...a); } : t[k]) }); };
+  return calls;
+}
+const dayCounts = (env) => Object.fromEntries(db(env).prepare('select k, n from gd where d = ?').all(today()).map((x) => [x.k, x.n]));
+// Web push as a browser receives it (RFC 8291, aes128gcm): a subscriber key pair and auth secret, and the decrypted { body, url }.
+const te = new TextEncoder(), b64 = (u8) => Buffer.from(u8).toString('base64url');
+const cat = (...p) => { const o = new Uint8Array(p.reduce((s, x) => s + x.length, 0)); let i = 0; for (const x of p) { o.set(x, i); i += x.length; } return o; };
+async function hkdf(salt, ikm, info, len) { const k = await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']); return new Uint8Array(await crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt, info }, k, len * 8)); }
+async function subscriber() {
+  const pair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+  const pub = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey)), auth = crypto.getRandomValues(new Uint8Array(16));
+  return { priv: pair.privateKey, pub, auth, endpoint: PUSH_HOST + 'fcm/send/' + crypto.randomUUID(), sub() { return { endpoint: this.endpoint, keys: { p256dh: b64(this.pub), auth: b64(this.auth) } }; } };
+}
+async function decrypt(body, s) {
+  const b = new Uint8Array(body), salt = b.slice(0, 16), idlen = b[20], asPub = b.slice(21, 21 + idlen), ct = b.slice(21 + idlen);
+  const asKey = await crypto.subtle.importKey('raw', asPub, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+  const shared = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: asKey }, s.priv, 256));
+  const ikm = await hkdf(s.auth, shared, cat(te.encode('WebPush: info\0'), s.pub, asPub), 32);
+  const cek = await hkdf(salt, ikm, te.encode('Content-Encoding: aes128gcm\0'), 16), nonce = await hkdf(salt, ikm, te.encode('Content-Encoding: nonce\0'), 12);
+  const pt = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: nonce }, await crypto.subtle.importKey('raw', cek, 'AES-GCM', false, ['decrypt']), ct));
+  let end = pt.length - 1; while (end >= 0 && pt[end] === 0) end--; assert.equal(pt[end], 2, 'last record delimiter');
+  return JSON.parse(new TextDecoder().decode(pt.slice(0, end)));
+}
+const VAPID = JSON.stringify(await crypto.subtle.exportKey('jwk', (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])).privateKey));
+// gb as it was before the reply column (2026-11-23): a store made then must keep working.
+const OLD_GB = "create table gb(id text primary key, at integer not null, uid text not null, ip text not null, day text not null, a integer not null, b integer not null, scr text not null, st text not null, lk integer not null default 1, ref text not null default '', n integer not null default 0, v integer not null default 0, vd integer not null default 0, kids integer not null default 0, rp integer not null default 0, vid text not null default '', j text not null)";
 
 describe('선물 전광판 on the Worker', { concurrency: false }, () => {
   it('makes a board with a guest token; the public view has no owner data; the token owns it', async () => {
@@ -397,6 +428,151 @@ describe('선물 전광판 on the Worker', { concurrency: false }, () => {
       assert.equal(st.days.find((d) => d.d === today()).made, 3);
       assert.equal(st.days.find((d) => d.d === today()).made_ref, 1);
       assert.equal(st.arms.reduce((s, a) => s + a.kids, 0), 1);
+    } finally { done(); }
+  });
+});
+
+describe('답장 전광판 on the Worker', { concurrency: false }, () => {
+  const REPLY = (to, o = {}) => ({ ...FORM({ to: '지수', from: '민지', occ: 'thanks', msg: REPLY_MSG, ...o }), ref: to, re: 1 });
+  const reOf = (env, id) => db(env).prepare('select re from gb where id = ?').get(id).re;
+
+  it('keeps the first reply on the answered board: only another account\'s reply counts, a second one changes nothing, and only the owner reads it', async () => {
+    const { state, clock, done } = setup();
+    try {
+      const env = makeEnv({ VAPID_PRIV: VAPID }), H = harness(env), A = await H.guest(), B = await H.guest('2.2.2.2'), C = await H.guest('3.3.3.3'), s = await subscriber();
+      assert.equal((await H.post('/rt/push', { s: s.sub() }, A.token)).status, 200, 'the sender has web push on');
+      const first = await (await H.post('/rt/gift', FORM({ to: '민지', from: '지수' }), A.token)).json();
+      // Not a reply: one's own board, a board that is not there, no board named, an ordinary board made from the page (ref without re).
+      assert.equal((await H.post('/rt/gift', REPLY(first.id, { to: '셀프' }), A.token)).status, 200);
+      assert.equal((await H.post('/rt/gift', REPLY('zzzzzzzz'), B.token, '2.2.2.2')).status, 200);
+      assert.equal((await H.post('/rt/gift', { ...REPLY(''), ref: undefined }, B.token, '2.2.2.2')).status, 200);
+      assert.equal((await H.post('/rt/gift', { ...FORM({ to: '다음' }), ref: first.id }, C.token, '3.3.3.3')).status, 200);
+      assert.equal(reOf(env, first.id), ''); assert.equal(state.pushes.length, 0); assert.equal('reply' in dayCounts(env), false);
+      assert.equal('re' in (await (await H.get('/rt/gift/' + first.id, A.token)).json()).mine, false);
+      // The reply: an ordinary board whose ref is the answered one.
+      const res = await H.post('/rt/gift', REPLY(first.id), B.token, '2.2.2.2'), reply = await res.json();
+      assert.equal(res.status, 200, JSON.stringify(reply));
+      assert.deepEqual([reply.gift.to, reply.gift.from, reply.gift.occ, reply.gift.msg, reply.gift.th], ['지수', '민지', 'thanks', REPLY_MSG, 'rose']);
+      assert.equal('reply' in reply, false); assert.equal(JSON.stringify(reply).includes(A.id), false, 'the answer never names the answered board\'s owner');
+      assert.equal(reOf(env, first.id), reply.id);
+      assert.equal(db(env).prepare('select ref from gb where id = ?').get(reply.id).ref, first.id);
+      assert.equal(state.pushes.length, 1, 'one notice to the answered board\'s owner');
+      assert.equal(state.pushes[0].url, s.endpoint);
+      assert.deepEqual(await decrypt(state.pushes[0].body, s), { body: '민지님이 답장 전광판을 걸었어요', url: '/g/' + first.id });
+      // A second reply (minutes later, another account) leaves the first and tells nobody.
+      clock.add(5 * 60000);
+      assert.equal((await H.post('/rt/gift', REPLY(first.id, { from: '수아' }), C.token, '3.3.3.3')).status, 200);
+      assert.equal(reOf(env, first.id), reply.id); assert.equal(state.pushes.length, 1);
+      await H.post('/rt/gift/' + first.id + '/seen', { v: VIS(1), e: 'reply' }); await giftSeenFlush(env, H.ctx);
+      const d = dayCounts(env);
+      assert.equal(d.reply, 1, 'boards that got their first reply'); assert.equal(d.made_ref, 3, 'every board made from the page still counts for K');
+      assert.equal(d['ev:reply'], 1, 'the reply button, per device and day');
+      assert.equal(db(env).prepare('select kids from gb where id = ?').get(first.id).kids, 3);
+      // Only the owner's read says a reply came; nobody else's read, the page or the world does.
+      const mine = await (await H.get('/rt/gift/' + first.id, A.token)).json();
+      assert.equal(mine.own, true); assert.equal(mine.mine.re, reply.id);
+      const pub = await (await H.get('/rt/gift/' + first.id)).json(), other = await (await H.get('/rt/gift/' + first.id, B.token)).json();
+      assert.equal(JSON.stringify(pub).includes(reply.id), false); assert.equal('mine' in other, false); assert.equal(JSON.stringify(other).includes(reply.id), false);
+      assert.equal((await (await H.get('/g/' + first.id)).text()).includes(reply.id), false, 'the page anyone opens does not carry it');
+      const theirs = await (await H.get('/rt/gift/' + reply.id)).json();
+      assert.equal(JSON.stringify(theirs).includes(first.id), false, 'a reply\'s public view does not say what it answers');
+      clock.add(61000);
+      const w = await (await H.get('/rt/world')).json();
+      assert.deepEqual(Object.keys(w.gifts.find((g) => g.id === first.id)).sort(), ['a', 'b', 'from', 'id', 'msg', 'n', 'occ', 'scr', 'th', 'to']);
+      // Taken down by its maker: the mark goes with it, at once for the owner.
+      assert.equal((await H.post('/rt/gift/' + reply.id + '/delete', {}, B.token, '2.2.2.2')).status, 200);
+      assert.equal(reOf(env, first.id), '');
+      assert.equal('re' in (await (await H.get('/rt/gift/' + first.id, A.token)).json()).mine, false);
+    } finally { done(); }
+  });
+
+  it('sends no reply notice from 21:00 to 08:00 KST (the owner page still shows it); without a name the notice says so', async () => {
+    const { state, clock, done } = setup();
+    try {
+      const env = makeEnv({ VAPID_PRIV: VAPID }), H = harness(env), A = await H.guest(), B = await H.guest('2.2.2.2'), s = await subscriber();
+      await H.post('/rt/push', { s: s.sub() }, A.token);
+      clock.add(10 * 36e5); // 22:00 KST
+      const night = await (await H.post('/rt/gift', FORM(), A.token)).json();
+      const r1 = await (await H.post('/rt/gift', REPLY(night.id), B.token, '2.2.2.2')).json();
+      assert.equal(reOf(env, night.id), r1.id); assert.equal(state.pushes.length, 0, 'never at night');
+      assert.equal((await (await H.get('/rt/gift/' + night.id, A.token)).json()).mine.re, r1.id, 'seen the next time the owner opens the page');
+      clock.add(10 * 36e5); // 08:00 KST the next morning
+      const day = await (await H.post('/rt/gift', FORM({ at: 9 }), A.token)).json();
+      const r2 = await (await H.post('/rt/gift', REPLY(day.id, { from: '' }), B.token, '2.2.2.2')).json();
+      assert.equal(reOf(env, day.id), r2.id); assert.equal(state.pushes.length, 1);
+      assert.deepEqual(await decrypt(state.pushes[0].body, s), { body: '답장 전광판이 도착했어요', url: '/g/' + day.id });
+    } finally { done(); }
+  });
+
+  it('a reply is a write: at the hard budget level it answers 503 with no call to the gift object', async () => {
+    const { state, clock, done } = setup();
+    try {
+      const env = makeEnv({ VAPID_PRIV: VAPID }), H = harness(env), A = await H.guest(), B = await H.guest('2.2.2.2'), s = await subscriber();
+      await H.post('/rt/push', { s: s.sub() }, A.token);
+      const first = await (await H.post('/rt/gift', FORM(), A.token)).json();
+      const calls = spyGift(env);
+      env.BUDGET_REQ_DAY = '1'; clock.add(61000);
+      const busy = await H.post('/rt/gift', REPLY(first.id), B.token, '2.2.2.2');
+      assert.equal(busy.status, 503); assert.equal((await busy.json()).code, 'busy');
+      assert.deepEqual(calls, [], 'no DO call'); assert.equal(reOf(env, first.id), ''); assert.equal(state.pushes.length, 0);
+      assert.equal(db(env).prepare('select count(*) n from gb').get().n, 1);
+      delete env.BUDGET_REQ_DAY; clock.add(61000); // the budget is back: the same reply is one call and one notice
+      assert.equal((await H.post('/rt/gift', REPLY(first.id), B.token, '2.2.2.2')).status, 200);
+      assert.deepEqual(calls, ['giftMake']); assert.notEqual(reOf(env, first.id), ''); assert.equal(state.pushes.length, 1);
+    } finally { done(); }
+  });
+
+  it('a store made before the reply column gains it on first use and keeps its boards', async () => {
+    const { done } = setup();
+    try {
+      const env = makeEnv(), H = harness(env), A = await H.guest(), B = await H.guest('2.2.2.2');
+      const now = Date.now(), a = Math.floor(now / GIFT.nowStep) * GIFT.nowStep, cols = () => db(env).prepare('pragma table_info(gb)').all().map((c) => c.name);
+      db(env).exec(OLD_GB);
+      db(env).prepare("insert into gb(id, at, uid, ip, day, a, b, scr, st, kids, j) values(?, ?, ?, ?, ?, ?, ?, 'STREET_31', 'live', 2, ?)").run('oldboard', now, A.id, 'f'.repeat(16), today(), a, a + GIFT.hours * 36e5, JSON.stringify({ to: '옛날', from: '친구', occ: 'bday', msg: '그대로', th: 'party' }));
+      assert.equal(cols().includes('re'), false, 'the table as it was');
+      const read = await (await H.get('/rt/gift/oldboard', A.token)).json();
+      assert.equal(read.own, true); assert.deepEqual([read.gift.to, read.gift.msg, read.mine.kids], ['옛날', '그대로', 2]); assert.equal('re' in read.mine, false);
+      assert.equal(cols().includes('re'), true, 'added in code, no migration');
+      assert.equal(reOf(env, 'oldboard'), '');
+      const reply = await (await H.post('/rt/gift', REPLY('oldboard'), B.token, '2.2.2.2')).json();
+      assert.equal(reply.ok, true); assert.equal(reOf(env, 'oldboard'), reply.id);
+      // The object starts again (a deploy, an eviction): the column is there, nothing is lost.
+      const again = new Meter(makeCtx(env.meter('gift').sql), env);
+      assert.equal(again.giftGet('oldboard', Date.now()).re, reply.id);
+      assert.equal(cols().filter((c) => c === 're').length, 1);
+      assert.equal(db(env).prepare('select count(*) n from gb').get().n, 2);
+    } finally { done(); }
+  });
+
+  it('withdrawal and the 7-day prune take a reply\'s mark with the reply board', async () => {
+    const { state, clock, done } = setup();
+    try {
+      const env = makeEnv(), H = harness(env), A = await H.guest(), U = await userToken(state, clock, '77777777-2222-3333-4444-555555555555'), B = await H.guest('2.2.2.2');
+      const mine = await (await H.post('/rt/gift', FORM(), A.token)).json();
+      const later = await (await H.post('/rt/gift', FORM({ day: addDays(today(), 3), at: 18 }), A.token)).json();
+      const byUser = await (await H.post('/rt/gift', REPLY(mine.id), U.token, '4.4.4.4')).json();
+      const byGuest = await (await H.post('/rt/gift', REPLY(later.id), B.token, '2.2.2.2')).json();
+      assert.equal(reOf(env, mine.id), byUser.id); assert.equal(reOf(env, later.id), byGuest.id);
+      assert.equal((await H.post('/rt/auth/withdraw', {}, U.token)).status, 200);
+      assert.equal(reOf(env, mine.id), '', 'no mark left pointing at a deleted board');
+      assert.equal('re' in (await (await H.get('/rt/gift/' + mine.id, A.token)).json()).mine, false);
+      assert.equal(reOf(env, later.id), byGuest.id, 'other replies stay');
+      // The reply (today's board) is past its 7 days while the board it answered (3 days later) still lives.
+      clock.add(8 * 864e5 + 36e5);
+      assert.equal('re' in (await (await H.get('/rt/gift/' + later.id, A.token)).json()).mine, false, 'a reply that is gone is not offered');
+      assert.equal((await H.post('/rt/gift', FORM(), A.token)).status, 200); // any new board prunes
+      assert.equal(db(env).prepare('select count(*) n from gb where id = ?').get(byGuest.id).n, 0);
+      assert.equal(reOf(env, later.id), '');
+      // A hidden reply is not offered either, and comes back with the board.
+      clock.add(61000);
+      const again = await (await H.post('/rt/gift', REPLY(later.id), B.token, '2.2.2.2')).json();
+      assert.equal(reOf(env, later.id), again.id);
+      await H.admin('/rt/admin/gift/hide', { id: again.id });
+      clock.add(21000);
+      assert.equal('re' in (await (await H.get('/rt/gift/' + later.id, A.token)).json()).mine, false);
+      await H.admin('/rt/admin/gift/hide', { id: again.id, hide: false });
+      clock.add(21000);
+      assert.equal((await (await H.get('/rt/gift/' + later.id, A.token)).json()).mine.re, again.id);
     } finally { done(); }
   });
 });
