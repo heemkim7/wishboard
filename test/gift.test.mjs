@@ -7,12 +7,86 @@ import {
   GIFT, GIFT_SCREENS, OCCASIONS, TIERS, TIER_NOTE, TIER_ASK, won, giftFault, paperFault, windowFor, windowText, startChoices, dayText, hourText,
   screenLoad, pickScreen, nextFree, placeGifts, turnOf, giftPhase, keepUntil, pruneDay, paperOpen, paperTakes, lockArm, refOf, keptRef, REF_MS,
   giftView, giftShareText, countdown, videoKind, rangeOf, pickRecordType, quietNow, kstDay, dayStart, addDays, giftScreen,
-  OCC_KEYS, REPLY_MSG, replyDraft, plazaLook, cpLen,
+  OCC_KEYS, REPLY_MSG, replyDraft, replyLabel, plazaLook, cpLen,
 } from '../giftrules.js';
 
+const src = (f) => fs.readFileSync(new URL('../' + f, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const KST = (s) => Date.parse(s + '+09:00');
 const NOW = KST('2026-11-23T12:00:00'); // Monday noon KST
 const form = (o = {}) => ({ to: '민지', from: '동아리', occ: 'bday', msg: '생일 축하해!', day: '2026-11-23', at: 'now', ...o });
+
+// ---- the light pages and the plaza glue in a small fake document -----------------------------------------------------------------
+// No browser here: just enough of a DOM for giftpage.js and gift.js to build what they show, so a test can press a button and read
+// the page and what was sent. Canvas drawing goes nowhere. Timers, intervals and animation frames are kept and never run by
+// themselves (P.timers() runs the timeouts, P.tick() the one-second lines). Each load is a fresh module instance.
+let LOADS = 0;
+function fakeDom({ path = '/gift', search = '', data = null, store = {}, at = 0, respond = () => ({}) } = {}) {
+  const sent = [], timeouts = [], ticks = [], winOn = {}, swOn = {}, copied = [], shared = [], P = { sent, store, copied, shared, winOn, swOn, skew: at ? at - Date.now() : 0 };
+  const ink = new Proxy({}, { get: (t, k) => (k in t ? t[k] : k === 'measureText' ? () => ({ width: 10 }) : () => ink), set: (t, k, v) => { t[k] = v; return true; } });
+  const text = (v) => ({ nodeType: 3, textContent: String(v), parent: null });
+  const REFLECT = new Set(['hidden', 'disabled', 'href', 'id', 'type', 'src', 'title', 'placeholder']);
+  const el = (tag) => {
+    const n = { tag: String(tag).toLowerCase(), nodeType: 1, kids: [], attrs: {}, on: {}, style: {}, className: '', value: '', parent: null, hidden: false, disabled: false, width: 0, height: 0 };
+    const adopt = (c) => { const k = c && c.nodeType ? c : text(c); if (k.parent) k.parent.kids = k.parent.kids.filter((x) => x !== k); k.parent = n; return k; };
+    Object.assign(n, {
+      append(...cs) { for (const c of cs) n.kids.push(adopt(c)); }, prepend(...cs) { n.kids.unshift(...cs.map(adopt)); },
+      after(c) { const i = n.parent.kids.indexOf(n); const k = c; if (k.parent) k.parent.kids = k.parent.kids.filter((x) => x !== k); k.parent = n.parent; n.parent.kids.splice(i + 1, 0, k); },
+      replaceChildren(...cs) { for (const k of n.kids) k.parent = null; n.kids = []; n.append(...cs); },
+      remove() { if (n.parent) n.parent.kids = n.parent.kids.filter((x) => x !== n); n.parent = null; },
+      contains(o) { for (let x = o; x; x = x.parent) if (x === n) return true; return false; },
+      setAttribute(k, v) { n.attrs[k] = String(v); if (REFLECT.has(k)) n[k] = k === 'hidden' || k === 'disabled' ? true : String(v); if (k === 'width' || k === 'height') n[k] = Number(v); },
+      getAttribute: (k) => n.attrs[k] ?? null, addEventListener(t, f) { (n.on[t] ||= []).push(f); }, removeEventListener() {},
+      focus() { doc.activeElement = n; }, matches: () => false, getContext: () => ink, canPlayType: () => '', play: () => Promise.resolve(), pause() {}, showPicker() {},
+    });
+    Object.defineProperty(n, 'textContent', { get: () => n.kids.map((k) => k.textContent).join(''), set(v) { n.replaceChildren(); if (v != null && v !== '') n.append(String(v)); } });
+    Object.defineProperty(n, 'isConnected', { get: () => { for (let x = n; x; x = x.parent) if (x === app || x === doc.body) return true; return false; } });
+    return n;
+  };
+  const app = el('main'), dataTag = data ? { textContent: JSON.stringify(data) } : null, toolWish = el('button');
+  const doc = { getElementById: (id) => (id === 'app' ? app : id === 'gift-data' ? dataTag : id === 'view' ? el('canvas') : null), createElement: el, createTextNode: text, querySelector: () => toolWish,
+    documentElement: { classList: { add() {} } }, head: el('head'), body: el('body'), activeElement: null, hidden: false, addEventListener() {}, removeEventListener() {} };
+  el('div').append(toolWish); // the HUD's 🌠 button has a parent (gift.js puts 🎁 after it)
+  const loc = { pathname: path, search, hash: '', origin: 'https://sq.example', reloads: 0, reload() { loc.reloads++; }, get href() { return loc.origin + loc.pathname + loc.search; }, set href(v) { loc.went = String(v); } };
+  const go = (url) => { const u = new URL(String(url), loc.origin); loc.pathname = u.pathname; loc.search = u.search; };
+  const win = { addEventListener(t, f) { (winOn[t] ||= []).push(f); }, removeEventListener() {}, scrollTo() {}, postMessage() {} }; win.parent = win;
+  const realNow = Date.now;
+  const globals = {
+    document: doc, window: win, location: loc, history: { scrollRestoration: 'auto', pushState: (s, t, url) => go(url), replaceState: (s, t, url) => go(url) },
+    localStorage: { getItem: (k) => (k in store ? store[k] : null), setItem(k, v) { store[k] = String(v); } },
+    navigator: { userAgent: 'test', sendBeacon: () => true, clipboard: { async writeText(t) { copied.push(String(t)); } }, share: null, serviceWorker: { addEventListener(t, f) { swOn[t] = f; } } },
+    fetch: async (url, opt = {}) => { sent.push({ url: String(url), method: opt.method || 'GET', body: typeof opt.body === 'string' ? JSON.parse(opt.body) : opt.body, auth: opt.headers?.authorization || '' }); const r = respond(String(url), opt); return { ok: !!r, status: r ? 200 : 404, json: async () => r || { ok: false }, blob: async () => new Blob([]) }; },
+    requestAnimationFrame: () => 0, cancelAnimationFrame() {}, scrollTo() {}, scrollY: 0, matchMedia: () => ({ matches: false }),
+    setInterval: (f) => { ticks.push(f); return 0; }, clearInterval() {}, setTimeout: (f, ms) => { timeouts.push({ f, ms }); return 0; }, clearTimeout() {},
+  };
+  const before = Object.fromEntries(Object.keys(globals).map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
+  for (const [k, value] of Object.entries(globals)) Object.defineProperty(globalThis, k, { value, configurable: true, writable: true });
+  Date.now = () => realNow() + P.skew;
+  const settle = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r)); };
+  const walk = (n, out = []) => { if (n.nodeType === 1) { out.push(n); for (const k of n.kids) walk(k, out); } return out; };
+  const shown = (n) => { for (let x = n; x; x = x.parent) if (x.hidden) return false; return true; };
+  Object.assign(P, {
+    app, doc, loc, settle, shown,
+    done() { Date.now = realNow; for (const [k, d] of Object.entries(before)) { if (d) Object.defineProperty(globalThis, k, d); else delete globalThis[k]; } },
+    async load(file) { const m = await import('../' + file + '?load=' + (++LOADS)); await settle(); return m; },
+    all: (tag, root = app) => walk(root).filter((n) => n.tag === tag),
+    /** The button or link on screen whose words match (hidden ones are not on screen). */
+    btn: (re, root = app) => walk(root).find((n) => (n.tag === 'button' || n.tag === 'a') && shown(n) && re.test(n.textContent)) || null,
+    heads: (tag = 'h2') => walk(app).filter((n) => n.tag === tag && shown(n)).map((n) => n.textContent),
+    says: (re) => walk(app).some((n) => shown(n) && n.kids.some((k) => k.nodeType === 3 && re.test(k.textContent))),
+    async press(n, ev = {}) { assert.ok(n, 'the button is on screen'); for (const f of n.on.click || []) await f({ preventDefault() {}, target: n, ...ev }); await settle(); },
+    async submit() { const f = walk(app).find((n) => n.tag === 'form'); assert.ok(f, 'a form'); for (const s of f.on.submit) await s({ preventDefault() {} }); await settle(); },
+    input: (id) => walk(app).find((n) => n.attrs.id === id) || null,
+    async timers() { for (const t of timeouts.splice(0)) await t.f(); await settle(); }, timeouts,
+    tick() { for (const f of ticks) f(); },
+    seen: (id, e) => { try { return !!JSON.parse(store.kts_gseen || '{}')[id + ':' + e]; } catch { return false; } },
+  });
+  return P;
+}
+const GUEST = () => JSON.stringify({ token: 'g1.test.token', exp: 4102444800 }); // a guest this browser already has: nothing is minted
+const DAY = '2026-11-25', WIN = { a: KST('2026-11-25T18:00:00'), b: KST('2026-11-26T00:00:00') };
+// A board's public view as the Worker sends it (to 민지, from 지수, the 25th 18:00 to midnight).
+const view = (o = {}) => ({ id: 'abcd1234', to: '민지', from: '지수', occ: 'bday', msg: '생일 축하해!', th: 'party', day: DAY, ...WIN, scr: 'STREET_31', phase: 'live', lk: 1, n: 0, v: 0, vid: null, paper: [], open: true, takes: true, ...o });
+const pageOf = (g, at, o = {}) => fakeDom({ path: '/g/' + g.id, data: { id: g.id, gift: g, now: at, media: false }, at, store: { masil_gt: GUEST() }, ...o });
 
 describe('the form', () => {
   it('takes a name, an occasion, a short line and a window; the theme follows the occasion unless chosen', () => {
@@ -166,6 +240,88 @@ describe('the reply board (답장 전광판) and the plaza replay', () => {
     const long = replyDraft({ to: '가'.repeat(30), from: '  나' + String.fromCharCode(0x200b) + '나'.repeat(30) });
     assert.equal(cpLen(long.to), GIFT.toMax); assert.equal(cpLen(long.from), GIFT.fromMax, 'cut to the limits, marks and spaces out');
     assert.equal(giftFault({ ...replyDraft({ to: '민지', from: '운영자' }), day: '2026-11-23', at: 'now' }, NOW).code, 'name', 'a name the form refuses is still refused');
+  });
+  it('the reply button is named after the sender when the board has one', () => {
+    assert.equal(replyLabel({ to: '민지', from: '지수' }), '💌 지수님에게 답장 전광판 걸기');
+    assert.equal(replyLabel({ to: '민지', from: '' }), '💌 고마워 전광판 걸기');
+    assert.equal(replyLabel(null), '💌 고마워 전광판 걸기');
+  });
+  it('the recipient page: after the film the reply is the first button; one tap opens the maker filled in, one more hangs it as a reply', async () => {
+    const g = view(), made = view({ id: 'rrrrrrrr', to: '지수', from: '민지', occ: 'thanks', msg: REPLY_MSG, th: 'rose' });
+    const P = pageOf(g, KST('2026-11-25T19:00:00'), { respond: (u, o) => (u === '/rt/gift' && o.method === 'POST' ? { ok: true, id: made.id, url: 'https://sq.example/g/' + made.id, gift: made, mine: { kids: 0, vd: 0, at: 1, lk: 1 }, media: false } : null) });
+    try {
+      await P.load('giftpage.js');
+      assert.deepEqual(P.heads('h1'), ['🎂 민지님, 생일 축하해요!']);
+      assert.equal(P.btn(/답장/), null, 'the film first');
+      await P.press(P.btn(/영상 건너뛰기/));
+      const reply = P.btn(/답장/);
+      assert.equal(reply.textContent, '💌 지수님에게 답장 전광판 걸기');
+      assert.equal(reply.parent.kids[0], reply, 'the first of the buttons');
+      assert.deepEqual(reply.parent.kids.filter((n) => n.tag === 'button' || n.tag === 'a').map((n) => n.textContent), ['💌 지수님에게 답장 전광판 걸기', '⬇ 영상 저장', '🗽 직접 가서 보기', '🎁 나도 누군가에게 걸어 주기']);
+      await P.press(reply);
+      assert.equal(P.seen(g.id, 'reply'), true, 'counted once per device and day');
+      assert.equal(JSON.parse(P.store.kts_gref).id, g.id, 'kept as the ref, like ?ref=');
+      assert.equal(P.loc.pathname, '/gift');
+      assert.deepEqual(P.heads('h1'), ['💌 답장 전광판을 걸어요']);
+      assert.deepEqual(['to', 'msg', 'from'].map((id) => P.input(id).value), ['지수', REPLY_MSG, '민지'], 'who it is for, the thanks line, who it is from');
+      assert.equal(P.all('button').find((n) => n.attrs['aria-pressed'] === 'true' && /고마움/.test(n.textContent)).textContent, '🙏 고마움');
+      assert.match(P.all('p').map((n) => n.textContent).join('\n'), /11월 25일 \(수\) 저녁 7시 ~ 다음 날 새벽 1시/, 'today, now');
+      assert.equal(P.timeouts.length, 0, 'a filled reply does not pull the keyboard up');
+      assert.equal(P.btn(/답장 걸기/).textContent, '💌 답장 걸기');
+      await P.submit();
+      const post = P.sent.find((s) => s.url === '/rt/gift' && s.method === 'POST');
+      assert.deepEqual(post.body, { to: '지수', from: '민지', occ: 'thanks', msg: REPLY_MSG, th: 'rose', day: DAY, at: 'now', ref: g.id, re: 1 });
+      assert.equal(post.auth, 'Bearer g1.test.token');
+      assert.deepEqual(P.heads('h1'), ['🎉 걸었어요!'], 'the reply\'s own owner page');
+      assert.equal(P.loc.pathname, '/g/' + made.id); assert.equal(P.store.kts_gref, '', 'the ref is used up'); assert.deepEqual(JSON.parse(P.store.kts_gmine), [made.id]);
+    } finally { P.done(); }
+  });
+  it('a board without a sender name: the reply is a thanks board and the cursor waits at who it is for; the form still checks what is typed', async () => {
+    const g = view({ from: '' });
+    const P = pageOf(g, KST('2026-11-26T09:00:00')); // the morning after: the page lives 7 more days
+    try {
+      await P.load('giftpage.js'); await P.press(P.btn(/영상 건너뛰기/));
+      assert.equal(P.btn(/전광판 걸기$/).textContent, '💌 고마워 전광판 걸기');
+      await P.press(P.btn(/고마워 전광판 걸기/));
+      assert.deepEqual(['to', 'msg', 'from'].map((id) => P.input(id).value), ['', REPLY_MSG, '민지']);
+      await P.timers(); assert.equal(P.doc.activeElement, P.input('to'));
+      await P.submit();
+      assert.equal(P.sent.some((s) => s.method === 'POST'), false, 'nothing is sent without a name');
+      assert.equal(P.says(/받는 사람 이름을 적어 주세요/), true);
+      P.input('to').value = '운영자'; for (const f of P.input('to').on.input) f();
+      await P.submit();
+      assert.equal(P.sent.some((s) => s.method === 'POST'), false); assert.equal(P.says(/그 이름은 쓸 수 없어요/), true, 'the usual checks');
+    } finally { P.done(); }
+  });
+  it('the maker by itself is as before: its own words, a kept ref without re, the cursor at the name', async () => {
+    const P = fakeDom({ path: '/gift', search: '?ref=abcd1234', at: KST('2026-11-25T19:00:00'), store: { masil_gt: GUEST() }, respond: (u, o) => (u === '/rt/gift' && o.method === 'POST' ? { ok: true, id: 'nnnnnnnn', gift: view({ id: 'nnnnnnnn', to: '수아' }), mine: {}, media: false } : null) });
+    try {
+      await P.load('giftpage.js');
+      assert.deepEqual(P.heads('h1'), ['친구를 위해 뉴욕 타임스퀘어에 전광판을 걸어요']); assert.equal(P.btn(/걸기$/).textContent, '🎁 무료로 걸기');
+      assert.equal(P.all('button').filter((n) => n.className === 'chip' && /고마움/.test(n.textContent)).length, 1, '고마움 can be picked by anyone');
+      assert.equal(P.timeouts.length, 1); await P.timers(); assert.equal(P.doc.activeElement, P.input('to'));
+      P.input('to').value = '수아'; for (const f of P.input('to').on.input) f();
+      await P.submit();
+      assert.deepEqual(P.sent.find((s) => s.method === 'POST').body, { to: '수아', from: '', occ: 'bday', msg: '', th: 'party', day: DAY, at: 'now', ref: 'abcd1234' });
+    } finally { P.done(); }
+  });
+  it('the owner page: a card on top once a reply came, with the way to it; not without one, and the owner\'s preview offers no reply', async () => {
+    const g = view();
+    const own = (mine) => pageOf(g, KST('2026-11-25T19:00:00'), { store: { masil_gt: GUEST(), kts_gmine: JSON.stringify([g.id]) }, respond: (u) => (u === '/rt/gift/' + g.id ? { ok: true, gift: g, own: true, mine, media: false } : u.endsWith('/interest') ? { ok: true } : null) });
+    let P = own({ kids: 1, vd: 0, at: 1, lk: 1, re: 'rrrrrrrr' });
+    try {
+      await P.load('giftpage.js');
+      assert.equal(P.heads()[0], '💌 답장이 도착했어요');
+      const see = P.btn(/답장 보기/);
+      assert.equal(see.tag, 'a'); assert.equal(see.href, '/g/rrrrrrrr');
+      assert.deepEqual(P.heads().slice(1, 4), ['🔗 링크 보내기', '✨ 더 크게, 더 오래 걸고 싶다면', '🎬 15초 축하 영상'], 'the rest as it was');
+      await P.press(P.btn(/받는 사람에게 보이는 화면/));
+      assert.equal(P.btn(/답장|고마워 전광판/), null, 'the preview is the owner looking: nothing to answer');
+      assert.ok(P.btn(/영상 저장/), 'the preview shows the buttons at once');
+    } finally { P.done(); }
+    P = own({ kids: 0, vd: 0, at: 1, lk: 1 });
+    try { await P.load('giftpage.js'); assert.equal(P.heads()[0], '🔗 링크 보내기'); assert.equal(P.btn(/답장 보기/), null); } finally { P.done(); }
+    for (const f of ['giftpage.js', 'gift.js', 'admin-gift.js']) assert.equal(/innerHTML|outerHTML|insertAdjacentHTML|document\.write/.test(src(f)), false, f + ': what people wrote is only ever set as text');
   });
   it('?gb= in the plaza: live in its window, a replay on this device from the day until the page goes, a wait before the day, gone after', () => {
     const g = { id: 'cccccccc', day: '2026-11-25', a: KST('2026-11-25T18:00:00'), b: KST('2026-11-26T00:00:00') };

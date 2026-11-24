@@ -305,6 +305,8 @@ export function keptRef(raw, now = Date.now()) {
 // 답장 전광판: the maker's values for a reply to board g (its public view): to and from swapped and cut to their limits, 고마움, the
 // thanks line. Everything can still be edited and goes through giftFault like any board; a board without a sender leaves `to` empty.
 export function replyDraft(g) { return { to: cut(g?.from, GIFT.toMax), from: cut(g?.to, GIFT.fromMax), occ: 'thanks', msg: REPLY_MSG, th: '' }; }
+// The recipient page's reply button: by the sender's name when the board has one.
+export function replyLabel(g) { const from = cut(g?.from, GIFT.fromMax); return from ? `💌 ${from}님에게 답장 전광판 걸기` : '💌 고마워 전광판 걸기'; }
 
 // ---- what a page shows ---------------------------------------------------------------------------------------------------
 // The public view of a stored board (the Worker strips the owner, network and visitor fields before this).
