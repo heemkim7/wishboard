@@ -2062,6 +2062,7 @@ export function createUI(root, hooks) {
     if (starterToastShown || !plazaReady || !entered) return;
     if (newbieOn) return;
     if (!goalReady()) return; // the same wait as the goal line: an offer must not come from a list that is about to change
+    if (hooks.starterListSettled?.() === false) return; // and the old four may still be replaced by a late read (main.js)
     if (hooks.starterUsed?.() == null && performance.now() < 8000) return;
     if (hooks.starterUsed?.() === true) { starterToastShown = true; return; }
     const id = firstOpenStarter();

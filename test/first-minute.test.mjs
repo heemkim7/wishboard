@@ -63,10 +63,39 @@ describe('the card\'s last step', () => {
     // no line on screen while there is nothing to say, and no free-slot offer from a list that may change
     assert.match(ui, /const none = newbieOn \? !newcomerTask\(\)\?\.text : !goalText;\s+if \(nextLine\.hidden !== none\) nextLine\.hidden = none;/);
     assert.match(ui, /if \(!goalReady\(\)\) return; \/\/ the same wait as the goal line/);
-    // main.js: an answer that is exactly the old four is asked once more, 2.5 s later, and only then is the list settled
+    // main.js: an answer that is exactly the old four is asked again (below), and the offer waits for the list to settle
     assert.match(main, /starterListKnown: \(\) => starterListKnown,/);
-    assert.match(main, /if \(BALANCE\.starterSlots\.join\(\) === STARTER_DEFAULT\.join\(\)\) \{\s+await new Promise\(\(r\) => setTimeout\(r, 2500\)\);\s+try \{ await net\.loadConfig\(\); \}/);
-    assert.match(main, /\}\s+starterListKnown = true;\s+\}\);/);
+    assert.match(main, /starterListSettled: \(\) => starterListSettled,/);
+    assert.match(ui, /if \(hooks\.starterListSettled\?\.\(\) === false\) return;/);
+  });
+  // The re-reads in main.js, run as they are written there, against a /rt/config that answers from a list of answers. A cold
+  // Worker isolate answered the old four for longer than the one read 2.5 s later, and the guest kept the wrong goal all session.
+  it('main.js reads /rt/config again while it answers the old four: at 2.5, 6 and 20 s at most, stopping at the first real list', async () => {
+    const main = read('main.js');
+    const from = main.indexOf('net.kakaoKey().catch(() => {}).then(async () => {'), to = main.indexOf('\n});', from) + 4;
+    assert.ok(from > 0 && to > from);
+    const consts = main.match(/^const STARTER_REREAD_MS = [^\n]+/m)?.[0] || '';
+    const run = async (answers) => {
+      const STARTER_DEFAULT = ['STREET_8', 'STREET_9', 'STREET_10', 'STREET_11'], REAL = ['STREET_20', 'STREET_21'];
+      const st = { list: answers[0] === 'real' ? REAL : STARTER_DEFAULT, reads: [], t: 0, known: false, settled: false };
+      const BALANCE = { get starterSlots() { return st.list; } };
+      const net = { kakaoKey: () => Promise.resolve(), loadConfig: async () => { st.reads.push(st.t); const a = answers[st.reads.length]; st.list = a === 'real' ? REAL : STARTER_DEFAULT; } };
+      const setTimeout = (f, ms) => { st.t += ms; f(); };
+      const body = (consts + '\n' + main.slice(from, to)).replace(/starterListKnown = true;/g, 'st.known = true;').replace(/starterListSettled = true;/g, 'st.settled = true;').replace(/^net\.kakaoKey\(\)/m, 'return net.kakaoKey()');
+      await new Function('net', 'BALANCE', 'STARTER_DEFAULT', 'setTimeout', 'st', body)(net, BALANCE, STARTER_DEFAULT, setTimeout, st);
+      return { reads: st.reads, real: st.list === REAL, known: st.known, settled: st.settled };
+    };
+    // the case that went wrong: the real list only on the third read again (one read again kept the old four all session)
+    const cold = await run(['old', 'old', 'old', 'real']);
+    assert.deepEqual([cold.reads, cold.real], [[2500, 6000, 20000], true]);
+    // a real list at once: no read again
+    assert.deepEqual(await run(['real']), { reads: [], real: true, known: true, settled: true });
+    // the old four, then the real list on the first read again (what one re-read used to cover)
+    assert.deepEqual(await run(['old', 'real']), { reads: [2500], real: true, known: true, settled: true });
+    // a cold isolate: the old four twice more, the real list at 20 s; the goal line follows it from there
+    assert.deepEqual(await run(['old', 'old', 'old', 'real']), { reads: [2500, 6000, 20000], real: true, known: true, settled: true });
+    // a database without starter_slot_list: the old four every time, three reads and no more
+    assert.deepEqual(await run(['old', 'old', 'old', 'old', 'real']), { reads: [2500, 6000, 20000], real: false, known: true, settled: true });
   });
 });
 
