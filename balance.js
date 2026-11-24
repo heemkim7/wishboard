@@ -87,8 +87,20 @@ export function starterList(raw) {
   for (const id of raw) if (typeof id === 'string' && /^STREET_\d+$/.test(id) && SLOT_BY.has(id) && !out.includes(id)) out.push(id);
   return out.length ? out : null;
 }
-/** Adopt the server's list; a missing or bad one goes back to STARTER_DEFAULT. */
-export function setStarterSlots(raw) { STARTER = starterList(raw); return BALANCE.starterSlots; }
+/**
+ * Adopt the server's list; a missing or bad one goes back to STARTER_DEFAULT. fallback: the Worker said its list is only the
+ * fallback (/rt/config starter_fallback, a cold isolate or a database without starter_slot_list): it never replaces a list
+ * the database gave (a periodic read that hit a cold isolate turned a session's goal line from 무료 거리 칸 to 건물 앞).
+ */
+let STARTER_DB = false;
+export function setStarterSlots(raw, fallback = false) {
+  if (fallback && STARTER_DB) return BALANCE.starterSlots;
+  STARTER = starterList(raw);
+  STARTER_DB = !fallback && !!STARTER;
+  return BALANCE.starterSlots;
+}
+/** Has the page a free-slot list the database gave (an answer not marked fallback)? */
+export const starterFromDb = () => STARTER_DB;
 export function slotOf(slotId) { return SLOT_BY.get(String(slotId || '')) || null; }
 export function floorOf(slotId) { return slotOf(slotId)?.bid || 0; }
 export function slotName(slotId) { return slotOf(slotId)?.name || String(slotId || ''); }

@@ -3067,7 +3067,9 @@ async function accountApi(req, env, ctx, u) {
     // the response; the withdrawal sheet asks with ?forget=1 and waits for the probe (1.5 s at most), so it never promises more than will happen.
     const asked = forgetProbe(env); if (u.searchParams.get('forget') === '1') await asked; else ctx?.waitUntil?.(asked);
     const maint = await ops.maintFor(env, ctx, () => LVL.l), operator = ops.operatorFor(env); // maint: the isolate's copy (one DO call a minute at most); operator: OPERATOR_INFO
-    return J({ ...(/^[\w-]{16,80}$/.test(kakao) ? { url: SUPA, key: ANON, kakao, starter: STARTER_C.list } : { url: SUPA, key: ANON, starter: STARTER_C.list }), ...(inviteOn(env) ? { invite: true } : {}), ...(FORGET_C.yes ? { forget: true } : {}), ...(maint ? { maint } : {}), ...(operator ? { operator } : {}), ...(humanSite(env) ? { turnstile: humanSite(env) } : {}) }); // invite: the master switch INVITE_ON; turnstile: the public site key, only with both Turnstile switches set
+    // starter_fallback: this isolate has no list from the database (not asked yet, a failure, or no starter_slot_list): the page keeps
+    // a list it already got from the database instead (balance.js setStarterSlots). A good list adds nothing.
+    return J({ ...(/^[\w-]{16,80}$/.test(kakao) ? { url: SUPA, key: ANON, kakao, starter: STARTER_C.list } : { url: SUPA, key: ANON, starter: STARTER_C.list }), ...(STARTER_C.good ? {} : { starter_fallback: true }), ...(inviteOn(env) ? { invite: true } : {}), ...(FORGET_C.yes ? { forget: true } : {}), ...(maint ? { maint } : {}), ...(operator ? { operator } : {}), ...(humanSite(env) ? { turnstile: humanSite(env) } : {}) }); // invite: the master switch INVITE_ON; turnstile: the public site key, only with both Turnstile switches set
   }
   if (u.pathname === '/rt/event') {
     if (req.method !== 'POST') return J({ err: 'post' }, 405);

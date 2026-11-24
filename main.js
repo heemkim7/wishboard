@@ -10,7 +10,7 @@ import { createUI } from './ui.js?v=202611241127';
 import { haptic, startMusic } from './audio.js?v=202611241127';
 import { isTouchUI } from './interact.js?v=202611241127';
 import { BALANCE, PAY, chainsOf, live, slotName, slotOf, takeGrants, cheerCount, countsAsActivity, josa, slotOpen, SLOT_SOON } from './balance.js';
-import { auctionClosed, EQUIP_MAX, OWNED_MAX, STARTER_DEFAULT } from './balance.js';
+import { auctionClosed, EQUIP_MAX, OWNED_MAX, STARTER_DEFAULT, starterFromDb } from './balance.js';
 import { primeAt, WHY_CHIP } from './primerules.js';
 import { trackEvent } from './analytics.js?v=202611241127';
 import { adoptHandover, allowedLink, blockedText, handoverHref, isAndroid, isInAppWebView, loginEmail, CHEER_PHRASES, GT_LS, SESSION_LS, slotTier } from './plaza-account.js';
@@ -476,8 +476,10 @@ net.kakaoKey().then(() => { ui.setOperator(net.operator); maintShow(net.maint); 
 // The free-slot list in that answer. A Worker isolate that has not asked the database yet answers with the old four
 // (STARTER_DEFAULT) and asks behind the response (worker.js starterSlots, 1.5 s at most), so the next answer has the real
 // list. The same guest saw "무료 거리 칸" on one load and "건물 앞 전광판" on the next, depending on which answer it got.
-// When the first answer is exactly the old four it is asked again, 2.5 s, about 6 s and 20 s after the first answer
-// (STARTER_REREAD_MS, three plain GETs at most), stopping at the first answer that is not the old four: a cold isolate
+// While the page has no list the database gave (an answer marked starter_fallback, or one that is exactly the old four:
+// a Worker from before that flag), it is asked again, 2.5 s, about 6 s and 20 s after the first answer
+// (STARTER_REREAD_MS, three plain GETs at most), stopping at the first list from the database. Later reads (maintTick)
+// never replace that list with a fallback (balance.js setStarterSlots). A cold isolate
 // can answer the old four for longer than the first re-read (its first call to Supabase can take more than 1.5 s). Until
 // the 2.5 s read the HUD shows no goal (hooks.starterListKnown, ui.js nextGoal); after it the goal line follows the list
 // as it changes (nextGoal reads BALANCE.starterSlots every second). The free-slot offer waits for the list to settle
@@ -487,7 +489,7 @@ const STARTER_REREAD_MS = [2500, 6000, 20000];
 net.kakaoKey().catch(() => {}).then(async () => {
   let waited = 0;
   for (const at of STARTER_REREAD_MS) {
-    if (BALANCE.starterSlots.join() !== STARTER_DEFAULT.join()) break;
+    if (starterFromDb() && BALANCE.starterSlots.join() !== STARTER_DEFAULT.join()) break;
     await new Promise((r) => setTimeout(r, at - waited));
     waited = at;
     try { await net.loadConfig(); } catch { /* the answer before stands */ }
