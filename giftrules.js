@@ -370,3 +370,162 @@ export function rangeOf(h, size) {
   if (!(s >= 0) || s > e || s >= size) return 'bad';
   return { offset: s, length: e - s + 1 };
 }
+
+// ---- 점등식 (the lighting ceremony, spec ③) -----------------------------------------------------------------------------------
+// A board with a fixed start (one of GIFT.starts on its day; never a "지금" board) lights in front of the friends who came by the recipient
+// page's button. Nothing tells the devices when: each runs these rules on its own clock plus the server offset (the caller adds it: nowMs()
+// in the plaza, the page's own now() on /g/<id>), the way the 9 pm show times itself. No new field on the board: the start is its window's
+// `a` when that is a whole start hour of its day. The phases of a start s:
+//   early  before s - CER.open             the page's button says when it opens; the plaza sends the link back to the page
+//   wait   s - CER.open .. s - CER.count   the teaser card on the board (곧 켜져요, the name, the time left; never the message)
+//   count  s - CER.count .. s              the big 10..1
+//   lit    s .. s + CER.late               the real card, fireworks, one cheer, the group photo at s + CER.shot; late arrivals get less
+//   over   later, or no fixed start, or the board is hidden or gone: the ordinary ?gb= visit
+// Every timing function takes a board or a start in ms (the localhost seam, cerDebugStart, passes a number).
+export const CER = Object.freeze({
+  open: 600000, count: 10000, late: 120000, // the window opens 10 min before; the countdown is the last 10 s; arrivals up to 2 min after
+  shot: 8000, pose: 6500, shotSlack: 4000, // the photo at s + 8 s (each avatar turns to the camera at 6.5 s); past s + 12 s it is only offered
+  rounds: 6, roundMs: 1200, cheerMs: 5000, // six rounds of fireworks 1.2 s apart; the cheer only in the first 5 s
+  hold: 60000, // the pin stays until s + late + hold (at least a minute); by then /rt/world has the board on its own screen
+});
+// Page beacons (giftsrv.js SEEN_EV; ev:<key> in the daily counters): a device arrived at a ceremony; it saved or shared the group photo.
+export const CER_BEACONS = Object.freeze(['cer', 'cershot']);
+export const CER_TEXT = Object.freeze({
+  early: '10분 전부터 들어올 수 있어요',
+  busy: '지금은 광장이 붐벼서 점등식에 들어갈 수 없어요. 잠시 뒤에 다시 해 주세요',
+  soon: '곧 켜져요',
+  gather: '전광판 앞으로 오면 단체 사진에 같이 찍혀요',
+  shotHead: '📸 단체 사진이 나왔어요',
+  shotReady: '📸 단체 사진이 나왔어요 · 보기', // a notice when a sheet or the gift frame was up at the shot
+  shotTake: '📸 지금 단체 사진 찍기', // late arrivals and a tab back after the shot: offered, never taken by itself
+  save: '사진 저장', share: '공유하기', page: '받는 사람 페이지로',
+});
+const CER_BAND = 'WISH BOARD 가상 광장';
+
+// The fixed start in ms, or 0: a "지금" board (rounded to 10 minutes: a start hour only when made in the first 10 minutes after one, which
+// the owner's read tells apart by `at`, its making time; the public view cannot, and such a board is past its lit minutes before anyone
+// could gather), a hidden or gone board, a window that is not a start hour of the board's day. /rt/world's rows have no day: `a` decides.
+export function cerStart(g) {
+  if (!g || (g.st != null && g.st !== 'live') || g.phase === 'gone') return 0;
+  const a = Number(g.a);
+  if (!Number.isFinite(a) || a <= 0 || a % 36e5 !== 0) return 0; // KST is a whole-hour offset: a start hour is a whole UTC hour
+  if (!GIFT.starts.includes(new Date(a + 9 * 36e5).getUTCHours())) return 0;
+  if (g.day != null && g.day !== '' && kstDay(a) !== String(g.day)) return 0;
+  if (g.at != null && Number(g.at) >= a) return 0; // made at or after its start: a "지금" board
+  return a;
+}
+const startOf = (x) => (typeof x === 'number' ? (Number.isFinite(x) && x > 0 ? x : 0) : cerStart(x));
+export function cerPhase(x, now = Date.now()) {
+  const s = startOf(x), t = Number(now);
+  if (!s || !Number.isFinite(t)) return 'over';
+  if (t < s - CER.open) return 'early';
+  if (t < s - CER.count) return 'wait';
+  if (t < s) return 'count';
+  return t < s + CER.late ? 'lit' : 'over';
+}
+export const cerLeft = (x, now = Date.now()) => { const s = startOf(x); return s ? Math.max(0, s - now) : 0; };
+/** The big number: 10..1 exactly while counting (10 from s - 10 s, 1 in the last second), 0 otherwise. */
+export function cerDigit(x, now = Date.now()) { const left = cerLeft(x, now); return left > 0 && left <= CER.count ? Math.ceil(left / 1000) : 0; }
+/** mm:ss of ms left, rounded up (the last second reads 00:01, never 00:00 while counting). */
+export function cerClock(ms) { const s = Math.max(0, Math.ceil(Number(ms) / 1000) || 0); return two(Math.floor(s / 60)) + ':' + two(s % 60); }
+const cerHM = (s) => { const d = new Date(s + 9 * 36e5); return two(d.getUTCHours()) + ':' + two(d.getUTCMinutes()); };
+/** '12월 25일 18:00' ('' without a start). */
+export function cerWhen(x) { const s = startOf(x); if (!s) return ''; const d = new Date(s + 9 * 36e5); return (d.getUTCMonth() + 1) + '월 ' + d.getUTCDate() + '일 ' + cerHM(s); }
+const cerTo = (g) => cut(g?.to, GIFT.toMax) || '당신';
+export const cerUrl = (id) => '/?gb=' + id + '&cer=1';
+
+// ---- the recipient page (giftpage.js) ----
+/** The page's ceremony button: { label, act, href } or null (no fixed start, or past the late window). act 'early': before the window, a tap
+ *  says CER_TEXT.early and opens the share sheet with cerInvite; 'go': href enters the plaza; 'busy' (budget hard): a tap says CER_TEXT.busy. */
+export function cerButton(g, now = Date.now(), { hard = false } = {}) {
+  const p = cerPhase(g, now);
+  if (p === 'over') return null;
+  if (p === 'early') return { label: '🎆 점등식 같이 보기 · ' + cerWhen(g), act: 'early', href: '' };
+  const label = p === 'lit' ? '🎆 방금 켜졌어요 · 점등식 보러 가기' : '🎆 점등식 들어가기 · ' + cerClock(cerLeft(g, now)) + ' 남음';
+  return hard ? { label, act: 'busy', href: '' } : { label, act: 'go', href: cerUrl(g.id) };
+}
+/** The invitation for the share sheet (url: the recipient page), or null without a fixed start. */
+export function cerInvite(g, url) {
+  const when = cerWhen(g); if (!when) return null;
+  const to = cerTo(g);
+  return { title: `🎆 ${to}님 선물 전광판 점등식`, text: `${when}, 뉴욕 타임스퀘어 가상 광장에서 ${to}님의 전광판이 켜져요. 같이 보러 와요! ${CER_TEXT.early} 👉`, url: String(url || '') };
+}
+/** Added to the owner's share text while the start is ahead (leading space), else ''. */
+export function cerShareLine(g, now = Date.now()) { const p = cerPhase(g, now); return p === 'early' || p === 'wait' || p === 'count' ? ` 🎆 점등식 ${cerWhen(g)}에 같이 봐요!` : ''; }
+/** The plaza's send-back address and the reason the page reads from it once ('early' | 'busy' | ''). */
+export const cerBack = (id, why) => '/g/' + id + '?cer=' + why;
+export function cerBackWhy(search) { try { const v = new URLSearchParams(String(search || '')).get('cer'); return v === 'early' || v === 'busy' ? v : ''; } catch { return ''; } }
+
+// ---- the plaza (gift.js, ts3d/screens.js, giftart.js) ----
+/** What /?gb=<id>&cer=1 does, decided before the room is joined: 'go' (the ceremony), 'early' / 'busy' (back to the page: cerBack), 'plain'
+ *  (no ceremony now: the ordinary ?gb= visit, gift.js land), 'gone'. hard: the gift read said budget hard. start: the localhost seam. */
+export function cerArrive(g, now = Date.now(), { hard = false, start = 0 } = {}) {
+  if (!g) return 'gone';
+  const p = cerPhase(start || g, now);
+  if (p === 'over') return 'plain';
+  if (p === 'early') return 'early';
+  return hard ? 'busy' : 'go';
+}
+export function cerArriveNote(g, now = Date.now(), start = 0) {
+  const s = start || cerStart(g), to = cerTo(g);
+  return now < s ? `🎆 ${to}님 선물 전광판 점등식 · ${cerHM(s)}에 켜져요` : `🎆 ${to}님 선물 전광판이 방금 켜졌어요!`;
+}
+/** The teaser card's fields (giftart.js paintTeaser draws only these): never the message, never the sender. */
+export function cerTeaser(g, now = Date.now(), start = 0) {
+  const s = start || cerStart(g), o = OCCASIONS[g?.occ] || OCCASIONS.bday;
+  return { to: cerTo(g), chip: CER_TEXT.soon, left: cerClock(s ? s - now : 0), when: s ? cerHM(s) : '', emoji: o.emoji, th: THEME_KEYS.includes(String(g?.th || '')) ? String(g.th) : o.th };
+}
+/** How long the one pin lasts from now: past the late window by CER.hold, at least CER.hold. */
+export const cerPinMs = (x, now = Date.now()) => { const s = startOf(x); return Math.max(CER.hold, s ? s + CER.late + CER.hold - now : 0); };
+/** The photo's bottom band: 'To. 민지 · 2026.12.25 · WISH BOARD 가상 광장'. */
+export function cerBand(g, start = 0) {
+  const s = start || cerStart(g), day = s ? kstDay(s) : String(g?.day || '');
+  return `To. ${cerTo(g)} · ${day.replace(/-/g, '.')} · ${CER_BAND}`;
+}
+export const cerPhotoText = (g) => `🎆 ${cerTo(g)}님 선물 전광판 점등식에서 · ${CER_BAND}`;
+/**
+ * The steps due on this device now, each once. done: what this device already did ({ before, teaser, count, light, cheer, rounds, pose,
+ * shot, offer, end }); the caller sets done.before = true whenever the phase was 'wait' or 'count', done[step] = true after each step, and
+ * done.rounds = round + 1 after firing a round. A tab that was hidden resumes at the phase it is in now: missed steps are not replayed.
+ * -> { phase, teaser, count, light, cheer, round (-1: none), pose, shot, offer, end }.
+ *   teaser  pin the board with the teaser (wait, count)      count  the countdown overlay (count)
+ *   light   the lit card is up (lit)                         cheer  the avatar's cheer, only in the first CER.cheerMs
+ *   round   a fireworks round: for a device here before the start, the round of this moment (missed ones are skipped; back after the
+ *           last one, a single round); a late arrival gets one
+ *   pose    turn to the photo camera; shot  the automatic photo (only a device here before the start, at s + CER.shot, until shotSlack)
+ *   offer   the tappable 📸 notice instead (late arrivals, or the shot's moment passed unseen)
+ *   end     once in 'over' after a ceremony ran: put the HUD back, drop the overlay
+ */
+export function cerSteps(x, now = Date.now(), done = {}) {
+  const s = startOf(x), phase = cerPhase(s, now), d = done || {}, t = now - s;
+  const out = { phase, teaser: false, count: false, light: false, cheer: false, round: -1, pose: false, shot: false, offer: false, end: false };
+  if (phase === 'wait' || phase === 'count') { out.teaser = !d.teaser; out.count = phase === 'count' && !d.count; return out; }
+  if (phase !== 'lit') { out.end = !!(d.teaser || d.light) && !d.end; return out; }
+  const here = !!d.before, fired = Number(d.rounds) || 0, k = Math.floor(t / CER.roundMs);
+  out.light = !d.light;
+  out.cheer = !d.cheer && t < CER.cheerMs;
+  if (here && k < CER.rounds) { if (k >= fired) out.round = k; } else if (!fired) out.round = 0;
+  const shotOn = here && !d.shot && t < CER.shot + CER.shotSlack;
+  out.pose = shotOn && !d.pose && t >= CER.pose;
+  out.shot = shotOn && t >= CER.shot;
+  out.offer = !d.shot && !d.offer && (!here || t >= CER.shot + CER.shotSlack);
+  return out;
+}
+/** The localhost-only seam: ?cerin=<seconds> runs the ceremony of any board against a start that many seconds from now (negative: already
+ *  started), on a local development host only (localhost, 127.0.0.1, [::1], *.localhost), within an hour either way. -> the start or 0. */
+export function cerDebugStart(search, host, now = Date.now()) {
+  const h = String(host || '').toLowerCase();
+  if (!(h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h === '::1' || h.endsWith('.localhost'))) return 0;
+  let v = null; try { v = new URLSearchParams(String(search || '')).get('cerin'); } catch { return 0; }
+  const n = v == null || v === '' ? NaN : Number(v);
+  return Number.isFinite(n) && Math.abs(n) <= 3600 ? now + Math.round(n * 1000) : 0;
+}
+/** One beacon per board, event and KST day on a device (the recipient page's rule, for the plaza too: the same kts_gseen store).
+ *  -> { send, seen } (seen: the store to keep; more than 200 keys drop the oldest 100). */
+export function beaconOnce(seen, id, e, day) {
+  const next = { ...(seen && typeof seen === 'object' ? seen : {}) }, key = id + ':' + e;
+  if (next[key] === day) return { send: false, seen: next };
+  const keys = Object.keys(next); if (keys.length > 200) for (const k of keys.slice(0, 100)) delete next[k];
+  next[key] = day;
+  return { send: true, seen: next };
+}
