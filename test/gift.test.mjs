@@ -988,5 +988,8 @@ describe('the gift page over the plaza is a dialog like the sheets (gift.js)', (
     assert.match(GCSS['#kts-gift-done .b']['box-shadow'], /^inset 0 0 0 99px rgba\(70,36,0,0\)$/);
     assert.ok(px(GCSS['#kts-gift-done .b']['min-height']) >= 44);
     assert.ok(GCSS['#kts-gift-rec button:active'].background); assert.equal(GCSS['#kts-gift-rec button::after'].position, 'absolute'); assert.equal(GCSS['#kts-gift-rec button'].position, 'relative');
+    // 취소: a 20px line, 4px above and below, and 8px more to press each way (44); 44px wide.
+    const rec = GCSS['#kts-gift-rec button'], recPad = String(GCSS['#kts-gift-rec button::after'].inset).split(' ').map((v) => -px(v) || 0), vpad = px(rec.padding.split(' ')[0]);
+    assert.ok(px(rec['line-height']) + 2 * vpad + 2 * recPad[0] >= 44); assert.ok(px(rec['min-width']) >= 44);
   });
 });

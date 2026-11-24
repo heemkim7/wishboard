@@ -23,8 +23,8 @@ body.gift-rec{background:#000}
 body.gift-rec #view{left:50%;right:auto;width:min(100vw,calc(100vh * 9 / 16));transform:translateX(-50%)}
 #kts-gift-rec{position:fixed;left:50%;transform:translateX(-50%);top:max(12px,env(safe-area-inset-top));z-index:2147482100;display:flex;gap:8px;align-items:center;padding:8px 14px;border-radius:999px;background:rgba(10,8,30,.82);color:#fff;font:800 14px ${GIFT_SANS};border:1px solid rgba(255,255,255,.2)}
 #kts-gift-rec i{width:10px;height:10px;border-radius:50%;background:#ff2d55;display:inline-block;animation:kgr 1s infinite}
-#kts-gift-rec button{position:relative;border:0;border-radius:999px;padding:4px 10px;background:rgba(255,255,255,.14);color:#fff;font:inherit;cursor:pointer;transition:background-color .25s}
-#kts-gift-rec button::after{content:"";position:absolute;inset:-9px -4px}
+#kts-gift-rec button{position:relative;min-width:44px;border:0;border-radius:999px;padding:4px 10px;background:rgba(255,255,255,.14);color:#fff;font:inherit;line-height:20px;cursor:pointer;transition:background-color .25s}
+#kts-gift-rec button::after{content:"";position:absolute;inset:-8px 0}
 #kts-gift-rec button:active{background:rgba(255,255,255,.42);transition:none}
 @keyframes kgr{50%{opacity:.25}}
 #kts-gift-done{position:fixed;inset:0;z-index:2147482100;background:rgba(4,4,14,.86);display:grid;place-items:center;padding:16px;font:15px/1.5 ${GIFT_SANS};color:#f3f1ff}
