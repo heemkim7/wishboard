@@ -1,7 +1,7 @@
 // 선물 전광판 light pages (gift.html): the maker at /gift and the board page at /g/<id> (owner preview with the price ladder, the
 // recipient page, the 롤링페이퍼). No three.js, no realtime room, no Supabase client: what the page needs from the Worker comes inline in
 // #gift-data (the Worker renders /g/<id>), the rest is a few small JSON calls. Text people wrote is only set with textContent.
-import { GIFT, GIFT_ID, OCCASIONS, OCC_KEYS, GIFT_THEMES, THEME_KEYS, TIERS, TIER_NOTE, TIER_ASK, won, giftFault, paperFault, startChoices, windowText, dayText, hourText, kstDay, addDays, dayStart, countdown, dDay, refOf, keptRef, cpLen, norm, windowFor, replyDraft, replyLabel, PLAZA_BTN, videoFirst, CER_TEXT, cerStart, cerButton, cerInvite, cerShareLine, cerBackWhy, cerDebugStart } from './giftrules.js';
+import { GIFT, GIFT_ID, OCCASIONS, OCC_KEYS, GIFT_THEMES, THEME_KEYS, TIERS, TIER_NOTE, TIER_ASK, won, giftFault, paperFault, startChoices, windowText, dayText, hourText, kstDay, addDays, countdown, dDay, refOf, keptRef, cpLen, norm, windowFor, replyDraft, replyLabel, PLAZA_BTN, videoFirst, CER_TEXT, cerStart, cerButton, cerInvite, cerShareLine, cerBackWhy, cerDebugStart, pageLook, hiddenWords } from './giftrules.js';
 import { paintGift, giftCardJpeg } from './giftart.js?v=202611241625';
 import { createFilm, FILM_MS, recordCanvas, canRecord, saveBlob, fileName } from './giftfilm.js?v=202611241625';
 
@@ -415,27 +415,37 @@ async function pushOn(tok) {
 
 // The recipient page (and anyone with the link): before the day a countdown and the 롤링페이퍼; from the day the film first, then
 // [답장 전광판 걸기] [영상 저장] [직접 가서 보기 / 광장에서 미리 보기 / 광장에서 다시 보기] [나도 누군가에게 걸어 주기], the messages, and a
-// line about when and where it hangs.
+// line about when and where it hangs. A 점등식 board (a fixed start) keeps the before look until its start (giftrules.js revealAt,
+// pageLook): the lighting is the reveal, and the page turns into the board by itself at that second.
 function visit(g, { preview = false } = {}) {
   clear(); CUR = g;
   if (!preview) beacon(g.id, 'open');
   const O = OCCASIONS[g.occ] || OCCASIONS.bday;
-  const phase = () => { const t = now(); return t >= g.b ? 'after' : t >= g.a ? 'live' : t >= dayStart(g.day) ? 'day' : 'before'; };
+  const phase = () => pageLook(g, now(), CER_DEBUG);
   const back = preview ? h('button', { class: 'btn sm', type: 'button', onclick: () => board() }, '← 내 관리 화면으로') : null;
   const cer = cerCard(g, preview ? '' : cerBackOnce()); // 점등식: under the countdown before the day, under the where line from the day
   if (phase() === 'before') {
-    const cd = live(h('div', { class: 'big count' }), () => { const d = dDay(g.day, now()); return d >= 1 ? 'D-' + d : countdown(dayStart(g.day) - now()); });
-    const prev = h('canvas', { class: 'preview', width: 1024, height: 576, 'aria-label': '전광판 미리보기' }); paintGift(prev, { ...g, msg: '그날 공개돼요 🤫', n: g.n });
+    const words = () => hiddenWords(g, now(), CER_DEBUG), w0 = words(); // a 점등식 board on its day counts to the lighting
+    const cd = live(h('div', { class: 'big count' }), () => words().count);
+    const label = live(h('div', { class: 'label', text: w0.label }), () => words().label), fine = live(h('p', { class: 'fine', text: w0.fine }), () => words().fine);
+    const prev = h('canvas', { class: 'preview', width: 1024, height: 576, 'aria-label': '전광판 미리보기' }); paintGift(prev, { ...g, msg: w0.hush, n: g.n });
     put(top(), back, h('div', { class: 'cols' },
       h('div', { class: 'sticky' }, h('h1', { text: O.emoji + ' ' + g.to + '님을 위한 선물 전광판' }), h('p', { class: 'sub', text: '뉴욕 타임스퀘어 가상 광장에 ' + windowText(g.a, g.b) + ' 걸려요.' }),
-        card(h('div', { class: 'label' }, '그날까지'), cd, h('p', { class: 'fine', text: dayText(g.day) + '이 되면 축하 영상과 친구들의 메시지가 함께 열려요.' })), cer, prev),
+        card(label, cd, fine), cer, prev),
       h('div', {}, paperCard(g), cta(g))), foot());
+    // A 점등식 board: at its start the page becomes the board (the reveal), and at midnight of its day the hidden preview says the time.
+    // Any other board stays as it always was (the page built before 00:00 of its day stays until it is opened again).
+    if (CER_DEBUG || cerStart(g)) {
+      const turn = () => { if (!prev.isConnected) { TICK.delete(turn); return; } if (phase() !== 'before' || words().hush !== w0.hush) { TICK.delete(turn); visit(g, { preview }); } };
+      TICK.add(turn);
+    }
     return;
   }
   const st = stage(g, { auto: true });
   const saveNote = h('p', { class: 'okmsg', role: 'status' }), saveBtn = h('button', { class: 'btn', type: 'button', onclick: () => saveVideo(g, st, saveBtn, saveNote) }, '⬇ 영상 저장');
   // The plaza button: the visit while the board hangs; on its day before that and after its window the plaza shows it on this device only
-  // (gift.js land, giftrules.js plazaLook). The label follows the clock; this part of the page is only built from the day on.
+  // (gift.js land, giftrules.js plazaLook). The label follows the clock; this part of the page is only built from the day on (a 점등식
+  // board: from its start, so it never offers 광장에서 미리 보기).
   const go = h('a', { class: 'btn gold', href: '/?gb=' + g.id, onclick: (e) => { beacon(g.id, 'go'); toPlaza(e, 'go', g.id); } }, PLAZA_BTN[phase()] || PLAZA_BTN.live);
   live(go, () => PLAZA_BTN[phase()] || PLAZA_BTN.live);
   const where = h('p', { class: 'sub' });

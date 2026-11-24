@@ -255,7 +255,30 @@ export function plazaLook(g, now = Date.now()) {
   const a = Number(g.a), b = Number(g.b);
   if (!(now < keepUntil(g))) return 'gone';
   if (now >= a && now < b) return 'live';
-  return now >= dayStart(g.day) ? 'replay' : 'wait';
+  return now >= revealAt(g) ? 'replay' : 'wait'; // a ceremony board is not previewed before its lighting
+}
+// What anyone but the owner sees of a board before revealAt is what they see before its day (the owner's choice, 2026-11-24: a 점등식
+// board keeps its message until the lighting, so the lighting is the reveal). A board with a fixed start (cerStart): the start; any other
+// board: 00:00 of its day, as before. start: the localhost seam's start (cerDebugStart) in place of the board's own. giftPhase (the
+// server's bookkeeping: pruning, the paper, windows) does not change.
+export function revealAt(g, start = 0) { return Number(start) > 0 ? Number(start) : cerStart(g) || dayStart(g?.day); }
+/** The recipient page's view: 'before' (the countdown and the hidden preview) until revealAt, 'day' (the film) until the window, 'live',
+ *  'after'. A ceremony board goes from 'before' straight to 'live'. */
+export function pageLook(g, now = Date.now(), start = 0) {
+  const t = Number(now);
+  if (t >= Number(g?.b)) return 'after';
+  if (t >= Number(g?.a)) return 'live';
+  return t >= revealAt(g, start) ? 'day' : 'before';
+}
+/** The words of the page's 'before' view: { label, count, fine, hush } (hush: what the hidden preview says in place of the message).
+ *  A board without a fixed start: today's words. A ceremony board: on earlier days the same countdown to the day; on its day the time left
+ *  to the lighting, and the time it opens. */
+export function hiddenWords(g, now = Date.now(), start = 0) {
+  const s = Number(start) > 0 ? Number(start) : cerStart(g);
+  if (!s) { const d = dDay(g.day, now); return { label: '그날까지', count: d >= 1 ? 'D-' + d : countdown(dayStart(g.day) - now), fine: dayText(g.day) + '이 되면 축하 영상과 친구들의 메시지가 함께 열려요.', hush: '그날 공개돼요 🤫' }; }
+  const day = kstDay(s), d = dDay(day, now), hm = cerHM(s);
+  if (d >= 1) return { label: '그날까지', count: 'D-' + d, fine: `${dayText(day)} ${hm}에 전광판이 켜지면 축하 영상이 함께 열려요.`, hush: '그날 공개돼요 🤫' };
+  return { label: '켜지기까지', count: countdown(s - now), fine: `오늘 ${hm}에 전광판이 켜지면 축하 영상이 함께 열려요.`, hush: `${hm}에 공개돼요 🤫` };
 }
 // The recipient page's plaza button by phase (/?gb=<id>); before the day there is none.
 export const PLAZA_BTN = Object.freeze({ day: '🗽 광장에서 미리 보기', live: '🗽 직접 가서 보기', after: '🗽 광장에서 다시 보기' });
