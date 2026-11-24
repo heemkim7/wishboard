@@ -1343,6 +1343,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
        name gives way, ending in "…" (.profile .name > span). */
     @media (orientation: portrait) and (max-width: 399px) { html.touch .ident .id-coin { padding: 0 8px 0 5px; } html.touch .id-coin img { margin-right: 0; } }
     @media (orientation: portrait) and (max-width: 359px) { html.touch .ident .id-coin { padding: 0 6px 0 4px; font-size: 14px; } html.touch .ident .profile { padding-right: 4px; } }
+    html.touch .ident .profile .status > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     html.touch .hud-l > .nextgoal:not(.task) { grid-column: 1; display: block; width: auto; padding: 6px 10px; border-radius: 999px; background: var(--surface-hud); border: 1px solid var(--line); font-size: 12px; line-height: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: auto; }
     html.touch .hud-l > .nextgoal:not(.task) .ng-k { font-size: 0; line-height: 0; vertical-align: top; }
     html.touch .hud-l > .nextgoal:not(.task) .ng-k::before { content: "목표"; display: inline-block; vertical-align: top; margin: 3px 6px 0 0; padding: 0 5px; border-radius: 6px; background: color-mix(in srgb, var(--info) 20%, transparent); font-size: 12px; line-height: 16px; }
