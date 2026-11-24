@@ -575,22 +575,28 @@ export function createUI(root, hooks) {
   }
   const wayArrow = h('i', { class: 'arrow' }, icon('navigate'));
   const wayText = h('span', { class: 'tnum' });
-  // 자동으로 가기 (auto-walk: timesSquare3d.js setWaypoint { x, z, auto }). A tap on the pill sets the avatar walking to the guide's target
-  // by itself; while it walks the pill reads 멈추기 (class `going`) and a tap stops it. The ✕ at its end still clears the guide.
-  // wayAt: what the world last said through setWaypoint below ({ x, z, auto }, null with no guide).
+  // The guide pill (.waypill): the place's name (.name, when the caller of hooks.setWaypoint gave one), the distance and what a tap
+  // on it does (.go). 자동으로 가기 (auto-walk: timesSquare3d.js setWaypoint { x, z, name, auto }): a tap on the pill's body sets the
+  // avatar walking to the guide's target by itself; while it walks the pill reads 멈추기 (class `going`) and a tap stops it. Only the
+  // ✕ at its end (small, a 44px target) clears the guide.
+  // wayAt: what the world last said through setWaypoint below ({ x, z, name, auto }, null with no guide).
   let wayAt = null;
+  const wayName = h('b', { class: 'name', hidden: true });
   const wayGo = h('b', { class: 'go' });
   const wayPill = h('button', { class: 'glass waypill', type: 'button', hidden: true, onclick: (ev) => {
     if (!wayAt || ev.target.closest?.('small')) hooks.setWaypoint(null);
-    else hooks.setWaypoint({ x: wayAt.x, z: wayAt.z, auto: !wayAt.auto });
-  } }, wayArrow, wayText, wayGo, h('small', { title: '목적지 지우기' }, icon('close')));
+    else hooks.setWaypoint({ x: wayAt.x, z: wayAt.z, name: wayAt.name, auto: !wayAt.auto });
+  } }, wayArrow, h('span', { class: 'way' }, wayName, h('span', { class: 'sub' }, wayText, wayGo)), h('small', { title: '목적지 지우기' }, icon('close')));
   function paintWay(wp) {
     wayAt = wp || null;
     wayPill.hidden = !wp;
-    const going = !!wp?.auto;
+    const going = !!wp?.auto, name = wp?.name || '';
+    wayName.textContent = name;
+    wayName.hidden = !name;
+    wayPill.classList.toggle('named', !!name);
     wayPill.classList.toggle('going', going);
-    wayPill.setAttribute('aria-label', going ? '자동으로 가는 중 · 누르면 멈추기' : '자동으로 가기');
-    // Under 400px upright the lane only has room for 자동 (index.html hides the <i>).
+    wayPill.setAttribute('aria-label', (name ? name + ' · ' : '') + (going ? '자동으로 가는 중 · 누르면 멈추기' : '자동으로 가기'));
+    // An upright phone under 412px only has room for 자동 (index.html hides the <i>).
     wayGo.replaceChildren(...(going ? ['멈추기'] : ['자동', h('i', { text: '으로 가기' })]));
   }
   paintWay(null);
@@ -1902,7 +1908,7 @@ export function createUI(root, hooks) {
       const card = hooks.slotCard?.(b.slot_id);
       if (!Number.isFinite(card?.x) || !Number.isFinite(card?.z)) continue;
       const d = me ? (card.x - me.x) ** 2 + (card.z - me.z) ** 2 : 0;
-      if (d < dist) { dist = d; best = { x: card.x, z: card.z }; }
+      if (d < dist) { dist = d; best = { x: card.x, z: card.z, name: '전광판' }; }
     }
     if (!best) { note('길안내할 전광판이 없어요', 'err'); return; }
     hooks.setWaypoint?.(best);
@@ -1978,7 +1984,7 @@ export function createUI(root, hooks) {
   }
   function goWaypoint(p, label) {
     if (!insideLoop(p.x, p.z, 0)) { note('울타리 밖으로는 갈 수 없어요', 'err'); return; }
-    hooks.setWaypoint(p);
+    hooks.setWaypoint({ x: p.x, z: p.z, name: label }); // the name goes on the guide pill
     closeSheet();
     note(`${label} 길안내를 시작해요 · 하늘색 빛기둥을 따라가세요`, 'ok');
   }
@@ -1997,7 +2003,7 @@ export function createUI(root, hooks) {
         h('span', { text: `${slot.id}번 필지 · 순환 도로 바로 바깥` })),
       h('div', { class: 'go' },
         h('button', { class: 'btn ghost', type: 'button', onclick: () => goWaypoint(p, `${slot.id}번 토지`) }, ...withIcon('pin', '길안내')),
-        h('button', { class: 'btn ghost', type: 'button', onclick: () => { hooks.setWaypoint(p); openMap(p); } }, ...withIcon('map', '지도')),
+        h('button', { class: 'btn ghost', type: 'button', onclick: () => { hooks.setWaypoint({ x: p.x, z: p.z, name: `${slot.id}번 토지` }); openMap(p); } }, ...withIcon('map', '지도')),
         h('button', { class: 'btn ghost', type: 'button', onclick: () => goTeleport(p, `${slot.id}번 토지`) }, ...withIcon('bolt', '바로 가기'))));
   }
 
@@ -5361,7 +5367,7 @@ export function createUI(root, hooks) {
       const chips = h('div', { class: 'quick' }, ...[starQuick(), ...QUICK].filter(Boolean).map(q => h('button', { type: 'button', onclick: () => {
         if (!insideLoop(q.x, q.z, 0)) return;
         view.cx = q.x; view.cz = q.z; view.scale = Math.max(view.scale, 0.9 * dprM);
-        hooks.setWaypoint({ x: q.x, z: q.z });
+        hooks.setWaypoint({ x: q.x, z: q.z, name: q.ko });
         sfx.click();
       } }, ...withIcon(q.ico || '', q.ko))));
       host.append(

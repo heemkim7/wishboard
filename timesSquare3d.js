@@ -438,7 +438,7 @@ void main(){
     }
     else if (info.kind === 'plot') opts.onPlot?.(info.plotId);
     else if (info.kind === 'adscreen') opts.onInteract?.('adscreen', info.id, { clicked: true, dist, ...adScreens.info(info.id) });
-    else if (info.kind === 'atm' && route === 'waypoint') opts.onInteract?.('atm', null, { clicked: true, near: false, far: true, at: { x: LAYOUT.atm.x, z: LAYOUT.atm.z } });
+    else if (info.kind === 'atm' && route === 'waypoint') opts.onInteract?.('atm', null, { clicked: true, near: false, far: true, at: { x: LAYOUT.atm.x, z: LAYOUT.atm.z, name: '황금 ATM' } });
     else opts.onInteract?.(info.kind, null, { clicked: true, near: near?.kind === info.kind });
   };
   canvas.addEventListener('pointermove', (ev) => {
@@ -700,12 +700,14 @@ void main(){
     tell('자동으로 가는 중 · 직접 움직이면 멈춰요', 'ok');
     return true;
   }
+  /** What the HUD's guide pill hears: where the guide points, the place's name if the caller gave one, and whether the avatar is walking there by itself. */
+  const sayGuide = () => opts.onWaypoint?.(waypoint && { x: waypoint.x, z: waypoint.z, name: waypoint.name, auto: !!autoWalk });
   /** Ends the auto-walk (the guide stays on) and tells the HUD; `line`: what to say about it, if anything. */
   function endAutoWalk(line = '', tone = '') {
     if (!autoWalk) return;
     autoWalk = null;
     if (line) tell(line, tone);
-    if (waypoint) opts.onWaypoint?.({ x: waypoint.x, z: waypoint.z, auto: false });
+    if (waypoint) sayGuide();
   }
   /** This frame's step of the walk ({ dx, dz, top } for stepWalk), or null when it has just ended. */
   function stepAutoWalk(dt) {
@@ -2321,16 +2323,17 @@ void main(){
     const camYaw = Math.atan2(tmp.x, tmp.z);
     return wrapAngle(Math.atan2(x - pos.x, z - pos.z) - camYaw);
   }
-  // p: { x, z } turns the guide on, null turns it off. { x, z, auto: true } also sets the avatar walking there by itself (the
-  // pill's 자동으로 가기); the same point without `auto` is 멈추기. onWaypoint hears { x, z, auto } (auto: is it walking now).
+  // p: { x, z } turns the guide on, null turns it off; `name` is the place's name for the pill (16 characters at most).
+  // { x, z, auto: true } also sets the avatar walking there by itself (the pill's 자동으로 가기); the same point without
+  // `auto` is 멈추기. onWaypoint hears { x, z, name, auto } (auto: is it walking now).
   function setWaypoint(p) {
     if (p && Number.isFinite(p.x) && Number.isFinite(p.z) && !insideLoop(p.x, p.z, 0)) p = null;
     const go = !!(p && p.auto);
     autoWalk = null; // a new target, a cleared one and 멈추기 all end the walk under way
-    waypoint = p && Number.isFinite(p.x) && Number.isFinite(p.z) ? { x: p.x, z: p.z } : null;
+    waypoint = p && Number.isFinite(p.x) && Number.isFinite(p.z) ? { x: p.x, z: p.z, name: chars(typeof p.name === 'string' ? p.name : '', 16) } : null;
     markers.way.set(waypoint);
     if (go && waypoint) beginAutoWalk();
-    opts.onWaypoint?.(waypoint && { x: waypoint.x, z: waypoint.z, auto: !!autoWalk });
+    sayGuide();
   }
   function setDancing(on) {
     if (on === dancing || drive) return;

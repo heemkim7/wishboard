@@ -277,16 +277,25 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .waypill { position: absolute; left: 50%; top: calc(88px + var(--safe-t)); transform: translateX(-50%); display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px; border-radius: 999px; font-size: 13px; font-weight: 700; color: var(--info); pointer-events: auto !important; }
   .waypill .arrow { font-size: 17px; color: var(--info); }
   .waypill small { color: var(--muted); font-size: 12px; margin-left: 2px; }
-  /* 자동으로 가기 (auto-walk; ui.js wayGo / paintWay). The pill's label: 자동으로 가기, or 자동 on an upright phone narrower than 400px (its lane
-     is under 206px there). While the avatar walks to the target by itself the pill is `going`: 멈추기, a lit rim, no arrow.
-     The ✕ (small) still clears the guide; its touch area runs to the end of the pill and over its whole height. */
-  .waypill .go { color: var(--text); font-weight: 800; white-space: nowrap; }
+  /* The guide pill's inside (ui.js wayPill / paintWay): .arrow, then .way (the place's .name over .sub: the distance and .go,
+     what a tap on the pill does), then the ✕ (small).
+     .go reads 자동으로 가기 (auto-walk), or 자동 on an upright phone narrower than 412px, whose lane has no room for more (under
+     360px the arrow goes too). While the avatar walks to the target by itself the pill is `going`: 멈추기, a lit rim, no arrow.
+     .name is one line and is cut with an ellipsis where the lane ends; with a name (`named`) the two lines are 12px.
+     Only the ✕ clears the guide: its target is 44 x 44px, centred on it (it overhangs the 38px pill by 3px above and below). */
+  .waypill .way { display: inline-flex; flex-direction: column; align-items: flex-start; justify-content: center; min-width: 0; line-height: 1.2; text-align: left; }
+  .waypill .name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 12px; font-weight: 800; }
+  .waypill .sub { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+  .waypill.named .sub { font-size: 12px; }
+  .waypill .go { color: var(--text); font-weight: 800; }
   .waypill .go i { font-style: normal; }
   .waypill.going { border-color: var(--info); }
   .waypill.going .go { color: var(--info); }
   .waypill.going .arrow { display: none; }
-  .waypill small { align-self: stretch; display: inline-flex; align-items: center; margin: 0 -10px 0 0; padding: 0 10px 0 6px; }
-  @media (orientation: portrait) and (max-width: 399px) { html.touch .waypill .go i { display: none; } }
+  .waypill small { position: relative; flex: none; align-self: stretch; display: inline-flex; align-items: center; justify-content: center; width: 30px; margin: 0 -10px 0 -2px; }
+  .waypill small::after { content: ''; position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
+  @media (orientation: portrait) and (max-width: 411px) { html.touch .waypill .go i { display: none; } }
+  @media (orientation: portrait) and (max-width: 359px) { html.touch .waypill .arrow { display: none; } }
   .taxihud .job small { white-space: normal; }
   .taxihud .job.talk small { color: var(--text); font-size: 15px; line-height: 1.35; }
   #ui > .sponsor { pointer-events: auto; position: absolute; left: 50%; bottom: calc(128px + var(--safe-b)); transform: translateX(-50%); width: min(520px, calc(100% - 24px)); padding: 14px 16px 12px; z-index: 8; }

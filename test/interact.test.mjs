@@ -360,20 +360,45 @@ describe('auto-walk in the world and on the pill', () => {
   it('the pill asks through setWaypoint: { auto: true } walks, the same point without it stops, and the HUD hears which', () => {
     const set = between(w, '  function setWaypoint(p) {', '\n  }\n');
     assert.match(set, /const go = !!\(p && p\.auto\);\n\s+autoWalk = null;/);
-    assert.match(set, /if \(go && waypoint\) beginAutoWalk\(\);\n\s+opts\.onWaypoint\?\.\(waypoint && \{ x: waypoint\.x, z: waypoint\.z, auto: !!autoWalk \}\);/);
+    assert.match(set, /if \(go && waypoint\) beginAutoWalk\(\);\n\s+sayGuide\(\);/);
+    assert.match(w, /const sayGuide = \(\) => opts\.onWaypoint\?\.\(waypoint && \{ x: waypoint\.x, z: waypoint\.z, name: waypoint\.name, auto: !!autoWalk \}\);/);
     assert.match(w, /bearing: bearingTo\(waypoint\.x, waypoint\.z\), auto: !!autoWalk \};/);
     // main.js is as it was: one hook each way
     const main = read('main.js');
     assert.match(main, /  setWaypoint: \(p\) => world\?\.setWaypoint\(p\),/);
     assert.match(main, /  onWaypoint: \(wp\) => ui\.setWaypoint\(wp\),/);
     const ui = read('ui.js');
-    assert.match(ui, /if \(!wayAt \|\| ev\.target\.closest\?\.\('small'\)\) hooks\.setWaypoint\(null\);\n\s+else hooks\.setWaypoint\(\{ x: wayAt\.x, z: wayAt\.z, auto: !wayAt\.auto \}\);/);
+    // the pill's body walks (or stops); only the ✕ clears the guide
+    assert.match(ui, /if \(!wayAt \|\| ev\.target\.closest\?\.\('small'\)\) hooks\.setWaypoint\(null\);\n\s+else hooks\.setWaypoint\(\{ x: wayAt\.x, z: wayAt\.z, name: wayAt\.name, auto: !wayAt\.auto \}\);/);
     assert.match(ui, /wayGo\.replaceChildren\(\.\.\.\(going \? \['멈추기'\] : \['자동', h\('i', \{ text: '으로 가기' \}\)\]\)\);/);
     assert.match(ui, /wayPill\.classList\.toggle\('going', going\);/);
     assert.match(ui, /setWaypoint\(wp\) \{ paintWay\(wp\); \},/);
+    assert.equal(/class: 'glass waypill'[^\n]*title: '목적지 지우기', onclick: \(\) => hooks\.setWaypoint\(null\)/.test(ui), false, 'the whole pill is no longer the clear button');
     const css = read('index.html');
     assert.match(css, /\.waypill\.going \{ border-color: var\(--info\); \}/);
-    assert.match(css, /@media \(orientation: portrait\) and \(max-width: 399px\) \{ html\.touch \.waypill \.go i \{ display: none; \} \}/);
+    assert.match(css, /@media \(orientation: portrait\) and \(max-width: 411px\) \{ html\.touch \.waypill \.go i \{ display: none; \} \}/);
+    assert.match(css, /\.waypill small::after \{ content: ''; position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; transform: translate\(-50%, -50%\); \}/);
+  });
+  it('the pill names the place: the name comes with setWaypoint and goes back to the HUD with the guide', () => {
+    const set = between(w, '  function setWaypoint(p) {', '\n  }\n');
+    assert.match(set, /\{ x: p\.x, z: p\.z, name: chars\(typeof p\.name === 'string' \? p\.name : '', 16\) \}/);
+    assert.match(w, /at: \{ x: LAYOUT\.atm\.x, z: LAYOUT\.atm\.z, name: '황금 ATM' \}/); // main.js hands info.at to setWaypoint as it is
+    const ui = read('ui.js');
+    assert.match(ui, /hooks\.setWaypoint\(\{ x: p\.x, z: p\.z, name: label \}\);/);
+    assert.match(ui, /hooks\.setWaypoint\(\{ x: q\.x, z: q\.z, name: q\.ko \}\);/);
+    assert.match(ui, /hooks\.setWaypoint\(\{ x: p\.x, z: p\.z, name: `\$\{slot\.id\}번 토지` \}\); openMap\(p\);/);
+    assert.match(ui, /best = \{ x: card\.x, z: card\.z, name: '전광판' \};/);
+    // the pill keeps its class and its three parts: the arrow, .way (.name over .sub: the distance and .go) and the ✕
+    assert.match(ui, /\}, wayArrow, h\('span', \{ class: 'way' \}, wayName, h\('span', \{ class: 'sub' \}, wayText, wayGo\)\), h\('small', \{ title: '목적지 지우기' \}, icon\('close'\)\)\);/);
+    assert.match(ui, /wayName\.textContent = name;\n\s+wayName\.hidden = !name;\n\s+wayPill\.classList\.toggle\('named', !!name\);/);
+    const css = read('index.html');
+    assert.match(css, /\.waypill \.name \{ max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;/);
+    assert.match(css, /\.waypill \.way \{[^}]*min-width: 0;/);
+    // 375px upright: the lane is 181px; padding 28, arrow 21, two 8px gaps and the ✕ (30 less 12 of margin) leave 98px for the text,
+    // and the second line (12px: about 30 + 6 + 24 for "123m 자동") fits; from 412px (lane 218px) the full label does (30 + 6 + 76)
+    assert.ok(375 - 194 - (28 + 21 + 16 + 18) >= 60);
+    assert.ok(412 - 194 - (28 + 21 + 16 + 18) >= 112);
+    assert.ok(320 - 194 - (20 + 12 + 18) >= 60, 'under 360px: 10px padding, 6px gaps, no arrow');
   });
   it('plans with the world\'s own collision, and stops for the stick, a key, a sheet, a taxi, a teleport and a scripted camera', () => {
     const blocked = between(w, '  function walkBlocked(x, z) {', '\n  }\n');
