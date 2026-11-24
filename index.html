@@ -1496,7 +1496,8 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
        between the left column (at most min(240px, 40vmax) wide) and the icon row (180px, 8px in), and the waypoint pill
        is centred under it. The stack hangs under the left column, as wide as a notice needs (at most 300px). */
     /* The band is symmetric (the left column's width + 18px on both sides, more than the icon row's 196px), so the slot and
-       the pill sit on the screen's centre: they were 31px right of it at 812px (the middle of the left column … icon row). */
+       the pill sit on the screen's centre: they were 31px right of it at 812px (the middle of the left column … icon row).
+       Under 641px a symmetric band is 78px, so there the 속보 slot keeps the band up to the icon row (127px at 568). */
     html.touch .news { top: calc(10px + var(--safe-t)); left: calc(min(240px, 40vmax) + 18px + max(var(--safe-l), var(--safe-r))); right: calc(min(240px, 40vmax) + 18px + max(var(--safe-l), var(--safe-r))); margin: 0 auto; }
     html.touch .waypill { top: calc(46px + var(--safe-t)); bottom: auto; left: calc(min(240px, 40vmax) + 18px + max(var(--safe-l), var(--safe-r))); right: calc(min(240px, 40vmax) + 18px + max(var(--safe-l), var(--safe-r))); margin: 0 auto; }
     html.touch .waypill .way { overflow: hidden; }
@@ -1524,7 +1525,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     html.touch body:has(.toasts > .farcard) #ui > .prompt { visibility: hidden; }
     /* Under 641px wide the band between the left column and the icon row is narrower than the pill: there it sits above
        the tag, right against the column (the jump button is beside it, not under it). */
-    @media (max-width: 640px) { html.touch .waypill { top: auto; bottom: calc(92px + var(--safe-b)); left: auto; right: calc(72px + var(--safe-r)); margin: 0; } }
+    @media (max-width: 640px) { html.touch .waypill { top: auto; bottom: calc(92px + var(--safe-b)); left: auto; right: calc(72px + var(--safe-r)); margin: 0; } html.touch .news { right: calc(196px + var(--safe-r)); } }
     /* The ⋯ menu: three columns, so it is about 210px tall on a 375px screen (it took 302px). */
     html.touch .tools.open { grid-template-columns: repeat(3, minmax(0, 1fr)); width: min(440px, calc(100vw - 20px - var(--safe-l) - var(--safe-r))); }
   }
@@ -1758,6 +1759,8 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .sheet :is(.chips, .holder, .field) { margin-top: var(--group-gap); }
   /* Buttons stacked straight in a sheet (Google로 계속 over the terms links, 로그인 over 처음이면 가입, a card's field and button). */
   .sheet .content > .btn, .sheet .vipcard :is(.btn, .input) { margin-top: max(10px, var(--tap-gap)); }
+  /* The sign-in sheet's terms line (two links) under Google로 계속 is its own group (its links were 10px under the button). */
+  .sheet .login-terms { margin-top: var(--group-gap); }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
   }
