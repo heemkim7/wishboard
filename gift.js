@@ -47,7 +47,8 @@ body.gift-cer:not(.has-sheet) #ui{visibility:hidden}
 #kts-cer-card{position:fixed;inset:0;z-index:2147482100;background:rgba(4,4,14,.86);display:grid;place-items:center;padding:16px;font:15px/1.5 ${GIFT_SANS};color:#f3f1ff;outline:none}
 #kts-cer-card .box{position:relative;width:min(440px,100%);max-height:100%;overflow:auto;background:#100d2a;border:1px solid rgba(255,255,255,.14);border-radius:20px;padding:16px}
 #kts-cer-card h2{margin:0 52px 10px 0;font-size:18px;line-height:1.35}
-#kts-cer-card img{display:block;width:100%;max-height:52vh;object-fit:contain;border-radius:14px;background:#000}
+#kts-cer-card img{display:block;width:100%;aspect-ratio:3/2;height:auto;object-fit:contain;border-radius:14px;background:#000}
+@media (orientation: landscape) and (max-height: 520px){#kts-cer-card .box{width:min(760px,100%);display:grid;grid-template-columns:3fr 2fr;column-gap:14px;align-items:start}#kts-cer-card h2{grid-column:1/-1}#kts-cer-card img{grid-column:1;grid-row:2/span 5;max-height:calc(100vh - 110px);width:auto;max-width:100%}#kts-cer-card p,#kts-cer-card .b{grid-column:2}#kts-cer-card p{grid-row:2;margin-top:0}}
 #kts-cer-card p{margin:8px 0 0;color:#a8a6c9;font-size:13px;min-height:1.5em}
 #kts-cer-card .b{display:flex;width:100%;min-height:48px;margin-top:8px;align-items:center;justify-content:center;border-radius:14px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.06);color:#fff;font:inherit;font-weight:900;text-decoration:none;cursor:pointer;box-shadow:inset 0 0 0 99px rgba(70,36,0,0);transition:background-color .25s,border-color .25s,box-shadow .25s,transform .25s}
 #kts-cer-card .b:active{background-color:rgba(255,255,255,.24);border-color:rgba(255,255,255,.55);transform:scale(.97);transition:none}
