@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { register } from 'node:module';
+import { posix } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { paintGift, paintWelcome } from '../giftart.js';
 import { WELCOME } from '../ftue.js';
@@ -397,14 +398,31 @@ describe('the entry flow shows it once (main.js, ui.js: source checks)', () => {
     const { EVENT_NAMES } = await import('../plaza-account.js');
     for (const n of ['welcome_show', 'welcome_cta']) assert.ok(EVENT_NAMES.includes(n), n);
   });
-  it('every name the plaza imports from ftue.js and giftart.js is exported there (no test loads main.js or ui.js)', async () => {
-    const mods = { 'ftue.js': await import('../ftue.js'), 'giftart.js': await import('../giftart.js') };
+  // No test loads main.js, ui.js or timesSquare3d.js (they need a page), so a name imported from a module that no longer exports it would
+  // only fail in the browser. Read from the sources: every named import of the modules this change touched, and every import of ftue.js and
+  // giftart.js anywhere, names something its module exports.
+  it('every name the plaza modules import is exported by its module', async () => {
+    const exportsOf = (file) => {
+      const src = read(file), out = new Set();
+      for (const m of src.matchAll(/^export (?:async )?(?:function\*?|class) ([A-Za-z_$][\w$]*)/gm)) out.add(m[1]);
+      for (const m of src.matchAll(/^export (?:const|let|var) (.*)$/gm)) for (const d of ('\u0000' + m[1]).matchAll(/(?:\u0000|, )([A-Za-z_$][\w$]*) = /g)) out.add(d[1]);
+      for (const m of src.matchAll(/^export \{([^}]+)\}/gm)) for (const part of m[1].split(',')) { const n = part.trim().split(/\s+as\s+/).pop(); if (n) out.add(n); }
+      return out;
+    };
+    const mine = ['main.js', 'ui.js', 'timesSquare3d.js', 'ts3d/screens.js', 'giftart.js', 'ftue.js'], all = [...mine, 'gift.js', 'giftfilm.js', 'giftpage.js'];
+    const missing = [];
     let seen = 0;
-    for (const file of ['main.js', 'ui.js', 'timesSquare3d.js', 'ts3d/screens.js', 'gift.js', 'giftfilm.js', 'giftpage.js']) {
-      for (const m of read(file).matchAll(/^import \{([^}]+)\} from '(?:\.\.?\/)+(ftue|giftart)\.js(?:\?v=[0-9a-z]+)?';/gm)) {
-        for (const name of m[1].split(',').map((s) => s.trim().split(/\s+as\s+/)[0]).filter(Boolean)) { seen++; assert.ok(name in mods[m[2] + '.js'], `${file}: ${name} from ${m[2]}.js`); }
+    for (const file of all) {
+      for (const m of read(file).matchAll(/^import \{([^}]+)\} from '(\.{1,2}\/[^'?]+\.js)(?:\?v=[0-9a-z]+)?';/gm)) {
+        const target = posix.normalize(posix.join(posix.dirname(file), m[2]));
+        if (target.startsWith('vendor/') || !(mine.includes(file) || target === 'ftue.js' || target === 'giftart.js')) continue;
+        const ex = exportsOf(target);
+        for (const name of m[1].split(',').map((s) => s.trim().split(/\s+as\s+/)[0]).filter(Boolean)) { seen++; if (!ex.has(name)) missing.push(`${file}: ${name} from ${target}`); }
       }
     }
-    assert.ok(seen > 40, String(seen));
+    assert.deepEqual(missing, []);
+    assert.ok(seen > 300, String(seen));
+    // The reader of exports agrees with the real modules where Node can load them.
+    for (const f of ['ftue.js', 'giftart.js']) assert.deepEqual([...exportsOf(f)].sort(), Object.keys(await import('../' + f)).sort(), f);
   });
 });
