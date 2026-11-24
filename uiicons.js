@@ -8,8 +8,11 @@
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 export const ICONS = Object.freeze({
-  // megaphone: the board / 전광판 점령 / 광장 소식
-  board: ['M4 9.5H7.5L14 5V19L7.5 14.5H4Z', 'M7.5 14.5L8.8 19.5', 'M17 9.5A3.5 3.5 0 0 1 17 14.5', 'M19.5 7A7 7 0 0 1 19.5 17'],
+  // 전광판 걸기: a billboard, a wide screen with two lines of text on two legs. It was a megaphone, which next to the
+  // speaker of the sound button read as a second sound button.
+  board: [['rect', 3, 4, 18, 11.5, 2], 'M7 8H17', 'M7 11.5H13.5', 'M8.5 15.5V20.5', 'M15.5 15.5V20.5'],
+  // megaphone: 광장 소식 only
+  megaphone: ['M4 9.5H7.5L14 5V19L7.5 14.5H4Z', 'M7.5 14.5L8.8 19.5', 'M17 9.5A3.5 3.5 0 0 1 17 14.5', 'M19.5 7A7 7 0 0 1 19.5 17'],
   // shooting star: 오늘의 소원
   wish: ['M9.5 8L11.2 12.15L15.68 12.49L12.26 15.4L13.32 19.76L9.5 17.4L5.68 19.76L6.74 15.4L3.32 12.49L7.8 12.15Z', 'M13.5 8.5L20 3.5', 'M17 11L21 8', 'M11.5 6L15 3'],
   trophy: ['M8 4H16V10A4 4 0 0 1 8 10Z', 'M8 6H4.5V8A3 3 0 0 0 7.5 11', 'M16 6H19.5V8A3 3 0 0 1 16.5 11', 'M12 14V17.5', ['rect', 8.5, 17.5, 7, 3, 1]],

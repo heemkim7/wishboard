@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import { runInNewContext } from 'node:vm';
-import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, pushRoute, proofOffers, proofPlan, awayRead, TOAST, SHEET_MAX, SPARE_MS } from '../overlay.js';
+import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, pushRoute, proofOffers, proofPlan, awayRead, TOAST, SHEET_MAX, SPARE_MS, PRESS, hintLeft, sameNews } from '../overlay.js';
 
 const read = (f) => readFileSync(new URL('../' + f, import.meta.url), 'utf8');
 
@@ -339,8 +339,25 @@ describe('ui.js: taps, late answers, buttons that come back', () => {
   const ui = read('ui.js');
   it('a touch that became the stick is never a tap on the world', () => {
     const end = ui.slice(ui.indexOf('const end = (ev) => {'), ui.indexOf("joyZone.addEventListener('pointerup', end);"));
-    assert.match(end, /if \(ev\.type === 'pointercancel' \|\| engaged\) hooks\.tapUp\?\.\(origin\.x \+ 999, origin\.y\);\s+else hooks\.tapUp\?\.\(ev\.clientX, ev\.clientY\);/);
+    // only a pointerup can be a tap: a cancelled touch, or one taken away when a sheet made the HUD inert (lostpointercapture), never is
+    assert.match(end, /if \(ev\.type !== 'pointerup' \|\| engaged\) hooks\.tapUp\?\.\(origin\.x \+ 999, origin\.y\);\s+else hooks\.tapUp\?\.\(ev\.clientX, ev\.clientY\);/);
     assert.ok(end.indexOf('hooks.tapUp') < end.indexOf('rest();'), 'engaged is read before rest() clears it');
+    assert.match(ui, /joyZone\.addEventListener\('pointerup', end\);\s+joyZone\.addEventListener\('pointercancel', end\);[\s\S]{0,400}joyZone\.addEventListener\('lostpointercapture', end\);/);
+  });
+  it('the pure helpers behind the HUD pass: the press selector and time, hints shown a few times, repeated news', () => {
+    assert.equal(PRESS.ms, 160);
+    assert.ok(Object.isFrozen(PRESS));
+    for (const part of ['button', '[role="button"]', 'summary', 'a.btn', 'label.agree']) assert.ok(PRESS.sel.split(', ').includes(part), part);
+    assert.match(ui, /el\.classList\.add\('tapped'\);\s+setTimeout\(\(\) => el\.classList\.remove\('tapped'\), PRESS\.ms\);/);
+    assert.equal(hintLeft(undefined), 3);
+    assert.equal(hintLeft(1), 2);
+    assert.equal(hintLeft(5), 0);
+    assert.equal(hintLeft(-4), 3);
+    assert.equal(sameNews('a  b', 'a b'), true);
+    assert.equal(sameNews('a', 'b'), false);
+    assert.equal(sameNews('  ', ''), false);
+    assert.match(ui, /sameNews\(n\.textContent, line\.textContent\)/);
+    assert.match(ui, /hintLeft\(seenHint\) > 0/);
   });
   it("the far-tap card's buttons are not in the touch button column's class", () => {
     const card = ui.slice(ui.indexOf('function showFarCard('), ui.indexOf('function levelOf('));

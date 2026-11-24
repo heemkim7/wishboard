@@ -511,7 +511,7 @@ describe('privacy policy and terms', () => {
   });
   it('ui.js: 문의하기 in settings, the operator line under the policy links, the maintenance card on the boot card', () => {
     const ui = read('ui.js');
-    assert.match(ui, /text: '문의하기', onclick: \(\) => openSupport\(\)/);
+    assert.match(ui, /open\('문의하기', \(\) => openSupport\(\)\)/); // a row of the settings sheet's list (name, then a chevron)
     assert.match(ui, /policyLinks\(\),\s*operatorFooter\(\),/);
     assert.match(ui, /href: '\/ads'/);
     assert.match(ui, /if \(maintOn\) \{ maintSaved = bootFields; bootEnter\.replaceChildren\(maintCard\(maintOn\)\); \}/);

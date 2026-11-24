@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import * as ftue from '../ftue.js';
 import { ftueDue, playedEarlierDay, newcomer, graduation, GRAD_EARN, crowdFacts, PUBLIC_MIN, peopleTag, tutorialNext, firstStep, kstDay, newcomerKnown } from '../ftue.js';
+import { goalKnown, GOAL_WAIT_MS } from '../overlay.js';
 
 const read = (f) => readFileSync(new URL('../' + f, import.meta.url), 'utf8');
 const DAY = '2026-11-20';
@@ -40,7 +41,32 @@ describe('the card\'s last step', () => {
     const ui = read('ui.js');
     assert.match(ui, /if \(firstOpenStarter\(\)\) \{ slot = firstOpenStarter\(\); price = 0; name = '무료 거리 칸'; \}/);
     assert.match(ui, /return \{ text: left \?[^\n]*name, left/);
-    assert.match(ui, /\(\) => \(\{ text: nextGoal\(\)\.text\.replace\(\/\^다음 목표: \/, ''\), go: nextGoalGo \}\),/);
+    // the card's last step is that goal, and no step at all while the goal is still undecided (an empty text)
+    assert.match(ui, /\(\) => \{ const text = nextGoal\(\)\.text\.replace\(\/\^다음 목표: \/, ''\); return text \? \{ text, go: nextGoalGo \} : null; \},/);
+  });
+  // The same guest used to see 무료 거리 칸 on one load and 건물 앞 전광판 on the next: the goal was decided before the boards, the
+  // account's "free slot used" flag and the settled free-slot list were all in (a cold Worker isolate answers /rt/config with the old four).
+  it('the goal is decided only once the boards, the starter flag and the settled starter list are known, or after 8 s', () => {
+    assert.equal(GOAL_WAIT_MS, 8000);
+    assert.equal(goalKnown({ boards: false, used: false, list: true, waited: 99999 }), false); // never before the boards
+    assert.equal(goalKnown({ boards: true, used: null, list: true, waited: 0 }), false); // the profile has not answered
+    assert.equal(goalKnown({ boards: true, used: false, list: false, waited: 0 }), false); // the list may still change
+    assert.equal(goalKnown({ boards: true, used: false, list: true, waited: 0 }), true);
+    assert.equal(goalKnown({ boards: true, used: true, list: true }), true);
+    assert.equal(goalKnown({ boards: true, used: null, list: false, waited: GOAL_WAIT_MS - 1 }), false);
+    assert.equal(goalKnown({ boards: true, used: null, list: false, waited: GOAL_WAIT_MS }), true); // a profile that never comes
+    assert.equal(goalKnown(), false);
+    const ui = read('ui.js'), main = read('main.js');
+    assert.match(ui, /const goalReady = \(\) => goalKnown\(\{ boards: plazaReady, used: hooks\.starterUsed\?\.\(\), list: hooks\.starterListKnown\?\.\(\) !== false, waited: plazaAt \? performance\.now\(\) - plazaAt : 0 \}\);/);
+    assert.match(ui, /if \(!goalReady\(\)\) return \{ text: '', undecided: true,/);
+    assert.match(ui, /if \(g\.undecided\) return;/);
+    // no line on screen while there is nothing to say, and no free-slot offer from a list that may change
+    assert.match(ui, /const none = newbieOn \? !newcomerTask\(\)\?\.text : !goalText;\s+if \(nextLine\.hidden !== none\) nextLine\.hidden = none;/);
+    assert.match(ui, /if \(!goalReady\(\)\) return; \/\/ the same wait as the goal line/);
+    // main.js: an answer that is exactly the old four is asked once more, 2.5 s later, and only then is the list settled
+    assert.match(main, /starterListKnown: \(\) => starterListKnown,/);
+    assert.match(main, /if \(BALANCE\.starterSlots\.join\(\) === STARTER_DEFAULT\.join\(\)\) \{\s+await new Promise\(\(r\) => setTimeout\(r, 2500\)\);\s+try \{ await net\.loadConfig\(\); \}/);
+    assert.match(main, /\}\s+starterListKnown = true;\s+\}\);/);
   });
 });
 

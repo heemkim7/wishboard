@@ -166,6 +166,53 @@ export function toastText(text, kind = '') {
   return '처리하지 못했어요. 잠시 뒤 다시 해 주세요';
 }
 
+// ---- pressed feedback ------------------------------------------------------------------------
+// Every control shows a press (index.html "Pressed"): the stylesheet styles :active and .tapped alike, and ui.js keeps
+// .tapped on the control under the pointer for PRESS.ms from pointerdown, so a quick tap is seen too.
+export const PRESS = Object.freeze({ sel: 'button, [role="button"], summary, a.btn, label.agree', ms: 160 });
+
+// ---- the touch prompt tag --------------------------------------------------------------------
+// What the tag beside the round touch button says, from the prompt's three parts [name, second line, button word]:
+// [the line, a small second line or '']. A board is "where · whose" (the rest of its name, "소원 걸기" and the like, is the
+// button's own word); a 함성 keeps its second line, because it counts down; everything else is its name alone.
+export function touchTag(kind, p) {
+  const name = String(p?.[0] ?? ''), sub = String(p?.[1] ?? '');
+  if (kind === 'board') {
+    const whose = name.split(' · ')[0];
+    return [sub ? `${sub} · ${whose}` : whose, ''];
+  }
+  return [name, kind === 'crowd' ? sub : ''];
+}
+
+// ---- the next goal ---------------------------------------------------------------------------
+// The goal line ("무료 거리 칸에 이름을 올리세요" or "건물 앞 전광판에 …") reads three things that arrive at different
+// moments after a load: the boards (who holds which slot), the account's own "free slot used" flag (null until the
+// profile answers) and the free-slot list (/rt/config answers with the old four until its isolate has asked the
+// database once; main.js asks again and reports it settled). Deciding before all three are in showed one goal on one load
+// and the other on the next, for the same guest. So: no goal until all are known, or until `waited` ms have passed since
+// the plaza was entered (a profile or a list that never arrives must not leave the HUD without a goal for good).
+export const GOAL_WAIT_MS = 8000;
+export function goalKnown({ boards, used, list, waited = 0 } = {}) {
+  if (!boards) return false;
+  if (used != null && list) return true;
+  return Number(waited) >= GOAL_WAIT_MS;
+}
+
+// ---- hints shown only a few times ------------------------------------------------------------
+// A how-to line that is worth reading three times, not for ever (the map sheet's "탭: 목적지 · 드래그: 이동 …").
+// hintLeft(seen, max): how many showings are left; the caller stores seen + 1 each time it shows the line.
+export function hintLeft(seen, max = 3) {
+  const n = Math.max(0, Math.floor(Number(seen) || 0));
+  return Math.max(0, max - n);
+}
+
+// ---- the news feed ---------------------------------------------------------------------------
+// The same line again (a welcome on every reload, a board announced twice): one copy is kept, the newest.
+export function sameNews(a, b) {
+  const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+  return norm(a) !== '' && norm(a) === norm(b);
+}
+
 // ---- notification click ----------------------------------------------------------------------
 // Where a clicked notification wants the open game to go. sw.js posts { t: 'push', url }; the page moves there in place.
 export function pushRoute(url, origin = 'https://plaza.invalid') {

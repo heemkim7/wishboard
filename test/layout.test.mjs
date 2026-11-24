@@ -54,130 +54,209 @@ describe('far-tap card and proof bar take their own taps', () => {
   });
 });
 
-describe('touch portrait', () => {
-  it('the open reactions panel is above the fixed pouch balloon', () => {
-    const portrait = media('(orientation: portrait)', '.stay-balloon');
-    assert.equal(Number(rule(portrait, 'html.touch .hud-r .stay-balloon').match(/z-index: (\d+)/)[1]), 7);
-    assert.match(css, /html\.touch \.reacts \{ z-index: 8; \}/);
+// ---- Touch layout after the screen-by-screen audit (docs/ux-audit-2026-11-24.md) ----------------------------------------
+// A phone (the compact HUD's media query, upright or on its side): top left the identity row, the goal and guest pills,
+// the 속보 slot and under it the floating stack; top right the icon row, the map, 멍때리기 and the eye (and upright the
+// waypoint pill); bottom left the stick; bottom right three round buttons (the action, jump, 동작) with the context tag
+// against the action. A touch tablet keeps the bottom lane's stack. PHONE is the block that holds a phone's places.
+const Q = '(orientation: portrait) and (max-width: 599px), (orientation: landscape) and (max-height: 520px)';
+const UP = '(orientation: portrait) and (max-width: 599px)';
+const LAND = '(orientation: landscape) and (max-height: 520px)';
+const PHONE = media(Q, '--stack-top');
+const PHONE_UP = media(UP, '--stack-top');
+const PHONE_LAND = media(LAND, '--stack-top');
+const LAND_BLOCK = media(LAND, '.taxihud');
+
+describe('touch: the right thumb column is three round buttons', () => {
+  const ui = read('ui.js');
+  const acts = rule(css, 'html.touch .acts');
+  it('from the bottom: the action, jump, 동작; 멍때리기 and the pouch are no longer in it', () => {
+    // ui.js: on touch 멍때리기 goes to the row under the map and the pouch into the 동작 panel; a desktop window keeps both where they were
+    assert.match(ui, /if \(coarse\) \{\n\s+viewRow\.prepend\(loungeBtn\);\n\s+reactPanel\.prepend\(balloonEl\);\n\s+\} else \{\n\s+dock\.prepend\(loungeBtn\);\n\s+root\.querySelector\('\.hud-r'\)\?\.append\(balloonEl\);\n\s+\}/);
+    assert.match(ui, /root\.append\(joy, h\('div', \{ class: 'acts' \}, boostBtn, actBtn, jumpBtn\)\);/);
+    // every button of the column is a 52px circle, 12px from the right edge
+    assert.match(css, /html\.touch \.act,\n\s*html\.touch \.act\.big,\n\s*html\.touch \.dock \.emote \{ width: 52px; height: 52px; min-width: 52px; border-radius: 50%;/);
+    assert.match(css, /html\.touch \.emote\.more \{ width: 52px; height: 52px; border-radius: 50%; \}/);
+    assert.equal(px(acts, 'right'), 12);
+    assert.match(acts, /flex-direction: column-reverse;/);
+    // nothing of the old five-button column is left: no rule for a pouch or a lounge button in the right-hand column
+    assert.equal(css.includes('html.touch .hud-r .stay-balloon'), false);
+    assert.equal(css.includes('html.touch .dock .stay-lounge-btn'), false);
+    assert.equal(css.includes('html.touch .dock button.stay-lounge-btn'), false);
   });
-  it('the look-around hint is the bottom of the floating stack: above the stick and the waypoint pill, no box of its own', () => {
-    // ui.js puts it first in the toasts' column on touch, so it is the bottom piece and the toasts climb over it
-    assert.match(read('ui.js'), /if \(coarse\) toasts\.prepend\(coachEl\);/);
-    const coach = rule(css, '.coach');
-    assert.equal(/position:|bottom:|left:|transform:/.test(coach), false);
-    assert.equal(css.includes('html.touch .coach {'), css.includes('html.touch .coach { white-space: normal;'));
-    // 390 x 844: the resting stick ends 36 + 104 = 140px up, the waypoint pill 142 + 38 = 180px up; the stack starts at 190px
-    const stack = rule(css, 'html.touch .toasts');
-    const joy = rule(css, 'html.touch .joy');
-    assert.ok(px(stack, 'bottom') >= px(joy, 'bottom') + px(joy, 'height') + 12);
-    const way = rule(css, 'html.touch .waypill');
-    assert.ok(px(stack, 'bottom') >= px(way, 'bottom') + 38 + 8);
-    // before, the hint had its own box (190px up, 16px … right 76px): 30px left of the toasts' centre and 55px left of the lane's at 390px
-    assert.equal((16 + 390 - 76) / 2, 165);
+  it('jump and 동작 never move: the action keeps its place while there is nothing to act on', () => {
+    assert.match(css, /html\.touch \.acts > \.act\.big\[hidden\] \{ display: grid !important; visibility: hidden; \}/);
+    // the dock (동작) starts where two 52px buttons and their gaps end, at every size
+    const gap = px(acts, 'gap');
+    assert.equal(px(rule(css, 'html.touch .dock'), 'bottom'), px(acts, 'bottom') + 52 + gap + 52 + gap); // a tablet: 36 + 124
+    const up = media('(orientation: portrait)', 'html.touch .acts');
+    assert.equal(px(rule(up, 'html.touch .dock'), 'bottom'), px(rule(up, 'html.touch .acts'), 'bottom') + 52 + gap + 52 + gap); // upright: 28 + 124
+    const side = rule(LAND_BLOCK, 'html.touch .acts'), sideGap = px(side, 'gap');
+    assert.equal(px(rule(LAND_BLOCK, 'html.touch .dock'), 'bottom'), px(side, 'bottom') + 52 + sideGap + 52 + sideGap); // on its side: 30 + 116
+    for (const d of [rule(css, 'html.touch .dock'), rule(up, 'html.touch .dock'), rule(LAND_BLOCK, 'html.touch .dock')]) assert.equal(px(d, 'right'), 12);
+    // on its side the three end 198px up: 4px under the map (8 + 48 + 6 + 56 = 118px down) on a 320px tall screen
+    const top = px(rule(LAND_BLOCK, 'html.touch .dock'), 'bottom') + 52;
+    assert.equal(top, 198);
+    assert.equal(px(rule(LAND_BLOCK, 'html.touch .minimap'), 'width'), 56);
+    assert.ok(320 - top >= 8 + px(rule(css, 'html.touch .tools'), 'height') + 6 + 56 + 4);
+    assert.match(rule(LAND_BLOCK, 'html.touch .locpill'), /display: none;/);
   });
-  it('the look-around hint is one line upright, and two lines in the 175-222px stack of a phone on its side under 641px', () => {
-    assert.match(rule(css, '.coach'), /white-space: nowrap;/);
-    assert.match(rule(css, '.coach'), /font: 700 12px\/1\.35 var\(--font\);/);
-    assert.match(read('ui.js'), /h\('div', \{ class: 'coach', role: 'status', hidden: true \}, h\('span', \{ text: '끌어서 둘러보기' \}\), h\('span', \{ class: 'sep', text: ' · ' \}\), h\('span', \{ text: '두 손가락으로 확대' \}\)\)/);
-    const narrow = media('(orientation: landscape) and (max-height: 520px) and (max-width: 640px)', '.coach');
-    assert.match(rule(narrow, 'html.touch .coach'), /white-space: normal;/);
-    assert.match(rule(narrow, 'html.touch .coach > span'), /display: block;/);
-    assert.match(rule(narrow, 'html.touch .coach > .sep'), /display: none;/);
-    // there it steps aside for a toast: 50px of hint and a three-line toast do not both fit under the tool row at 320px tall
-    assert.match(rule(narrow, 'html.touch .toasts:has(> .toast) > .coach'), /display: none;/);
-    // the 11px size under 374px is gone: upright the stack is at least 320 - 84 = 236px wide and one 12px line is about 199px
-    assert.equal(css.includes('(max-width: 373px)'), false);
-    assert.ok(320 - 84 >= 199);
+  it('the 동작 panel opens left of the column from the bottom edge, with the pouch as its first row', () => {
+    const panel = rule(css, 'html.touch .reacts');
+    assert.equal(px(panel, 'right'), 12 + 52 + 8);
+    assert.equal(px(panel, 'bottom'), px(acts, 'bottom'));
+    assert.match(panel, /z-index: 8;/);
+    assert.match(panel, /overflow: auto;/);
+    const row = rule(css, 'html.touch .reacts button.stay-balloon');
+    assert.match(row, /grid-column: 1 \/ -1;/);
+    assert.ok(px(row, 'height') >= 44);
+    assert.match(rule(css, 'html.touch .reacts button.stay-balloon .bn'), /background: var\(--accent\);/);
+    assert.match(rule(css, 'html.touch .reacts button.stay-balloon:disabled .bn'), /color: var\(--text-2\);/);
+    // the count is a badge at the row's end, the name beside the icon; at most 999+
+    const paint = ui.slice(ui.indexOf('function balloonText('), ui.indexOf('setInterval(paintBalloon, 1000);'));
+    assert.match(paint, /balloonEl\.replaceChildren\(\.\.\.\[icon\('packet'\), coarse \? h\('span', \{ class: 'bl', text: '복주머니 던지기' \}\) : null, h\('span', \{ class: 'bn', text \}\)\]\.filter\(Boolean\)\);/);
+    assert.match(paint, /balloonText\(coarse \? \(left > 999 \? '999\+' : `\$\{left\}`\) : `\$\{left\}번 남음 · 터뜨려 보세요`\);/); // play: no points
+    // its name says what it is and how many are left; the explanation is the tooltip
+    assert.match(paint, /balloonName\(`복주머니 던지기 · \$\{left\}번 남음`\);/);
+    assert.match(paint, /balloonEl\.title = '맞출 때마다 줄어요\. 0이 되면 터지면서 복이 쏟아져요';/);
+    assert.equal(/setAttribute\('aria-label', balloonEl\.title\)/.test(ui), false);
+    // a tap closes the panel so the throw is in view, and the first one of a session says what to do in one line
+    assert.match(ui, /toggleReacts\(false\);\n\s+if \(!balloonTold && balloonHp > 0\) \{ balloonTold = true; note\('복주머니를 맞혀 보세요'\); \}/);
   });
-  it('on a phone the four actions are a named row in the panel, and the dock circles carry captions', () => {
-    const ui = read('ui.js');
+  it('the panel names its four actions, and every caption is at least 12px', () => {
     assert.match(ui, /reactPanel\.prepend\(h\('p', \{ class: 'rh', text: '동작' \}\), \.\.\.dock\.querySelectorAll\('\.emote:not\(\.more\)'\), h\('p', \{ class: 'rh', text: '리액션' \}\)\);/);
     assert.match(ui, /if \(cap\) cap\.textContent = '동작';/);
-    assert.match(css, /html\.touch \.reacts button\.emote \.l \{ display: block;/);
-    assert.match(css, /html\.touch \.dock button\.emote\.more \.l, html\.touch \.dock button\.stay-lounge-btn \.l \{ display: block;/);
-    // the caption rule comes after the rules that hid dock labels on touch
-    assert.ok(css.indexOf('html.touch .dock button.emote.more .l') > css.indexOf('html.touch .dock .stay-lounge-btn .l { display: none; }'));
-    // portrait: four 44px columns; 4 x 44 + 3 x 4 gaps + 12 padding = 200px, 8px from the right of a 320px phone
-    assert.ok(8 + 4 * 44 + 3 * 4 + 12 < 320 - 76);
+    assert.match(css, /html\.touch \.reacts \.rh \{ grid-column: 1 \/ -1; margin: 4px 2px 0; font: 700 12px\/1\.2 var\(--font\);/);
+    for (const sel of ['html.touch .reacts button.emote .l', 'html.touch .dock button.emote.more .l']) {
+      assert.ok(px(rule(css, sel), 'font-size') >= 12, sel); // they were 10px and 9px
+    }
+    // upright: four 50px columns (a 12px four-letter name fits), 4px gaps, 6px padding and a 1px border: 226px, left of the column on a 320px phone
+    const cols = Number(rule(css, 'html.touch .reacts').match(/right: calc\((\d+)px/)[1]);
+    assert.match(css, /html\.touch \.reacts \{ grid-template-columns: repeat\(4, 50px\); \}/);
+    assert.ok(320 - cols - (4 * 50 + 3 * 4 + 12 + 2) >= 0);
+    // on its side: ten 44px columns (eight under 600px wide), without the two headings, under the icon row
+    const land = media(LAND, 'grid-template-columns: repeat(10, 44px)');
+    assert.match(rule(land, 'html.touch .reacts'), /grid-template-columns: repeat\(10, 44px\);/);
+    assert.match(rule(media(LAND + ' and (max-width: 599px)', '.reacts'), 'html.touch .reacts'), /grid-template-columns: repeat\(8, 44px\);/);
+    for (const [vw, n] of [[568, 8], [599, 8], [600, 10], [812, 10]]) assert.ok(vw - 72 - (n * 44 + (n - 1) * 4 + 12 + 2) >= 0, String(vw));
+    // there the two headings are row breaks of no height: the emoji start on their own row under the four actions
+    assert.match(rule(LAND_BLOCK, 'html.touch .reacts .rh'), /height: 0; margin: 0; overflow: hidden; visibility: hidden;/);
+    // 375px tall: padding 12, the pouch 44, the actions 48, three emoji rows of 44, six 4px gaps and the border: 262px from 30px up
+    assert.ok(30 + 12 + 44 + 48 + 3 * 44 + 6 * 4 + 2 <= 375 - 62);
+    assert.match(rule(LAND_BLOCK, 'html.touch .reacts'), /max-height: calc\(var\(--app-h, 100dvh\) - 96px/);
   });
-  it('every dock button is 52 x 52: the old 48px rules for the more and lounge buttons are gone', () => {
-    assert.equal(css.includes('html.touch .dock .emote.more'), false);
-    assert.equal(/html\.touch \.dock \.stay-lounge-btn \{ width: 48px/.test(css), false);
-    assert.match(css, /html\.touch \.dock \.emote,\n\s*html\.touch \.dock \.stay-lounge-btn,\n\s*html\.touch \.hud-r \.stay-balloon \{ width: 52px; height: 52px; min-width: 52px;/);
-    assert.match(css, /html\.touch \.emote\.more \{ width: 52px; height: 52px; border-radius: 50%; \}/);
+  it('the bake and dance panels take the bottom of a touch screen: the stick, the column and the tag step aside', () => {
+    assert.match(css, /html\.touch #ui:has\(\.bake\.show, \.rhythm\.show\) > :is\(\.dock, \.acts, \.joy, \.prompt, \.reacts\) \{ visibility: hidden !important; \}/);
+    assert.match(css, /html\.touch #ui:has\(\.bake\.show, \.rhythm\.show\) \.viewrow \{ visibility: hidden !important; \}/);
+    assert.equal(px(rule(css, 'html.touch .bake, html.touch .rhythm'), 'bottom'), 24);
+    // on its side the dance panel's lanes are as tall as the screen leaves (it was 455px on a 375px screen, 176px off the top)
+    const canvas = rule(LAND_BLOCK, 'html.touch .rhythm canvas');
+    assert.match(canvas, /width: auto; height: calc\(var\(--app-h, 100dvh\) - 150px/);
+    assert.equal(px(rule(LAND_BLOCK, 'html.touch .bake, html.touch .rhythm'), 'bottom'), 8);
+    // 375px tall: header about 44px, canvas 225px, pads 10 + 48px, padding 16px and the border: about 345px from 8px up
+    assert.ok(8 + 44 + (375 - 150) + 10 + px(rule(LAND_BLOCK, 'html.touch .rhythm .pads button'), 'height') + 16 + 2 <= 375);
+    // a closed panel is invisible, inert and out of the tab order
+    assert.match(css, /\.bake:not\(\.show\), \.rhythm:not\(\.show\) \{ visibility: hidden; \}/);
+    for (const [el, open, close] of [['bakeEl', 'function startBake()', 'function closeBake()'], ['rhythmEl', 'function startDance()', 'function endDance(']]) {
+      assert.match(ui, new RegExp(`const ${el} = h\\('div', \\{ class: 'glass (bake|rhythm)', role: 'dialog', 'aria-hidden': 'true', 'aria-label': '[^']+', inert: true \\}`));
+      assert.match(ui.slice(ui.indexOf(open), ui.indexOf(open) + 3600), new RegExp(`${el}\\.inert = false;`));
+      assert.match(ui.slice(ui.indexOf(close), ui.indexOf(close) + 700), new RegExp(`${el}\\.inert = true;`));
+    }
   });
 });
 
-describe('touch bottom lane: the news line, the prompt and the waypoint pill are one stack', () => {
+describe('touch: 멍때리기 and the eye are two named tiles under the map', () => {
   const ui = read('ui.js');
-  const slot = rule(css, 'html.touch .news');
+  it('ui.js builds the row and puts 멍때리기 in it on touch', () => {
+    assert.match(ui, /const viewRow = h\('div', \{ class: 'viewrow' \}, viewBtn\);/);
+    assert.match(ui, /mapEl,\n\s*locPill,\n\s*viewRow,\n/);
+    assert.match(ui, /const viewLabel = h\('span', \{ class: 'l', text: '화면만' \}\);/);
+    assert.match(ui, /viewLabel\.textContent = on \? '돌아가기' : '화면만';/);
+    // the first press of a session says what the eye does (nothing said it before the HUD was already gone)
+    assert.match(ui, /if \(on && byTap && !viewTold\) \{ viewTold = true; note\('화면만 보기 · 다시 누르면 돌아와요'\); \}/);
+    assert.match(ui, /loungeBtn\.setAttribute\('aria-pressed', String\(!!on\)\);/);
+    // 멍때리기 is refused in a taxi: its tile steps aside for the ride
+    assert.match(ui, /loungeBtn\.hidden = coarse && driving;/);
+  });
+  it('the tiles are 60 x 48 with a 12px name, shown on touch only; the eye only on a phone', () => {
+    assert.match(css, /\n\s*\.viewrow \{ display: none; \}/);
+    assert.match(rule(css, 'html.touch .viewrow'), /display: flex; gap: 6px;/);
+    const tile = rule(css, 'html.touch .viewrow > button');
+    assert.equal(px(tile, 'width'), 60);
+    assert.ok(px(tile, 'height') >= 44);
+    assert.match(tile, /font: 700 12px\/1 var\(--font\);/);
+    assert.match(css, /\.id-coin, \.hud-r \.view-btn, \.wal-quick, \.phone-only \{ display: none; \}/);
+    assert.match(media(Q, '.id-coin'), /html\.touch \.hud-r \.view-btn \{ display: flex; \}/);
+  });
+  it('upright the row is under the map; on its side it is left of the map, level with it', () => {
+    // upright (hud-r: 8px down, 6px gaps): the icon row 8 … 56, the map 62 … 120, the tiles 126 … 174
+    const tools = px(rule(css, 'html.touch .tools'), 'height'), map = px(rule(media('(orientation: portrait)', '.minimap'), 'html.touch .minimap'), 'height');
+    assert.equal(8 + tools + 6 + map + 6, 126);
+    assert.match(rule(PHONE_UP, 'html.touch .hud-r .locpill'), /display: none;/);
+    // the 속보 line ends 8px left of the two tiles (126px wide, 8px in)
+    assert.equal(px(rule(PHONE_UP, 'html.touch .news'), 'right'), 8 + 60 + 6 + 60 + 8);
+    // on its side: absolute in the column, under the icon row and 6px left of the 56px map
+    const side = media(Q, '.id-coin').match(/@media \(orientation: landscape\) \{ html\.touch \.hud-r > \.viewrow \{ ([^}]*) \} \}/);
+    assert.ok(side, 'no landscape rule for the row');
+    assert.equal(px(side[1], 'top'), tools + 6);
+    assert.equal(px(side[1], 'right'), px(rule(LAND_BLOCK, 'html.touch .minimap'), 'width') + 6);
+    // it ends 110px down, above the three buttons (198px up) even on a 320px tall screen
+    assert.ok(8 + px(side[1], 'top') + 48 <= 320 - 198);
+  });
+});
+
+describe('touch bottom lane: one context tag against the action button', () => {
+  const ui = read('ui.js');
   const prompt = rule(css, 'html.touch .prompt');
-  const way = rule(css, 'html.touch .waypill');
   const joy = rule(css, 'html.touch .joy');
   const acts = rule(css, 'html.touch .acts');
-  const LAND = '(orientation: landscape) and (max-height: 520px)';
-  const land = media(LAND, 'html.touch .waypill, html.touch .news, html.touch .prompt');
-  const landWide = media(LAND + ' and (min-width: 641px)', '.prompt');
-  const landBlock = media(LAND, '.taxihud');
-  it('upright and on tablets the three share one lane between the resting stick and the right-hand buttons', () => {
-    for (const r of [slot, prompt, way]) {
-      assert.equal(px(r, 'left'), 122);
-      assert.equal(px(r, 'right'), 72);
-      assert.match(r, /margin: 0 auto;/);
-      assert.match(r, /top: auto;/);
-    }
-    for (const r of [slot, prompt]) {
-      assert.match(r, /width: auto;/);
-      assert.equal(px(r, 'max-width'), 440);
-    }
-    assert.match(way, /width: fit-content;/);
+  it('the tag is right-aligned between the resting stick and the column, and takes no touches', () => {
+    assert.equal(px(prompt, 'left'), 122);
+    assert.equal(px(prompt, 'right'), 72);
+    assert.match(prompt, /width: fit-content;/);
+    assert.match(prompt, /margin: 0 0 0 auto;/);
+    assert.match(prompt, /top: auto;/);
     assert.match(prompt, /transform: translateY\(8px\) scale\(\.96\);/);
-    assert.match(rule(css, 'html.touch .prompt.show'), /transform: none;/);
-    assert.match(rule(css, 'html.touch .prompt button'), /width: 100%;/);
-    // 8px clear of the resting stick (104px, 10px in) and of the 52px edge column 12px from the right
-    assert.ok(px(slot, 'left') >= px(joy, 'left') + px(joy, 'width') + 8);
-    assert.ok(px(slot, 'right') >= px(acts, 'right') + 52 + 8);
-    // 390px: 196px wide, centred at 220px for all three (before: 168px and 168px at 195px, 202px at 219px)
-    assert.equal(390 - 122 - 72, 196);
+    assert.match(rule(css, 'html.touch .prompt.show'), /transform: none; pointer-events: none !important;/);
+    // 8px clear of the resting stick (104px, 10px in) and of the 52px column 12px from the right
+    assert.ok(px(prompt, 'left') >= px(joy, 'left') + px(joy, 'width') + 8);
+    assert.ok(px(prompt, 'right') >= px(acts, 'right') + 52 + 8);
+    const tag = rule(css, 'html.touch .prompt .tag');
+    assert.match(tag, /font: 700 13px\/1\.35 var\(--font\);/);
+    assert.match(tag, /word-break: keep-all;/);
+    assert.equal(css.includes('html.touch .prompt button'), false); // it is not a button there any more
+    assert.equal(/\.keycap[^{]*\{[^}]*\}/.test(css), true); // the key cap is the keyboard prompt's
   });
-  it('from the bottom: the slot, the prompt 6px above it, the pill above the stick and a four-line prompt', () => {
-    assert.equal(px(slot, 'bottom'), 8);
-    assert.equal(px(slot, 'height'), 32);
-    assert.equal(px(prompt, 'bottom'), px(slot, 'bottom') + px(slot, 'height') + 6);
-    // the prompt is 6px padding, a 32px key cap or up to four 12px lines (about 15px each), 6px padding and a 1px border
-    const tallest = 6 + 4 * 15.5 + 6 + 2;
-    assert.ok(px(prompt, 'bottom') + tallest <= px(way, 'bottom') - 8);
-    assert.equal(px(way, 'bottom'), 142);
-    assert.ok(px(way, 'bottom') >= px(joy, 'bottom') + px(joy, 'height'));
-    // the news line is one line here (no kicker line), the slot's height
-    assert.match(rule(css, 'html.touch .news .body small'), /display: none;/);
-    assert.match(rule(css, 'html.touch .news .body strong'), /line-height: 30px;/);
-    // the stick stays put while a news line shows: nothing moves the prompt or the pill
-    assert.equal(/#ui:has\(> \.news\.show\)[^{]*\.(prompt|waypill)/.test(css), false);
+  it('the tag and 시점 해제 are level with the action button at every size', () => {
+    const tagH = 8 + 13 * 1.35 + 8 + 2; // one line: about 36px
+    const level = (actBottom, tagBottom, h) => Math.abs((actBottom + 26) - (tagBottom + h / 2));
+    const up = media('(orientation: portrait)', 'html.touch .acts');
+    const focus = rule(css, 'html.touch .stay-focus');
+    assert.ok(px(focus, 'min-height') >= 44);
+    assert.equal(px(focus, 'right'), px(prompt, 'right'));
+    assert.match(focus, /left: auto;/);
+    for (const [name, a, t, f] of [
+      ['a tablet', px(acts, 'bottom'), px(prompt, 'bottom'), px(focus, 'bottom')],
+      ['upright', px(rule(up, 'html.touch .acts'), 'bottom'), px(rule(PHONE_UP, 'html.touch .prompt'), 'bottom'), px(rule(PHONE_UP, 'html.touch .stay-focus'), 'bottom')],
+      ['on its side', px(rule(LAND_BLOCK, 'html.touch .acts'), 'bottom'), px(rule(PHONE_LAND, 'html.touch .prompt'), 'bottom'), px(rule(PHONE_LAND, 'html.touch .stay-focus'), 'bottom')],
+    ]) {
+      assert.ok(level(a, t, tagH) <= 1, name + ' tag');
+      assert.ok(level(a, f, 44) <= 1, name + ' 시점 해제');
+    }
+    // on its side the tag is at most 240px wide (it was 406px across the street) and starts past the 88px stick
+    const side = rule(PHONE_LAND, 'html.touch .prompt');
+    assert.equal(px(side, 'max-width'), 240);
+    assert.equal(px(rule(LAND_BLOCK, 'html.touch .joy'), 'width'), 88);
+    assert.ok(px(side, 'left') >= 10 + 88 + 8);
+    // 시점 해제 takes the tag's place: the prompt is hidden while the focus camera is on
+    assert.match(ui, /const show = !!near && !baking && !sheet && !dance && !driving && !focusOn;/);
   });
-  it('a phone on its side: right of the stick and left of the dock column, and from 641px on the toasts\' centre', () => {
-    const r = rule(land, 'html.touch .waypill, html.touch .news, html.touch .prompt');
-    // the stick is 88px wide there; the dock column is 52px wide, 76px from the right
-    assert.equal(px(rule(landBlock, 'html.touch .joy'), 'width'), 88);
-    assert.ok(px(r, 'left') >= 10 + 88 + 8);
-    assert.ok(px(r, 'right') >= px(rule(landBlock, 'html.touch .dock'), 'right') + 52 + 12);
-    assert.equal(px(rule(land, 'html.touch .waypill'), 'bottom'), 108);
-    // two prompt lines (46px) end 54px under the pill; the floating stack (the hint, a card, the toasts) is 8px above the pill
-    assert.ok(46 + 46 + 8 <= 108);
-    const toasts = rule(media(LAND, '.toasts'), 'html.touch .toasts');
-    assert.ok(px(toasts, 'bottom') >= 108 + 38 + 8);
-    const wide = rule(landWide, 'html.touch .waypill, html.touch .news, html.touch .prompt');
-    const leftOf = (d) => d.match(/left: (calc\([^;]*\));/)[1];
-    assert.equal(leftOf(wide), leftOf(toasts));
-    assert.equal(px(r, 'right'), px(toasts, 'right'));
-  });
-  it('the 화면만 보기 and 멍때리기 rules still name the stack pieces', () => {
+  it('the 화면만 보기 and 멍때리기 rules still name the pieces', () => {
     assert.match(css, /#ui\.viewonly > :is\(\.hud-l, \.news, \.prompt, \.waypill,/);
     assert.match(css, /#ui\.lounging > \.news, #ui\.lounging > \.help/);
     assert.equal(css.includes('.stay-ticket'), false); // the 5-minute draw line is gone (no lottery)
-    // the slot is no longer emptied while driving: the taxi HUD is at the top on touch
-    assert.equal(css.includes('html.touch #ui:has(.taxihud:not([hidden])) .news'), false);
-    assert.match(css, /html\.touch #ui:has\(\.taxihud:not\(\[hidden\]\)\) \.waypill \{ display: none; \}/);
+    // nothing moves the prompt or the pill while a news line shows
+    assert.equal(/#ui:has\(> \.news\.show\)[^{]*\.(prompt|waypill)/.test(css), false);
   });
   it('a news line longer than its bar crawls to its end and stays until it has been read', () => {
     const pump = ui.slice(ui.indexOf('function pumpNews('), ui.indexOf('function cooldownLeft('));
@@ -190,47 +269,27 @@ describe('touch bottom lane: the news line, the prompt and the waypoint pill are
     assert.match(css, /@keyframes newsCrawl \{ from \{ transform: none; \} to \{ transform: translateX\(var\(--crawl, 0px\)\); \} \}/);
     // the crawl starts after 1 s and leaves 1.2 s on the end: about 70px a second (14ms a pixel), 1.5 to 8 s
     assert.match(pump, /Math\.min\(8000, Math\.max\(1500, over \* 14\)\)/);
+    // the line is one 12px line on touch (the 속보 LIVE tab was 10px), under the left column
+    assert.match(rule(css, 'html.touch .news .kick'), /font-size: 12px;/);
+    assert.match(rule(css, 'html.touch .news .body small'), /display: none;/);
+  });
+  it('the line waits while one board is looked at or the boards are toured, and the same line is not run twice', () => {
+    const pump = ui.slice(ui.indexOf('function pumpNews('), ui.indexOf('function cooldownLeft('));
+    assert.match(pump, /if \(focusOn \|\| root\.classList\.contains\('lounging'\)\) return;/);
+    assert.match(ui, /focusLock\(on\) \{ focusOn = !!on; focusBtn\.hidden = !on; root\.classList\.toggle\('focusing', focusOn\); renderPrompt\(\); if \(!on\) \{ setTimeout\(pumpQueued, 0\); pumpNews\(\); \} \},/);
+    assert.match(ui, /if \(!on\) pumpNews\(\); \},\n/);
+    // the welcome comes with every reconnect: the feed keeps one copy, and the banner does not run it again
+    assert.match(pump, /const again = \[\.\.\.feedRows\.children\]\.filter\(\(n\) => sameNews\(n\.textContent, line\.textContent\)\);\n\s+for \(const n of again\) n\.remove\(\);/);
+    assert.match(pump, /if \(again\.length\) \{ newsBusy = false; pumpNews\(\); return; \}/);
   });
 });
 
-describe('touch toasts and the pouch count', () => {
-  const ui = read('ui.js');
-  it('toasts stay clear of the right-hand buttons (the star line used to cover 멍때리기)', () => {
-    const t = rule(css, 'html.touch .toasts');
-    assert.match(t, /transform: none;/);
-    // upright: the dock and the pouch are 52px wide, 12px from the right
-    assert.ok(px(t, 'right') >= 12 + 52 + 8);
-    assert.equal(px(t, 'left'), px(t, 'right'));
-    assert.match(rule(css, 'html.touch .toast'), /word-break: keep-all;/);
-    // on its side: left of the dock column (76px from the right) and the pouch on top of it
-    const land = rule(media('(orientation: landscape) and (max-height: 520px)', '.toasts'), 'html.touch .toasts');
-    assert.ok(px(land, 'right') >= 76 + 52 + 12);
-  });
-  it('the pouch is an icon in its circle with the count as a badge on the edge, at most 999+', () => {
-    const paint = ui.slice(ui.indexOf('function balloonText('), ui.indexOf('setInterval(paintBalloon, 1000);'));
-    assert.match(paint, /balloonEl\.replaceChildren\(icon\('packet'\), h\('span', \{ class: 'bn', text \}\)\);/);
-    assert.match(paint, /balloonText\(coarse \? \(left > 999 \? '999\+' : `\$\{left\}`\) : `\$\{left\}번 남음 · 터뜨려 보세요`\);/); // play: no points
-    const bn = rule(css, 'html.touch .hud-r .stay-balloon .bn');
-    assert.match(bn, /position: absolute;/);
-    assert.ok(px(bn, 'top') < 0 && px(bn, 'right') < 0);
-    assert.match(bn, /white-space: nowrap;/);
-    assert.match(rule(css, 'html.touch .hud-r .stay-balloon:disabled .bn'), /background: var\(--surface-2\);/);
-    // the badge needs a positioned button where the phone rules do not fix it (tablets); the phone rules come later
-    assert.ok(css.indexOf('html.touch .hud-r .stay-balloon { position: relative; }') < css.indexOf('html.touch .hud-r .stay-balloon { position: fixed;'));
-    // on its side the badge (8px past the circle's right edge) stays clear of the edge column: 76 - 8 > 12 + 52
-    assert.ok(76 - 8 > 12 + 52);
-  });
-});
-
-describe('the floating stack: the hint, a far-board card, 홈 화면 추가, a lottery result, a board\'s card and the toasts are one column', () => {
+describe('the floating stack: the hint, a far-board card, 홈 화면 추가, a board\'s card and the toasts are one column', () => {
   const ui = read('ui.js');
   const stack = rule(css, 'html.touch .toasts');
   const piece = rule(css, 'html.touch .toasts > *');
   const lane = rule(css, 'html.touch .waypill');
-  const LAND = '(orientation: landscape) and (max-height: 520px)';
-  const landStack = media(LAND, '.toasts');
-  const narrow = media(LAND + ' and (max-width: 640px)', '.farcard');
-  it('ui.js puts every floating card in the toasts\' column, under the toasts, and a burst of toasts drops only toasts', () => {
+  it('ui.js puts every floating card in the toasts\' column, and a burst of toasts drops only toasts', () => {
     const far = ui.slice(ui.indexOf('  function showFarCard('), ui.indexOf('  function showAdCard('));
     const ad = ui.slice(ui.indexOf('  function showAdCard('), ui.indexOf('  function levelOf('));
     for (const f of [far, ad]) {
@@ -243,189 +302,193 @@ describe('the floating stack: the hint, a far-board card, 홈 화면 추가, a l
     assert.equal(ui.includes('showDraw'), false); // the lottery result card is gone with the lottery
     assert.match(ui, /if \(!coarse\) root\.append\(sponsorEl\);/);
     assert.match(ui, /if \(coarse\) toasts\.prepend\(sponsorEl\);/);
+    assert.match(ui, /if \(coarse\) toasts\.prepend\(coachEl\);/);
     // note(): over three toasts the oldest plain toast goes; a card in the column is never counted or dropped
     const note = ui.slice(ui.indexOf('  function note('), ui.indexOf('  const newsQueue = []'));
     assert.match(note, /const shown = \(\) => \[\.\.\.toasts\.children\]\.filter\(\(c\) => c\.classList\.contains\('toast'\)\);/);
     assert.match(note, /for \(let list = shown\(\); list\.length > 3; list = shown\(\)\) \(list\.find\(\(c\) => c !== t && !c\.classList\.contains\('hit'\)\) \|\| list\[0\]\)\.remove\(\);/);
     assert.equal(note.includes('toasts.firstChild'), false);
   });
-  it('upright and on tablets each piece is centred on the bottom lane\'s centre, and a wider one grows left, never into the right-hand column', () => {
+  it('a phone: one notice at a time, hanging under the left column, never over the avatar', () => {
+    const s = rule(PHONE, 'html.touch .toasts');
+    assert.match(s, /top: var\(--stack-top, 182px\); bottom: auto;/);
+    assert.match(s, /flex-direction: column; align-items: flex-start;/);
+    assert.equal(px(s, 'left'), 10);
+    assert.match(rule(PHONE, 'html.touch .toasts > *'), /align-self: flex-start; margin-left: 0; max-width: 100%; translate: none;/);
+    assert.match(rule(PHONE, 'html.touch .toasts > .toast:has(~ .toast)'), /display: none;/); // only the newest shows
+    assert.match(rule(PHONE, 'html.touch .toast'), /text-align: left;/);
+    // ui.js keeps the left column's bottom edge on the root element: the toasts live in <body>, not in #ui
+    assert.match(ui, /document\.documentElement\.style\.setProperty\('--hudl-b', Math\.round\(col\.offsetTop \+ col\.offsetHeight\) \+ 'px'\)/);
+    assert.equal(ui.includes("root.style.setProperty('--hudl-b'"), false);
+    // upright: under both top columns. The left one ends at --hudl-b and the 속보 slot is 8 + 30px under it; the right one
+    // (icon row, map, tiles) ends 174px down; with a waypoint pill (180 … 218px) the stack starts under the pill
+    const up = rule(PHONE_UP, 'html.touch .toasts');
+    assert.match(up, /--stack-top: max\(calc\(var\(--hudl-b, 142px\) \+ 46px\), calc\(182px \+ var\(--safe-t\)\)\);/);
+    assert.ok(46 >= 8 + px(rule(css, 'html.touch .news'), 'height') + 8);
+    assert.equal(182, 174 + 8);
+    const pill = rule(PHONE_UP, 'html.touch .waypill');
+    assert.equal(px(pill, 'top'), 174 + 6);
+    assert.equal(px(pill, 'right'), 8);
+    assert.match(pill, /bottom: auto; left: auto;/);
+    assert.match(rule(PHONE_UP, 'html.touch body:has(#ui > .waypill:not([hidden])) .toasts'), /--stack-top: max\(calc\(var\(--hudl-b, 142px\) \+ 46px\), calc\(226px \+ var\(--safe-t\)\)\);/);
+    assert.equal(226, px(pill, 'top') + 38 + 8);
+    // a 640px tall phone: a three-line notice (about 70px) from 190px ends by 260px, above the avatar's head (about 300px down)
+    assert.ok(190 + 70 <= 300);
+    // the stack's top is a variable set by the states (pill, taxi), so a sheet's own rule for `top` still wins
+    assert.equal(/html\.touch body:has\([^{]*\) \.toasts \{ top: (calc|max)\(/.test(PHONE_UP), false);
+  });
+  it('a phone on its side: under the left column, as wide as a notice needs; the far-board card takes the tag\'s place', () => {
+    const s = rule(PHONE_LAND, 'html.touch .toasts');
+    assert.match(s, /--stack-top: calc\(var\(--hudl-b, 142px\) \+ 8px\);/);
+    assert.match(s, /right: auto; width: min\(300px,/);
+    // the 속보 line is the top centre banner there, between the left column and the icon row (180px, 8px in), the pill centred under it
+    const news = rule(PHONE_LAND, 'html.touch .news'), pill = rule(PHONE_LAND, 'html.touch .waypill');
+    for (const r of [news, pill]) {
+      assert.match(r, /left: calc\(min\(240px, 40vmax\) \+ 18px \+ var\(--safe-l\)\);/);
+      assert.equal(px(r, 'right'), 8 + 180 + 8);
+      assert.match(r, /margin: 0 auto;/);
+    }
+    assert.equal(px(pill, 'top'), px(news, 'top') + px(rule(css, 'html.touch .news'), 'height') + 6);
+    // the board's card without the board's lines (the camera is on the board)
+    assert.match(rule(PHONE_LAND, 'html.touch .toasts > .sponsor p'), /display: none;/);
+    // the far-board card would need two rows in a 300px stack: one row in the lane for its 4 s, and the tag steps aside
+    const far = rule(PHONE_LAND, 'html.touch .toasts > .farcard');
+    assert.match(far, /position: fixed;/);
+    assert.equal(px(far, 'left'), px(rule(PHONE_LAND, 'html.touch .prompt'), 'left'));
+    assert.equal(px(far, 'right'), 72);
+    assert.equal(px(far, 'bottom'), px(rule(LAND_BLOCK, 'html.touch .acts'), 'bottom'));
+    assert.match(far, /flex-wrap: nowrap;/);
+    assert.match(PHONE_LAND, /html\.touch body:has\(\.toasts > \.farcard\) #ui > \.prompt \{ visibility: hidden; \}/);
+    // 568px: the lane is 568 - 106 - 72 = 390px, the card's row is 182px plus the name (140px)
+    assert.ok(568 - 106 - 72 >= 2 * 12 + 2 + 12 + 3 * 44 + 2 * 6 + 140);
+  });
+  it('a tablet keeps the stack above the bottom lane, each piece on the lane\'s centre, never in the right-hand column', () => {
     const L = px(stack, 'left'), R = px(stack, 'right');
     assert.equal(L, 72);
     assert.equal(R, 72);
+    assert.equal(px(stack, 'bottom'), 190);
+    assert.match(stack, /transform: none;/);
     assert.match(piece, /align-self: flex-start;/);
     const off = Number(piece.match(/margin-left: calc\(50% \+ (\d+)px\);/)[1]);
     const extra = Number(piece.match(/max-width: calc\(100% \+ (\d+)px\);/)[1]);
     const k = Number(piece.match(/translate: min\(-50%, calc\(50vw - (\d+)px - \(var\(--safe-l\) \+ var\(--safe-r\)\) \/ 2 - 100%\)\);/)[1]);
     const acts = rule(css, 'html.touch .acts');
-    for (const vw of [320, 360, 375, 390, 412, 430, 600, 768, 1024]) {
+    for (const vw of [600, 768, 834, 1024]) {
       const B = vw - L - R;
       const C = L + B / 2 + off; // where the margin puts a piece's left edge, before the translate
-      // that is the lane's centre (122px … right 72px), where the slot, the prompt and the pill are centred
       assert.equal(C, (px(lane, 'left') + vw - px(lane, 'right')) / 2, String(vw));
       const room = vw / 2 - k; // from that centre to the stack's right edge
       assert.equal(room, vw - R - C, String(vw));
       for (const w of [96, 160, 198, 246, 306, 346]) {
         if (w > B + extra) continue;
         const left = C + Math.min(-w / 2, room - w), right = left + w;
-        assert.ok(right <= vw - R + 1e-9, vw + ' ' + w);
-        // 8px clear of the dock, the pouch and the action buttons (52px wide, 12px in)
         assert.ok(right <= vw - px(acts, 'right') - 52 - 8, vw + ' ' + w);
         assert.ok(left >= L - extra - 1e-9, vw + ' ' + w);
-        if (w <= 2 * room) assert.equal(left + w / 2, C, vw + ' ' + w);
       }
     }
-    // 390px: a short toast and the hint (198px) are centred on 220px like the pill; the star toast (306px) runs 12 … 318px
-    assert.equal(390 / 2 - k, 98);
-    // before: the toasts were centred 72px in on each side, the hint 16px … right 76px (195, 165 and 220px at 390)
-    assert.equal(L + (390 - L - R) / 2, 195);
-  });
-  it('the stack starts above the resting stick and the waypoint pill; the pieces have no box of their own', () => {
     const joy = rule(css, 'html.touch .joy');
-    assert.equal(px(stack, 'bottom'), 190);
     assert.ok(px(stack, 'bottom') >= px(joy, 'bottom') + px(joy, 'height') + 12);
     assert.ok(px(stack, 'bottom') >= px(lane, 'bottom') + 38 + 8);
+    assert.match(rule(css, 'html.touch .toast'), /word-break: keep-all;/);
+  });
+  it('the pieces have no box of their own, and the far-board card shows its name', () => {
     const far = rule(css, '.farcard'), home = rule(css, '.a2hs');
     assert.equal(css.includes('.stay-draw'), false);
     for (const r of [far, home, rule(css, '.coach')]) {
       assert.equal(/(^|[;\s])(left|bottom|top): /.test(r), false, r);
       assert.equal(/position: (absolute|fixed)/.test(r), false, r);
     }
-    assert.equal(css.includes('html.touch .a2hs { bottom'), false);
-    assert.match(rule(css, 'html.touch .a2hs'), /width: min\(360px, calc\(100% \+ 60px\)\);/);
-  });
-  it('the far-board card shows its name: it wraps its buttons to a second row instead of squeezing the name to nothing', () => {
-    // as a box at left: 50% it could never be wider than half the screen: 195px at 390px, the three buttons alone 156px
-    assert.ok(390 / 2 - 24 - 2 - 12 - 3 * 48 - 2 * 6 < 10);
-    const far = rule(css, '.farcard');
     assert.match(far, /flex-wrap: wrap;/);
     assert.match(far, /width: max-content; max-width: 100%;/);
     assert.match(rule(css, '.farcard .where'), /flex: 1 1 140px; min-width: 0;/);
     assert.match(rule(css, '.farcard .far-acts'), /margin-left: auto;/);
-    const btn = rule(css, 'html.touch .farcard .far-acts button');
-    assert.match(btn, /padding: 0 8px;/);
-    // three 44px buttons and two 6px gaps (144px) fit the narrowest stack upright (320 - 84 = 236px) and on its side from 641px
+    assert.match(rule(css, 'html.touch .farcard .far-acts button'), /padding: 0 8px;/);
+    // upright on a phone the stack is the screen less 10px each side: one row (name 140px) from 342px wide, two rows below
     const row = 3 * 44 + 2 * 6, card = 2 * 12 + 2;
-    assert.ok(row + card <= 320 - 84);
-    assert.ok(row + card <= 641 - Math.min(240, 641 * 0.4) - 26 - 140);
-    // one row from 406px upright (name 140px), two rows below
     assert.equal(card + 140 + 12 + row, 322);
-    assert.ok(430 - 84 >= 322 && 390 - 84 < 322);
+    assert.ok(375 - 20 >= 322 && 320 - 20 < 322);
+    // the board's card and the 홈 화면 추가 card are as wide as the phone's stack allows
+    assert.match(rule(PHONE, 'html.touch .toasts > :is(.sponsor, .a2hs)'), /width: min\(420px, 100%\);/);
   });
-  it('a card in the stack sends the hint aside, a far-board card sends 홈 화면 추가 aside, and over a sheet only the toasts show', () => {
+  it('the hint is one 12px line for 8 s; a card sends it aside; a menu hides the whole stack; over a sheet only the toasts show', () => {
+    const coach = rule(css, '.coach');
+    assert.match(coach, /white-space: nowrap;/);
+    assert.match(coach, /font: 700 12px\/1\.35 var\(--font\);/);
+    assert.match(ui, /h\('div', \{ class: 'coach', role: 'status', hidden: true \}, h\('span', \{ text: '끌어서 둘러보기' \}\), h\('span', \{ class: 'sep', text: ' · ' \}\), h\('span', \{ text: '두 손가락으로 확대' \}\)\)/);
+    assert.match(ui, /coachTimer = setTimeout\(coachDone, 8000\);/); // it was 15 s on every visit until the first drag
+    assert.equal(css.includes('html.touch .coach'), false); // no two-line version: every stack is wide enough for the one line
     assert.match(css, /\.toasts:has\(> \.farcard, > \.a2hs:not\(\[hidden\]\), > \.sponsor:not\(\[hidden\]\)\) > \.coach \{ display: none; \}/);
     assert.match(css, /\.toasts:has\(> \.farcard\) > \.a2hs \{ display: none; \}/);
+    // the ⋯ menu and the 동작 panel are menus: nothing floats over them (a toast lay on 전체 화면, the hint on the first emoji row)
+    assert.match(css, /body:has\(#ui \.tools\.open\) \.toasts, html\.touch body:has\(#ui > \.reacts:not\(\[hidden\]\)\) \.toasts \{ visibility: hidden; \}/);
     assert.match(css, /body\.has-sheet \.toasts > :not\(\.toast\), body\.has-proof \.toasts > :not\(\.toast\), body:has\(#ui > \.bake\.show\) \.toasts > :not\(\.toast\), body:has\(#ui > \.rhythm\.show\) \.toasts > :not\(\.toast\) \{ display: none; \}/);
-    // up there the toasts are centred 72px in, as before, not on the lane
     const top = css.match(/html\.touch body\.has-sheet \.toasts > \*, html\.touch body\.has-proof \.toasts > \*, html\.touch body:has\(#ui > \.bake\.show\) \.toasts > \*, html\.touch body:has\(#ui > \.rhythm\.show\) \.toasts > \* \{([^}]*)\}/);
     assert.ok(top, 'no reset for the toasts at the top');
     assert.match(top[1], /align-self: center; margin-left: 0; max-width: 100%; translate: none;/);
     assert.ok(css.indexOf(top[0]) > css.indexOf('html.touch .toasts > * {'));
   });
-  it('a board\'s card (focus link, taxi drop-off) is in the stack on touch, and 시점 해제 takes the prompt\'s place in the lane', () => {
+  it('a board\'s card (focus link, taxi drop-off) is in the stack on touch; on a phone the pills step aside for the board', () => {
     const sp = rule(css, 'html.touch .toasts > .sponsor');
     assert.match(sp, /pointer-events: auto;/);
-    assert.match(sp, /width: min\(420px, calc\(100% \+ 60px\)\);/);
     assert.match(rule(css, 'html.touch .toasts > .sponsor .chips'), /flex-wrap: nowrap; overflow-x: auto;/);
-    // a desktop window still lifts its toasts over the card; touch no longer moves its stack to 400px up
+    // a desktop window still lifts its toasts over the card, and its chips are one scrolling row too (twelve chips took three rows)
     assert.match(css, /html:not\(\.touch\) body\.has-sponsor \.toasts \{ bottom: calc\(360px \+ var\(--safe-b\)\); \}/);
+    assert.match(css, /#ui > \.sponsor \.chips \{ flex-wrap: nowrap; overflow-x: auto;/);
     assert.equal(css.includes('html.touch body.has-sponsor'), false);
     assert.equal(css.includes('html.touch #ui > .sponsor'), false);
-    // 시점 해제 sits where the prompt is, which is hidden while the focus camera is on (it was 310px up, on the card's chips)
-    const focus = rule(css, 'html.touch .stay-focus');
-    const prompt = rule(css, 'html.touch .prompt');
-    for (const p of ['bottom', 'left', 'right']) assert.equal(px(focus, p), px(prompt, p), p);
-    assert.match(ui, /const show = !!near && !baking && !sheet && !dance && !driving && !focusOn;/);
-    assert.match(media(LAND, 'html.touch .stay-focus { left: calc(106px'), /html\.touch \.stay-focus \{ left: calc\(106px \+ var\(--safe-l\)\); right: calc\(140px \+ var\(--safe-r\)\); \}/);
-  });
-  it('a phone on its side: from 154px up (114px without a pill), one toast at a time, the far-board card in the lane under 641px', () => {
-    const s = rule(landStack, 'html.touch .toasts');
-    assert.equal(px(s, 'bottom'), 108 + 38 + 8);
-    assert.match(landStack, /html\.touch body:not\(:has\(#ui > \.waypill:not\(\[hidden\]\)\)\) \.toasts \{ bottom: calc\(114px \+ var\(--safe-b\)\); \}/);
-    // a three-line prompt there is 6 + 3 x 15.5 + 6 + 2 = 60.5px tall from 46px up
-    assert.ok(114 >= 46 + 6 + 3 * 15.5 + 6 + 2 + 6);
-    assert.match(rule(landStack, 'html.touch .toasts > *'), /align-self: center; margin-left: 0; max-width: 100%; translate: none;/);
-    assert.match(rule(landStack, 'html.touch .toasts > .toast:has(~ .toast)'), /display: none;/);
-    assert.match(rule(landStack, 'html.touch .toasts > .sponsor p'), /display: none;/);
-    // under 641px the column is 175-222px: the card would need two rows (108px), so it is one row in the lane for its 4 s
-    const far = rule(narrow, 'html.touch .toasts > .farcard');
-    const landLane = rule(media(LAND, 'html.touch .waypill, html.touch .news, html.touch .prompt'), 'html.touch .waypill, html.touch .news, html.touch .prompt');
-    assert.match(far, /position: fixed;/);
-    assert.equal(px(far, 'left'), px(landLane, 'left'));
-    assert.equal(px(far, 'right'), px(landLane, 'right'));
-    assert.equal(px(far, 'bottom'), px(rule(css, 'html.touch .prompt'), 'bottom'));
-    assert.match(far, /flex-wrap: nowrap;/);
-    assert.match(narrow, /html\.touch body:has\(\.toasts > \.farcard\) #ui > :is\(\.prompt, \.waypill\) \{ visibility: hidden; \}/);
-    // 568px: the lane is 322px, the card's row is 182px plus the name (140px)
-    assert.equal(568 - 106 - 140, 2 * 12 + 2 + 12 + 3 * 44 + 2 * 6 + 140);
-    // the lane's card (46 + 66 = 112px) ends under the stack even without a pill
-    assert.ok(46 + 66 <= 114);
+    // looking at one board on a phone: only the identity row stays in the left column, and the 속보 line waits
+    assert.match(PHONE, /html\.touch #ui\.focusing > \.hud-l > :not\(\.ident\), html\.touch #ui\.focusing > \.news \{ visibility: hidden !important; \}/);
   });
   it('화면만 보기 hides the hint and the board\'s card in the stack too, and keeps the toasts', () => {
-    const Q = '(orientation: portrait) and (max-width: 599px), (orientation: landscape) and (max-height: 520px)';
     assert.match(media(Q, '.id-coin'), /html\.touch body:has\(> #ui\.viewonly\) \.toasts > :is\(\.coach, \.sponsor\) \{ display: none !important; \}/);
   });
 });
 
 describe('touch landscape on a phone (height up to 520px)', () => {
-  const land = media('(orientation: landscape) and (max-height: 520px)', '.taxihud');
-  // The left column: 14px in above 640px wide (10px at or under), at most min(240px, 40vw) wide.
-  const leftCol = (vw) => (vw > 640 ? 14 : 10) + Math.min(240, vw * 0.4);
-  const inset = (vw) => Math.min(240, vw * 0.4) + 26;
-  it('the columns right of the left column (taxi HUD, the floating stack with the hint and the toasts) start 12px past the identity card', () => {
-    assert.match(rule(land, 'html.touch .hud-l'), /max-width: min\(240px, 40vw\);/);
-    for (const vw of [568, 640, 667, 740, 767]) assert.ok(inset(vw) - leftCol(vw) >= 12, String(vw));
-    assert.equal(leftCol(667), 254);
-    assert.equal(inset(667), 266);
-    const toasts = rule(media('(orientation: landscape) and (max-height: 520px)', '.toasts'), 'html.touch .toasts');
-    for (const r of [rule(land, 'html.touch .taxihud'), toasts]) assert.match(r, /left: calc\(min\(240px, 40vw\) \+ 26px \+ var\(--safe-l\)\);/);
-  });
-  it('while driving, the taxi HUD is between the left column and the right-hand buttons', () => {
-    const t = rule(land, 'html.touch .taxihud');
+  // The left column: 10px in, at most min(240px, 40vw) wide.
+  const leftCol = (vw) => 10 + Math.min(240, vw * 0.4);
+  it('driving: the taxi HUD is one row along the top, between the left column and the icon row', () => {
+    assert.match(rule(LAND_BLOCK, 'html.touch .hud-l'), /max-width: min\(240px, 40vw\);/);
+    const t = rule(LAND_BLOCK, 'html.touch .taxihud');
+    assert.equal(px(t, 'top'), 8); // it was 156px down: across the middle of a 375px screen, on the taxi and the road
     assert.match(t, /left: calc\(min\(240px, 40vw\) \+ 26px \+ var\(--safe-l\)\);/);
-    assert.ok(px(t, 'right') >= 12 + 52 + 12);
+    assert.equal(px(t, 'right'), 8 + 180 + 8);
+    assert.match(t, /grid-template-rows: auto;/);
+    for (const vw of [641, 667, 740, 812, 844]) assert.ok(Math.min(240, vw * 0.4) + 26 - leftCol(vw) >= 12, String(vw));
+    // 812px: 812 - 266 - 196 = 350px for speed, passengers, the job line and the timer
+    assert.equal(812 - (240 + 26) - px(t, 'right'), 350);
+    assert.match(rule(LAND_BLOCK, 'html.touch .taxihud .keys'), /display: none;/);
+    // the 속보 line (the same slot) and the waypoint pill wait until the ride is over
+    assert.match(LAND_BLOCK, /html\.touch #ui:has\(\.taxihud:not\(\[hidden\]\)\) > :is\(\.news, \.waypill\) \{ display: none; \}/);
     // the base rule (full width, 8px in) comes first, so this one wins
     assert.ok(css.indexOf('html.touch .taxihud { top:') < css.indexOf('(orientation: landscape) and (max-height: 520px)'));
   });
-  it('the dock is its own column left of the action buttons, and the pouch balloon sits on top of it', () => {
-    const dock = rule(land, 'html.touch .dock');
-    const acts = rule(css, 'html.touch .acts');
-    // the edge column: 52px buttons 12px from the right, from 36px up; the dock column is 12px left of it, from the same 36px
-    assert.equal(px(acts, 'right'), 12);
-    assert.equal(px(dock, 'right'), 12 + 52 + 12);
-    assert.equal(px(dock, 'bottom'), px(acts, 'bottom'));
-    // two dock buttons 10px apart reach 36 + 114 = 150px; the balloon starts 10px above that
-    const b = rule(land, 'html.touch .hud-r .stay-balloon');
-    assert.match(b, /position: fixed;/);
-    assert.equal(Number(b.match(/z-index: (\d+)/)[1]), 7);
-    assert.equal(px(b, 'right'), px(dock, 'right'));
-    assert.ok(px(b, 'bottom') >= px(dock, 'bottom') + 52 * 2 + 10 + 10);
-    // 320px tall: the balloon's top (320 - 160 - 52 = 108px) is under the map only because the location pill steps aside
-    // and the map column is 56px wide at the edge (the balloon is 64px in from it)
-    assert.match(rule(land, 'html.touch .locpill'), /display: none;/);
-    assert.equal(px(rule(land, 'html.touch .minimap'), 'width'), 56);
-    // driving: three 52px buttons 6px apart end 36 + 168 = 204px up, under the map's bottom (56 + 56 = 112px down) at 320px tall
-    assert.ok(320 - (px(acts, 'bottom') + 3 * 52 + 2 * px(rule(land, 'html.touch .acts'), 'gap')) >= 56 + 56);
-    // the panels of the bakery and the dance are centred and reach the dock column on a narrow screen: the dock steps aside
-    assert.match(land, /html\.touch #ui:has\(\.bake\.show\) \.dock, html\.touch #ui:has\(\.rhythm\.show\) \.dock \{ visibility: hidden; \}/);
-    // the floating stack (the look-around hint among it) ends left of the dock column
-    const stack = rule(media('(orientation: landscape) and (max-height: 520px)', '.toasts'), 'html.touch .toasts');
-    assert.ok(px(stack, 'right') >= px(dock, 'right') + 52 + 12);
-  });
-  it('the news line no longer moves the waypoint pill: it takes the draw line\'s slot', () => {
-    assert.equal(css.includes('#ui:has(> .news.show) .waypill'), false);
-    assert.equal(land.includes('.news'), false);
-    assert.equal(land.includes('.prompt'), false);
-  });
   it('568-640px wide: while driving the taxi HUD takes the row under the identity card', () => {
-    const narrow = media('(orientation: landscape) and (max-height: 520px) and (max-width: 640px)', '.taxihud');
+    const narrow = media(LAND + ' and (max-width: 640px)', '.taxihud');
     const t = rule(narrow, 'html.touch .taxihud');
     assert.equal(px(t, 'left'), 10);
-    // 568px wide: 568 - 10 - 110 = 448px (it was 239px), and its right edge (458px) is left of the map column (504px)
-    assert.equal(568 - px(t, 'left') - px(t, 'right'), 448);
-    assert.ok(568 - px(t, 'right') <= 568 - 12 - 56 - 8);
+    // under the identity row (10 + 46px) and ending 8px left of 멍때리기, the eye and the map (126 + 6 + 56px wide, 8px in)
+    assert.ok(px(t, 'top') >= 10 + 46 + 6);
+    assert.equal(px(t, 'right'), 8 + 56 + 6 + 126 + 8);
+    assert.ok(568 - px(t, 'left') - px(t, 'right') >= 340);
     assert.match(narrow, /html\.touch #ui:has\(\.taxihud:not\(\[hidden\]\)\) \.hud-l > :not\(\.ident\) \{ display: none; \}/);
-    assert.match(rule(narrow, 'html.touch .taxihud .keys'), /display: none;/);
+  });
+  it('upright the taxi HUD is under both top columns and the stack under it', () => {
+    assert.equal(px(rule(PHONE_UP, 'html.touch .taxihud'), 'top'), 182);
+    assert.match(rule(PHONE_UP, 'html.touch body:has(#ui > .taxihud:not([hidden])) .toasts'), /--stack-top: calc\(282px \+ var\(--safe-t\)\);/);
+    // while driving the HUD's arrow points the way: the waypoint pill waits on every phone
+    assert.match(PHONE, /html\.touch #ui:has\(\.taxihud:not\(\[hidden\]\)\) > \.waypill \{ display: none; \}/);
+    // the key line shows for the first 8 s of a ride, and the ride begins with one short notice (two long ones lay on the road)
+    const ui = read('ui.js');
+    assert.match(ui, /taxiKeys\.hidden = !driving;\n\s+if \(driving\) taxiKeysTimer = setTimeout\(\(\) => \{ taxiKeys\.hidden = true; \}, 8000\);/);
+    assert.match(ui, /if \(driving\) \{ closeSheet\(\); note\('손님 기둥 앞에서 속도를 줄이세요', 'ok'\); \}/);
+    assert.equal(/운전 시작!|진행 방향 도로 위에/.test(ui), false);
+  });
+  it('the ⋯ menu is three columns there, and dims what is behind it', () => {
+    assert.match(rule(PHONE_LAND, 'html.touch .tools.open'), /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/);
+    assert.match(rule(css, 'html.touch .tools.open'), /box-shadow: var\(--shadow-sheet\), 0 0 0 100vmax rgba\(0, 0, 0, \.56\);/);
+    // eight rows (소리 and 전체 화면 are in settings) and 닫기: 3 rows of 48px + 닫기 + gaps and padding, about 226px of a 375px screen
+    assert.ok(4 * px(rule(css, 'html.touch .tools.open > .btn'), 'height') + 3 * 4 + 16 + 2 <= 375 * 0.62);
   });
   it('the boot card scrolls from the top when it is taller than the screen', () => {
     const boot = rule(css, '#boot');
@@ -434,7 +497,7 @@ describe('touch landscape on a phone (height up to 520px)', () => {
     assert.equal(/overflow: hidden/.test(boot), false);
     // auto margins centre the card while it fits and are zero when it does not
     assert.match(rule(css, '#boot .wrap'), /margin: auto 0;/);
-    assert.match(land, /#boot \.bootmark \{ display: none; \}/);
+    assert.match(LAND_BLOCK, /#boot \.bootmark \{ display: none; \}/);
   });
 });
 
@@ -457,8 +520,35 @@ describe('desktop windows', () => {
     // after: 전광판, 소원, (받은 소식), 순위, 조작 안내, ⋯
     for (const vw of [641, 700, 771, 819]) assert.ok(vw - 14 - row(6) - IDENT_RIGHT >= 12, String(vw));
     assert.equal(700 - 14 - row(5) - IDENT_RIGHT, 122);
-    // from 820px the full row fits again: 11 buttons end 2px right of the card
+    // from 820px the full row fits again: 11 buttons end 2px right of the card (the sound button is gone: 소리 is a
+    // switch in the settings sheet, so the row is 전광판, 소원, 선물, 받은 소식, 공유·코드, 사진, 순위, 내 건물, 전체 화면, 설정, 조작 안내)
     assert.ok(820 - 14 - row(11) - IDENT_RIGHT >= 0);
+    const ui = read('ui.js');
+    assert.equal(/soundBtn/.test(ui), false);
+    assert.equal((ui.slice(ui.indexOf("h('div', { class: 'glass tools' },"), ui.indexOf('    mapEl,\n')).match(/h\('button'/g) || []).length, 7); // + wishBtn, inboxBtn, fsBtn; gift.js and the key card add theirs
+  });
+  it('from 1240px the first four tools carry their name beside the icon (twelve bare icons told nothing apart)', () => {
+    const wide = media('(min-width: 1240px)', '.named');
+    assert.match(rule(wide, 'html:not(.touch) .tools .btn:is(.named, .tool-gift)'), /width: auto;/);
+    assert.match(rule(wide, 'html:not(.touch) .tools .btn:is(.named, .tool-gift)::after'), /content: attr\(aria-label\);/);
+    const ui = read('ui.js');
+    for (const name of ['전광판 걸기', '응원 순위']) assert.match(ui, new RegExp(`class: 'btn icon( tool-rank)? named', type: 'button', 'aria-label': '${name}'`));
+    assert.match(ui, /class: 'btn icon tool-wish named'/);
+    // four names of about 110-150px and seven 40px icons are about 770px: clear of the left column (354px) at 1240px
+    assert.ok(1240 - 14 - (124 + 124 + 150 + 112 + 7 * 40 + 10) - IDENT_RIGHT >= 12);
+  });
+  it('a button and the sheet it opens say the same thing', () => {
+    const ui = read('ui.js');
+    for (const [label, title] of [['공유·코드', "openSheet(['share', '공유·코드'], null,"], ['내 건물', "openSheet(['building', '내 건물'], null,"],
+      ['사진 찍어 공유', "openSheet(['camera', '사진 찍어 공유'], null,"], ['내 캐릭터', "openSheet(['user', '내 캐릭터'], null,"]]) {
+      assert.ok(ui.includes(`'aria-label': '${label}', title: '${label}'`), label);
+      assert.ok(ui.includes(title), title);
+    }
+    // the identity button is named by the sheet it opens and the name written on it
+    assert.match(ui, /profile\.setAttribute\('aria-label', `내 캐릭터 · \$\{hooks\.nick\(\)\}`\);/);
+    // the English tags beside a title said nothing
+    assert.equal(/'(EXCHANGE|SPONSOR|NOW|MANHATTAN|MINE|AD)'/.test(ui), false);
+    assert.equal(/VIP 메뉴|내 건물 짓기'|공유와 스폰서 코드'/.test(ui.replace(/\/\/[^\n]*/g, '')), false);
   });
   it('the controls card is above the dock where the dock reaches it, and under every control', () => {
     assert.match(css, /\.help \{ z-index: -1; \}/);
@@ -619,6 +709,14 @@ describe('toasts and the game panels', () => {
     const bake = px(rule(css, '.bake'), 'bottom'), toasts = px(rule(css, '.toasts'), 'bottom');
     assert.ok(toasts > bake && toasts < bake + 170);
   });
+  it('on a phone the panels are along the bottom, so a notice keeps its place under the left column', () => {
+    const phone = media('(orientation: portrait) and (max-width: 599px), (orientation: landscape) and (max-height: 520px)', '--stack-top');
+    assert.match(rule(phone, 'html.touch body:has(#ui > .bake.show) .toasts'), /top: var\(--stack-top, 182px\);/);
+    // the dance panel reaches that place on a phone on its side (it is centred and 350px tall): only upright
+    const up = media('(orientation: portrait) and (max-width: 599px)', '--stack-top');
+    assert.match(rule(up, 'html.touch body:has(#ui > .rhythm.show) .toasts'), /top: var\(--stack-top, 182px\);/);
+    assert.equal(phone.includes('.rhythm.show'), false);
+  });
 });
 
 describe('compact phone HUD (a touch phone upright or on its side)', () => {
@@ -632,14 +730,14 @@ describe('compact phone HUD (a touch phone upright or on its side)', () => {
     assert.match(ui, /const compactMq = matchMedia\(COMPACT_HUD_Q\);\n\s*const compactNow = \(\) => coarse && compactMq\.matches;/);
     assert.match(ui, /compactMq\.addEventListener\?\.\('change', \(\) => placeGoal\(\)\);/);
     // the new pieces are hidden by default, so tablets and desktop windows look as they did
-    assert.match(css, /\.id-coin, \.hud-r > \.view-btn, \.wal-quick, \.phone-only \{ display: none; \}/);
+    assert.match(css, /\.id-coin, \.hud-r \.view-btn, \.wal-quick, \.phone-only \{ display: none; \}/);
     // every rule in the block starts with html.touch (the nested query too)
     for (const line of box.split('\n').map((s) => s.trim()).filter(Boolean)) {
       if (line === '}') continue;
       assert.ok(line.startsWith('html.touch ') || /^@media \([^{]*\) \{ html\.touch /.test(line), line);
     }
   });
-  it('portrait: the left column is at most 62% wide and 112px tall (it was 172 x 418px at 360 x 780)', () => {
+  it('portrait: the left column is at most 62% wide and 136px tall, in thumb-sized rows (it was 172 x 418px at 360 x 780)', () => {
     const col = rule(box, 'html.touch .hud-l');
     assert.match(col, /display: grid;/);
     assert.match(col, /width: min\(62vw, 240px, 40vmax\);/);
@@ -648,33 +746,54 @@ describe('compact phone HUD (a touch phone upright or on its side)', () => {
     assert.equal(Math.round(colW(360, 780)), 223);
     assert.equal(colW(390, 844), 240);
     const gap = px(col, 'gap');
-    // identity row: the avatar (30px on touch) + 5px padding above and below + the card's 1px border each side
-    assert.match(rule(box, 'html.touch .ident .profile'), /padding: 5px 7px 5px 5px;/);
-    const ident = px(rule(css, 'html.touch .avatar'), 'height') + 2 * 5 + 2;
-    // goal pill: one 16px line, 6px padding, 1px border; guest pill: the 28px button alone
+    // identity row: the avatar (30px on touch) + 7px padding above and below + the card's 1px border each side: its two
+    // buttons are 44px tall
+    assert.match(rule(box, 'html.touch .ident .profile'), /padding: 7px 7px 7px 6px;/);
+    const ident = px(rule(css, 'html.touch .avatar'), 'height') + 2 * 7 + 2;
+    assert.ok(ident - 2 >= 44);
+    // goal pill: one 22px line, 6px padding, 1px border; guest pill: the 36px button alone
     const goal = rule(box, 'html.touch .hud-l > .nextgoal:not(.task)');
     assert.match(goal, /white-space: nowrap; overflow: hidden; text-overflow: ellipsis;/);
     const pill = px(goal, 'line-height') + 2 * px(goal, 'padding') + 2;
     const guest = px(rule(box, 'html.touch .hud-l > .guestwarn .btn'), 'height');
     assert.match(rule(box, 'html.touch .hud-l > .guestwarn p'), /display: none;/);
+    assert.equal(pill, 36);
+    assert.equal(guest, 36);
+    // the pills take taps over 44px and are 8px apart, so their touch rows meet and never overlap (they overlapped by 5px)
+    const hit = rule(box, 'html.touch .hud-l > .nextgoal:not(.task)::after, html.touch .hud-l > .guestwarn .btn::after');
+    const grow = -Number(hit.match(/inset: (-?\d+)px 0;/)[1]);
+    assert.equal(pill + 2 * grow, 44);
+    assert.equal(2 * grow, gap);
     const tall = ident + gap + pill + gap + guest;
-    assert.equal(tall, 42 + 6 + 30 + 6 + 28);
-    assert.ok(tall <= 130);
+    assert.equal(tall, 46 + 8 + 36 + 8 + 36);
+    assert.ok(tall <= 136);
     // the wallet card and the live board are gone from the column
     assert.match(rule(box, 'html.touch .hud-l > .wallet, html.touch .hud-l > .liveboard'), /display: none;/);
   });
   it('the column ends well above the floating stick\'s zone, and its top row stops 8px left of the tool row', () => {
     // 360 x 780 before: the column reached 10 + 418 = 428px, into the stick zone (from 351px down)
     assert.ok(10 + 418 > 780 * (1 - STICK_H));
-    for (const vh of [568, 640, 780, 844]) assert.ok(10 + 112 + 12 <= vh * (1 - STICK_H), String(vh));
-    // tool row (portrait): 36px buttons, 3px padding and 1px border each side, 8px from the right; four buttons, five with 받은 소식
-    const row = (n) => n * 36 + 2 * 3 + 2;
-    assert.match(rule(box, 'html.touch .hud-l > .ident'), /max-width: min\(100%, calc\(100vw - 178px - var\(--safe-l\) - var\(--safe-r\)\)\);/);
-    assert.match(rule(box, 'html.touch #ui:has(.tool-inbox:not([hidden])) .hud-l > .ident'), /max-width: min\(100%, calc\(100vw - 214px - var\(--safe-l\) - var\(--safe-r\)\)\);/);
+    // the column (to 144px), the 속보 slot and one three-line notice (to about 260px) end above the stick zone on a 640px phone
+    for (const vh of [640, 780, 844]) assert.ok(10 + 134 + 46 + 70 <= vh * (1 - STICK_H), String(vh));
+    // tool row: 40px buttons 4px apart, 3px padding and a 1px border each side, 8px from the right; four buttons, five with
+    // 받은 소식 (they were 36px with no gap between them)
+    const tools = rule(css, 'html.touch .tools'), btn = rule(css, 'html.touch .tools .btn');
+    assert.equal(px(tools, 'height'), 48);
+    assert.equal(px(tools, 'gap'), 4);
+    assert.equal(px(btn, 'width'), 40);
+    assert.equal(px(btn, 'height'), 40);
+    // each button takes taps over the row's whole height and half the gap on each side: 44 x 48px
+    assert.match(css, /html\.touch \.tools:not\(\.open\) \.btn::after \{ inset: -4px -2px; \}/);
+    const row = (n) => n * 40 + (n - 1) * 4 + 2 * 3 + 2;
+    assert.equal(row(4), 180);
+    assert.match(rule(box, 'html.touch .hud-l > .ident'), /max-width: min\(100%, calc\(100vw - 206px - var\(--safe-l\) - var\(--safe-r\)\)\);/);
+    assert.match(rule(box, 'html.touch #ui:has(.tool-inbox:not([hidden])) .hud-l > .ident'), /max-width: min\(100%, calc\(100vw - 250px - var\(--safe-l\) - var\(--safe-r\)\)\);/);
     for (const vw of [320, 360, 390, 430]) {
-      assert.equal(vw - 8 - row(4) - (10 + vw - 178), 8, String(vw));
-      assert.equal(vw - 8 - row(5) - (10 + vw - 214), 8, String(vw));
+      assert.equal(vw - 8 - row(4) - (10 + vw - 206), 8, String(vw));
+      assert.equal(vw - 8 - row(5) - (10 + vw - 250), 8, String(vw));
     }
+    // a name that does not fit ends in "…": the span inside the flex row is what clips (text-overflow does nothing on a flex row)
+    assert.match(rule(css, '.profile .name > span'), /min-width: 0; overflow: hidden; text-overflow: ellipsis;/);
   });
   it('landscape keeps the column min(240px, 40vw) wide, so the ticker and the taxi HUD still start past it', () => {
     for (const [vw, vh] of [[568, 320], [667, 375], [740, 360], [780, 360], [844, 390]]) assert.equal(colW(vw, vh), Math.min(240, vw * 0.4), String(vw));
@@ -688,8 +807,9 @@ describe('compact phone HUD (a touch phone upright or on its side)', () => {
     // the badge sits under the amount (a second grid row), so it never widens the row and squeezes the name
     assert.match(rule(box, 'html.touch .ident .id-coin'), /display: grid; grid-template-rows: auto auto;/);
     assert.match(rule(box, 'html.touch .id-coin .pend'), /grid-row: 2;/);
-    // under 375px upright the coin picture steps aside for the name
-    assert.match(box, /@media \(orientation: portrait\) and \(max-width: 374px\) \{ html\.touch \.id-coin img \{ display: none; \} \}/);
+    assert.match(rule(box, 'html.touch .id-coin .pend'), /font-size: 12px;/); // it was 10px
+    // under 400px upright the coin picture steps aside for the name (the wider tool row took 28px from the identity row)
+    assert.match(box, /@media \(orientation: portrait\) and \(max-width: 399px\) \{ html\.touch \.id-coin img \{ display: none; \} \}/);
   });
   it('the next goal is one line under the identity row, with a small 목표 tag in place of "다음 목표: "', () => {
     assert.match(ui, /if \(compactNow\(\)\) \{ if \(nextLine\.nextElementSibling !== guestWarn\) guestWarn\.before\(nextLine\); \}/);
@@ -719,12 +839,13 @@ describe('compact phone HUD (a touch phone upright or on its side)', () => {
     assert.match(rule(box, 'html.touch .sheet .phone-only'), /display: flex;/);
   });
   it('화면만 보기: the eye under the map hides the HUD, keeps the stick, the action buttons and itself, and lasts one tab session', () => {
-    assert.match(ui, /class: 'glass view-btn', type: 'button', 'aria-label': '화면만 보기'/);
+    assert.match(ui, /const viewBtn = h\('button', \{ class: 'view-btn', type: 'button', 'aria-label': '화면만 보기', title: '화면만 보기', 'aria-pressed': 'false'/);
     assert.match(ui, /root\.classList\.toggle\('viewonly', !!on\);/);
     assert.match(ui, /sessionStorage\.setItem\('kts_viewonly', on \? '1' : '0'\)/);
     assert.match(ui, /if \(sessionStorage\.getItem\('kts_viewonly'\) === '1'\) setViewOnly\(true\);/);
-    assert.match(ui, /mapEl,\n\s*locPill,\n\s*viewBtn,\n/);
-    const m = box.match(/html\.touch #ui\.viewonly > :is\(([^)]*)\), html\.touch #ui\.viewonly > \.hud-r > :not\(\.view-btn\) \{([^}]*)\}/);
+    assert.match(ui, /mapEl,\n\s*locPill,\n\s*viewRow,\n/);
+    // the eye sits in the row under the map (.viewrow) with 멍때리기: of that row only the eye stays
+    const m = box.match(/html\.touch #ui\.viewonly > :is\(([^)]*)\), html\.touch #ui\.viewonly > \.hud-r > :not\(\.viewrow\), html\.touch #ui\.viewonly > \.hud-r > \.viewrow > :not\(\.view-btn\) \{([^}]*)\}/);
     assert.ok(m, 'no #ui.viewonly rule');
     const hidden = m[1].split(', ');
     for (const gone of ['.hud-l', '.news', '.prompt', '.waypill', '.dock', '.reacts']) assert.ok(hidden.includes(gone), gone);
@@ -733,24 +854,23 @@ describe('compact phone HUD (a touch phone upright or on its side)', () => {
     // the hiding rule is inside the compact block: a tablet or a desktop window never hides its HUD
     assert.equal(css.replace(box, '').includes('#ui.viewonly'), false);
   });
-  it('the eye clears the right-hand buttons: under the map upright, left of the map on its side', () => {
-    const eye = 36, hudTop = 8, gap = 6;
-    // upright (390 x 844): tool row 40px, map 58px, location pill about 24px, then the eye; the pouch balloon starts 274 + 52px up
-    const top = hudTop + 40 + gap + 58 + gap + 24 + gap;
-    assert.ok(top + eye + 12 <= 640 - 274 - 52, 'a 640px tall phone');
-    // on its side the column under the map belongs to the action buttons (three while driving reach 36 + 168 = 204px up,
-    // 116px from the top at 320px tall), so the eye moves left of the 56px map, level with its top
-    const side = box.match(/@media \(orientation: landscape\) \{ html\.touch \.hud-r > \.view-btn \{ ([^}]*) \} \}/);
-    assert.ok(side, 'no landscape rule for the eye');
-    const land = media('(orientation: landscape) and (max-height: 520px)', '.taxihud');
-    const mapW = px(rule(land, 'html.touch .minimap'), 'width');
-    assert.equal(px(side[1], 'top'), px(rule(css, 'html.touch .tools'), 'height') + gap);
-    assert.equal(px(side[1], 'right'), mapW + gap);
-    // its right edge (8 + 62px in) stays 6px left of the action column (12 + 52px wide); its bottom (8 + 48 + 36 = 92px) is
-    // above the pouch balloon in the dock column (160 + 52px up: 108px from the top at 320px tall)
-    const acts = rule(css, 'html.touch .acts');
-    assert.ok(8 + px(side[1], 'right') >= px(acts, 'right') + 52 + 6);
-    const balloon = rule(land, 'html.touch .hud-r .stay-balloon');
-    assert.ok(hudTop + px(side[1], 'top') + eye + 12 <= 320 - px(balloon, 'bottom') - 52);
+  it('멍때리기 ends from one pill in the corner: the tile under the map is shown alone while its column is hidden', () => {
+    // the whole right column is hidden during the tour; the button in it is made visible again and fixed to the corner
+    assert.match(css, /#ui\.lounging > :is\(\.hud-r, \.prompt, \.waypill, \.stay-focus, \.reacts, \.joy, \.acts, \.help\) \{ visibility: hidden !important; \}/);
+    const stop = rule(css, 'html.touch #ui.lounging .viewrow > .stay-lounge-btn');
+    assert.match(stop, /visibility: visible !important; position: fixed;/);
+    assert.equal(px(stop, 'right'), 16);
+    assert.equal(px(stop, 'bottom'), 14);
+    assert.ok(px(stop, 'height') >= 44);
+    // the notices take the bottom edge left of it (and no top: the phone's stack rule sets one)
+    assert.match(rule(css, 'html.touch body:has(#ui.lounging) .toasts'), /top: auto;[^}]*right: calc\(150px \+ var\(--safe-r\)\);[^}]*bottom: calc\(14px \+ var\(--safe-b\)\) !important;/);
+    // a desktop window: its notice is along the bottom edge too, not on the middle of the board being watched
+    assert.equal(px(rule(css, 'html:not(.touch) body:has(#ui.lounging) .toasts'), 'bottom'), 24);
+    assert.match(ui, /if \(label\) label\.textContent = on \? '그만 보기' : '멍때리기';/);
+    // the start notice is two words, the top line says what is on; no notice when it ends
+    const main = read('main.js');
+    assert.match(main, /ui\.note\(loungeFull \? '오늘 관람 포인트는 다 받았어요 · 움직이면 끝나요' : '움직이면 끝나요', 'ok'\);/);
+    assert.equal(/관람을 마쳤어요|8초마다 다음 전광판 · 움직이면/.test(main), false);
+    assert.match(ui, /setIconText\(loungeEl, 'coffee', `전광판 관람 중 · 관람 포인트 \+\$\{loungeN\}`\);/);
   });
 });
