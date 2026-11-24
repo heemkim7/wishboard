@@ -414,9 +414,14 @@ describe('the world, run in Node: the same phone on its side (812 x 375)', { ski
         const b = cam.position.clone();
         run(1);
         const c = cam.position.clone();
+        // the end: gift.js may still be recording (it records 200 ms past the show), so the way back is a glide too
         show.stop();
+        frame(); frame();
+        const early = cam.position.clone();
+        run(1);
+        const back = cam.position.distanceTo(c);
         world.dispose();
-        return { first: a.distanceTo(high), second: b.distanceTo(a), third: c.distanceTo(b) };
+        return { first: a.distanceTo(high), second: b.distanceTo(a), third: c.distanceTo(b), went: early.distanceTo(c) / back, back };
       } finally { calm = false; }
     };
     for (const on of [false, true]) {
@@ -424,6 +429,8 @@ describe('the world, run in Node: the same phone on its side (812 x 375)', { ski
       // the 5.4 s glide from high above: one frame in it has barely left, and it is still on its way a second and two in
       assert.ok(m.first < 1, `${on ? 'calm' : 'plain'}: ${m.first.toFixed(2)} m on the first frame of the glide (a cut jumps all the way)`);
       assert.ok(m.second > 1 && m.third > 1, `${on ? 'calm' : 'plain'}: moving ${m.second.toFixed(2)} m, then ${m.third.toFixed(2)} m`);
+      assert.ok(m.back > 5, `${on ? 'calm' : 'plain'}: the way back is ${m.back.toFixed(2)} m`);
+      assert.ok(m.went < 0.5, `${on ? 'calm' : 'plain'}: two frames into the way back: ${(m.went * 100).toFixed(0)}% of it (a cut is 100%)`);
     }
   });
   it('the lot models: none is asked for at the spawn; set down at a plot (as a link does) the five come in, every lot wears one, an upgrade swaps it', async () => {
