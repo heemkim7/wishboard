@@ -15,7 +15,8 @@
 // an account link moves a guest's boards and lines to the account.
 //
 // Tables in instance 'gift' (made on first use):
-//   gb(id, at, uid, ip, day, a, b, scr, st, lk, ref, n, v, vd, kids, rp, vid, j)  boards; j: { to, from, occ, msg, th }
+//   gb(id, at, uid, ip, day, a, b, scr, st, lk, ref, n, v, vd, kids, rp, vid, j, re)  boards; j: { to, from, occ, msg, th }; re: the first
+//                                              답장 전광판 (a board made with re: 1 whose ref is this one), '' when none; added to older stores
 //   gm(g, id, at, uid, nick, txt, ip, st, rp)  롤링페이퍼 lines; uid: the writer (guest or account), ip: network hash (both only for caps and reports)
 //   gv(g, v, at, dd)                           distinct visitors per board (v: a hash of the device's random id), dd: seen on the day
 //   gd(d, k, n)                                daily counters (KST): made, made_ref, view, view_day, return_day, msg, video, ladder, pick:t, ...
@@ -43,16 +44,21 @@ const rowOf = (r) => {
   if (!r) return null;
   const j = parse(r.j), v = r.vid ? parse(r.vid) : null;
   return { id: String(r.id), at: Number(r.at), uid: String(r.uid), ip: String(r.ip), day: String(r.day), a: Number(r.a), b: Number(r.b), scr: String(r.scr), st: String(r.st), lk: Number(r.lk) || 0,
-    ref: String(r.ref || ''), n: Number(r.n) || 0, v: Number(r.v) || 0, vd: Number(r.vd) || 0, kids: Number(r.kids) || 0, rp: Number(r.rp) || 0,
+    ref: String(r.ref || ''), re: String(r.re || ''), n: Number(r.n) || 0, v: Number(r.v) || 0, vd: Number(r.vd) || 0, kids: Number(r.kids) || 0, rp: Number(r.rp) || 0,
     vid: v && v.t ? { t: String(v.t), n: Number(v.n) || 0, at: Number(v.at) || 0 } : null,
     to: String(j.to || ''), from: String(j.from || ''), occ: String(j.occ || 'bday'), msg: String(j.msg || ''), th: String(j.th || '') };
 };
 const bump = (q, d, k, n = 1) => q.exec('insert into gd(d, k, n) values(?, ?, ?) on conflict(d, k) do update set n = n + excluded.n', d, k, n);
 const lim = (q, k, d) => Number(q.exec('select n from gr where k = ? and d = ?', k, d).toArray()[0]?.n) || 0;
 const limAdd = (q, k, d) => q.exec('insert into gr(k, d, n) values(?, ?, 1) on conflict(k, d) do update set n = n + 1', k, d);
+// A board that goes takes its reply mark off the board it answered (a reply's ref is that board, so this is a key lookup, not a scan).
 function dropBoards(q, ids) {
   for (const id of ids) for (const t of ['gm', 'gv', 'grp', 'gc']) q.exec(`delete from ${t} where g = ?`, id);
-  for (const id of ids) { q.exec('delete from gr where k = ?', 'vb:' + id); q.exec('delete from gb where id = ?', id); }
+  for (const id of ids) {
+    q.exec('delete from gr where k = ?', 'vb:' + id);
+    q.exec("update gb set re = '' where id = (select ref from gb where id = ?) and re = ?", id, id);
+    q.exec('delete from gb where id = ?', id);
+  }
 }
 // A board's line count, from what is left (after lines of one writer went).
 const recount = (q, g) => q.exec('update gb set n = (select count(*) from gm where gm.g = gb.id) where id = ?', g);
@@ -62,6 +68,9 @@ export const giftDb = {
     q.exec('create index if not exists gb_day on gb(day)');
     q.exec('create index if not exists gb_b on gb(b)');
     q.exec('create index if not exists gb_uid on gb(uid)');
+    // re (the first reply's id) came after the first stores were made: those get the column here, the way worker.js adds its own
+    // (a second try fails on the duplicate name and changes nothing). No Supabase migration.
+    try { q.exec("alter table gb add column re text not null default ''"); } catch { /* column already exists */ }
     q.exec("create table if not exists gm(g text not null, id text not null, at integer not null, uid text not null, nick text not null, txt text not null, ip text not null, st text not null default 'live', rp integer not null default 0, primary key(g, id))");
     q.exec('create index if not exists gm_uid on gm(uid)');
     q.exec('create table if not exists gv(g text not null, v text not null, at integer not null, dd integer not null default 0, primary key(g, v))');
@@ -82,7 +91,10 @@ export const giftDb = {
     q.exec('delete from gi where at < ?', now - GIFT.optinDays * 864e5);
     return old;
   },
-  // o: { uid, ip, v (giftFault's), ref, split }. -> { ok: true, row, gone } | { ok: false, code: 'mine' | 'net' | 'full', next, gone }.
+  // o: { uid, ip, v (giftFault's), ref, re, split }. -> { ok: true, row, gone, reply? } | { ok: false, code: 'mine' | 'net' | 'full', next, gone }.
+  // 답장 전광판: with o.re and a kept ref (the answered board exists and is another account's) the answered board keeps this board's id
+  // in re: the first reply stays, a later one changes nothing. reply: { to: the answered board's owner, gid: its id } only when that mark
+  // was set now (the Worker sends that owner one notice); a later reply is an ordinary board made from the page (kids, made_ref).
   make(q, o, now = Date.now()) {
     const gone = this.prune(q, now), d = kstDay(now), v = o.v;
     if (lim(q, 'u:' + o.uid, d) >= GIFT.dayPerActor) return { ok: false, code: 'mine', gone };
@@ -92,19 +104,27 @@ export const giftDb = {
     if (!scr) return { ok: false, code: 'full', next: nextFree(rows, v.day, now), gone };
     let id = rid(GIFT.idLen); for (let i = 0; i < 4 && q.exec('select 1 from gb where id = ?', id).toArray().length; i++) id = rid(GIFT.idLen);
     let ref = refOf(o.ref);
-    const parent = ref ? q.exec('select uid from gb where id = ?', ref).toArray()[0] : null;
-    if (!parent || String(parent.uid) === o.uid) ref = '';
+    const parent = ref ? rowOf(q.exec('select * from gb where id = ?', ref).toArray()[0]) : null;
+    if (!parent || parent.uid === o.uid) ref = '';
     q.exec("insert into gb(id, at, uid, ip, day, a, b, scr, st, lk, ref, j) values(?, ?, ?, ?, ?, ?, ?, ?, 'live', ?, ?, ?)", id, now, o.uid, o.ip, v.day, v.a, v.b, scr, lockArm(id, !!o.split), ref,
       JSON.stringify({ to: v.to, from: v.from, occ: v.occ, msg: v.msg, th: v.th }));
     limAdd(q, 'u:' + o.uid, d); limAdd(q, 'n:' + o.ip, d);
     bump(q, d, 'made');
     if (ref) { q.exec('update gb set kids = kids + 1 where id = ?', ref); bump(q, d, 'made_ref'); }
-    return { ok: true, row: this.get(q, id, now, false), gone };
+    // Only a board whose page can still be opened is answered (not a hidden one, not one past its 7 days), and the place is taken only
+    // while the reply in it can be opened too: a reply that was hidden or is over does not keep later ones out.
+    let reply = null;
+    if (ref && o.re && giftPhase(parent, now) !== 'gone' && giftPhase(parent.re ? rowOf(q.exec('select * from gb where id = ?', parent.re).toArray()[0]) : null, now) === 'gone') {
+      q.exec('update gb set re = ? where id = ?', id, ref); bump(q, d, 'reply'); reply = { to: parent.uid, gid: ref };
+    }
+    return { ok: true, row: this.get(q, id, now, false), gone, ...(reply ? { reply } : {}) };
   },
   // The stored board (owner fields included: the Worker strips them), with its visible lines (no writer ids) when withPaper.
+  // re is kept only while the reply board can still be opened (there, not hidden, its page not over): the owner's card links to it.
   get(q, id, now = Date.now(), withPaper = true) {
     const row = rowOf(q.exec('select * from gb where id = ?', String(id || '')).toArray()[0]);
     if (!row) return null;
+    if (row.re && giftPhase(rowOf(q.exec('select * from gb where id = ?', row.re).toArray()[0]), now) === 'gone') row.re = '';
     if (withPaper) row.paper = q.exec("select id, nick, txt from gm where g = ? and st = 'live' order by at asc, rowid asc limit ?", row.id, GIFT.paper.max).toArray().map((r) => ({ id: String(r.id), nick: String(r.nick), txt: String(r.txt) }));
     return row;
   },
@@ -199,13 +219,14 @@ export const giftDb = {
     bump(q, kstDay(now), 'report');
     return { ok: true, hidden: n >= GIFT.report };
   },
-  // The owner takes the board down: it goes with everything of it. -> { ok, vid } (vid: had a video to delete).
+  // The owner takes the board down: it goes with everything of it. -> { ok, vid, up } (vid: had a video to delete; up: the board it was
+  // the reply of, whose copy in the Worker is now old).
   del(q, id, uid) {
     const g = this.get(q, id, Date.now(), false);
     if (!g) return { ok: false, code: 'gone' };
     if (g.uid !== uid) return { ok: false, code: 'owner' };
     dropBoards(q, [g.id]);
-    return { ok: true, vid: !!g.vid };
+    return { ok: true, vid: !!g.vid, up: g.ref };
   },
   // Boards on the plaza now (the public copy /rt/world carries), at most GIFT.liveMax, earliest first.
   live(q, now = Date.now()) {
@@ -272,7 +293,7 @@ export const giftDb = {
     return { ok: false, error: 'op' };
   },
 };
-const SEEN_EV = new Set(['open', 'film', 'play', 'done', 'save', 'go', 'share', 'cta', 'paper_open']);
+const SEEN_EV = new Set(['open', 'film', 'play', 'done', 'save', 'go', 'share', 'cta', 'reply', 'paper_open']); // reply: the recipient page's 답장 button
 
 // ---- isolate caches ------------------------------------------------------------------------------------------------------
 const ONE = new Map(); // id -> { at, v: stored board | null }
@@ -325,7 +346,8 @@ async function readBytes(req, max) {
 const visitorHash = (env, v) => hex('gv|' + String(v) + '|' + String(env.GUEST_KEY || ''));
 const actorOf = async (req, k, env) => { try { return await k.resolveActor(env, k.tokenOf(req)); } catch { return null; } };
 const isOwner = (g, actor) => !!(g && actor && g.uid === String(actor.id));
-const ownerExtras = (g) => ({ kids: g.kids, vd: g.vd, at: g.at, lk: g.lk });
+// What only the owner's read carries. re: the first reply board's id while it can be opened (giftDb.get decides); never in the public view.
+const ownerExtras = (g) => ({ kids: g.kids, vd: g.vd, at: g.at, lk: g.lk, ...(g.re ? { re: g.re } : {}) });
 const actNo = async (k, env, id) => !!(k.actOk && !(await k.actOk(env, 'misc', id)));
 
 // ---- routes --------------------------------------------------------------------------------------------------------------
@@ -355,9 +377,12 @@ export async function giftApi(req, env, ctx, u, k) {
   return J({ ok: true, gift: giftView(g, now), own, ...(own ? { mine: ownerExtras(g), media: mediaOn(env) } : {}) });
 }
 
-// POST /rt/gift { to, from, occ, msg, th, day, at, ref, ts }: a guest token is enough. Checks, cheapest first: token, the account's
+// POST /rt/gift { to, from, occ, msg, th, day, at, ref, re, ts }: a guest token is enough. Checks, cheapest first: token, the account's
 // minute (ACT_RL misc), the network's minute (OPS_RL), body, budget hard, Turnstile ('gift', only while switched on), the form, then one
 // DO call that counts the day limits and picks the screen.
+// re: 1 marks a 답장 전광판 (ref names the board it answers). It is a board like any other, with the same checks and limits. When it is the
+// answered board's first reply, that board's owner gets one web push (informational, so no "(광고)"; never 21:00-08:00 KST: then the owner
+// page shows it the next time it is opened). The answer says nothing of the answered board or its owner.
 async function make(req, env, ctx, k) {
   if (req.method !== 'POST') return J({ err: 'post' }, 405);
   const actor = await actorOf(req, k, env); if (!actor) return no('auth', 401);
@@ -368,11 +393,16 @@ async function make(req, env, ctx, k) {
   const gate = k.humanGate ? await k.humanGate(env, req, got.b, 'gift') : null; if (gate) return gate;
   const now = Date.now(), f = giftFault(got.b, now);
   if (!f.ok) return J({ ok: false, code: f.code, field: f.field, error: f.error }, 400);
-  let r = null; try { r = await giftM(env).giftMake({ uid: String(actor.id), ip: await k.ipHash(env, req), v: f.v, ref: refOf(got.b.ref), split: String(env.GIFT_E3 || '') === '1' }, now); } catch { r = null; }
+  const ref = refOf(got.b.ref);
+  let r = null; try { r = await giftM(env).giftMake({ uid: String(actor.id), ip: await k.ipHash(env, req), v: f.v, ref, re: !!ref && Number(got.b.re) === 1, split: String(env.GIFT_E3 || '') === '1' }, now); } catch { r = null; }
   if (r?.gone?.length) mediaDrop(env, ctx, r.gone);
   if (!r) return no('down', 503);
   if (!r.ok) return r.code === 'full' ? J({ ok: false, code: 'full', error: GIFT_ERR.full, next: r.next || null }, 409) : no(r.code, 429);
   oneKeep(r.row.id, r.row); NOW.at = 0;
+  if (r.reply) {
+    ONE.delete(r.reply.gid); // the answered board's copy here has no re yet
+    if (!quietNow(now) && k.pushNow) k.pushNow(env, ctx, r.reply.to, { kind: 'giftreply', from_name: f.v.from, gid: r.reply.gid });
+  }
   return J({ ok: true, id: r.row.id, url: new URL('/g/' + r.row.id, req.url).href, gift: giftView(r.row, now), mine: ownerExtras(r.row), media: mediaOn(env) });
 }
 function mediaDrop(env, ctx, ids) {
@@ -454,6 +484,7 @@ async function remove(req, env, ctx, id, k) {
   if (!r.ok) return no(r.code, r.code === 'owner' ? 403 : 404);
   if (r.vid) mediaDrop(env, ctx, [id]);
   giftDrop(id);
+  if (r.up) ONE.delete(r.up); // it may have been that board's reply: its owner's next read asks again
   return J({ ok: true });
 }
 
@@ -565,7 +596,7 @@ export async function giftMove(env, from, to) { try { await giftM(env).giftMove(
 export async function giftForget(env, uid, ctx) {
   let r = null; try { r = await giftM(env).giftForget(String(uid || '')); } catch { r = null; }
   if (r?.ids?.length) { for (const id of r.ids) giftDrop(id); await mediaDrop(env, ctx, r.ids); }
-  if (r?.lines) ONE.clear(); // their lines left other boards: no copy here shows them
+  if (r?.lines || r?.ids?.length) ONE.clear(); // their lines left other boards, their replies left the boards they answered: no copy here shows them
   return r;
 }
 

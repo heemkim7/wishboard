@@ -19,6 +19,7 @@ import { OPS_THEME_KEYS } from './seasons.js';
 import * as ops from './ops.js'; // 운영 장치: error reports, 문의하기, operator details, maintenance, /rt/health extras
 import { adsApi, adsDb, adsWorld } from './adsrv.js';
 import { giftApi, giftDb, giftPath, giftPage, giftWorld, giftMove, giftForget } from './giftsrv.js'; // 선물 전광판 (docs/gift-board.md)
+import { GIFT_ID } from './giftrules.js';
 import { teamApi, teamDb, teamPath, teamWorld, teamMove, teamForget } from './teamsrv.js'; // 응원 팀과 명당 (docs/prime-screens.md)
 import { isPrime, BOARD_ERR, PLOT_HOLD_MS } from './primerules.js';
 // v16 cost pass: ping 25s (client) / STALE 75s, idle scan alarm 60s, meter report 60s, compact pos ('p'/'P'), nearby fanout, event ring + world cache, HMAC guest tokens.
@@ -1600,6 +1601,7 @@ function pushText(row) {
   if (row?.kind === 'wishwin') return `어제 소원이 ${Math.max(1, Math.floor(Number(row.rank)) || 1)}위였어요. +${Math.max(0, Math.floor(Number(row.prize)) || 0)} 응원 포인트가 들어왔어요`;
   if (row?.kind === 'invite') return `초대한 친구가 소원을 걸었어요. +${Math.max(0, Math.floor(Number(row.amount)) || 0)} 응원 포인트가 들어왔어요`;
   if (row?.kind === 'giftopen') return /^\(광고\) /.test(String(row.text || '')) ? clip(row.text, 90) : ''; // 선물 전광판 "열리면 알림": advertising, labelled (giftsrv.js)
+  if (row?.kind === 'giftreply') return name ? `${name}님이 답장 전광판을 걸었어요` : '답장 전광판이 도착했어요'; // 답장 전광판: informational, to the answered board's owner, once per board (giftsrv.js make: never 21:00-08:00 KST)
   return '';
 }
 // Where a notification click lands (same origin, validated ids only); '' leaves it to the service worker's default '/'.
@@ -1608,6 +1610,7 @@ function pushUrl(row) {
   if ((row?.kind === 'taken' || row?.kind === 'dark') && SLOT_RE.test(slot)) return '/?focus=' + slot;
   if ((row?.kind === 'wish' || row?.kind === 'wishwin') && WISH_ID.test(wid)) return '/?wish=' + wid;
   if (row?.kind === 'giftopen') return '/gift';
+  if (row?.kind === 'giftreply') return GIFT_ID.test(String(row.gid || '')) ? '/g/' + row.gid : '/gift'; // the answered board's own page: its owner sees the reply card there
   return '';
 }
 // Avatar species, presence field av: 1..SPECIES_MAX (ts3d/avatars.js SPECIES), anything else is 1 (the mouse).
@@ -2011,7 +2014,7 @@ function queueTaken(env, ctx, victim, fromName, slotId) {
 }
 // Immediate web push without the cron. Subscriptions live in the Meter instance 'push' (filled by /rt/push), because Supabase push_subs cannot be read
 // per actor with the publishable key. One notice per (actor, kind) per PUSH_GAP; everything runs in waitUntil and never touches the triggering response.
-const PUSH_GAP = { taken: 60000, wish: 600000, wishwin: 60000, dark: 1, invite: 60000, giftopen: 864e5 }, WISH_PUSH_AT = [1, 3, 5, 10, 20, 30, 50, 100]; // dark: no gap, each notice is once per (slot, lit_until) already
+const PUSH_GAP = { taken: 60000, wish: 600000, wishwin: 60000, dark: 1, invite: 60000, giftopen: 864e5, giftreply: 60000 }, WISH_PUSH_AT = [1, 3, 5, 10, 20, 30, 50, 100]; // dark: no gap, each notice is once per (slot, lit_until) already
 const pushM = env => env.METER.get(env.METER.idFromName('push'));
 function pushNow(env, ctx, actorId, note) {
   if (!env?.VAPID_PRIV || !actorId || !PUSH_GAP[note?.kind]) return Promise.resolve();
