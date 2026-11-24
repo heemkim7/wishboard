@@ -523,7 +523,6 @@ export function createUI(root, hooks) {
   const danceGo = coarse
     ? h('button', { class: 'dance-go', type: 'button', onclick: () => { toggleReacts(false); startDance('panel'); } }, icon('music'), h('span', { class: 'dl', text: '같이 춤추기' }))
     : h('button', { class: 'emote dance-go', type: 'button', title: '같이 춤추기', onclick: () => startDance('panel') }, h('span', { class: 'e' }, icon('music')), h('span', { class: 'l', text: '같이 춤추기' }));
-  if (!coarse) dock.querySelector('.sep')?.before(danceGo);
   // Touch: the four actions (1-4 on a keyboard) live in this panel, under a '동작' heading with their names, above the
   // '리액션' emoji. The dock button says '동작' too: as bare line icons in the first emoji row they were not found.
   if (coarse) {
@@ -1361,7 +1360,7 @@ export function createUI(root, hooks) {
   // Someone within 15 m keeps dancing (the world asks once per player): one tappable notice, never over a sheet or a game.
   function danceInvite(name) {
     if (dance || screenBusy() || ceremonyOn() || ext) return false;
-    note(`${chars(String(name || '익명'), 12)}님이 춤추고 있어요 · 같이 춤추기`, 'ok', () => startDance('join'), { key: 'dance-near' }); // key: one row (note() may ignore it)
+    note(`${chars(String(name || '익명'), 12)}님이 춤추고 있어요 · 같이 춤추기`, 'ok', () => startDance('join'), { key: 'dance-near' }); // key: one row, refreshed (note() opts.key)
     return true;
   }
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') endDance('hidden'); });
@@ -5853,6 +5852,9 @@ export function createUI(root, hooks) {
     reactPanel.prepend(balloonEl);
   } else {
     dock.prepend(loungeBtn);
+    // The dock is two kinds of button: things to do without a number key (멍때리기, 같이 춤추기) on the left, then the four
+    // actions with their keys 1-4 and 리액션 (5). 같이 춤추기 stood among the numbered actions with a bigger icon and no key.
+    loungeBtn.after(danceGo);
     root.querySelector('.hud-r')?.append(balloonEl);
   }
   root.querySelector('.hud-l')?.append(questEl);

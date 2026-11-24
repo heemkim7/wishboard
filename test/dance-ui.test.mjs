@@ -87,7 +87,7 @@ describe('starting and ending', () => {
     assert.match(ui, /stage: \['같이 춤추기', '모두 같은 음악에 같은 춤', '춤추기'\],/);
     assert.match(main, /else if \(kind === 'stage'\) ui\.startDance\('stage'\);/);
     assert.match(ui, /h\('button', \{ class: 'dance-go', type: 'button', onclick: \(\) => \{ toggleReacts\(false\); startDance\('panel'\); \} \}, icon\('music'\), h\('span', \{ class: 'dl', text: '같이 춤추기' \}\)\)/);
-    assert.match(ui, /if \(!coarse\) dock\.querySelector\('\.sep'\)\?\.before\(danceGo\);/);
+    assert.match(ui, /loungeBtn\.after\(danceGo\);/); // a desktop dock: beside 멍때리기, the two buttons without a number key
     assert.match(css, /html\.touch \.reacts button\.dance-go \{ grid-column: 1 \/ -1;[^}]*height: 44px;/);
     const start = slice(ui, "  function startDance(kind = 'panel') {", '\n  }\n');
     assert.match(start, /trackEvent\('dance_start', \{ kind \}\);/);

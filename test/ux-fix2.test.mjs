@@ -91,6 +91,11 @@ describe('1. the tool row: one form at every desktop width, in the order of use'
       assert.ok(vw - 14 - row >= 354 + 12, `${vw}: ${shown.join(' ')} = ${row}px`);
     }
   });
+  it('the desktop dock: the two without a number key (멍때리기, 같이 춤추기) first, then the numbered actions, one icon size', () => {
+    assert.match(ui, /dock\.prepend\(loungeBtn\);\r?\n(\s*\/\/[^\n]*\n)*\s*loungeBtn\.after\(danceGo\);/);
+    assert.equal(/dock\.querySelector\('\.sep'\)\?\.before\(danceGo\)/.test(ui), false);
+    assert.equal(/\.emote\.dance-go svg\.ico \{ width: 26px/.test(css), false);
+  });
   it('the ⋯ menu lists every tool as an icon + name row, and choosing one closes it', () => {
     const wide = media('(min-width: 1024px)', '.tool-fold::after');
     assert.match(rule(wide, 'html:not(.touch) .tools.open'), /position: absolute;[^}]*grid-template-columns: 1fr;/);
@@ -240,6 +245,14 @@ describe('4. a repeated notice of the same kind is one notice', () => {
     r.note('광장 서버에 연결되면 응원이 기록됩니다', 'err', null, { key: 'offline' });
     assert.ok(hit.isConnected);
     assert.equal(r.live().length, 2);
+  });
+  it('같이 춤추기 near you (a tappable notice keyed dance-near) is one row however often it is said', () => {
+    const r = rig();
+    r.note('곰님이 춤추고 있어요 · 같이 춤추기', 'ok', () => {}, { key: 'dance-near' });
+    r.note('쥐님이 춤추고 있어요 · 같이 춤추기', 'ok', () => {}, { key: 'dance-near' });
+    assert.equal(r.live().length, 1);
+    assert.equal(r.live()[0].text, '쥐님이 춤추고 있어요 · 같이 춤추기');
+    assert.match(ui, /\{ key: 'dance-near' \}\)/);
   });
   it('every desktop window and tablet shows two rows at most, as a phone does', () => {
     assert.match(css, /(^|\n)\s*\.toasts > \.toast:not\(\.hit\):has\(~ \.toast:not\(\.hit\)\), \.toasts > \.toast\.hit:has\(~ \.toast\.hit\) \{ display: none; \}/);

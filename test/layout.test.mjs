@@ -72,7 +72,7 @@ describe('touch: the right thumb column is three round buttons', () => {
   const acts = rule(css, 'html.touch .acts');
   it('from the bottom: the action, jump, 동작; 멍때리기 and the pouch are no longer in it', () => {
     // ui.js: on touch 멍때리기 goes to the row under the map and the pouch into the 동작 panel; a desktop window keeps both where they were
-    assert.match(ui, /if \(coarse\) \{\n\s+viewRow\.prepend\(loungeBtn\);\n\s+reactPanel\.prepend\(balloonEl\);\n\s+\} else \{\n\s+dock\.prepend\(loungeBtn\);\n\s+root\.querySelector\('\.hud-r'\)\?\.append\(balloonEl\);\n\s+\}/);
+    assert.match(ui, /if \(coarse\) \{\n\s+viewRow\.prepend\(loungeBtn\);\n\s+reactPanel\.prepend\(balloonEl\);\n\s+\} else \{\n\s+dock\.prepend\(loungeBtn\);\n(\s*\/\/[^\n]*\n)*\s+loungeBtn\.after\(danceGo\);\n\s+root\.querySelector\('\.hud-r'\)\?\.append\(balloonEl\);\n\s+\}/);
     assert.match(ui, /root\.append\(joy, h\('div', \{ class: 'acts' \}, boostBtn, actBtn, jumpBtn\)\);/);
     // every button of the column is a 52px circle, 12px from the right edge
     assert.match(css, /html\.touch \.act,\n\s*html\.touch \.act\.big,\n\s*html\.touch \.dock \.emote \{ width: 52px; height: 52px; min-width: 52px; border-radius: 50%;/);
