@@ -519,7 +519,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html.touch .reacts button::after { inset: -2px; }
   html.touch .wallet .chip::after, html.touch .wallet .protect::after, html.touch .nextgoal:not(.task)::after { inset: -6px 0 -3px; }
   html.touch .wallet .sub-fixed .chip::after { inset: -5px 0 -3px; } /* up to the amount line above (a button of its own), not over it */
-  html.touch .linkbtn::after { inset: -14px -8px; }
+  html.touch .linkbtn::after { inset: -15px -8px; }
   /* Scrolling rows clip what leaves them: the row grows by the same amount it pulls back, so the hit area stays inside it. */
   html.touch .quick { padding-top: 6px; margin-top: -6px; }
   html.touch .sheet .more .emo-row { padding: 7px 0; margin: -7px 0; }
@@ -918,6 +918,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
      step aside for them (movement is locked while either is up), so nothing shows through or sticks out under a panel. */
   html.touch .bake, html.touch .rhythm { bottom: calc(24px + var(--safe-b)); }
   html.touch #ui:has(.bake.show, .rhythm.show) > :is(.dock, .acts, .joy, .prompt, .reacts) { visibility: hidden !important; }
+  html.touch #ui:has(.bake.show, .rhythm.show) .viewrow { visibility: hidden !important; } /* the dance panel reaches the two tiles on a 740px wide phone on its side */
   @media (orientation: landscape) and (max-height: 520px) {
     html.touch .stay-quest { display: none; }
     /* The left column is at most min(240px, 40vw) wide and starts 10-14px in, so everything in the middle that shares its
@@ -943,7 +944,9 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     /* The 동작 panel: ten columns (eight under 600px wide), so the pouch, the four actions and the 24 emoji are about
        300px tall and fit a 375px tall screen without scrolling (it used to be 158px tall with 12 of 28 buttons in view). */
     html.touch .reacts { bottom: calc(30px + var(--safe-b)); max-height: calc(var(--app-h, 100dvh) - 96px - var(--safe-t) - var(--safe-b)); }
-    html.touch .reacts .rh { display: none; } /* the action buttons carry their names: the two headings would cost 48px of a 375px screen */
+    /* The action buttons carry their names: the two headings would cost 48px of a 375px screen. They stay as row breaks
+       of no height, so the emoji start on their own row under the four actions. */
+    html.touch .reacts .rh { height: 0; margin: 0; overflow: hidden; visibility: hidden; }
     /* The dance panel was 455px tall on a 375px screen: its title, 그만두기 and the top of the lanes were off the top edge.
        Here the lanes are as tall as the screen leaves (the canvas keeps its 960:560 shape and narrows), the pads are
        lower, and both panels sit 8px from the bottom. */
@@ -1422,8 +1425,9 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     /* Upright the dance panel is along the bottom too, so its notices also stay under the left column. */
     html.touch body:has(#ui > .rhythm.show) .toasts { top: var(--stack-top, 182px); }
     html.touch body:has(#ui > .rhythm.show) .toasts > * { align-self: flex-start; }
-    /* A 320px wide phone: the identity row is 114px, so the avatar picture steps aside and the name keeps what there is. */
-    @media (max-width: 359px) { html.touch .ident .avatar { display: none; } html.touch .ident .profile { padding-left: 12px; min-height: 44px; } }
+    /* Under 400px wide the identity row is 114-193px (the icon row beside it is 180px): the avatar picture steps aside
+       there, so an eight-letter name (브로드웨이곰68: 84px) is whole from 360px up instead of ending in "…". */
+    @media (max-width: 399px) { html.touch .ident .avatar { display: none; } html.touch .ident .profile { padding-left: 12px; min-height: 44px; } }
     /* The tag and 시점 해제 are level with the action button (28 … 80px up). */
     html.touch .prompt { bottom: calc(36px + var(--safe-b)); }
     html.touch .stay-focus { bottom: calc(32px + var(--safe-b)); }
@@ -1475,7 +1479,12 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   /* A sheet's box is focused when it opens so the keyboard starts inside it; that focus draws no ring around the sheet. */
   html div.sheet:not(#view):focus-visible { box-shadow: var(--shadow-sheet) !important; }
   /* Thumb-sized on touch: a fold's summary line, the shop row in the profile sheet, the two wish tabs, a tappable notice. */
-  html.touch .sheet .more summary { padding: 12px 0; }
+  .sheet .more summary { padding: 4px 0; }
+  .linkbtn, .legend .osm { display: inline-flex; align-items: center; min-height: 24px; }
+  html.touch .sheet .more summary { padding: 13px 0; }
+  html.touch .toasts > .sponsor .chips button { min-height: 44px; padding: 7px 14px; font-size: 13px; }
+  html.touch .swatches input[type=color] { width: 44px; height: 44px; }
+  html.touch .sheet .more .swatches input[type=color] { width: 40px; height: 40px; }
   html.touch .sheet .btn.shop-open { height: auto; min-height: 44px; }
   html.touch .wish-tab { min-height: 44px; }
   html.touch .wish-tabs { gap: 8px; }

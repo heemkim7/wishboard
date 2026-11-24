@@ -138,8 +138,13 @@ describe('zoom and focus', () => {
     // a pinch zoom is a window onto the page, not a new screen size: the layout keeps its unzoomed height and top
     assert.match(html, /const zoom = vv && vv\.scale > 1\.01 \? vv\.scale : 1;\n\s+s\.setProperty\('--app-h', \(vv \? vv\.height \* zoom : innerHeight\) \+ 'px'\);\n\s+s\.setProperty\('--app-top', \(vv && zoom === 1 \? vv\.offsetTop : 0\) \+ 'px'\);/);
   });
-  it('a sheet is modal: the HUD and the canvas are inert behind it, and Tab goes round inside it', () => {
-    assert.match(ui, /function backInert\(on\) \{\n\s+root\.inert = !!on;\n\s+if \(viewEl\) viewEl\.inert = !!on;\n\s+\}/);
+  it('a sheet is modal: the HUD is inert and the canvas out of the tab order behind it, and Tab goes round inside it', () => {
+    // the canvas is not made inert (the world keeps its own pointer state for a camera drag): it only leaves the tab order
+    assert.match(ui, /function backInert\(on\) \{\n\s+root\.inert = !!on;\n\s+if \(!viewEl\) return;\n\s+viewEl\.tabIndex = on \? -1 : 0;\n\s+if \(on\) viewEl\.setAttribute\('aria-hidden', 'true'\);\n\s+else viewEl\.removeAttribute\('aria-hidden'\);\n\s+\}/);
+    assert.match(html, /<canvas id="view" aria-label="타임스퀘어 3D 광장" tabindex="0"><\/canvas>/);
+    // a sheet that opens while the thumb is on the stick takes the pointer away with no pointerup: the stick lets go
+    assert.match(ui, /joyZone\.addEventListener\('lostpointercapture', end\);/);
+    assert.match(ui, /if \(ev\.type !== 'pointerup' \|\| engaged\) hooks\.tapUp\?\.\(origin\.x \+ 999, origin\.y\);/);
     const open = ui.slice(ui.indexOf('  function openSheet('), ui.indexOf('  const backKeeper ='));
     assert.match(open, /document\.body\.classList\.add\('has-sheet'\);\n\s+backInert\(true\);/);
     assert.match(open, /el\.addEventListener\('keydown', \(e\) => trapTab\(e, box\)\);/);

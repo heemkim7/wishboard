@@ -288,7 +288,7 @@ export function createUI(root, hooks) {
   const statusDot = h('i', { class: 'live-dot warn' });
   const statusEl = h('span', { text: '연결 중' });
   const peopleEl = h('span', { class: 'tnum', text: '', title: '이 채널에 있는 사람' });
-  const profile = h('button', { class: 'profile', type: 'button', 'aria-label': '프로필 편집', onclick: () => openProfile() },
+  const profile = h('button', { class: 'profile', type: 'button', 'aria-label': '내 캐릭터', title: '내 캐릭터', onclick: () => openProfile() }, // named as the sheet it opens
     avatarEl,
     h('div', { class: 'who' }, h('div', { class: 'name' }, nameEl), h('div', { class: 'status' }, statusDot, statusEl, peopleEl)),
   );
@@ -716,7 +716,7 @@ export function createUI(root, hooks) {
       jp = null;
       // The world decides whether this was a tap (it moved 7 px or less, under 450 ms). A cancelled touch never is, and
       // neither is one that became the stick: a quick flick that ends near where it began must not pick a board.
-      if (ev.type === 'pointercancel' || engaged) hooks.tapUp?.(origin.x + 999, origin.y);
+      if (ev.type !== 'pointerup' || engaged) hooks.tapUp?.(origin.x + 999, origin.y);
       else hooks.tapUp?.(ev.clientX, ev.clientY);
       origin = null;
       if (engaged) hooks.joystick(0, 0);
@@ -724,6 +724,9 @@ export function createUI(root, hooks) {
     };
     joyZone.addEventListener('pointerup', end);
     joyZone.addEventListener('pointercancel', end);
+    // A sheet that opens while the thumb is on the stick makes the HUD inert (backInert): the pointer is then taken away
+    // with no pointerup or pointercancel, only this. Without it the stick stayed "held" and took no touch afterwards.
+    joyZone.addEventListener('lostpointercapture', end);
     // A touch laptop's mouse drags the camera everywhere: the area stands aside while the mouse is in use.
     window.addEventListener('pointermove', (ev) => { if (ev.pointerType === 'mouse' && jp == null) joyZone.style.pointerEvents = 'none'; }, { passive: true });
     window.addEventListener('pointerdown', (ev) => { if (ev.pointerType !== 'mouse') joyZone.style.pointerEvents = ''; }, { passive: true, capture: true });
@@ -888,6 +891,7 @@ export function createUI(root, hooks) {
   let accountView = { ready: false, guest: false, linked: false }, bootLogin = null;
   function renderProfile() {
     nameEl.replaceChildren(document.createTextNode(hooks.nick()));
+    profile.setAttribute('aria-label', `내 캐릭터 · ${hooks.nick()}`); // the sheet it opens, and the name that is on it
     if (accountView.linked) nameEl.append(h('i', { class: 'verified', title: '인증 계정' }, icon('check')));
     avatarEl.style.setProperty('--me', hooks.color());
     avatarEl.textContent = (SPECIES.find((s) => s.id === hooks.species()) || SPECIES[0]).glyph;
@@ -1470,10 +1474,16 @@ export function createUI(root, hooks) {
   // A sheet is modal (aria-modal): while one is open the HUD and the canvas behind it are inert, so Tab and a screen
   // reader stay in the sheet (Tab used to walk out to the HUD buttons under the backdrop after the sheet's last control).
   // The notices live in <body> and stay reachable. trapTab keeps Tab and Shift+Tab going round inside the top sheet.
+  // The canvas only leaves the tab order and the accessibility tree (tabindex, aria-hidden), it is not made inert: the
+  // world keeps its own pointer state for a camera drag (timesSquare3d.js), and a sheet that opens by itself in the
+  // middle of one must not cut that pointer off without a pointerup. Movement is locked by lockInput either way.
   const viewEl = document.getElementById('view');
   function backInert(on) {
     root.inert = !!on;
-    if (viewEl) viewEl.inert = !!on;
+    if (!viewEl) return;
+    viewEl.tabIndex = on ? -1 : 0;
+    if (on) viewEl.setAttribute('aria-hidden', 'true');
+    else viewEl.removeAttribute('aria-hidden');
   }
   const TABBABLE = 'button, a[href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])';
   function trapTab(e, box) {
@@ -1637,7 +1647,7 @@ export function createUI(root, hooks) {
     ])
       .then((r) => { page = typeof r?.page === 'string' && /^https?:\/\//.test(r.page) ? r.page : ''; return page; })
       .catch(() => '');
-    openSheet(['camera', '타임스퀘어 사진'], null, (host) => {
+    openSheet(['camera', '사진 찍어 공유'], null, (host) => { // named as the tool that opens it
       const save = h('button', { class: 'btn ghost', type: 'button', text: '이미지 저장', onclick: () => {
         const a = document.createElement('a');
         a.href = url;

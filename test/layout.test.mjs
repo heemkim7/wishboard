@@ -139,11 +139,15 @@ describe('touch: the right thumb column is three round buttons', () => {
     assert.match(rule(land, 'html.touch .reacts'), /grid-template-columns: repeat\(10, 44px\);/);
     assert.match(rule(media(LAND + ' and (max-width: 599px)', '.reacts'), 'html.touch .reacts'), /grid-template-columns: repeat\(8, 44px\);/);
     for (const [vw, n] of [[568, 8], [599, 8], [600, 10], [812, 10]]) assert.ok(vw - 72 - (n * 44 + (n - 1) * 4 + 12 + 2) >= 0, String(vw));
-    assert.match(rule(LAND_BLOCK, 'html.touch .reacts .rh'), /display: none;/);
+    // there the two headings are row breaks of no height: the emoji start on their own row under the four actions
+    assert.match(rule(LAND_BLOCK, 'html.touch .reacts .rh'), /height: 0; margin: 0; overflow: hidden; visibility: hidden;/);
+    // 375px tall: padding 12, the pouch 44, the actions 48, three emoji rows of 44, six 4px gaps and the border: 262px from 30px up
+    assert.ok(30 + 12 + 44 + 48 + 3 * 44 + 6 * 4 + 2 <= 375 - 62);
     assert.match(rule(LAND_BLOCK, 'html.touch .reacts'), /max-height: calc\(var\(--app-h, 100dvh\) - 96px/);
   });
   it('the bake and dance panels take the bottom of a touch screen: the stick, the column and the tag step aside', () => {
     assert.match(css, /html\.touch #ui:has\(\.bake\.show, \.rhythm\.show\) > :is\(\.dock, \.acts, \.joy, \.prompt, \.reacts\) \{ visibility: hidden !important; \}/);
+    assert.match(css, /html\.touch #ui:has\(\.bake\.show, \.rhythm\.show\) \.viewrow \{ visibility: hidden !important; \}/);
     assert.equal(px(rule(css, 'html.touch .bake, html.touch .rhythm'), 'bottom'), 24);
     // on its side the dance panel's lanes are as tall as the screen leaves (it was 455px on a 375px screen, 176px off the top)
     const canvas = rule(LAND_BLOCK, 'html.touch .rhythm canvas');
@@ -535,10 +539,13 @@ describe('desktop windows', () => {
   });
   it('a button and the sheet it opens say the same thing', () => {
     const ui = read('ui.js');
-    for (const [label, title] of [['공유·코드', "openSheet(['share', '공유·코드'], null,"], ['내 건물', "openSheet(['building', '내 건물'], null,"]]) {
+    for (const [label, title] of [['공유·코드', "openSheet(['share', '공유·코드'], null,"], ['내 건물', "openSheet(['building', '내 건물'], null,"],
+      ['사진 찍어 공유', "openSheet(['camera', '사진 찍어 공유'], null,"], ['내 캐릭터', "openSheet(['user', '내 캐릭터'], null,"]]) {
       assert.ok(ui.includes(`'aria-label': '${label}', title: '${label}'`), label);
       assert.ok(ui.includes(title), title);
     }
+    // the identity button is named by the sheet it opens and the name written on it
+    assert.match(ui, /profile\.setAttribute\('aria-label', `내 캐릭터 · \$\{hooks\.nick\(\)\}`\);/);
     // the English tags beside a title said nothing
     assert.equal(/'(EXCHANGE|SPONSOR|NOW|MANHATTAN|MINE|AD)'/.test(ui), false);
     assert.equal(/VIP 메뉴|내 건물 짓기'|공유와 스폰서 코드'/.test(ui.replace(/\/\/[^\n]*/g, '')), false);
