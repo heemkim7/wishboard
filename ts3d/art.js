@@ -652,6 +652,9 @@ export function paintMenuBoard(canvas) {
 
 // The cab's roof light (1.0 x 0.25 m): one word, as large as the light. From 10 to 40 m on a phone the whole light is
 // 56 to 14 pixels wide, where a second word (it used to carry a medallion number too) was only speckle.
+// The modelled cab's light is a 0.9 x 0.26 m box with a chamfer: its flat faces (0.78 x 0.14 m) show the full width of
+// this canvas and the 72% of its height about the middle (ts3d/traffic.js modelSignGeometry), so the word and the
+// plain margin above and below it must stay inside that band.
 export function paintTaxiSign(canvas) {
   const g = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height, k = H / 64;
@@ -665,9 +668,11 @@ export function paintTaxiSign(canvas) {
   return canvas;
 }
 
-// Where things are on the cab's door decal, as fractions of the canvas (ts3d/traffic.js maps it onto a 3.4 x 0.42 m
-// plane): the checker stripe is the top half, in cells of 1/16 of the width and 1/4 of the height; the lettering is in
-// the bottom half and stays between text0 and text1 of the width, which is the stretch of door between the wheels.
+// The door decal of the box cab, which stands in until the modelled cab is fetched (the model has its stripe as
+// geometry and no lettering on its doors, so this canvas is freed when it takes over). Where things are on it, as
+// fractions of the canvas (ts3d/traffic.js maps it onto a 3.4 x 0.42 m plane): the checker stripe is the top half, in
+// cells of 1/16 of the width and 1/4 of the height; the lettering is in the bottom half and stays between text0 and
+// text1 of the width, which is the stretch of door between the wheels.
 export const TAXI_DECAL = { cols: 16, rows: 2, band: 0.5, text0: 0.19, text1: 0.81 };
 
 // The stripe is two rows of 21 x 10.5 cm cells (the old one had 10.6 x 4.6 cm cells: on a phone those are 1.5 x 0.6

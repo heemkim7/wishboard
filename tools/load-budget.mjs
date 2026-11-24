@@ -40,6 +40,9 @@ export const RULES = [
   [/^assets\/models\/lots\/lot[0-4]_[a-z]+\.glb$/, 'later'],
   [/^assets\/avatars\/[a-z]+(-hood)?\.png$/, 'later'], // character picker tiles and their hoodie masks (ts3d/avatars.js SPECIES thumb, hood), only in the profile sheet
   [/^assets\/audio\/(sfx\/)?$/, 'first', () => []], // 'assets/audio/' + id + '.ogg': no such files in the repo, the browser gets 404s
+  // The cab and car model (loadplan.js TAXI_URL): nothing waits for it. ts3d/traffic.js asks for it only after the street
+  // has been drawn with the box cars, which stay if it never comes, so it is counted with the first minute, not with boot.
+  [/^assets\/models\/taxi\.glb$/, 'first'],
   [/^icons\/(lot|tent|pocha|shop|tower)\.jpg$/, 'later'],
   [/^icons\/board\.jpg$/, 'later'],
   [/^assets\/times-square\/credits\.json$/, 'later'],

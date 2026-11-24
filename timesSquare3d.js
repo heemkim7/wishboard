@@ -19,7 +19,7 @@ import { createReflection } from './ts3d/ground.js?v=202611241127';
 import { createBoards, createAdScreens, screenTime } from './ts3d/screens.js?v=202611241127';
 import { loadNYC, ROAD } from './ts3d/nyc.js?v=202611241127';
 import { createWorld, FAR_LAYER } from './ts3d/world.js?v=202611241127';
-import { createTraffic } from './ts3d/traffic.js?v=202611241127';
+import { createTraffic, loadTaxiModel } from './ts3d/traffic.js?v=202611241127';
 import { buildTimesSquare } from './ts3d/timesq.js?v=202611241127';
 import { claimRockefeller, buildRockefeller } from './ts3d/rockefeller.js?v=202611241127';
 import { claimIcons, buildIcons } from './ts3d/icons.js?v=202611241127';
@@ -246,7 +246,8 @@ void main(){
     tsq = buildTimesSquare({ scene, renderer, manager, kitMats, boards, adScreens, nyc, quality, colliders });
     hideStockBall();
     marks = buildLandmarks({ scene, kitMats, boards, ground: world, colliders, blockers, pick, quality, onFishLanded: (p, gold) => burst(p, gold ? '#ffcf5a' : '#ffb070', gold ? 70 : 34, gold ? 0.8 : 0.5) });
-    traffic = createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk: () => opts.onHonk?.() });
+    // Box cars from the first frame; the modelled cab (one small file) is fetched by the traffic itself once the street is on screen.
+    traffic = createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk: () => opts.onHonk?.(), loadModel: loadTaxiModel });
     nyc.ensureSolid(pos.x, pos.z, 360);
     world.warm(pos.x, pos.z, low ? 220 : 320);
     traffic.warm(pos.x, pos.z);
