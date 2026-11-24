@@ -49,11 +49,15 @@ function fakeDom({ path = '/gift', search = '', data = null, store = {}, at = 0,
     documentElement: { classList: { add() {} } }, head: el('head'), body: el('body'), activeElement: null, hidden: false, addEventListener() {}, removeEventListener() {} };
   el('div').append(toolWish); // the HUD's 🌠 button has a parent (gift.js puts 🎁 after it)
   const loc = { pathname: path, search, hash: '', origin: 'https://sq.example', reloads: 0, reload() { loc.reloads++; }, get href() { return loc.origin + loc.pathname + loc.search; }, set href(v) { loc.went = String(v); } };
+  // The session history of this document: entries with their state, as pushState and replaceState leave them.
+  const entries = [{ url: path + search, state: null }]; let cur = 0;
+  const hist = { scrollRestoration: 'auto', get state() { return entries[cur].state; },
+    pushState(s, t, url) { entries.splice(cur + 1); entries.push({ url: String(url), state: s }); cur++; go(url); }, replaceState(s, t, url) { entries[cur] = { url: String(url), state: s }; go(url); } };
   const go = (url) => { const u = new URL(String(url), loc.origin); loc.pathname = u.pathname; loc.search = u.search; };
   const win = { addEventListener(t, f) { (winOn[t] ||= []).push(f); }, removeEventListener() {}, scrollTo() {}, postMessage() {} }; win.parent = win;
   const realNow = Date.now;
   const globals = {
-    document: doc, window: win, location: loc, history: { scrollRestoration: 'auto', pushState: (s, t, url) => go(url), replaceState: (s, t, url) => go(url) },
+    document: doc, window: win, location: loc, history: hist,
     localStorage: { getItem: (k) => (k in store ? store[k] : null), setItem(k, v) { store[k] = String(v); } },
     navigator: { userAgent: 'test', sendBeacon: () => true, clipboard: { async writeText(t) { copied.push(String(t)); } }, share: null, serviceWorker: { addEventListener(t, f) { swOn[t] = f; } } },
     fetch: async (url, opt = {}) => { sent.push({ url: String(url), method: opt.method || 'GET', body: typeof opt.body === 'string' ? JSON.parse(opt.body) : opt.body, auth: opt.headers?.authorization || '' }); const r = respond(String(url), opt); return { ok: !!r, status: r ? 200 : 404, json: async () => r || { ok: false }, blob: async () => new Blob([]) }; },
@@ -68,6 +72,8 @@ function fakeDom({ path = '/gift', search = '', data = null, store = {}, at = 0,
   const shown = (n) => { for (let x = n; x; x = x.parent) if (x.hidden) return false; return true; };
   Object.assign(P, {
     app, doc, loc, settle, shown,
+    /** The browser's back (-1) or forward (1) within this document: that entry's address and state, then popstate. */
+    async step(d) { cur = Math.max(0, Math.min(entries.length - 1, cur + d)); go(entries[cur].url); for (const f of winOn.popstate || []) f(); await settle(); },
     done() { Date.now = realNow; for (const [k, d] of Object.entries(before)) { if (d) Object.defineProperty(globalThis, k, d); else delete globalThis[k]; } },
     async load(file) { const m = await import('../' + file + '?load=' + (++LOADS)); await settle(); return m; },
     all: (tag, root = app) => walk(root).filter((n) => n.tag === tag),
@@ -265,6 +271,9 @@ describe('the reply board (답장 전광판) and the plaza replay', () => {
       assert.equal(JSON.parse(P.store.kts_gref).id, g.id, 'kept as the ref, like ?ref=');
       assert.equal(P.loc.pathname, '/gift');
       assert.deepEqual(P.heads('h1'), ['💌 답장 전광판을 걸어요']);
+      // Back to the board and forward again: the reply's maker, filled in as before.
+      await P.step(-1); assert.equal(P.loc.pathname, '/g/' + g.id); assert.deepEqual(P.heads('h1'), ['🎂 민지님, 생일 축하해요!']);
+      await P.step(1); assert.equal(P.loc.pathname, '/gift'); assert.deepEqual(P.heads('h1'), ['💌 답장 전광판을 걸어요']);
       assert.deepEqual(['to', 'msg', 'from'].map((id) => P.input(id).value), ['지수', REPLY_MSG, '민지'], 'who it is for, the thanks line, who it is from');
       assert.equal(P.all('button').find((n) => n.attrs['aria-pressed'] === 'true' && /고마움/.test(n.textContent)).textContent, '🙏 고마움');
       assert.match(P.all('p').map((n) => n.textContent).join('\n'), /11월 25일 \(수\) 저녁 7시 ~ 다음 날 새벽 1시/, 'today, now');
@@ -276,6 +285,10 @@ describe('the reply board (답장 전광판) and the plaza replay', () => {
       assert.equal(post.auth, 'Bearer g1.test.token');
       assert.deepEqual(P.heads('h1'), ['🎉 걸었어요!'], 'the reply\'s own owner page');
       assert.equal(P.loc.pathname, '/g/' + made.id); assert.equal(P.store.kts_gref, '', 'the ref is used up'); assert.deepEqual(JSON.parse(P.store.kts_gmine), [made.id]);
+      // Back twice (the maker, then the board that was answered): an ordinary maker now that the reply is hung, then that board
+      // again under its own address, not the reply just made.
+      await P.step(-1); assert.equal(P.loc.pathname, '/gift'); assert.deepEqual(P.heads('h1'), ['친구를 위해 뉴욕 타임스퀘어에 전광판을 걸어요']);
+      await P.step(-1); assert.equal(P.loc.pathname, '/g/' + g.id); assert.deepEqual(P.heads('h1'), ['🎂 민지님, 생일 축하해요!']);
     } finally { P.done(); }
   });
   it('a board without a sender name: the reply is a thanks board and the cursor waits at who it is for; the form still checks what is typed', async () => {

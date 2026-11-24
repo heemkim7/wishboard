@@ -224,6 +224,7 @@ function maker({ re: answers = '', ...prefill } = {}) {
     }
     addMine(r.id);
     if (kept && kept === ref) ls.set('kts_gref', '');
+    if (re) history.replaceState(null, '', '/gift'); // the reply is hung: going back to this maker starts an ordinary board
     history.pushState(null, '', '/g/' + r.id);
     owner(r.gift, { fresh: true, mine: r.mine, media: !!r.media });
     giftCardJpeg(r.gift).then(async (jpg) => { const tok = await token(false); if (jpg && tok) fetch('/rt/gift/' + r.id + '/card', { method: 'POST', headers: { authorization: 'Bearer ' + tok, 'content-type': 'image/jpeg' }, body: jpg }).catch(() => { }); });
@@ -248,7 +249,9 @@ function maker({ re: answers = '', ...prefill } = {}) {
 // ---- the board page (/g/<id>) -------------------------------------------------------------------------------------------------
 let CUR = null; // the board on screen (after making one on /gift there is no #gift-data)
 async function board() {
-  const g = CUR || DATA?.gift;
+  // The board of this address: the one on screen, or the one the Worker put in the page. They differ after a reply was made here
+  // (the page of the answered board, then the maker, then the reply's own page) and the visitor goes back.
+  const at = location.pathname.slice(3, 11), g = [CUR, DATA?.gift].find((x) => x && x.id === at) || CUR || DATA?.gift;
   if (!g) return gone();
   if (mine().includes(g.id)) {
     const tok = await token(false);
@@ -404,7 +407,7 @@ function visit(g, { preview = false } = {}) {
   // 답장 전광판: the first button (not in the owner's own preview). It opens the maker here, filled in from this board.
   const reply = preview ? null : h('button', { class: 'btn pink', type: 'button', onclick: () => {
     beacon(g.id, 'reply'); ls.set('kts_gref', JSON.stringify({ id: g.id, at: Date.now() })); // kept like ?ref=: a board made later still counts as led here
-    history.pushState(null, '', '/gift'); maker({ ...replyDraft(g), re: g.id });
+    history.pushState({ re: g.id }, '', '/gift'); maker({ ...replyDraft(g), re: g.id }); // the state: back and forward come to the reply again (route)
   } }, replyLabel(g));
   const acts = h('div', { class: 'stack', hidden: !preview && !st.ended }, reply, saveBtn, go, h('a', { class: 'btn', href: '/gift?ref=' + g.id, onclick: () => beacon(g.id, 'cta') }, '🎁 나도 누군가에게 걸어 주기'), saveNote);
   const skip = h('button', { class: 'linkbtn', type: 'button', onclick: () => { acts.hidden = false; skip.remove(); } }, '영상 건너뛰기');
@@ -454,7 +457,7 @@ function paperCard(g) {
 // ---- start ----------------------------------------------------------------------------------------------------------------------
 function route() {
   if (/^\/g\/[0-9a-z]{8}\/?$/.test(location.pathname)) { if (DATA && DATA.id === location.pathname.slice(3, 11)) board(); else location.reload(); }
-  else maker();
+  else { const re = refOf(history.state?.re); maker(re && DATA?.gift?.id === re ? { ...replyDraft(DATA.gift), re } : {}); } // a reply's maker, reached again by forward
 }
 window.addEventListener('load', () => { if (scrollY > 0 && !document.activeElement?.matches?.('input,textarea')) scrollTo(0, 0); }, { once: true }); // a reload's kept scroll: start at the film
 window.addEventListener('popstate', () => { if (/^\/g\//.test(location.pathname) && !DATA?.gift) location.reload(); else route(); });
