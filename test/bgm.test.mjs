@@ -206,7 +206,7 @@ describe('audio.js hands a missing track to the synth', () => {
     assert.match(ui, /lofi = true;\n\s+bgm\.over\('lounge'\);/);
     assert.match(ui, /lofi = false;\n\s+bgm\.over\(null\);/);
     assert.doesNotMatch(ui, /const chords = \[\[220, 261\.6, 329\.6\]/); // the old humming sine chords
-    assert.match(ui, /danceSong = r\.id;\n\s+bgm\.over\(r\.id, r\.posMs \/ 1000\);/); // 같이 춤추기: the radio's track at the clock's place
+    assert.match(ui, /if \(bgm\.over\(r\.id, r\.posMs \/ 1000\)\) danceSong = r\.id;/); // 같이 춤추기: the radio's track at the clock's place
     assert.equal(/danceBus|duckMusic/.test(ui), false);
     assert.match(read('index.html') + read('ui.js'), /bgm\.js\?v=/);
   });

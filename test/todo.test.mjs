@@ -92,12 +92,13 @@ describe('what changed', () => {
 
 describe('words', () => {
   const l = todoList({ ...base, cheer: 3, wish: true, team: { has: true, done: false } });
-  it('a row with points, a row without, the last row', () => {
-    assert.equal(itemNote(l[2], todoNext(l)), '✓ 소원 한 줄 걸기 · +15 포인트 · 다음: 소원에 하트 1개');
-    assert.equal(itemNote(l[1], l[2]), '✓ 전광판 응원 3번 · +45 포인트 · 다음: 소원 한 줄 걸기');
+  it('a row with the points that arrived, a row without, the last row', () => {
+    assert.equal(itemNote(l[2], todoNext(l), 15), '✓ 소원 한 줄 걸기 · +15 포인트 · 다음: 소원에 하트 1개');
+    assert.equal(itemNote(l[1], l[2], 45), '✓ 전광판 응원 3번 · +45 포인트 · 다음: 소원 한 줄 걸기');
+    assert.equal(itemNote(l[1], l[2]), '✓ 전광판 응원 3번 · 다음: 소원 한 줄 걸기', 'no pay arrived: no points (test/review2-hud.test.mjs 2)');
     const team = todoList({ ...base, team: { has: true, done: true } })[4];
     assert.equal(itemNote(team, l[3]), '✓ 우리 팀 응원하기 · 다음: 소원에 하트 1개');
-    assert.equal(itemNote(l[3], null), '✓ 소원에 하트 1개 · +15 포인트');
+    assert.equal(itemNote(l[3], null, 15), '✓ 소원에 하트 1개 · +15 포인트');
     assert.equal(allNote(4), '🎉 오늘 할 일을 다 했어요 · 출석 4일');
   });
   it('the next day\'s attendance line', () => {

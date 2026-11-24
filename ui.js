@@ -32,7 +32,7 @@ import { qrEncode, paintQr } from './qr.js?v=202611241625';
 import { icon } from './uiicons.js?v=202611241625';
 import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, proofOffers, proofPlan, TOAST, touchTag, goalKnown, PRESS, TOOL_ORDER, hintLeft, sameNews } from './overlay.js?v=202611241625';
 import { linesFault, LINES_ERR } from './ftue.js?v=202611241625'; // the board-line checks
-import { TODO_TEXT, todoList, todoSettled, todoProgress, todoNext, todoSnap, todoDiff, allDue, momentHold, itemNote, allNote, attendNote, footLine, cardText, pillPlan, markStamp, stampRow, stampName, giftSeen, giftDone, weekStart, todoKeep } from './todo.js?v=202611241625';
+import { TODO, TODO_TEXT, todoList, todoSettled, todoProgress, todoNext, todoSnap, todoDiff, allDue, momentHold, itemNote, allNote, attendNote, footLine, cardText, pillPlan, markStamp, stampRow, stampName, giftSeen, giftDone, weekStart, todoKeep } from './todo.js?v=202611241625';
 
 const LEVELS = [
   { src: 'icons/lot.jpg?v=2', t: '빈 땅' },
@@ -985,58 +985,75 @@ export function createUI(root, hooks) {
   // opts.key names a kind of notice (cheer-wait, copied, offline …), and a notice still up with that key, or without a
   // key the same text, is taken down and this one stands in its place with a fresh clock and the newest text. Only a
   // notice of the same tappability counts: a keyed plain notice never takes away a tappable one (its retry or link).
+  // The place: a notice that replaces one keeps that one's place in the stack. The tappable notices are a stack: only the
+  // top one shows (index.html), and one hidden under a newer one keeps the rest of its time and comes back when the newer
+  // one goes (paceToasts). opts.recover: a notice that asks the person to do something to put things right (a retry, a
+  // re-login) is never the one that waits: a guide notice (the to-do's 다음: …, the dance invite) that comes while one is
+  // up goes under it instead.
   function note(text, kind = '', onClick, opts) {
     const say = toastText(text, kind);
     if (!say) return null;
     const click = typeof onClick === 'function' ? onClick : null;
     const key = opts?.key ? String(opts.key) : '';
-    let again = false;
+    let spot = null;
     for (const c of [...toasts.children]) {
       if (!c.classList.contains('toast') || c.classList.contains('out') || c.classList.contains('hit') !== !!click) continue;
       if (key ? c.kKey !== key : (c.kKey || c.kSay !== say)) continue;
       clearTimeout(c.kTimer);
       clearTimeout(c.pTimer);
-      c.remove();
-      again = true;
+      if (spot) c.remove(); else spot = c;
     }
     const t = h(click ? 'button' : 'div', { class: `glass toast ${kind}${click ? ' hit' : ''}`, type: click ? 'button' : null },
       say, click ? h('i', { class: 'go', 'aria-hidden': 'true' }, icon('chevronRight')) : null);
     t.kKey = key;
     t.kSay = say;
-    if (again) t.classList.add('again'); // no second entrance: the row stays where it was and only its words change
-    if (click) t.addEventListener('click', () => { t.remove(); click(); });
-    toasts.append(t);
+    t.kFix = !!(click && opts?.recover);
+    if (spot) t.classList.add('again'); // no second entrance: the row stays where it was and only its words change
+    if (click) t.addEventListener('click', () => { t.remove(); click(); paceToasts(); });
+    // In the place of the one it replaces; a guide notice under the recover notices still up; else on top.
+    const under = spot || (click && !t.kFix ? [...toasts.children].find((c) => c.kFix && c.classList.contains('hit') && !c.classList.contains('out')) : null);
+    if (under) toasts.insertBefore(t, under); else toasts.append(t);
+    if (spot) spot.remove();
     // Over three: the oldest plain one goes first, so a tappable notice is not pushed out by a burst of coin lines. Only
     // toasts count: the cards in the same column (hint, far-board card, 홈 화면 추가, lottery result, a board's card) are not
     // theirs to drop.
     const shown = () => [...toasts.children].filter((c) => c.classList.contains('toast'));
     for (let list = shown(); list.length > 3; list = shown()) (list.find((c) => c !== t && !c.classList.contains('hit')) || list[0]).remove();
     const ms = Number(opts?.ms) > 0 ? Number(opts.ms) : toastMs(say, !!click);
-    if (click) { t.kLeft = ms; armToast(t); } // a tappable one waits out an open menu (holdToasts)
+    if (click) t.kLeft = ms; // a tappable one waits out an open menu (holdToasts) and a newer tappable one over it (paceToasts)
     else t.pTimer = setTimeout(() => toastOut(t), ms);
+    paceToasts();
     return t;
   }
-  function toastOut(t) { if (!t.isConnected) return; t.classList.add('out'); setTimeout(() => t.remove(), 320); }
+  function toastOut(t) { if (!t.isConnected) return; t.classList.add('out'); paceToasts(); setTimeout(() => { t.remove(); paceToasts(); }, 320); }
   // While the ⋯ menu or (touch) the 동작 panel is open the toasts are hidden (index.html "nothing floats over them"). A
   // tappable toast's clock stops there, and it gets at least TOAST_BACK_MS once the menu closes: it used to run out
-  // behind the menu with its only retry or link. A plain one keeps its clock.
+  // behind the menu with its only retry or link. A plain one keeps its clock. The same goes for a tappable toast under a
+  // newer tappable one (only the top one shows): its clock stops until it is the top one again.
   const TOAST_BACK_MS = 4000;
   let toastsHeld = false;
-  function armToast(t) {
-    clearTimeout(t.kTimer);
-    t.kTimer = 0;
-    if (toastsHeld) return;
-    t.kAt = Date.now();
-    t.kTimer = setTimeout(() => toastOut(t), t.kLeft);
+  function paceToasts() {
+    const hits = [...toasts.children].filter((c) => c.classList.contains('toast') && c.classList.contains('hit') && !c.classList.contains('out'));
+    const top = hits[hits.length - 1];
+    for (const t of hits) {
+      const run = t === top && !toastsHeld;
+      if (run && !t.kTimer) {
+        if (t.kWaited) t.kLeft = Math.max(t.kLeft, TOAST_BACK_MS);
+        t.kWaited = false;
+        t.kAt = Date.now();
+        t.kTimer = setTimeout(() => { t.kTimer = 0; toastOut(t); }, t.kLeft);
+      } else if (!run) {
+        if (t.kTimer) { t.kLeft = Math.max(0, t.kLeft - (Date.now() - t.kAt)); clearTimeout(t.kTimer); t.kTimer = 0; t.kWaited = true; }
+        else if (t.kAt) t.kWaited = true; // it ran before: it comes back with at least TOAST_BACK_MS
+        else if (toastsHeld) t.kWaited = true;
+      }
+    }
   }
   function holdToasts() {
     const held = !!toolsEl?.classList.contains('open') || (document.documentElement.classList.contains('touch') && !reactPanel.hidden);
     if (held === toastsHeld) return;
     toastsHeld = held;
-    for (const t of toasts.querySelectorAll(':scope > .toast.hit:not(.out)')) {
-      if (held) { if (t.kTimer) t.kLeft = Math.max(0, t.kLeft - (Date.now() - t.kAt)); armToast(t); }
-      else { t.kLeft = Math.max(t.kLeft, TOAST_BACK_MS); armToast(t); }
-    }
+    paceToasts();
   }
   const newsQueue = [];
   let newsBusy = false;
@@ -1336,8 +1353,7 @@ export function createUI(root, hooks) {
   let danceSong = ''; // the dance track bgm.js lays over the square's track now ('' none)
   function danceMusic(r) {
     if (!soundOn || lofi || danceSong === r.id) return;
-    danceSong = r.id;
-    bgm.over(r.id, r.posMs / 1000);
+    if (bgm.over(r.id, r.posMs / 1000)) danceSong = r.id; // only when it took: no audio context yet is tried again by the next tick
   }
   function danceMusicOff() {
     if (!danceSong) return;
@@ -1348,7 +1364,7 @@ export function createUI(root, hooks) {
   // kind: 'stage' (the stage's round button / E), 'panel' (the 동작 row, the dock button), 'join' (the notice).
   function startDance(kind = 'panel') {
     if (dance) { endDance('stop'); return false; }
-    if (sheet || baking || driving) return false;
+    if (sheet || ext || baking || driving) return false; // a layer (the gift maker) is a sheet here
     if (ceremonyOn()) { note('점등식이 끝나면 같이 춰요'); return false; }
     if (loungeWatch) { note('멍때리기를 끝내면 같이 출 수 있어요'); return false; }
     if (hooks.danceStart?.(kind) !== true) return false;
@@ -1366,6 +1382,7 @@ export function createUI(root, hooks) {
     if (ceremonyOn()) { endDance('ceremony'); return; }
     const r = radioAt(nowMs(), danceRadio);
     if (dance.song !== r.id) { dance.song = r.id; danceSongEl.textContent = '♪ ' + r.name; danceMusic(r); }
+    else if (danceSong !== r.id) danceMusic(r); // the music did not take yet (no audio context): again, from where the clock is now
     const n = Math.max(1, Math.floor(Number(hooks.danceCount?.()) || 1));
     if (n !== dance.n) { dance.n = n; danceMatesEl.textContent = n > 1 ? `지금 ${n}명이 같이 춰요` : '지금 혼자 춰요'; }
   }
@@ -1825,6 +1842,7 @@ export function createUI(root, hooks) {
       heart: fresh ? 0 : (prev.heart || 0),
       paid: fresh ? {} : (prev.paid || {}),
       qPaid: fresh ? {} : (prev.qPaid || {}),
+      got: fresh ? {} : (prev.got && typeof prev.got === 'object' ? prev.got : {}), // the points today's 오늘 할 일 pays brought here (todoPaid)
       streak: prev.streak || 0,
       last: prev.last || '',
       ...backFields(prev, day), // back: days since the last attended day on a later day; backSent: return_visit already went out today
@@ -1901,9 +1919,8 @@ export function createUI(root, hooks) {
     d.paid[key] = 1;
     d.score = (d.score || 0) + BALANCE.season.mission;
     saveDay(d);
-    // No notice of its own: the row that earned it already said '✓ … · +15 포인트' when it was done (renderTodo). amount is the pay.
-    void amount;
-    renderTodo();
+    // No notice of its own: the row that earned it says '✓ … · +15 포인트' with this amount (renderTodo waits for it, todoPaid).
+    todoPaid(key, amount);
   }
   function askShot() {
     queuePushOffer();
@@ -2018,7 +2035,7 @@ export function createUI(root, hooks) {
   function paintTodoCard(d, list) {
     const p = todoProgress(list), next = todoNext(list);
     const foot = footLine({ all: p.all, streak: d.streak, tomorrow: todoTomorrow(d) });
-    const sig = JSON.stringify([list.map((r) => [r.id, r.label, r.value, r.done]), d.stamps, d.streak, foot, todoPop]);
+    const sig = JSON.stringify([list.map((r) => [r.id, r.label, r.value, r.done]), d.stamps, d.streak, foot, todoPop]); // todoPop: a paint with the pop, once (renderTodo clears it)
     if (sig === todoSig) return false;
     todoSig = sig;
     const tap = (id) => { if (id === 'attend') openToday({ at: 'week' }); else guideQuest(id); };
@@ -2033,36 +2050,66 @@ export function createUI(root, hooks) {
   }
   // What tapping a 오늘 할 일 notice does: the next row's action, or the sheet when nothing is left.
   const todoGo = (next) => () => { if (next) guideQuest(next.id); else openToday(); };
+  // A finished row whose pay is on its way: its one notice waits for the pay (todoPaid) or TODO.payWaitMs, so it names only points
+  // that arrived (the counters are this device's kts_daily: a second device, offline or a pay the Room refuses would promise points
+  // that never come). questAt: when the third cheer's QUEST claim went out (questBump).
+  let todoWait = null, todoQuestAt = -1e9;
+  function todoQuestSent() { todoQuestAt = performance.now(); }
+  // A pay of the list arrived (markDaily: BONUS mission for cheer / wish / heart, markQuest: QUEST cheer): what it brought is kept for the
+  // day (kts_daily.got) and a row waiting for it says it.
+  function todoPaid(id, amount) {
+    const d = today();
+    d.got = d.got && typeof d.got === 'object' ? d.got : {};
+    const n = Math.max(0, Math.floor(Number(amount) || 0));
+    if (n) d.got[id] = (Number(d.got[id]) || 0) + n;
+    saveDay(d);
+    renderTodo();
+  }
+  // -> the points that arrived for a finished row (0: none came, none is coming), or null while its pay is still on its way.
+  function rowPay(id, d) {
+    const got = d.got && typeof d.got === 'object' ? d.got : {};
+    if (id === 'cheer') return (d.qPaid || {}).cheer ? Number(got.cheer) || 0 : performance.now() - todoQuestAt < TODO.payWaitMs ? null : 0;
+    if (id === 'wish' || id === 'heart') return (d.paid || {})[id] ? Number(got[id]) || 0 : (d[id] || 0) >= 1 ? null : 0; // counted here: payDue pays it or gives up
+    return 0; // the team row (no points); attendance has its own line (attendPaid)
+  }
   // Every change of a signal comes here (and the 1 s HUD tick): the rows finished since the last look get their notice, the whole
-  // list its moment once a day, the stamp its gold, and the card, the sheet and the pill their new state.
+  // list its moment once a day, the stamp its gold, and the card, the sheet and the pill their new state. In newcomer mode (#ui.newbie)
+  // the notices and their sounds stay quiet (the newcomer card has its own steps); the stamps and the counters go on.
   function renderTodo() {
     const d = today();
     const s = todoSignals(d), list = todoList(s), settled = todoSettled(s), p = todoProgress(list);
     const snap = todoSnap(list);
     // A new day under an open page starts over: nothing from yesterday is announced.
     const fresh = todoSnapPrev && todoSnapDay === d.day ? todoDiff(todoSnapPrev, snap) : [];
-    if (todoSnapDay !== d.day) { todoSawOpen = false; todoDoneHere = false; todoPop = ''; }
+    if (todoSnapDay !== d.day) { todoSawOpen = false; todoDoneHere = false; todoPop = ''; todoWait = null; }
     todoSnapPrev = snap;
     todoSnapDay = d.day;
     if (list.some((r) => r.known && !r.done)) todoSawOpen = true;
     const due = entered && allDue({ list, settled, day: d.day, allDay: d.allDay, sawOpen: todoSawOpen });
     for (const id of fresh) trackEvent('todo_done', { kind: id });
     if (fresh.length) todoPop = fresh[fresh.length - 1];
+    const quiet = root.classList.contains('newbie');
     if (due) {
       d.allDay = d.day;
       d.stamps = markStamp(d.stamps, d.day, 2);
       saveDay(d);
       todoDoneHere = true;
-      note(allNote(d.streak), 'ok', () => openToday(), { key: 'todo' });
-      sfx.todoAll();
+      todoWait = null; // the whole list's line says it
+      if (!quiet) { note(allNote(d.streak), 'ok', () => openToday(), { key: 'todo' }); sfx.todoAll(); }
       trackEvent('todo_all', { streak: Math.max(1, d.streak || 1) });
-    } else if (fresh.length && entered) {
-      const row = list.find((r) => r.id === fresh[fresh.length - 1]), next = todoNext(list);
-      note(itemNote(row, next), 'ok', todoGo(next), { key: 'todo' });
-      sfx.todo();
+    } else if (fresh.length && entered) todoWait = { id: fresh[fresh.length - 1], until: performance.now() + TODO.payWaitMs };
+    if (todoWait && !due) {
+      const pts = rowPay(todoWait.id, d), row = list.find((r) => r.id === todoWait.id);
+      if (!row?.done) todoWait = null;
+      else if (pts !== null || performance.now() >= todoWait.until) {
+        todoWait = null;
+        const next = todoNext(list);
+        if (!quiet) { note(itemNote(row, next, pts || 0), 'ok', todoGo(next), { key: 'todo' }); sfx.todo(); }
+      }
     }
     if (settled && p.all && d.stamps?.[d.day] !== 2) { d.stamps = markStamp(d.stamps, d.day, 2); saveDay(d); } // done on another device too: gold, no moment
     if (paintTodoCard(d, list)) todoSheetPaint?.(); // the open sheet is redrawn only when something on it changed
+    todoPop = ''; // the pop is played by the paint that shows the row done, once (a later repaint does not replay it)
     pumpTodoCard(d);
     return list;
   }
@@ -2072,6 +2119,7 @@ export function createUI(root, hooks) {
     const hold = momentHold({
       cer: document.body.classList.contains('gift-cer'), rec: document.body.classList.contains('gift-rec'), lounge: root.classList.contains('lounging'),
       driving, busy: sheets.length > 0 || !!ext, baking: !!baking, proof: !proof.hidden,
+      focus: root.classList.contains('focusing'), walk: !!hooks.autoWalking?.(), intro: !!hooks.introOn?.(), cine: !!hooks.cineOn?.(),
     });
     if (hold || performance.now() - todoCardTry < 2000) return;
     todoCardTry = performance.now();
@@ -2079,11 +2127,11 @@ export function createUI(root, hooks) {
     d.cardDay = d.day;
     saveDay(d);
   }
-  // Day attendance paid (main.js PAY attend): one keyed line in place of 출석 +N 포인트.
+  // Day attendance paid (main.js PAY attend): one keyed line in place of 출석 +N 포인트, with the amount that came. No todo_done: the
+  // server knows the attendance already (it would be one more event POST and Durable Object call per visitor per day).
   function attendPaid(streak, got) {
     const list = renderTodo(), next = todoNext(list);
-    note(attendNote(streak, got, next), 'ok', todoGo(next), { key: 'todo' });
-    trackEvent('todo_done', { kind: 'attend' });
+    if (!root.classList.contains('newbie')) note(attendNote(streak, got, next), 'ok', todoGo(next), { key: 'todo' });
   }
   // 응원 팀 (main.js): v = { has, done } from /rt/team/me or a write, false when teams cannot be used now, 'ask' when the ask went out.
   function setTeamToday(v) {
@@ -4331,7 +4379,7 @@ export function createUI(root, hooks) {
       const formNodes = kids.filter((n) => n && n !== legal.box);
       let saved = [], tick = 0;
       // A result that arrives after the player closed the sheet: its line would never be read, so it is a toast, and a tap reopens the sheet.
-      const away = (text, kind = 'err') => { if (sheet !== me) note(text, kind, () => openLogin()); };
+      const away = (text, kind = 'err') => { if (sheet !== me) note(text, kind, () => openLogin(), { recover: true }); };
       const paintCode = () => {
         const k = codeKeep;
         if (!k) return;
@@ -6108,9 +6156,11 @@ export function createUI(root, hooks) {
     if (d.qPaid[key]) return;
     d[key] = (d[key] || 0) + 1;
     saveDay(d);
+    // The claim goes out before the list repaints: the finished row's notice then knows a pay is on its way and waits for it.
+    const sent = d[key] < need || !!hooks.claimQuest?.(key);
+    if (d[key] >= need && sent) todoQuestSent();
     renderTodo();
-    if (d[key] < need) return;
-    if (!hooks.claimQuest?.(key)) note('광장에 연결되면 오늘 할 일 포인트가 들어와요', 'err', null, { key: 'offline' });
+    if (!sent) note('광장에 연결되면 오늘 할 일 포인트가 들어와요', 'err', null, { key: 'offline' });
   }
   let balloonHp = 0, balloonWait = 25000, balloonWaitAt = 0;
   // The pouch icon, then the text in its own span: on touch the button is a circle with the icon and the span is the
@@ -6158,17 +6208,18 @@ export function createUI(root, hooks) {
 
   return {
     sfx, note, pop, flyCoins, cooldownLeft, armCooldown, showResult,
-    layer,
+    // A layer (gift.js's frame: the gift maker) ends 같이 춤추기 like a sheet (openSheet), and startDance waits for it to close.
+    layer(el, close) { if (el && dance) endDance('layer'); layer(el, close); },
     startBake, stopBake, startDance, endDance, danceInvite, openBillboard, openAd, openPlot, openHub, openCredits, openMap, openSettings, openWalletInfo, openVip, toggleReacts, showProof,
     mission(kind) { if (kind === 'wish' || kind === 'heart') { missionBump(kind); renderTodo(); } }, // a cheer counts through quest (questBump)
     quest: questBump,
     markDaily,
-    markQuest(key) {
+    markQuest(key, amount) {
       const d = today();
       d.qPaid = d.qPaid || {};
       if (key === 'cheer') d.qPaid.cheer = 1;
       saveDay(d);
-      renderTodo();
+      if (key === 'cheer') todoPaid('cheer', amount); else renderTodo();
     },
     // 오늘 할 일: the day's attendance pay (its keyed notice), the team signal (main.js teamMe / teamOp), the open sheet.
     attendPaid,
@@ -6191,6 +6242,14 @@ export function createUI(root, hooks) {
       paintBalloon();
     },
     isBusy: () => !!sheet || !!baking || !!dance,
+    // The part of a desktop window not under the left column or the minimap column ({ left, right } px from each edge), for the street-screen
+    // card's frame (timesSquare3d.js freeFit). null on touch layouts and when the column is not shown.
+    freeView() {
+      if (document.documentElement.classList.contains('touch')) return null;
+      const l = root.querySelector('.hud-l')?.getBoundingClientRect(), m = root.querySelector('.minimap')?.getBoundingClientRect();
+      if (!l || !(l.width > 0) || !(l.height > 0)) return null;
+      return { left: Math.max(0, Math.round(l.right) + 8), right: m && m.width > 0 ? Math.max(0, Math.round(innerWidth - m.left) + 8) : 0 };
+    },
     // 점등식 (gift.js): a sheet or a layer (the gift frame, the photo card) is open: the countdown leaves the HUD up, the photo waits
     // in a notice.
     busy: () => sheets.length > 0 || !!ext,

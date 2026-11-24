@@ -114,7 +114,7 @@ describe('starting and ending', () => {
     assert.equal(/showResult|note\(/.test(end), false, 'no result, no score');
   });
   it('the music: the radio track laid over the square at the clock position, and back to the square after', () => {
-    assert.match(ui, /bgm\.over\(r\.id, r\.posMs \/ 1000\);/);
+    assert.match(ui, /if \(bgm\.over\(r\.id, r\.posMs \/ 1000\)\) danceSong = r\.id;/); // only when it took (test/review2-hud.test.mjs 9)
     assert.match(slice(ui, '  function danceMusicOff() {', '\n  }\n'), /if \(!lofi\) bgm\.over\(null\);/);
     assert.match(ui, /if \(dance\) danceMusic\(radioAt\(nowMs\(\), danceRadio\)\);/);
   });
@@ -151,7 +151,7 @@ describe('the world', () => {
     const send = slice(world, '  function sendDance(now) {', '\n  }\n');
     assert.match(send, /if \(!resendDue\(now, danceSentAt, lastEmote, EMOTE_GAP_MS\)\) return;/);
     assert.match(send, /net\?\.sendEmoji\?\.\(4\)/);
-    assert.match(send, /lastEmote = now;/);
+    assert.equal(/lastEmote = now;/.test(send), false, 'the re-send waits for the cooldown and does not take it (test/review2-hud.test.mjs 9)');
     const dancePart = slice(world, '  function setDancing(on) {', '\n  // Street names for the HUD');
     assert.equal(/net\?*\.send\(|sendEmoji\?\.\((?!4)/.test(dancePart), false, 'no other message');
     assert.match(world, /    if \(dancing\) sendDance\(now\);\n/);

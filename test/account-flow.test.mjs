@@ -638,7 +638,7 @@ describe('Google sign-in keeps the game tab', () => {
     // Every message of this sheet is inline. The toasts are for results that arrive after the player closed the sheet: an id sign-in that
     // failed, and the code step (away(): a tap reopens the sheet on the code).
     assert.equal((login.match(/\bnote\(/g) || []).length, 2); assert.match(login, /if \(sheet !== me\) note\(text, 'err'\);/);
-    assert.match(login, /const away = \(text, kind = 'err'\) => \{ if \(sheet !== me\) note\(text, kind, \(\) => openLogin\(\)\); \};/);
+    assert.match(login, /const away = \(text, kind = 'err'\) => \{ if \(sheet !== me\) note\(text, kind, \(\) => openLogin\(\), \{ recover: true \}\); \};/);
     assert.match(login, /h\('form', \{ class: 'login-form'/);
     assert.match(login, /autocomplete: 'username', autocapitalize: 'off'/);
     assert.match(login, /enterkeyhint: 'next'/);

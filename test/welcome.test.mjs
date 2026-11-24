@@ -262,12 +262,12 @@ describe('the world shows the welcome (timesSquare3d.js)', () => {
     const fn = body(w, '  function welcome(');
     assert.match(fn, /const slot = boards\.pinWelcome\(name, WELCOME\.ms, \{ x: pos\.x, z: pos\.z \}, card\);/); // card: 오늘 할 일's words (null: the welcome's)
     // The same rule that ends a scripted camera decides not to start one (camrig.js cineCancels): keys or the stick, unless input is locked.
-    assert.match(fn, /const walking = cineCancels\(\{ active: true, keys: keys\.size, joy: Math\.hypot\(joy\.x, joy\.y\), locked: !inputEnabled \}\);/);
+    assert.match(fn, /const walking = !!autoWalk \|\| cineCancels\(\{ active: true, keys: keys\.size, joy: Math\.hypot\(joy\.x, joy\.y\), locked: !inputEnabled \}\);/);
     assert.equal(cineCancels({ active: true, keys: 1, joy: 0, locked: false }), true);
     assert.equal(cineCancels({ active: true, keys: 0, joy: 0.5, locked: false }), true);
     assert.equal(cineCancels({ active: true, keys: 0, joy: 0, locked: false }), false);
     assert.equal(cineCancels({ active: true, keys: 1, joy: 1, locked: true }), false, 'entered before the city is built: movement is locked, the camera may go');
-    assert.match(fn, /if \(slot && cam && !drive && !walking && focusSlot\(slot, \{ hold: 3500, celebrate: false \}\)\) setTimeout\(\(\) => cheerAt\(slot\), 900\);/);
+    assert.match(fn, /if \(slot && cam && !drive && !walking && focusSlot\(slot, \{ hold: 3500, celebrate: false, free: true \}\)\) setTimeout\(\(\) => cheerAt\(slot\), 900\);/); // free: framed clear of the desktop HUD columns (test/review2-hud.test.mjs 11)
     assert.doesNotMatch(fn, /!low\b/, 'the phone tier gets the camera too: without it the card can hang out of sight');
     assert.match(fn, /return slot;/);
     assert.match(w, /import \{ WELCOME \} from '\.\/ftue\.js\?v=[0-9a-z]+';/);

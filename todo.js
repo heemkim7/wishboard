@@ -11,6 +11,7 @@ export const TODO = Object.freeze({
   nameMax: 12,     // the card's name, in code points (as the welcome card)
   keepDays: 14,    // stamps kept on the device
   cardMs: 8000,    // the card on a street screen (as the welcome card)
+  payWaitMs: 10000, // a finished row's notice waits this long at most for its pay (QUEST cheer, BONUS mission); then it says no points
 });
 export const TODO_TEXT = Object.freeze({
   title: '오늘 할 일',
@@ -86,16 +87,19 @@ export function allDue({ list = [], settled = false, day = '', allDay = '', sawO
   return !!day && settled && sawOpen && allDay !== day && todoProgress(list).all;
 }
 /** The card and the camera wait while something else has the screen: a lighting ceremony, a gift film being recorded, the lounge,
- *  a taxi ride, a bake round, the claim's proof bar, a sheet or a layer. 같이 춤추기 does not hold it. The notice and the stamp never wait. */
+ *  a taxi ride, a bake round, the claim's proof bar, a sheet or a layer, a board focus or the photo frame (focus), an auto-walk (walk),
+ *  the entry intro (intro), any scripted camera (cine: a focus link, a tour). 같이 춤추기 does not hold it. The notice and the stamp never wait. */
 export function momentHold(o = {}) {
-  return !!(o.cer || o.rec || o.lounge || o.driving || o.busy || o.baking || o.proof);
+  return !!(o.cer || o.rec || o.lounge || o.driving || o.busy || o.baking || o.proof || o.focus || o.walk || o.intro || o.cine);
 }
 
 // ---- words ------------------------------------------------------------------------------------------------------------------
-/** A finished row: '✓ 소원 한 줄 걸기 · +15 포인트 · 다음: 소원에 하트 1개' (no points for the team row; no 다음 when nothing is left). */
-export function itemNote(row, next) {
+/** A finished row: '✓ 소원 한 줄 걸기 · +15 포인트 · 다음: 소원에 하트 1개'. pts: the points that arrived for it (the pays' own amounts),
+ *  never the row's nominal value: a row finished with no pay (refused, paid on another device, offline, the team row) says none.
+ *  No 다음 when nothing is left. */
+export function itemNote(row, next, pts = 0) {
   if (!row) return '';
-  return `✓ ${row.name}` + (row.pts > 0 ? ` · +${row.pts} 포인트` : '') + (next ? ` · 다음: ${next.name}` : '');
+  return `✓ ${row.name}` + (int(pts) > 0 ? ` · +${int(pts)} 포인트` : '') + (next ? ` · 다음: ${next.name}` : '');
 }
 export function allNote(streak) { return `🎉 오늘 할 일을 다 했어요 · 출석 ${Math.max(1, int(streak))}일`; }
 /** The day's attendance pay (PAY attend): '출석 3일 · +15 포인트 · 다음: 전광판 응원 3번'. */
