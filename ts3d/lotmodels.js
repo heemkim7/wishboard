@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { LOT_MODEL_URL } from './loadplan.js?v=202611241127';
+import { LOT_MODEL_URL } from './loadplan.js?v=202611241625';
 
 /** The surfaces a lot is drawn with:
  *   matte   lit, the file's colours (walls, paving, wood, cloth, trim, dark glass)

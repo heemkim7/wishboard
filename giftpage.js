@@ -2,8 +2,8 @@
 // recipient page, the 롤링페이퍼). No three.js, no realtime room, no Supabase client: what the page needs from the Worker comes inline in
 // #gift-data (the Worker renders /g/<id>), the rest is a few small JSON calls. Text people wrote is only set with textContent.
 import { GIFT, GIFT_ID, OCCASIONS, OCC_KEYS, GIFT_THEMES, THEME_KEYS, TIERS, TIER_NOTE, TIER_ASK, won, giftFault, paperFault, startChoices, windowText, dayText, hourText, kstDay, addDays, dayStart, countdown, dDay, refOf, keptRef, cpLen, norm, windowFor, replyDraft, replyLabel, PLAZA_BTN, videoFirst } from './giftrules.js';
-import { paintGift, giftCardJpeg } from './giftart.js?v=202611241127';
-import { createFilm, FILM_MS, recordCanvas, canRecord, saveBlob, fileName } from './giftfilm.js?v=202611241127';
+import { paintGift, giftCardJpeg } from './giftart.js?v=202611241625';
+import { createFilm, FILM_MS, recordCanvas, canRecord, saveBlob, fileName } from './giftfilm.js?v=202611241625';
 
 const $app = document.getElementById('app');
 // Opened over the plaza (gift.js, ?in=1 in a frame): links into the plaza tell the plaza instead of loading a second one in the frame.
@@ -59,7 +59,7 @@ function sessionToken() {
 }
 async function human(site, action) {
   if (!site) return '';
-  try { const m = await import('./human.js?v=202611241127'); return await m.humanToken(site, { action }); } catch { return ''; }
+  try { const m = await import('./human.js?v=202611241625'); return await m.humanToken(site, { action }); } catch { return ''; }
 }
 let MINT = null;
 async function token(mint = false) {
