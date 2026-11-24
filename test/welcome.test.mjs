@@ -493,3 +493,51 @@ describe('the ceremony teaser card', () => {
     assert.deepEqual(upToFrame(a).filter((c) => c[0] === 'stop').slice(0, 2), upToFrame(g).filter((c) => c[0] === 'stop').slice(0, 2));
   });
 });
+
+// ---- 점등식: one pin from arrival past the lighting (ts3d/screens.js pinGift with cer) ------------------------------------------------
+describe('the ceremony pin: the teaser before the start, the gift card from it, on one screen', () => {
+  const cerGift = (start, o = {}) => ({ id: 'fffffff1', to: '민지', from: '지수', occ: 'bday', msg: '비밀 문구 🤫', th: '', scr: 'STREET_5', a: start, b: start + 6 * 36e5, n: 2, ...o });
+  const count = (list, s) => list.filter((w) => w === s).length;
+  it('crosses from the teaser to the card in the tick that passes the start, with no re-placement and nothing else in between', async () => {
+    const p = await plaza();
+    const start = Date.now() + 2500, cam = new p.THREE.Vector3(p.xOf('STREET_5'), 5, 20);
+    const w0 = p.words('STREET_5').length; // what the screen drew before the pin (its notice)
+    const slot = p.boards.pinGift(cerGift(start), 180000, { cer: start });
+    assert.equal(slot, 'STREET_5');
+    const w = () => p.words(slot).slice(w0), placed = p.boards.get(slot).gifts;
+    assert.ok(w().includes('곧 켜져요') && w().includes('To. 민지') && w().some((s) => /^🎂 \d\d:\d\d에 켜져요$/.test(s)), 'the teaser: ' + w().join(' | '));
+    assert.equal(w().some((s) => /비밀|지수/.test(s)), false, 'never the message or the sender before the start');
+    // /rt/world lists the same board (the localhost seam runs on a live one): the pin's teaser is still what this screen shows.
+    p.boards.setGifts([cerGift(start)]);
+    p.tick(cam);
+    assert.equal(w().some((s) => /비밀|지수/.test(s)), false, 'the list\'s copy does not replace the teaser');
+    assert.match(w().join(' | '), /점등식 {3}· {3}To\. 민지 {3}· {3}\d\d:\d\d에 켜져요/, 'the moving strip says it is a ceremony');
+    assert.doesNotMatch(w().join(' | '), /From\. 지수|선물 전광판 {3}·/);
+    const before = w().length;
+    await later(2600, () => p.tick(cam));
+    const after = w().slice(before);
+    assert.ok(after.includes('🎁 선물 전광판') && after.includes('To. 민지') && after.includes('비밀 문구 🤫'), 'the gift card: ' + after.join(' | '));
+    assert.equal(after.includes('곧 켜져요'), false);
+    assert.equal(p.boards.giftSlot('fffffff1'), slot, 'the same screen');
+    assert.equal(p.boards.get(slot).gifts, placed, 'not placed again');
+    assert.equal(w().some((s) => /메인거리|빈칸/.test(s)), false, 'no blank or notice paint at any point');
+    // The pin ends after the late window; /rt/world has the board on the same screen, so the card stays put.
+    await later(180000 + 1000, () => { p.boards.setGifts([cerGift(start)]); p.tick(cam); assert.equal(p.boards.giftSlot('fffffff1'), slot); assert.equal(p.boards.get(slot).giftKey, 'fffffff1'); });
+  });
+  it('repaints the time left at most once a second (0.64 s ticks over 3 s)', async () => {
+    const p = await plaza();
+    const start = Date.now() + 60000, cam = new p.THREE.Vector3(p.xOf('STREET_5'), 5, 20);
+    const slot = p.boards.pinGift(cerGift(start), 180000, { cer: start });
+    const base = count(p.words(slot), '곧 켜져요');
+    for (let i = 0; i <= 4; i++) await later(i * 640, () => p.tick(cam));
+    const extra = count(p.words(slot), '곧 켜져요') - base;
+    assert.ok(extra >= 2 && extra <= 3, String(extra));
+  });
+  it('a pin without cer is today\'s pin: the card at once, and the list\'s copy is what it shows', async () => {
+    const p = await plaza();
+    const start = Date.now() + 60000;
+    const slot = p.boards.pinGift(cerGift(start), 30000);
+    assert.ok(p.words(slot).includes('비밀 문구 🤫'));
+    assert.equal(p.words(slot).includes('곧 켜져요'), false);
+  });
+});
