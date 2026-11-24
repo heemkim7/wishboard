@@ -1582,7 +1582,8 @@ void main(){
     cineL0.copy(viewLook);
     cineTo.copy(cam);
     cineL1.copy(look);
-    cine = { t0: performance.now(), dur: glideMs(o.dur || 700, calm.matches), back: false, until: o.until || 0, pin: !!o.pin, fov: o.fov || 0 };
+    cine = { t0: performance.now(), dur: o.dur || 700, back: false, until: o.until || 0, pin: !!o.pin, fov: o.fov || 0 };
+    cine.dur = glideMs(cine.dur, calm.matches); // a cut for a player who asked for less motion
   }
   /**
    * The one way out of a scripted camera: movement, a tap, Escape, a timed hold running out, 시점 해제, the lounge

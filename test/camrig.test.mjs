@@ -325,10 +325,12 @@ describe('dragging the view, and less motion for those who ask for it', () => {
     const w = read('timesSquare3d.js');
     assert.match(w, /const calm = matchMedia\('\(prefers-reduced-motion: reduce\)'\);/);
     // every glide starts in startCine, the intro or the way back: a board focus, the lounge tour, the look at the balloon, the gift show
-    assert.match(w, /cine = \{ t0: performance\.now\(\), dur: glideMs\(o\.dur \|\| 700, calm\.matches\), back: false,/);
+    assert.match(w, /fov: o\.fov \|\| 0 \};\n\s+cine\.dur = glideMs\(cine\.dur, calm\.matches\);/);
     assert.match(w, /cine = \{ t0: performance\.now\(\), dur: glideMs\(2200, calm\.matches\), back: true, ease: 'inout', tell: true \};/);
     assert.equal(w.match(/dur: glideMs\(RETURN_MS, calm\.matches\), back: true/g).length, 2);
-    assert.equal(/\bcine = \{[^}]*dur: (?!glideMs)/.test(w), false, 'no scripted camera sets a duration past the rule');
+    // the four places a scripted camera gets its duration: startCine, the intro and the two ways back
+    assert.equal(w.match(/\n\s+cine = \{/g).length, 4);
+    assert.equal(w.match(/glideMs\(/g).length, 4);
   });
 });
 
