@@ -30,6 +30,7 @@ import { seesAvatar, prefetchDelay, prefetchIds } from './ts3d/loadplan.js?v=202
 import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, paintLabel, fontsReady, chars, hashStr, FRAME_FX } from './ts3d/art.js?v=202611230850';
 import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=202611230850';
 import { taxiExit, EXIT_SLOW, nextOfferDelay, fareWait } from './interact.js?v=202611230850';
+import { WELCOME } from './ftue.js?v=202611230850';
 import { RETURN_MS, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, portraitFov, fitDistance, reverseTime, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange, boardVantage, facesBlock } from './camrig.js?v=202611230850';
 
 export { paintBillboard, THEMES, LAYOUT, PLOT_SLOTS, groundHeight, EMOTES, AVATAR_COLORS, STARTER_COLORS, taxiTrainMult, applyTaxiHardHit };
@@ -1527,6 +1528,16 @@ void main(){
     opts.onFocus?.(true);
     return true;
   }
+  // ---- 환영 전광판 (main.js armFtue) ------------------------------------------------------------------------------------
+  // The newcomer's own name alone on the free street screen nearest to where they stand, for WELCOME.ms, on this device only (boards.pinWelcome:
+  // nothing is sent and nobody else sees it). The camera looks at that screen once, like focusSlot (a drag, a step or Escape ends it; it comes
+  // back by itself after 3.5 s), with one round of the cheer fireworks around the face. The avatar stays where it is. cam: false, the phone
+  // tier (low) and a taxi leave the camera alone: the card is up and that is all. -> the slot, or '' when no screen is free.
+  function welcome(name, { cam = true } = {}) {
+    const slot = boards.pinWelcome(name, WELCOME.ms, { x: pos.x, z: pos.z });
+    if (slot && cam && !low && !drive && focusSlot(slot, { hold: 3500, celebrate: false })) setTimeout(() => cheerAt(slot), 900);
+    return slot;
+  }
   // ---- 선물 전광판 15-second show (gift.js records it) ---------------------------------------------------------------
   // From high above the street the camera glides down toward the board, settles on a street-level view of it and holds while
   // fireworks go off around the face and a crew of local-only avatars (never sent to anyone) cheers in front. Input does not
@@ -2733,6 +2744,7 @@ void main(){
     // which screen shows a gift now; the 15-second show; a hook after every drawn frame (the recorder), -> its remover.
     setGifts(list) { boards.setGifts(list); },
     pinGift(g, ms) { return boards.pinGift(g, ms); },
+    welcome,
     giftSlot(id) { return boards.giftSlot(id); },
     giftShow,
     onFrame(fn) { afterRender.add(fn); return () => afterRender.delete(fn); },

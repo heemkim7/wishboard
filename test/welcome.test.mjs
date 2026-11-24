@@ -4,11 +4,21 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { register } from 'node:module';
 import { paintGift, paintWelcome } from '../giftart.js';
 import { WELCOME } from '../ftue.js';
 
 register(new URL('./nine-three-hook.mjs', import.meta.url)); // 'three' -> the vendored build, so ts3d/screens.js loads in Node
+const read = (f) => readFileSync(new URL('../' + f, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+// The text of a function from its first line to the line that closes it at the same indent.
+function body(src, head) {
+  const a = src.indexOf(head);
+  assert.ok(a >= 0, head);
+  const indent = head.match(/^\s*/)[0];
+  const b = src.indexOf('\n' + indent + '}', a);
+  return src.slice(a, b + indent.length + 2);
+}
 
 // A 2D context that records every call and every property it is given; text is measured at 10 px a character.
 function fakeCanvas(w = 1024, h = 576) {
@@ -221,5 +231,22 @@ describe('the welcome pin on the plaza screens', () => {
     assert.equal(ROW.some((id) => p.boards.get(id).giftKey === '!welcome'), false);
     assert.equal(p.boards.pinWelcome('민지', 8000, { x: 60, z: 12 }), '');
     assert.equal(p.boards.get(gs).giftKey, 'bbbbbbb1');
+  });
+});
+
+// ---- the world and the entry flow: source checks (they need WebGL and a page) -------------------------------------------------------------
+describe('the world shows the welcome (timesSquare3d.js)', () => {
+  const w = read('timesSquare3d.js');
+  it('pins near where the avatar stands and looks at it once; no camera on the phone tier, in a taxi or when told not to', () => {
+    const fn = body(w, '  function welcome(');
+    assert.match(fn, /const slot = boards\.pinWelcome\(name, WELCOME\.ms, \{ x: pos\.x, z: pos\.z \}\);/);
+    assert.match(fn, /if \(slot && cam && !low && !drive && focusSlot\(slot, \{ hold: 3500, celebrate: false \}\)\) setTimeout\(\(\) => cheerAt\(slot\), 900\);/);
+    assert.match(fn, /return slot;/);
+    assert.match(w, /import \{ WELCOME \} from '\.\/ftue\.js\?v=[0-9a-z]+';/);
+    assert.match(w, /\n    pinGift\(g, ms\) \{ return boards\.pinGift\(g, ms\); \},\n    welcome,\n/, 'in the world api, next to pinGift');
+  });
+  it('moves the camera only: the avatar is not teleported and nothing goes to the room', () => {
+    const fn = body(w, '  function welcome(');
+    assert.equal(/teleport|goToSlot|pos\.(set|copy|x =|z =)|me\.root\.position|net\b|\.send|raw\(/.test(fn), false);
   });
 });
