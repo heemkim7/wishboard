@@ -271,7 +271,7 @@ describe('the world shows the welcome (timesSquare3d.js)', () => {
     assert.doesNotMatch(fn, /!low\b/, 'the phone tier gets the camera too: without it the card can hang out of sight');
     assert.match(fn, /return slot;/);
     assert.match(w, /import \{ WELCOME \} from '\.\/ftue\.js\?v=[0-9a-z]+';/);
-    assert.match(w, /\n    pinGift\(g, ms\) \{ return boards\.pinGift\(g, ms\); \},\n    welcome,\n/, 'in the world api, next to pinGift');
+    assert.match(w, /\n    pinGift\(g, ms, o\) \{ return boards\.pinGift\(g, ms, o\); \},\n    welcome,\n/, 'in the world api, next to pinGift (o: the ceremony\'s { cer })');
   });
   it('moves the camera only: the avatar is not teleported and nothing goes to the room', () => {
     const fn = body(w, '  function welcome(');

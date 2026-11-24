@@ -645,8 +645,9 @@ describe('small rules', () => {
     assert.match(shot, /document\.body\.classList\.remove\('posing'\)/);
     const w = read('timesSquare3d.js');
     assert.match(w, /if \(document\.body\.classList\.contains\('posing'\)\) return;/);
-    const cap = w.slice(w.indexOf('capture() {'), w.indexOf("g.fillText('WISH BOARD"));
-    assert.ok(cap.indexOf('me.tag.visible = false;') < cap.indexOf('composer.render()'));
+    const cap = w.slice(w.indexOf("capture({ me: withMe = false, band = '' } = {}) {"), w.indexOf('g.fillText(words'));
+    assert.ok(cap.indexOf('me.tag.visible = !!withMe;') > 0 && cap.indexOf('me.tag.visible = !!withMe;') < cap.indexOf('composer.render()'), 'without { me: true } my tag is off for the render');
+    assert.match(cap, /const words = String\(band \|\| ''\) \|\| 'WISH BOARD · 모두의 전광판';/, 'the default band is today\'s');
     assert.match(cap, /finally \{ me\.tag\.visible = tagOn; \}/);
   });
   it('rings are quiet while their gap runs (no points: PLAY.ring), and a lost context is handled', () => {
@@ -955,8 +956,10 @@ describe('deep link and lounge wiring', () => {
     assert.match(arrive, /if \(GIFT\) \{\n\s+world\?\.giftPop\?\.\(FOCUS, true\);/);
     assert.match(arrive, /introDone\(\); \}, 700\);/);
     const w = read('timesSquare3d.js');
-    const go = w.slice(w.indexOf('goToSlot(slotId) {'), w.indexOf('cineOn:'));
-    assert.match(go, /api\.teleport\(pose\.front\.x, pose\.front\.z\);/);
+    const go = w.slice(w.indexOf('goToSlot(slotId, { spread } = {}) {'), w.indexOf('cineOn:'));
+    // The front point itself, unless a ceremony arrival asks for its spread spot (and that spot is inside the fence).
+    assert.match(go, /let tx = pose\.front\.x, tz = pose\.front\.z;\n      if \(spread != null && Number\.isFinite\(Number\(spread\)\)\) \{/);
+    assert.match(go, /if \(insideLoop\(sx, sz, 0\) && !approachOf\(sx, sz\)\) \{ tx = sx; tz = sz; break; \}\n        \}\n      \}\n      api\.teleport\(tx, tz\);/);
     assert.match(go, /insideLoop\(pose\.front\.x, pose\.front\.z, 0\)/);
   });
   it('the lounge tour chains board to board and refuses in a taxi', () => {

@@ -248,17 +248,19 @@ export function facesBlock(faces) {
 // at `share[1]` of the narrow width, the face centre in the upper half. The nearest distance that fits wins (the board as big as the
 // rule allows), never nearer than the crowd's back row plus `behind`.
 // With block (boardVantage's rule: the clear fraction of a segment), a pose whose view of the face or the crowd is cut by something
-// (a building, a lot, the arch, a post) is not taken: from that distance in, then a little higher, then with the lens opened up to
-// `widen` degrees, the first pose that sees all the sample points wins; when none does, the one that sees the most (`seen`).
-export const CER_SHOT = { share: [0.6, 0.9], up: [0.3, 0.42], fit: 0.95, behind: 5, near: 1.5, step: 0.5, reach: 60, rise: [2.2, 0.12], lift: [0, 2.5, 5], widen: 14 };
+// (a building, a lot, the arch, a post, a lamp) is not taken: from that distance in, low then a little higher, with the lens opened
+// up to `widen` degrees, first on the normal and then turned along the street (`yaws`), the first spot that sees all the sample points
+// wins; when none does, the one that sees the most (`seen`).
+export const CER_SHOT = { share: [0.6, 0.9], up: [0.3, 0.42], fit: 0.95, behind: 5, near: 1.5, step: 0.5, reach: 60, rise: [2.2, 0.12], lift: [0, 2.5, 5], widen: 20, yaws: [0, 15, -15, 30, -30, 45, -45], far: 12, sure: 20 };
 /**
  * pos: the face centre {x, y, z}; normal: its unit normal {x, z}; w, h: the face (m); front: the crowd's centre {x, z}; aspect: the
  * view's width / height; fov: the frame's base vertical fov (deg; an upright frame opens it as portraitFov does); ground: the floor
- * height under the crowd; block(ax, ay, az, bx, by, bz) -> the clear fraction of that segment (optional).
- * -> { cam: {x, y, z}, look: {x, y, z}, fov, dist, seen } (dist: from the face along the normal; seen: the share of the sample points
- * with nothing in the way, 1 without block).
+ * height under the crowd; block(ax, ay, az, bx, by, bz) -> the clear fraction of that segment (optional; a cheap test); sure: the same
+ * for a costly, exact test (the world's rays against its meshes), asked only for spots the cheap one finds clear, at most CER_SHOT.sure
+ * of them. -> { cam: {x, y, z}, look: {x, y, z}, fov, dist, seen } (dist: from the face; seen: the share of the sample points with
+ * nothing in the way, 1 without block).
  */
-export function cerShotPose({ pos, normal, w = 0, h = 0, front, aspect = 1, fov = 55, ground = 0, block = null } = {}) {
+export function cerShotPose({ pos, normal, w = 0, h = 0, front, aspect = 1, fov = 55, ground = 0, block = null, sure = null } = {}) {
   const S = CER_SHOT, px = num(pos?.x), py = num(pos?.y), pz = num(pos?.z), gy = num(ground);
   let nx = num(normal?.x), nz = num(normal?.z, 1); const nl = Math.hypot(nx, nz) || 1; nx /= nl; nz /= nl;
   const rx = nz, rz = -nx; // the face's right as the camera sees it
@@ -271,17 +273,18 @@ export function cerShotPose({ pos, normal, w = 0, h = 0, front, aspect = 1, fov 
   for (const u of [-4, 4]) for (const d of [0, 3]) for (const y of [gy, gy + 1.9]) pts.push([fx + rx * u + nx * d, y, fz + rz * u + nz * d]);
   const v0 = portraitFov(a, clamp(num(fov, 55), 10, 120)), share = S.share[0] + (S.share[1] - S.share[0]) * k, upAim = S.up[0] + (S.up[1] - S.up[0]) * k;
   // One distance, height and lens: the pitch (rad) that keeps every point inside and puts the face centre nearest upAim, or null.
-  const pitch = (D, cy, vf) => {
-    const tv = Math.tan((vf * Math.PI) / 360), th = tv * a, cx = px + nx * D, cz = pz + nz * D;
+  // dx, dz: the way from the face to the camera (the normal, or the normal turned for a blocked view).
+  const pitch = (D, cy, vf, dx = nx, dz = nz) => {
+    const tv = Math.tan((vf * Math.PI) / 360), th = tv * a, cx = px + dx * D, cz = pz + dz * D, qx = dz, qz = -dx;
     let best = null, gap = Infinity;
     for (let deg = -40; deg <= 40; deg += 0.25) {
       const t = (deg * Math.PI) / 180, c = Math.cos(t), s = Math.sin(t);
-      // forward (-n tilted by t), up (perpendicular to it in the normal's vertical plane)
-      const f0 = -nx * c, f1 = s, f2 = -nz * c, u0 = nx * s, u1 = c, u2 = nz * s;
+      // forward (toward the face, tilted by t), up (perpendicular to it in that vertical plane), right (q)
+      const f0 = -dx * c, f1 = s, f2 = -dz * c, u0 = dx * s, u1 = c, u2 = dz * s;
       let ok = true;
       for (const [x, y, z] of pts) {
         const vx = x - cx, vy = y - cy, vz = z - cz, zz = vx * f0 + vy * f1 + vz * f2;
-        if (!(zz > 0.1) || Math.abs((vx * rx + vz * rz) / (zz * th)) > S.fit || Math.abs((vx * u0 + vy * u1 + vz * u2) / (zz * tv)) > S.fit) { ok = false; break; }
+        if (!(zz > 0.1) || Math.abs((vx * qx + vz * qz) / (zz * th)) > S.fit || Math.abs((vx * u0 + vy * u1 + vz * u2) / (zz * tv)) > S.fit) { ok = false; break; }
       }
       if (!ok) continue;
       const vx = px - cx, vy = py - cy, vz = pz - cz, zz = vx * f0 + vy * f1 + vz * f2, e = Math.abs((vx * u0 + vy * u1 + vz * u2) / (zz * tv) - upAim);
@@ -290,9 +293,9 @@ export function cerShotPose({ pos, normal, w = 0, h = 0, front, aspect = 1, fov 
     return best;
   };
   const height = (D, lift) => gy + S.rise[0] + S.rise[1] * D + lift;
-  const pose = (D, lift, vf, t) => {
-    const cy = height(D, lift), cx = px + nx * D, cz = pz + nz * D, c = Math.cos(t);
-    return { cam: { x: cx, y: cy, z: cz }, look: { x: cx - nx * c * D, y: cy + Math.sin(t) * D, z: cz - nz * c * D }, fov: vf, dist: D };
+  const pose = (D, lift, vf, t, dx = nx, dz = nz) => {
+    const cy = height(D, lift), cx = px + dx * D, cz = pz + dz * D, c = Math.cos(t);
+    return { cam: { x: cx, y: cy, z: cz }, look: { x: cx - dx * c * D, y: cy + Math.sin(t) * D, z: cz - dz * c * D }, fov: vf, dist: D };
   };
   // The free pose: from the crowd's back row plus `behind` (or the share's distance, if farther) out until it fits.
   const tv0 = Math.tan((v0 * Math.PI) / 360);
@@ -306,18 +309,30 @@ export function cerShotPose({ pos, normal, w = 0, h = 0, front, aspect = 1, fov 
   const look = [];
   for (const [u, v] of [[0, 0], [-0.42, -0.42], [0.42, -0.42], [-0.42, 0.42], [0.42, 0.42]]) look.push([px + rx * u * W + nx * 0.6, py + v * H, pz + rz * u * W + nz * 0.6]);
   for (const u of [-3, 0, 3]) look.push([fx + rx * u + nx * 1.5, gy + 1.5, fz + rz * u + nz * 1.5]);
-  const seenFrom = (c) => { let n = 0; for (const [x, y, z] of look) if (!(num(block(c.x, c.y, c.z, x, y, z), 1) < 0.999)) n++; return n / look.length; };
-  let best = { ...free, seen: seenFrom(free.cam) };
-  if (best.seen === 1) return best;
+  const seenShare = (fn, cx, cy, cz) => { let n = 0; for (const [x, y, z] of look) if (!(num(fn(cx, cy, cz, x, y, z), 1) < 0.999)) n++; return n / look.length; };
+  let tried = 0;
+  // The exact test, for a spot the cheap one found clear and a lens fits: -> the share it sees, or -1 once its budget is spent.
+  const exact = (c) => { if (typeof sure !== 'function') return 1; if (tried >= S.sure) return -1; tried++; return seenShare(sure, c.x, c.y, c.z); };
+  let best = { ...free, seen: seenShare(block, free.cam.x, free.cam.y, free.cam.z) };
+  if (best.seen === 1) { const e = exact(best.cam); if (e === 1) return best; best.seen = Math.max(0, e); }
+  // The line of sight depends only on where the camera stands: the cheap test first, then whether a lens fits there, then the exact
+  // test. On the normal first, from the free pose's distance in, low before high; then turned along the street (a corner or a
+  // narrow street can leave no clear spot on the normal itself), where the camera may stand up to `far` m farther out.
   const floor = fd + 3 + S.near;
-  for (let D = free.dist; D >= floor - 1e-9; D -= 1) {
-    for (const lift of S.lift) {
-      let p = null;
-      for (let vf = free.fov; vf <= v0 + S.widen && !p; vf++) { const t = pitch(D, height(D, lift), vf); if (t != null) p = pose(D, lift, vf, t); }
-      if (!p) continue;
-      const seen = seenFrom(p.cam);
-      if (seen === 1) return { ...p, seen };
-      if (seen > best.seen) best = { ...p, seen };
+  for (const deg of S.yaws) {
+    const r = (deg * Math.PI) / 180, dx = nx * Math.cos(r) - nz * Math.sin(r), dz = nx * Math.sin(r) + nz * Math.cos(r);
+    for (let D = free.dist + (deg ? S.far : 0); D >= floor - 1e-9; D -= 1) {
+      for (const lift of S.lift) {
+        const cheap = seenShare(block, px + dx * D, height(D, lift), pz + dz * D);
+        if (!(cheap > best.seen) && cheap < 1) continue;
+        let p = null;
+        for (let vf = v0; vf <= v0 + S.widen && !p; vf++) { const t = pitch(D, height(D, lift), vf, dx, dz); if (t != null) p = pose(D, lift, vf, t, dx, dz); }
+        if (!p) continue;
+        const seen = cheap === 1 ? exact(p.cam) : cheap;
+        if (seen < 0) return best;
+        if (seen === 1) return { ...p, seen };
+        if (seen > best.seen) best = { ...p, seen };
+      }
     }
   }
   return best;

@@ -32,7 +32,7 @@ import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, 
 import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=202611241625';
 import { taxiExit, EXIT_SLOW, nextOfferDelay, fareWait, isTouchUI, AUTO_WALK, gridPath, walkSteer, walkStall, walkPace, autoWalkEnds } from './interact.js?v=202611241625';
 import { WELCOME } from './ftue.js?v=202611241625';
-import { RETURN_MS, glideMs, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, chaseYawRate, CHASE, stickFrame, dragSpeed, viewDragged, portraitFov, fitDistance, BALLOON_LOOK, balloonLook, reverseTime, driveView, driveWiden, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange, boardVantage, facesBlock } from './camrig.js?v=202611241625';
+import { RETURN_MS, glideMs, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, chaseYawRate, CHASE, stickFrame, dragSpeed, viewDragged, portraitFov, fitDistance, BALLOON_LOOK, balloonLook, reverseTime, driveView, driveWiden, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange, boardVantage, facesBlock, cerShotPose, cerSpread } from './camrig.js?v=202611241625';
 
 export { paintBillboard, THEMES, LAYOUT, PLOT_SLOTS, groundHeight, EMOTES, AVATAR_COLORS, STARTER_COLORS, taxiTrainMult, applyTaxiHardHit };
 export const PLAZA = LAYOUT;
@@ -1733,6 +1733,93 @@ void main(){
     at(ms, () => { stop(); o.onDone?.(); });
     return { stop };
   }
+  // ---- 점등식: the group photo's pose (gift.js) ---------------------------------------------------------------------------
+  // camrig.js cerShotPose: on the board's normal behind the crowd, above eye level. What may stand in the way: a cheap test first
+  // (nyc's walls and the other boards' faces), then for the spots it finds clear an exact one, rays against what this frame draws
+  // within CER_NEAR m of the board (the building tiles, the lots, the arch and its name plate, number posts, taxi-stand signs, lamps,
+  // trees, signal poles, blade signs, the other boards' frames). Left out: the avatars (they are the crowd), the board's own screen,
+  // glows and beams, and the moving cars and walkers. A blocked ideal pose steps nearer, higher, wider or turned (cerShotPose); the one
+  // that sees the most is taken when none is clear. gift.js asks for it once when the ceremony starts (cerPrep, kept per board and frame
+  // shape) so the photo's move at +6.5 s does not wait for the rays.
+  // The pose: a pinned scripted camera (input does not end it; a cut with reduced motion: no `film`) that ends itself after CER_HOLD
+  // ms if gift.js never calls cerEnd. My avatar turns to face it (a local turn like goToSlot's: it goes out in the ordinary position packet).
+  const CER_NEAR = 110, CER_HOLD = 9000;
+  function cerTests(slotId, p) {
+    const others = [];
+    for (const b of boards.boards.values()) {
+      if (b.slotId === slotId || !b.mounts.length) continue;
+      const o = boards.face(b.slotId);
+      if (o && o.pos.distanceToSquared(p) < 6400) others.push(o);
+    }
+    const hitFace = facesBlock(others);
+    if (nyc) nyc.ensureSolid(p.x, p.z, 90);
+    const block = (ax, ay, az, bx, by, bz) => Math.min(nyc ? nyc.rayBlock(ax, ay, az, bx, by, bz) : 1, hitFace(ax, ay, az, bx, by, bz));
+    scene.updateMatrixWorld();
+    const own = new Set();
+    for (const m of boards.get(slotId)?.mounts || []) m.screen?.traverse?.((o) => own.add(o));
+    me.root.traverse((o) => own.add(o));
+    const list = [], c = new THREE.Vector3();
+    scene.traverseVisible((o) => {
+      if (!o.isMesh || o.isSkinnedMesh || own.has(o) || (o.isInstancedMesh && o.parent === scene) || !(o.layers.mask & camera.layers.mask)) return;
+      const m = Array.isArray(o.material) ? o.material[0] : o.material;
+      if (!m || m.blending === THREE.AdditiveBlending || m.depthWrite === false || (m.transparent && m.opacity < 0.9)) return;
+      // An instanced mesh's own sphere holds all of its instances (the lamps of a tile); a plain mesh's is its geometry's.
+      let s = null;
+      if (o.isInstancedMesh) { if (!o.boundingSphere) o.computeBoundingSphere(); s = o.boundingSphere; } else { if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere(); s = o.geometry.boundingSphere; }
+      if (!s) return;
+      c.copy(s.center).applyMatrix4(o.matrixWorld);
+      if (c.distanceTo(p) > CER_NEAR + s.radius * o.matrixWorld.getMaxScaleOnAxis()) return;
+      list.push(o);
+    });
+    const ray = new THREE.Raycaster(), a = new THREE.Vector3(), d = new THREE.Vector3(), hits = [];
+    ray.layers.mask = camera.layers.mask;
+    ray.camera = camera;
+    const sure = (ax, ay, az, bx, by, bz) => {
+      a.set(ax, ay, az); d.set(bx - ax, by - ay, bz - az);
+      const len = d.length();
+      if (!(len > 1e-3)) return 1;
+      ray.set(a, d.multiplyScalar(1 / len)); ray.near = 0; ray.far = len;
+      hits.length = 0;
+      ray.intersectObjects(list, false, hits);
+      return Math.min(block(ax, ay, az, bx, by, bz), hits.length ? hits[0].distance / len : 1);
+    };
+    return { block, sure };
+  }
+  let cerKept = null; // { key, shot }: the last pose worked out (cerPrep), for this board and this frame shape
+  function cerShot(slotId) {
+    const p = boards.worldPos(slotId), face = boards.face(slotId);
+    if (!p || !face) return null;
+    const key = slotId + ':' + camera.aspect.toFixed(3) + ':' + p.x.toFixed(1) + ',' + p.z.toFixed(1);
+    if (cerKept?.key === key) return cerKept.shot;
+    let nx = face.normal.x, nz = face.normal.z; const nl = Math.hypot(nx, nz) || 1; nx /= nl; nz /= nl;
+    const front = { x: p.x + nx * 9, z: p.z + nz * 9 };
+    const { block, sure } = cerTests(slotId, p);
+    const pose = cerShotPose({ pos: { x: p.x, y: p.y, z: p.z }, normal: { x: nx, z: nz }, w: face.w, h: face.h, front, aspect: camera.aspect, fov: baseFov, ground: groundHeight(front.x, front.z), block, sure });
+    const shot = { ...pose, face: { x: p.x, y: p.y, z: p.z, nx, nz, w: face.w, h: face.h }, front };
+    cerKept = { key, shot };
+    return shot;
+  }
+  /** Works the photo pose out ahead of time (nothing moves). -> the pose, or null when the board is not on the map. */
+  function cerPrep(slotId) { return cerShot(slotId); }
+  function cerPose(slotId) {
+    if (drive) return false;
+    const pose = cerShot(slotId);
+    if (!pose) return false;
+    endAutoWalk();
+    if (hidMe) { hidMe = false; me.root.visible = true; }
+    startCine(new THREE.Vector3(pose.cam.x, pose.cam.y, pose.cam.z), new THREE.Vector3(pose.look.x, pose.look.y, pose.look.z), { dur: 900, pin: true, fov: pose.fov, until: performance.now() + CER_HOLD });
+    cine.cer = true;
+    // Face the camera: a local turn (no move), unless the player is walking.
+    if (!walkingNow()) {
+      const dx = pose.cam.x - pos.x, dz = pose.cam.z - pos.z;
+      if (dx * dx + dz * dz > 1) { yaw = Math.atan2(dx, dz); me.holder.rotation.y = yaw; }
+    }
+    opts.onFocus?.(true);
+    return pose; // truthy: the pose that is up ({ cam, look, fov, dist, seen, face, front })
+  }
+  /** Ends the photo pose (and nothing else: another scripted camera that took over is left alone). */
+  function cerEnd() { if (cine?.cer && !cine.back) endCine(); }
+  const walkingNow = () => cineCancels({ active: true, keys: keys.size, joy: Math.hypot(joy.x, joy.y), locked: !inputEnabled });
   // The prime screens, each seen the way the photo frame sees it: level with the face and straight on (framePose), in
   // either orientation. A screen whose straight view is blocked (a corner screen the vantage can only see turned up to
   // 72° along the street) is skipped, so the tour never shows a board from the side or from far below; only when no
@@ -2832,11 +2919,23 @@ void main(){
     },
     // Deep links and QR codes: put the avatar at the board's front point (the same local teleport the map uses; the
     // position still comes only from this client) facing the board. Returns the point, or null when the board is not
-    // on the map or its front is outside the fence.
-    goToSlot(slotId) {
+    // on the map or its front is outside the fence. spread (점등식, gift.js: one seed per tab): that far to the side and out
+    // (camrig.js cerSpread), so friends who came by the same link do not stand inside each other; the front point when that spot is
+    // outside the fence.
+    goToSlot(slotId, { spread } = {}) {
       const pose = slotPose(slotId, 18);
       if (!pose || !insideLoop(pose.front.x, pose.front.z, 0)) return null;
-      api.teleport(pose.front.x, pose.front.z);
+      let tx = pose.front.x, tz = pose.front.z;
+      if (spread != null && Number.isFinite(Number(spread))) {
+        const s = cerSpread(Number(spread)), nx = (pose.front.x - pose.look.x) / 9, nz = (pose.front.z - pose.look.z) / 9;
+        // The spot, else its mirror across the normal: one the teleport would not pull onto a named place (the arch's entry, a taxi
+        // stand: approachOf) and inside the fence.
+        for (const u of [s.u, -s.u]) {
+          const sx = tx + nz * u + nx * s.n, sz = tz - nx * u + nz * s.n;
+          if (insideLoop(sx, sz, 0) && !approachOf(sx, sz)) { tx = sx; tz = sz; break; }
+        }
+      }
+      api.teleport(tx, tz);
       const dx = pose.look.x - pos.x, dz = pose.look.z - pos.z;
       if (dx * dx + dz * dz > 1) {
         yaw = Math.atan2(dx, dz);
@@ -2858,10 +2957,13 @@ void main(){
     isDriving: () => !!drive,
     exitTaxi,
     startStars, removeStar, clearStars,
-    capture() {
-      // The picture is taken without my own name tag (the frame loop decides its visibility again on the next frame).
+    // The picture, as a JPEG blob (1280 px wide at most) with a band across the bottom. Default: without my own name tag and the band
+    // 'WISH BOARD · 모두의 전광판' (ui.js openShot). The ceremony's group photo (gift.js): { me: true } keeps my tag in it (forced on for
+    // this one render: a scripted camera hides it every frame), band: its own words, made smaller until they fit the width.
+    capture({ me: withMe = false, band = '' } = {}) {
+      // The frame loop decides the tag's visibility again on the next frame.
       const tagOn = me.tag.visible;
-      me.tag.visible = false;
+      me.tag.visible = !!withMe;
       try { composer.render(); } finally { me.tag.visible = tagOn; }
       const maxW = 1280;
       const scale = Math.min(1, maxW / Math.max(1, canvas.width));
@@ -2875,8 +2977,11 @@ void main(){
       g.fillRect(0, out.height - bar, out.width, bar);
       g.textBaseline = 'middle';
       g.fillStyle = '#ffe7a8';
-      g.font = `800 ${Math.max(15, Math.round(bar * 0.4))}px sans-serif`;
-      g.fillText('WISH BOARD · 모두의 전광판', 16, out.height - bar * 0.62);
+      const words = String(band || '') || 'WISH BOARD · 모두의 전광판';
+      let size = Math.max(15, Math.round(bar * 0.4));
+      g.font = `800 ${size}px sans-serif`;
+      if (band) while (size > 12 && g.measureText(words).width > out.width - 32) { size -= 1; g.font = `800 ${size}px sans-serif`; }
+      g.fillText(words, 16, out.height - bar * 0.62);
       const raw = out.toDataURL('image/jpeg', 0.9).split(',')[1] || '';
       const bin = atob(raw);
       const bytes = new Uint8Array(bin.length);
@@ -2897,8 +3002,11 @@ void main(){
     // 선물 전광판 (gift.js): /rt/world's live gifts on the street and lot screens; show one alone on a screen for ms (-> its slot);
     // which screen shows a gift now; the 15-second show; a hook after every drawn frame (the recorder), -> its remover.
     setGifts(list) { boards.setGifts(list); },
-    pinGift(g, ms) { return boards.pinGift(g, ms); },
+    pinGift(g, ms, o) { return boards.pinGift(g, ms, o); },
     welcome,
+    // 점등식 (gift.js): the group photo's pinned pose (-> false while driving or when the board is not on the map), its end, and
+    // whether the player is walking right now (keys or the stick: a scripted camera would end at once).
+    cerPrep, cerPose, cerEnd, walking: () => walkingNow(),
     giftSlot(id) { return boards.giftSlot(id); },
     giftShow,
     onFrame(fn) { afterRender.add(fn); return () => afterRender.delete(fn); },
