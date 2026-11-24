@@ -519,7 +519,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html.touch .reacts button::after { inset: -2px; }
   html.touch .wallet .chip::after, html.touch .wallet .protect::after, html.touch .nextgoal:not(.task)::after { inset: -6px 0 -3px; }
   html.touch .wallet .sub-fixed .chip::after { inset: -5px 0 -3px; } /* up to the amount line above (a button of its own), not over it */
-  html.touch .linkbtn::after { inset: -15px -8px; }
+  html.touch .linkbtn::after { inset: -10px -8px; } /* a text link is a 24px row (below): 44px with this */
   /* Scrolling rows clip what leaves them: the row grows by the same amount it pulls back, so the hit area stays inside it. */
   html.touch .quick { padding-top: 6px; margin-top: -6px; }
   html.touch .sheet .more .emo-row { padding: 7px 0; margin: -7px 0; }
@@ -1480,7 +1480,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html div.sheet:not(#view):focus-visible { box-shadow: var(--shadow-sheet) !important; }
   /* Thumb-sized on touch: a fold's summary line, the shop row in the profile sheet, the two wish tabs, a tappable notice. */
   .sheet .more summary { padding: 4px 0; }
-  .linkbtn, .legend .osm { display: inline-flex; align-items: center; min-height: 24px; }
+  .linkbtn, .legend .osm { display: inline-flex; align-items: center; justify-content: center; min-height: 24px; }
   html.touch .sheet .more summary { padding: 13px 0; }
   html.touch .toasts > .sponsor .chips button { min-height: 44px; padding: 7px 14px; font-size: 13px; }
   html.touch .swatches input[type=color] { width: 44px; height: 44px; }
