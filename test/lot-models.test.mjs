@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { describe, it, before } from 'node:test';
 import { register } from 'node:module';
 import * as THREE from '../vendor/three/build/three.module.js';
-import { LAYOUT, LOT, PLOT_SLOTS, lotRect, streetPosts, groundHeight } from '../ts3d/layout.js';
+import { LAYOUT, LOT, PLOT_SLOTS, lotRect, lotBoxes, lotFacing, streetSlots, streetPosts, groundHeight } from '../ts3d/layout.js';
 import { boardVantage, facesBlock, portraitFov, frameDistance } from '../camrig.js';
 import { LOT_MODEL_URL, LOTS_R, MODEL_URL, nearLots } from '../ts3d/loadplan.js';
 import { loadBudget } from '../tools/load-budget.mjs';
@@ -17,7 +17,7 @@ register(new URL('./nine-three-hook.mjs', import.meta.url)); // 'three' -> the v
 
 const read = (p) => readFileSync(new URL('../' + p, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const onDisk = (url) => new URL('..' + url, import.meta.url);
-const S = LAYOUT.street, SC = LOT.scale;
+const S = LAYOUT.street, SC = LOT.scale, DEG = Math.PI / 180;
 const LEVELS = [0, 1, 2, 3, 4];
 const NAMES = ['lot0_empty', 'lot1_tent', 'lot2_pocha', 'lot3_shop', 'lot4_tower'];
 const close = (a, b, eps = 1e-3) => Math.abs(a - b) <= eps;
@@ -278,13 +278,25 @@ describe('a lot model as the game draws it (ts3d/lotmodels.js)', () => {
       if (Math.abs(x) > 1.9) assert.ok(Math.abs(Math.abs(x) - 2.57) <= 0.12 && z <= LOT.d / 2 + 0.07, `x ${x} z ${z}`);
       assert.ok(z <= LOT.reach, `z ${z}`);
     }
-    // in the world the marquee ends 12.94 m from the centre line: outside the street's clear width, and clear of the lot's
-    // number post (4.4 m along the street from the lot's centre) and of the spot before the lot (5.4 forward of it)
-    const edge = S.lotX - LOT.reach * SC;
-    near(edge, 12.941);
-    assert.ok(edge > S.half + 0.9);
-    for (const p of streetPosts().filter((q) => q.lot)) assert.ok(Math.abs(p.z - PLOT_SLOTS[p.lot - 1].z) - p.r > 1.9 * SC + 2);
+    // In the world, turned with its lot, the marquee's nearer corner is 10.60 m from the centre line: outside the street's
+    // clear width. The lot's number post stands 2.3 m to its side (4.4 m from the lot's centre line, in the lot's own
+    // frame), and the spot before the lot is 5.4 forward of its centre, 0.9 past the marquee.
+    for (const s of PLOT_SLOTS) {
+      const edge = Math.min(...[-1.9, 1.9].map((x) => Math.abs(s.x + (x * Math.cos(s.rot) + LOT.reach * Math.sin(s.rot)) * SC - S.x)));
+      near(edge, S.lotX - (LOT.reach * Math.cos(S.turn) + 1.9 * Math.sin(S.turn)) * SC, 'lot ' + s.id);
+      near(edge, 10.601, 'lot ' + s.id);
+      assert.ok(edge > S.half + 0.9);
+    }
+    for (const p of streetPosts().filter((q) => q.lot)) {
+      const s = PLOT_SLOTS[p.lot - 1], across = (p.x - s.x) * Math.cos(s.rot) - (p.z - s.z) * Math.sin(s.rot); // the post in the lot's own x, metres
+      assert.ok(Math.abs(across) - 0.36 > 1.9 * SC + 2, 'lot ' + s.id);
+    }
     assert.ok(5.4 > LOT.reach + 0.8);
+    // And all of a tower that is wider than its pad (the board, its rim, the outriggers that carry it) lies between z 0.9
+    // and 3.75 of the lot's frame, 8.6 m up or more: test/plot-street.test.mjs keeps two towers' "wings" apart with these.
+    const wings = points(4).filter(([x]) => Math.abs(x) > LOT.w / 2 + 1e-3);
+    assert.ok(wings.length > 100);
+    for (const [x, y, z] of wings) assert.ok(z >= 0.9 && z <= 3.75 && y >= 8.6 && Math.abs(x) <= LOT.wide / 2, `${x},${y},${z}`);
   });
   it('the colliders hold what stands in a walker\'s way', () => {
     // Of each model's surface between 0.6 and 1.7 m (a walker's body; the pad, kerbs, steps and low stools are under it),
@@ -449,16 +461,16 @@ describe('the street with the models in (ts3d/landmarks.js with the real three a
 
   const DRAWS = [3, 4, 4, 3, 3];
   for (const level of LEVELS) {
-    it(`level ${level} on both sides: the model on its pad, its pick data, its board and sign on their mounts, its collider inside the pad`, () => {
+    it(`level ${level} on both sides: the model on its pad, its pick data, its board and sign on their mounts, its collider boxes about its footprint`, () => {
       all(level);
       const prep = W.marks.lots.get(level);
       const ray = new THREE.Raycaster();
       const lotsColliders = W.colliders.filter((c) => c.plot);
-      assert.equal(lotsColliders.length, level ? 18 : 0);
-      assert.equal(W.blockers.filter((b) => b.plot).length, LOT.tall[level] ? 18 : 0);
+      assert.equal(lotsColliders.length, level ? 18 * LOT.steps : 0);
+      assert.equal(W.blockers.filter((b) => b.plot).length, LOT.tall[level] ? 18 * LOT.steps : 0);
       for (const s of PLOT_SLOTS) {
         const rec = W.marks.plots.get(s.id), tag = `lot ${s.id}@${level}`;
-        const toStreet = Math.sign(S.x - s.x);
+        const toStreet = Math.sign(S.x - s.x), way = lotFacing(s);
         assert.ok(isModel(rec), tag);
         assert.equal(rec.body.length, DRAWS[level], tag);
         // drawn from the shared geometry, turned and scaled by the lot's group alone
@@ -482,24 +494,39 @@ describe('the street with the models in (ts3d/landmarks.js with the real three a
           assert.ok(accent.material.vertexColors && accent.material.isMeshStandardMaterial, tag);
           assert.notEqual(accent.material, W.marks.plots.get(s.id <= 2 ? s.id + 2 : s.id - 2).body.find((m) => m.name === 'accent').material, tag);
         }
-        // in the world: the front toward the street, nothing in the clear walking width, nothing off the lot
-        const box = new THREE.Box3();
-        for (const m of rec.body) box.union(new THREE.Box3().copy(m.geometry.boundingBox).applyMatrix4(m.matrixWorld));
-        const front = toStreet > 0 ? box.max.x - s.x : s.x - box.min.x, back = toStreet > 0 ? s.x - box.min.x : box.max.x - s.x;
-        near(back, (LOT.d / 2) * SC, tag);
-        if (level === 4) near(front, LOT.reach * SC, tag, 0.01); else near(front, (LOT.d / 2) * SC, tag);
-        assert.ok(Math.min(Math.abs(box.min.x - S.x), Math.abs(box.max.x - S.x)) > S.half + 0.9, tag);
-        assert.ok(box.max.z - s.z <= (LOT.wide / 2) * SC + 1e-6 && s.z - box.min.z <= (LOT.wide / 2) * SC + 1e-6, tag);
-        // a tap from the street: the ray to the pad's front kerb, as the game picks (the nearest pickable thing)
-        const eye = new THREE.Vector3(S.x, 1.9, s.z + 1.5), kerb = rec.group.localToWorld(new THREE.Vector3(0.6, 0.13, LOT.d / 2 - 0.08));
+        // In the world, vertex by vertex: the model reaches forward the way the lot faces (to its pad's front edge, a
+        // tower to its marquee) and back to its pad's back edge, no wider than the widest level, and nothing of it is in
+        // the street's clear width.
+        let front = -Infinity, back = Infinity, wide = 0, top = 0, toCentre = Infinity;
+        const v = new THREE.Vector3();
+        for (const m of rec.body) {
+          const p = m.geometry.attributes.position;
+          for (let i = 0; i < p.count; i++) {
+            v.fromBufferAttribute(p, i).applyMatrix4(m.matrixWorld);
+            const dx = v.x - s.x, dz = v.z - s.z, along = dx * way.x + dz * way.z;
+            front = Math.max(front, along); back = Math.min(back, along);
+            wide = Math.max(wide, Math.abs(dx * way.z - dz * way.x));
+            top = Math.max(top, v.y);
+            toCentre = Math.min(toCentre, Math.abs(v.x - S.x));
+          }
+        }
+        near(back, -(LOT.d / 2) * SC, tag, 1e-4);
+        if (level === 4) near(front, LOT.reach * SC, tag, 0.01); else near(front, (LOT.d / 2) * SC, tag, 1e-4);
+        assert.ok(wide <= (LOT.wide / 2) * SC + 1e-6, tag);
+        assert.ok(toCentre > S.half + 0.3, `${tag} ${toCentre}`);
+        // a tap from the spot before the lot: the ray to the pad's front kerb, as the game picks (the nearest pickable thing)
+        const spot = W.marks.plotFront(s.id);
+        const eye = new THREE.Vector3(spot.x, 1.9, spot.z), kerb = rec.group.localToWorld(new THREE.Vector3(0.6, 0.13, LOT.d / 2 - 0.08));
         ray.set(eye, kerb.clone().sub(eye).normalize());
         const hit = ray.intersectObjects(W.pick, false).find((h) => h.object.userData.pick);
         assert.ok(hit, tag);
         assert.deepEqual(hit.object.userData.pick, { kind: 'plot', plotId: s.id }, tag);
         assert.ok(bodyMeshes(rec).includes(hit.object), tag);
-        // the board: toward the street, where LOT.faces says, and the model's mount plate 0.24 m behind the screen
+        // the board: turned with the lot (toward the street and, by the street's turn, toward the entrance), where
+        // LOT.faces says, and the model's mount plate 0.24 m behind the screen
         const f = W.boards.face('PLOT_' + s.id), spec = LOT.faces[level];
-        near(f.normal.x, toStreet, tag); near(f.normal.z, 0, tag);
+        near(f.normal.x, toStreet * Math.cos(S.turn), tag); near(f.normal.z, -Math.sin(S.turn), tag);
+        near(f.normal.x, way.x, tag); near(f.normal.z, way.z, tag);
         const at = rec.group.localToWorld(new THREE.Vector3(spec.board.x, spec.board.y, spec.board.z));
         near(f.pos.x, at.x, tag); near(f.pos.y, at.y, tag); near(f.pos.z, at.z, tag);
         ray.set(f.pos.clone().addScaledVector(f.normal, 0.5), f.normal.clone().negate());
@@ -525,21 +552,35 @@ describe('the street with the models in (ts3d/landmarks.js with the real three a
             near(ray.intersectObjects(rec.body, false)[0].distance, 0.17 * SC, `${tag} rim under the sign`, 0.005);
           }
         }
-        // the collider: lotRect's, inside the pad; the camera blocker over it, as tall as the level
-        const c = lotsColliders.find((q) => q.plot === s.id);
+        // The collider: the lot is turned off the axes and collision takes axis-aligned boxes, so it is lotBoxes'
+        // staircase of six: inside the box about the lot's pad, clear of the street's width and of every post, and
+        // holding the building's footprint at walking height (the tent's masts, the shop's plinth, the tower's lobby).
+        const mine = lotsColliders.filter((q) => q.plot === s.id);
         if (level) {
-          const r = lotRect(s, LOT.foot[level][0], LOT.foot[level][1]);
-          near(c.x0, r.x0, tag); near(c.x1, r.x1, tag); near(c.z0, r.z0, tag); near(c.z1, r.z1, tag);
-          assert.ok(inside(c, pad(s)), tag);
-          assert.ok(Math.min(Math.abs(c.x0 - S.x), Math.abs(c.x1 - S.x)) >= S.half + 1.7, tag);
-          for (const p of streetPosts()) assert.equal(overlap(c, { x0: p.x - p.r, x1: p.x + p.r, z0: p.z - p.r, z1: p.z + p.r }), false, tag);
-        } else assert.equal(c, undefined, tag);
-        const b = W.blockers.find((q) => q.plot === s.id);
+          const want = lotBoxes(s, LOT.foot[level][0], LOT.foot[level][1]);
+          assert.equal(mine.length, LOT.steps, tag);
+          mine.forEach((c, k) => { near(c.x0, want[k].x0, tag); near(c.x1, want[k].x1, tag); near(c.z0, want[k].z0, tag); near(c.z1, want[k].z1, tag); });
+          for (const c of mine) {
+            assert.ok(inside(c, pad(s)), tag);
+            assert.ok(Math.min(Math.abs(c.x0 - S.x), Math.abs(c.x1 - S.x)) >= S.half + 1, tag);
+            for (const p of streetPosts()) assert.equal(overlap(c, { x0: p.x - p.r, x1: p.x + p.r, z0: p.z - p.r, z1: p.z + p.r }), false, tag);
+          }
+          const [ax, dz] = LOT.foot[level];
+          for (const [x, z] of [[-ax, -dz], [ax, -dz], [ax, dz], [-ax, dz], [0, 0], [ax, 0], [0, dz], [-ax * 0.5, dz], [ax * 0.5, -dz]]) {
+            const p = rec.group.localToWorld(new THREE.Vector3(x, 0, z));
+            assert.ok(mine.some((c) => p.x >= c.x0 - 1e-6 && p.x <= c.x1 + 1e-6 && p.z >= c.z0 - 1e-6 && p.z <= c.z1 + 1e-6), `${tag} ${x},${z}`);
+          }
+        } else assert.equal(mine.length, 0, tag);
+        // the camera's blockers: the same boxes, as tall as the level and as the model
+        const tall = W.blockers.filter((q) => q.plot === s.id);
         if (LOT.tall[level]) {
-          near(b.max.y, LOT.tall[level] * SC, tag);
-          assert.deepEqual([b.min.x, b.max.x, b.min.z, b.max.z, b.min.y], [c.x0, c.x1, c.z0, c.z1, 0], tag);
-          assert.ok(b.max.y >= box.max.y - 0.011, tag); // as tall as the model
-        } else assert.equal(b, undefined, tag);
+          assert.equal(tall.length, LOT.steps, tag);
+          tall.forEach((b, k) => {
+            near(b.max.y, LOT.tall[level] * SC, tag);
+            assert.deepEqual([b.min.x, b.max.x, b.min.z, b.max.z, b.min.y], [mine[k].x0, mine[k].x1, mine[k].z0, mine[k].z1, 0], tag);
+          });
+          assert.ok(LOT.tall[level] * SC >= top - 0.011, tag);
+        } else assert.equal(tall.length, 0, tag);
       }
       // shared: one geometry per part for all 18, the lot's accent apart
       const mats = new Set(), geos = new Set();
@@ -550,7 +591,7 @@ describe('the street with the models in (ts3d/landmarks.js with the real three a
       // the ones by the arch)
       const posts = streetPosts().map((p) => new THREE.Box3(new THREE.Vector3(p.x - p.r, 0, p.z - p.r), new THREE.Vector3(p.x + p.r, p.arch ? S.arch.h : 1.8, p.z + p.r)));
       const v = new THREE.Vector3();
-      for (const id of [1, 2, 3, 4]) for (const m of W.marks.plots.get(id).body) {
+      for (const id of [1, 2, 3, 4, 17, 18]) for (const m of W.marks.plots.get(id).body) {
         const p = m.geometry.attributes.position;
         for (let i = 0; i < p.count; i++) {
           v.fromBufferAttribute(p, i).applyMatrix4(m.matrixWorld);
@@ -560,37 +601,45 @@ describe('the street with the models in (ts3d/landmarks.js with the real three a
     });
   }
 
-  it('the street stays 27 m wide: on an upright phone the tower\'s board camera needs 20.1 m and has 6.6 m of street behind it', () => {
-    // The widest board (a tower's, 11.34 x 6.38 m in the world) seen whole on a 9:19.5 frame (37 degrees wide) from straight
-    // on. With the rows at x ± 17 the camera stands 6.3 m past the centre line, inside the clear width, 6.6 m before the far
-    // row's marquees. Rows 2.83 m nearer the centre line would put it outside the clear width, and the next test shows how
-    // little a narrower street gives a walker. So LAYOUT.street.lotX stays 17.
+  it('the tower\'s board camera on an upright phone stands 20.1 m straight before the turned face: in the clear width, south of the arch', () => {
+    // The widest board (a tower's, 11.34 x 6.38 m in the world) seen whole on a 9:19.5 frame (37 degrees wide) from
+    // straight on. The face is turned 20° up the street, so the camera stands up the street from its lot: 6.92 m past the
+    // centre line, 2.58 m inside the clear width, with the far row's tips behind it.
     all(4);
     const aspect = 9 / 19.5, vfov = portraitFov(aspect, 62);
     near(vfov, 72);
     const faces = new Map(PLOT_SLOTS.map((s) => [s.id, W.boards.face('PLOT_' + s.id)]));
+    let north = Infinity;
     for (const s of PLOT_SLOTS) {
-      const f = faces.get(s.id), toStreet = Math.sign(S.x - s.x);
-      near(frameDistance({ w: f.w, h: f.h, aspect, vfov }), 20.13, 'lot ' + s.id, 0.01);
+      const f = faces.get(s.id), toStreet = Math.sign(S.x - s.x), tag = 'lot ' + s.id;
+      near(frameDistance({ w: f.w, h: f.h, aspect, vfov }), 20.13, tag, 0.01);
       const v = boardVantage({ face: { x: f.pos.x, y: f.pos.y, z: f.pos.z, nx: f.normal.x, nz: f.normal.z, w: f.w, h: f.h }, dist: 18, aspect, vfov, block: facesBlock([...faces.values()].filter((o) => o !== f)), ground: groundHeight });
-      assert.ok(v.fit >= 0.999 && v.seen >= 0.999 && v.yaw === 0, 'lot ' + s.id);
-      near((S.x - v.x) * toStreet, -6.33, 'lot ' + s.id, 0.01); // 6.33 m past the centre line
-      assert.ok(Math.abs(v.x - S.x) < S.half);
-      const farMarquee = S.lotX - LOT.reach * SC; // the far row's marquees, from the centre line
-      near(farMarquee - Math.abs(v.x - S.x), 6.61, 'lot ' + s.id, 0.01);
-      // moving both rows in by d moves the face in and the camera out by d while the clear half-width shrinks by d
-      near((S.half - Math.abs(v.x - S.x)) / 2, 2.83, 'lot ' + s.id, 0.01);
+      assert.ok(v.fit >= 0.999 && v.seen >= 0.999 && v.yaw === 0, tag);
+      // straight before the face: on its normal, 20.13 m out
+      const ox = v.x - f.pos.x, oz = v.z - f.pos.z;
+      near(ox * f.normal.z - oz * f.normal.x, 0, tag, 1e-6);
+      near(ox * f.normal.x + oz * f.normal.z, 20.13, tag, 0.01);
+      near((S.x - v.x) * toStreet, -6.92, tag, 0.01);
+      near(S.half - Math.abs(v.x - S.x), 2.58, tag, 0.01);
+      north = Math.min(north, v.z);
     }
-    assert.equal(S.lotX, 17);
+    // Lots 1 and 2 are 10 m from the arch, and their fronts look toward it: their camera is at z 264.02, 6.6 m up, 1.67 m
+    // south of the arch's name plate (0.7 m deep about z 262, 6.4 to 9.4 m up), which the camera's own search does not
+    // know. That is what bounds the turn: the camera goes sin(turn) x (20.13 + 3.2) m up the street from the lot's
+    // centre. 22.5° would leave 0.72 m, and at 25° the camera is inside the plate.
+    near(north, 264.02, 'north', 0.01);
+    const left = (deg) => S.lot0 - Math.sin(deg * DEG) * (20.13 + LOT.faces[4].board.z * SC) - (S.arch.z + 0.35);
+    near(left(S.turn / DEG), north - (S.arch.z + 0.35), 'left', 0.01);
+    near(left(20), 1.67, 'left', 0.01);
+    assert.ok(left(22.5) < 1 && left(25) < 0);
+    assert.deepEqual([S.lotX, Math.round(S.turn / DEG)], [15, 20]);
   });
 
-  it('walking down the centre, an upright phone sees little of the lots at any width the street may have', () => {
-    // The share of a 9:19.5 frame (37 degrees wide, the walking camera 8.4 m behind and 1.25 m over the eye line) that the
-    // lots' models and boards cover, pads left out, with the player on the centre line at z 300. The real models are
-    // projected and filled into a 180 x 390 grid for rows at x ± 17 (as built), ± 15 and ± 13 (the narrowest that leaves
-    // 16 m clear). The fronts are parallel to the walk, so the frame's edges only reach them 37 m ahead and at 15 to 18
-    // degrees off their own plane, at every width: a narrower street is not clearly better, and at ± 13 the tower's board
-    // camera of the test above no longer fits in it.
+  it('by the measure the chevron shows an upright phone 1.5 to 2.1 times as much of the lots, and a board 31° off its plane where it was 13°', () => {
+    // The share of a 9:19.5 frame (37 degrees wide; the walking camera 8.4 m behind the player and 1.25 m over the eye
+    // line) that the lots' models and boards cover, pads left out, with the player on the centre line: the mean over five
+    // places along the street. The real models are projected and filled into a 180 x 390 grid, for a street of empty
+    // lots, a mixed one and one of towers, as the street was (rows at x ± 17, square to it), turned only, and as built.
     const tris = LEVELS.map((level) => {
       const out = [];
       for (const g of W.marks.lots.get(level).parts.values()) {
@@ -600,21 +649,27 @@ describe('the street with the models in (ts3d/landmarks.js with the real three a
           if (t.some((v) => v.y >= 0.3)) out.push(t);
         }
       }
-      const b = LOT.faces[level].board, w = Math.min(b.w, (b.h * 16) / 9) / 2, h = Math.min(b.h, (b.w * 9) / 16) / 2;
-      const q = [[-w, -h], [w, -h], [w, h], [-w, h]].map(([x, y]) => new THREE.Vector3(b.x + x, b.y + y, b.z));
-      out.push([q[0], q[1], q[2]], [q[0], q[2], q[3]]);
+      out.push(...boardQuad(level, (q) => [[q[0], q[1], q[2]], [q[0], q[2], q[3]]]));
       return out;
     });
-    const GW = 180, GH = 390, aspect = 9 / 19.5;
-    const cam = new THREE.PerspectiveCamera(portraitFov(aspect, 62), aspect, 0.2, 5200);
-    cam.position.set(S.x, 1.9 + 1.25, 300 - 8.4);
-    cam.lookAt(S.x, 1.9, 300);
-    cam.updateMatrixWorld(true);
-    const vp = new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
-    const fill = (lotX, levelOf) => {
-      const mask = new Uint8Array(GW * GH), m = new THREE.Matrix4(), v = new THREE.Vector4();
-      for (const s of PLOT_SLOTS) {
-        m.compose(new THREE.Vector3(S.x + Math.sign(s.x - S.x) * lotX, 0, s.z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), s.rot), new THREE.Vector3(SC, SC, SC)).premultiply(vp);
+    function boardQuad(level, pick) {
+      const b = LOT.faces[level].board, w = Math.min(b.w, (b.h * 16) / 9) / 2, h = Math.min(b.h, (b.w * 9) / 16) / 2;
+      return pick([[-w, -h], [w, -h], [w, h], [-w, h]].map(([x, y]) => new THREE.Vector3(b.x + x, b.y + y, b.z)));
+    }
+    const GW = 180, GH = 390, aspect = 9 / 19.5, ZS = [266, 285, 300, 320, 345];
+    const camAt = (z) => {
+      const cam = new THREE.PerspectiveCamera(portraitFov(aspect, 62), aspect, 0.2, 5200);
+      cam.position.set(S.x, 1.9 + 1.25, z - 8.4);
+      cam.lookAt(S.x, 1.9, z);
+      cam.updateMatrixWorld(true);
+      return cam;
+    };
+    const matOf = (s) => new THREE.Matrix4().compose(new THREE.Vector3(s.x, 0, s.z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), s.rot), new THREE.Vector3(SC, SC, SC));
+    const fill = (slots, levelOf, z) => {
+      const cam = camAt(z), vp = new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+      const mask = new Uint8Array(GW * GH), v = new THREE.Vector4();
+      for (const s of slots) {
+        const m = matOf(s).premultiply(vp);
         for (const t of tris[levelOf(s.id)]) {
           const a = [];
           for (const p of t) {
@@ -639,17 +694,38 @@ describe('the street with the models in (ts3d/landmarks.js with the real three a
       return (n / mask.length) * 100;
     };
     const MIX = [0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0, 0, 1, 2, 4, 3, 0, 0];
-    const table = [17, 15, 13].map((x) => [fill(x, () => 0), fill(x, (id) => MIX[id - 1]), fill(x, () => 4)]);
+    const street = (lotX, deg) => streetSlots({ ...S, lotX, turn: deg * DEG });
     // percent of the frame: all lots empty, a mix of levels, all towers
-    for (const [row, want] of [[table[0], [1.0, 4.5, 9.6]], [table[1], [1.1, 4.8, 12.0]], [table[2], [1.6, 7.8, 15.4]]]) {
-      row.forEach((got, i) => assert.ok(Math.abs(got - want[i]) < 0.15, `${row.map((n) => n.toFixed(2))} vs ${want}`));
-    }
-    // at the width as built the lots abreast of the walker and the next two pairs are outside the frame: the nearest
-    // board whose centre is in it is 37 m ahead
-    const half = Math.tan((portraitFov(aspect, 62) * Math.PI) / 360) * aspect; // tan of half the frame's width
-    const faceX = S.lotX - LOT.faces[4].board.z * SC;
-    const first = PLOT_SLOTS.map((s) => s.z - 300).filter((d) => d > 0 && faceX / (d + 8.4) < half).sort((a, b) => a - b)[0];
-    assert.equal(first, 37);
+    const shares = (slots) => [() => 0, (id) => MIX[id - 1], () => 4].map((levelOf) => ZS.reduce((sum, z) => sum + fill(slots, levelOf, z), 0) / ZS.length);
+    const was = shares(street(17, 0)), turned = shares(street(17, 20)), built = shares(PLOT_SLOTS);
+    const about = (got, want) => got.forEach((v, i) => assert.ok(Math.abs(v - want[i]) < 0.15, `${got.map((n) => n.toFixed(2))} vs ${want}`));
+    about(was, [0.8, 4.2, 7.9]);
+    about(turned, [1.2, 5.1, 9.1]); // the turn alone
+    about(built, [1.6, 6.7, 12.2]); // the turn, and the rows 2 m nearer the centre line
+    assert.deepEqual(built.map((v, i) => Math.round((v / was[i]) * 10) / 10), [2.1, 1.6, 1.5]);
+    // The boards themselves, from the middle of the street (z 300): the nearest board that is wholly in the frame, how far
+    // ahead it is, how many degrees off its own plane it is seen (90 is straight on) and its share of the frame.
+    const board = (slots, level) => {
+      const cam = camAt(300);
+      let best = null;
+      for (const s of slots) {
+        const m = matOf(s), c = boardQuad(level, (q) => q.map((p) => p.applyMatrix4(m)));
+        if (c.some((p) => p.clone().applyMatrix4(cam.matrixWorldInverse).z > -0.5)) continue;
+        const ndc = c.map((p) => p.clone().project(cam));
+        if (!ndc.every((p) => Math.abs(p.x) <= 1 && Math.abs(p.y) <= 1)) continue;
+        const centre = c[0].clone().add(c[2]).multiplyScalar(0.5), toCam = cam.position.clone().sub(centre).normalize();
+        const facing = toCam.x * Math.sin(s.rot) + toCam.z * Math.cos(s.rot);
+        if (facing <= 0 || (best && s.z >= best.z)) continue;
+        let a = 0;
+        for (let i = 0; i < 4; i++) a += ndc[i].x * ndc[(i + 1) % 4].y - ndc[(i + 1) % 4].x * ndc[i].y;
+        best = { z: s.z, ahead: s.z - 300, off: Math.round(Math.asin(facing) / DEG), share: Math.round((Math.abs(a) / 8) * 10000) / 100 };
+      }
+      return [best.ahead, best.off, best.share];
+    };
+    assert.deepEqual(board(street(17, 0), 4), [50, 13, 0.58]); // a tower's board as it was: a sliver
+    assert.deepEqual(board(PLOT_SLOTS, 4), [50, 31, 1.37]);
+    assert.deepEqual(board(street(17, 0), 0).slice(0, 2), [50, 14]); // an empty lot's hoarding
+    assert.deepEqual(board(PLOT_SLOTS, 0).slice(0, 2), [37, 36]);
   });
 
   it('the street with a mix of levels: 3 or 4 draw calls a lot, the models\' own triangle counts', () => {
@@ -696,8 +772,8 @@ describe('the street with the models in (ts3d/landmarks.js with the real three a
     for (const m of rec.body) assert.equal(m.geometry, W.marks.lots.get(4).parts.get(m.name));
     assert.equal(gone, 1);
     assert.equal(picks().length, 3 + 1);
-    assert.equal(W.colliders.filter((c) => c.plot === 5).length, 1);
-    assert.equal(W.blockers.filter((b) => b.plot === 5).length, 1);
+    assert.equal(W.colliders.filter((c) => c.plot === 5).length, LOT.steps);
+    assert.equal(W.blockers.filter((b) => b.plot === 5).length, LOT.steps);
     // a new colour at the same level: a new accent material, the same geometry
     const a4 = rec.body[2].material;
     res = W.marks.applyPlot({ plot_id: 5, level: 4, theme_color: '#b84dff', owner_name: '가게' });
@@ -720,8 +796,11 @@ describe('the street with the models in (ts3d/landmarks.js with the real three a
 
   it('the name sign can be seen from the street at every level; on the tower\'s crown it could not', () => {
     // Rays from a walker's camera height to 45 points of the sign, through everything the lots draw (models, boards and
-    // their frames). `share` is how many arrive. From the far side of the street every sign is in full view but the
-    // shop's, whose lower edge the board's rim covers; from the centre line the shop's sign loses its lower third.
+    // their frames). `share` is how many arrive. The walker stands straight before the lot, on the line its front looks
+    // along: where that line crosses the street's centre line, and half a metre inside the far edge of the clear width.
+    // From the far side every sign is in full view but the shop's, whose lower edge the board's rim covers; from the
+    // centre line the shop's sign loses its lower third.
+    const eyeAt = (s, past) => { const way = lotFacing(s), t = (Math.abs(s.x - S.x) + past) / Math.abs(way.x); return new THREE.Vector3(s.x + way.x * t, 3.15, s.z + way.z * t); };
     const visible = (level) => {
       all(level);
       const solid = [];
@@ -730,8 +809,7 @@ describe('the street with the models in (ts3d/landmarks.js with the real three a
       for (const [name, off] of [['centre', 0], ['far', S.half - 0.5]]) {
         let got = 0, n = 0;
         for (const id of [9, 10]) {
-          const s = PLOT_SLOTS[id - 1], rec = W.marks.plots.get(id), toStreet = Math.sign(S.x - s.x);
-          const eye = new THREE.Vector3(S.x + toStreet * off, 3.15, s.z);
+          const s = PLOT_SLOTS[id - 1], rec = W.marks.plots.get(id), eye = eyeAt(s, off);
           for (let u = -0.45; u <= 0.451; u += 0.225) for (let v = -0.45; v <= 0.451; v += 0.1125) {
             const p = rec.sign.localToWorld(new THREE.Vector3(u * rec.signSpec.w, v * rec.signSpec.h, 0));
             const d = p.clone().sub(eye), len = d.length();
@@ -746,7 +824,7 @@ describe('the street with the models in (ts3d/landmarks.js with the real three a
       return out;
     };
     const seen = LEVELS.map(visible);
-    assert.deepEqual(seen.map((s) => s.far), [100, 100, 100, 89, 100]);
+    assert.deepEqual(seen.map((s) => s.far), [100, 100, 100, 78, 100]);
     assert.deepEqual(seen.map((s) => s.centre), [100, 100, 100, 67, 100]);
     // The same count for the tower's sign on the model's own plate (y 16.3, z 1.2): the board, 2.2 m before it and as
     // high, hides all of it from anywhere in the street. That is why the game stands the sign on the board's rim.
@@ -758,8 +836,7 @@ describe('the street with the models in (ts3d/landmarks.js with the real three a
     const ray = new THREE.Raycaster();
     let got = 0, n = 0;
     for (const off of [0, S.half - 0.5]) for (const id of [9, 10]) {
-      const s = PLOT_SLOTS[id - 1], rec = W.marks.plots.get(id), toStreet = Math.sign(S.x - s.x);
-      const eye = new THREE.Vector3(S.x + toStreet * off, 3.15, s.z);
+      const s = PLOT_SLOTS[id - 1], rec = W.marks.plots.get(id), eye = eyeAt(s, off);
       for (let u = -0.45; u <= 0.451; u += 0.225) for (let v = -0.45; v <= 0.451; v += 0.1125) {
         const p = rec.sign.localToWorld(new THREE.Vector3(u * 6.2, v * 0.9, 0));
         const d = p.clone().sub(eye), len = d.length();
@@ -790,7 +867,7 @@ describe('when a lot model does not arrive, the boxes stay', () => {
         for (const m of bodyMeshes(rec)) assert.deepEqual(m.userData.pick, { kind: 'plot', plotId: rec.id });
         assert.equal(!!rec.gem, level === 0);
       }
-      assert.equal(W.colliders.filter((c) => c.plot).length, level ? 18 : 0);
+      assert.equal(W.colliders.filter((c) => c.plot).length, level ? 18 * LOT.steps : 0);
       W.marks.update(0.016, level, NEAR);
     }
     assert.equal(calls.length, 5);

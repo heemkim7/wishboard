@@ -1,7 +1,11 @@
 # Builds the modelled props of the game as GLB files:
 #   lot0_empty  lot1_tent  lot2_pocha  lot3_shop  lot4_tower   - the five building levels of a plot, each on the lot pad
 #   taxi        xmas_tree  air_dancer                           - the cab, the plaza tree, the rigged inflatable figure
-# Models only: nothing here is wired into the game yet.
+# In the game: the five lot models, served from assets/models/lots/ (ts3d/loadplan.js LOT_MODEL_URL) and drawn by
+# ts3d/lotmodels.js for ts3d/landmarks.js buildPlot, which keeps its box buildings as the stand-in. Copy a rebuilt file
+# there under a new name (the service worker caches /assets/ by URL), keep ts3d/layout.js LOT in step with the model
+# (the anchors below, the collider half-sizes, the heights), and run test/lot-models.test.mjs, which measures the
+# files. The taxi, the tree and the air dancer are models only: nothing draws them yet.
 #
 # Needs: Blender 4.5 LTS (its glTF exporter and the Weighted Normal modifier). Nothing else, no downloads, no textures.
 # Run from anywhere:
@@ -18,7 +22,9 @@
 #   - every building has two empty nodes, BoardAnchor and SignAnchor: at the centre of the screen and of the name
 #     sign that buildPlot mounts for that level, scaled (width, height, 1), looking toward +z. The model keeps a dark
 #     flat plate behind each (0.24 m behind the screen plane: the game's own board frame is 0.22 deep; 0.03 m behind
-#     the sign plane) and nothing in front of it.
+#     the sign plane) and nothing in front of it. One sign is not drawn at its anchor: the tower's plate is on the
+#     crown, behind the board, where nobody in the street can see it, so the game stands that sign on the board's top
+#     rim (ts3d/layout.js LOT.faces; render_props.py SIGN_AT draws it there too).
 #   - the taxi drives toward +z like the kit in vehicleKits (headlights at +z); its left wheels are at +x. Wheel
 #     nodes sit on the axles at (+-0.86, 0.40, +-1.45), radius 0.40 (the kit: +-0.86, 0.34, +-1.45, radius 0.34).
 #   - materials are flat colours, single-sided. `Accent` is what the game tints with the owner's colour: it is
