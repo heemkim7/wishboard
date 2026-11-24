@@ -26,7 +26,7 @@ const STAGE_STEPS = 2.4;
  *  tall   how high each level stops the camera (0: it does not): the shop's roof items reach 9 m, the tower 19 m
  *  wide   the widest piece any level carries (the rim of the tower's board, 13.41 m)
  *  reach  how far forward of its centre any level comes: the tower's marquee, 0.7 m over the pad's front edge and
- *         2.8 m up, with nothing under it. Everything else of a lot stays on its pad
+ *         2.6 m up or more, with nothing under it. Everything else of a lot stays on its pad
  *  faces  where each level's billboard and name sign hang: { x, y, z, w, h }, centre and size. The models carry a mount
  *         plate behind each and say the same numbers in their BoardAnchor / SignAnchor nodes, but for the tower's
  *         sign: its plate is on the crown (y 16.3, z 1.2), 2.2 m behind the board's top edge, where nobody in the
