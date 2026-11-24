@@ -6,14 +6,16 @@ import { describe, it } from 'node:test';
 import {
   RETURN_MS, easeOutCubic, easeInOutCubic, tweenU, returnPoint, focusOptions, cineCancels, behindCar,
   FOLLOW, followYawRate, CHASE, chaseYawRate, STICK_FRAME, stickFrame, DRAG_MIN, viewDragged, tallness, portraitFov, fitDistance,
+  BALLOON_LOOK, balloonLook,
   DRIVE_CAM, reverseTime, driveView, driveWiden, driveCamera, easeCamDist, shortenFocus,
   BOARD_NEAR, pickNearBoard, boardState, boardPrompt, proximityKey, FAR_TAP, tapRoute,
   EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone,
   FRAME, frameDistance, boardRange, SPARK, sparkGlide, sparkDrop,
   CELEBRATE_GAP_MS, celebrationDue, faceAbove, PARTY, celebrationPlan, fanVelocity,
 } from '../camrig.js';
+import { THROW } from '../ts3d/gestures.js';
 
-const read = (p) => readFileSync(new URL('../' + p, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+const read =(p) => readFileSync(new URL('../' + p, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const near = (a, b, eps = 1e-9) => Math.abs(a - b) <= eps;
 
 describe('scripted camera: one way back', () => {
@@ -296,6 +298,35 @@ describe('the touch stick: the view comes round behind the direction of travel',
     assert.equal(/\bnet\b/.test(cam), false);
     // getting into a taxi and a teleport start the stick's frame again
     assert.match(w, /travel\.on = false; stick\.ref = null; stick\.lag = 0;/);
+  });
+});
+
+describe('the first throw\'s look up at the balloon', () => {
+  it('waits for the pouch to leave the hand, goes 45% of the way from 2 m farther back, and ends when the old look did', () => {
+    assert.deepEqual(BALLOON_LOOK, { after: 250, lerp: 0.45, back: 2, dur: 600, hold: 1250 });
+    assert.equal(BALLOON_LOOK.after + BALLOON_LOOK.hold, 1500);
+    assert.ok(BALLOON_LOOK.after >= THROW.swing * 1000, 'the arm has swung and the pouch is on its way');
+    // the follow camera 8.2 m behind an avatar at the origin that faces +z; the balloon 58 m up, 80 m and 14 m away
+    const cam = { x: 0, y: 3.15, z: -8.2 }, look = { x: 0, y: 1.9, z: 0 };
+    for (const far of [80, 14]) {
+      const balloon = { x: 0, y: 58, z: far };
+      const v = balloonLook(cam, look, balloon);
+      assert.ok(near(Math.hypot(v.cam.x - cam.x, v.cam.y - cam.y, v.cam.z - cam.z), 2, 1e-9));
+      assert.ok(v.cam.z < cam.z && v.cam.y > cam.y, 'straight back along the view');
+      assert.ok(near(v.look.y, 1.9 + 0.45 * 56.1, 1e-9) && near(v.look.z, 0.45 * far, 1e-9) && v.look.x === 0);
+      // the balloon is inside an upright frame (36° either side of the view's axis) and a landscape one (31°)
+      const up = (p) => Math.atan2(p.y - v.cam.y, p.z - v.cam.z) / DEG;
+      assert.ok(Math.abs(up(balloon) - up(v.look)) < 31, `${far} m: ${(up(balloon) - up(v.look)).toFixed(0)}° off the axis`);
+      // the avatar is under the frame for as long as the look lasts (45° below the axis and more): it has thrown by then
+      assert.ok(up(v.look) - up({ y: 0, z: 0 }) > 36);
+    }
+    const w = read('timesSquare3d.js');
+    const toss = w.slice(w.indexOf('function throwPouch() {'), w.indexOf('function updateThrows(dt) {'));
+    assert.match(toss, /balloonSeen = true;\n\s+balloonLookAt = now \+ BALLOON_LOOK\.after;/);
+    assert.equal(/startCine\(/.test(toss), false, 'the throw itself moves no camera');
+    assert.match(w, /if \(balloonLookAt && now >= balloonLookAt\) lookAtBalloon\(now\);/);
+    assert.match(w, /if \(drive \|\| cine \|\| !balloon \|\| balloon\.hp <= 0\) return;\n\s+const v = balloonLook\(camera\.position, viewLook, balloon\.mesh\.position\);/);
+    assert.match(w, /\{ dur: BALLOON_LOOK\.dur, until: now \+ BALLOON_LOOK\.hold \}\);/);
   });
 });
 

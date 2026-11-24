@@ -26,12 +26,13 @@ import { claimIcons, buildIcons } from './ts3d/icons.js?v=202611241127';
 import { buildLandmarks } from './ts3d/landmarks.js?v=202611241127';
 import { createAvatars, EMOTES, REACTIONS, AVATAR_COLORS, STARTER_COLORS, speciesId } from './ts3d/avatars.js?v=202611241127';
 import { createPouchKit } from './ts3d/pouch.js?v=202611241127';
+import { THROW, throwSize } from './ts3d/gestures.js?v=202611241127';
 import { seesAvatar, prefetchDelay, prefetchIds } from './ts3d/loadplan.js?v=202611241127';
 import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, paintLabel, fontsReady, chars, hashStr, FRAME_FX } from './ts3d/art.js?v=202611241127';
 import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=202611241127';
 import { taxiExit, EXIT_SLOW, nextOfferDelay, fareWait, AUTO_WALK, gridPath, walkSteer, walkStall, walkPace, autoWalkEnds } from './interact.js?v=202611241127';
 import { WELCOME } from './ftue.js?v=202611241127';
-import { RETURN_MS, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, chaseYawRate, CHASE, stickFrame, viewDragged, portraitFov, fitDistance, reverseTime, driveView, driveWiden, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange, boardVantage, facesBlock } from './camrig.js?v=202611241127';
+import { RETURN_MS, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, chaseYawRate, CHASE, stickFrame, viewDragged, portraitFov, fitDistance, BALLOON_LOOK, balloonLook, reverseTime, driveView, driveWiden, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange, boardVantage, facesBlock } from './camrig.js?v=202611241127';
 
 export { paintBillboard, THEMES, LAYOUT, PLOT_SLOTS, groundHeight, EMOTES, AVATAR_COLORS, STARTER_COLORS, taxiTrainMult, applyTaxiHardHit };
 export const PLAZA = LAYOUT;
@@ -1070,9 +1071,18 @@ void main(){
     opts.onBalloon?.(balloon.hp);
   }
   // One throw per THROW_GAP_MS (a held or mashed button is not 30 throws a second). The balloon floats 58 m up, out of
-  // the usual view: the first throw of the session tilts the camera up to it for a moment (on foot, no other camera).
+  // the usual view: the first throw of the session tilts the camera up toward it for a moment (on foot, no other camera),
+  // once the pouch has left the hand, so the throw itself is seen first (camrig.js BALLOON_LOOK; lookAtBalloon in step()).
   const THROW_GAP_MS = 250;
-  let lastThrow = -1e9, balloonSeen = false;
+  let lastThrow = -1e9, balloonSeen = false, balloonLookAt = 0;
+  function lookAtBalloon(now) {
+    balloonLookAt = 0;
+    if (drive || cine || !balloon || balloon.hp <= 0) return;
+    const v = balloonLook(camera.position, viewLook, balloon.mesh.position);
+    // pulled back only where there is room behind the view (a wall behind the player keeps the view where it is)
+    const room = !nyc || nyc.rayBlock(camera.position.x, camera.position.y, camera.position.z, v.cam.x, v.cam.y, v.cam.z) >= 1;
+    startCine(room ? new THREE.Vector3(v.cam.x, v.cam.y, v.cam.z) : camera.position.clone(), new THREE.Vector3(v.look.x, v.look.y, v.look.z), { dur: BALLOON_LOOK.dur, until: now + BALLOON_LOOK.hold });
+  }
   function throwPouch() {
     if (!balloon || balloon.hp <= 0) return false;
     const now = performance.now();
@@ -1080,27 +1090,36 @@ void main(){
     lastThrow = now;
     if (!balloonSeen && !drive && !cine) {
       balloonSeen = true;
-      startCine(camera.position.clone(), viewLook.clone().lerp(balloon.mesh.position, 0.8), { dur: 600, until: now + 1500 });
+      balloonLookAt = now + BALLOON_LOOK.after;
     }
     const from = new THREE.Vector3(pos.x, (pos.y || 0) + 1.5, pos.z);
     const mesh = makePouch(1.8);
+    // On foot the pouch starts small in the throwing hand, rides the swing and leaves the hand at its top (gestures.js
+    // THROW.release), growing to its flying size on the way up. From a taxi, or on the stand-in body, it leaves at once.
+    const held = !drive && !!me.holdPoint(from);
     mesh.position.copy(from);
+    mesh.scale.setScalar(1.8 * throwSize(0));
     scene.add(mesh);
     // It tumbles end over end and turns on the way up, so its round body, knot and tassel show from any camera.
     const r = Math.random;
-    mesh.rotation.set(r() * 6.3, r() * 6.3, 0);
-    pouchThrows.push({ mesh, from, t: 0, spin: { x: (r() < 0.5 ? -1 : 1) * (7 + r() * 4), y: 5 + r() * 4, rx: mesh.rotation.x, ry: mesh.rotation.y } });
+    mesh.rotation.set(held ? 0 : r() * 6.3, held ? yaw : r() * 6.3, 0);
+    pouchThrows.push({ mesh, from, t: held ? -THROW.release / 0.65 : 0, spin: { x: (r() < 0.5 ? -1 : 1) * (7 + r() * 4), y: 5 + r() * 4, rx: mesh.rotation.x, ry: mesh.rotation.y } });
     me?.emote?.('Throw');
     return true;
   }
   function updateThrows(dt) {
     for (let i = pouchThrows.length - 1; i >= 0; i--) {
       const p = pouchThrows[i];
+      const inHand = p.t < 0;
       p.t += dt / 0.65;
+      // In the hand until the release: the flight starts from where the hand is at that moment.
+      if (inHand && !drive && me.holdPoint(p.from) && p.t < 0) { p.mesh.position.copy(p.from); continue; }
+      if (p.t < 0) p.t = 0;
       const u = Math.min(1, p.t);
       const target = balloon?.mesh?.position || p.from;
       p.mesh.position.lerpVectors(p.from, target, u);
       p.mesh.position.y += Math.sin(u * Math.PI) * 8;
+      p.mesh.scale.setScalar(1.8 * throwSize(u));
       p.mesh.rotation.x = p.spin.rx + p.t * 0.65 * p.spin.x;
       p.mesh.rotation.y = p.spin.ry + p.t * 0.65 * p.spin.y;
       if (u < 1) continue;
@@ -1914,7 +1933,7 @@ void main(){
       hiveHint = close < 14;
     } else hiveHint = false;
     ensureBalloon(performance.now());
-    updateThrows(dt);
+    if (balloonLookAt && now >= balloonLookAt) lookAtBalloon(now);
     if (balloon && balloon.hp > 0) {
       balloon.mesh.position.y = 58 + Math.sin(t * 0.6) * 1.6;
       balloon.mesh.rotation.set(Math.sin(t * 0.45) * 0.06, t * 0.25, Math.sin(t * 0.6) * 0.05); // turns slowly, so it reads as round from the plaza
@@ -1925,6 +1944,7 @@ void main(){
       tourNext();
     }
     if (!drive) me.update(dt, t);
+    updateThrows(dt); // after the avatar is posed: a pouch still in the hand sits where the hand is this frame
     playerInfo.x = pos.x; playerInfo.y = pos.y; playerInfo.z = pos.z; playerInfo.yaw = yaw; playerInfo.driving = !!drive;
 
     // Network projection: meters → wire units (5 cm grid). Never read back into the local player.

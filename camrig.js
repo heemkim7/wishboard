@@ -232,6 +232,21 @@ export function facesBlock(faces) {
   };
 }
 
+// ---- the first throw's look up at the balloon ------------------------------------------------------------------
+// The balloon floats 58 m up, out of the usual view, so the first pouch of a session shows where it is. The look used to
+// start with the throw and go 80% of the way to the balloon: the avatar left the frame at once and stayed out for 1.5 s,
+// so the first throw itself was never seen. Now it starts once the pouch has left the hand (`after` ms), goes less far
+// (`lerp`) from a camera pulled `back` m, and is over when the old one was (after + hold).
+export const BALLOON_LOOK = { after: 250, lerp: 0.45, back: 2, dur: 600, hold: 1250 };
+/** Where that look stands and what it looks at. cam, look: the view now; balloon: where the balloon is ({ x, y, z } each). */
+export function balloonLook(cam, look, balloon) {
+  const dx = cam.x - look.x, dy = cam.y - look.y, dz = cam.z - look.z, k = BALLOON_LOOK.back / (Math.hypot(dx, dy, dz) || 1), t = BALLOON_LOOK.lerp;
+  return {
+    cam: { x: cam.x + dx * k, y: cam.y + dy * k, z: cam.z + dz * k },
+    look: { x: look.x + (balloon.x - look.x) * t, y: look.y + (balloon.y - look.y) * t, z: look.z + (balloon.z - look.z) * t },
+  };
+}
+
 // ---- driving camera ------------------------------------------------------------------------------------------
 // The view is fixed to the car: behind it, turning with it, at any speed (it used to wait for 3 m/s and for 1.5 s after a
 // touch, then close the gap at 2.4 / s: in a full-lock turn, 1.9 rad/s, the view trailed the car by 45°, and an upright phone
