@@ -68,7 +68,7 @@ async function boot(w, h) {
   const errors = [];
   const canvas = Object.assign(el('canvas', w, h), { parentElement: el('div', w, h) });
   const world = T.createTimesSquare(canvas, { quality: 'low', autostart: false, name: '시험', species: 1, onError: (e) => errors.push(e) });
-  for (let i = 0; i < 400 && !(world.built() && world.mapData()); i++) await new Promise((r) => real.setTimeout(r, 10));
+  for (const until = real.now() + 60000; real.now() < until && !(world.built() && world.mapData());) await new Promise((r) => real.setTimeout(r, 10)); // a busy machine (the whole suite at once) can take a while
   if (errors.length || !world.mapData()) throw new Error('the city did not build: ' + (errors[0]?.message || 'timeout'));
   world.start();
   run(0.1);
@@ -114,7 +114,7 @@ for (const [w, h, built] of [...SIZES.map((s) => [...s, false]), ...SIZES.map((s
   describe(`the ceremony in the world (${w} x ${h}${built ? ', the lots built up' : ''})`, { skip }, () => {
     let world = null;
     it('boots', async () => {
-      world = await boot(w, h);
+      world = await boot(w, h); // a fresh world: the page has one animation-frame slot, so only the newest world steps
       if (!built) return;
       for (let id = 1; id <= 18; id++) assert.ok(world.applyPlot({ plot_id: id, level: id % 2 ? 4 : 3, theme_color: '#ff3d9a', sign_text: '시험', owner_name: '시험' }, false));
       for (let i = 0; i < 60; i++) { run(0.05); await new Promise((r) => real.setTimeout(r, 20)); } // the lot models come from the disk

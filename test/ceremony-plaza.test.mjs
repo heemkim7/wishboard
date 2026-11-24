@@ -397,3 +397,23 @@ describe('the photo card and the overlay follow the HUD rules (sheet)', () => {
     assert.equal(/innerHTML|outerHTML|insertAdjacentHTML/.test(g), false);
   });
 });
+
+describe('the entry waits for the ceremony gate (main.js, ui.js)', () => {
+  const main = src('main.js');
+  it('enter() asks gift.js before joining the room; the boot card is not changed', () => {
+    const a = main.indexOf('async function enter({ nick, color, species }) {'), enter = main.slice(a, main.indexOf('\n}\n', a));
+    const hold = enter.indexOf('await giftUi?.cerHold?.();'), join = enter.indexOf("await net.join('square', world.netState());");
+    assert.ok(hold > 0 && join > hold, 'the gate before net.join');
+  });
+  it('mountGift hears about budget hard from the room and the gate', () => {
+    assert.match(main, /giftUi = mountGift\(\{ world, ui, whenBuilt, introDone: \(\) => introDone\(\), budgetDown: \(\) => !!\(net\.budgetDown \|\| net\.gateDown\) \}\);/);
+  });
+  it('a ceremony link is a deep link: no welcome board, no intro (main.js DEEP_LINK reads ?gb=)', () => {
+    const a = main.indexOf('const DEEP_LINK = (() => {'), deep = main.slice(a, main.indexOf('})();', a));
+    assert.match(deep, /'gb'/);
+    assert.ok(main.indexOf('if (giftUi?.arrive()) return;') < main.indexOf('world?.playIntro();'));
+  });
+  it('ui.busy(): a sheet or a layer is open', () => {
+    assert.match(src('ui.js'), /\n    busy: \(\) => sheets\.length > 0 \|\| !!ext,\n/);
+  });
+});
