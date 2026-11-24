@@ -3,7 +3,7 @@
 // rooftop water towers — plus the far shores and a skyline layer that stays when tiles unload.
 import * as THREE from 'three';
 import { TILE, ROAD, AREA } from './nyc.js?v=202611241127';
-import { LOOP } from './layout.js?v=202611241127';
+import { LOOP, NO_ROAD } from './layout.js?v=202611241127';
 import { patchWet, GROUND_LAYER } from './ground.js?v=202611241127';
 import { Kit } from './kit.js?v=202611241127';
 import { makeCanvas, paintPuddles, paintGlow } from './art.js?v=202611241127';
@@ -759,6 +759,17 @@ export function createWorld(ctx) {
       new THREE.Plane(new THREE.Vector3(0, 0, -1), LOOP.z1),
     ];
     for (const m of [mats.land, mats.grass, mats.pavers, mats.pool, mats.river]) m.clippingPlanes = clips;
+    // No car road under the lots' pedestrian street (layout.js NO_ROAD, one rectangle): the asphalt and its paint are cut
+    // out there, so the land shows and landmarks.js lays the street's pavers on it. Each plane is negative inside the
+    // rectangle and clipIntersection drops only what all four clip. (Raising a slab over the paint instead would also
+    // cover every avatar's shadow and the ground markers, which sit just above the road.)
+    const hole = [
+      new THREE.Plane(new THREE.Vector3(-1, 0, 0), NO_ROAD.x0),
+      new THREE.Plane(new THREE.Vector3(1, 0, 0), -NO_ROAD.x1),
+      new THREE.Plane(new THREE.Vector3(0, 0, -1), NO_ROAD.z0),
+      new THREE.Plane(new THREE.Vector3(0, 0, 1), -NO_ROAD.z1),
+    ];
+    for (const m of [mats.asphalt, mats.paint]) { m.clippingPlanes = hole; m.clipIntersection = true; }
     put(land.build(), mats.land, GROUND_LAYER, 0);
     put(walls.build(), mats.wall, 0, 0);
     const water = new THREE.Mesh(new THREE.PlaneGeometry(90000, 90000).rotateX(-Math.PI / 2), mats.river);

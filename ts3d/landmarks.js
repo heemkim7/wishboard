@@ -1,8 +1,9 @@
 // Plaza landmarks: TKTS red stairs, Times Square Station exit 1, the golden bungeo-ppang pocha,
 // the Golden ATM, the K-POP stage, and the 18 plot buildings (levels 0–4) on their street, 가운데 거리.
 import * as THREE from 'three';
-import { LAYOUT, LOOP, LOT, PLOT_SLOTS, TAXI_STANDS, fountainSpot, insideLoop, lotRect } from './layout.js?v=202611241127';
-import { Kit, fishGeometry } from './kit.js?v=202611241127';
+import { LAYOUT, LOOP, LOT, PLOT_SLOTS, TAXI_STANDS, fountainSpot, insideLoop, lotRect, streetPosts } from './layout.js?v=202611241127';
+import { Kit, fishGeometry, cropPlane, imgCrop } from './kit.js?v=202611241127';
+import { GROUND_LAYER } from './ground.js?v=202611241127';
 import {
   makeCanvas, paintStationSign, paintPylon, paintMenuBoard, paintTKTS, paintNeonSign,
   paintPlotBadge, paintLabel, paintTaxiStand, SANS, EMOJI,
@@ -486,7 +487,7 @@ export function buildLandmarks(ctx) {
     scene.add(ring);
     const frontRing = new THREE.Mesh(new THREE.RingGeometry(3.3, 3.55, 64).rotateX(-Math.PI / 2), ringMat.clone());
     frontRing.material.opacity = 0.5;
-    frontRing.position.set(G.spot.x, 0.04, G.z0 - 3.6);
+    frontRing.position.set(G.spot.x, 0.09, G.z0 - 3.6); // on the street's pavers (0.022), clear of their depth offset from afar
     frontRing.layers.set(1);
     scene.add(frontRing);
     const stairSign = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 0.7), new THREE.MeshBasicMaterial({ map: tex(paintLabel(makeCanvas(768, 128), '여기로 올라가세요', '#ff7ac0', '#07070d')), color: new THREE.Color(1.1, 1.1, 1.1) }));
@@ -673,6 +674,63 @@ export function buildLandmarks(ctx) {
   }
 
   for (const slot of PLOT_SLOTS) plots.set(slot.id, buildPlot(slot, { plot_id: slot.id, level: 0, theme_color: '#00ffcc' }));
+
+  // ===== 가운데 거리 (WISH STREET): the lots' street =================================================
+  // Pavers where world.js cuts the car road out (layout.js NO_ROAD), a thin lit centre line, the entrance arch with its
+  // name, and a number post at each lot's street corner. One Kit, five meshes: the pavers and the line join the ground
+  // stack (GROUND_LAYER, at the road's and its paint's heights, so avatar shadows and markers still show on them), the
+  // posts and the arch go into the shared metal and glow buckets, and the name and the 18 numbers are faces on one atlas.
+  {
+    const S = LAYOUT.street, A = S.arch, P = S.pave;
+    const PINK = '#ff3d9a', CYAN = '#3fe6ff', GOLD = '#ffcf5a', DARK = '#16171c', NIGHT = '#07070d';
+    const sideColor = (slot) => (slot.side === 'E' ? PINK : CYAN); // odd numbers (east) pink, even numbers (west) cyan
+    const kit = new Kit();
+    kit.plane(P.x1 - P.x0, P.z1 - P.z0, '#ffffff', { mat: 'pave', rx: -Math.PI / 2, x: (P.x0 + P.x1) / 2, y: 0.022, z: (P.z0 + P.z1) / 2 });
+    // The centre line runs from under the arch to the ring before the stage steps.
+    const l0 = S.z0 + 1.2, l1 = S.z1 - 5;
+    kit.plane(0.14, l1 - l0, GOLD, { mat: 'line', glow: 1.7, rx: -Math.PI / 2, x: S.x, y: 0.045, z: (l0 + l1) / 2 });
+
+    // One atlas: the arch's name on top, the numbers in two rows of nine under it (half size on the phone tier).
+    const q = low ? 0.5 : 1, AW = 1024 * q, SH = 256 * q, CELL = 112 * q, AH = SH + CELL * 2;
+    const atlas = makeCanvas(AW, AH), ag = atlas.getContext('2d');
+    ag.fillStyle = NIGHT;
+    ag.fillRect(0, 0, AW, AH);
+    ag.drawImage(paintNeonSign(makeCanvas(AW, SH), 'WISH STREET', PINK, '가운데 거리 · PLOT 1 – 18'), 0, 0);
+    const cellAt = (id) => [8 * q + ((id - 1) % 9) * CELL, SH + Math.floor((id - 1) / 9) * CELL];
+    for (const slot of PLOT_SLOTS) ag.drawImage(paintLabel(makeCanvas(CELL, CELL), String(slot.id), sideColor(slot), NIGHT), ...cellAt(slot.id));
+    const crop = (x, y, w, h) => imgCrop((x + 2 * q) / AW, (y + 2 * q) / AH, (x + w - 2 * q) / AW, (y + h - 2 * q) / AH);
+    const faces = new THREE.MeshBasicMaterial({ map: tex(atlas, 8), color: new THREE.Color(1.3, 1.3, 1.3) });
+
+    for (const p of streetPosts()) {
+      colliders.push({ x0: p.x - p.r, x1: p.x + p.r, z0: p.z - p.r, z1: p.z + p.r });
+      if (p.arch) {
+        // An arch post: the east one carries the odd side's colour, the west one the even side's.
+        kit.box(0.8, A.h, 0.8, DARK, { x: p.x, y: A.h / 2, z: p.z, mat: 'metal' });
+        for (const s of [-1, 1]) kit.box(0.1, A.h - 0.8, 0.06, p.arch > 0 ? PINK : CYAN, { x: p.x, y: A.h / 2, z: p.z + s * 0.43, glow: 2.2 });
+        kit.box(1.0, 0.24, 1.0, GOLD, { x: p.x, y: A.h + 0.12, z: p.z, glow: 1.6 });
+        continue;
+      }
+      // A lot's number post (1.77 m, below every board): the number toward the street and both ways along it.
+      const slot = PLOT_SLOTS[p.lot - 1];
+      kit.box(0.5, 1.0, 0.5, DARK, { x: p.x, y: 0.5, z: p.z, mat: 'metal' });
+      kit.box(0.72, 0.72, 0.72, '#0b0c10', { x: p.x, y: 1.36, z: p.z, mat: 'metal' });
+      kit.box(0.76, 0.05, 0.76, sideColor(slot), { x: p.x, y: 1.745, z: p.z, glow: 2 });
+      const [cx, cy] = cellAt(slot.id);
+      for (const ry of [slot.rot, 0, Math.PI]) kit.add(cropPlane(0.64, 0.64, crop(cx, cy, CELL, CELL)), '#ffffff', { mat: 'faces', x: p.x + Math.sin(ry) * 0.39, y: 1.36, z: p.z + Math.cos(ry) * 0.39, ry });
+    }
+    // The arch's beam (7 m clear under it, 6.4 m under the name plate) and its name, read from both sides.
+    kit.box(A.post * 2 + 0.8, 1.2, 0.6, DARK, { x: S.x, y: A.h - 0.8, z: A.z, mat: 'metal' });
+    kit.box(A.post * 2 - 1.2, 0.06, 0.1, GOLD, { x: S.x, y: A.h - 1.44, z: A.z, glow: 2 });
+    kit.box(10.8, 3.0, 0.7, '#0b0c10', { x: S.x, y: A.h - 0.5, z: A.z, mat: 'metal' }); // deeper than the beam it hangs on
+    kit.box(10.8, 0.06, 0.74, GOLD, { x: S.x, y: A.h + 1.03, z: A.z, glow: 2 });
+    for (const ry of [0, Math.PI]) kit.add(cropPlane(10.4, 2.6, crop(0, 0, AW, SH)), '#ffffff', { mat: 'faces', x: S.x, y: A.h - 0.5, z: A.z + Math.cos(ry) * 0.41, ry });
+
+    const lineMat = new THREE.MeshBasicMaterial({ vertexColors: true, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
+    const street = kit.build({ ...kitMats, pave: ground.mats.pavers, line: lineMat, faces });
+    street.name = 'wish-street';
+    for (const m of street.children) if (m.name === 'pave' || m.name === 'line') { m.layers.set(GROUND_LAYER); m.renderOrder = m.name === 'pave' ? 1 : 2; }
+    scene.add(street);
+  }
 
   {
     const c = makeCanvas(1024, 256);
