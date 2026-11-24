@@ -1751,7 +1751,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
      apart with a mouse, tabs and the lot grid 4-6px. The buttons of one row share one height and wrap as a group. */
   :root { --tap-gap: 8px; --group-gap: 16px; }
   html.touch { --tap-gap: 12px; }
-  .sheet .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); align-items: stretch; gap: var(--tap-gap); margin-top: var(--group-gap); }
+  .sheet .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); align-items: stretch; gap: var(--tap-gap); margin-top: var(--group-gap); }
   .sheet .row > .btn { width: 100%; justify-content: center; margin: 0; }
   .sheet .field > .row { margin-top: 0; }
   .sheet :is(.chips, .seg, .place .go, .themes, .swatches, .colors, .plots, .species-grid, .wish-tabs, .shot-row, .wiz-nav, .wal-quick, .linkrow, .rowlist, .lines, .emo-row, .quick, .mapzoom, .login-form, .team-form, .vipcard .air-row) { gap: var(--tap-gap); }

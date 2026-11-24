@@ -142,7 +142,7 @@ describe('3. sheets: tappable neighbours 8px apart with a mouse and 12px on touc
     assert.match(css, /:root \{ --tap-gap: 8px; --group-gap: 16px; \}/);
     assert.match(css, /html\.touch \{ --tap-gap: 12px; \}/);
     // a grid of equal cells (four in a row where they fit, two on a phone), so a wrapped last button is not a lone wide bar
-    assert.match(rule(css, '.sheet .row'), /display: grid; grid-template-columns: repeat\(auto-fit, minmax\(140px, 1fr\)\); align-items: stretch; gap: var\(--tap-gap\); margin-top: var\(--group-gap\);/);
+    assert.match(rule(css, '.sheet .row'), /display: grid; grid-template-columns: repeat\(auto-fit, minmax\(112px, 1fr\)\); align-items: stretch; gap: var\(--tap-gap\); margin-top: var\(--group-gap\);/);
     const groups = css.match(/\.sheet :is\(([^)]*)\) \{ gap: var\(--tap-gap\); \}/);
     assert.ok(groups);
     for (const g of ['.chips', '.seg', '.place .go', '.themes', '.swatches', '.colors', '.plots', '.species-grid']) assert.ok(groups[1].includes(g), g);
