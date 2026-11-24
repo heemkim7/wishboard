@@ -21,9 +21,11 @@ const form = (o = {}) => ({ to: '민지', from: '동아리', occ: 'bday', msg: '
 // No browser here: just enough of a DOM for giftpage.js and gift.js to build what they show, so a test can press a button and read
 // the page and what was sent. Canvas drawing goes nowhere. Timers, intervals and animation frames are kept and never run by
 // themselves (P.timers() runs the timeouts, P.tick() the one-second lines). Each load is a fresh module instance.
+// touch: a phone (the pointer is not a mouse: matchMedia('(pointer: fine)') is false). embed: the page is in the plaza's frame (?in=1 is
+// the caller's to put in search); what it tells the plaza is kept in P.posted.
 let LOADS = 0;
-function fakeDom({ path = '/gift', search = '', data = null, store = {}, at = 0, respond = () => ({}), rec = false } = {}) {
-  const sent = [], timeouts = [], ticks = [], winOn = {}, swOn = {}, copied = [], shared = [], P = { sent, store, copied, shared, winOn, swOn, skew: at ? at - Date.now() : 0 };
+function fakeDom({ path = '/gift', search = '', data = null, store = {}, at = 0, respond = () => ({}), rec = false, touch = false, embed = false } = {}) {
+  const sent = [], timeouts = [], ticks = [], winOn = {}, docOn = {}, swOn = {}, copied = [], shared = [], posted = [], P = { sent, store, copied, shared, posted, winOn, docOn, swOn, skew: at ? at - Date.now() : 0 };
   const ink = new Proxy({}, { get: (t, k) => (k in t ? t[k] : k === 'measureText' ? () => ({ width: 10 }) : () => ink), set: (t, k, v) => { t[k] = v; return true; } });
   const text = (v) => ({ nodeType: 3, textContent: String(v), parent: null });
   const REFLECT = new Set(['hidden', 'disabled', 'href', 'id', 'type', 'src', 'title', 'placeholder']);
@@ -46,22 +48,24 @@ function fakeDom({ path = '/gift', search = '', data = null, store = {}, at = 0,
   };
   const app = el('main'), dataTag = data ? { textContent: JSON.stringify(data) } : null, toolWish = el('button');
   const doc = { getElementById: (id) => (id === 'app' ? app : id === 'gift-data' ? dataTag : id === 'view' ? el('canvas') : null), createElement: el, createTextNode: text, querySelector: () => toolWish,
-    documentElement: { classList: { add() {} } }, head: el('head'), body: el('body'), activeElement: null, hidden: false, addEventListener() {}, removeEventListener() {} };
+    documentElement: { classList: { add() {} } }, head: el('head'), body: el('body'), activeElement: null, hidden: false, addEventListener(t, f) { (docOn[t] ||= []).push(f); }, removeEventListener() {} };
+  doc.createElementNS = (ns, tag) => el(tag); // the line icon of the frame's close button (gift.js)
   el('div').append(toolWish); // the HUD's 🌠 button has a parent (gift.js puts 🎁 after it)
+  P.tools = toolWish.parent;
   const loc = { pathname: path, search, hash: '', origin: 'https://sq.example', reloads: 0, reload() { loc.reloads++; }, get href() { return loc.origin + loc.pathname + loc.search; }, set href(v) { loc.went = String(v); } };
   // The session history of this document: entries with their state, as pushState and replaceState leave them.
   const entries = [{ url: path + search, state: null }]; let cur = 0;
   const hist = { scrollRestoration: 'auto', get state() { return entries[cur].state; },
     pushState(s, t, url) { entries.splice(cur + 1); entries.push({ url: String(url), state: s }); cur++; go(url); }, replaceState(s, t, url) { entries[cur] = { url: String(url), state: s }; go(url); } };
   const go = (url) => { const u = new URL(String(url), loc.origin); loc.pathname = u.pathname; loc.search = u.search; };
-  const win = { addEventListener(t, f) { (winOn[t] ||= []).push(f); }, removeEventListener() {}, scrollTo() {}, postMessage() {} }; win.parent = win;
+  const win = { addEventListener(t, f) { (winOn[t] ||= []).push(f); }, removeEventListener() {}, scrollTo() {}, postMessage() {} }; win.parent = embed ? { postMessage(m) { posted.push(m); } } : win;
   const realNow = Date.now;
   const globals = {
     document: doc, window: win, location: loc, history: hist,
     localStorage: { getItem: (k) => (k in store ? store[k] : null), setItem(k, v) { store[k] = String(v); } },
     navigator: { userAgent: 'test', sendBeacon: () => true, clipboard: { async writeText(t) { copied.push(String(t)); } }, share: null, serviceWorker: { addEventListener(t, f) { swOn[t] = f; } } },
     fetch: async (url, opt = {}) => { sent.push({ url: String(url), method: opt.method || 'GET', body: typeof opt.body === 'string' ? JSON.parse(opt.body) : opt.body, auth: opt.headers?.authorization || '' }); const r = respond(String(url), opt); return { ok: !!r, status: r ? 200 : 404, json: async () => r || { ok: false }, blob: async () => new Blob([]) }; },
-    requestAnimationFrame: () => 0, cancelAnimationFrame() {}, scrollTo() {}, scrollY: 0, matchMedia: () => ({ matches: false }),
+    requestAnimationFrame: () => 0, cancelAnimationFrame() {}, scrollTo() {}, scrollY: 0, matchMedia: (q) => ({ matches: /pointer:\s*fine/.test(q) ? !touch : /pointer:\s*coarse/.test(q) ? touch : false }),
     setInterval: (f) => { ticks.push(f); return 0; }, clearInterval() {}, setTimeout: (f, ms) => { timeouts.push({ f, ms }); return 0; }, clearTimeout() {},
     // rec: a browser that can record a canvas (giftfilm.js canRecord); without it the two names are undefined, as in an in-app browser.
     MediaRecorder: rec ? function MediaRecorder() {} : undefined, HTMLCanvasElement: rec ? { prototype: { captureStream() {} } } : undefined,
@@ -88,6 +92,10 @@ function fakeDom({ path = '/gift', search = '', data = null, store = {}, at = 0,
     input: (id) => walk(app).find((n) => n.attrs.id === id) || null,
     async timers() { for (const t of timeouts.splice(0)) await t.f(); await settle(); }, timeouts,
     tick() { for (const f of ticks) f(); },
+    /** A key pressed with the cursor in this document (on: P.winOn or P.docOn). Says whether a listener took it for itself. */
+    async key(on, key, more = {}) { const e = { key, isComposing: false, keyCode: 0, defaultPrevented: false, stopped: false, preventDefault() { e.defaultPrevented = true; }, stopPropagation() { e.stopped = true; }, ...more }; for (const f of on.keydown || []) f(e); await settle(); return e; },
+    /** Every button and link on screen. */
+    controls: (root = app) => walk(root).filter((n) => (n.tag === 'button' || n.tag === 'a') && shown(n)),
     seen: (id, e) => { try { return !!JSON.parse(store.kts_gseen || '{}')[id + ':' + e]; } catch { return false; } },
   });
   return P;
@@ -578,5 +586,156 @@ describe('the reply notice opens the board as its owner on any device of the acc
   it('without ?o=1 a device that did not make the board does not ask as the owner (as before)', async () => {
     const P = pageOf(g, KST('2026-11-25T19:00:00'), { respond: () => null });
     try { await P.load('giftpage.js'); assert.equal(P.sent.some((x) => x.url === '/rt/gift/' + g.id && x.auth), false); } finally { P.done(); }
+  });
+});
+
+// ---- gift.html's sheet, read as rules -------------------------------------------------------------------------------------------
+// The pages are not opened here, so what a phone needs from the sheet is checked on its text: a pressed state for every control,
+// places to press of 44px, no text under 12px, and the contrast of every text colour on the lightest surface it can sit on.
+const SHEET = (() => {
+  const css = /<style>([\s\S]*?)<\/style>/.exec(src('gift.html'))[1].replace(/\/\*[\s\S]*?\*\//g, '');
+  // @media blocks apart: their rules hold only where the query does.
+  let base = ''; const media = [];
+  for (let i = 0; i < css.length;) {
+    const at = css.indexOf('@media', i);
+    if (at < 0) { base += css.slice(i); break; }
+    base += css.slice(i, at);
+    const open = css.indexOf('{', at); let j = open + 1;
+    for (let depth = 1; depth && j < css.length; j++) depth += css[j] === '{' ? 1 : css[j] === '}' ? -1 : 0;
+    media.push({ q: css.slice(at + 6, open).trim(), body: css.slice(open + 1, j - 1) }); i = j;
+  }
+  const parse = (text) => [...text.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
+    sels: m[1].split(',').map((s) => s.trim().replace(/\s+/g, ' ')),
+    decl: Object.fromEntries(m[2].split(';').map((d) => d.trim()).filter(Boolean).map((d) => { const k = d.indexOf(':'); return [d.slice(0, k).trim(), d.slice(k + 1).trim()]; })),
+  }));
+  const rules = parse(base), vars = rules.find((r) => r.sels.includes(':root')).decl;
+  const val = (v) => String(v ?? '').replace(/var\((--[\w-]+)\)/g, (_, k) => vars[k] ?? '');
+  /** A property of exactly this selector (the last rule outside @media that names it), var() resolved; undefined when it has none. */
+  const get = (sel, prop) => { let out; for (const r of rules) if (r.sels.includes(sel) && prop in r.decl) out = r.decl[prop]; return out === undefined ? undefined : val(out); };
+  return { css, rules, media: media.map((m) => ({ q: m.q, rules: parse(m.body) })), vars, val, get };
+})();
+const px = (v) => { const m = /^(-?[\d.]+)px$/.exec(String(v ?? '').trim()); return m ? Number(m[1]) : NaN; };
+// Colours as [r, g, b, alpha]; WCAG 2 relative luminance and contrast.
+const rgb = (c) => {
+  const s = String(c).trim(); let m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(s);
+  if (m) { const x = m[1].length === 3 ? [...m[1]].map((d) => d + d).join('') : m[1]; return [parseInt(x.slice(0, 2), 16), parseInt(x.slice(2, 4), 16), parseInt(x.slice(4, 6), 16), 1]; }
+  m = /^rgba?\(([^)]+)\)$/i.exec(s); assert.ok(m, 'a colour: ' + c);
+  const p = m[1].split(',').map(Number); return [p[0], p[1], p[2], p[3] ?? 1];
+};
+const colours = (v) => (String(v ?? '').match(/#[0-9a-f]{3,6}\b|rgba?\([^)]*\)/gi) || []).map(rgb); // every colour of a value (a gradient's stops)
+const lum = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+const lay = (top, under) => [0, 1, 2].map((i) => top[i] * top[3] + under[i] * (1 - top[3])).concat(1); // a see-through fill over an opaque one
+const WHITE = [255, 255, 255, 1], BLACK = [0, 0, 0, 1];
+// The surfaces text sits on. The page is its darkest colour with two glows over it: the lightest the page can be is the lighter glow's
+// own colour (a bound: the glows' centres are off the screen). A card is the card fill over that, and what lies in a card over the card.
+const SURF = (() => {
+  const S = SHEET, fill = (sel, under) => lay(colours(S.get(sel, 'background'))[0], under);
+  const page = colours(S.get('body', 'background')).reduce((a, b) => (lum(b) > lum(a) ? b : a)), card = lay(rgb(S.vars['--card']), page);
+  return {
+    page, card, ask: fill('.ask', card), chip: fill('.chip', card), chipOn: fill('.chip[aria-pressed=true]', card), btn: fill('.btn', card), field: fill('textarea', card),
+    tier: fill('.tier', card), tierOn: fill('.tier[aria-checked=true]', card), lock: fill('.lock', card), link: fill('.link', card), stat: fill('.stats div', card),
+    tag: fill('.tag', page), tagLive: fill('.tag.live', page), pressed: lay(rgb(S.vars['--press']), card),
+    gold: colours(S.get('.btn.gold', 'background')), pink: colours(S.get('.btn.pink', 'background')), best: colours(S.get('.tier .best', 'background')),
+    notes: ['.note', '.note:nth-child(3n+2)', '.note:nth-child(3n)'].map((s) => colours(S.get(s, 'background'))[0]),
+  };
+})();
+
+describe('gift.html on a phone: pressed states, places to press, text size and contrast (read from the sheet)', () => {
+  const S = SHEET;
+  it('every control has a pressed state that changes its fill the moment it is touched, not only its size', () => {
+    const PRESSED = ['.btn:not(:disabled):active', '.btn.gold:not(:disabled):active', '.btn.pink:not(:disabled):active', '.chip:not(:disabled):active', '.chip[aria-pressed=true]:not(:disabled):active',
+      '.sw:active', '.tier:active', '.tier[aria-checked=true]:active', '.linkbtn:active', '.brand:active', '.note .rp:active', '.stage .play:active span'];
+    for (const sel of PRESSED) {
+      const d = S.rules.filter((r) => r.sels.includes(sel)).map((r) => r.decl);
+      assert.ok(d.length, sel + ': a pressed rule');
+      assert.ok(d.some((x) => x.background || x['box-shadow'] || x.color), sel + ': more than a change of size');
+    }
+    // At once: the fade of the rest state is switched off while the finger is down, and the rest state fades back (a quick tap is seen).
+    const instant = S.rules.find((r) => r.decl.transition === 'none' && r.sels.includes('.btn:active'));
+    for (const sel of ['.btn:active', '.chip:active', '.sw:active', '.tier:active', '.linkbtn:active']) assert.ok(instant.sels.includes(sel), sel + ': no fade in');
+    const fade = S.rules.find((r) => /background-color \.25s/.test(r.decl.transition || '') && r.sels.includes('.btn'));
+    for (const sel of ['.btn', '.chip', '.sw', '.tier', '.linkbtn']) assert.ok(fade.sels.includes(sel), sel + ': fades back');
+    assert.match(fade.decl.transition, /box-shadow \.25s/, 'the gold and pink washes are shadows: they fade too');
+    // How far each fill moves (rest against pressed, as a contrast ratio). The plaza's gold moved 1.17:1 and nobody saw it.
+    const press = rgb(S.vars['--press']);
+    const moved = {
+      btn: ratio(SURF.btn, SURF.pressed), chip: ratio(SURF.chip, SURF.pressed),
+      chipOn: ratio(SURF.chipOn, lay(colours(S.get('.chip[aria-pressed=true]:not(:disabled):active', 'background'))[0], SURF.card)),
+      tier: ratio(SURF.tier, lay(colours(S.get('.tier:active', 'background'))[0], SURF.card)),
+      tierOn: ratio(SURF.tierOn, lay(colours(S.get('.tier[aria-checked=true]:active', 'background'))[0], SURF.card)),
+      gold: Math.min(...SURF.gold.map((c) => ratio(c, lay(rgb(S.vars['--gold-press']), c)))), pink: Math.min(...SURF.pink.map((c) => ratio(c, lay(rgb(S.vars['--pink-press']), c)))),
+    };
+    for (const [k, v] of Object.entries(moved)) assert.ok(v >= 1.4, `${k}: the pressed fill is ${v.toFixed(2)}:1 from the rest fill`);
+    assert.equal(press[3] >= 0.2, true);
+    // The words on a pressed button stay readable.
+    const ink = { gold: rgb(S.get('.btn.gold', 'color')), pink: rgb(S.get('.btn.pink', 'color')), text: rgb(S.vars['--text']) };
+    for (const c of SURF.gold) assert.ok(ratio(ink.gold, lay(rgb(S.vars['--gold-press']), c)) >= 4.5, 'pressed gold');
+    for (const c of SURF.pink) assert.ok(ratio(ink.pink, lay(rgb(S.vars['--pink-press']), c)) >= 4.5, 'pressed pink');
+    assert.ok(ratio(ink.text, SURF.pressed) >= 4.5, 'pressed plain button');
+    // The washes of the gold and pink buttons are the pressed rules' inset shadows, there (clear) at rest so they can fade.
+    assert.match(S.get('.btn.gold', 'box-shadow'), /inset 0 0 0 99px rgba\(70,36,0,0\)$/); assert.match(S.get('.btn.gold:not(:disabled):active', 'box-shadow'), /inset 0 0 0 99px rgba\(70,36,0,\.34\)$/);
+    assert.match(S.get('.btn.pink', 'box-shadow'), /^inset 0 0 0 99px rgba\(10,0,24,0\)$/); assert.match(S.get('.btn.pink:not(:disabled):active', 'box-shadow'), /^inset 0 0 0 99px rgba\(10,0,24,\.45\)$/);
+  });
+  it('places to press are 44px or more; small text links get there with a clear pad around them', () => {
+    for (const [sel, props] of [['.btn', ['min-height']], ['.btn.sm', ['min-height']], ['.chip', ['min-height', 'min-width']], ['.sw', ['width', 'height']], ['.linkbtn', ['min-height', 'min-width']], ['textarea', ['min-height']]]) {
+      for (const p of props) assert.ok(px(S.get(sel, p)) >= 44, `${sel} ${p}: ${S.get(sel, p)}`);
+    }
+    // 광장 가기 and the paper's 신고 keep their look; ::after carries the size: (line + 2 × pad) tall, (min-width + 2 × pad) wide.
+    const pad = (sel) => { assert.equal(S.get(sel, 'position'), 'absolute'); assert.equal(S.get(sel, 'content'), '""'); return String(S.get(sel, 'inset')).split(' ').map((x) => -px(x)); };
+    const [bv] = pad('.brand::after'); assert.ok(px(S.get('.brand', 'line-height')) + 2 * bv >= 44, 'WISH BOARD'); assert.equal(S.get('.brand', 'position'), 'relative');
+    const [rv, rh] = pad('.note .rp::after'); assert.ok(px(S.get('.note .rp', 'line-height')) + 2 * rv >= 44, '신고, tall'); assert.ok(px(S.get('.note .rp', 'min-width')) + 2 * rh >= 44, '신고, wide'); assert.equal(S.get('.note .rp', 'position'), 'relative');
+    assert.ok(px(S.get('input[type=checkbox]', 'width')) >= 22, 'the consent box (its whole line is the label)');
+    // Six colours in one row on a 360px phone: 360 - 2 × (16 page + 16 card + 1 line) = 294.
+    assert.ok(6 * px(S.get('.sw', 'width')) + 5 * px(S.get('.chips.sws', 'gap')) <= 294);
+  });
+  it('no text under 12px', () => {
+    for (const r of [...S.rules, ...S.media.flatMap((m) => m.rules)]) {
+      const size = r.decl['font-size'] ? px(r.decl['font-size']) : /(\d+(?:\.\d+)?)px/.test(r.decl.font || '') ? Number(/(\d+(?:\.\d+)?)px/.exec(r.decl.font)[1]) : null;
+      if (size != null) assert.ok(size >= 12, r.sels.join(', ') + ': ' + size + 'px');
+    }
+    assert.equal(S.get('.brand small', 'font-size'), '12px', '모두의 전광판 (a bare <small> is 10.8px)'); assert.equal(S.get('.tier .best', 'font-size'), '12px', '추천');
+  });
+  it('every text colour is 4.5:1 or more on the lightest surface it sits on', () => {
+    const { page, card, ask, chip, chipOn, btn, field, tier, tierOn, lock, link, stat, tag, tagLive, pressed, gold, pink, best, notes } = SURF;
+    // Each rule that sets a text colour, and what it can lie on. A new coloured text has to be added here with its surface.
+    const ON = {
+      body: [page, card, ask, tier, tierOn, stat], a: [page, card], '.brand': [page], '.brand small': [page], '.sub': [page, card, ask], '.fine': [page, card],
+      '.label small, .field > label small': [card], 'input[type=text], input[type=date], textarea': [field], 'input::placeholder, textarea::placeholder': [field],
+      '.chip': [chip], '.chip[aria-pressed=true]': [chipOn], '.err': [card, ask], '.okmsg': [card, ask], '.btn': [btn], '.btn.gold': gold, '.btn.pink': pink, '.when': [card],
+      '.stage .play': [lay(colours(S.get('.stage .play span', 'background'))[0], WHITE)], '.stage .rec': [WHITE, BLACK].map((u) => lay(colours(S.get('.stage .rec', 'background'))[0], u)),
+      '.tag': [tag], '.tag.live': [tagLive], '.tier': [tier, tierOn], '.tier .price': [tier, tierOn], '.tier ul': [tier, tierOn], '.tier .best': best, '.tier .hint': [tier, tierOn],
+      '.note': notes, '.note b': notes, '.note .rp': notes, '.lock': [lock], '.lock b': [lock], '.link': [link], '.stats span': [stat], '.boot': [page], '.foot': [page],
+      '.linkbtn': [page, card, ask], '.linkbtn:active': [pressed, lay(rgb(S.vars['--press']), ask)], '.note .rp:active': notes.map((n) => lay(colours(S.get('.note .rp:active', 'background'))[0], n)),
+    };
+    const coloured = S.rules.filter((r) => 'color' in r.decl).map((r) => r.sels.join(', '));
+    assert.deepEqual([...coloured].sort(), Object.keys(ON).sort(), 'the rules that colour text');
+    assert.equal(S.media.some((m) => m.rules.some((r) => 'color' in r.decl)), false, 'no text colour changes with the screen');
+    let low = { v: 99, at: '' };
+    for (const [sel, under] of Object.entries(ON)) {
+      const fg = rgb(S.val(S.rules.filter((r) => r.sels.join(', ') === sel).pop().decl.color));
+      for (const u of under) { const v = ratio(fg, u); if (v < low.v) low = { v, at: sel }; assert.ok(v >= 4.5, `${sel}: ${v.toFixed(2)}:1`); }
+    }
+    assert.ok(low.v >= 4.5, `the lowest is ${low.v.toFixed(2)}:1 (${low.at})`);
+    // What the audit measured: the small grey #77769c (2.4 to 3.5:1), the browser's own placeholder grey, white on the 추천 badge and on the pink button.
+    assert.equal(/#77769c/i.test(S.css), false); assert.equal(S.vars['--dim'], '#a3a2c4');
+    assert.ok(ratio(rgb('#77769c'), tierOn) < 3 && ratio(rgb('#77769c'), page) < 4.5, 'the old grey on these surfaces, by the same sum');
+    assert.ok(ratio(WHITE, rgb(S.vars['--pink'])) < 4.5, 'white on the badge pink still fails: the badge text is dark');
+  });
+  it('the page loads the plaza\'s typeface without waiting for it, breaks Korean between words, and outlines the darkest colour', () => {
+    const page = src('gift.html'), href = /<link rel="stylesheet" href="([^"]*pretendard[^"]*)"/.exec(src('index.html'))[1];
+    assert.ok(page.includes(`<link rel="stylesheet" href="${href}" media="print" onload="this.media='all'" />`), 'the same file as the plaza, never blocking the first paint');
+    assert.equal(S.get('body', 'word-break'), 'keep-all'); assert.equal(S.get('body', 'overflow-wrap'), 'anywhere'); assert.equal(S.get('.link', 'word-break'), 'break-all', 'an address still breaks anywhere');
+    assert.match(S.get('.sw', 'box-shadow'), /^0 0 0 1px rgba\(255,255,255,\.35\)$/, '밤하늘 is the card\'s own colour: a thin ring');
+  });
+  it('the owner\'s preview film is at most half the screen and 420px on a phone, the whole film beside the cards on a desk; the recipient\'s is as it was', () => {
+    assert.match(S.css, /\.stage\.sm \{ max-width: min\(100%, calc\(min\(52vh, 420px\) \* 9 \/ 16\)\); max-width: min\(100%, calc\(min\(52dvh, 420px\) \* 9 \/ 16\)\);/);
+    assert.equal(S.get('.stage', 'max-width'), 'min(100%, calc(72vh * 9 / 16))');
+    const desk = S.media.find((m) => m.q === '(min-width: 900px)');
+    assert.equal(desk.rules.find((r) => r.sels.includes('.stage.sm')).decl['max-width'], 'min(100%, calc(72vh * 9 / 16))');
+    // A phone on its side: two columns, so the picture is not the whole first screen there either.
+    const side = S.media.find((m) => /orientation: landscape/.test(m.q));
+    assert.equal(side.q, '(orientation: landscape) and (max-height: 520px) and (min-width: 600px) and (max-width: 899px)');
+    assert.equal(side.rules.find((r) => r.sels.includes('.cols')).decl.display, 'grid');
   });
 });
