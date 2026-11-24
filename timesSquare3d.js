@@ -29,7 +29,7 @@ import { createPouchKit } from './ts3d/pouch.js?v=202611241127';
 import { seesAvatar, prefetchDelay, prefetchIds } from './ts3d/loadplan.js?v=202611241127';
 import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, paintLabel, fontsReady, chars, hashStr, FRAME_FX } from './ts3d/art.js?v=202611241127';
 import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=202611241127';
-import { taxiExit, EXIT_SLOW, nextOfferDelay, fareWait } from './interact.js?v=202611241127';
+import { taxiExit, EXIT_SLOW, nextOfferDelay, fareWait, AUTO_WALK, gridPath, walkSteer, walkStall, walkPace, autoWalkEnds } from './interact.js?v=202611241127';
 import { WELCOME } from './ftue.js?v=202611241127';
 import { RETURN_MS, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, portraitFov, fitDistance, reverseTime, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange, boardVantage, facesBlock } from './camrig.js?v=202611241127';
 
@@ -350,6 +350,11 @@ void main(){
   // not the same thing as sitting in a taxi.
   const homePos = camera.position.clone(), homeLook = follow.clone(), viewLook = follow.clone();
   let hidMe = false, clipDist = Infinity, reverseT = 0, lastEmote = -1e9, stuntAt = -1e9, ringDim = false, boardAt = 0, boardNear = null;
+  // The follow cameras (camrig.js). travel: the heading the walk is asked to take this frame (the stick or the auto-walk), which
+  // the view comes round behind. stick: the stick's frame (stickFrame). backT: ms the walk has pointed back toward the lens.
+  // driveYaw0 / driveOrbit: the car's heading last frame and this frame's orbit angles (driveCamera).
+  const travel = { on: false, yaw: 0 }, stick = { ref: null, lag: 0 }, driveOrbit = { theta: 0, phi: 0 };
+  let backT = 0, driveYaw0 = 0;
   // The world has one free-form line to the HUD: onInteract('notice', null, { text, tone }).
   const tell = (text, tone = '', extra = null) => opts.onInteract?.('notice', null, { text, tone, ...extra });
 
@@ -359,7 +364,7 @@ void main(){
   let lastNearKey = '', near = null, lastJump = 0;
   window.addEventListener('keydown', (e) => {
     if (isTyping(e)) return;
-    if (e.code === 'Escape') { endCine(true); return; }
+    if (e.code === 'Escape') { endAutoWalk(); endCine(true); return; }
     if (MOVE_CODES.has(e.code)) {
       // Not while input is switched off: auto-repeat would refill the set that setInputEnabled(false) just emptied.
       // A key still held when input comes back counts again on its next repeat.
@@ -652,6 +657,75 @@ void main(){
     if (p) passenger.position.set(p.x, groundHeight(p.x, p.z), p.z);
   }
   let waypoint = null;
+  // ---- auto-walk (interact.js AUTO_WALK): 길안내 알약의 `자동으로 가기` ---------------------------------------------------
+  // The avatar walks to the guide's target by itself: a route over walkable ground (gridPath, tested with this world's own
+  // collision), followed by the same walk step the stick drives (stepWalk). The position still comes from this local
+  // simulation only, and nothing new goes on the wire: the position packets are what they always were.
+  // autoWalk: { route, st: { i, side }, stall: { best, t }, replanned } while it is on, else null.
+  let autoWalk = null;
+  const walkOut = { dx: 0, dz: 0, left: 0, done: false }, walkGo = { dx: 0, dz: 0, top: RUN };
+  const WALK_BOUNDS = { x0: LOOP.x0 + 1.4, x1: LOOP.x1 - 1.4, z0: LOOP.z0 + 1.4, z1: LOOP.z1 - 1.4 }; // where collide() keeps a walker
+  /** Nobody can stand here: inside a building, or within AUTO_WALK.clear of a wall, a landmark or a street prop (cars come and go: walkSteer goes round them). */
+  function walkBlocked(x, z) {
+    if (nyc.buildingAt(x, z) >= 0) return true;
+    let [cx, cz] = pushOut(x, z, AUTO_WALK.clear, colliders);
+    if (world) [cx, cz] = world.collideProps(cx, cz, AUTO_WALK.clear);
+    [cx, cz] = nyc.collide(cx, cz, AUTO_WALK.clear);
+    return Math.hypot(cx - x, cz - z) > 0.02;
+  }
+  /** The avatar can stand here right now: walls, landmarks, props and the cars as they are this frame. */
+  const walkFree = (x, z) => { const [cx, cz] = collide(x, z, RADIUS, false); return Math.hypot(cx - x, cz - z) < 0.06; };
+  function planWalk() {
+    if (!nyc || !waypoint) return null;
+    nyc.ensureSolid(pos.x, pos.z); // from anywhere inside the fence this loads the walls of the whole fenced square
+    return gridPath({ from: { x: pos.x, z: pos.z }, to: waypoint, bounds: WALK_BOUNDS, blocked: walkBlocked });
+  }
+  function beginAutoWalk() {
+    if (drive) { tell('택시에서 내린 뒤에 자동으로 갈 수 있어요'); return false; }
+    if (!inputEnabled) return false;
+    if (!nyc) { tell('지도를 불러오는 중이에요. 잠시 뒤에 다시 눌러 주세요'); return false; }
+    if (cine && cine.pin && !cine.back) return false; // a photo is being framed: the avatar is not even drawn
+    const plan = planWalk();
+    if (!plan) { tell('여기서는 걸어서 더 가까이 갈 길이 없어요', 'err'); return false; }
+    // A board focus or the lounge tour ends: the walk is watched from behind the avatar.
+    if (lounge || (cine && !cine.back)) endCine();
+    autoWalk = { route: plan.points, st: { i: 1, side: 0 }, stall: { best: Infinity, t: 0 }, replanned: false };
+    tell('자동으로 가는 중 · 직접 움직이면 멈춰요', 'ok');
+    return true;
+  }
+  /** Ends the auto-walk (the guide stays on) and tells the HUD; `line`: what to say about it, if anything. */
+  function endAutoWalk(line = '', tone = '') {
+    if (!autoWalk) return;
+    autoWalk = null;
+    if (line) tell(line, tone);
+    if (waypoint) opts.onWaypoint?.({ x: waypoint.x, z: waypoint.z, auto: false });
+  }
+  /** This frame's step of the walk ({ dx, dz, top } for stepWalk), or null when it has just ended. */
+  function stepAutoWalk(dt) {
+    const a = autoWalk;
+    walkSteer(pos, a.route, a.st, walkFree, walkOut);
+    let t = walkOut.done ? 0 : walkStall(a.stall, walkOut.left, dt);
+    if (!t) a.replanned = false;
+    else if (t >= AUTO_WALK.replan && !a.replanned) {
+      // Not getting nearer: plan again from here once (a prop that streamed in, a lot that was built), the clock running on.
+      a.replanned = true;
+      const plan = planWalk();
+      if (plan) {
+        a.route = plan.points; a.st.i = 1; a.st.side = 0;
+        walkSteer(pos, a.route, a.st, walkFree, walkOut);
+        t = walkOut.done ? 0 : walkStall(a.stall, walkOut.left, 0, true);
+      }
+    }
+    // The end of the route, or as near to it as the avatar gets (the last steps of a target that stands against something).
+    if (walkOut.done || (t >= AUTO_WALK.stuck && walkOut.left < 3)) {
+      const short = Math.hypot(pos.x - waypoint.x, pos.z - waypoint.z) >= 7;
+      endAutoWalk(short ? '가장 가까운 곳까지 왔어요 · 목적지는 걸어서 들어갈 수 없어요' : '');
+      return null;
+    }
+    if (t >= AUTO_WALK.stuck) { endAutoWalk('길이 막혀서 자동으로 가기를 멈췄어요', 'err'); return null; }
+    walkGo.dx = walkOut.dx; walkGo.dz = walkOut.dz; walkGo.top = walkPace(walkOut.left, WALK, RUN);
+    return walkGo;
+  }
   const job = { phase: 'none', target: null, dest: null, t0: 0, limit: 0, nextAt: 0, startX: 0, startZ: 0, riders: 0, extra: null, extraAt: 0, extraReach: 0, detachAt: 0, wait: 0 };
   // fareAt: clock time (s) of the last fare sent this session (null = none). SLOW_V: pick-up and drop-off below 40 km/h.
   let fareAt = null;
@@ -720,6 +794,8 @@ void main(){
   function enterTaxi(i) {
     const t = traffic?.takeTaxi(i);
     if (!t) return false;
+    endAutoWalk(); // getting into a taxi ends the auto-walk
+    travel.on = false; stick.ref = null; stick.lag = 0;
     drive = { i, x: t.x, z: t.z, y: groundHeight(t.x, t.z), yaw: t.yaw, v: 0, steer: 0, odo: 0, fare: 3 };
     me.root.visible = false;
     vel.set(0, 0, 0);
@@ -1219,17 +1295,20 @@ void main(){
     return { f: clamp(f, -1, 1), r: clamp(r, -1, 1), walk: keys.has('ShiftLeft') || keys.has('ShiftRight'), joy: usingJoy };
   }
 
-  function stepWalk(dt, input) {
+  // auto: the auto-walk's step this frame ({ dx, dz, top }: a unit direction on the ground and a top speed), or null for the
+  // player's own input. Either way the avatar moves by this local simulation only.
+  function stepWalk(dt, input, auto) {
     // While a scripted camera runs (or eases back) the stick is read against the orbit the player will return to.
     if (cine) fwd.subVectors(homeLook, homePos); else camera.getWorldDirection(fwd);
     fwd.y = 0;
     if (fwd.lengthSq() < 1e-6) fwd.set(0, 0, -1);
     fwd.normalize();
     right.set(-fwd.z, 0, fwd.x);
-    wish.set(0, 0, 0).addScaledVector(fwd, input.f).addScaledVector(right, input.r);
+    if (auto) wish.set(auto.dx, 0, auto.dz);
+    else wish.set(0, 0, 0).addScaledVector(fwd, input.f).addScaledVector(right, input.r);
     const mag = Math.min(1, wish.length());
     if (mag > 1e-4) wish.normalize();
-    const top = input.walk ? WALK : input.joy ? WALK + (RUN - WALK) * clamp((mag - 0.45) / 0.45, 0, 1) : RUN;
+    const top = auto ? auto.top : input.walk ? WALK : input.joy ? WALK + (RUN - WALK) * clamp((mag - 0.45) / 0.45, 0, 1) : RUN;
     const moving = mag > 0.08;
     const k = 1 - Math.exp(-dt * (moving ? 10 : 13));
     vel.x += ((moving ? wish.x * top : 0) - vel.x) * k;
@@ -1498,6 +1577,7 @@ void main(){
     if (drive) { tell('운전 중에는 내린 뒤에 볼 수 있어요'); return null; }
     const pose = slotPose(slotId, 18, true);
     if (!pose) return null;
+    endAutoWalk(); // the view leaves the avatar: it does not walk on unseen
     if (hidMe) { hidMe = false; me.root.visible = true; }
     startCine(pose.cam, pose.look, { dur: 700, until: o.hold ? performance.now() + o.hold : 0, fov: pose.fov });
     // Fireworks around the board, and only when asked (a claim): a plain 보기 leaves it clear. When boards.set already
@@ -1516,6 +1596,7 @@ void main(){
     if (drive) return false;
     const pose = framePose(slotId);
     if (!pose) return false;
+    endAutoWalk();
     // A cut, not a flight: the photo is taken right away. Pinned: a drag or a step must not drop the frame.
     startCine(pose.cam, pose.look, { dur: 1, pin: true });
     cineFrom.copy(pose.cam);
@@ -1560,6 +1641,7 @@ void main(){
     if (drive) return null;
     const hold = slotPose(slotId, 15, true, false);
     if (!hold) return null;
+    endAutoWalk();
     const ms = Math.max(4000, Number(o.ms) || 15000), look = hold.look.clone();
     const f = new THREE.Vector3().subVectors(hold.cam, look); f.y = 0; if (f.lengthSq() < 1e-4) f.set(0, 0, 1); f.normalize();
     const side = new THREE.Vector3(f.z, 0, -f.x);
@@ -1774,9 +1856,15 @@ void main(){
     // While input is switched off (a sheet is open) a held key or a thumb resting on the stick does not count.
     if (cine && !cine.back && (drive || cineCancels({ active: true, pin: cine.pin, keys: keys.size, joy: Math.hypot(joy.x, joy.y), lounge, locked: !inputEnabled }))) endCine();
     else if (lounge && drive) endCine();
+    // The auto-walk: the player's own input (the stick, a movement key, a sheet, a taxi) ends it before this frame's step.
+    let auto = null;
+    if (autoWalk) {
+      if (autoWalkEnds({ joy: Math.hypot(joy.x, joy.y), keys: keys.size, locked: !inputEnabled, driving: !!drive, guide: !!waypoint })) endAutoWalk();
+      else auto = stepAutoWalk(dt);
+    }
     let sitting = false;
     if (drive) stepDrive(dt, input, t);
-    else sitting = stepWalk(dt, input);
+    else sitting = stepWalk(dt, input, auto);
     reverseT = drive ? reverseTime(reverseT, drive.v, dt) : 0;
     // The rings share one 20 s gap (PLAY.ring, no points: main.js only cheers through onStunt): dim while it runs, and no shake or burst.
     const ringWait = now - stuntAt < PLAY.ring.gapMs + 250;
@@ -2011,7 +2099,8 @@ void main(){
     if (key !== lastNearKey) { lastNearKey = key; near = nk; opts.onProximity?.(nk); }
     marks?.stall.setNear(near?.kind === 'cart', t);
     marks?.stage.setNear(near?.kind === 'stage', t);
-    if (waypoint && Math.hypot(pos.x - waypoint.x, pos.z - waypoint.z) < 7) setWaypoint(null); // reached: the guide goes out
+    // Reached: the guide goes out. The auto-walk goes on to the end of its route first (an ATM or a lot opens from closer than 7 m).
+    if (waypoint && !autoWalk && Math.hypot(pos.x - waypoint.x, pos.z - waypoint.z) < 7) setWaypoint(null);
     for (const m of markerList) if (m.g.visible) { m.icon.position.y = 6 + Math.sin(t * 2.4) * 0.4; m.ring.scale.setScalar(1 + Math.sin(t * 3) * 0.06); }
 
     syncRemotes(dt, t);
@@ -2189,11 +2278,16 @@ void main(){
     const camYaw = Math.atan2(tmp.x, tmp.z);
     return wrapAngle(Math.atan2(x - pos.x, z - pos.z) - camYaw);
   }
+  // p: { x, z } turns the guide on, null turns it off. { x, z, auto: true } also sets the avatar walking there by itself (the
+  // pill's 자동으로 가기); the same point without `auto` is 멈추기. onWaypoint hears { x, z, auto } (auto: is it walking now).
   function setWaypoint(p) {
     if (p && Number.isFinite(p.x) && Number.isFinite(p.z) && !insideLoop(p.x, p.z, 0)) p = null;
+    const go = !!(p && p.auto);
+    autoWalk = null; // a new target, a cleared one and 멈추기 all end the walk under way
     waypoint = p && Number.isFinite(p.x) && Number.isFinite(p.z) ? { x: p.x, z: p.z } : null;
     markers.way.set(waypoint);
-    opts.onWaypoint?.(waypoint);
+    if (go && waypoint) beginAutoWalk();
+    opts.onWaypoint?.(waypoint && { x: waypoint.x, z: waypoint.z, auto: !!autoWalk });
   }
   function setDancing(on) {
     if (on === dancing || drive) return;
@@ -2758,6 +2852,7 @@ void main(){
     // false when it cannot start (in a taxi).
     startLounge() {
       if (drive) { tell('운전 중에는 내린 뒤에 볼 수 있어요'); return false; }
+      endAutoWalk();
       lounge = true;
       loungeAt = 0;
       loungeI = 0;
@@ -2779,6 +2874,8 @@ void main(){
     balloonUp: () => !!(balloon && balloon.hp > 0),
     teleport(x, z) {
       if (drive) exitTaxi();
+      endAutoWalk(); // the route was planned from the old place
+      stick.ref = null; stick.lag = 0;
       let tx = clamp(Number(x) || 0, LOOP.x0 + 4, LOOP.x1 - 4), tz = clamp(Number(z) || 0, LOOP.z0 + 4, LOOP.z1 - 4);
       const spot = approachOf(tx, tz);
       if (spot) { tx = spot.x; tz = spot.z; yaw = spot.yaw; }
@@ -2827,7 +2924,7 @@ void main(){
       if (drive && job.phase === 'none') out.offerIn = Math.max(0, job.nextAt - clockT);
       if (drive) out.exitArmed = exitArmed > performance.now();
       if (drive?.exiting) out.exiting = true;
-      if (waypoint) out.waypoint = { dist: Math.hypot(waypoint.x - pos.x, waypoint.z - pos.z), bearing: bearingTo(waypoint.x, waypoint.z) };
+      if (waypoint) out.waypoint = { dist: Math.hypot(waypoint.x - pos.x, waypoint.z - pos.z), bearing: bearingTo(waypoint.x, waypoint.z), auto: !!autoWalk };
       return out;
     },
     setMyBeacon,

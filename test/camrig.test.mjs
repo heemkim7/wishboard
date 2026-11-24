@@ -90,7 +90,7 @@ describe('scripted camera: one way back', () => {
     assert.match(step, /camera\.position\.lerpVectors\(cineFrom, homePos, e\)/);
     // every ending goes through endCine: the only place a camera is dropped is the landed return
     assert.equal(w.match(/\bcine = null\b/g).length, 2); // the declaration and the landed return
-    assert.match(w, /if \(e\.code === 'Escape'\) \{ endCine\(true\); return; \}/);
+    assert.match(w, /if \(e\.code === 'Escape'\) \{ endAutoWalk\(\); endCine\(true\); return; \}/);
     assert.match(w, /const cut = !!\(cine && !cine\.back && !cine\.pin\);\n\s+if \(cut\) endCine\(\);/);
     // the touch that ended the camera does not also open the board under it
     assert.match(w, /if \(moved > 7 \|\| !quick \|\| !inputEnabled \|\| cut\) return;/);
@@ -686,7 +686,8 @@ describe('a reached waypoint', () => {
   // The bake tutorial opened the claim wizard at the free slot's waypoint; with it gone nothing waits for an arrival.
   it('the guide goes out when the player is within 7 m, and nobody is told', () => {
     const w = read('timesSquare3d.js');
-    assert.match(w, /if \(waypoint && Math\.hypot\(pos\.x - waypoint\.x, pos\.z - waypoint\.z\) < 7\) setWaypoint\(null\);/);
+    // (the auto-walk goes on to the end of its route first: test/interact.test.mjs)
+    assert.match(w, /if \(waypoint && !autoWalk && Math\.hypot\(pos\.x - waypoint\.x, pos\.z - waypoint\.z\) < 7\) setWaypoint\(null\);/);
     assert.equal(w.includes("'arrive'"), false);
     assert.equal(/'arrive'|ftueApi|onWaypoint\?\.\(info\)/.test(read('main.js')), false);
   });

@@ -575,7 +575,25 @@ export function createUI(root, hooks) {
   }
   const wayArrow = h('i', { class: 'arrow' }, icon('navigate'));
   const wayText = h('span', { class: 'tnum' });
-  const wayPill = h('button', { class: 'glass waypill', type: 'button', hidden: true, title: '목적지 지우기', onclick: () => hooks.setWaypoint(null) }, icon('pin'), wayArrow, wayText, h('small', null, icon('close')));
+  // 자동으로 가기 (auto-walk: timesSquare3d.js setWaypoint { x, z, auto }). A tap on the pill sets the avatar walking to the guide's target
+  // by itself; while it walks the pill reads 멈추기 (class `going`) and a tap stops it. The ✕ at its end still clears the guide.
+  // wayAt: what the world last said through setWaypoint below ({ x, z, auto }, null with no guide).
+  let wayAt = null;
+  const wayGo = h('b', { class: 'go' });
+  const wayPill = h('button', { class: 'glass waypill', type: 'button', hidden: true, onclick: (ev) => {
+    if (!wayAt || ev.target.closest?.('small')) hooks.setWaypoint(null);
+    else hooks.setWaypoint({ x: wayAt.x, z: wayAt.z, auto: !wayAt.auto });
+  } }, wayArrow, wayText, wayGo, h('small', { title: '목적지 지우기' }, icon('close')));
+  function paintWay(wp) {
+    wayAt = wp || null;
+    wayPill.hidden = !wp;
+    const going = !!wp?.auto;
+    wayPill.classList.toggle('going', going);
+    wayPill.setAttribute('aria-label', going ? '자동으로 가는 중 · 누르면 멈추기' : '자동으로 가기');
+    // Under 400px upright the lane only has room for 자동 (index.html hides the <i>).
+    wayGo.replaceChildren(...(going ? ['멈추기'] : ['자동', h('i', { text: '으로 가기' })]));
+  }
+  paintWay(null);
   root.append(wayPill);
 
   const toasts = h('div', { class: 'toasts', 'aria-live': 'polite' });
@@ -5651,6 +5669,7 @@ export function createUI(root, hooks) {
     } else trainEl.hidden = true;
     wayPill.hidden = !hd.waypoint;
     if (hd.waypoint) {
+      if (wayAt && !!wayAt.auto !== !!hd.waypoint.auto) paintWay({ ...wayAt, auto: !!hd.waypoint.auto }); // the walk ended by itself
       const m = hd.waypoint.dist;
       wayText.textContent = m >= 1000 ? `${(m / 1000).toFixed(1)}km` : `${Math.round(m)}m`;
       wayArrow.style.transform = `rotate(${(-hd.waypoint.bearing * 180) / Math.PI - 90}deg)`;
@@ -5880,7 +5899,7 @@ export function createUI(root, hooks) {
       else if (ev.type === 'done') { rideLine = ''; jobEl.classList.remove('talk'); sfx.cash(); jobTitle.textContent = '손님 찾는 중'; showSponsor(ev); }
       else if (ev.type === 'focus') showSponsor(ev);
     },
-    setWaypoint(wp) { wayPill.hidden = !wp; },
+    setWaypoint(wp) { paintWay(wp); },
     setWallet(next, { bump = false, defer = false } = {}) {
       wallet = {
         confirmed: Math.max(0, Number(next.confirmed) || 0),
