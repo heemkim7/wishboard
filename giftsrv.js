@@ -67,6 +67,7 @@ export const giftDb = {
     q.exec("create table if not exists gb(id text primary key, at integer not null, uid text not null, ip text not null, day text not null, a integer not null, b integer not null, scr text not null, st text not null, lk integer not null default 1, ref text not null default '', n integer not null default 0, v integer not null default 0, vd integer not null default 0, kids integer not null default 0, rp integer not null default 0, vid text not null default '', j text not null)");
     q.exec('create index if not exists gb_day on gb(day)');
     q.exec('create index if not exists gb_b on gb(b)');
+    q.exec('create index if not exists gb_uid on gb(uid)');
     // re (the first reply's id) came after the first stores were made: those get the column here, the way worker.js adds its own
     // (a second try fails on the duplicate name and changes nothing). No Supabase migration.
     try { q.exec("alter table gb add column re text not null default ''"); } catch { /* column already exists */ }
@@ -103,15 +104,15 @@ export const giftDb = {
     if (!scr) return { ok: false, code: 'full', next: nextFree(rows, v.day, now), gone };
     let id = rid(GIFT.idLen); for (let i = 0; i < 4 && q.exec('select 1 from gb where id = ?', id).toArray().length; i++) id = rid(GIFT.idLen);
     let ref = refOf(o.ref);
-    const parent = ref ? q.exec('select uid from gb where id = ?', ref).toArray()[0] : null;
-    if (!parent || String(parent.uid) === o.uid) ref = '';
+    const parent = ref ? rowOf(q.exec('select * from gb where id = ?', ref).toArray()[0]) : null;
+    if (!parent || parent.uid === o.uid) ref = '';
     q.exec("insert into gb(id, at, uid, ip, day, a, b, scr, st, lk, ref, j) values(?, ?, ?, ?, ?, ?, ?, ?, 'live', ?, ?, ?)", id, now, o.uid, o.ip, v.day, v.a, v.b, scr, lockArm(id, !!o.split), ref,
       JSON.stringify({ to: v.to, from: v.from, occ: v.occ, msg: v.msg, th: v.th }));
     limAdd(q, 'u:' + o.uid, d); limAdd(q, 'n:' + o.ip, d);
     bump(q, d, 'made');
     if (ref) { q.exec('update gb set kids = kids + 1 where id = ?', ref); bump(q, d, 'made_ref'); }
-    let reply = null;
-    if (ref && o.re && q.exec("update gb set re = ? where id = ? and re = '' and st = 'live'", id, ref).rowsWritten > 0) { bump(q, d, 'reply'); reply = { to: String(parent.uid), gid: ref }; }
+    let reply = null; // only a board whose page can still be opened is answered (not a hidden one, not one past its 7 days)
+    if (ref && o.re && giftPhase(parent, now) !== 'gone' && q.exec("update gb set re = ? where id = ? and re = ''", id, ref).rowsWritten > 0) { bump(q, d, 'reply'); reply = { to: parent.uid, gid: ref }; }
     return { ok: true, row: this.get(q, id, now, false), gone, ...(reply ? { reply } : {}) };
   },
   // The stored board (owner fields included: the Worker strips them), with its visible lines (no writer ids) when withPaper.

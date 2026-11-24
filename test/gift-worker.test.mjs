@@ -467,6 +467,8 @@ describe('답장 전광판 on the Worker', { concurrency: false }, () => {
       const d = dayCounts(env);
       assert.equal(d.reply, 1, 'boards that got their first reply'); assert.equal(d.made_ref, 3, 'every board made from the page still counts for K');
       assert.equal(d['ev:reply'], 1, 'the reply button, per device and day');
+      assert.equal((await (await H.admin('/rt/admin/gift/stats')).json()).days.find((x) => x.d === today()).reply, 1, 'the admin table reads it by key');
+      assert.ok(/\['made_ref', '페이지에서 와서 만든'\], \['reply', '답장'\], /.test(fs.readFileSync(new URL('../admin-gift.js', import.meta.url), 'utf8')), 'admin-gift.js: one column 답장, next to made_ref');
       assert.equal(db(env).prepare('select kids from gb where id = ?').get(first.id).kids, 3);
       // Only the owner's read says a reply came; nobody else's read, the page or the world does.
       const mine = await (await H.get('/rt/gift/' + first.id, A.token)).json();
@@ -504,6 +506,21 @@ describe('답장 전광판 on the Worker', { concurrency: false }, () => {
     } finally { done(); }
   });
 
+  it('a hidden board is not answered: no mark and no notice until it is back (the reply is still a board of its own)', async () => {
+    const { state, done } = setup();
+    try {
+      const env = makeEnv({ VAPID_PRIV: VAPID }), H = harness(env), A = await H.guest(), B = await H.guest('2.2.2.2'), C = await H.guest('3.3.3.3'), s = await subscriber();
+      await H.post('/rt/push', { s: s.sub() }, A.token);
+      const first = await (await H.post('/rt/gift', FORM(), A.token)).json();
+      await H.admin('/rt/admin/gift/hide', { id: first.id });
+      assert.equal((await H.post('/rt/gift', REPLY(first.id), B.token, '2.2.2.2')).status, 200);
+      assert.equal(reOf(env, first.id), ''); assert.equal(state.pushes.length, 0); assert.equal('reply' in dayCounts(env), false);
+      await H.admin('/rt/admin/gift/hide', { id: first.id, hide: false });
+      const r = await (await H.post('/rt/gift', REPLY(first.id), C.token, '3.3.3.3')).json();
+      assert.equal(reOf(env, first.id), r.id); assert.equal(state.pushes.length, 1); assert.equal(dayCounts(env).reply, 1);
+    } finally { done(); }
+  });
+
   it('a reply is a write: at the hard budget level it answers 503 with no call to the gift object', async () => {
     const { state, clock, done } = setup();
     try {
@@ -534,6 +551,7 @@ describe('답장 전광판 on the Worker', { concurrency: false }, () => {
       assert.equal(read.own, true); assert.deepEqual([read.gift.to, read.gift.msg, read.mine.kids], ['옛날', '그대로', 2]); assert.equal('re' in read.mine, false);
       assert.equal(cols().includes('re'), true, 'added in code, no migration');
       assert.equal(reOf(env, 'oldboard'), '');
+      assert.deepEqual(db(env).prepare("select name from sqlite_master where type = 'index' and tbl_name = 'gb' and name like 'gb|_%' escape '|' order by name").all().map((x) => x.name), ['gb_b', 'gb_day', 'gb_uid'], 'the lookups by day, end and owner keep their indexes');
       const reply = await (await H.post('/rt/gift', REPLY('oldboard'), B.token, '2.2.2.2')).json();
       assert.equal(reply.ok, true); assert.equal(reOf(env, 'oldboard'), reply.id);
       // The object starts again (a deploy, an eviction): the column is there, nothing is lost.
