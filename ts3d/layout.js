@@ -23,6 +23,7 @@ const STAGE_STEPS = 2.4;
  *  w, d   the pad
  *  foot   each level's collider half-sizes [across, deep] (level 0 is walk-through): the tent with its two masts
  *         (x ± 2.98) and its counter, the stall's cabinet and counter, the shop's 8.0 m body, the tower's lobby
+ *  steps  how many axis-aligned boxes stand for a footprint that is turned off the axes (lotBoxes)
  *  tall   how high each level stops the camera (0: it does not): the shop's roof items reach 9 m, the tower 19 m
  *  wide   the widest piece any level carries (the rim of the tower's board, 13.41 m)
  *  reach  how far forward of its centre any level comes: the tower's marquee, 0.7 m over the pad's front edge and
@@ -34,6 +35,7 @@ const STAGE_STEPS = 2.4;
 export const LOT = {
   w: 8.4, d: 7.6, scale: 0.9,
   foot: [null, [3.1, 2.35], [3.6, 1.9], [4.1, 3.3], [4.1, 3.6]],
+  steps: 6,
   tall: [0, 0, 0, 9, 19],
   wide: 13.42, reach: 4.51,
   faces: [
@@ -47,9 +49,24 @@ export const LOT = {
 
 // 가운데 거리 (WISH STREET): one north-south pedestrian street down the middle of the pad. People arrive at its north end
 // (the 건물 구역 taxi stand), walk in under the arch at z0 and reach the stage steps at z1. Nine lots stand on each side at
-// x ± lotX, every `step` metres from lot0, and face the street. Inside ± half of the centre line nothing has a collider.
-const STREET = { x: 0, z0: 262, z1: STAGE.z0 - STAGE_STEPS, half: 12, lotX: 17, lot0: 272, step: 13, pairs: 9 };
-const LOT_BACK = STREET.lotX + (LOT.d / 2) * LOT.scale, LOT_FRONT = STREET.lotX - (LOT.d / 2) * LOT.scale;
+// x ± lotX, every `step` metres from lot0. Each is turned about its own centre by `turn` toward the entrance, the east
+// row one way and the west row the mirror way (a chevron), so every front and billboard faces up the street at the
+// people walking in: an upright phone sees a board 31° off its plane instead of 13° edge-on (test/lot-models.test.mjs
+// has the measure). turn 0 stands both rows square to the street, front to front; with lotX 17 and half 12 that is the
+// street as it was until 2026-11-24. Inside ± half of the centre line nothing has a collider and no part of a lot reaches.
+const DEG = Math.PI / 180;
+const STREET = { x: 0, z0: 262, z1: STAGE.z0 - STAGE_STEPS, half: 9.5, lotX: 15, lot0: 272, step: 13, pairs: 9, turn: 20 * DEG };
+
+/** Sine and cosine of an angle, exact (0, ±1) at the quarter turns: a lot that stands square to the axes gets exact numbers. */
+function turned(rot) {
+  const snap = (v) => (Math.abs(v) < 1e-12 ? 0 : Math.abs(Math.abs(v) - 1) < 1e-12 ? Math.sign(v) : v);
+  return [snap(Math.sin(rot)), snap(Math.cos(rot))];
+}
+// How far a pad reaches from its row's line across the street: outward to its back corner, and inward to the corner of
+// its front edge that is farther from the street (turned fronts are a sawtooth: the pavers reach into every tooth).
+const [TURN_SIN, TURN_COS] = turned(STREET.turn);
+const LOT_BACK = STREET.lotX + ((LOT.d / 2) * TURN_COS + (LOT.w / 2) * TURN_SIN) * LOT.scale;
+const LOT_FRONT = STREET.lotX - ((LOT.d / 2) * TURN_COS - (LOT.w / 2) * TURN_SIN) * LOT.scale;
 
 export const LAYOUT = {
   bounds: NYC_META.bounds,
@@ -66,13 +83,14 @@ export const LAYOUT = {
   oneTimes: { x: 17.4, z: 192.9, roof: { x: 21.3, z: 225.6, h: 110.6 } },
   stage: STAGE,
   // The lots' street (see STREET above). entry: where a jump to the lots lands, between the 건물 구역 stand and the arch.
-  // mid: the middle pair, for the map pin. arch: the entrance arch's posts at x ± post, each a square of half-size r.
-  // pave: the paved strip between the two rows of pads, through to the pad's south edge under the stage.
+  // mid: the middle pair, for the map pin. arch: the entrance arch's posts at x ± post (1.2 m outside the clear width),
+  // each a square of half-size r. pave: the paved strip from one row of pads to the other (into the teeth of turned
+  // fronts), through to the pad's south edge under the stage.
   street: {
     ...STREET,
-    entry: { x: STREET.x, z: 258 },
+    entry: { x: STREET.x, z: STREET.z0 - 1 },
     mid: { x: STREET.x, z: STREET.lot0 + (STREET.step * (STREET.pairs - 1)) / 2 },
-    arch: { z: STREET.z0, post: 13.2, r: 0.45, h: 8.4 },
+    arch: { z: STREET.z0, post: STREET.half + 1.2, r: 0.45, h: 8.4 },
     pave: { x0: STREET.x - LOT_FRONT, x1: STREET.x + LOT_FRONT, z0: STREET.z0, z1: PAD.z1 },
   },
 };
@@ -80,39 +98,77 @@ export const LAYOUT = {
 export const TAXI_STANDS = [
   { x: 9.4, z: 72, axis: 'z', name: '타임스퀘어' },
   { x: -11.6, z: -40, axis: 'z', name: '더피 스퀘어' },
-  // On the street's centre line at the pad's north edge: the way in to the lots.
-  { x: 0, z: 255, axis: 'z', name: '건물 구역' },
+  // On the street's centre line, on the pavement 2 m before the arch: the way in to the lots. (It stood at z 255, in
+  // the eastbound lane of West 42nd Street, whose south curb is at z 258.7: cars drove through its post.)
+  { x: STREET.x, z: STREET.z0 - 2, axis: 'z', name: '건물 구역' },
 ];
 
 // Walking in from the entrance (heading south, +Z) the odd numbers are on the left, which is east (+X), and the even
 // numbers on the right: pair k is lots 2k+1 (east) and 2k+2 (west). A lot's front is its local +Z and three.js turns it
-// by rotation.y = rot to (sin rot, cos rot), so the east row looks along -X and the west row along +X: at the street.
-const lot = (id) => {
-  const east = id % 2 === 1, k = (id - 1) >> 1;
-  return { id, x: STREET.x + (east ? STREET.lotX : -STREET.lotX), z: STREET.lot0 + STREET.step * k, rot: east ? -Math.PI / 2 : Math.PI / 2, side: east ? 'E' : 'W', scale: LOT.scale };
-};
+// by rotation.y = rot to (sin rot, cos rot). Square to the street the east row would look along -X and the west row
+// along +X; each is turned by `turn` more, toward -Z: the east row looks north-west, the west row north-east.
+/** The lots of a street like LAYOUT.street: [id - 1] is the lot with that id. */
+export function streetSlots(street) {
+  const turn = Number(street.turn) || 0;
+  return Array.from({ length: street.pairs * 2 }, (_, i) => {
+    const id = i + 1, east = id % 2 === 1, k = (id - 1) >> 1;
+    return { id, x: street.x + (east ? street.lotX : -street.lotX), z: street.lot0 + street.step * k, rot: east ? -(Math.PI / 2 + turn) : Math.PI / 2 + turn, side: east ? 'E' : 'W', scale: LOT.scale };
+  });
+}
 /** PLOT_SLOTS[id - 1] is the lot with that id (1..18). */
-export const PLOT_SLOTS = Array.from({ length: STREET.pairs * 2 }, (_, i) => lot(i + 1));
+export const PLOT_SLOTS = streetSlots(STREET);
 
 /** The way a lot's front looks, as a unit vector on the ground. */
 export const lotFacing = (slot) => ({ x: Math.sin(slot.rot), z: Math.cos(slot.rot) });
-/** World rectangle of a box centred on a lot, given its half-sizes across and deep in the lot's own frame (before the
- *  lot's scale). A quarter-turned lot swaps the two. */
+/** The four corners on the ground, in the world, of a box centred on a lot: [x, z] going round from the back. The box
+ *  is given by its half-sizes across and deep in the lot's own frame (before the lot's scale). */
+export function lotCorners(slot, across, deep) {
+  const sc = slot.scale || 1, [s, c] = turned(slot.rot);
+  return [[-across, -deep], [across, -deep], [across, deep], [-across, deep]].map(([x, z]) => [slot.x + (x * c + z * s) * sc, slot.z + (z * c - x * s) * sc]);
+}
+/** World rectangle around that box: the box itself when the lot stands square to the axes (a quarter-turned lot swaps
+ *  its two sides), the axis-aligned box about its four corners when it is turned off them. */
 export function lotRect(slot, across, deep) {
-  const sc = slot.scale || 1, swap = Math.abs(Math.sin(slot.rot)) > 0.5;
-  const hx = (swap ? deep : across) * sc, hz = (swap ? across : deep) * sc;
+  const sc = slot.scale || 1, [s, c] = turned(slot.rot);
+  const hx = (across * Math.abs(c) + deep * Math.abs(s)) * sc, hz = (across * Math.abs(s) + deep * Math.abs(c)) * sc;
   return { x0: slot.x - hx, x1: slot.x + hx, z0: slot.z - hz, z1: slot.z + hz };
 }
-/** The street's own solid pieces, which ts3d/landmarks.js draws and collides: the entrance arch's two posts ({ arch: -1 | 1 })
- *  and a number post at every lot's street corner, the corner nearer the entrance ({ lot: id }). Each is a square of
- *  half-size r at (x, z), outside the street's clear width. */
-export function streetPosts() {
-  const S = LAYOUT.street, out = [];
-  for (const s of [-1, 1]) out.push({ arch: s, x: S.x + s * S.arch.post, z: S.arch.z, r: S.arch.r });
-  for (const slot of PLOT_SLOTS) {
-    const f = lotFacing(slot), sc = slot.scale || 1;
-    out.push({ lot: slot.id, x: slot.x + f.x * ((LOT.d / 2) * sc + 0.58), z: slot.z - ((LOT.w / 2) * sc + 0.62), r: 0.38 });
+/** Axis-aligned boxes that together hold that box, for the walker's collision and the camera's, which take nothing else.
+ *  Square to the axes it is lotRect, one box. Turned off them it is `steps` slabs across the street, each as wide as the
+ *  turned box is within it: a staircase along the slanted sides, tight where lotRect would wall off the wedge of
+ *  ground before a turned front. */
+export function lotBoxes(slot, across, deep, steps = LOT.steps) {
+  const r = lotRect(slot, across, deep), [s, c] = turned(slot.rot);
+  if (s === 0 || c === 0 || !(steps > 1)) return [r];
+  const P = lotCorners(slot, across, deep), out = [];
+  for (let k = 0; k < steps; k++) {
+    const za = r.z0 + ((r.z1 - r.z0) * k) / steps, zb = r.z0 + ((r.z1 - r.z0) * (k + 1)) / steps;
+    let x0 = Infinity, x1 = -Infinity;
+    const take = (x) => { if (x < x0) x0 = x; if (x > x1) x1 = x; };
+    for (let i = 0; i < 4; i++) {
+      const [ax, az] = P[i], [bx, bz] = P[(i + 1) % 4];
+      if (az >= za - 1e-9 && az <= zb + 1e-9) take(ax); // a corner inside the slab
+      for (const z of [za, zb]) if ((az - z) * (bz - z) < 0) take(ax + ((bx - ax) * (z - az)) / (bz - az)); // a side crossing its edge
+    }
+    out.push({ x0, x1, z0: za, z1: zb });
   }
+  return out;
+}
+/** A lot's number post: 0.58 m before the lot's front edge and 0.62 m past its side nearer the entrance, in the lot's own
+ *  frame, so it turns with the lot and keeps its place by the front. A square of half-size r on the ground: the post's
+ *  0.72 m head, turned as the lot is, and 2 cm. */
+export function lotPost(slot) {
+  const sc = slot.scale || 1, [s, c] = turned(slot.rot), ahead = (LOT.d / 2) * sc + 0.58, aside = (LOT.w / 2) * sc + 0.62;
+  const e = s > 0 ? 1 : -1; // the lot's own x looks along (c, -s): this is the sign of it that goes north, toward the entrance
+  return { lot: slot.id, x: slot.x + s * ahead + e * c * aside, z: slot.z + c * ahead - e * s * aside, r: 0.38 + 0.36 * (Math.abs(s) + Math.abs(c) - 1) };
+}
+/** The street's own solid pieces, which ts3d/landmarks.js draws and collides: the entrance arch's two posts ({ arch: -1 | 1 })
+ *  and a number post by every lot's front, on the side nearer the entrance ({ lot: id }, lotPost). Each is a square of
+ *  half-size r at (x, z), outside the street's clear width. */
+export function streetPosts(street = LAYOUT.street, slots = PLOT_SLOTS) {
+  const out = [];
+  for (const s of [-1, 1]) out.push({ arch: s, x: street.x + s * street.arch.post, z: street.arch.z, r: street.arch.r });
+  for (const slot of slots) out.push(lotPost(slot));
   return out;
 }
 
@@ -132,7 +188,7 @@ export const NO_PROPS = [
 /** No park trees around the stage (4 m past its floor on every side). */
 export const NO_TREES = [{ x0: STAGE.x0 - 4, x1: STAGE.x1 + 4, z0: STAGE.z0 - 4, z1: STAGE.z1 + 4 }];
 /** No car road here: ts3d/world.js cuts the asphalt and its paint out of this one rectangle (the lots' street from the arch
- *  to the pad's south edge, as wide as the backs of the two rows of pads), and landmarks.js lays the street's pavers. */
+ *  to the pad's south edge, as wide as the back corners of the two rows of pads), and landmarks.js lays the street's pavers. */
 export const NO_ROAD = { x0: STREET.x - LOT_BACK, x1: STREET.x + LOT_BACK, z0: STREET.z0, z1: PAD.z1 };
 /** Where the star shower lands: the south bowtie plaza. */
 export const STAR_ZONES = [

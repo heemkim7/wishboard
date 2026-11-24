@@ -395,17 +395,46 @@ describe('the world, run in Node: the same phone on its side (812 x 375)', { ski
       for (let i = 0; i < 400 && worn('gem').length < 18; i++) { await new Promise((r) => real.setTimeout(r, 5)); frame(); }
       assert.deepEqual([worn('matte').length, worn('glow').length, worn('gem').length, worn('accent').length], [18, 18, 18, 0]);
       assert.equal(new Set(worn('matte').map((m) => m.geometry)).size, 1);
-      assert.equal(world.applyPlot({ plot_id: 5, level: 4, theme_color: '#ff3d9a', owner_name: '시험' }, false), true);
-      frame();
-      assert.deepEqual([worn('matte').length, worn('gem').length, worn('accent').length], [18, 17, 1]);
+      // The lots are turned toward the entrance (a chevron), and the world finds a lot's board by its id from the built
+      // plot, as it does every board at an angle. For lots on both sides, empty and as a tower:
+      for (const [id, level] of [[5, 0], [6, 0], [5, 4], [12, 4]]) {
+        const slot = L.PLOT_SLOTS[id - 1], way = L.lotFacing(slot), tag = `PLOT_${id}@${level}`;
+        if (level) { assert.equal(world.applyPlot({ plot_id: id, level, theme_color: '#ff3d9a', owner_name: '시험' }, false), true); frame(); }
+        assert.ok(way.z < -0.3 && way.x * (L.LAYOUT.street.x - slot.x) > 0, tag); // up the street, toward it
+        const out = L.LOT.faces[level].board.z * slot.scale, face = { x: slot.x + way.x * out, z: slot.z + way.z * out };
+        // a jump to it lands 9 m straight before the turned face, looking at it
+        const at = world.goToSlot('PLOT_' + id);
+        assert.ok(at && Math.hypot(at.x - (face.x + way.x * 9), at.z - (face.z + way.z * 9)) < 0.05, `${tag} landed at ${at?.x.toFixed(2)}, ${at?.z.toFixed(2)}`);
+        frame();
+        assert.ok(Math.abs(wrap(world.getPlayer().yaw - Math.atan2(-way.x, -way.z))) < 0.01, `${tag}: facing ${world.getPlayer().yaw.toFixed(3)}, the board is toward ${Math.atan2(-way.x, -way.z).toFixed(3)}`);
+        // 보기: the camera straight before it, on the face's own normal (no turned view), looking at its centre
+        const pose = world.focusSlot('PLOT_' + id);
+        assert.ok(pose && pose.yaw === 0, `${tag}: ${pose ? 'turned ' + pose.yaw : 'no pose'}`);
+        const ox = pose.cam.x - pose.look.x, oz = pose.cam.z - pose.look.z;
+        assert.ok(Math.abs(ox * way.z - oz * way.x) < 1e-6 && ox * way.x + oz * way.z > 5.9, `${tag} camera ${ox.toFixed(2)}, ${oz.toFixed(2)} from the face`);
+        assert.ok(Math.hypot(pose.look.x - face.x, pose.look.z - face.z) < 1e-6, tag);
+        run(1);
+        world.endFocus();
+        run(0.6);
+        // a gift pinned to that screen, and its 15-second show, use the same pose
+        assert.equal(world.pinGift({ id: 'chevron' + id % 10, to: '받는이', from: '보낸이', occ: 'bday', msg: '축하해요', scr: 'PLOT_' + id }, 5000), 'PLOT_' + id, tag);
+        const show = world.giftShow('PLOT_' + id, { ms: 4000 });
+        assert.ok(show, tag);
+        run(0.3);
+        show.stop();
+        run(0.6);
+      }
+      assert.deepEqual([worn('matte').length, worn('gem').length, worn('accent').length], [18, 16, 2]);
       assert.equal(worn('accent')[0].material.color.getHexString(), 'ff3d9a');
-      // the tower stops a walker and the frames go on
+      // the tower stops a walker (its collider is a staircase of boxes about the turned footprint) and the frames go on
       world.teleport(L.PLOT_SLOTS[4].x, L.PLOT_SLOTS[4].z + 20);
       world.setWaypoint({ x: L.PLOT_SLOTS[4].x, z: L.PLOT_SLOTS[4].z, auto: true });
       let t = 0;
       while (t < 12 && world.hud().waypoint?.auto) { frame(); t += 0.016; }
-      const p = world.getPlayer(), foot = L.lotRect(L.PLOT_SLOTS[4], L.LOT.foot[4][0], L.LOT.foot[4][1]);
-      assert.ok(!(p.x > foot.x0 && p.x < foot.x1 && p.z > foot.z0 && p.z < foot.z1), `${p.x.toFixed(1)}, ${p.z.toFixed(1)} is inside the tower`);
+      const p = world.getPlayer(), boxes = L.lotBoxes(L.PLOT_SLOTS[4], L.LOT.foot[4][0], L.LOT.foot[4][1]);
+      assert.equal(boxes.length, L.LOT.steps);
+      assert.ok(!boxes.some((b) => p.x > b.x0 && p.x < b.x1 && p.z > b.z0 && p.z < b.z1), `${p.x.toFixed(1)}, ${p.z.toFixed(1)} is inside the tower`);
+      assert.ok(Math.hypot(p.x - L.PLOT_SLOTS[4].x, p.z - L.PLOT_SLOTS[4].z) < 9, 'it walked up to the tower');
       world.setWaypoint(null);
       run(1);
       assert.equal(lots().length, 5);

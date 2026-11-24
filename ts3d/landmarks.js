@@ -1,7 +1,7 @@
 // Plaza landmarks: TKTS red stairs, Times Square Station exit 1, the golden bungeo-ppang pocha,
 // the Golden ATM, the K-POP stage, and the 18 plot buildings (levels 0–4) on their street, 가운데 거리.
 import * as THREE from 'three';
-import { LAYOUT, LOOP, LOT, PLOT_SLOTS, TAXI_STANDS, fountainSpot, insideLoop, lotRect, streetPosts } from './layout.js?v=202611241127';
+import { LAYOUT, LOOP, LOT, PLOT_SLOTS, TAXI_STANDS, fountainSpot, insideLoop, lotBoxes, streetPosts } from './layout.js?v=202611241127';
 import { Kit, fishGeometry, cropPlane, imgCrop } from './kit.js?v=202611241127';
 import { GROUND_LAYER } from './ground.js?v=202611241127';
 import { nearLots } from './loadplan.js?v=202611241127';
@@ -692,13 +692,13 @@ export function buildLandmarks(ctx) {
     const slotId = 'PLOT_' + slot.id;
     const boardGroup = boards.mount(slotId, group, { ...board });
     const extraBoards = [];
-    const box = [];
     if (foot) {
-      // A lot on the street is turned a quarter: lotRect swaps the footprint's two sides for it.
-      const r = lotRect(slot, foot[0], foot[1]);
-      box.push({ ...r, plot: slot.id });
-      colliders.push(box[0]);
-      if (LOT.tall[level]) blockers.push(Object.assign(new THREE.Box3(new THREE.Vector3(r.x0, 0, r.z0), new THREE.Vector3(r.x1, LOT.tall[level] * sc, r.z1)), { plot: slot.id }));
+      // The walker's collision and the camera's take axis-aligned boxes only, and a lot on the street is turned off the
+      // axes: lotBoxes gives the footprint as a staircase of them (one box when the lot stands square to the street).
+      for (const r of lotBoxes(slot, foot[0], foot[1])) {
+        colliders.push({ ...r, plot: slot.id });
+        if (LOT.tall[level]) blockers.push(Object.assign(new THREE.Box3(new THREE.Vector3(r.x0, 0, r.z0), new THREE.Vector3(r.x1, LOT.tall[level] * sc, r.z1)), { plot: slot.id }));
+      }
     }
     return Object.assign(rec, { boardGroup, extraBoards, sMat, signSpec, sign });
   }
@@ -745,7 +745,7 @@ export function buildLandmarks(ctx) {
 
   // ===== 가운데 거리 (WISH STREET): the lots' street =================================================
   // Pavers where world.js cuts the car road out (layout.js NO_ROAD), a thin lit centre line, the entrance arch with its
-  // name, and a number post at each lot's street corner. One Kit, five meshes: the pavers (world.js mats.street) and the
+  // name, and a number post by each lot's front (layout.js lotPost). One Kit, five meshes: the pavers (world.js mats.street) and the
   // line join the ground stack (GROUND_LAYER, at a pedestrian road's and the road paint's heights, so avatar shadows and
   // markers still show on them), the posts and the arch go into the shared metal and glow buckets, and the name and the
   // 18 numbers are faces on one atlas.
@@ -779,13 +779,14 @@ export function buildLandmarks(ctx) {
         kit.box(1.0, 0.24, 1.0, GOLD, { x: p.x, y: A.h + 0.12, z: p.z, glow: 1.6 });
         continue;
       }
-      // A lot's number post (1.77 m, below every board): the number toward the street and both ways along it.
+      // A lot's number post (1.77 m, below every board), turned as its lot is: the number the way the lot's front looks
+      // (at the street, and up it at the people walking in) and on both of its sides (down the street, and back).
       const slot = PLOT_SLOTS[p.lot - 1];
-      kit.box(0.5, 1.0, 0.5, DARK, { x: p.x, y: 0.5, z: p.z, mat: 'metal' });
-      kit.box(0.72, 0.72, 0.72, '#0b0c10', { x: p.x, y: 1.36, z: p.z, mat: 'metal' });
-      kit.box(0.76, 0.05, 0.76, sideColor(slot), { x: p.x, y: 1.745, z: p.z, glow: 2 });
+      kit.box(0.5, 1.0, 0.5, DARK, { x: p.x, y: 0.5, z: p.z, ry: slot.rot, mat: 'metal' });
+      kit.box(0.72, 0.72, 0.72, '#0b0c10', { x: p.x, y: 1.36, z: p.z, ry: slot.rot, mat: 'metal' });
+      kit.box(0.76, 0.05, 0.76, sideColor(slot), { x: p.x, y: 1.745, z: p.z, ry: slot.rot, glow: 2 });
       const [cx, cy] = cellAt(slot.id);
-      for (const ry of [slot.rot, 0, Math.PI]) kit.add(cropPlane(0.64, 0.64, crop(cx, cy, CELL, CELL)), '#ffffff', { mat: 'faces', x: p.x + Math.sin(ry) * 0.39, y: 1.36, z: p.z + Math.cos(ry) * 0.39, ry });
+      for (const ry of [slot.rot, slot.rot + Math.PI / 2, slot.rot - Math.PI / 2]) kit.add(cropPlane(0.64, 0.64, crop(cx, cy, CELL, CELL)), '#ffffff', { mat: 'faces', x: p.x + Math.sin(ry) * 0.39, y: 1.36, z: p.z + Math.cos(ry) * 0.39, ry });
     }
     // The arch's beam (7 m clear under it, 6.4 m under the name plate) and its name, read from both sides.
     kit.box(A.post * 2 + 0.8, 1.2, 0.6, DARK, { x: S.x, y: A.h - 0.8, z: A.z, mat: 'metal' });

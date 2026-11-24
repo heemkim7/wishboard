@@ -523,10 +523,16 @@ describe('the lots\' pedestrian street', needsMap, () => {
   });
   it('no AI car is ever in it or on those roads: ten minutes with the player at the arch, with 46 cars about', () => {
     const segs = reaching(), on = [], turned = new Map(), W42 = junctionAt(-1.4, 250.1);
-    let off7th = 0, waited = 0;
+    // the 건물 구역 stand's post, 2 m before the arch: how near a car's body ever comes to it (it stood at z 255, in the
+    // outer eastbound lane of W 42nd St, and cars drove through it)
+    const stand = TAXI_STANDS[2];
+    const toBody = (c, x, z) => { const fx = Math.sin(c.yaw), fz = Math.cos(c.yaw), ex = x - c.x, ez = z - c.z; return Math.hypot(Math.max(Math.abs(ex * fx + ez * fz) - HL, 0), Math.max(Math.abs(ez * fx - ex * fz) - HW, 0)); };
+    let off7th = 0, waited = 0, nearStand = Infinity, nearOld = Infinity;
     const r = watch({ quality: 'medium', seed: 51, player: onFoot(S.entry.x, S.entry.z), minutes: 10, each(cs) {
       for (const c of cs) {
         if (!c.ai) continue;
+        nearStand = Math.min(nearStand, toBody(c, stand.x, stand.z));
+        nearOld = Math.min(nearOld, toBody(c, S.x, 255));
         const q = onClosed(segs, c);
         if (q && on.length < 3) on.push(`${q.name} (segment ${q.p}) at (${c.x.toFixed(1)}, ${c.z.toFixed(1)})`);
         // cars coming down 7th Avenue toward the arch: they wait at the light and leave along W 42nd St, either way
@@ -540,6 +546,8 @@ describe('the lots\' pedestrian street', needsMap, () => {
     assert.ok(off7th >= 15, off7th + ' cars came down 7th Avenue and turned onto W 42nd St');
     assert.ok(waited > 100, 'and waited at its light: ' + waited + ' frames');
     assert.ok(r.seen.stillMax < 30, 'nobody is stuck in front of the arch: ' + r.seen.stillMax.toFixed(0) + ' s');
+    assert.equal(nearOld, 0, 'cars do drive over (0, 255), where the stand was');
+    assert.ok(nearStand > 2, `no car comes near the stand's post: the nearest body was ${nearStand.toFixed(2)} m away`);
   });
   it('and none with the player far up the square (cars used to be put on 7th Avenue among the lots from there)', () => {
     const segs = reaching(), on = [];
@@ -577,7 +585,9 @@ describe('the lots\' pedestrian street', needsMap, () => {
   });
   it('the cab called to the 건물 구역 stand waits beside the entrance, on W 42nd St, and the game finds it from the stand', () => {
     const stand = TAXI_STANDS[2];
-    assert.deepEqual([stand.name, stand.x, stand.z], ['건물 구역', S.x, 255]);
+    assert.deepEqual([stand.name, stand.x, stand.z], ['건물 구역', S.x, S.arch.z - 2]); // 2 m before the arch, south of W 42nd St's roadway
+    const road = nyc.nearestRoad(stand.x, stand.z, 30, (r) => carRoad(r) && nyc.roadName(r) === 'West 42nd Street');
+    assert.ok(road.d - nyc.roads.width[road.road] / 2 > 1 && stand.z > road.pz, `${(road.d - nyc.roads.width[road.road] / 2).toFixed(2)} m south of its south edge`);
     const W = world('low', 1), me = onFoot(stand.x, stand.z);
     W.traffic.warm(me.x, me.z);
     // as timesSquare3d.js does every frame a player stands at a stand: call one unless one is parked within 18 m
