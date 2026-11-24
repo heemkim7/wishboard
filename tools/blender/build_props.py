@@ -20,7 +20,7 @@
 #     flat plate behind each (0.24 m behind the screen plane: the game's own board frame is 0.22 deep; 0.03 m behind
 #     the sign plane) and nothing in front of it.
 #   - the taxi drives toward +z like the kit in vehicleKits (headlights at +z); its left wheels are at +x. Wheel
-#     nodes sit on the axles at (+-0.85, 0.36, +-1.45), radius 0.36 (the kit: +-0.86, 0.34, +-1.45, radius 0.34).
+#     nodes sit on the axles at (+-0.86, 0.40, +-1.45), radius 0.40 (the kit: +-0.86, 0.34, +-1.45, radius 0.34).
 #   - materials are flat colours, single-sided. `Accent` is what the game tints with the owner's colour: it is
 #     exported neutral light grey with a mild glow of the same grey (emissive 0.45 of the colour), so set both color
 #     and emissive to the theme colour. The taxi's `Paint` is exported near-white for the same reason.
@@ -810,6 +810,9 @@ def lot1_tent():
 
 # ====================================================================================================== lot 2: the street food stall
 def lot2_pocha():
+    """A tall open stall under the board (the board's plate starts at 4.35 m, the stall reaches 3.9 m): a cart with a
+    serving counter, the cooking in view, a lit menu wall and hanging lamps, a tarp roof in the owner's colour that
+    is lifted at the front so the inside shows from above too, a big red lantern at the front corner, stools."""
     board = dict(x=0.0, y=6.4, z=2.05, w=6.4, h=3.6)
     sign = dict(x=2.2, y=2.2, z=2.05, w=2.4, h=0.5)
     g = Geo("Lot")
@@ -817,17 +820,18 @@ def lot2_pocha():
     top = PAD_TOP + 0.03
     zf = board["z"] - BOARD_BACK
     MX, MZ = 3.15, zf - 0.22                    # the two masts: the stall's front corner posts carry the board
-    # ---- the billboard on the masts, braced, with a string of bulbs under it
+    EF, EB = 3.45, 2.95                         # underside of the roof at the front edge (z = 2.0) and at the back (z = -1.6)
+    Y0 = 1.15                                   # top of the cabinet: the cooking stands here
+    roof_y = lambda z: EB + (EF - EB) * (z + 1.6) / 3.6
+    # ---- the billboard on the masts, stayed to the back of the roof
     board_mount(g, board, neon="NeonPink", lamps=2)
     for s in (-1, 1):
         g.box("Metal", 0.2, 8.25, 0.2, s * MX, top, MZ, b=0.035, base=True)
         g.box("Stone", 0.5, 0.2, 0.5, s * MX, top, MZ, b=0.05, base=True)
-        g.beam("Metal", (s * MX, 6.2, MZ - 0.08), (s * MX, 2.8, -1.38), 0.11, 0.11)
-        g.beam("Metal", (s * MX, 2.95, MZ), (-s * MX, 4.2, MZ), 0.06, 0.06, soft=True)
+        g.beam("Metal", (s * MX, 6.4, MZ - 0.08), (s * MX, EB + 0.3, -1.42), 0.11, 0.11)
     g.box("Metal", 6.5, 0.12, 0.12, 0.0, 4.27, MZ, b=0.02)
     for y in (5.2, 7.6):
         g.box("Metal", 6.2, 0.1, 0.1, 0.0, y, zf - 0.17, soft=True)
-    bulbs(g, "Glass", (-MX, 4.15, MZ + 0.16), (MX, 4.15, MZ + 0.16), 8, sag=0.55, r=0.08)
     # ---- the cart: stainless cabinet on wheels, serving counter on brackets, a neon line round it
     g.box("Body", 6.8, 0.2, 2.2, 0.0, top, -0.15, soft=True, base=True)
     g.box("Metal", 7.0, 0.82, 2.4, 0.0, top + 0.2, -0.15, b=0.04, base=True)
@@ -836,88 +840,113 @@ def lot2_pocha():
     for s in (-1, 1):
         for wz in (-1.0, 0.7):
             g.lathe(["Body", "Body", "Body", "Metal", "Metal"], [(0.0, -0.09), (0.19, -0.09), (0.24, -0.04), (0.24, 0.07), (0.12, 0.1), (0.0, 0.1)],
-                    x=s * 3.46, y=0.37, z=wz, seg=10, rz=-90.0 * s)
+                    x=s * 3.46, y=0.37, z=wz, seg=8, rz=-90.0 * s)
     g.tube("NeonPink", [(-3.56, 0.5, -1.2), (-3.56, 0.5, 1.11), (3.56, 0.5, 1.11), (3.56, 0.5, -1.2)], 0.035, seg=4)
     g.box("Metal", 7.3, 0.07, 0.78, 0.0, 1.2, 1.37, b=0.025)
     for bx in (-2.9, -1.45, 0.0, 1.45, 2.9):
         g.prism("Body", [(0.0, 0.0), (0.6, 0.0), (0.0, -0.42)], 0.07, x=bx, y=1.165, z=1.06, ry=-90, soft=True)
-    # ---- the frame: back posts, header with the name plate, low side panels, a lit menu on the back wall
+    # ---- the frame: back posts, a header under the roof edge, low side panels
     for s in (-1, 1):
-        g.box("Body", 0.14, 1.42, 0.14, s * 3.42, 1.15, -1.27, b=0.025, base=True)
-        g.beam("Body", (s * 3.42, 2.48, -1.27), (s * 3.42, 2.48, 1.5), 0.14, 0.14, soft=True)
-        g.box("Metal", 0.07, 0.5, 2.25, s * 3.46, 1.15, -0.13, b=0.02, base=True)
-    g.box("Body", 7.5, 0.6, 0.3, 0.0, 2.25, 1.65, b=0.04)
-    sign_mount(g, sign, rim="Metal")
-    g.box("Body", 7.0, 1.42, 0.1, 0.0, 1.15, -1.3, b=0.02, base=True)
-    g.pane("Glass", 4.8, 0.46, -0.2, 2.14, -1.25, proud=0.04, c=0.03)
+        g.box("Body", 0.14, roof_y(-1.27) - Y0, 0.14, s * 3.42, Y0, -1.27, b=0.025, base=True)
+        g.beam("Body", (s * 3.42, roof_y(-1.27) - 0.07, -1.27), (s * 3.42, roof_y(1.5) - 0.07, 1.5), 0.14, 0.14, soft=True)
+        g.box("Metal", 0.07, 0.5, 2.25, s * 3.46, Y0, -0.13, b=0.02, base=True)
+    g.box("Body", 7.5, 0.3, 0.3, 0.0, roof_y(1.65) - 0.17, 1.65, b=0.04)
+    # ---- warm light inside: a lit menu wall behind the cooking, bottles in front of it, lamps over the counter
+    g.box("Body", 7.0, EB - Y0 + 0.05, 0.1, 0.0, Y0, -1.3, b=0.02, base=True)
+    g.pane("Glass", 5.9, 1.2, -0.2, 2.15, -1.25, proud=0.04, c=0.03)
     for k in range(4):
-        g.box("Body", 0.05, 0.5, 0.07, -2.0 + k * 1.2, 2.14, -1.21, soft=True)
-    g.box("Metal", 6.4, 0.05, 0.3, 0.0, 1.74, -1.1, soft=True)
-    for k, mat in enumerate(("Accent", "Lantern", "Cloth", "Accent", "Cloth", "Lantern", "Accent")):
-        g.cyl(mat, 0.06, 0.2 + 0.05 * (k % 2), -2.4 + k * 0.72, 1.765, -1.1, seg=5, r2=0.04, b=0.0, soft=True)
-    # ---- the vaulted tarp roof in the owner's colour, cream ribs, steel edge, a neon line along the front
-    arch = [(-1.6, 2.55), (2.0, 2.55), (2.0, 2.63)] + [(2.0 - 3.6 * k / 8, 2.63 + 0.44 * math.sin(PI * k / 8)) for k in range(1, 8)] + [(-1.6, 2.63)]
-    g.prism("Accent", arch, 7.8, ry=-90, b=0.05)
-    rib = [(-1.62, 2.57), (2.02, 2.57), (2.02, 2.64)] + [(2.02 - 3.64 * k / 8, 2.645 + 0.455 * math.sin(PI * k / 8)) for k in range(1, 8)] + [(-1.62, 2.64)]
+        g.box("Body", 0.05, 1.24, 0.07, -2.0 + k * 1.2, 2.15, -1.21, soft=True)
+    g.box("Body", 5.95, 0.05, 0.07, -0.2, 2.2, -1.21, soft=True)
+    g.box("Metal", 6.4, 0.05, 0.3, 0.0, 1.42, -1.1, soft=True)
+    for k, mat in enumerate(("Accent", "Lantern", "Cloth", "Accent", "Cloth", "Lantern")):
+        g.cyl(mat, 0.06, 0.2 + 0.06 * (k % 2), -2.5 + k * 0.92, 1.445, -1.1, seg=5, r2=0.04, b=0.0, soft=True)
+    for lx in (-2.45, -0.95, 0.55):
+        g.tube("Body", [(lx, roof_y(0.95), 0.95), (lx, 2.82, 0.95)], 0.014, seg=3)
+        g.cyl("Body", 0.2, 0.13, lx, 2.7, 0.95, seg=8, r2=0.05, b=0.0, soft=True)
+        g.ball("Glass", 0.105, lx, 2.68, 0.95, seg=6, rings=3)
+    g.box("Glass", 6.0, 0.05, 0.1, -0.1, roof_y(1.55) - 0.36, 1.55, soft=True)
+    # ---- the name plate hangs from the roof edge on the right, braced to the mast; the counter stays open under it
+    sign_mount(g, sign, rim="Metal")
+    for hx in (1.25, 3.05):
+        g.box("Metal", 0.05, roof_y(1.95) - 2.58, 0.05, hx, 2.58, 1.95, soft=True, base=True)
+    g.box("Metal", 0.07, 0.07, 0.34, MX, 2.2, 1.78, soft=True)
+    # ---- the tarp roof in the owner's colour, lifted at the front: a low vault with cream ribs, a pointed valance,
+    # steel edges, a neon line along the front
+    def arch(z0, z1, lift, rise):
+        n = 8
+        pts = [(z0, roof_y(z0) + lift), (z1, roof_y(z1) + lift), (z1, roof_y(z1) + lift + 0.08)]
+        for k in range(1, n):
+            z = z1 - (z1 - z0) * k / n
+            pts.append((z, roof_y(z) + lift + 0.08 + rise * math.sin(PI * k / n)))
+        return pts + [(z0, roof_y(z0) + lift + 0.08)]
+    g.prism("Accent", arch(-1.6, 2.0, 0.0, 0.42), 7.8, ry=-90, b=0.05)
     for rx_ in (-2.6, -0.87, 0.87, 2.6):
-        g.prism("Cloth", rib, 0.22, x=rx_, ry=-90)
-    for rz in (2.0, -1.6):
-        g.box("Metal", 7.9, 0.1, 0.1, 0.0, 2.59, rz, b=0.02)
-    g.tube("NeonPink", [(-3.92, 2.69, 2.0), (3.92, 2.69, 2.0)], 0.035, seg=4)
-    # ---- the red lantern on a bracket
-    lx, lz = -2.75, 2.22
-    g.beam("Body", (lx, 2.42, 1.8), (lx, 2.42, lz + 0.06), 0.06, 0.06, soft=True)
-    g.tube("Body", [(lx, 2.42, lz), (lx, 2.27, lz)], 0.015, seg=3)
-    g.lathe(["Body", "Body", "Lantern", "Lantern", "Lantern", "Lantern", "Lantern", "Body", "Body"],
-            [(0.0, 1.53), (0.15, 1.53), (0.18, 1.6), (0.28, 1.68), (0.345, 1.84), (0.345, 1.98), (0.28, 2.14), (0.18, 2.22), (0.15, 2.28), (0.0, 2.28)],
-            x=lx, z=lz, seg=12)
-    g.cyl("Glass", 0.03, 0.24, lx, 1.28, lz, seg=4, b=0.0, soft=True)
-    # ---- the cooking: stock pot, fish-cake pot with skewers, red rice-cake pan, steamer, kettle, steam
-    y0 = 1.15
-    g.box("Body", 5.0, 0.06, 0.62, -0.7, y0 + 0.03, 0.62, soft=True)
-    g.lathe("Metal", [(0.0, 0.0), (0.28, 0.0), (0.3, 0.02), (0.3, 0.36), (0.31, 0.38), (0.16, 0.45), (0.05, 0.47), (0.05, 0.51), (0.0, 0.52)],
-            x=-2.75, y=y0 + 0.06, z=0.62, seg=10)
-    g.box("Metal", 0.86, 0.2, 0.5, -1.75, y0 + 0.16, 0.62, b=0.03)
-    g.plate("Cloth", 0.74, 0.4, -1.75, y0 + 0.265, 0.62 + 0.2, 0)
+        g.prism("Cloth", arch(-1.62, 2.02, 0.012, 0.435), 0.22, x=rx_, ry=-90)
+    g.box("Metal", 7.9, 0.1, 0.1, 0.0, EF + 0.04, 2.0, b=0.02)
+    g.box("Metal", 7.9, 0.1, 0.1, 0.0, EB + 0.04, -1.6, b=0.02)
+    g.tube("NeonPink", [(-3.92, EF + 0.14, 2.0), (3.92, EF + 0.14, 2.0)], 0.035, seg=4)
+    for k in range(13):
+        g.prism("Cloth" if k % 2 else "Accent", [(0.0, 0.0), (0.6, 0.0), (0.6, -0.12), (0.3, -0.22), (0.0, -0.12)], 0.04,
+                x=-3.9 + k * 0.6, y=EF - 0.01, z=2.04, soft=True)
+    # ---- the big red lantern at the front left corner, a small one at the right
+    for lx, ly, lz, sc in ((-3.62, 2.2, 2.3, 1.0), (3.86, 2.42, 2.22, 0.52)):
+        sx = -1 if lx < 0 else 1
+        g.beam("Body", (sx * MX, ly + 0.56 * sc, MZ), (lx, ly + 0.56 * sc, lz), 0.07, 0.07, soft=True)
+        g.tube("Body", [(lx, ly + 0.56 * sc, lz), (lx, ly + 0.5 * sc, lz)], 0.016, seg=3)
+        with g.at(lx, ly, lz, sx=sc, sy=sc, sz=sc):
+            g.lathe(["Body", "Body", "Lantern", "Lantern", "Lantern", "Lantern", "Lantern", "Body", "Body"],
+                    [(0.0, -0.5), (0.2, -0.5), (0.25, -0.42), (0.38, -0.3), (0.46, -0.1), (0.46, 0.1), (0.38, 0.3), (0.25, 0.42), (0.2, 0.5), (0.0, 0.5)],
+                    seg=12 if sc == 1.0 else 8)
+            g.cyl("Glass", 0.035, 0.3, 0.0, -0.82, 0.0, seg=4, b=0.0, soft=True)
+    # ---- the cooking, near the front of the cabinet where it shows: stock pot, fish-cake pot with skewers, the red
+    # rice-cake pan, a steamer, a kettle, pancakes on a griddle; steam over the pot and the steamer
+    cz = 0.7
+    g.box("Body", 5.4, 0.06, 0.72, -0.6, Y0 + 0.03, cz - 0.03, soft=True)
+    g.lathe("Metal", [(0.0, 0.0), (0.32, 0.0), (0.35, 0.03), (0.35, 0.46), (0.37, 0.48), (0.37, 0.5), (0.2, 0.57), (0.06, 0.59), (0.06, 0.64), (0.0, 0.65)],
+            x=-2.7, y=Y0 + 0.06, z=cz, seg=10)
+    g.box("Metal", 0.9, 0.24, 0.56, -1.6, Y0 + 0.18, cz, b=0.03)
+    g.lid("Glass", -2.0, -1.2, cz - 0.23, cz + 0.23, Y0 + 0.295, Y0 + 0.315, 0.02)
     for k in range(5):
-        sx = -2.05 + k * 0.15
-        g.beam("Cloth", (sx, y0 + 0.24, 0.62), (sx + 0.05, y0 + 0.62, 0.5 + (k % 2) * 0.16), 0.026, 0.026, soft=True)
-        g.box("Glass", 0.07, 0.12, 0.05, sx + 0.014, y0 + 0.36, 0.585 + (k % 2) * 0.05, soft=True)
-    g.lathe(["Body", "Body", "Body", "Lantern", "Lantern"], [(0.0, 0.0), (0.36, 0.0), (0.38, 0.02), (0.38, 0.1), (0.33, 0.1), (0.0, 0.12)],
-            x=-0.75, y=y0 + 0.06, z=0.62, seg=10)
+        sx = -1.93 + k * 0.165
+        g.beam("Cloth", (sx, Y0 + 0.3, cz), (sx + 0.04, Y0 + 0.8, cz - 0.12 + (k % 2) * 0.2), 0.028, 0.028, soft=True)
+        g.box("Cloth", 0.08, 0.14, 0.05, sx + 0.014, Y0 + 0.48, cz - 0.045 + (k % 2) * 0.075, soft=True)
+    g.lathe(["Body", "Body", "Body", "Lantern", "Lantern"], [(0.0, 0.0), (0.4, 0.0), (0.43, 0.02), (0.43, 0.11), (0.38, 0.11), (0.0, 0.13)],
+            x=-0.5, y=Y0 + 0.06, z=cz, seg=10)
     g.lathe(["Cloth", "Cloth", "Body", "Cloth", "Body", "Cloth", "Cloth", "Cloth"],
-            [(0.0, 0.0), (0.3, 0.0), (0.3, 0.13), (0.31, 0.16), (0.3, 0.29), (0.31, 0.32), (0.24, 0.39), (0.06, 0.44), (0.0, 0.445)],
-            x=0.3, y=y0 + 0.06, z=0.62, seg=10)
-    g.lathe("Metal", [(0.0, 0.0), (0.16, 0.0), (0.2, 0.08), (0.2, 0.2), (0.12, 0.3), (0.05, 0.32), (0.05, 0.36), (0.0, 0.37)], x=1.25, y=y0 + 0.06, z=0.62, seg=8)
-    g.beam("Metal", (1.4, y0 + 0.2, 0.62), (1.62, y0 + 0.34, 0.62), 0.045, 0.045, soft=True)
-    for px, py, pr in ((-2.75, 1.86, 0.15), (-2.68, 2.1, 0.19), (-2.82, 2.32, 0.13), (0.3, 1.82, 0.14), (0.38, 2.04, 0.18), (0.26, 2.26, 0.12)):
-        g.ball("Cloth", pr, px, py, 0.6, seg=6, rings=3)
+            [(0.0, 0.0), (0.32, 0.0), (0.32, 0.14), (0.33, 0.17), (0.32, 0.31), (0.33, 0.34), (0.26, 0.42), (0.06, 0.47), (0.0, 0.475)],
+            x=0.6, y=Y0 + 0.06, z=cz, seg=10)
+    g.lathe("Metal", [(0.0, 0.0), (0.16, 0.0), (0.2, 0.08), (0.2, 0.2), (0.12, 0.3), (0.05, 0.32), (0.05, 0.36), (0.0, 0.37)], x=1.5, y=Y0 + 0.06, z=cz, seg=8)
+    g.beam("Metal", (1.65, Y0 + 0.2, cz), (1.87, Y0 + 0.34, cz), 0.045, 0.045, soft=True)
+    g.box("Body", 0.95, 0.06, 0.6, 2.6, Y0 + 0.03, cz, soft=True)
+    for k in range(3):
+        g.cyl("Glass", 0.14, 0.03, 2.33 + k * 0.27, Y0 + 0.06, cz - 0.1 + (k % 2) * 0.2, seg=6, b=0.0, soft=True)
+    for px, py, pz, pr in ((-2.72, 2.02, cz, 0.15), (-2.58, 2.3, cz + 0.03, 0.21), (-2.76, 2.66, cz - 0.02, 0.16),
+                           (0.6, 1.9, cz, 0.14), (0.7, 2.2, cz + 0.02, 0.19)):
+        g.ball("Cloth", pr, px, py, pz, seg=6, rings=4)
     # ---- on the counter: plates of skewers, cups, a napkin box, bottles
     yc = 1.235
     for px in (-2.3, -0.5, 0.9):
         g.cyl("Cloth", 0.18, 0.03, px, yc, 1.42, seg=8, b=0.0, soft=True)
-        for k in range(3):
-            g.box("Glass", 0.04, 0.03, 0.26, px - 0.1 + k * 0.1, yc + 0.045, 1.43, soft=True)
+        for k in range(2):
+            g.box("Glass", 0.05, 0.03, 0.26, px - 0.06 + k * 0.12, yc + 0.045, 1.43, soft=True)
     for k in range(3):
         g.cyl("Accent", 0.05, 0.11, -1.35 + k * 0.13, yc, 1.5, seg=5, r2=0.06, b=0.0, soft=True)
     g.box("Cloth", 0.26, 0.12, 0.16, 0.2, yc + 0.06, 1.5, soft=True)
     for k in range(3):
         g.lathe(["Accent", "Accent", "Metal", "Metal"], [(0.0, 0.0), (0.045, 0.0), (0.045, 0.16), (0.02, 0.19), (0.0, 0.26)],
                 x=1.75 + k * 0.12, y=yc, z=1.45 + (k % 2) * 0.1, seg=5, soft=True)
-    # ---- stools, the gas bottle, the flue, a folding menu
-    for sx in (-2.3, -0.7, 0.9):
-        g.lathe(["Metal", "Metal", "Metal", "Metal", "Accent", "Accent", "Accent"],
-                [(0.0, 0.0), (0.17, 0.0), (0.17, 0.035), (0.035, 0.05), (0.035, 0.38), (0.2, 0.39), (0.21, 0.47), (0.0, 0.49)],
-                x=sx, y=top, z=2.75, seg=8)
+    # ---- stools in front, the gas bottle, the flue with its steam, a folding menu
+    for sx in (-2.5, -1.2, 0.1, 1.4):
+        g.lathe(["Metal", "Metal", "Metal", "Accent", "Accent", "Accent"],
+                [(0.0, 0.0), (0.17, 0.0), (0.035, 0.05), (0.035, 0.38), (0.2, 0.39), (0.21, 0.47), (0.0, 0.49)],
+                x=sx, y=top, z=2.8, seg=8)
     g.lathe(["Metal", "Metal", "Metal", "Body", "Metal", "Metal", "Metal", "Lantern", "Lantern"],
             [(0.0, 0.0), (0.15, 0.0), (0.18, 0.04), (0.18, 0.28), (0.18, 0.33), (0.18, 0.62), (0.13, 0.74), (0.06, 0.78), (0.05, 0.9), (0.0, 0.91)],
             x=3.93, y=top, z=-0.95, seg=8)
-    g.cyl("Metal", 0.11, 2.6, 2.85, y0, -1.0, seg=8, b=0.0)                          # the flue, on the side the steam shows
-    g.lathe("Metal", [(0.0, 0.0), (0.24, 0.0), (0.24, 0.03), (0.0, 0.2)], x=2.85, y=3.82, z=-1.0, seg=8)
-    for px, py, pr in ((2.88, 4.22, 0.16), (2.98, 4.52, 0.22), (2.86, 4.84, 0.15)):
-        g.ball("Cloth", pr, px, py, -1.0, seg=8, rings=4)
-    g.box("Glass", 6.0, 0.05, 0.1, -0.1, 1.94, 1.52, soft=True)                      # a warm strip light under the header
-    g.box("Glass", 0.1, 0.05, 2.3, 0.0, 2.5, 0.1, soft=True)                         # and one under the roof
+    g.cyl("Metal", 0.11, 2.85, 2.85, Y0, -1.0, seg=8, b=0.0)
+    g.lathe("Metal", [(0.0, 0.0), (0.24, 0.0), (0.24, 0.03), (0.0, 0.2)], x=2.85, y=4.02, z=-1.0, seg=8)
+    for px, py, pr in ((2.88, 4.4, 0.16), (2.98, 4.7, 0.22), (2.86, 5.02, 0.15)):
+        g.ball("Cloth", pr, px, py, -1.0, seg=6, rings=4)
     with g.at(3.45, top, 3.05, ry=-28):
         g.box("Body", 0.62, 0.95, 0.05, 0.0, 0.46, 0.13, b=0.02, rx=-15)
         g.box("Body", 0.62, 0.95, 0.05, 0.0, 0.46, -0.13, b=0.02, rx=15)
@@ -1044,119 +1073,159 @@ def lot3_shop():
     return dict(geos=[g], anchors=dict(BoardAnchor=board, SignAnchor=sign), budget=(6000, 150))
 
 # ====================================================================================================== lot 4: the tower
+def window_inset(g, x, y, z, w, h, ry, glass="Glass", frame="Trim", depth=0.11):
+    """A pane on the wall plane inside a proud frame of four bars with a deeper sill: it reads as set into the wall.
+    The wall looks toward ry (0 front, 90 right, 180 back, -90 left)."""
+    with g.at(x, y, z, ry=ry):
+        g.plate(glass, w, h, 0.0, 0.0, 0.012, 0)
+        t = 0.09
+        g.box(frame, w + 2 * t, t, depth, 0.0, h / 2 + t / 2, depth / 2 - 0.01, soft=True)
+        g.box(frame, w + 2 * t + 0.08, t + 0.03, depth + 0.07, 0.0, -h / 2 - t / 2, depth / 2 + 0.025, soft=True)
+        for s in (-1, 1):
+            g.box(frame, t, h, depth, s * (w / 2 + t / 2), 0.0, depth / 2 - 0.01, soft=True)
+
 def lot4_tower():
+    """The board hides the shaft from 8.8 m up, so the part below it carries the building: a tall lobby (glass
+    between pilasters, a marquee in the owner's colour, doors) as a podium, the shaft set back on it with its
+    windows recessed in a grid of piers and floor bands, neon up the piers and on fins at the sides, and a stepped
+    crown with a lit lantern tier, a spire and a beacon that stands above the board. Nothing the game positions has
+    moved: the board plate and the name plate are where buildPlot mounts them."""
     board = dict(x=0.0, y=12.6, z=3.55, w=12.6, h=7.1)
     sign = dict(x=0.0, y=16.3, z=1.2, w=6.2, h=0.9)
     g = Geo("Lot")
     pad(g, pavers=False)
     top = PAD_TOP
-    zf = board["z"] - BOARD_BACK
-    HX, ZB, ZF = 3.6, -2.85, zf - 0.12 - 0.12   # shaft: half width, back face, front face (rails carry the plate off it)
-    Y1, Y2 = 2.9, 15.8                          # top of the podium, roof of the shaft
-    # ---- podium: two lit storeys, the entrance under a canopy in the owner's colour
-    g.box("Body", 7.9, Y1 - top, 6.3, 0.0, top, -0.05, b=0.06, base=True)
-    g.box("Trim", 8.02, 0.36, 6.42, 0.0, top, -0.05, b=0.05, base=True)
-    g.box("Trim", 8.1, 0.24, 6.5, 0.0, Y1 - 0.12, -0.05, b=0.05)
-    pz = 3.1
-    g.pane("Glass", 2.7, 2.0, 0.0, top + 1.36, pz, proud=0.04, c=0.02)
-    for mx in (-1.39, -0.46, 0.46, 1.39):
-        g.box("Trim", 0.08, 2.0, 0.12, mx, top + 0.36, pz + 0.03, soft=True, base=True)
-    g.box("Trim", 2.9, 0.1, 0.14, 0.0, top + 2.4, pz + 0.03, b=0.02)
-    g.box("Trim", 2.78, 0.06, 0.11, 0.0, top + 1.75, pz + 0.03, soft=True)
-    g.box("Accent", 3.7, 0.16, 1.15, 0.0, 2.52, pz + 0.55, b=0.05)
-    g.tube("NeonGold", [(-1.9, 2.42, pz + 0.02), (-1.9, 2.42, pz + 1.16), (1.9, 2.42, pz + 1.16), (1.9, 2.42, pz + 0.02)], 0.035, seg=4)
+    zf = board["z"] - BOARD_BACK                    # face of the board's plate
+    PF, ZB, HX = zf - 0.24, -2.75, 3.5              # the shaft's pier faces: front (rails carry the plate off it), back, half width
+    IN = 0.2                                        # the glass wall stands this far inside the pier faces
+    Y1, Y2, FL = 4.3, 15.8, 1.28                    # top of the podium, roof of the shaft, floor to floor
+    ZC = (PF + ZB) / 2
+    # ---- the podium: a tall lobby
+    PZ, PB, PW = 3.42, -3.22, 7.9                   # its front and back faces, its width
+    pc = (PZ + PB) / 2
+    g.box("Body", PW, Y1 - top, PZ - PB, 0.0, top, pc, b=0.06, base=True)
+    g.box("Trim", PW + 0.12, 0.4, PZ - PB + 0.12, 0.0, top, pc, b=0.05, base=True)
+    g.box("Trim", PW + 0.2, 0.3, PZ - PB + 0.2, 0.0, Y1 - 0.2, pc, b=0.06, base=True)
+    e = PW / 2 + 0.16
+    g.tube("NeonPink", [(-e, Y1 + 0.14, PB - 0.16), (-e, Y1 + 0.14, PZ + 0.16), (e, Y1 + 0.14, PZ + 0.16), (e, Y1 + 0.14, PB - 0.16)], 0.04, seg=4, closed=True)
+    GW, GH, GY = 4.6, 3.1, 0.55                      # the lobby glass: width, height, sill
+    g.pane("Glass", GW, GH, 0.0, GY + GH / 2, PZ, 0, proud=0.03, c=0.02)
     for s in (-1, 1):
-        g.beam("Trim", (s * 1.6, 2.6, pz + 1.0), (s * 1.6, 2.86, pz + 0.04), 0.05, 0.05, soft=True)
-        window(g, s * 2.75, 1.5, pz, 1.5, 1.5, 0, sill=False)
-        g.box("Trim", 0.42, Y1 - top - 0.2, 0.2, s * 3.72, top, pz + 0.04, b=0.04, base=True)
-        g.box("Trim", 0.3, Y1 - top - 0.2, 0.16, s * 1.72, top, pz + 0.03, b=0.03, base=True)
-        for wz in (-1.95, 0.0, 1.95):
-            window(g, s * 3.95, 1.5, wz - 0.05, 1.3, 1.5, s * 90, sill=False)
+        g.box("Trim", 0.44, Y1 - top - 0.3, 0.3, s * (GW / 2 + 0.27), top, PZ + 0.1, b=0.05, base=True)      # pilasters
+        g.ball("Glass", 0.11, s * (GW / 2 + 0.27), 3.05, PZ + 0.33, seg=6, rings=3)                           # a lamp on each
+        g.box("Accent", 0.1, 2.3, 0.16, s * 0.74, top + 0.05, PZ + 0.07, b=0.02, base=True)                   # door jambs
+        g.box("NeonGold", 0.04, 0.42, 0.05, s * 0.1, 1.3, PZ + 0.11, soft=True)                               # handles
+        window_inset(g, s * 3.38, 2.1, PZ, 0.62, 2.6, 0)
+        for wz in (-1.9, 0.1, 2.1):
+            window_inset(g, s * PW / 2, 2.15, wz, 1.2, 2.7, s * 90)
         g.lathe(["Body", "Body", "Body", "NeonCyan", "NeonCyan"], [(0.0, 0.0), (0.11, 0.0), (0.1, 0.58), (0.11, 0.6), (0.09, 0.73), (0.0, 0.77)],
-                x=s * 2.4, y=top, z=3.55, seg=6)
+                x=s * 2.6, y=top, z=3.6, seg=6)
+    g.box("Trim", GW + 1.06, 0.36, 0.3, 0.0, GY + GH + 0.2, PZ + 0.1, b=0.05)                                 # lintel
+    for mx in (-1.55, -0.78, 0.78, 1.55):
+        g.box("Trim", 0.07, GH, 0.1, mx, GY + GH / 2, PZ + 0.05, soft=True)
+    g.box("Trim", GW, 0.08, 0.1, 0.0, 2.52, PZ + 0.05, soft=True)
+    g.box("Accent", 1.58, 0.1, 0.16, 0.0, 2.4, PZ + 0.07, b=0.02)
+    g.box("Trim", 0.05, 2.25, 0.1, 0.0, top + 0.05, PZ + 0.06, soft=True, base=True)
     for wx in (-2.4, 0.0, 2.4):
-        window(g, wx, 1.5, -3.2, 1.3, 1.5, 180, sill=False)
-    g.box("Trim", 3.4, 0.1, 0.7, 0.0, top, 3.45, b=0.03, base=True)
-    g.tube("NeonPink", [(-4.09, Y1 + 0.05, -3.34), (-4.09, Y1 + 0.05, 3.24), (4.09, Y1 + 0.05, 3.24), (4.09, Y1 + 0.05, -3.34)], 0.04, seg=4, closed=True)
-    # ---- the shaft: dark walls, corner piers and fins, a grid of windows (most lit warm, some dark, a few in colour)
-    ZC = (ZF + ZB) / 2
-    g.box("Body", 2 * HX, Y2 - Y1, ZF - ZB, 0.0, Y1, ZC, b=0.05, base=True)
+        window_inset(g, wx, 2.15, PB, 1.2, 2.7, 180)
+    g.box("Trim", 4.2, 0.1, 0.22, 0.0, top, PZ + 0.11, soft=True, base=True)                                  # the step
+    AY = 2.82                                                                                                # the marquee
+    g.box("Accent", 3.6, 0.2, 1.0, 0.0, AY, PZ + 0.5, b=0.07)
+    g.tube("NeonGold", [(-1.86, AY - 0.02, PZ + 0.02), (-1.86, AY - 0.02, PZ + 1.06), (1.86, AY - 0.02, PZ + 1.06), (1.86, AY - 0.02, PZ + 0.02)], 0.035, seg=4)
+    for s in (-1, 0, 1):
+        g.ball("Glass", 0.08, s * 1.2, AY - 0.13, PZ + 0.6, seg=5, rings=3)
+    for s in (-1, 1):
+        g.beam("Trim", (s * 1.5, AY + 0.08, PZ + 0.9), (s * 1.5, AY + 0.86, PZ + 0.12), 0.05, 0.05, soft=True)
+    # ---- the shaft, set back on the podium: a dark glass wall inside a grid of piers and floor bands
+    H = Y2 - Y1
+    g.box("Body", 2 * (HX - IN), H, PF - ZB - 2 * IN, 0.0, Y1, ZC, b=0.02, base=True)
+    g.box("Trim", 2 * HX + 0.1, 0.34, PF - ZB + 0.1, 0.0, Y1 + 0.02, ZC, b=0.04, base=True)                   # base band
+    for k in range(1, 9):
+        g.box("Trim", 2 * (HX - 0.07), 0.2, PF - ZB - 0.14, 0.0, Y1 + FL * k, ZC, b=0.03)                     # floor bands
+    g.box("Trim", 2 * HX + 0.3, 0.26, PF - ZB + 0.3, 0.0, Y2, ZC, b=0.05)                                     # roof cornice
     for sx in (-1, 1):
-        for z in (ZB + 0.1, ZF - 0.1):
-            g.box("Trim", 0.36, Y2 - Y1, 0.36, sx * (HX - 0.1), Y1, z, b=0.05, base=True)
-    g.box("Trim", 2 * HX + 0.16, 0.18, ZF - ZB + 0.16, 0.0, 8.68, ZC, b=0.03)
-    g.box("Trim", 2 * HX + 0.3, 0.24, ZF - ZB + 0.3, 0.0, Y2, ZC, b=0.04)
+        for z in (ZB + 0.25, PF - 0.25):
+            g.box("Trim", 0.5, H, 0.5, sx * (HX - 0.25), Y1, z, b=0.05, base=True)                            # corner piers
+    side_piers = (ZB + 0.5 + (PF - ZB - 1.0) / 3, ZB + 0.5 + 2 * (PF - ZB - 1.0) / 3)
+    side_bays = [ZB + 0.5 + (PF - ZB - 1.0) * (k + 0.5) / 3 for k in range(3)]
+    for x in (-1.5, 0.0, 1.5):
+        g.box("Trim", 0.22, 8.75 - Y1, 0.22, x, Y1, PF - 0.11, b=0.03, base=True)                             # front piers, to the board
+        g.tube("NeonCyan", [(x, Y1 + 0.45, PF + 0.03), (x, 8.6, PF + 0.03)], 0.035, seg=4)
+        g.box("Trim", 0.22, H, 0.22, x, Y1, ZB + 0.11, b=0.03, base=True)
+    for sx in (-1, 1):
+        for z in side_piers:
+            g.box("Trim", 0.22, H, 0.22, sx * (HX - 0.11), Y1, z, b=0.03, base=True)
+            g.box("Trim", 0.36, H - 0.3, 0.08, sx * (HX + 0.16), Y1 + 0.3, z, b=0.02, base=True)              # a fin on each side pier
+            g.tube("NeonPink", [(sx * (HX + 0.37), Y1 + 0.4, z), (sx * (HX + 0.37), Y2 - 0.25, z)], 0.035, seg=4)
+        g.tube("NeonCyan", [(sx * (HX + 0.04), Y1 + 0.45, ZB - 0.04), (sx * (HX + 0.04), Y2 - 0.3, ZB - 0.04)], 0.04, seg=4)
+        g.tube("NeonCyan", [(sx * (HX + 0.04), Y1 + 0.45, PF + 0.04), (sx * (HX + 0.04), 8.6, PF + 0.04)], 0.04, seg=4)
     rng = random.Random(7)
-    def pane():
+    def lit():
         r = rng.random()
-        return "Glass" if r < 0.52 else "GlassDark" if r < 0.82 else "NeonCyan" if r < 0.91 else "NeonPink"
-    rows_low = [3.78 + 1.22 * k for k in range(4)]
-    rows_all = [3.78 + 1.22 * k for k in range(10)]
-    for x in (-2.4, -0.8, 0.8, 2.4):
-        for y in rows_low:
-            g.pane(pane(), 1.2, 0.84, x, y, ZF, 0, proud=0.03, c=0.03)
-        for y in rows_all:
-            g.pane(pane(), 1.2, 0.84, x, y, ZB, 180, proud=0.03, c=0.03)
-    side_z = [ZC - 1.83, ZC, ZC + 1.83]
+        return "Glass" if r < 0.55 else "GlassDark" if r < 0.84 else "NeonCyan" if r < 0.92 else "NeonPink"
+    row = lambda k: Y1 + FL * (k + 0.5)
+    for x in (-2.25, -0.75, 0.75, 2.25):
+        for k in range(4):
+            g.plate(lit(), 1.26, FL - 0.24, x, row(k), PF - IN + 0.006, 0)
+        for k in range(9):
+            g.plate(lit(), 1.26, FL - 0.24, x, row(k), ZB + IN - 0.006, 180)
     for sx in (-1, 1):
-        for z in side_z:
-            for y in rows_all:
-                g.pane(pane(), 1.34, 0.84, sx * HX, y, z, sx * 90, proud=0.03, c=0.03)
-        for z in (ZC - 0.915, ZC + 0.915):
-            g.box("Trim", 0.12, Y2 - Y1, 0.16, sx * (HX + 0.03), Y1, z, b=0.025, base=True)
-    for x in (-1.6, 0.0, 1.6):
-        g.box("Trim", 0.14, 8.6 - Y1, 0.12, x, Y1, ZF + 0.03, b=0.025, base=True)
-        g.box("Trim", 0.14, Y2 - Y1, 0.12, x, Y1, ZB - 0.03, b=0.025, base=True)
-    for sx in (-1, 1):                                                              # cyan lines up the corners
-        g.tube("NeonCyan", [(sx * (HX + 0.12), Y1 + 0.2, ZB - 0.12), (sx * (HX + 0.12), Y2 - 0.2, ZB - 0.12)], 0.04, seg=4)
-        g.tube("NeonCyan", [(sx * (HX + 0.12), Y1 + 0.2, ZF + 0.12), (sx * (HX + 0.12), 8.5, ZF + 0.12)], 0.04, seg=4)
-    # ---- the big board: wider than the shaft, on rails, its wings carried by outriggers
+        for z in side_bays:
+            for k in range(9):
+                g.plate(lit(), (PF - ZB - 1.0) / 3 - 0.24, FL - 0.24, sx * (HX - IN + 0.006), row(k), z, sx * 90)
+    # ---- the big board: wider than the shaft, on rails, its wings carried by outriggers; a warning light on each top corner
     board_mount(g, board, neon="NeonGold", rim="Trim")
     for rx_ in (-3.0, -1.0, 1.0, 3.0):
         g.box("Trim", 0.22, 7.3, 0.12, rx_, board["y"], zf - 0.18, soft=True)
     for sx in (-1, 1):
-        g.box("Trim", 0.2, 7.3, 0.2, sx * 6.3, board["y"], zf - 0.22, b=0.03)
+        g.box("Trim", 0.2, 8.2, 0.2, sx * 6.3, board["y"] + 0.45, zf - 0.22, b=0.03)
+        g.ball("NeonPink", 0.11, sx * 6.3, board["y"] + 4.66, zf - 0.22, seg=6, rings=3)
         for y in (9.4, 12.6, 15.75):
-            g.beam("Trim", (sx * 3.5, y, zf - 0.22), (sx * 6.4, y, zf - 0.22), 0.2, 0.2)
-            g.beam("Trim", (sx * 6.25, y, zf - 0.3), (sx * (HX + 0.02), y, ZC + 0.6), 0.12, 0.12)
-    # ---- the top: a terrace behind the board, the crown with the name plate on its face, tiers, a spire
+            g.beam("Trim", (sx * 3.4, y, zf - 0.22), (sx * 6.4, y, zf - 0.22), 0.2, 0.2, soft=True)
+            g.beam("Trim", (sx * 6.25, y, zf - 0.3), (sx * (HX + 0.3), y, side_piers[1]), 0.12, 0.12, soft=True)
+    # ---- the crown, behind and above the board: the block with the name plate on its face (it has to reach above the
+    # sign at 15.85 .. 16.75), a band in the owner's colour, a lit lantern tier, a cap, the spire and its beacon at 19 m
     CZ = -0.75
-    # Heights: shaft roof 15.8, crown block to 17.05 (it has to reach above the name sign at 15.85 .. 16.75), band in the
-    # owner's colour to 17.2, two low tiers to 17.9, the spire and its beacon to 18.5.
     g.box("Body", 6.6, 1.15, 3.7, 0.0, Y2 + 0.1, CZ, b=0.05, base=True)
     sign_mount(g, sign, rim="Trim")
-    g.box("Accent", 6.9, 0.16, 4.0, 0.0, Y2 + 1.25, CZ, b=0.05, base=True)
-    g.box("Body", 5.2, 0.4, 2.8, 0.0, Y2 + 1.41, CZ, b=0.05, base=True)
-    g.tube("NeonGold", [(-2.68, Y2 + 1.83, CZ - 1.48), (-2.68, Y2 + 1.83, CZ + 1.48), (2.68, Y2 + 1.83, CZ + 1.48), (2.68, Y2 + 1.83, CZ - 1.48)], 0.04, seg=4, closed=True)
-    g.box("Trim", 3.2, 0.26, 1.7, 0.0, Y2 + 1.81, CZ, b=0.05, base=True)
-    g.lathe("Trim", [(0.0, 0.0), (0.24, 0.0), (0.2, 0.08), (0.09, 0.24), (0.05, 0.44), (0.0, 0.46)], y=Y2 + 2.07, z=CZ, seg=8)
-    g.ball("NeonPink", 0.09, 0.0, Y2 + 2.61, CZ, seg=6, rings=3)
+    g.box("Accent", 6.9, 0.2, 4.0, 0.0, Y2 + 1.25, CZ, b=0.06, base=True)
+    g.box("Body", 5.4, 0.62, 3.0, 0.0, Y2 + 1.45, CZ, b=0.05, base=True)
+    g.pane("Glass", 4.7, 0.34, 0.0, Y2 + 1.76, CZ + 1.5, 0, proud=0.03, c=0.03)
+    g.pane("Glass", 4.7, 0.34, 0.0, Y2 + 1.76, CZ - 1.5, 180, proud=0.03, c=0.03)
     for sx in (-1, 1):
+        g.pane("Glass", 2.3, 0.34, sx * 2.7, Y2 + 1.76, CZ, sx * 90, proud=0.03, c=0.03)
         for sz in (-1, 1):
-            g.box("Trim", 0.3, 0.5, 0.3, sx * 3.1, Y2 + 1.41, CZ + sz * 1.65, b=0.04, base=True)
-            g.ball("NeonGold", 0.1, sx * 3.1, Y2 + 2.01, CZ + sz * 1.65, seg=6, rings=3)
-        g.box("Trim", 1.0, 0.5, 0.8, sx * 2.3, Y2 + 0.1, 2.1, b=0.04, base=True)
+            g.box("Trim", 0.34, 0.72, 0.34, sx * 3.05, Y2 + 1.45, CZ + sz * 1.6, b=0.05, base=True)           # corner posts of the crown
+            g.ball("NeonGold", 0.11, sx * 3.05, Y2 + 2.28, CZ + sz * 1.6, seg=6, rings=3)
+    g.tube("NeonGold", [(-2.78, Y2 + 2.1, CZ - 1.58), (-2.78, Y2 + 2.1, CZ + 1.58), (2.78, Y2 + 2.1, CZ + 1.58), (2.78, Y2 + 2.1, CZ - 1.58)], 0.04, seg=4, closed=True)
+    g.box("Trim", 3.6, 0.36, 2.0, 0.0, Y2 + 2.07, CZ, b=0.05, base=True)
+    g.box("Accent", 2.4, 0.14, 1.3, 0.0, Y2 + 2.43, CZ, b=0.04, base=True)
+    g.lathe("Trim", [(0.0, 0.0), (0.32, 0.0), (0.26, 0.08), (0.11, 0.3), (0.06, 0.52), (0.0, 0.54)], y=Y2 + 2.57, z=CZ, seg=8)
+    g.ring("NeonPink", 0.3, 0.03, 0.0, Y2 + 2.82, CZ, n=10, seg=3)
+    g.ball("NeonPink", 0.12, 0.0, Y2 + 3.08, CZ, seg=8, rings=4)
     return dict(geos=[g], anchors=dict(BoardAnchor=board, SignAnchor=sign), budget=(8000, 150))
 
 # ====================================================================================================== taxi
 def taxi():
-    """A chunky yellow cab on the footprint of the box kit in ts3d/traffic.js: it drives toward +z (headlights at +z,
-    as the kit does), its left side is +x. Nodes: Body, Glass, Checker, Wheel_FL/FR/RL/RR (origins on the axles, they
-    turn about x), RoofSign, HeadLights, TailLights."""
-    WR, WX, WZ, RA = 0.36, 0.85, 1.45, 0.44          # wheel radius, half track, half wheelbase, arch radius
+    """A chunky toy cab on the footprint of the box kit in ts3d/traffic.js: it drives toward +z (headlights at +z,
+    as the kit does), its left side is +x. Big wheels under flared arches, thick bumpers with over-riders, a chrome
+    grille, mirrors, door handles. Nodes: Body, Glass, Checker, Wheel_FL/FR/RL/RR (origins on the axles, they turn
+    about x), RoofSign, HeadLights, TailLights."""
+    WR, WX, WZ, RA = 0.40, 0.86, 1.45, 0.48          # wheel radius, half track, half wheelbase, arch radius
+    HW, SILL, BELT = 0.97, 0.33, 1.04                # half width of the body, its underside, its shoulder line
     body = Geo("Body")
     # ---- the lower body: one skin lofted from tail to nose. The underside lifts over the axles to make the arches.
     def top(z):                                       # the bonnet falls a little toward the nose
-        return 1.0 if z < 1.1 else 1.0 - 0.06 * (z - 1.1) / 0.81
-    rows = [(-2.31, 0.72, 0.44, 0.78), (-2.28, 0.82, 0.38, 0.88), (-2.20, 0.90, 0.33, 0.95), (-2.06, 0.94, 0.31, 0.985)]
+        return BELT if z < 1.1 else BELT - 0.07 * (z - 1.1) / 0.83
+    rows = [(-2.33, 0.74, 0.47, 0.84), (-2.30, 0.84, 0.41, 0.93), (-2.22, 0.92, 0.36, 0.99), (-2.08, 0.96, 0.34, 1.025)]
     for zc in (-WZ, WZ):
-        rows.append((zc - RA - 0.02, 0.95, 0.30, top(zc - RA - 0.02)))
-        for dz in (-0.42, -0.34, -0.2, 0.0, 0.2, 0.34, 0.42):
-            rows.append((zc + dz, 0.95, WR + math.sqrt(RA * RA - dz * dz), top(zc + dz)))
-        rows.append((zc + RA + 0.02, 0.95, 0.30, top(zc + RA + 0.02)))
-    rows += [(2.08, 0.94, 0.31, 0.915), (2.22, 0.90, 0.33, 0.88), (2.30, 0.82, 0.38, 0.82), (2.34, 0.72, 0.44, 0.74)]
+        rows.append((zc - RA - 0.02, HW, SILL, top(zc - RA - 0.02)))
+        for dz in (-0.46, -0.37, -0.22, 0.0, 0.22, 0.37, 0.46):
+            rows.append((zc + dz, HW, WR + math.sqrt(RA * RA - dz * dz), top(zc + dz)))
+        rows.append((zc + RA + 0.02, HW, SILL, top(zc + RA + 0.02)))
+    rows += [(2.09, 0.96, 0.34, 0.95), (2.24, 0.92, 0.36, 0.915), (2.32, 0.84, 0.41, 0.86), (2.36, 0.74, 0.47, 0.78)]
     def ring(z, hw, y0, y1):
-        rt = min(0.11, (y1 - y0) * 0.45)
+        rt = min(0.12, (y1 - y0) * 0.45)
         rb = min(0.05, (y1 - y0) * 0.2)
         half = [(0.0, y0), (hw - rb, y0), (hw, y0 + rb), (hw, y1 - rt)]
         half += [(hw - rt + rt * math.cos(a), y1 - rt + rt * math.sin(a)) for a in (PI / 6, PI / 3)]
@@ -1165,9 +1234,20 @@ def taxi():
         return [(x, y, z) for x, y in pts]
     dark = {0, 1, 12, 13}                             # underside and sill
     body.loft("Paint", [ring(*r) for r in rows], pick=lambda si, k: "Trim" if (0 <= si < len(rows) - 1 and k in dark) else None)
+    # ---- flared wheel arches: a lip round each arch, standing 6 cm proud of the body side
+    for sx in (-1, 1):
+        for zc in (-WZ, WZ):
+            secs = []
+            for k in range(9):
+                a = -0.2 + (PI + 0.4) * k / 8
+                c, s = math.cos(a), math.sin(a)
+                secs.append([(sx * (HW - 0.03), WR + (RA - 0.02) * s, zc + (RA - 0.02) * c), (sx * (HW + 0.06), WR + (RA - 0.01) * s, zc + (RA - 0.01) * c),
+                             (sx * (HW + 0.06), WR + (RA + 0.09) * s, zc + (RA + 0.09) * c), (sx * (HW - 0.03), WR + (RA + 0.11) * s, zc + (RA + 0.11) * c)])
+            v, f, _ = g_loft(secs, True, True, True)
+            body.emit(v, f, "Paint", soft=True)
     # ---- the cabin: a skin lofted upward; the window band is split off into the Glass node
-    levels = [(0.96, 0.88, 1.16, -1.68, 0.22), (1.07, 0.87, 1.10, -1.62, 0.22), (1.42, 0.76, 0.62, -1.24, 0.20),
-              (1.50, 0.72, 0.52, -1.14, 0.22), (1.54, 0.60, 0.38, -1.00, 0.20)]
+    levels = [(1.0, 0.89, 1.14, -1.66, 0.22), (1.11, 0.88, 1.08, -1.6, 0.22), (1.47, 0.78, 0.66, -1.26, 0.20),
+              (1.55, 0.74, 0.56, -1.16, 0.22), (1.59, 0.62, 0.42, -1.02, 0.20)]
     def cab_ring(y, hx, zf, zr, rc):
         q = rc * math.sqrt(0.5)
         za, zb = zf - rc, zr + rc
@@ -1183,46 +1263,56 @@ def taxi():
     body.emit(v, paint, "Paint", fix=None)
     glass = Geo("Glass")
     glass.emit(v, glass_f, "Glass", fix=None)
-    # ---- bumpers, grille, lamp rims, plates, mirrors, the roof-sign foot
-    for z in (2.31, -2.28):
-        body.box("Trim", 1.74, 0.16, 0.18, 0.0, 0.41, z, b=0.055)
-    body.box("Trim", 0.62, 0.19, 0.06, 0.0, 0.62, 2.335, b=0.02)
-    for gy in (0.58, 0.66):
-        body.box("Chrome", 0.66, 0.028, 0.07, 0.0, gy, 2.34, soft=True)
+    # ---- bumpers with chrome over-riders and a chrome strip, the grille in a chrome frame, lamp rims
+    for z, s in ((2.34, 1), (-2.31, -1)):
+        body.box("Trim", 1.86, 0.2, 0.24, 0.0, 0.45, z, b=0.07)
+        body.box("Chrome", 1.6, 0.035, 0.03, 0.0, 0.5, z + s * 0.125, soft=True)
+        for ox in (-0.5, 0.5):
+            body.box("Chrome", 0.09, 0.27, 0.1, ox, 0.46, z + s * 0.1, soft=True)
+    body.box("Chrome", 0.8, 0.32, 0.06, 0.0, 0.69, 2.35, b=0.02)
+    body.box("Trim", 0.7, 0.22, 0.05, 0.0, 0.69, 2.37, soft=True)
+    for gy in (0.63, 0.69, 0.75):
+        body.box("Chrome", 0.68, 0.022, 0.05, 0.0, gy, 2.385, soft=True)
+    body.box("Chrome", 0.04, 0.24, 0.055, 0.0, 0.69, 2.39, soft=True)
     for s in (-1, 1):
-        body.cyl("Chrome", 0.155, 0.06, s * 0.55, 0.615, 2.30, seg=10, b=0.015, axis="z")
-        body.box("Trim", 0.36, 0.2, 0.05, s * 0.5, 0.63, -2.30, b=0.02)
-        body.box("Paint", 0.07, 0.1, 0.16, s * 0.985, 1.1, 0.92, b=0.03)
-        body.box("Trim", 0.14, 0.035, 0.05, s * 0.92, 1.07, 0.95, soft=True)
-        body.box("Chrome", 0.025, 0.03, 0.13, s * 0.944, 0.945, 0.35, soft=True)
-        body.box("Chrome", 0.025, 0.03, 0.13, s * 0.944, 0.945, -0.62, soft=True)
-        body.box("Trim", 0.012, 0.56, 0.016, s * 0.952, 0.64, -0.1, soft=True)        # door line
-    body.box("White", 0.42, 0.13, 0.03, 0.0, 0.41, 2.405, soft=True)
-    body.box("White", 0.42, 0.13, 0.03, 0.0, 0.66, -2.325, soft=True)
-    body.box("Trim", 0.56, 0.05, 0.22, 0.0, 1.55, -0.3, b=0.02)
+        body.cyl("Chrome", 0.17, 0.07, s * 0.58, 0.69, 2.31, seg=10, b=0.02, axis="z")
+        body.box("Trim", 0.38, 0.22, 0.05, s * 0.52, 0.7, -2.325, b=0.02)
+        # ---- mirrors on stalks, chrome door handles, the seam between the doors
+        body.box("Paint", 0.1, 0.14, 0.2, s * 1.06, 1.17, 0.98, b=0.04)
+        body.box("Chrome", 0.08, 0.11, 0.02, s * 1.06, 1.17, 0.875, soft=True)
+        body.box("Trim", 0.2, 0.045, 0.07, s * 0.95, 1.13, 1.0, soft=True)
+        for hz in (0.42, -0.56):
+            body.box("Chrome", 0.035, 0.045, 0.18, s * 0.972, 0.972, hz, soft=True)
+        body.box("Trim", 0.012, 0.3, 0.018, s * 0.972, 0.5, -0.1, soft=True)
+    # ---- plates, the boot handle, the exhaust, the roof-sign foot
+    body.box("White", 0.44, 0.14, 0.03, 0.0, 0.45, 2.465, soft=True)
+    body.box("White", 0.44, 0.14, 0.03, 0.0, 0.72, -2.345, soft=True)
+    body.box("Chrome", 0.34, 0.035, 0.035, 0.0, 0.87, -2.325, soft=True)
+    body.cyl("Chrome", 0.045, 0.14, -0.55, 0.35, -2.42, seg=6, b=0.0, axis="z", soft=True)
+    body.box("Trim", 0.56, 0.05, 0.22, 0.0, 1.6, -0.3, b=0.02)
     # ---- the checker stripe along the doors: a pale band with dark squares of 12 cm standing proud of it.
     # Its own node, so the same body can be an ordinary car by leaving this node and RoofSign out.
     checker = Geo("Checker")
     for s in (-1, 1):
-        checker.box("White", 0.03, 0.26, 1.94, s * 0.955, 0.78, 0.0, soft=True)
+        checker.box("White", 0.03, 0.26, 1.94, s * (HW + 0.005), 0.8, 0.0, soft=True)
         for col in range(16):
             for row in range(2):
                 if (col + row) % 2 == 0:
-                    checker.box("Trim", 0.03, 0.12, 0.12, s * 0.966, 0.72 + row * 0.12, -0.9 + col * 0.12, soft=True)
+                    checker.box("Trim", 0.03, 0.12, 0.12, s * (HW + 0.016), 0.74 + row * 0.12, -0.9 + col * 0.12, soft=True)
     # ---- the lit parts, each its own node: the roof sign (no lettering: the game draws it), head and tail lamps
     sign = Geo("RoofSign")
-    sign.box("RoofSign", 0.9, 0.26, 0.22, 0.0, 1.70, -0.3, b=0.06)
+    sign.box("RoofSign", 0.9, 0.26, 0.22, 0.0, 1.75, -0.3, b=0.06)
     head = Geo("HeadLights")
     tail = Geo("TailLights")
     for s in (-1, 1):
-        head.lathe("LightFront", [(0.0, 0.0), (0.125, 0.0), (0.125, 0.05), (0.08, 0.09), (0.0, 0.1)], x=s * 0.55, y=0.615, z=2.32, seg=10, rx=90.0)
-        tail.box("LightRear", 0.3, 0.14, 0.07, s * 0.5, 0.63, -2.315, b=0.03)
-    # ---- wheels: tyre and hub cap in one turned shape; the outside face looks away from the car
+        head.lathe("LightFront", [(0.0, 0.0), (0.135, 0.0), (0.135, 0.05), (0.085, 0.09), (0.0, 0.1)], x=s * 0.58, y=0.69, z=2.34, seg=10, rx=90.0)
+        tail.box("LightRear", 0.32, 0.16, 0.07, s * 0.52, 0.7, -2.34, b=0.03)
+    # ---- wheels: fat tyre and a chrome dish in one turned shape; the outside face looks away from the car
     wheels = []
     for name, sx, sz in (("Wheel_FL", 1, 1), ("Wheel_FR", -1, 1), ("Wheel_RL", 1, -1), ("Wheel_RR", -1, -1)):
         w = Geo(name, origin=(sx * WX, WR, sz * WZ))
         w.lathe(["Trim", "Trim", "Trim", "Trim", "Trim", "Chrome", "Chrome", "Chrome"],
-                [(0.0, -0.13), (0.31, -0.13), (WR, -0.07), (WR, 0.07), (0.31, 0.13), (0.225, 0.13), (0.2, 0.085), (0.11, 0.125), (0.0, 0.135)],
+                [(0.0, -0.14), (0.34, -0.14), (WR, -0.075), (WR, 0.075), (0.34, 0.14), (0.255, 0.14), (0.23, 0.09), (0.12, 0.135), (0.0, 0.145)],
                 seg=12, rz=-90.0 * sx)
         wheels.append(w)
     palette = {
@@ -1406,16 +1496,19 @@ def air_dancer():
             from mathutils import Quaternion
             return Quaternion(Vector(to_blender(axis)), rad(deg))
         def pose(t):
-            s, c = math.sin, math.cos
+            # The arms rest 35 degrees above level. They flap between about level and 55 degrees up and the forearm
+            # never folds past upright, and they are held a little to the front: with a wider flap or a swing to
+            # the back an arm crossed the head or went behind it (seen on the 8-frame sheet of the first version).
+            s = math.sin
             return {
-                "Body1": about(FRONT, 9 * s(w * t)) @ about(SIDE, 5 * s(2 * w * t + 0.6)),
-                "Body2": about(FRONT, 14 * s(w * t - 0.9)) @ about(SIDE, 7 * s(2 * w * t + 0.1)),
-                "Body3": about(FRONT, 16 * s(w * t - 1.8)) @ about(SIDE, 8 * s(2 * w * t - 0.5)),
-                "Head":  about(FRONT, 18 * s(w * t - 2.7)) @ about(SIDE, 12 * s(2 * w * t - 1.1)) @ about(UPAX, 10 * s(w * t + 0.4)),
-                "ArmL1": about(FRONT, 12 + 38 * s(2 * w * t + 0.3)) @ about(UPAX, 22 * s(w * t + 1.0)),
-                "ArmL2": about(FRONT, 48 * s(2 * w * t - 0.8)),
-                "ArmR1": about(FRONT, -12 - 38 * s(2 * w * t + 2.0)) @ about(UPAX, 22 * s(w * t + 2.4)),
-                "ArmR2": about(FRONT, -48 * s(2 * w * t + 0.9)),
+                "Body1": about(FRONT, 8 * s(w * t)) @ about(SIDE, 5 * s(2 * w * t + 0.6)),
+                "Body2": about(FRONT, 13 * s(w * t - 0.9)) @ about(SIDE, 6 * s(2 * w * t + 0.1)),
+                "Body3": about(FRONT, 15 * s(w * t - 1.8)) @ about(SIDE, 7 * s(2 * w * t - 0.5)),
+                "Head":  about(FRONT, 13 * s(w * t - 2.7)) @ about(SIDE, 8 * s(2 * w * t - 1.1)) @ about(UPAX, 8 * s(w * t + 0.4)),
+                "ArmL1": about(FRONT, -10 + 28 * s(2 * w * t + 0.3)) @ about(UPAX, -(10 + 12 * s(w * t + 1.0))),
+                "ArmL2": about(FRONT, 5 + 30 * s(2 * w * t - 0.8)),
+                "ArmR1": about(FRONT, 10 - 28 * s(2 * w * t + 2.0)) @ about(UPAX, 10 + 12 * s(w * t + 2.4)),
+                "ArmR2": about(FRONT, -5 - 30 * s(2 * w * t + 0.9)),
             }
         rest = {b.name: b.matrix_local.to_quaternion() for b in ad.bones}
         for pb in arm.pose.bones:
