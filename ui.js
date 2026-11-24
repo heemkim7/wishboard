@@ -33,11 +33,11 @@ import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toa
 import { linesFault, LINES_ERR } from './ftue.js?v=202611241127'; // the board-line checks
 
 const LEVELS = [
-  { src: 'icons/lot.jpg', t: '빈 땅' },
-  { src: 'icons/tent.jpg', t: '텐트' },
-  { src: 'icons/pocha.jpg', t: '포차' },
-  { src: 'icons/shop.jpg', t: '네온상가' },
-  { src: 'icons/tower.jpg', t: '타워' },
+  { src: 'icons/lot.jpg?v=2', t: '빈 땅' },
+  { src: 'icons/tent.jpg?v=2', t: '텐트' },
+  { src: 'icons/pocha.jpg?v=2', t: '포차' },
+  { src: 'icons/shop.jpg?v=2', t: '네온상가' },
+  { src: 'icons/tower.jpg?v=2', t: '타워' },
 ];
 const levelImg = (L) => h('img', { class: 'i', src: L.src, alt: L.t, draggable: 'false' });
 const TIERS = { S: { floor: 3000, label: 'S급 메인 타워' }, B: { floor: 500, label: 'B급 서브 타워' }, C: { floor: 100, label: 'C급 거리 전광판' } };

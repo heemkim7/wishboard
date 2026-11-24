@@ -3,8 +3,9 @@
 //          and every asset the boot path asks for (city, env photos, own species model, HUD images)
 //   first  the first minute after entering: other species once their avatars are on screen or in the idle prefetch, counted
 //          as the PREFETCH_MAX largest other models on disk (the prefetch asks for at most that many), audio
-//   later  only when a sheet opens (plot pictures, hub picture, photo credits, the character picker's thumbnails), and the
-//          remaining species models, which load only when an avatar of that species walks into view
+//   later  only when a sheet opens (plot pictures, hub picture, photo credits, the character picker's thumbnails), the
+//          remaining species models, which load only when an avatar of that species walks into view, and the five plot
+//          buildings, which load when the player first comes near the lots' street
 // Every '/assets/…' or 'icons/…' literal in a loaded module must match a RULE below, so a new download cannot slip into
 // the boot path unnoticed (test/load.test.mjs). Wire bytes are gzip -9 for text and raw for images, models and the
 // already-gzipped manhattan.bin; Cloudflare's brotli is a little smaller. CDN files (supabase-js, fonts) are listed
@@ -33,6 +34,10 @@ export const RULES = [
   [/^icons\/coin\.jpg$/, 'boot'], // wallet icon, built with the HUD
   [/^assets\/times-square\/\$\{name\}\.env\.jpg$/, 'boot', () => ENV_PHOTOS.map((n) => clean(envPhotoUrl(n)))],
   [/^assets\/models\/[A-Z][a-z]+Toy\.glb$/, (lit, ctx) => (lit === clean(MODEL_URL[ctx.species]) ? 'boot' : ctx.peers.has(lit) ? 'first' : 'later')],
+  // The five plot buildings (ts3d/loadplan.js LOT_MODEL_URL): never at boot. They are asked for together the first time the
+  // camera or the player is within LOTS_R of the lots' street (234 m from the spawn), like a species model on first sight.
+  // A link that lands on a plot does fetch them in its first minute: 0.6 MB that the `first` total does not count.
+  [/^assets\/models\/lots\/lot[0-4]_[a-z]+\.glb$/, 'later'],
   [/^assets\/avatars\/[a-z]+(-hood)?\.png$/, 'later'], // character picker tiles and their hoodie masks (ts3d/avatars.js SPECIES thumb, hood), only in the profile sheet
   [/^assets\/audio\/(sfx\/)?$/, 'first', () => []], // 'assets/audio/' + id + '.ogg': no such files in the repo, the browser gets 404s
   [/^icons\/(lot|tent|pocha|shop|tower)\.jpg$/, 'later'],

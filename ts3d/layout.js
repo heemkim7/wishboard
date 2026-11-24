@@ -18,10 +18,32 @@ const PAD = { x0: -70, x1: 70, z0: 255, z1: 395 };
 const STAGE = { cx: 0, x0: -8, x1: 8, z0: 382, z1: 394, h: 0.75, spot: { x: 0, z: 388, r: 3.8 }, trees: [[-15, 4], [15, 4], [-21, 2], [21, 2], [-19, 9], [19, 9]] };
 const STAGE_STEPS = 2.4;
 
-/** A lot in its own frame, before its scale (the front is +Z, as buildPlot in ts3d/landmarks.js draws it): the pad, each
- *  level's collider half-sizes [across, deep] (level 0 is walk-through), and the widest piece any level carries (the
- *  tower's 13.4 m roof line). Nothing of a lot reaches past the pad's front edge. */
-export const LOT = { w: 8.4, d: 7.6, scale: 0.9, foot: [null, [3.0, 2.2], [3.6, 1.9], [5, 3.4], [4.4, 3.4]], wide: 13.4 };
+/** A lot in its own frame, before its scale (the front is +Z, as buildPlot in ts3d/landmarks.js draws it). The numbers
+ *  follow the five models (tools/blender/build_props.py, served from assets/models/lots/):
+ *  w, d   the pad
+ *  foot   each level's collider half-sizes [across, deep] (level 0 is walk-through): the tent with its two masts
+ *         (x ± 2.98) and its counter, the stall's cabinet and counter, the shop's 8.0 m body, the tower's lobby
+ *  tall   how high each level stops the camera (0: it does not): the shop's roof items reach 9 m, the tower 19 m
+ *  wide   the widest piece any level carries (the rim of the tower's board, 13.41 m)
+ *  reach  how far forward of its centre any level comes: the tower's marquee, 0.7 m over the pad's front edge and
+ *         2.6 m up or more, with nothing under it. Everything else of a lot stays on its pad
+ *  faces  where each level's billboard and name sign hang: { x, y, z, w, h }, centre and size. The models carry a mount
+ *         plate behind each and say the same numbers in their BoardAnchor / SignAnchor nodes, but for the tower's
+ *         sign: its plate is on the crown (y 16.3, z 1.2), 2.2 m behind the board's top edge, where nobody in the
+ *         street can see it, so the game stands the sign on the board's top rim instead. */
+export const LOT = {
+  w: 8.4, d: 7.6, scale: 0.9,
+  foot: [null, [3.1, 2.35], [3.6, 1.9], [4.1, 3.3], [4.1, 3.6]],
+  tall: [0, 0, 0, 9, 19],
+  wide: 13.42, reach: 4.51,
+  faces: [
+    { board: { x: 0, y: 2.2, z: 2.72, w: 3.7, h: 2.05 }, sign: { x: 0, y: 3.7, z: 2.6, w: 3.2, h: 0.55 } },
+    { board: { x: 0, y: 4.7, z: 0.4, w: 6.2, h: 3.5 }, sign: { x: 0, y: 1.55, z: 2.28, w: 2.8, h: 0.5 } },
+    { board: { x: 0, y: 6.4, z: 2.05, w: 6.4, h: 3.6 }, sign: { x: 2.2, y: 2.2, z: 2.05, w: 2.4, h: 0.5 } },
+    { board: { x: 0, y: 4.6, z: 3.15, w: 6.6, h: 3.7 }, sign: { x: 0, y: 7.35, z: 1.6, w: 5.2, h: 0.8 } },
+    { board: { x: 0, y: 12.6, z: 3.55, w: 12.6, h: 7.1 }, sign: { x: 0, y: 17.1, z: 3.4, w: 6.2, h: 0.9 } },
+  ],
+};
 
 // 가운데 거리 (WISH STREET): one north-south pedestrian street down the middle of the pad. People arrive at its north end
 // (the 건물 구역 taxi stand), walk in under the arch at z0 and reach the stage steps at z1. Nine lots stand on each side at

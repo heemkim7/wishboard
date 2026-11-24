@@ -377,4 +377,39 @@ describe('the world, run in Node: the same phone on its side (812 x 375)', { ski
     assert.ok(cut.went > 0.999, 'already there');
     assert.ok(cut.back < 0.05, `and back at once (${cut.back.toFixed(2)} m)`);
   });
+  it('the lot models: none is asked for at the spawn; set down at a plot (as a link does) the five come in, every lot wears one, an upgrade swaps it', async () => {
+    const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+    const { LOT_MODEL_URL } = await import('../ts3d/loadplan.js');
+    const fromDisk = GLTFLoader.prototype.load, asked = [];
+    GLTFLoader.prototype.load = function (url, ...rest) { asked.push(String(url)); return fromDisk.call(this, url, ...rest); };
+    try {
+      const { world } = await boot(812, 375);
+      const lots = () => asked.filter((u) => u.includes('/models/lots/'));
+      const worn = (name) => { const out = []; world.scene.traverse((o) => { if (o.isMesh && o.name === name && o.geometry.userData.shared) out.push(o); }); return out; };
+      run(1);
+      assert.deepEqual(lots(), []); // 234 m from the street
+      assert.equal(worn('matte').length, 0);
+      world.goToSlot('PLOT_5');
+      frame();
+      assert.deepEqual(lots().sort(), Object.values(LOT_MODEL_URL).sort()); // on the first frame there, each file once
+      for (let i = 0; i < 400 && worn('gem').length < 18; i++) { await new Promise((r) => real.setTimeout(r, 5)); frame(); }
+      assert.deepEqual([worn('matte').length, worn('glow').length, worn('gem').length, worn('accent').length], [18, 18, 18, 0]);
+      assert.equal(new Set(worn('matte').map((m) => m.geometry)).size, 1);
+      assert.equal(world.applyPlot({ plot_id: 5, level: 4, theme_color: '#ff3d9a', owner_name: '시험' }, false), true);
+      frame();
+      assert.deepEqual([worn('matte').length, worn('gem').length, worn('accent').length], [18, 17, 1]);
+      assert.equal(worn('accent')[0].material.color.getHexString(), 'ff3d9a');
+      // the tower stops a walker and the frames go on
+      world.teleport(L.PLOT_SLOTS[4].x, L.PLOT_SLOTS[4].z + 20);
+      world.setWaypoint({ x: L.PLOT_SLOTS[4].x, z: L.PLOT_SLOTS[4].z, auto: true });
+      let t = 0;
+      while (t < 12 && world.hud().waypoint?.auto) { frame(); t += 0.016; }
+      const p = world.getPlayer(), foot = L.lotRect(L.PLOT_SLOTS[4], L.LOT.foot[4][0], L.LOT.foot[4][1]);
+      assert.ok(!(p.x > foot.x0 && p.x < foot.x1 && p.z > foot.z0 && p.z < foot.z1), `${p.x.toFixed(1)}, ${p.z.toFixed(1)} is inside the tower`);
+      world.setWaypoint(null);
+      run(1);
+      assert.equal(lots().length, 5);
+      world.dispose();
+    } finally { GLTFLoader.prototype.load = fromDisk; }
+  });
 });

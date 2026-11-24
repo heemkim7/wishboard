@@ -4,6 +4,8 @@ import * as THREE from 'three';
 import { LAYOUT, LOOP, LOT, PLOT_SLOTS, TAXI_STANDS, fountainSpot, insideLoop, lotRect, streetPosts } from './layout.js?v=202611241127';
 import { Kit, fishGeometry, cropPlane, imgCrop } from './kit.js?v=202611241127';
 import { GROUND_LAYER } from './ground.js?v=202611241127';
+import { nearLots } from './loadplan.js?v=202611241127';
+import { createLotModels, EMPTY_ACCENT, EMPTY_GLOW, ACCENT_GLOW } from './lotmodels.js?v=202611241127';
 import {
   makeCanvas, paintStationSign, paintPylon, paintMenuBoard, paintTKTS, paintNeonSign,
   paintPlotBadge, paintLabel, paintTaxiStand, SANS, EMOJI,
@@ -15,6 +17,7 @@ const tex = (canvas, aniso = 4) => {
   t.anisotropy = aniso;
   return t;
 };
+const GEM_Y = 4.35; // the gem over an empty lot (the model's `Gem` node is at the same height)
 const catenary = (a, b, sag, n) => {
   const pts = [];
   for (let i = 0; i <= n; i++) {
@@ -524,15 +527,135 @@ export function buildLandmarks(ctx) {
   }
 
   // ===== Plots ===================================================================
+  // A lot draws the model for its level (ts3d/lotmodels.js: five files shared by all 18 lots, asked for the first time the
+  // camera or the player is near the street, see update) or, until that file is in and for good when it failed, the box building
+  // below. Everything else of a lot is the same for both: where it stands, its billboard, its name sign, its badge, its
+  // collider and its camera blocker (LOT in ts3d/layout.js). So putting the model in place of the boxes moves nothing.
   const plots = new Map();
-  const plotMats = {
-    tower: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.1, metalness: 0.9, envMapIntensity: 1.5 }),
-  };
+  const lots = createLotModels({
+    loadGlb: ctx.loadGlb,
+    glow: kitMats.glow,
+    // A file whose board mount is not where the game hangs the board is another revision of the model (a stale cached
+    // copy, say): it is turned down and the boxes stay.
+    accept: (level, prep) => { const a = prep.anchors.board, b = LOT.faces[level].board; return !!a && ['x', 'y', 'z', 'w', 'h'].every((k) => Math.abs(a[k] - b[k]) < 0.01); },
+    onLevel: (level) => { for (const rec of plots.values()) if (rec.level === level) dress(rec); },
+  });
+  const sharedMats = new Set([...Object.values(kitMats), ...Object.values(lots.mats)]);
 
   function plotSign(text, color, sub) {
     const c = makeCanvas(512, 128);
     paintNeonSign(c, text, color, sub);
     return new THREE.MeshBasicMaterial({ map: tex(c), transparent: true, color: new THREE.Color(1.35, 1.35, 1.35) });
+  }
+
+  /** The box building of a level: what a lot shows while its model is not there. */
+  function boxBody(rec) {
+    const { level, color } = rec;
+    const kit = new Kit();
+    // The pad and its lit border (layout.js LOT: test/plot-street.test.mjs keeps neighbouring pads apart with the same numbers).
+    kit.box(LOT.w, 0.08, LOT.d, '#2e3138', { y: 0.04 });
+    for (const [w, d, x, z] of [[LOT.w, 0.08, 0, LOT.d / 2], [LOT.w, 0.08, 0, -LOT.d / 2], [0.08, LOT.d, -LOT.w / 2, 0], [0.08, LOT.d, LOT.w / 2, 0]]) kit.box(w, 0.06, d, level ? color : EMPTY_ACCENT, { x, y: 0.1, z, glow: level ? 1.4 : EMPTY_GLOW });
+    const { board } = LOT.faces[level];
+    let gem = null;
+    if (level === 0) {
+      kit.box(7.6, 0.42, 6.8, '#2a2c33', { y: 0.24 });
+      kit.box(4.4, 2.5, 0.22, '#e6b84a', { y: 2.15, z: 2.55 });
+      for (const s of [-1, 1]) kit.box(0.16, 1.15, 0.16, '#6a5030', { x: s * 1.55, y: 0.75, z: 2.4 });
+      for (const s of [-1, 1]) {
+        kit.cone(0.32, 0.9, '#ff6a1a', { x: s * 2.7, y: 0.62, z: 1.7, seg: 12, mat: 'gloss' });
+        kit.cyl(0.18, 0.22, 0.16, '#fff4e8', { x: s * 2.7, y: 0.7, z: 1.7, seg: 12, glow: 1.2 });
+      }
+      gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.55), new THREE.MeshBasicMaterial({ color: new THREE.Color('#ffcf5a').multiplyScalar(1.8) }));
+      gem.position.set(0, GEM_Y, 0.6);
+    } else if (level === 1) {
+      kit.box(4.8, 1.15, 1.7, '#7a4a2a', { y: 0.7, z: 1.35 });
+      for (const [x, z] of [[-2.35, 2.05], [2.35, 2.05], [-2.35, -1.7], [2.35, -1.7]]) kit.box(0.18, 2.55, 0.18, '#6b4226', { x, y: 1.35, z });
+      kit.box(5.3, 0.14, 4.7, '#f4efe4', { y: 2.65 });
+      kit.cone(2.15, 1.05, '#f7f1e4', { y: 3.2, seg: 4, ry: Math.PI / 4 });
+      for (let i = 0; i < 6; i++) kit.sphere(0.08, '#ffe7a0', { x: -1.75 + i * 0.7, y: 2.42, z: 2.15, glow: 4, seg: 6 });
+      // the board's two posts
+      for (const s of [-1, 1]) kit.box(0.08, board.y, 0.08, '#2a2c30', { x: board.x + s * (board.w / 2 - 0.2), y: board.y / 2, z: board.z - 0.12, mat: 'metal' });
+    } else if (level === 2) {
+      kit.box(7.4, 2.5, 3.4, '#3a2a22', { y: 1.3, z: 0.1 });
+      kit.box(7.8, 0.16, 3.8, '#9aa0a8', { y: 2.62, z: 0.1, mat: 'metal' });
+      kit.box(7.2, 0.08, 0.1, '#ff3d9a', { y: 2.4, z: 1.75, glow: 3.2 });
+      kit.box(6.6, 0.9, 0.16, '#d5d8de', { y: 1.2, z: 1.85, mat: 'metal' });
+      kit.box(7.0, 0.07, 0.08, '#ff3d9a', { y: 0.7, z: 1.9, glow: 2.6 });
+      kit.cyl(0.32, 0.32, 0.72, '#e23a2e', { x: -3.2, y: 1.9, z: 1.95, seg: 12, glow: 1.4 });
+      kit.sphere(0.12, '#ffd0a0', { x: -3.2, y: 2.34, z: 1.95, glow: 3, seg: 8 });
+    } else if (level === 3) {
+      // 8 m wide like the model's body, so the boxes fit the collider too
+      kit.box(8.0, 6.4, 6.2, '#1b1d24', { y: 3.2, z: -0.3 });
+      for (let i = 0; i < 4; i++) kit.box(1.45, 1.5, 0.08, '#ffe2b8', { x: -2.7 + i * 1.8, y: 1.35, z: 2.85, glow: 0.8 });
+      kit.box(8.4, 0.12, 0.12, '#ffcf5a', { y: 6.5, z: 2.9, glow: 3.4 });
+      for (const s of [-1, 1]) kit.box(0.12, 6.2, 0.12, '#ffcf5a', { x: s * 3.95, y: 3.2, z: 2.9, glow: 2.6 });
+      kit.box(8.3, 0.28, 6.6, color, { y: 6.55, z: -0.3, glow: 2.2 });
+    } else {
+      kit.box(8.4, 16.5, 6.4, '#0d1a33', { y: 8.25, z: -0.2, mat: 'metal' });
+      for (let fy = 2.4; fy < 13; fy += 1.6) for (const x of [-2.4, -0.8, 0.8, 2.4]) kit.box(1.15, 1.05, 0.08, '#9fd4ff', { x, y: fy, z: 3.05, glow: 0.55 });
+      kit.box(13.2, 0.28, 1.1, '#141820', { y: 16.45, z: 2.1, mat: 'metal' });
+      kit.box(13.4, 0.1, 0.12, '#ffcf5a', { y: 16.7, z: 2.15, glow: 3.4 });
+    }
+    const built = kit.build(kitMats);
+    return { nodes: gem ? [built, gem] : [built], gem };
+  }
+
+  /** The model of a level, drawn from the geometry every lot at that level shares. Only the accent material is the lot's own. */
+  function modelBody(prep, rec) {
+    const nodes = [];
+    for (const [part, geo] of prep.parts) {
+      const mat = part === 'accent'
+        ? new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0, color: rec.color, emissive: rec.color, emissiveIntensity: ACCENT_GLOW })
+        : lots.mats[part];
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.name = part;
+      nodes.push(mesh);
+    }
+    let gem = null;
+    if (prep.gem) {
+      gem = new THREE.Mesh(prep.gem.geometry, lots.mats.gem);
+      gem.name = 'gem';
+      gem.position.copy(prep.gem.position);
+      nodes.push(gem);
+    }
+    return { nodes, gem };
+  }
+
+  /** Takes the lot's building out of its group. Shared geometry and materials are left alone. */
+  function undress(rec) {
+    for (const node of rec.body || []) {
+      node.traverse((o) => {
+        const i = pick.indexOf(o);
+        if (i >= 0) pick.splice(i, 1);
+        if (o.geometry && !o.geometry.userData.shared) o.geometry.dispose();
+        for (const m of [].concat(o.material || [])) if (!sharedMats.has(m)) m.dispose();
+      });
+      rec.group.remove(node);
+    }
+    rec.body = null;
+    rec.gem = null;
+  }
+
+  /** Puts the lot's building into its group: the model for its level once that file is in, the boxes until then. The
+   *  old one leaves in the same step, so no frame shows both or neither. */
+  function dress(rec) {
+    const prep = lots.get(rec.level);
+    if (rec.body && (rec.model || !prep)) return;
+    let next = null;
+    if (prep) { try { next = modelBody(prep, rec); } catch (err) { console.error('[lots]', err); } }
+    const model = !!next;
+    if (!next) {
+      if (rec.body) return;
+      next = boxBody(rec);
+    }
+    undress(rec);
+    for (const node of next.nodes) {
+      node.traverse((o) => { if (o.isMesh) { o.userData.pick = { kind: 'plot', plotId: rec.id }; pick.push(o); } });
+      rec.group.add(node);
+    }
+    rec.body = next.nodes;
+    rec.gem = next.gem;
+    rec.model = model;
   }
 
   function buildPlot(slot, data) {
@@ -543,71 +666,15 @@ export function buildLandmarks(ctx) {
     group.position.set(slot.x, LAYOUT.walk.y, slot.z);
     group.rotation.y = slot.rot;
     group.scale.setScalar(sc);
-    const kit = new Kit();
-    const own = [];
-    const anim = [];
-    // The pad and its lit border (layout.js LOT: test/plot-street.test.mjs keeps neighbouring pads apart with the same numbers).
-    kit.box(LOT.w, 0.08, LOT.d, '#2e3138', { y: 0.04 });
-    for (const [w, d, x, z] of [[LOT.w, 0.08, 0, LOT.d / 2], [LOT.w, 0.08, 0, -LOT.d / 2], [0.08, LOT.d, -LOT.w / 2, 0], [0.08, LOT.d, LOT.w / 2, 0]]) kit.box(w, 0.06, d, level ? color : '#ffe2a8', { x, y: 0.1, z, glow: level ? 1.4 : 0.55 });
-    let board = null, signSpec = null;
-    // Collider half-sizes [across, deep] in the lot's frame (level 0 has none). Level 1's reaches its board's two posts (x ± 2.9).
+    const rec = { id: slot.id, level, color, data: data || { plot_id: slot.id, level }, group, body: null, gem: null, model: false, anim: [] };
+    dress(rec);
+    // The gem over an empty lot turns and bobs, whichever building the lot is wearing.
+    if (level === 0) rec.anim.push((dt, t) => { const gem = rec.gem; if (gem) { gem.rotation.y = t * 1.4; gem.position.y = GEM_Y + Math.sin(t * 2 + slot.id) * 0.18; } });
+    const { board, sign: signSpec } = LOT.faces[level];
+    // Collider half-sizes [across, deep] in the lot's frame (level 0 has none).
     const foot = LOT.foot[level];
-    if (level === 0) {
-      kit.box(7.6, 0.42, 6.8, '#2a2c33', { y: 0.24 });
-      kit.box(4.4, 2.5, 0.22, '#e6b84a', { y: 2.15, z: 2.55 });
-      for (const s of [-1, 1]) kit.box(0.16, 1.15, 0.16, '#6a5030', { x: s * 1.55, y: 0.75, z: 2.4 });
-      board = { x: 0, y: 2.2, z: 2.72, w: 3.7, h: 2.05 };
-      signSpec = { x: 0, y: 3.7, z: 2.6, w: 3.2, h: 0.55, text: '빈 땅', sub: `PLOT ${slot.id}` };
-      for (const s of [-1, 1]) {
-        kit.cone(0.32, 0.9, '#ff6a1a', { x: s * 2.7, y: 0.62, z: 1.7, seg: 12, mat: 'gloss' });
-        kit.cyl(0.18, 0.22, 0.16, '#fff4e8', { x: s * 2.7, y: 0.7, z: 1.7, seg: 12, glow: 1.2 });
-      }
-      const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.55), new THREE.MeshBasicMaterial({ color: new THREE.Color('#ffcf5a').multiplyScalar(1.8) }));
-      gem.position.set(0, 4.35, 0.6);
-      own.push(gem);
-      anim.push((dt, t) => { gem.rotation.y = t * 1.4; gem.position.y = 4.35 + Math.sin(t * 2 + slot.id) * 0.18; });
-    } else if (level === 1) {
-      kit.box(4.8, 1.15, 1.7, '#7a4a2a', { y: 0.7, z: 1.35 });
-      for (const [x, z] of [[-2.35, 2.05], [2.35, 2.05], [-2.35, -1.7], [2.35, -1.7]]) kit.box(0.18, 2.55, 0.18, '#6b4226', { x, y: 1.35, z });
-      kit.box(5.3, 0.14, 4.7, '#f4efe4', { y: 2.65 });
-      kit.cone(2.15, 1.05, '#f7f1e4', { y: 3.2, seg: 4, ry: Math.PI / 4 });
-      for (let i = 0; i < 6; i++) kit.sphere(0.08, '#ffe7a0', { x: -1.75 + i * 0.7, y: 2.42, z: 2.15, glow: 4, seg: 6 });
-      board = { x: 0, y: 4.7, z: 0.4, w: 6.2, h: 3.5, posts: true };
-      signSpec = { x: 0, y: 1.55, z: 2.28, w: 2.8, h: 0.5 };
-    } else if (level === 2) {
-      kit.box(7.4, 2.5, 3.4, '#3a2a22', { y: 1.3, z: 0.1 });
-      kit.box(7.8, 0.16, 3.8, '#9aa0a8', { y: 2.62, z: 0.1, mat: 'metal' });
-      kit.box(7.2, 0.08, 0.1, '#ff3d9a', { y: 2.4, z: 1.75, glow: 3.2 });
-      kit.box(6.6, 0.9, 0.16, '#d5d8de', { y: 1.2, z: 1.85, mat: 'metal' });
-      kit.box(7.0, 0.07, 0.08, '#ff3d9a', { y: 0.7, z: 1.9, glow: 2.6 });
-      kit.cyl(0.32, 0.32, 0.72, '#e23a2e', { x: -3.2, y: 1.9, z: 1.95, seg: 12, glow: 1.4 });
-      kit.sphere(0.12, '#ffd0a0', { x: -3.2, y: 2.34, z: 1.95, glow: 3, seg: 8 });
-      board = { x: 0, y: 6.4, z: 2.05, w: 6.4, h: 3.6 };
-      signSpec = { x: 2.2, y: 2.2, z: 2.05, w: 2.4, h: 0.5 };
-    } else if (level === 3) {
-      kit.box(9.6, 6.4, 6.2, '#1b1d24', { y: 3.2, z: -0.3 });
-      for (let i = 0; i < 4; i++) kit.box(1.7, 1.5, 0.08, '#ffe2b8', { x: -3.2 + i * 2.15, y: 1.35, z: 2.85, glow: 0.8 });
-      kit.box(10.2, 0.12, 0.12, '#ffcf5a', { y: 6.5, z: 2.9, glow: 3.4 });
-      for (const s of [-1, 1]) kit.box(0.12, 6.2, 0.12, '#ffcf5a', { x: s * 4.7, y: 3.2, z: 2.9, glow: 2.6 });
-      kit.box(10, 0.28, 6.6, color, { y: 6.55, z: -0.3, glow: 2.2 });
-      signSpec = { x: 0, y: 7.35, z: 1.6, w: 5.2, h: 0.8, posts: true };
-      board = { x: 0, y: 4.6, z: 3.15, w: 6.6, h: 3.7 };
-    } else {
-      kit.box(8.4, 16.5, 6.4, '#0d1a33', { y: 8.25, z: -0.2, mat: 'tower' });
-      for (let fy = 2.4; fy < 13; fy += 1.6) for (const x of [-2.4, -0.8, 0.8, 2.4]) kit.box(1.15, 1.05, 0.08, '#9fd4ff', { x, y: fy, z: 3.05, glow: 0.55 });
-      kit.box(13.2, 0.28, 1.1, '#141820', { y: 16.45, z: 2.1, mat: 'metal' });
-      kit.box(13.4, 0.1, 0.12, '#ffcf5a', { y: 16.7, z: 2.15, glow: 3.4 });
-      signSpec = { x: 0, y: 16.3, z: 1.2, w: 6.2, h: 0.9, posts: true };
-      board = { x: 0, y: 12.6, z: 3.55, w: 12.6, h: 7.1 };
-    }
-    if (board?.posts) for (const s of [-1, 1]) kit.box(0.08, board.y, 0.08, '#2a2c30', { x: board.x + s * (board.w / 2 - 0.2), y: board.y / 2, z: board.z - 0.12, mat: 'metal' });
-    if (signSpec?.posts && level < 3) for (const s of [-1, 1]) kit.box(0.07, signSpec.y, 0.07, '#2a2c30', { x: signSpec.x + s * (signSpec.w / 2 - 0.2), y: signSpec.y / 2, z: signSpec.z - 0.08, mat: 'metal' });
-    const built = kit.build({ ...kitMats, ...plotMats });
-    built.traverse(o => { if (o.isMesh) { o.userData.pick = { kind: 'plot', plotId: slot.id }; pick.push(o); } });
-    group.add(built);
-    own.forEach(o => group.add(o));
     const label = data?.sign_text || (level === 0 ? '빈 땅' : data?.owner_name || `${slot.id}번 토지`);
-    const sMat = plotSign(label, color, level === 0 ? signSpec.sub : (data?.owner_name ? `OWNER · ${String(data.owner_name).slice(0, 10)}` : ''));
+    const sMat = plotSign(label, color, level === 0 ? `PLOT ${slot.id}` : (data?.owner_name ? `OWNER · ${String(data.owner_name).slice(0, 10)}` : ''));
     const sign = new THREE.Mesh(new THREE.PlaneGeometry(signSpec.w, signSpec.h), sMat);
     sign.position.set(signSpec.x, signSpec.y, signSpec.z);
     sign.userData.pick = { kind: 'plot', plotId: slot.id };
@@ -617,12 +684,13 @@ export function buildLandmarks(ctx) {
     paintPlotBadge(badgeC, slot.id, level, color);
     const badge = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex(badgeC), transparent: true, depthWrite: false }));
     badge.scale.set(1.2, 0.6, 1);
-    badge.position.set(-3.4, level >= 3 ? 1.2 : 3.0, 3.4);
+    // Before the lot's front wall: the tower's lobby front (z 3.42, its window frames to 3.6) is further forward than the others.
+    badge.position.set(-3.4, level >= 3 ? 1.2 : 3.0, level === 4 ? 3.8 : 3.4);
     badge.layers.set(2);
     group.add(badge);
     scene.add(group);
     const slotId = 'PLOT_' + slot.id;
-    const boardGroup = boards.mount(slotId, group, board);
+    const boardGroup = boards.mount(slotId, group, { ...board });
     const extraBoards = [];
     const box = [];
     if (foot) {
@@ -630,24 +698,24 @@ export function buildLandmarks(ctx) {
       const r = lotRect(slot, foot[0], foot[1]);
       box.push({ ...r, plot: slot.id });
       colliders.push(box[0]);
-      if (level >= 3) blockers.push(Object.assign(new THREE.Box3(new THREE.Vector3(r.x0, 0, r.z0), new THREE.Vector3(r.x1, (level === 4 ? 19 : 6) * sc, r.z1)), { plot: slot.id }));
+      if (LOT.tall[level]) blockers.push(Object.assign(new THREE.Box3(new THREE.Vector3(r.x0, 0, r.z0), new THREE.Vector3(r.x1, LOT.tall[level] * sc, r.z1)), { plot: slot.id }));
     }
-    return { id: slot.id, level, color, data: data || { plot_id: slot.id, level }, group, boardGroup, extraBoards, anim, sMat, signSpec, sign };
+    return Object.assign(rec, { boardGroup, extraBoards, sMat, signSpec, sign });
   }
 
   function clearPlot(rec) {
     boards.unmount('PLOT_' + rec.id, rec.boardGroup);
     for (const g of rec.extraBoards || []) boards.unmount('PLOT_' + rec.id, g);
+    undress(rec);
+    // What is left is the lot's own: the name sign and the badge.
     rec.group.traverse(o => {
       const i = pick.indexOf(o);
       if (i >= 0) pick.splice(i, 1);
-      if (o.geometry) o.geometry.dispose();
-      if (o.material && o.material !== kitMats.base) {
-        for (const m of [].concat(o.material)) {
-          if (Object.values(kitMats).includes(m) || Object.values(plotMats).includes(m)) continue;
-          if (m.map && m.map !== glowTex) m.map.dispose();
-          m.dispose();
-        }
+      if (o.geometry && !o.isSprite && !o.geometry.userData.shared) o.geometry.dispose();
+      for (const m of [].concat(o.material || [])) {
+        if (sharedMats.has(m)) continue;
+        if (m.map && m.map !== glowTex) m.map.dispose();
+        m.dispose();
       }
     });
     scene.remove(rec.group);
@@ -777,7 +845,10 @@ export function buildLandmarks(ctx) {
     rail(L.x1 - 1.2, L.x1, L.z0, L.z1);
   }
 
-  function update(dt, t) {
+  /** eye, me: where the camera and the player are ({ x, z }). The first time either is within LOTS_R of the street the five
+   *  lot models are asked for: the player lands there at once from a link to a plot, the camera flies there to show a board. */
+  function update(dt, t, eye, me) {
+    if (!lots.started && ((eye && nearLots(eye.x, eye.z, LAYOUT.street)) || (me && nearLots(me.x, me.z, LAYOUT.street)))) lots.want();
     for (const u of updaters) u(dt, t);
     for (const rec of plots.values()) for (const a of rec.anim) a(dt, t);
   }
@@ -789,5 +860,5 @@ export function buildLandmarks(ctx) {
     return out.set(slot.x + Math.sin(slot.rot) * d, LAYOUT.walk.y, slot.z + Math.cos(slot.rot) * d);
   }
 
-  return { update, stall, atm, stage, plots, applyPlot, plotFront };
+  return { update, stall, atm, stage, plots, applyPlot, plotFront, lots };
 }

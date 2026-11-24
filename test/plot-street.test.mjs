@@ -31,7 +31,7 @@ const FENCE = { x0: LOOP.x0 + 1.2, x1: LOOP.x1 - 1.2, z0: LOOP.z0 + 1.2, z1: LOO
 const STRIP = { x0: S.x - S.half, x1: S.x + S.half, z0: S.z0, z1: S.z1 };
 
 const pad = (slot) => lotRect(slot, LOT.w / 2, LOT.d / 2);
-/** The widest a lot gets along the street at any level (the tower's roof line), as deep as its pad. */
+/** The widest a lot gets along the street at any level (the rim of the tower's board), as deep as its pad. */
 const widest = (slot) => lotRect(slot, LOT.wide / 2, LOT.d / 2);
 const LEVELS = [1, 2, 3, 4];
 const foot = (slot, level) => lotRect(slot, LOT.foot[level][0], LOT.foot[level][1]);
@@ -111,10 +111,11 @@ describe('가운데 거리: eighteen lots on one north-south street', () => {
     assert.match(lm, /return out\.set\(slot\.x \+ Math\.sin\(slot\.rot\) \* d, LAYOUT\.walk\.y, slot\.z \+ Math\.cos\(slot\.rot\) \* d\);/);
     assert.match(ui, /return \{ x: slot\.x \+ Math\.sin\(slot\.rot\) \* d, z: slot\.z \+ Math\.cos\(slot\.rot\) \* d \};/);
     assert.match(w, /launch\(slot\.x \+ Math\.sin\(slot\.rot\) \* 6, slot\.z \+ Math\.cos\(slot\.rot\) \* 6,/);
-    // every board in buildPlot is at a local z between the lot's centre and the pad's front edge
-    const zs = [...lm.matchAll(/board = \{ x: 0, y: [\d.]+, z: ([\d.]+),/g)].map((m) => Number(m[1]));
-    assert.equal(zs.length, 5);
-    for (const z of zs) assert.ok(z > 0 && z < LOT.d / 2, String(z));
+    // every level's board hangs at a local z between the lot's centre and the pad's front edge (LOT.faces, which buildPlot mounts)
+    assert.equal(LOT.faces.length, 5);
+    for (const f of LOT.faces) assert.ok(f.board.x === 0 && f.board.z > 0 && f.board.z < LOT.d / 2, JSON.stringify(f.board));
+    assert.match(lm, /const \{ board, sign: signSpec \} = LOT\.faces\[level\];/);
+    assert.match(lm, /const boardGroup = boards\.mount\(slotId, group, \{ \.\.\.board \}\);/);
   });
   it('a quarter-turned lot swaps its footprint: lotRect is the box three.js would give', () => {
     const turned = [...PLOT_SLOTS, { id: 0, x: 3, z: -4, rot: 0, scale: 1 }, { id: 0, x: 3, z: -4, rot: Math.PI, scale: 0.9 }];
@@ -137,11 +138,17 @@ describe('가운데 거리: eighteen lots on one north-south street', () => {
     assert.match(lm, /const r = lotRect\(slot, foot\[0\], foot\[1\]\);\n\s*box\.push\(\{ \.\.\.r, plot: slot\.id \}\);\n\s*colliders\.push\(box\[0\]\);/);
     assert.equal(/Math\.abs\(Math\.sin\(slot\.rot\)\) > 0\.5/.test(lm), false); // the swap lives in lotRect only
     assert.equal(LOT.foot[0], null); // an empty lot is walk-through
-    // level 1's collider reaches the two posts of its board (x ± (6.2 / 2 - 0.2), 0.08 thick)
-    assert.ok(LOT.foot[1][0] >= 6.2 / 2 - 0.2 + 0.04);
-    // the tower's footprint covers its 8.4 x 6.4 body, which sits 0.2 back from the lot's centre
-    assert.ok(LOT.foot[4][0] >= 8.4 / 2 && LOT.foot[4][1] >= 6.4 / 2 + 0.2 - EPS);
-    assert.ok(LOT.foot[3][0] >= 9.6 / 2 && LOT.foot[3][1] >= 6.2 / 2 + 0.3 - EPS);
+    // the colliders follow the models (tools/blender/build_props.py; test/lot-models.test.mjs measures the files): the tent's
+    // two masts stand at x ± 2.98 (0.2 thick) and the name board on its counter is 2.28 forward; the stall's cabinet is 7.0
+    // wide and its counter ends 1.76 forward; the shop's body is 8.0 wide on a plinth of 8.12, its back wall 3.3 behind the
+    // centre; the tower's lobby is 7.9 wide under a cornice of 8.1 and runs from 3.22 behind the centre to 3.42 before it
+    assert.ok(LOT.foot[1][0] >= 2.98 + 0.1 && LOT.foot[1][1] >= 2.28);
+    assert.ok(LOT.foot[2][0] >= 7.0 / 2 && LOT.foot[2][1] >= 1.76);
+    assert.ok(LOT.foot[3][0] >= 8.12 / 2 && LOT.foot[3][1] >= 3.3 - EPS);
+    assert.ok(LOT.foot[4][0] >= 8.1 / 2 && LOT.foot[4][1] >= 3.42);
+    // the camera is stopped by the shop up to its roof items (9 m) and by the tower up to its beacon (19 m), by nothing lower
+    assert.deepEqual(LOT.tall, [0, 0, 0, 9, 19]);
+    assert.match(lm, /if \(LOT\.tall\[level\]\) blockers\.push\(Object\.assign\(new THREE\.Box3\(new THREE\.Vector3\(r\.x0, 0, r\.z0\), new THREE\.Vector3\(r\.x1, LOT\.tall\[level\] \* sc, r\.z1\)\), \{ plot: slot\.id \}\)\);/);
   });
   it('no two lots overlap: not their pads, not their colliders at any level, not the widest level\'s roof line', () => {
     for (const a of PLOT_SLOTS) for (const b of PLOT_SLOTS) {
@@ -150,8 +157,8 @@ describe('가운데 거리: eighteen lots on one north-south street', () => {
       assert.equal(overlap(widest(a), widest(b)), false, `widest ${a.id} ${b.id}`);
       for (const la of LEVELS) for (const lb of LEVELS) assert.equal(overlap(foot(a, la), foot(b, lb)), false, `colliders ${a.id}@${la} ${b.id}@${lb}`);
     }
-    // neighbours on one side: 13 m apart, 12.06 m at the widest (the tower's 13.4 m roof line at scale 0.9)
-    near(S.step - LOT.wide * 0.9, 0.94);
+    // neighbours on one side: 13 m apart, 12.08 m at the widest (the rim of the tower's board, 13.42 m, at scale 0.9)
+    near(S.step - LOT.wide * 0.9, 0.922);
     assert.ok(LOT.wide >= Math.max(LOT.w, ...LEVELS.map((l) => LOT.foot[l][0] * 2)));
     // the two rows are 27.16 m apart pad to pad, and no collider comes nearer the centre line than a pad does
     near(pad(PLOT_SLOTS[0]).x0 - pad(PLOT_SLOTS[1]).x1, 27.16);
@@ -193,8 +200,8 @@ describe('the stage at the street\'s south end', () => {
         assert.equal(overlap(b, widest(s)), false, `${b.part} under lot ${s.id}`);
       }
     }
-    // the last towers' roof line (15 m up, 15 m east and west of the centre line) ends level with the stage's front edge
-    near(widest(last[0]).z1 - G.z0, 0.03);
+    // the last towers' board rim (8 to 15 m up, 14 m east and west of the centre line) ends level with the stage's front edge
+    near(widest(last[0]).z1 - G.z0, 0.039);
     assert.ok(pad(last[0]).x0 - (G.cx + 10.6 + 0.85) > 2); // 2.1 m between the speakers and the last pads' street edge
   });
   it('it faces north, up the street: three 0.8 m steps on its north side, the floor behind them, flat street before them', () => {
@@ -302,10 +309,12 @@ describe('the street is free from the entrance to the stage', () => {
       assert.ok(r.z1 < own.z0, 'lot ' + s.id);
       assert.ok(own.z0 - p.z < 1, 'lot ' + s.id);
       assert.ok(p.z > S.z0 + 4, 'lot ' + s.id);
-      // off every pad, and before every building line (a level 3 shop front is 2.96 forward of the lot's centre)
+      // off every pad, and before every building line (the tower's lobby, the deepest collider, is 3.24 forward of the lot's centre)
+      const deepest = Math.max(...LEVELS.map((l) => LOT.foot[l][1]));
+      assert.equal(deepest, 3.6);
       for (const o of PLOT_SLOTS) {
         assert.equal(overlap(r, pad(o)), false, `post ${s.id} on pad ${o.id}`);
-        assert.equal(overlap(r, lotRect(o, LOT.wide / 2, 3.0)), false, `post ${s.id} in lot ${o.id}`);
+        assert.equal(overlap(r, lotRect(o, LOT.wide / 2, deepest)), false, `post ${s.id} in lot ${o.id}`);
       }
       // the spot where a visitor stands to open the lot (5.4 forward of its centre, 3.6 m around) stays free
       const f = lotFacing(s), spot = { x: s.x + f.x * 5.4 * s.scale, z: s.z + f.z * 5.4 * s.scale };
