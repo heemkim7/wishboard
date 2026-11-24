@@ -193,12 +193,13 @@ function taxiDecalGeometry() {
 // assets/models/taxi.glb (tools/blender/build_props.py `taxi`): metres, origin on the ground under the middle of the
 // car, nose toward +z like the box kit. Nodes Body, Glass, Checker, Wheel_FL/FR/RL/RR, RoofSign, HeadLights,
 // TailLights; flat-colour materials Paint, Trim, Chrome, White, Glass, RoofSign, LightFront, LightRear; no textures.
-// A plain car is the same model without Checker and RoofSign.
+// A plain car is the same model without Checker and RoofSign, and without the dark pad the roof light stands on
+// (in the file the pad is part of Body: 44 triangles of Trim on the roof, picked out here by where they are).
 //
 // The fleets do not draw it node by node (18 primitives a car). Its triangles are sorted into a few groups, each one
 // geometry with the file's colour written on every vertex, and each group is one instanced mesh:
 //   paint   Body's Paint: the only part an instance colour tints (cab yellow, a shop colour, a car's colour)
-//   solid   Trim and White: tyres, bumpers, sills, the plates, and on a cab the checker stripe
+//   solid   Trim and White: tyres, bumpers, sills, the plates, and on a cab the checker stripe and the light's pad
 //   chrome  Chrome: bumper strips, grille, lamp rims, handles, the wheels' dishes
 //   glass   the windows
 //   glow    head and tail lamps, unlit: the file's emissive colour x its strength x LAMP_GAIN
@@ -256,6 +257,24 @@ function modelSignGeometry(box, texAspect) {
   return g;
 }
 
+// The triangles of an indexed geometry that `keep(a, b, c)` (their vertex numbers) says yes to, as a geometry of
+// their own holding only the vertices they use.
+function pickTriangles(g, keep) {
+  const idx = g.index.array, to = new Map(), out = [];
+  for (let t = 0; t < idx.length; t += 3) {
+    if (!keep(idx[t], idx[t + 1], idx[t + 2])) continue;
+    for (let k = 0; k < 3; k++) { const v = idx[t + k]; if (!to.has(v)) to.set(v, to.size); out.push(to.get(v)); }
+  }
+  const p = new THREE.BufferGeometry();
+  for (const [name, a] of Object.entries(g.attributes)) {
+    const n = a.itemSize, arr = new Float32Array(to.size * n);
+    for (const [from, at] of to) for (let k = 0; k < n; k++) arr[at * n + k] = a.array[from * n + k];
+    p.setAttribute(name, new THREE.BufferAttribute(arr, n));
+  }
+  p.setIndex(out);
+  return p;
+}
+
 /**
  * The parsed taxi.glb (its scene) as the fleets draw it: { taxi, car } are lists of [group, geometry] with paint
  * first, by tier (see above); `tris` is what one cab and one car cost. Geometry that is the same for both is one
@@ -265,7 +284,7 @@ export function taxiModelKit(root, quality = 'high', signAspect = 4) {
   root.updateMatrixWorld(true);
   const found = new Set(root.children.map((o) => o.name));
   for (const name of MODEL_NODES) if (!found.has(name)) throw new Error('taxi model: no node ' + name);
-  const parts = { paint: [], solid: [], checker: [], chrome: [], glass: [], glow: [] };
+  const parts = { paint: [], solid: [], checker: [], pad: [], chrome: [], glass: [], glow: [] };
   const flat = [], c = new THREE.Color();
   let sign = null;
   root.traverse((o) => {
@@ -289,6 +308,20 @@ export function taxiModelKit(root, quality = 'high', signAspect = 4) {
     flat.push(g);
   });
   if (!parts.paint.length || !parts.checker.length || !sign) throw new Error('taxi model: no Paint, Checker or RoofSign triangles');
+  // The pad under the roof light: whatever dark or pale part reaches up to within 8 cm of the light's underside and
+  // no further out than the light. A cab keeps it; on a plain car it would be a dark block on the roof with nothing on it.
+  sign.computeBoundingBox();
+  const lamp = sign.boundingBox;
+  for (let k = parts.solid.length - 1; k >= 0; k--) {
+    const g = parts.solid[k], pos = g.attributes.position;
+    const under = (i) => pos.getY(i) > lamp.min.y - 0.08 && pos.getX(i) > lamp.min.x && pos.getX(i) < lamp.max.x && pos.getZ(i) > lamp.min.z - 0.02 && pos.getZ(i) < lamp.max.z + 0.02;
+    const isPad = (a, b, d) => under(a) && under(b) && under(d);
+    const pad = pickTriangles(g, isPad);
+    if (!pad.index.count) continue;
+    parts.solid[k] = pickTriangles(g, (a, b, d) => !isPad(a, b, d));
+    parts.pad.push(pad);
+    flat.push(pad, parts.solid[k]);
+  }
   // What a part fades to far away (CHECKER_FADE): itself, except the stripe, whose band and squares both go to the
   // tone the two make together (they cover the stripe half and half).
   const fadeTo = (g, to) => {
@@ -298,7 +331,7 @@ export function taxiModelKit(root, quality = 'high', signAspect = 4) {
   };
   const mean = [0, 0, 0];
   for (const g of parts.checker) for (let k = 0; k < 3; k++) mean[k] += g.attributes.color.array[k] / parts.checker.length;
-  for (const g of parts.solid) fadeTo(g);
+  for (const g of [...parts.solid, ...parts.pad]) fadeTo(g);
   for (const g of parts.checker) fadeTo(g, mean);
   const merge = (...lists) => {
     const g = mergeGeometries(lists.flat(), false);
@@ -311,7 +344,7 @@ export function taxiModelKit(root, quality = 'high', signAspect = 4) {
   paint.deleteAttribute('color'); // its colour is the instance's
   const shine = quality === 'low' ? [['shiny', merge(parts.chrome, parts.glass)]] : [['chrome', merge(parts.chrome)], ['glass', merge(parts.glass)]];
   const kit = {
-    taxi: [['paint', paint], ['solid', merge(parts.solid, parts.checker)], ...shine, ['glow', glow], ['sign', signGeo]],
+    taxi: [['paint', paint], ['solid', merge(parts.solid, parts.checker, parts.pad)], ...shine, ['glow', glow], ['sign', signGeo]],
     car: [['paint', paint], ['solid', merge(parts.solid)], ...shine, ['glow', glow]],
   };
   kit.tris = { taxi: kit.taxi.reduce((a, [k, g]) => a + (k === 'sign' ? g.attributes.position.count / 3 : tris(g)), 0), car: kit.car.reduce((a, [, g]) => a + tris(g), 0) };

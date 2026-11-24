@@ -242,14 +242,14 @@ describe('the fleets, once the model is in', needsMap, () => {
       for (const m of [...cabs, ...cars]) { assert.equal(m.material.transparent, false); assert.equal(m.frustumCulled, false); }
     }
   });
-  it('a cab is 3,328 triangles and a car 2,876 (no stripe, no roof light); a full street is 81,104 / 143,144 / 210,936', async () => {
+  it('a cab is 3,328 triangles and a car 2,832 (no stripe, no roof light, no pad under it); a full street is 80,576 / 142,176 / 209,440', async () => {
     const full = {};
     for (const q of ['low', 'medium', 'high']) {
       const kit = taxiModelKit(await parsed(), q);
-      assert.deepEqual(kit.tris, { taxi: 3328, car: 3328 - 408 - 44 });
+      assert.deepEqual(kit.tris, { taxi: 3328, car: 3328 - 408 - 44 - 44 }); // the file's whole count; less Checker, RoofSign and the pad
       full[q] = FLEET[q][0] * kit.tris.taxi + FLEET[q][1] * kit.tris.car;
     }
-    assert.deepEqual(full, { low: 81104, medium: 143144, high: 210936 });
+    assert.deepEqual(full, { low: 80576, medium: 142176, high: 209440 });
     // the boxes: 456 a cab, 428 a car, 112 a wheel
     const S = street('low'), kit = S.now();
     assert.deepEqual([kit.cabs, kit.cars, kit.wheels].map((l) => l.reduce((a, m) => a + tris(m.geometry), 0)), [456, 428, 112]);
@@ -419,7 +419,13 @@ describe('the model\'s roof light and stripe', () => {
     const kit = taxiModelKit(await parsed(), 'high');
     const solid = (list) => list.find(([k]) => k === 'solid')[1];
     const cab = solid(kit.taxi), car = solid(kit.car);
-    assert.equal(tris(cab) - tris(car), 408); // the Checker node: 24 triangles of band, 384 of squares
+    assert.equal(tris(cab) - tris(car), 408 + 44); // the Checker node (24 triangles of band, 384 of squares) and the roof light's pad
+    // the pad (0.56 x 0.05 x 0.22 m of Trim on the roof, part of Body in the file) is a cab's: a plain car has nothing above its roof
+    const top = (g) => { g.computeBoundingBox(); return +g.boundingBox.max.y.toFixed(3); };
+    assert.equal(top(cab), 1.625);
+    assert.ok(top(car) < 1.3, 'the highest dark part of a plain car is a mirror stalk: ' + top(car));
+    for (const [k, g] of kit.car) assert.ok(top(g) <= 1.59, `${k} of a plain car reaches ${top(g)}`); // its roof is at 1.59
+    assert.equal(car.attributes.position.count, cab.attributes.position.count - 16 - 256 - 24);
     const white = new THREE.Color().setRGB(0.838798999786377, 0.8307698965072632, 0.7912979125976562), trim = new THREE.Color().setRGB(0.006995410192757845, 0.00802319310605526, 0.011612244881689548);
     const mean = [0, 1, 2].map((k) => (white.toArray()[k] + trim.toArray()[k]) / 2);
     const count = (g) => {
