@@ -12,6 +12,14 @@ const EMBED = (() => { try { return window.parent !== window && new URLSearchPar
 if (EMBED) document.documentElement.classList.add('embed');
 const tellPlaza = (act, id) => { try { window.parent.postMessage({ t: 'gift', act, id }, location.origin); } catch { /* not framed */ } };
 const toPlaza = (e, act, id) => { if (!EMBED) return; e.preventDefault(); tellPlaza(act, id); };
+// Escape with the cursor in this page closes the frame over the plaza, like the plaza's sheets (a key pressed in here never reaches
+// the plaza's own listener, gift.js). Not while Hangul is being composed: there Escape only drops the half-typed syllable.
+if (EMBED) document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !e.isComposing && e.keyCode !== 229 && !e.defaultPrevented) tellPlaza('close', ''); });
+// A mouse is the pointer here (a desk): the cursor may wait in the first field. On a phone it must not: the keyboard would come up
+// over the preview and push the top of the page out of sight before anything was read.
+const FINE = (() => { try { return !!matchMedia('(pointer: fine)').matches; } catch { return false; } })();
+// iOS shows :active (gift.html's pressed states) only on pages that listen for touches.
+try { document.addEventListener('touchstart', () => { }, { passive: true }); } catch { /* no touch here */ }
 try { history.scrollRestoration = 'manual'; } catch { /* old browsers */ } // the film is at the top: a reload starts there
 const DATA = (() => { try { return JSON.parse(document.getElementById('gift-data')?.textContent || 'null'); } catch { return null; } })();
 const SKEW = DATA?.now ? DATA.now - Date.now() : 0;
@@ -32,10 +40,14 @@ function h(tag, props, ...kids) {
 const put = (...nodes) => $app.append(...nodes.filter(Boolean)); // h() skips null children; append() would print them
 const card = (...kids) => h('section', { class: 'card' }, ...kids);
 const top = () => h('div', { class: 'top' }, h('a', { class: 'brand', href: '/', onclick: (e) => toPlaza(e, 'close', '') }, 'WISH BOARD', h('small', { text: '모두의 전광판' })), h('span', { class: 'tag', text: '🎁 선물 전광판' }));
-const foot = () => h('p', { class: 'foot' }, '뉴욕 타임스퀘어를 본뜬 가상 광장이에요. 실제 타임스퀘어와는 관계가 없어요.', h('br'),
-  '약관과 개인정보처리방침은 광장의 설정 › 정보에 있어요. ', h('a', { href: '/', text: '광장 가기', onclick: (e) => toPlaza(e, 'close', '') }));
+// The page's last lines: what a page has to say but nobody needs before acting (more: lines of that page, above the two every page has).
+const foot = (...more) => h('footer', { class: 'foot' }, ...more.map((t) => h('p', { text: t })),
+  h('p', {}, '뉴욕 타임스퀘어를 본뜬 가상 광장이에요. 실제 타임스퀘어와는 관계가 없어요.', h('br'), '약관과 개인정보처리방침은 광장의 설정 › 정보에 있어요.'),
+  h('a', { class: 'linkbtn', href: '/', text: '광장 가기', onclick: (e) => toPlaza(e, 'close', '') }));
 const screenName = (s) => { const m = /^(STREET|PLOT)_(\d+)$/.exec(String(s || '')); return m ? (m[1] === 'STREET' ? '메인거리 ' : '건물 앞 ') + m[2] + '번 화면' : '광장 화면'; };
-const say = (el, text, ok = false) => { el.textContent = text || ''; el.className = ok ? 'okmsg' : 'err'; };
+// A line under a form or a button: read out when it changes (an error at once, a result when the reader is free).
+const say = (el, text, ok = false) => { el.textContent = text || ''; el.className = ok ? 'okmsg' : 'err'; el.setAttribute('role', ok ? 'status' : 'alert'); };
+const flag = (el, bad) => el?.setAttribute?.('aria-invalid', String(!!bad)); // a field the form refused, until it is typed in again
 
 // ---- identity -----------------------------------------------------------------------------------------------------------
 // The plaza's own: a signed-in Supabase session if this browser has a live one, else the Worker's guest token (masil_gt, the same key the
@@ -104,9 +116,10 @@ function live(el, fn) { const run = () => { if (!el.isConnected) { TICK.delete(r
 function clear() { TICK.clear(); STAGES.forEach((s) => s.stop()); STAGES.clear(); $app.replaceChildren(); window.scrollTo(0, 0); }
 const STAGES = new Set();
 
-// The 9:16 stage: the stored video when there is one this browser can play, else the drawn film. opts: { watermark, auto, label }.
+// The 9:16 stage: the stored video when there is one this browser can play, else the drawn film. opts: { watermark, auto, quiet,
+// small }. small: the owner's page, where the film is a preview and must leave the first screen to what comes next (gift.html .stage.sm).
 function stage(g, opts = {}) {
-  const box = h('div', { class: 'stage', role: 'img', 'aria-label': `${g.to}님을 위한 축하 영상` });
+  const box = h('div', { class: opts.small ? 'stage sm' : 'stage', role: 'img', 'aria-label': `${g.to}님을 위한 축하 영상` });
   const cv = h('canvas', { width: 720, height: 1280 });
   const film = createFilm(cv, g, { watermark: opts.watermark !== false });
   const api = { box, film, canvas: cv, video: null, ended: false, ends: new Set(), stop: () => { film.stop(); api.video?.pause?.(); } };
@@ -183,14 +196,17 @@ function maker({ re: answers = '', ...prefill } = {}) {
   const f = { to: '', from: '', occ: 'bday', msg: '', th: '', day: today, at: 'now', ...prefill };
   const cv = h('canvas', { class: 'preview', width: 1024, height: 576, 'aria-label': '광장 화면 미리보기' });
   let raf = 0; const repaint = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => paintGift(cv, { id: 'preview', ...f, th: f.th || OCCASIONS[f.occ].th })); };
-  const errs = {}; const err = (k) => (errs[k] = h('p', { class: 'err' }));
+  // A refused field: its line is read out (role alert), the field says it is wrong and points at the line, until it is typed in again.
+  const errs = {}; const err = (k) => (errs[k] = h('p', { class: 'err', id: 'err-' + k, role: 'alert' }));
   const count = (el, max) => { const c = h('small'); const up = () => { c.textContent = cpLen(norm(el.value)) + '/' + max; }; el.addEventListener('input', up); up(); return c; };
-  const toIn = h('input', { type: 'text', id: 'to', maxlength: 24, autocomplete: 'off', placeholder: '예: 민지', value: f.to, oninput: () => { f.to = toIn.value; repaint(); } });
-  const msgIn = h('input', { type: 'text', id: 'msg', maxlength: 80, autocomplete: 'off', placeholder: OCCASIONS[f.occ].hint, value: f.msg, oninput: () => { f.msg = msgIn.value; repaint(); } });
-  const fromIn = h('input', { type: 'text', id: 'from', maxlength: 24, autocomplete: 'off', placeholder: '예: 동아리 친구들', value: f.from, oninput: () => { f.from = fromIn.value; repaint(); } });
+  const typed = (k, el) => { f[k] = el.value; flag(el, false); if (errs[k]) errs[k].textContent = ''; repaint(); };
+  const toIn = h('input', { type: 'text', id: 'to', maxlength: 24, autocomplete: 'off', placeholder: '예: 민지', 'aria-describedby': 'err-to', value: f.to, oninput: () => typed('to', toIn) });
+  const msgIn = h('input', { type: 'text', id: 'msg', maxlength: 80, autocomplete: 'off', placeholder: OCCASIONS[f.occ].hint, 'aria-describedby': 'err-msg', value: f.msg, oninput: () => typed('msg', msgIn) });
+  const fromIn = h('input', { type: 'text', id: 'from', maxlength: 24, autocomplete: 'off', placeholder: '예: 동아리 친구들', 'aria-describedby': 'err-from', value: f.from, oninput: () => typed('from', fromIn) });
+  const fields = { to: toIn, msg: msgIn, from: fromIn };
   const occRow = h('div', { class: 'chips', role: 'group', 'aria-label': '무슨 날' });
   const paintOcc = () => { occRow.replaceChildren(...OCC_KEYS.map((k) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(f.occ === k), onclick: () => { f.occ = k; f.th = ''; msgIn.placeholder = OCCASIONS[k].hint; paintOcc(); paintTh(); repaint(); } }, OCCASIONS[k].emoji + ' ' + OCCASIONS[k].name))); };
-  const thRow = h('div', { class: 'chips', role: 'group', 'aria-label': '색' });
+  const thRow = h('div', { class: 'chips sws', role: 'group', 'aria-label': '색' });
   const paintTh = () => { const cur = f.th || OCCASIONS[f.occ].th; thRow.replaceChildren(...THEME_KEYS.map((k) => h('button', { type: 'button', class: 'sw', title: GIFT_THEMES[k].name, 'aria-label': GIFT_THEMES[k].name, 'aria-pressed': String(cur === k), style: `background:linear-gradient(135deg,${GIFT_THEMES[k].a},${GIFT_THEMES[k].b})`, onclick: () => { f.th = k; paintTh(); repaint(); } }))); };
   const dayRow = h('div', { class: 'chips', role: 'group', 'aria-label': '날짜' }), atRow = h('div', { class: 'chips', role: 'group', 'aria-label': '시간' }), whenLine = h('p', { class: 'when' });
   const dateIn = h('input', { type: 'date', min: today, max: addDays(today, GIFT.aheadDays), value: f.day, hidden: true, 'aria-label': '날짜 고르기', onchange: () => { if (dateIn.value) { f.day = dateIn.value; f.at = ''; paintDay(); } } });
@@ -206,20 +222,21 @@ function maker({ re: answers = '', ...prefill } = {}) {
     whenLine.textContent = w ? windowText(w.a, w.b) + ' · ' + GIFT.hours + '시간 동안 걸려요' : '그날은 고를 수 있는 시간이 없어요';
   };
   const send = h('button', { class: 'btn gold', type: 'submit' }, sendLabel);
-  const sendErr = h('p', { class: 'err' });
+  const sendErr = h('p', { class: 'err', role: 'alert' });
   const nextBtn = h('button', { class: 'btn sm', type: 'button', hidden: true });
   const form = h('form', { novalidate: true, onsubmit: async (e) => {
     e.preventDefault();
     for (const el of Object.values(errs)) el.textContent = '';
+    for (const el of Object.values(fields)) flag(el, false);
     say(sendErr, ''); nextBtn.hidden = true;
     const v = giftFault(f, now());
-    if (!v.ok) { (errs[v.field] || sendErr).textContent = v.error; ({ to: toIn, msg: msgIn, from: fromIn }[v.field])?.focus?.(); return; }
+    if (!v.ok) { (errs[v.field] || sendErr).textContent = v.error; flag(fields[v.field], true); fields[v.field]?.focus?.(); return; }
     send.disabled = true; send.textContent = '거는 중…';
     const kept = keptRef(ls.get('kts_gref'), Date.now()), ref = re || kept; // a reply names the board it answers, whatever ref was kept
     const r = await post('/rt/gift', { to: f.to, from: f.from, occ: f.occ, msg: f.msg, th: f.th || OCCASIONS[f.occ].th, day: f.day, at: f.at, ...(ref ? { ref } : {}), ...(re ? { re: 1 } : {}) }, { mint: true, action: 'gift' });
     send.disabled = false; send.textContent = sendLabel;
     if (!r.ok) {
-      if (r.field && errs[r.field]) errs[r.field].textContent = r.error; else say(sendErr, r.error || '걸지 못했어요. 다시 해 주세요.');
+      if (r.field && errs[r.field]) { errs[r.field].textContent = r.error; flag(fields[r.field], true); } else say(sendErr, r.error || '걸지 못했어요. 다시 해 주세요.');
       if (r.code === 'full' && r.next) { nextBtn.hidden = false; nextBtn.textContent = '빈 시간으로: ' + dayText(r.next.day) + ' ' + (r.next.at === 'now' ? '지금' : hourText(r.next.at)); nextBtn.onclick = () => { f.day = r.next.day; f.at = r.next.at; paintDay(); nextBtn.hidden = true; }; }
       return;
     }
@@ -237,15 +254,19 @@ function maker({ re: answers = '', ...prefill } = {}) {
   h('div', { class: 'field' }, h('label', { for: 'from' }, '보내는 사람', h('small', { text: '선택' })), fromIn, err('from')),
   h('div', { class: 'field' }, h('div', { class: 'label' }, '색', h('small', { text: '선택' })), thRow),
   send, sendErr, nextBtn,
-  h('p', { class: 'fine', text: '결제는 없어요. 글자만 걸고 사진은 받지 않아요. 받는 사람의 연락처는 적지 않아요. 문구는 광장에서 누구나 볼 수 있고, 신고가 쌓이면 가려져요. 기념 페이지는 그날이 지나고 7일 뒤에 지워져요.' }));
+  h('p', { class: 'fine', text: '결제는 없어요. 문구는 광장에서 누구나 볼 수 있어요.' })); // what is needed before pressing; the other rules are the page's last lines (MAKER_RULES)
   paintOcc(); paintTh(); paintDay(); repaint();
   const lead = h('div', {}, h('h1', { text: re ? '💌 답장 전광판을 걸어요' : '친구를 위해 뉴욕 타임스퀘어에 전광판을 걸어요' }),
     h('p', { class: 'sub', text: re ? (f.to ? '받는 사람과 한마디를 채워 두었어요. 고쳐 써도 되고, 그대로 걸어도 돼요.' : '한마디를 채워 두었어요. 받는 사람 이름만 적으면 돼요.') + ` 가상 광장의 화면에 ${GIFT.hours}시간 무료로 걸려요.`
       : `가상 광장의 화면에 ${GIFT.hours}시간 무료로 걸리고, 15초 축하 영상과 친구들의 롤링페이퍼가 함께 가요. 30초면 끝나요.` }),
     cv, h('p', { class: 'fine', text: '광장 화면에는 이렇게 보여요' }));
-  put(top(), h('div', { class: 'cols' }, h('div', { class: 'sticky' }, lead), card(form)), foot());
-  if (!re || !f.to) setTimeout(() => toIn.focus(), 50); // a filled reply is one tap away: no keyboard over it; a board without a sender leaves the name to write
+  put(top(), h('div', { class: 'cols' }, h('div', { class: 'sticky' }, lead), card(form)), foot(MAKER_RULES));
+  // The cursor in the name, where a mouse is the pointer (FINE). A filled reply is one tap away: no cursor there either; a board
+  // without a sender leaves the name to write. The page stays at its top (preventScroll): the title and the preview are read first.
+  if (FINE && (!re || !f.to)) setTimeout(() => { try { toIn.focus({ preventScroll: true }); } catch { toIn.focus(); } }, 50);
 }
+// What a board may carry and how long its page lives. It used to stand under the button with the two lines that are there now.
+const MAKER_RULES = '글자만 걸고 사진은 받지 않아요. 받는 사람의 연락처는 적지 않아요. 신고가 쌓이면 문구가 가려지고, 기념 페이지는 그날이 지나고 7일 뒤에 지워져요.';
 
 // ---- the board page (/g/<id>) -------------------------------------------------------------------------------------------------
 let CUR = null; // the board on screen (after making one on /gift there is no #gift-data)
@@ -276,13 +297,15 @@ function gone() {
 }
 
 // The owner: what is up and when, the free preview, the price ladder (E1), sharing, the real video, the 롤링페이퍼 count.
+// On a phone the first screen holds the title, a small preview and the first thing to press: 공유하기 and 링크 복사 (or, video first,
+// the gold video button). So each card starts with its buttons and says the rest in small print under them.
 function owner(g, { fresh = false, mine: extra = null, media = false } = {}) {
   clear(); CUR = g;
-  const url = location.origin + '/g/' + g.id, note = h('p', { class: 'okmsg' }), O = OCCASIONS[g.occ] || OCCASIONS.bday;
+  const url = location.origin + '/g/' + g.id, note = h('p', { class: 'okmsg', role: 'status' }), O = OCCASIONS[g.occ] || OCCASIONS.bday;
   const phaseTag = h('span', { class: 'tag' + (g.phase === 'live' ? ' live' : '') });
   live(phaseTag, () => { const t = now(); const d = dDay(g.day, t); return t >= g.b ? '광장에서 내려왔어요' : t >= g.a ? '● 지금 광장에 걸려 있어요' : d >= 1 ? 'D-' + d : '걸리기까지 ' + countdown(g.a - t); });
-  const st = stage(g, { auto: true, quiet: true });
-  const saveNote = h('p', { class: 'okmsg' }), saveBtn = h('button', { class: 'btn', type: 'button', onclick: () => saveVideo(g, st, saveBtn, saveNote) }, '⬇ 이 미리보기 영상 저장');
+  const st = stage(g, { auto: true, quiet: true, small: true });
+  const saveNote = h('p', { class: 'okmsg', role: 'status' }), saveBtn = h('button', { class: 'btn', type: 'button', onclick: () => saveVideo(g, st, saveBtn, saveNote) }, '⬇ 이 미리보기 영상 저장');
   // Video first (giftrules.js videoFirst): only when the Worker stores videos, this board has none and is not over. Then the video card
   // leads, its button is the page's gold one, and the first share or copy of this board asks once (kts_gnudge) whether to make the video
   // first. It never blocks: "그냥 보내기" does what was asked. Without a video store nothing here changes.
@@ -301,16 +324,16 @@ function owner(g, { fresh = false, mine: extra = null, media = false } = {}) {
     nudge.hidden = false;
   };
   const vidCard = card(h('h2', { text: '🎬 15초 축하 영상' }),
-    h('p', { class: 'sub', text: '광장을 불러와 밤의 타임스퀘어를 날아 이 전광판 앞에서 폭죽과 캐릭터들의 환호를 세로 영상으로 찍어요. 이 기기에서 만들어요. 휴대폰이 1~2분 바빠질 수 있어요.' }),
     g.phase === 'after' ? h('p', { class: 'fine', text: '광장에서 내려온 전광판은 새 영상을 찍을 수 없어요.' }) : rec,
+    g.phase === 'after' ? null : h('p', { class: 'fine', text: '광장에서 이 전광판 앞의 폭죽과 환호를 세로 영상으로 찍어요. 이 기기에서 만들고, 1~2분 걸릴 수 있어요.' }),
     h('p', { class: 'fine', text: media ? (g.vid ? '찍은 영상이 받는 사람 페이지에 올라가 있어요. 다시 찍으면 바뀌어요(3번까지).' : '찍은 영상은 받는 사람 페이지에 올라가요. 그날이 지나고 7일 뒤에 지워져요.') : '지금은 영상 저장소가 없어서, 찍은 영상은 이 기기에만 저장돼요. 받는 사람 페이지에서는 그려진 축하 영상이 나와요.' }),
-    h('div', { style: 'height:8px' }), saveBtn, saveNote);
+    h('div', { style: 'height:8px' }), saveBtn, saveNote, h('p', { class: 'fine', text: '미리보기 영상은 무료 버전이라 워터마크가 있어요.' }));
   const linkBox = h('div', { class: 'link', text: url });
   const shareCard = card(h('h2', { text: '🔗 링크 보내기' }),
-    h('p', { class: 'sub', text: '친구들에게 먼저 보내 롤링페이퍼 메시지를 모으고, 그날 ' + g.to + '님에게 보내세요. ' + (g.lk ? '메시지는 그날(' + dayText(g.day) + ') 0시에 함께 열려요.' : '메시지는 남기는 대로 바로 보여요.') }),
     h('div', { class: 'row' }, h('button', { class: vfirst ? 'btn' : 'btn gold', type: 'button', onclick: () => sendOr(() => share(g, url, note)) }, '공유하기'),
       h('button', { class: 'btn', type: 'button', onclick: () => sendOr(async () => { try { await navigator.clipboard.writeText(url); say(note, '링크를 복사했어요.', true); } catch { say(note, '아래 주소를 길게 눌러 복사해 주세요.'); } }) }, '링크 복사')),
-    vfirst ? nudge : null, linkBox, note);
+    vfirst ? nudge : null, linkBox, note,
+    h('p', { class: 'fine', text: '친구들에게 먼저 보내 메시지를 모으고, 그날 ' + g.to + '님에게 보내세요. ' + (g.lk ? '메시지는 그날(' + dayText(g.day) + ') 0시에 함께 열려요.' : '메시지는 남기는 대로 바로 보여요.') }));
   const stats = h('div', { class: 'stats' }, h('div', {}, h('b', { text: String(g.v || 0) }), h('span', { text: '열어 본 사람' })), h('div', {}, h('b', { text: String(g.n || 0) }), h('span', { text: '친구 메시지' })), h('div', {}, h('b', { text: String(extra?.kids || 0) }), h('span', { text: '이어서 걸린 전광판' })));
   const del = twoTap(h('button', { class: 'linkbtn', type: 'button' }, '이 선물 전광판 지우기'), '한 번 더 누르면 지워요(되돌릴 수 없어요)', async () => {
     const r = await post('/rt/gift/' + g.id + '/delete', {});
@@ -318,7 +341,7 @@ function owner(g, { fresh = false, mine: extra = null, media = false } = {}) {
   });
   const head = h('div', {}, h('h1', { text: fresh ? '🎉 걸었어요!' : O.emoji + ' ' + g.to + '님을 위한 선물 전광판' }),
     h('p', { class: 'sub' }, windowText(g.a, g.b) + ' · ' + screenName(g.scr) + ' ', phaseTag),
-    st.box, h('p', { class: 'fine', text: '미리보기예요. 무료 버전이라 워터마크가 있어요.' }));
+    st.box);
   // 답장 전광판: the first board hung in answer to this one (only the owner's read carries it, while that board can be opened).
   const replyCard = extra?.re && GIFT_ID.test(String(extra.re)) ? card(h('h2', { text: '💌 답장이 도착했어요' }),
     h('p', { class: 'sub', text: '이 전광판의 링크를 연 사람이 답장 전광판을 걸었어요.' }),
@@ -345,7 +368,7 @@ function ladder(g) {
     pick = t; paint();
     if (!t) { ask.hidden = true; return; }
     once('pick:' + t, { act: 'pick', t });
-    const T = TIERS[t], box = h('input', { type: 'checkbox', id: 'adok' }), msg = h('p', { class: 'okmsg' });
+    const T = TIERS[t], box = h('input', { type: 'checkbox', id: 'adok' }), msg = h('p', { class: 'okmsg', role: 'status' });
     const go = h('button', { class: 'btn pink', type: 'button', disabled: true, onclick: async () => {
       go.disabled = true; say(msg, '');
       const tok = await token(false); const r = tok ? await pushOn(tok) : { ok: false, hint: '잠시 뒤에 다시 해 주세요.' };
@@ -363,7 +386,7 @@ function ladder(g) {
   }
   paint();
   return card(h('h2', { text: '✨ 더 크게, 더 오래 걸고 싶다면' }),
-    h('p', { class: 'sub', text: '지금은 무료 시즌이라 무료 걸기로 걸렸어요. 아래는 준비 중인 상품이에요. 골라 보면 결제 대신 "열리면 알림"을 받을 수 있어요.' }),
+    h('p', { class: 'sub', text: '아래는 준비 중인 상품이에요. 지금은 결제가 없고, 고르면 "열리면 알림"을 받을 수 있어요.' }),
     list, ask, h('p', { class: 'fine', text: TIER_NOTE }));
 }
 // Web push for the "열리면 알림" (the plaza's service worker and the same /rt/push the plaza posts to).
@@ -401,7 +424,7 @@ function visit(g, { preview = false } = {}) {
     return;
   }
   const st = stage(g, { auto: true });
-  const saveNote = h('p', { class: 'okmsg' }), saveBtn = h('button', { class: 'btn', type: 'button', onclick: () => saveVideo(g, st, saveBtn, saveNote) }, '⬇ 영상 저장');
+  const saveNote = h('p', { class: 'okmsg', role: 'status' }), saveBtn = h('button', { class: 'btn', type: 'button', onclick: () => saveVideo(g, st, saveBtn, saveNote) }, '⬇ 영상 저장');
   // The plaza button: the visit while the board hangs; on its day before that and after its window the plaza shows it on this device only
   // (gift.js land, giftrules.js plazaLook). The label follows the clock; this part of the page is only built from the day on.
   const go = h('a', { class: 'btn gold', href: '/?gb=' + g.id, onclick: (e) => { beacon(g.id, 'go'); toPlaza(e, 'go', g.id); } }, PLAZA_BTN[phase()] || PLAZA_BTN.live);
@@ -439,13 +462,13 @@ function paperCard(g) {
   };
   paint();
   if (!g.takes) return card(h('h2', { text: '💌 롤링페이퍼' }), list, h('p', { class: 'fine', text: '메시지를 받는 시간이 끝났어요.' }));
-  const nick = h('input', { type: 'text', maxlength: 20, autocomplete: 'nickname', placeholder: '닉네임 (선택)', 'aria-label': '닉네임' });
-  const txt = h('textarea', { maxlength: 120, placeholder: g.to + '님에게 한마디', 'aria-label': '메시지' });
-  const cnt = h('small', { text: '0/' + GIFT.paper.txtMax }); txt.addEventListener('input', () => { cnt.textContent = cpLen(norm(txt.value)) + '/' + GIFT.paper.txtMax; });
-  const msg = h('p', { class: 'err' }), btn = h('button', { class: 'btn gold', type: 'submit' }, '💌 메시지 남기기');
+  const nick = h('input', { type: 'text', maxlength: 20, autocomplete: 'nickname', placeholder: '닉네임 (선택)', 'aria-label': '닉네임', 'aria-describedby': 'paper-msg', oninput: () => flag(nick, false) });
+  const txt = h('textarea', { maxlength: 120, placeholder: g.to + '님에게 한마디', 'aria-label': '메시지', 'aria-describedby': 'paper-msg' });
+  const cnt = h('small', { text: '0/' + GIFT.paper.txtMax }); txt.addEventListener('input', () => { flag(txt, false); cnt.textContent = cpLen(norm(txt.value)) + '/' + GIFT.paper.txtMax; });
+  const msg = h('p', { class: 'err', id: 'paper-msg', role: 'alert' }), btn = h('button', { class: 'btn gold', type: 'submit' }, '💌 메시지 남기기');
   const form = h('form', { novalidate: true, onsubmit: async (e) => {
-    e.preventDefault(); say(msg, '');
-    const v = paperFault({ nick: nick.value, txt: txt.value }); if (!v.ok) { say(msg, v.error); return; }
+    e.preventDefault(); say(msg, ''); flag(nick, false); flag(txt, false);
+    const v = paperFault({ nick: nick.value, txt: txt.value }); if (!v.ok) { say(msg, v.error); flag(v.field === 'nick' ? nick : txt, true); return; }
     btn.disabled = true;
     const r = await post('/rt/gift/' + g.id + '/paper', { nick: v.v.nick, txt: v.v.txt }, { mint: true, action: 'gmsg' });
     btn.disabled = false;

@@ -21,9 +21,11 @@ const form = (o = {}) => ({ to: '민지', from: '동아리', occ: 'bday', msg: '
 // No browser here: just enough of a DOM for giftpage.js and gift.js to build what they show, so a test can press a button and read
 // the page and what was sent. Canvas drawing goes nowhere. Timers, intervals and animation frames are kept and never run by
 // themselves (P.timers() runs the timeouts, P.tick() the one-second lines). Each load is a fresh module instance.
+// touch: a phone (the pointer is not a mouse: matchMedia('(pointer: fine)') is false). embed: the page is in the plaza's frame (?in=1 is
+// the caller's to put in search); what it tells the plaza is kept in P.posted.
 let LOADS = 0;
-function fakeDom({ path = '/gift', search = '', data = null, store = {}, at = 0, respond = () => ({}), rec = false } = {}) {
-  const sent = [], timeouts = [], ticks = [], winOn = {}, swOn = {}, copied = [], shared = [], P = { sent, store, copied, shared, winOn, swOn, skew: at ? at - Date.now() : 0 };
+function fakeDom({ path = '/gift', search = '', data = null, store = {}, at = 0, respond = () => ({}), rec = false, touch = false, embed = false } = {}) {
+  const sent = [], timeouts = [], ticks = [], winOn = {}, docOn = {}, swOn = {}, copied = [], shared = [], posted = [], P = { sent, store, copied, shared, posted, winOn, docOn, swOn, skew: at ? at - Date.now() : 0 };
   const ink = new Proxy({}, { get: (t, k) => (k in t ? t[k] : k === 'measureText' ? () => ({ width: 10 }) : () => ink), set: (t, k, v) => { t[k] = v; return true; } });
   const text = (v) => ({ nodeType: 3, textContent: String(v), parent: null });
   const REFLECT = new Set(['hidden', 'disabled', 'href', 'id', 'type', 'src', 'title', 'placeholder']);
@@ -38,7 +40,7 @@ function fakeDom({ path = '/gift', search = '', data = null, store = {}, at = 0,
       contains(o) { for (let x = o; x; x = x.parent) if (x === n) return true; return false; },
       setAttribute(k, v) { n.attrs[k] = String(v); if (REFLECT.has(k)) n[k] = k === 'hidden' || k === 'disabled' ? true : String(v); if (k === 'width' || k === 'height') n[k] = Number(v); },
       getAttribute: (k) => n.attrs[k] ?? null, addEventListener(t, f) { (n.on[t] ||= []).push(f); }, removeEventListener() {},
-      focus() { doc.activeElement = n; }, matches: () => false, getContext: () => ink, canPlayType: () => '', play: () => Promise.resolve(), pause() {}, showPicker() {},
+      focus(o) { doc.activeElement = n; n.focused = o || {}; }, matches: () => false, getContext: () => ink, canPlayType: () => '', play: () => Promise.resolve(), pause() {}, showPicker() {},
     });
     Object.defineProperty(n, 'textContent', { get: () => n.kids.map((k) => k.textContent).join(''), set(v) { n.replaceChildren(); if (v != null && v !== '') n.append(String(v)); } });
     Object.defineProperty(n, 'isConnected', { get: () => { for (let x = n; x; x = x.parent) if (x === app || x === doc.body) return true; return false; } });
@@ -46,22 +48,24 @@ function fakeDom({ path = '/gift', search = '', data = null, store = {}, at = 0,
   };
   const app = el('main'), dataTag = data ? { textContent: JSON.stringify(data) } : null, toolWish = el('button');
   const doc = { getElementById: (id) => (id === 'app' ? app : id === 'gift-data' ? dataTag : id === 'view' ? el('canvas') : null), createElement: el, createTextNode: text, querySelector: () => toolWish,
-    documentElement: { classList: { add() {} } }, head: el('head'), body: el('body'), activeElement: null, hidden: false, addEventListener() {}, removeEventListener() {} };
+    documentElement: { classList: { add() {} } }, head: el('head'), body: el('body'), activeElement: null, hidden: false, addEventListener(t, f) { (docOn[t] ||= []).push(f); }, removeEventListener() {} };
+  doc.createElementNS = (ns, tag) => el(tag); // the line icon of the frame's close button (gift.js)
   el('div').append(toolWish); // the HUD's 🌠 button has a parent (gift.js puts 🎁 after it)
+  P.tools = toolWish.parent;
   const loc = { pathname: path, search, hash: '', origin: 'https://sq.example', reloads: 0, reload() { loc.reloads++; }, get href() { return loc.origin + loc.pathname + loc.search; }, set href(v) { loc.went = String(v); } };
   // The session history of this document: entries with their state, as pushState and replaceState leave them.
   const entries = [{ url: path + search, state: null }]; let cur = 0;
   const hist = { scrollRestoration: 'auto', get state() { return entries[cur].state; },
     pushState(s, t, url) { entries.splice(cur + 1); entries.push({ url: String(url), state: s }); cur++; go(url); }, replaceState(s, t, url) { entries[cur] = { url: String(url), state: s }; go(url); } };
   const go = (url) => { const u = new URL(String(url), loc.origin); loc.pathname = u.pathname; loc.search = u.search; };
-  const win = { addEventListener(t, f) { (winOn[t] ||= []).push(f); }, removeEventListener() {}, scrollTo() {}, postMessage() {} }; win.parent = win;
+  const win = { addEventListener(t, f) { (winOn[t] ||= []).push(f); }, removeEventListener() {}, scrollTo() {}, postMessage() {} }; win.parent = embed ? { postMessage(m) { posted.push(m); } } : win;
   const realNow = Date.now;
   const globals = {
     document: doc, window: win, location: loc, history: hist,
     localStorage: { getItem: (k) => (k in store ? store[k] : null), setItem(k, v) { store[k] = String(v); } },
     navigator: { userAgent: 'test', sendBeacon: () => true, clipboard: { async writeText(t) { copied.push(String(t)); } }, share: null, serviceWorker: { addEventListener(t, f) { swOn[t] = f; } } },
     fetch: async (url, opt = {}) => { sent.push({ url: String(url), method: opt.method || 'GET', body: typeof opt.body === 'string' ? JSON.parse(opt.body) : opt.body, auth: opt.headers?.authorization || '' }); const r = respond(String(url), opt); return { ok: !!r, status: r ? 200 : 404, json: async () => r || { ok: false }, blob: async () => new Blob([]) }; },
-    requestAnimationFrame: () => 0, cancelAnimationFrame() {}, scrollTo() {}, scrollY: 0, matchMedia: () => ({ matches: false }),
+    requestAnimationFrame: () => 0, cancelAnimationFrame() {}, scrollTo() {}, scrollY: 0, matchMedia: (q) => ({ matches: /pointer:\s*fine/.test(q) ? !touch : /pointer:\s*coarse/.test(q) ? touch : false }),
     setInterval: (f) => { ticks.push(f); return 0; }, clearInterval() {}, setTimeout: (f, ms) => { timeouts.push({ f, ms }); return 0; }, clearTimeout() {},
     // rec: a browser that can record a canvas (giftfilm.js canRecord); without it the two names are undefined, as in an in-app browser.
     MediaRecorder: rec ? function MediaRecorder() {} : undefined, HTMLCanvasElement: rec ? { prototype: { captureStream() {} } } : undefined,
@@ -88,6 +92,10 @@ function fakeDom({ path = '/gift', search = '', data = null, store = {}, at = 0,
     input: (id) => walk(app).find((n) => n.attrs.id === id) || null,
     async timers() { for (const t of timeouts.splice(0)) await t.f(); await settle(); }, timeouts,
     tick() { for (const f of ticks) f(); },
+    /** A key pressed with the cursor in this document (on: P.winOn or P.docOn). Says whether a listener took it for itself. */
+    async key(on, key, more = {}) { const e = { key, isComposing: false, keyCode: 0, defaultPrevented: false, stopped: false, preventDefault() { e.defaultPrevented = true; }, stopPropagation() { e.stopped = true; }, ...more }; for (const f of on.keydown || []) f(e); await settle(); return e; },
+    /** Every button and link on screen. */
+    controls: (root = app) => walk(root).filter((n) => (n.tag === 'button' || n.tag === 'a') && shown(n)),
     seen: (id, e) => { try { return !!JSON.parse(store.kts_gseen || '{}')[id + ':' + e]; } catch { return false; } },
   });
   return P;
@@ -578,5 +586,415 @@ describe('the reply notice opens the board as its owner on any device of the acc
   it('without ?o=1 a device that did not make the board does not ask as the owner (as before)', async () => {
     const P = pageOf(g, KST('2026-11-25T19:00:00'), { respond: () => null });
     try { await P.load('giftpage.js'); assert.equal(P.sent.some((x) => x.url === '/rt/gift/' + g.id && x.auth), false); } finally { P.done(); }
+  });
+});
+
+// ---- gift.html's sheet, read as rules -------------------------------------------------------------------------------------------
+// The pages are not opened here, so what a phone needs from the sheet is checked on its text: a pressed state for every control,
+// places to press of 44px, no text under 12px, and the contrast of every text colour on the lightest surface it can sit on.
+const SHEET = (() => {
+  const css = /<style>([\s\S]*?)<\/style>/.exec(src('gift.html'))[1].replace(/\/\*[\s\S]*?\*\//g, '');
+  // @media blocks apart: their rules hold only where the query does.
+  let base = ''; const media = [];
+  for (let i = 0; i < css.length;) {
+    const at = css.indexOf('@media', i);
+    if (at < 0) { base += css.slice(i); break; }
+    base += css.slice(i, at);
+    const open = css.indexOf('{', at); let j = open + 1;
+    for (let depth = 1; depth && j < css.length; j++) depth += css[j] === '{' ? 1 : css[j] === '}' ? -1 : 0;
+    media.push({ q: css.slice(at + 6, open).trim(), body: css.slice(open + 1, j - 1) }); i = j;
+  }
+  const parse = (text) => [...text.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
+    sels: m[1].split(',').map((s) => s.trim().replace(/\s+/g, ' ')),
+    decl: Object.fromEntries(m[2].split(';').map((d) => d.trim()).filter(Boolean).map((d) => { const k = d.indexOf(':'); return [d.slice(0, k).trim(), d.slice(k + 1).trim()]; })),
+  }));
+  const rules = parse(base), vars = rules.find((r) => r.sels.includes(':root')).decl;
+  const val = (v) => String(v ?? '').replace(/var\((--[\w-]+)\)/g, (_, k) => vars[k] ?? '');
+  /** A property of exactly this selector (the last rule outside @media that names it), var() resolved; undefined when it has none. */
+  const get = (sel, prop) => { let out; for (const r of rules) if (r.sels.includes(sel) && prop in r.decl) out = r.decl[prop]; return out === undefined ? undefined : val(out); };
+  return { css, rules, media: media.map((m) => ({ q: m.q, rules: parse(m.body) })), vars, val, get };
+})();
+const px = (v) => { const m = /^(-?[\d.]+)px$/.exec(String(v ?? '').trim()); return m ? Number(m[1]) : NaN; };
+// Colours as [r, g, b, alpha]; WCAG 2 relative luminance and contrast.
+const rgb = (c) => {
+  const s = String(c).trim(); let m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(s);
+  if (m) { const x = m[1].length === 3 ? [...m[1]].map((d) => d + d).join('') : m[1]; return [parseInt(x.slice(0, 2), 16), parseInt(x.slice(2, 4), 16), parseInt(x.slice(4, 6), 16), 1]; }
+  m = /^rgba?\(([^)]+)\)$/i.exec(s); assert.ok(m, 'a colour: ' + c);
+  const p = m[1].split(',').map(Number); return [p[0], p[1], p[2], p[3] ?? 1];
+};
+const colours = (v) => (String(v ?? '').match(/#[0-9a-f]{3,6}\b|rgba?\([^)]*\)/gi) || []).map(rgb); // every colour of a value (a gradient's stops)
+const lum = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+const lay = (top, under) => [0, 1, 2].map((i) => top[i] * top[3] + under[i] * (1 - top[3])).concat(1); // a see-through fill over an opaque one
+const WHITE = [255, 255, 255, 1], BLACK = [0, 0, 0, 1];
+// The surfaces text sits on. The page is its darkest colour with two glows over it: the lightest the page can be is the lighter glow's
+// own colour (a bound: the glows' centres are off the screen). A card is the card fill over that, and what lies in a card over the card.
+const SURF = (() => {
+  const S = SHEET, fill = (sel, under) => lay(colours(S.get(sel, 'background'))[0], under);
+  const page = colours(S.get('body', 'background')).reduce((a, b) => (lum(b) > lum(a) ? b : a)), card = lay(rgb(S.vars['--card']), page);
+  return {
+    page, card, ask: fill('.ask', card), chip: fill('.chip', card), chipOn: fill('.chip[aria-pressed=true]', card), btn: fill('.btn', card), field: fill('textarea', card),
+    tier: fill('.tier', card), tierOn: fill('.tier[aria-checked=true]', card), lock: fill('.lock', card), link: fill('.link', card), stat: fill('.stats div', card),
+    tag: fill('.tag', page), tagLive: fill('.tag.live', page), pressed: lay(rgb(S.vars['--press']), card),
+    gold: colours(S.get('.btn.gold', 'background')), pink: colours(S.get('.btn.pink', 'background')), best: colours(S.get('.tier .best', 'background')),
+    notes: ['.note', '.note:nth-child(3n+2)', '.note:nth-child(3n)'].map((s) => colours(S.get(s, 'background'))[0]),
+  };
+})();
+
+describe('gift.html on a phone: pressed states, places to press, text size and contrast (read from the sheet)', () => {
+  const S = SHEET;
+  it('every control has a pressed state that changes its fill the moment it is touched, not only its size', () => {
+    const PRESSED = ['.btn:not(:disabled):active', '.btn.gold:not(:disabled):active', '.btn.pink:not(:disabled):active', '.chip:not(:disabled):active', '.chip[aria-pressed=true]:not(:disabled):active',
+      '.sw:active', '.tier:active', '.tier[aria-checked=true]:active', '.linkbtn:active', '.brand:active', '.note .rp:active', '.stage .play:active span'];
+    for (const sel of PRESSED) {
+      const d = S.rules.filter((r) => r.sels.includes(sel)).map((r) => r.decl);
+      assert.ok(d.length, sel + ': a pressed rule');
+      assert.ok(d.some((x) => x.background || x['box-shadow'] || x.color), sel + ': more than a change of size');
+    }
+    // At once: the fade of the rest state is switched off while the finger is down, and the rest state fades back (a quick tap is seen).
+    const instant = S.rules.find((r) => r.decl.transition === 'none' && r.sels.includes('.btn:active'));
+    for (const sel of ['.btn:active', '.chip:active', '.sw:active', '.tier:active', '.linkbtn:active']) assert.ok(instant.sels.includes(sel), sel + ': no fade in');
+    const fade = S.rules.find((r) => /background-color \.25s/.test(r.decl.transition || '') && r.sels.includes('.btn'));
+    for (const sel of ['.btn', '.chip', '.sw', '.tier', '.linkbtn']) assert.ok(fade.sels.includes(sel), sel + ': fades back');
+    assert.match(fade.decl.transition, /box-shadow \.25s/, 'the gold and pink washes are shadows: they fade too');
+    // How far each fill moves (rest against pressed, as a contrast ratio). The plaza's gold moved 1.17:1 and nobody saw it.
+    const press = rgb(S.vars['--press']);
+    const moved = {
+      btn: ratio(SURF.btn, SURF.pressed), chip: ratio(SURF.chip, SURF.pressed),
+      chipOn: ratio(SURF.chipOn, lay(colours(S.get('.chip[aria-pressed=true]:not(:disabled):active', 'background'))[0], SURF.card)),
+      tier: ratio(SURF.tier, lay(colours(S.get('.tier:active', 'background'))[0], SURF.card)),
+      tierOn: ratio(SURF.tierOn, lay(colours(S.get('.tier[aria-checked=true]:active', 'background'))[0], SURF.card)),
+      gold: Math.min(...SURF.gold.map((c) => ratio(c, lay(rgb(S.vars['--gold-press']), c)))), pink: Math.min(...SURF.pink.map((c) => ratio(c, lay(rgb(S.vars['--pink-press']), c)))),
+    };
+    for (const [k, v] of Object.entries(moved)) assert.ok(v >= 1.4, `${k}: the pressed fill is ${v.toFixed(2)}:1 from the rest fill`);
+    assert.equal(press[3] >= 0.2, true);
+    // The words on a pressed button stay readable.
+    const ink = { gold: rgb(S.get('.btn.gold', 'color')), pink: rgb(S.get('.btn.pink', 'color')), text: rgb(S.vars['--text']) };
+    for (const c of SURF.gold) assert.ok(ratio(ink.gold, lay(rgb(S.vars['--gold-press']), c)) >= 4.5, 'pressed gold');
+    for (const c of SURF.pink) assert.ok(ratio(ink.pink, lay(rgb(S.vars['--pink-press']), c)) >= 4.5, 'pressed pink');
+    assert.ok(ratio(ink.text, SURF.pressed) >= 4.5, 'pressed plain button');
+    // The washes of the gold and pink buttons are the pressed rules' inset shadows, there (clear) at rest so they can fade.
+    assert.match(S.get('.btn.gold', 'box-shadow'), /inset 0 0 0 99px rgba\(70,36,0,0\)$/); assert.match(S.get('.btn.gold:not(:disabled):active', 'box-shadow'), /inset 0 0 0 99px rgba\(70,36,0,\.34\)$/);
+    assert.match(S.get('.btn.pink', 'box-shadow'), /^inset 0 0 0 99px rgba\(10,0,24,0\)$/); assert.match(S.get('.btn.pink:not(:disabled):active', 'box-shadow'), /^inset 0 0 0 99px rgba\(10,0,24,\.45\)$/);
+  });
+  it('places to press are 44px or more; small text links get there with a clear pad around them', () => {
+    for (const [sel, props] of [['.btn', ['min-height']], ['.btn.sm', ['min-height']], ['.chip', ['min-height', 'min-width']], ['.sw', ['width', 'height']], ['.linkbtn', ['min-height', 'min-width']], ['textarea', ['min-height']]]) {
+      for (const p of props) assert.ok(px(S.get(sel, p)) >= 44, `${sel} ${p}: ${S.get(sel, p)}`);
+    }
+    // 광장 가기 and the paper's 신고 keep their look; ::after carries the size: (line + 2 × pad) tall, (min-width + 2 × pad) wide.
+    const pad = (sel) => { assert.equal(S.get(sel, 'position'), 'absolute'); assert.equal(S.get(sel, 'content'), '""'); return String(S.get(sel, 'inset')).split(' ').map((x) => -px(x)); };
+    const [bv] = pad('.brand::after'); assert.ok(px(S.get('.brand', 'line-height')) + 2 * bv >= 44, 'WISH BOARD'); assert.equal(S.get('.brand', 'position'), 'relative');
+    const [rv, rh] = pad('.note .rp::after'); assert.ok(px(S.get('.note .rp', 'line-height')) + 2 * rv >= 44, '신고, tall'); assert.ok(px(S.get('.note .rp', 'min-width')) + 2 * rh >= 44, '신고, wide'); assert.equal(S.get('.note .rp', 'position'), 'relative');
+    assert.ok(px(S.get('input[type=checkbox]', 'width')) >= 22, 'the consent box (its whole line is the label)');
+    // Six colours in one row on a 360px phone: 360 - 2 × (16 page + 16 card + 1 line) = 294.
+    assert.ok(6 * px(S.get('.sw', 'width')) + 5 * px(S.get('.chips.sws', 'gap')) <= 294);
+  });
+  it('no text under 12px', () => {
+    for (const r of [...S.rules, ...S.media.flatMap((m) => m.rules)]) {
+      const size = r.decl['font-size'] ? px(r.decl['font-size']) : /(\d+(?:\.\d+)?)px/.test(r.decl.font || '') ? Number(/(\d+(?:\.\d+)?)px/.exec(r.decl.font)[1]) : null;
+      if (size != null) assert.ok(size >= 12, r.sels.join(', ') + ': ' + size + 'px');
+    }
+    assert.equal(S.get('.brand small', 'font-size'), '12px', '모두의 전광판 (a bare <small> is 10.8px)'); assert.equal(S.get('.tier .best', 'font-size'), '12px', '추천');
+  });
+  it('every text colour is 4.5:1 or more on the lightest surface it sits on', () => {
+    const { page, card, ask, chip, chipOn, btn, field, tier, tierOn, lock, link, stat, tag, tagLive, pressed, gold, pink, best, notes } = SURF;
+    // Each rule that sets a text colour, and what it can lie on. A new coloured text has to be added here with its surface.
+    const ON = {
+      body: [page, card, ask, tier, tierOn, stat], a: [page, card], '.brand': [page], '.brand small': [page], '.sub': [page, card, ask], '.fine': [page, card],
+      '.label small, .field > label small': [card], 'input[type=text], input[type=date], textarea': [field], 'input::placeholder, textarea::placeholder': [field],
+      '.chip': [chip], '.chip[aria-pressed=true]': [chipOn], '.err': [card, ask], '.okmsg': [card, ask], '.btn': [btn], '.btn.gold': gold, '.btn.pink': pink, '.when': [card],
+      '.stage .play': [lay(colours(S.get('.stage .play span', 'background'))[0], WHITE)], '.stage .rec': [WHITE, BLACK].map((u) => lay(colours(S.get('.stage .rec', 'background'))[0], u)),
+      '.tag': [tag], '.tag.live': [tagLive], '.tier': [tier, tierOn], '.tier .price': [tier, tierOn], '.tier ul': [tier, tierOn], '.tier .best': best, '.tier .hint': [tier, tierOn],
+      '.note': notes, '.note b': notes, '.note .rp': notes, '.lock': [lock], '.lock b': [lock], '.link': [link], '.stats span': [stat], '.boot': [page], '.foot': [page],
+      '.linkbtn': [page, card, ask], '.linkbtn:active': [pressed, lay(rgb(S.vars['--press']), ask)], '.note .rp:active': notes.map((n) => lay(colours(S.get('.note .rp:active', 'background'))[0], n)),
+    };
+    const coloured = S.rules.filter((r) => 'color' in r.decl).map((r) => r.sels.join(', '));
+    assert.deepEqual([...coloured].sort(), Object.keys(ON).sort(), 'the rules that colour text');
+    assert.equal(S.media.some((m) => m.rules.some((r) => 'color' in r.decl)), false, 'no text colour changes with the screen');
+    let low = { v: 99, at: '' };
+    for (const [sel, under] of Object.entries(ON)) {
+      const fg = rgb(S.val(S.rules.filter((r) => r.sels.join(', ') === sel).pop().decl.color));
+      for (const u of under) { const v = ratio(fg, u); if (v < low.v) low = { v, at: sel }; assert.ok(v >= 4.5, `${sel}: ${v.toFixed(2)}:1`); }
+    }
+    assert.ok(low.v >= 4.5, `the lowest is ${low.v.toFixed(2)}:1 (${low.at})`);
+    // What the audit measured: the small grey #77769c (2.4 to 3.5:1), the browser's own placeholder grey, white on the 추천 badge and on the pink button.
+    assert.equal(/#77769c/i.test(S.css), false); assert.equal(S.vars['--dim'], '#a3a2c4');
+    assert.ok(ratio(rgb('#77769c'), tierOn) < 3 && ratio(rgb('#77769c'), page) < 4.5, 'the old grey on these surfaces, by the same sum');
+    assert.ok(ratio(WHITE, rgb(S.vars['--pink'])) < 4.5, 'white on the badge pink still fails: the badge text is dark');
+  });
+  it('the page loads the plaza\'s typeface without waiting for it, breaks Korean between words, and outlines the darkest colour', () => {
+    const page = src('gift.html'), href = /<link rel="stylesheet" href="([^"]*pretendard[^"]*)"/.exec(src('index.html'))[1];
+    assert.ok(page.includes(`<link rel="stylesheet" href="${href}" media="print" onload="this.media='all'" />`), 'the same file as the plaza, never blocking the first paint');
+    assert.equal(S.get('body', 'word-break'), 'keep-all'); assert.equal(S.get('body', 'overflow-wrap'), 'break-word', 'a long name without spaces still wraps; a short word beside it is not squeezed'); assert.equal(S.get('.link', 'word-break'), 'break-all', 'an address still breaks anywhere');
+    assert.match(S.get('.sw', 'box-shadow'), /^0 0 0 1px rgba\(255,255,255,\.35\)$/, '밤하늘 is the card\'s own colour: a thin ring');
+  });
+  it('the owner\'s preview film is at most half the screen and 420px on a phone, the whole film beside the cards on a desk; the recipient\'s is as it was', () => {
+    assert.match(S.css, /\.stage\.sm \{ max-width: min\(100%, calc\(min\(52vh, 420px\) \* 9 \/ 16\)\); max-width: min\(100%, calc\(min\(52dvh, 420px\) \* 9 \/ 16\)\);/);
+    assert.equal(S.get('.stage', 'max-width'), 'min(100%, calc(72vh * 9 / 16))');
+    const desk = S.media.find((m) => m.q === '(min-width: 900px)');
+    assert.equal(desk.rules.find((r) => r.sels.includes('.stage.sm')).decl['max-width'], 'min(100%, calc(72vh * 9 / 16))');
+    // A phone on its side: two columns, so the picture is not the whole first screen there either.
+    const side = S.media.find((m) => /orientation: landscape/.test(m.q));
+    assert.equal(side.q, '(orientation: landscape) and (max-height: 520px) and (min-width: 600px) and (max-width: 899px)');
+    assert.equal(side.rules.find((r) => r.sels.includes('.cols')).decl.display, 'grid');
+  });
+});
+
+describe('the gift pages on a phone: what the page script builds (giftpage.js)', () => {
+  const g = view(), AT = KST('2026-11-25T19:00:00');
+  const made = (o = {}) => (u, opt) => (u === '/rt/gift' && opt.method === 'POST' ? { ok: true, id: 'nnnnnnnn', gift: view({ id: 'nnnnnnnn', to: '수아', from: '' }), mine: { kids: 0, vd: 0, at: 1, lk: 1 }, media: false, ...o } : u.endsWith('/interest') ? { ok: true } : null);
+  const maker = (o = {}) => fakeDom({ path: '/gift', at: AT, store: { masil_gt: GUEST() }, respond: made(), ...o });
+  const own = (o = {}) => pageOf(o.gift || g, AT, { rec: !!o.media, store: { masil_gt: GUEST(), kts_gmine: JSON.stringify([g.id]) },
+    respond: (u) => (u === '/rt/gift/' + g.id ? { ok: true, gift: o.gift || g, own: true, mine: { kids: 0, vd: 0, at: 1, lk: 1 }, media: !!o.media } : u.endsWith('/interest') ? { ok: true } : null) });
+  const flat = (P) => { const out = []; const walk = (n) => { out.push(n); for (const k of n.kids || []) walk(k); }; walk(P.app); return out; };
+  const cardOf = (P, head) => P.all('section').find((c) => c.kids[0]?.tag === 'h2' && c.kids[0].textContent === head);
+  // The first control under the page's top line, in reading order (the film's own play button is hidden while the film plays).
+  const firstControl = (P) => P.controls().filter((n) => n.className !== 'brand')[0];
+
+  it('nothing takes the cursor when the maker opens on a phone (no keyboard over the preview); with a mouse it waits in the name, the page still at its top', async () => {
+    let P = maker({ touch: true });
+    try {
+      await P.load('giftpage.js');
+      assert.deepEqual(P.heads('h1'), ['친구를 위해 뉴욕 타임스퀘어에 전광판을 걸어요']);
+      assert.equal(P.timeouts.length, 0); await P.timers(); assert.equal(P.doc.activeElement, null);
+      // A refused form still puts the cursor where the fault is: that is the person's own tap.
+      await P.submit(); assert.equal(P.doc.activeElement, P.input('to'));
+    } finally { P.done(); }
+    P = pageOf(view({ from: '' }), KST('2026-11-26T09:00:00'), { touch: true }); // a reply to a board without a sender: the name is still to write, by hand
+    try {
+      await P.load('giftpage.js'); await P.press(P.btn(/영상 건너뛰기/)); await P.press(P.btn(/고마워 전광판 걸기/));
+      assert.deepEqual(P.heads('h1'), ['💌 답장 전광판을 걸어요']); assert.equal(P.timeouts.length, 0); assert.equal(P.doc.activeElement, null);
+    } finally { P.done(); }
+    P = maker();
+    try {
+      await P.load('giftpage.js'); assert.equal(P.timeouts.length, 1); assert.equal(P.timeouts[0].ms, 50);
+      await P.timers(); assert.equal(P.doc.activeElement, P.input('to')); assert.deepEqual(P.input('to').focused, { preventScroll: true });
+    } finally { P.done(); }
+  });
+  it('in the plaza\'s frame, Escape in the page asks the plaza to close it; not while Hangul is being composed, and not on a page of its own', async () => {
+    let P = maker({ search: '?in=1', embed: true });
+    try {
+      await P.load('giftpage.js');
+      await P.key(P.docOn, 'a'); await P.key(P.docOn, 'Escape', { isComposing: true }); await P.key(P.docOn, 'Process', { keyCode: 229 }); await P.key(P.docOn, 'Escape', { keyCode: 229 });
+      assert.deepEqual(P.posted, [], 'typing, and Escape that only drops a half-typed syllable');
+      await P.key(P.docOn, 'Escape');
+      assert.deepEqual(P.posted, [{ t: 'gift', act: 'close', id: '' }]);
+    } finally { P.done(); }
+    P = maker();
+    try { await P.load('giftpage.js'); assert.equal((P.docOn.keydown || []).length, 0); assert.ok((P.docOn.touchstart || []).length >= 1, 'iOS shows :active only on a page that listens for touches'); } finally { P.done(); }
+  });
+  it('a refused field is read out and marked, until it is typed in again (the maker and the 롤링페이퍼)', async () => {
+    let P = maker();
+    try {
+      await P.load('giftpage.js'); await P.submit();
+      const to = P.input('to'), line = P.input('err-to');
+      assert.equal(line.textContent, '받는 사람 이름을 적어 주세요.'); assert.equal(line.attrs.role, 'alert');
+      assert.equal(to.attrs['aria-invalid'], 'true'); assert.equal(to.attrs['aria-describedby'], 'err-to');
+      for (const id of ['msg', 'from']) { assert.equal(P.input(id).attrs['aria-describedby'], 'err-' + id); assert.equal(P.input('err-' + id).attrs.role, 'alert'); assert.equal(P.input(id).attrs['aria-invalid'], 'false'); }
+      to.value = '수아'; for (const f of to.on.input) f();
+      assert.equal(to.attrs['aria-invalid'], 'false'); assert.equal(line.textContent, '');
+      P.input('msg').value = 'https://evil.example/x'; for (const f of P.input('msg').on.input) f();
+      await P.submit();
+      assert.equal(P.input('msg').attrs['aria-invalid'], 'true'); assert.equal(to.attrs['aria-invalid'], 'false'); assert.equal(P.doc.activeElement, P.input('msg'));
+      assert.equal(P.sent.some((s) => s.method === 'POST'), false);
+    } finally { P.done(); }
+    P = pageOf(view({ phase: 'before' }), KST('2026-11-24T12:00:00'));
+    try {
+      await P.load('giftpage.js'); await P.submit();
+      const txt = P.all('textarea')[0], line = P.input('paper-msg');
+      assert.equal(line.attrs.role, 'alert'); assert.ok(line.textContent.length > 0); assert.equal(txt.attrs['aria-invalid'], 'true'); assert.equal(txt.attrs['aria-describedby'], 'paper-msg');
+      for (const f of txt.on.input) f(); assert.equal(txt.attrs['aria-invalid'], 'false');
+    } finally { P.done(); }
+  });
+  it('the maker: two short lines under the button; the other rules are kept, at the foot of the page', async () => {
+    const P = maker();
+    try {
+      await P.load('giftpage.js');
+      const form = P.all('form')[0], send = P.btn(/무료로 걸기/);
+      assert.deepEqual(form.kids.filter((n) => n.className === 'fine').map((n) => n.textContent), ['결제는 없어요. 문구는 광장에서 누구나 볼 수 있어요.']);
+      assert.ok(form.kids.indexOf(send) < form.kids.findIndex((n) => n.className === 'fine'));
+      const foot = P.all('footer')[0].textContent;
+      for (const re of [/글자만 걸고 사진은 받지 않아요\./, /받는 사람의 연락처는 적지 않아요\./, /신고가 쌓이면 문구가 가려지고/, /기념 페이지는 그날이 지나고 7일 뒤에 지워져요\./, /뉴욕 타임스퀘어를 본뜬 가상 광장이에요\. 실제 타임스퀘어와는 관계가 없어요\./, /약관과 개인정보처리방침은 광장의 설정 › 정보에 있어요\./]) assert.match(foot, re);
+      const home = P.btn(/^광장 가기$/); assert.equal(home.tag, 'a'); assert.equal(home.className, 'linkbtn', 'a 44px place to press, not a word in a sentence');
+      assert.equal(P.all('div').find((n) => n.attrs['aria-label'] === '색').className, 'chips sws');
+    } finally { P.done(); }
+  });
+  it('the owner page: the title, a small preview, then 공유하기 and 링크 복사 with nothing to read first (also right after hanging a board)', async () => {
+    const check = (P, title) => {
+      assert.deepEqual(P.heads('h1'), [title]);
+      const all = flat(P), at = (n) => all.indexOf(n), stage = P.all('div').find((n) => /^stage/.test(n.className)), share = cardOf(P, '🔗 링크 보내기');
+      assert.equal(stage.className, 'stage sm', 'the preview is the small one');
+      assert.equal(stage.parent.kids.at(-1), stage, 'nothing between the preview and the first card');
+      assert.deepEqual(share.kids[1].kids.map((n) => [n.tag, n.textContent, n.className]), [['button', '공유하기', 'btn gold'], ['button', '링크 복사', 'btn']], 'the buttons come right under the card\'s title');
+      assert.ok(at(P.all('h1')[0]) < at(stage) && at(stage) < at(share) && at(share) < at(P.btn(/^공유하기$/)));
+      assert.equal(firstControl(P).textContent, '공유하기', 'the first thing to press on the page');
+      const words = share.kids.filter((n) => n.tag === 'p' && n.className === 'fine').map((n) => n.textContent);
+      assert.deepEqual(words, ['친구들에게 먼저 보내 메시지를 모으고, 그날 ' + (title === '🎉 걸었어요!' ? '수아' : '민지') + '님에게 보내세요. 메시지는 그날(11월 25일 (수)) 0시에 함께 열려요.'], 'how to use the link: kept, small, under the buttons');
+      assert.ok(share.kids.indexOf(share.kids.find((n) => n.className === 'link')) > 1, 'the address under the buttons');
+      assert.deepEqual(P.heads(), ['🔗 링크 보내기', '✨ 더 크게, 더 오래 걸고 싶다면', '🎬 15초 축하 영상', '📊 지금까지']);
+      assert.equal(P.says(/^미리보기 영상은 무료 버전이라 워터마크가 있어요\.$/), true); assert.equal(P.says(/^아래는 준비 중인 상품이에요\. 지금은 결제가 없고, 고르면 "열리면 알림"을 받을 수 있어요\.$/), true, 'no payment: still said');
+    };
+    let P = own();
+    try { await P.load('giftpage.js'); check(P, '🎂 민지님을 위한 선물 전광판'); } finally { P.done(); }
+    P = maker({ touch: true });
+    try {
+      await P.load('giftpage.js'); P.input('to').value = '수아'; for (const f of P.input('to').on.input) f();
+      await P.submit(); check(P, '🎉 걸었어요!');
+    } finally { P.done(); }
+    // The recipient's page keeps the whole film: it is what that page is for.
+    P = pageOf(g, AT);
+    try { await P.load('giftpage.js'); assert.equal(P.all('div').find((n) => /^stage/.test(n.className)).className, 'stage'); } finally { P.done(); }
+  });
+  it('video first (the Worker stores videos): the video card still leads and starts with its gold button; after the window it starts with why there is none', async () => {
+    let P = own({ media: true });
+    try {
+      await P.load('giftpage.js');
+      assert.deepEqual(P.heads(), ['🎬 15초 축하 영상', '🔗 링크 보내기', '✨ 더 크게, 더 오래 걸고 싶다면', '📊 지금까지']);
+      const vid = cardOf(P, '🎬 15초 축하 영상');
+      assert.deepEqual([vid.kids[1].tag, vid.kids[1].className, vid.kids[1].textContent], ['a', 'btn gold', '🎬 광장에서 진짜 15초 영상 만들기 · 약 25초']);
+      assert.equal(firstControl(P), vid.kids[1], 'the first thing to press on the page');
+      assert.deepEqual(vid.kids.filter((n) => n.className === 'fine').map((n) => n.textContent), ['광장에서 이 전광판 앞의 폭죽과 환호를 세로 영상으로 찍어요. 이 기기에서 만들고, 1~2분 걸릴 수 있어요.', '찍은 영상은 받는 사람 페이지에 올라가요. 그날이 지나고 7일 뒤에 지워져요.', '미리보기 영상은 무료 버전이라 워터마크가 있어요.']);
+      assert.equal(P.all('div').find((n) => /^stage/.test(n.className)).className, 'stage sm');
+      assert.deepEqual(cardOf(P, '🔗 링크 보내기').kids[1].kids.map((n) => n.className), ['btn', 'btn'], 'one gold button on the page');
+    } finally { P.done(); }
+    P = own({ media: true, gift: view({ phase: 'after' }) });
+    try {
+      await P.load('giftpage.js');
+      const vid = cardOf(P, '🎬 15초 축하 영상');
+      assert.deepEqual(vid.kids.filter((n) => n.className === 'fine').map((n) => n.textContent).slice(0, 2), ['광장에서 내려온 전광판은 새 영상을 찍을 수 없어요.', '찍은 영상은 받는 사람 페이지에 올라가요. 그날이 지나고 7일 뒤에 지워져요.']);
+    } finally { P.done(); }
+  });
+  it('every button and link the pages build carries a class that has a pressed state in the sheet', async () => {
+    const RULE = { btn: '.btn:not(:disabled):active', chip: '.chip:not(:disabled):active', sw: '.sw:active', tier: '.tier:active', linkbtn: '.linkbtn:active', brand: '.brand:active', rp: '.note .rp:active', play: '.stage .play:active span' };
+    for (const sel of Object.values(RULE)) assert.ok(SHEET.rules.some((r) => r.sels.includes(sel)), sel);
+    const seen = new Set();
+    const sweep = (P, where) => { for (const n of [...P.all('button'), ...P.all('a')]) { const c = n.className.split(/\s+/).find((x) => RULE[x]); assert.ok(c, `${where}: "${n.textContent}" (${n.className || 'no class'}) has no pressed state`); seen.add(c); } };
+    let P = maker();
+    try { await P.load('giftpage.js'); sweep(P, 'the maker'); } finally { P.done(); }
+    P = own({ media: true });
+    try {
+      await P.load('giftpage.js'); await P.press(P.btn(/^공유하기$/)); await P.press(P.all('button').find((n) => n.className === 'tier' && /축하 영상 세트/.test(n.textContent)));
+      assert.ok(P.btn(/그냥 보내기/) && P.btn(/열리면 알림 받기/) && P.btn(/무료로 둘게요/), 'the nudge and the notice box are up');
+      sweep(P, 'the owner page');
+    } finally { P.done(); }
+    P = pageOf(view({ paper: [{ id: 'p00001', nick: '친구', txt: '축하해' }] }), AT);
+    try { await P.load('giftpage.js'); await P.press(P.btn(/영상 건너뛰기/)); assert.ok(P.btn(/^신고$/)); sweep(P, 'the recipient page'); } finally { P.done(); }
+    P = pageOf(view({ phase: 'before' }), KST('2026-11-24T12:00:00'));
+    try { await P.load('giftpage.js'); sweep(P, 'the page before the day'); } finally { P.done(); }
+    P = fakeDom({ path: '/g/abcd1234', data: { id: 'abcd1234', gift: null, now: AT, media: false }, at: AT });
+    try { await P.load('giftpage.js'); assert.deepEqual(P.heads('h1'), ['기념 페이지가 끝났거나 가려졌어요']); sweep(P, 'the page that is gone'); } finally { P.done(); }
+    assert.deepEqual([...seen].sort(), Object.keys(RULE).sort(), 'and every kind of control was met');
+  });
+});
+
+describe('the gift page over the plaza is a dialog like the sheets (gift.js)', () => {
+  // The plaza with its HUD's 🌠 button; the world only records whether its input is on.
+  async function plaza(o = {}) {
+    const P = fakeDom({ path: '/', at: KST('2026-11-25T19:00:00'), store: { masil_gt: GUEST() }, respond: () => null, ...o });
+    P.locks = [];
+    const { mountGift } = await P.load('gift.js');
+    P.gift = mountGift({ world: { setGifts() {}, setInputEnabled: (on) => P.locks.push(on) }, ui: { note() {} }, whenBuilt: (f) => f(), introDone() {} });
+    P.frame = () => P.doc.body.kids.find((n) => n.id === 'kts-gift-frame') || null;
+    P.giftBtn = P.tools.kids[1];
+    P.say = (data) => { for (const f of P.winOn.message) f({ origin: P.loc.origin, data }); };
+    return P;
+  }
+  // gift.js's own sheet (a template string) as rules.
+  const GCSS = (() => {
+    const text = /const CSS = `([\s\S]*?)`;/.exec(src('gift.js'))[1].replace(/\$\{GIFT_SANS\}/g, 'sans-serif');
+    const rules = Object.fromEntries([...text.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => [m[1].trim(), Object.fromEntries(m[2].split(';').filter(Boolean).map((d) => { const k = d.indexOf(':'); return [d.slice(0, k).trim(), d.slice(k + 1).trim()]; }))]));
+    return rules;
+  })();
+
+  it('it is a named modal dialog; opening it moves focus to the frame itself, never into a field', async () => {
+    const P = await plaza();
+    try {
+      assert.equal(P.giftBtn.attrs['aria-label'], '선물 전광판 걸기'); assert.equal(P.frame(), null);
+      await P.press(P.giftBtn);
+      const f = P.frame(), ifr = f.kids.find((n) => n.tag === 'iframe'), x = f.kids.find((n) => n.tag === 'button');
+      assert.deepEqual([f.attrs.role, f.attrs['aria-modal'], f.attrs['aria-label'], f.attrs.tabindex], ['dialog', 'true', '선물 전광판 만들기', '-1']);
+      assert.equal(ifr.src, '/gift?in=1'); assert.equal(ifr.title, '선물 전광판 만들기');
+      assert.equal(P.doc.activeElement, f); assert.deepEqual(f.focused, { preventScroll: true });
+      assert.deepEqual(P.locks, [false], 'the plaza under it takes no input');
+      // The close button: named, and drawn with the sheets' two-stroke icon (no ✕ letter).
+      assert.equal(x.attrs['aria-label'], '닫기'); assert.equal(x.type, 'button'); assert.equal(x.textContent, '');
+      assert.deepEqual(x.kids.map((n) => [n.tag, n.attrs.viewBox, n.attrs['aria-hidden']]), [['svg', '0 0 24 24', 'true']]);
+      assert.equal(x.kids[0].kids[0].attrs.d, 'M6 6L18 18M18 6L6 18');
+      assert.ok(/close: \['M6 6L18 18', 'M18 6L6 18'\]/.test(src('uiicons.js')), 'the same strokes as the sheets\' close icon (uiicons.js)');
+      // A board's page opened from a reply notice is named for what it is.
+      P.swOn.message({ data: { t: 'push', url: '/g/abcd1234?o=1' } });
+      assert.equal(P.frame().attrs['aria-label'], '선물 전광판'); assert.equal(P.frame().attrs.role, 'dialog'); assert.equal(P.frame().kids.find((n) => n.tag === 'iframe').title, '선물 전광판');
+    } finally { P.done(); }
+  });
+  it('Escape in the plaza closes it and nothing under it, and focus goes back to the 🎁 button; without the frame Escape is the plaza\'s', async () => {
+    const P = await plaza();
+    try {
+      let e = await P.key(P.winOn, 'Escape');
+      assert.deepEqual([e.defaultPrevented, e.stopped], [false, false], 'nothing open: the plaza\'s own listeners get the key');
+      await P.press(P.giftBtn);
+      for (e of [await P.key(P.winOn, 'a'), await P.key(P.winOn, 'Enter'), await P.key(P.winOn, 'Escape', { isComposing: true })]) assert.deepEqual([!!P.frame(), e.stopped], [true, false]);
+      e = await P.key(P.winOn, 'Escape');
+      assert.equal(P.frame(), null);
+      assert.deepEqual([e.defaultPrevented, e.stopped], [true, true], 'one press closes this, not also a sheet under it');
+      assert.equal(P.doc.activeElement, P.giftBtn); assert.deepEqual(P.giftBtn.focused, { preventScroll: true });
+      assert.deepEqual(P.locks, [false, true], 'the plaza takes input again');
+      e = await P.key(P.winOn, 'Escape'); assert.equal(e.stopped, false);
+      await P.press(P.giftBtn); assert.ok(P.frame(), 'and it opens again');
+    } finally { P.done(); }
+  });
+  it('the close button and the page\'s own close message do the same; focus returns to what opened it, or to 🎁 when that is gone', async () => {
+    const P = await plaza();
+    try {
+      // Opened from another control of the plaza (the "친구 이름을 전광판에 걸어 보세요" card calls gift.open()).
+      const task = P.doc.createElement('button'); P.doc.body.append(task); task.focus();
+      P.gift.open();
+      await P.press(P.frame().kids.find((n) => n.tag === 'button'));
+      assert.equal(P.frame(), null); assert.equal(P.doc.activeElement, task);
+      P.gift.open(); assert.equal(P.doc.activeElement, P.frame());
+      task.remove();
+      P.say({ t: 'gift', act: 'close' }); // 광장 가기 or Escape inside the page (giftpage.js)
+      assert.equal(P.frame(), null); assert.equal(P.doc.activeElement, P.giftBtn);
+      // Messages that are not the page's do nothing.
+      P.gift.open(); for (const f of P.winOn.message) f({ origin: 'https://evil.example', data: { t: 'gift', act: 'close' } }); P.say({ t: 'other', act: 'close' });
+      assert.ok(P.frame());
+    } finally { P.done(); }
+  });
+  it('its close button is the sheets\' close button, value for value (index.html .x)', () => {
+    const page = src('index.html'), decl = (re, what) => { const m = re.exec(page); assert.ok(m, 'index.html: ' + what + ' is not where it was. Read the sheet close button again and match gift.js to it'); return Object.fromEntries(m[1].split(';').map((d) => d.trim()).filter(Boolean).map((d) => { const k = d.indexOf(':'); return [d.slice(0, k).trim(), d.slice(k + 1).trim()]; })); };
+    const sheet = decl(/\n\s*\.x \{([^}]*)\}/, '.x'), hover = decl(/\n\s*\.x:hover \{([^}]*)\}/, '.x:hover'), pad = decl(/\n\s*html\.touch \.x::after \{([^}]*)\}/, 'html.touch .x::after'), ico = decl(/\n\s*\.x svg\.ico, \.mapzoom button svg\.ico \{([^}]*)\}/, '.x svg.ico'), line = decl(/\n\s*svg\.ico \{([^}]*)\}/, 'svg.ico');
+    const root = (k) => { const m = new RegExp('\\n\\s*' + k + ': (#[0-9a-f]{6});').exec(page); assert.ok(m, 'index.html :root ' + k); return m[1]; };
+    const mine = GCSS['#kts-gift-frame button'], mineHover = GCSS['#kts-gift-frame button:hover'], minePad = GCSS['#kts-gift-frame button::after'], mineIco = GCSS['#kts-gift-frame button svg'];
+    // Same size and corners (it was a 40px circle), same layout.
+    for (const p of ['width', 'height', 'border-radius', 'display', 'place-items']) assert.equal(mine[p], sheet[p], p);
+    assert.deepEqual([mine.width, mine.height, mine['border-radius']], ['38px', '38px', '10px']);
+    // Same colours: the plaza's own tokens, with their values of today behind them.
+    const same = (got, want) => { assert.equal(got.replace(/var\((--[\w-]+),#[0-9a-f]{6}\)/g, 'var($1)'), want); for (const m of got.matchAll(/var\((--[\w-]+),(#[0-9a-f]{6})\)/g)) assert.equal(m[2], root(m[1]), m[1]); };
+    same(mine.color, sheet.color); same(mine.background, sheet.background); same(mine.border, sheet.border);
+    same(mineHover.color, hover.color); same(mineHover['border-color'], hover['border-color']);
+    // Same place to press (38 + 3 + 3 = 44) and the same icon: 20px, the same stroke.
+    assert.equal(minePad.inset, pad.inset); assert.equal(minePad.position, 'absolute'); assert.equal(minePad.content, '""');
+    assert.equal(px(mine.width) - 2 * px(minePad.inset), 44);
+    for (const p of ['width', 'height']) assert.equal(mineIco[p], ico[p], 'icon ' + p);
+    for (const p of ['fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin']) assert.equal(mineIco[p], line[p], 'icon ' + p);
+  });
+  it('the page inside leaves the close button its corner (its top line ends short of it)', () => {
+    const x = GCSS['#kts-gift-frame button'], inset = Number(/^max\((\d+)px,/.exec(x.right)[1]), edge = Number(/max\((\d+)px, env\(safe-area-inset-right\)\)/.exec(SHEET.get('main', 'padding'))[1]);
+    assert.deepEqual([inset, edge], [10, 16]);
+    assert.ok(edge + px(SHEET.get('html.embed .top', 'padding-right')) >= inset + px(x.width) + 8, 'the brand line and the button do not meet');
+  });
+  it('the plaza-side gift controls have a pressed state too: the close button, the buttons under the finished video, 취소 while it records', () => {
+    const x = GCSS['#kts-gift-frame button'], down = GCSS['#kts-gift-frame button:active'];
+    assert.ok(down.background && down.color && down.transition === 'none');
+    const rest = rgb(/#[0-9a-f]{6}/.exec(x.background)[0]), hit = rgb(down.background);
+    assert.ok(ratio(rest, hit) >= 1.4, 'the fill moves ' + ratio(rest, hit).toFixed(2) + ':1');
+    assert.ok(ratio(rgb(/#[0-9a-f]{6}/.exec(x.color)[0]), rest) >= 4.5 && ratio(rgb(/#[0-9a-f]{6}/.exec(down.color)[0]), hit) >= 4.5, 'the icon stays clear');
+    assert.ok(GCSS['#kts-gift-done .b:active']['background-color'] && GCSS['#kts-gift-done .b:active'].transition === 'none');
+    assert.match(GCSS['#kts-gift-done .b.gold:active']['box-shadow'], /^inset 0 0 0 99px rgba\(70,36,0,\.34\)$/, 'the gold one: the same wash as gift.html');
+    assert.match(GCSS['#kts-gift-done .b']['box-shadow'], /^inset 0 0 0 99px rgba\(70,36,0,0\)$/);
+    assert.ok(px(GCSS['#kts-gift-done .b']['min-height']) >= 44);
+    assert.ok(GCSS['#kts-gift-rec button:active'].background); assert.equal(GCSS['#kts-gift-rec button::after'].position, 'absolute'); assert.equal(GCSS['#kts-gift-rec button'].position, 'relative');
+    // 취소: a 20px line, 4px above and below, and 8px more to press each way (44); 44px wide.
+    const rec = GCSS['#kts-gift-rec button'], recPad = String(GCSS['#kts-gift-rec button::after'].inset).split(' ').map((v) => -px(v) || 0), vpad = px(rec.padding.split(' ')[0]);
+    assert.ok(px(rec['line-height']) + 2 * vpad + 2 * recPad[0] >= 44); assert.ok(px(rec['min-width']) >= 44);
   });
 });
