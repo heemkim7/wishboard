@@ -608,3 +608,46 @@ describe('답장 전광판 on the Worker', { concurrency: false }, () => {
     } finally { done(); }
   });
 });
+
+describe('점등식 on the Worker: two beacon keys and the hard flag on the two reads', () => {
+  const dataOf = (html) => JSON.parse(/<script id="gift-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html)[1]);
+  it('takes the beacons cer and cershot as daily counts (an unknown key is still dropped); at hard a cer beacon is dropped', async () => {
+    const { clock, done } = setup();
+    try {
+      const env = makeEnv(), H = harness(env), A = await H.guest();
+      const r = await (await H.post('/rt/gift', FORM({ day: addDays(today(), 1), at: 18 }), A.token)).json();
+      const seen = (v, e) => H.post('/rt/gift/' + r.id + '/seen', { v: VIS(v), e });
+      assert.equal((await seen(1, 'cer')).status, 204); await seen(2, 'cer'); await seen(1, 'cershot'); await seen(1, 'cerx');
+      await giftSeenFlush(env, H.ctx);
+      let d = dayCounts(env);
+      assert.equal(d['ev:cer'], 2); assert.equal(d['ev:cershot'], 1); assert.equal('ev:cerx' in d, false, 'an unknown key is dropped');
+      env.BUDGET_REQ_DAY = '1'; clock.add(61000);
+      assert.equal((await seen(3, 'cer')).status, 204); await giftSeenFlush(env, H.ctx);
+      d = dayCounts(env); assert.equal(d['ev:cer'], 2, 'dropped at hard');
+    } finally { done(); }
+  });
+  it('GET /rt/gift/<id> and the /g/<id> page data say hard: true at level 2 only, with no more DO calls than at level 0', async () => {
+    const { clock, done } = setup();
+    try {
+      const env = makeEnv(), H = harness(env), A = await H.guest();
+      const r = await (await H.post('/rt/gift', FORM({ day: addDays(today(), 1), at: 18 }), A.token)).json();
+      const pub = await (await H.get('/rt/gift/' + r.id)).json();
+      assert.equal(pub.ok, true); assert.equal('hard' in pub, false, 'no hard at level 0');
+      assert.equal('hard' in dataOf(await (await H.get('/g/' + r.id)).text()), false, 'nor in the page data');
+      const calls = spyGift(env);
+      await H.get('/rt/gift/' + r.id); const base = calls.length; // a cached board: what a level-0 read costs now
+      env.BUDGET_REQ_DAY = '1'; clock.add(61000);
+      calls.length = 0;
+      const hard = await (await H.get('/rt/gift/' + r.id)).json();
+      assert.equal(hard.ok, true); assert.equal(hard.hard, true); assert.equal(hard.gift.id, r.id);
+      assert.ok(calls.length <= base, `the level-2 read made ${calls.length} gift DO calls, the level-0 read ${base}`);
+      const own = await (await H.get('/rt/gift/' + r.id, A.token)).json();
+      assert.equal(own.own, true); assert.equal(own.hard, true, 'the owner\'s read too');
+      const page = await H.get('/g/' + r.id);
+      assert.equal(page.status, 200); assert.equal(dataOf(await page.text()).hard, true);
+      assert.equal((await H.get('/rt/gift/zzzzzzzz')).status, 404, 'the 404 is unchanged');
+      delete env.BUDGET_REQ_DAY; clock.add(61000);
+      assert.equal('hard' in (await (await H.get('/rt/gift/' + r.id)).json()), false, 'back at level 0');
+    } finally { done(); }
+  });
+});

@@ -1,7 +1,7 @@
 // 선물 전광판 light pages (gift.html): the maker at /gift and the board page at /g/<id> (owner preview with the price ladder, the
 // recipient page, the 롤링페이퍼). No three.js, no realtime room, no Supabase client: what the page needs from the Worker comes inline in
 // #gift-data (the Worker renders /g/<id>), the rest is a few small JSON calls. Text people wrote is only set with textContent.
-import { GIFT, GIFT_ID, OCCASIONS, OCC_KEYS, GIFT_THEMES, THEME_KEYS, TIERS, TIER_NOTE, TIER_ASK, won, giftFault, paperFault, startChoices, windowText, dayText, hourText, kstDay, addDays, dayStart, countdown, dDay, refOf, keptRef, cpLen, norm, windowFor, replyDraft, replyLabel, PLAZA_BTN, videoFirst } from './giftrules.js';
+import { GIFT, GIFT_ID, OCCASIONS, OCC_KEYS, GIFT_THEMES, THEME_KEYS, TIERS, TIER_NOTE, TIER_ASK, won, giftFault, paperFault, startChoices, windowText, dayText, hourText, kstDay, addDays, countdown, dDay, refOf, keptRef, cpLen, norm, windowFor, replyDraft, replyLabel, PLAZA_BTN, videoFirst, CER_TEXT, cerStart, cerButton, cerInvite, cerShareLine, cerBackWhy, cerDebugStart, pageLook, hiddenWords } from './giftrules.js';
 import { paintGift, giftCardJpeg } from './giftart.js?v=202611241625';
 import { createFilm, FILM_MS, recordCanvas, canRecord, saveBlob, fileName } from './giftfilm.js?v=202611241625';
 
@@ -24,6 +24,11 @@ try { history.scrollRestoration = 'manual'; } catch { /* old browsers */ } // th
 const DATA = (() => { try { return JSON.parse(document.getElementById('gift-data')?.textContent || 'null'); } catch { return null; } })();
 const SKEW = DATA?.now ? DATA.now - Date.now() : 0;
 const now = () => Date.now() + SKEW;
+// 점등식 at budget hard: the page data says so (an older Worker has no field: not hard), or a later read of the board did.
+let HARD = !!DATA?.hard;
+// The localhost seam (giftrules.js cerDebugStart): ?cerin=<seconds> on a local development host runs the ceremony button against a start
+// that many seconds from this load, and its link carries the seconds left to the plaza. Anywhere else 0: the board's own start.
+const CER_DEBUG = (() => { try { return cerDebugStart(location.search, location.hostname, now()); } catch { return 0; } })();
 const ls = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
 const json = (k, d) => { try { return JSON.parse(ls.get(k) || '') ?? d; } catch { return d; } };
 
@@ -170,8 +175,10 @@ async function saveVideo(g, st, btn, note) {
   } catch { say(note, '영상을 저장하지 못했어요. 다시 해 주세요.'); }
   finally { btn.disabled = false; }
 }
-async function share(g, url, note) {
-  const o = OCCASIONS[g.occ] || OCCASIONS.bday, text = `${o.emoji} ${g.to}님을 위한 선물 전광판이 뉴욕 타임스퀘어 가상 광장에 걸려요! 친구들 메시지도 남겨 주세요 👉`;
+// made: the board's making time (only the owner's read has it): a "지금" board made in the first minutes after a start hour is no ceremony.
+async function share(g, url, note, made) {
+  const o = OCCASIONS[g.occ] || OCCASIONS.bday, text = `${o.emoji} ${g.to}님을 위한 선물 전광판이 뉴욕 타임스퀘어 가상 광장에 걸려요! 친구들 메시지도 남겨 주세요 👉`
+    + cerShareLine(made ? { ...g, at: made } : g, now()); // 점등식: ' 🎆 점등식 12월 25일 18:00에 같이 봐요!' until the start
   try { if (navigator.share) { await navigator.share({ title: `${g.to}님을 위한 선물 전광판`, text, url }); beacon(g.id, 'share'); return; } } catch (e) { if (e?.name === 'AbortError') return; }
   try { await navigator.clipboard.writeText(text + ' ' + url); beacon(g.id, 'share'); say(note, '링크를 복사했어요. 카카오톡에 붙여 넣어 보내세요.', true); } catch { say(note, '아래 주소를 길게 눌러 복사해 주세요.'); }
 }
@@ -283,6 +290,7 @@ async function board() {
     if (tok) {
       try {
         const r = await fetch('/rt/gift/' + g.id, { headers: { authorization: 'Bearer ' + tok }, cache: 'no-store' }).then((x) => x.json());
+        if (r?.hard) HARD = true;
         if (r?.own) { if (asked) addMine(g.id); return owner(r.gift, { mine: r.mine, media: !!r.media }); }
       } catch { /* the public page */ }
     }
@@ -330,7 +338,7 @@ function owner(g, { fresh = false, mine: extra = null, media = false } = {}) {
     h('div', { style: 'height:8px' }), saveBtn, saveNote, h('p', { class: 'fine', text: '미리보기 영상은 무료 버전이라 워터마크가 있어요.' }));
   const linkBox = h('div', { class: 'link', text: url });
   const shareCard = card(h('h2', { text: '🔗 링크 보내기' }),
-    h('div', { class: 'row' }, h('button', { class: vfirst ? 'btn' : 'btn gold', type: 'button', onclick: () => sendOr(() => share(g, url, note)) }, '공유하기'),
+    h('div', { class: 'row' }, h('button', { class: vfirst ? 'btn' : 'btn gold', type: 'button', onclick: () => sendOr(() => share(g, url, note, extra?.at)) }, '공유하기'),
       h('button', { class: 'btn', type: 'button', onclick: () => sendOr(async () => { try { await navigator.clipboard.writeText(url); say(note, '링크를 복사했어요.', true); } catch { say(note, '아래 주소를 길게 눌러 복사해 주세요.'); } }) }, '링크 복사')),
     vfirst ? nudge : null, linkBox, note,
     h('p', { class: 'fine', text: '친구들에게 먼저 보내 메시지를 모으고, 그날 ' + g.to + '님에게 보내세요. ' + (g.lk ? '메시지는 그날(' + dayText(g.day) + ') 0시에 함께 열려요.' : '메시지는 남기는 대로 바로 보여요.') }));
@@ -407,26 +415,37 @@ async function pushOn(tok) {
 
 // The recipient page (and anyone with the link): before the day a countdown and the 롤링페이퍼; from the day the film first, then
 // [답장 전광판 걸기] [영상 저장] [직접 가서 보기 / 광장에서 미리 보기 / 광장에서 다시 보기] [나도 누군가에게 걸어 주기], the messages, and a
-// line about when and where it hangs.
+// line about when and where it hangs. A 점등식 board (a fixed start) keeps the before look until its start (giftrules.js revealAt,
+// pageLook): the lighting is the reveal, and the page turns into the board by itself at that second.
 function visit(g, { preview = false } = {}) {
   clear(); CUR = g;
   if (!preview) beacon(g.id, 'open');
   const O = OCCASIONS[g.occ] || OCCASIONS.bday;
-  const phase = () => { const t = now(); return t >= g.b ? 'after' : t >= g.a ? 'live' : t >= dayStart(g.day) ? 'day' : 'before'; };
+  const phase = () => pageLook(g, now(), CER_DEBUG);
   const back = preview ? h('button', { class: 'btn sm', type: 'button', onclick: () => board() }, '← 내 관리 화면으로') : null;
+  const cer = cerCard(g, preview ? '' : cerBackOnce()); // 점등식: under the countdown before the day, under the where line from the day
   if (phase() === 'before') {
-    const cd = live(h('div', { class: 'big count' }), () => { const d = dDay(g.day, now()); return d >= 1 ? 'D-' + d : countdown(dayStart(g.day) - now()); });
-    const prev = h('canvas', { class: 'preview', width: 1024, height: 576, 'aria-label': '전광판 미리보기' }); paintGift(prev, { ...g, msg: '그날 공개돼요 🤫', n: g.n });
+    const words = () => hiddenWords(g, now(), CER_DEBUG), w0 = words(); // a 점등식 board on its day counts to the lighting
+    const cd = live(h('div', { class: 'big count' }), () => words().count);
+    const label = live(h('div', { class: 'label', text: w0.label }), () => words().label), fine = live(h('p', { class: 'fine', text: w0.fine }), () => words().fine);
+    const prev = h('canvas', { class: 'preview', width: 1024, height: 576, 'aria-label': '전광판 미리보기' }); paintGift(prev, { ...g, msg: w0.hush, n: g.n });
     put(top(), back, h('div', { class: 'cols' },
       h('div', { class: 'sticky' }, h('h1', { text: O.emoji + ' ' + g.to + '님을 위한 선물 전광판' }), h('p', { class: 'sub', text: '뉴욕 타임스퀘어 가상 광장에 ' + windowText(g.a, g.b) + ' 걸려요.' }),
-        card(h('div', { class: 'label' }, '그날까지'), cd, h('p', { class: 'fine', text: dayText(g.day) + '이 되면 축하 영상과 친구들의 메시지가 함께 열려요.' })), prev),
+        card(label, cd, fine), cer, prev),
       h('div', {}, paperCard(g), cta(g))), foot());
+    // A 점등식 board: at its start the page becomes the board (the reveal), and at midnight of its day the hidden preview says the time.
+    // Any other board stays as it always was (the page built before 00:00 of its day stays until it is opened again).
+    if (CER_DEBUG || cerStart(g)) {
+      const turn = () => { if (!prev.isConnected) { TICK.delete(turn); return; } if (phase() !== 'before' || words().hush !== w0.hush) { TICK.delete(turn); visit(g, { preview }); } };
+      TICK.add(turn);
+    }
     return;
   }
   const st = stage(g, { auto: true });
   const saveNote = h('p', { class: 'okmsg', role: 'status' }), saveBtn = h('button', { class: 'btn', type: 'button', onclick: () => saveVideo(g, st, saveBtn, saveNote) }, '⬇ 영상 저장');
   // The plaza button: the visit while the board hangs; on its day before that and after its window the plaza shows it on this device only
-  // (gift.js land, giftrules.js plazaLook). The label follows the clock; this part of the page is only built from the day on.
+  // (gift.js land, giftrules.js plazaLook). The label follows the clock; this part of the page is only built from the day on (a 점등식
+  // board: from its start, so it never offers 광장에서 미리 보기).
   const go = h('a', { class: 'btn gold', href: '/?gb=' + g.id, onclick: (e) => { beacon(g.id, 'go'); toPlaza(e, 'go', g.id); } }, PLAZA_BTN[phase()] || PLAZA_BTN.live);
   live(go, () => PLAZA_BTN[phase()] || PLAZA_BTN.live);
   const where = h('p', { class: 'sub' });
@@ -441,9 +460,53 @@ function visit(g, { preview = false } = {}) {
   st.ends.add(() => { acts.hidden = false; skip.remove(); });
   const rp = twoTap(h('button', { class: 'linkbtn', type: 'button' }, '이 전광판 신고'), '한 번 더 누르면 신고해요', async () => { const r = await fetch('/rt/gift/' + g.id + '/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then((x) => x.json()).catch(() => null); rp.textContent = r?.ok ? '신고했어요' : '신고하지 못했어요'; rp.disabled = true; });
   put(top(), back, h('div', { class: 'cols' },
-    h('div', { class: 'sticky' }, h('h1', { text: O.emoji + ' ' + g.to + '님, ' + O.head + '!' }), where, st.box, acts.hidden ? skip : null, h('div', { style: 'height:10px' }), acts),
+    h('div', { class: 'sticky' }, h('h1', { text: O.emoji + ' ' + g.to + '님, ' + O.head + '!' }), where, cer, st.box, acts.hidden ? skip : null, h('div', { style: 'height:10px' }), acts),
     h('div', {}, card(h('h2', { text: '📺 광장에 걸린 글' }), h('p', { class: 'big', style: 'font-size:22px', text: 'To. ' + g.to }), h('p', { style: 'font-weight:800;margin:4px 0', text: g.msg || O.hint }), g.from ? h('p', { class: 'sub', text: 'From. ' + g.from }) : null, rp),
       paperCard(g), cta(g))), foot());
+}
+// 점등식: the button for a board with a fixed start (giftrules.js cerButton), with the line under it, or null. Before the window a tap says
+// when it opens and shares the invitation; inside it (and for the 2 lit minutes) a link to the plaza (over the plaza: a message to it);
+// at budget hard a button that says the plaza is busy. The 1-second ticker repaints the label, swaps the element when what it does
+// changes, and takes the whole thing away once the late window is over. why: the reason the plaza sent this visitor back, said once.
+function cerCard(g, why = '') {
+  const start = CER_DEBUG || cerStart(g);
+  const btnOf = () => (start ? cerButton(g, now(), { hard: HARD, start }) : null);
+  if (!btnOf()) return null;
+  const line = h('p', { class: 'okmsg', role: 'status' }), box = h('div', { class: 'cer' });
+  const href = (b) => b.href + (CER_DEBUG ? '&cerin=' + Math.round((start - now()) / 1000) : ''); // the seam goes on into the plaza
+  const invite = async () => {
+    say(line, CER_TEXT.early, true);
+    const inv = cerInvite(g, location.origin + '/g/' + g.id, start); if (!inv) return;
+    try { if (navigator.share) { await navigator.share(inv); return; } } catch (e) { if (e?.name === 'AbortError') return; }
+    try { await navigator.clipboard.writeText(inv.text + ' ' + inv.url); say(line, CER_TEXT.early + ' 초대 문구를 복사했어요. 카카오톡에 붙여 넣어 보내세요.', true); } catch { /* the line stays */ }
+  };
+  const make = (b) => {
+    if (b.act !== 'go') return h('button', { class: 'btn gold', type: 'button', onclick: () => (b.act === 'early' ? invite() : say(line, CER_TEXT.busy)) });
+    const a = h('a', { class: 'btn gold', href: href(b), onclick: (e) => { a.setAttribute('href', href(b)); beacon(g.id, 'go'); toPlaza(e, 'cer', g.id); } });
+    return a;
+  };
+  let act = '', ctl = null;
+  const paint = () => {
+    const b = btnOf();
+    if (!b) { box.remove(); return false; }
+    if (b.act !== act) { if (act) line.textContent = ''; act = b.act; ctl = make(b); box.replaceChildren(ctl, line); }
+    ctl.textContent = b.label;
+    if (b.act === 'go') ctl.setAttribute('href', href(b));
+    return true;
+  };
+  paint();
+  const run = () => { if (!box.isConnected || !paint()) TICK.delete(run); };
+  TICK.add(run);
+  if (why) say(line, CER_TEXT[why], true);
+  return box;
+}
+// ?cer=early|busy (the plaza sent this visitor back): the reason, read once; the address loses cer so a reload does not say it again.
+function cerBackOnce() {
+  const why = cerBackWhy(location.search);
+  if (why) {
+    try { const q = new URLSearchParams(location.search); q.delete('cer'); const s = q.toString(); history.replaceState(history.state, '', location.pathname + (s ? '?' + s : '') + (location.hash || '')); } catch { /* the address stays */ }
+  }
+  return why;
 }
 function cta(g) {
   return card(h('h2', { text: '🎁 나도 누군가에게' }), h('p', { class: 'sub', text: '친구의 생일, 합격, 기념일에 뉴욕 타임스퀘어 가상 광장의 전광판을 6시간 무료로 걸어 줄 수 있어요.' }),

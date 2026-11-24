@@ -352,8 +352,10 @@ describe('the reply board (답장 전광판) and the plaza replay', () => {
     const g = { id: 'cccccccc', day: '2026-11-25', a: KST('2026-11-25T18:00:00'), b: KST('2026-11-26T00:00:00') };
     assert.equal(plazaLook(g, KST('2026-11-24T12:00:00')), 'wait');
     assert.equal(plazaLook(g, KST('2026-11-24T23:59:59')), 'wait');
-    assert.equal(plazaLook(g, KST('2026-11-25T00:00:00')), 'replay', 'the day has come: a preview');
-    assert.equal(plazaLook(g, KST('2026-11-25T10:00:00')), 'replay');
+    // 점등식 (2026-11-24): an 18:00 board is a ceremony board; it is not previewed before its lighting. A board without a fixed start
+    // still is, from its day (the G6 tests).
+    assert.equal(plazaLook(g, KST('2026-11-25T00:00:00')), 'wait', 'the day has come, but not the lighting');
+    assert.equal(plazaLook(g, KST('2026-11-25T10:00:00')), 'wait');
     assert.equal(plazaLook(g, g.a), 'live'); assert.equal(plazaLook(g, KST('2026-11-25T19:00:00')), 'live');
     assert.equal(plazaLook(g, g.b), 'replay', 'the window is over, the page lives');
     assert.equal(plazaLook(g, KST('2026-11-28T12:00:00')), 'replay');
@@ -372,7 +374,9 @@ describe('the reply board (답장 전광판) and the plaza replay', () => {
     assert.equal(plazaNote(g, 'replay', KST('2026-11-28T12:00:00')), '🎁 민지님을 위한 선물 전광판이에요 · 이 기기에서만 다시 보여 드려요');
   });
   it('the recipient page\'s plaza button follows the clock: a preview on the day, the visit while it hangs, a replay after; none before the day', async () => {
-    const g = view();
+    // A window that is not a start hour (no 점등식): the day view before the window offers the preview. An 18:00 board (a 점등식) shows
+    // the before look until 18:00 (the G6 tests) and so never offers it.
+    const g = view({ a: KST('2026-11-25T18:20:00'), b: KST('2026-11-26T00:20:00') });
     let P = pageOf(g, KST('2026-11-25T10:00:00'));
     try {
       await P.load('giftpage.js'); await P.press(P.btn(/영상 건너뛰기/));
@@ -382,6 +386,8 @@ describe('the reply board (답장 전광판) and the plaza replay', () => {
       P.skew += 6 * 36e5; P.tick(); assert.equal(go.textContent, '🗽 광장에서 다시 보기'); // 01:00, the window is over
       await P.press(go); assert.equal(P.seen(g.id, 'go'), true, 'counted as before');
     } finally { P.done(); }
+    P = pageOf(view(), KST('2026-11-25T18:00:00'));
+    try { await P.load('giftpage.js'); await P.press(P.btn(/영상 건너뛰기/)); assert.equal(P.btn(/^🗽/).textContent, '🗽 직접 가서 보기', 'an 18:00 board: the visit from its start'); } finally { P.done(); }
     P = pageOf(view({ phase: 'before' }), KST('2026-11-24T12:00:00'));
     try { await P.load('giftpage.js'); assert.deepEqual(P.heads('h1'), ['🎂 민지님을 위한 선물 전광판']); assert.equal(P.btn(/^🗽/), null); assert.equal(P.btn(/답장|고마워 전광판/), null, 'nothing to answer before the day'); } finally { P.done(); }
   });
@@ -405,10 +411,16 @@ describe('the reply board (답장 전광판) and the plaza replay', () => {
       assert.deepEqual(P.notes.map((n) => [n.t, n.k]), [['🎁 민지님을 위한 선물 전광판이에요 · 이 기기에서만 다시 보여 드려요', 'ok']]);
       assert.equal(P.loc.search, '', 'the link is used up');
     } finally { P.done(); }
+    P = await plaza({ at: KST('2026-11-25T10:00:00'), gift: view({ phase: 'day', a: KST('2026-11-25T18:20:00'), b: KST('2026-11-26T00:20:00') }) }); // no fixed start
+    try {
+      P.gift.arrive(); await P.settle(); await P.timers();
+      assert.deepEqual(P.calls, SHOWN); assert.equal(P.notes[0].t, '🎁 민지님을 위한 선물 전광판이에요 · 광장에는 저녁 6시 20분에 걸려요');
+    } finally { P.done(); }
+    // 점등식 (an 18:00 board) on its day before the start: no preview with the message, only when it hangs (as before the day).
     P = await plaza({ at: KST('2026-11-25T10:00:00'), gift: view({ phase: 'day' }) });
     try {
       P.gift.arrive(); await P.settle(); await P.timers();
-      assert.deepEqual(P.calls, SHOWN); assert.equal(P.notes[0].t, '🎁 민지님을 위한 선물 전광판이에요 · 광장에는 저녁 6시에 걸려요');
+      assert.deepEqual(P.calls, []); assert.deepEqual(P.notes.map((n) => [n.t, n.k]), [['이 선물 전광판은 11월 25일 (수) 저녁 6시 ~ 자정에 걸려요', 'ok']]);
     } finally { P.done(); }
     // Hanging now: the world's own copy (no day in it) is enough, nothing is fetched; the same from the frame's "직접 가서 보기".
     P = await plaza({ at: KST('2026-11-25T19:00:00'), search: '', list: [{ id: g.id, to: g.to, from: g.from, occ: g.occ, msg: g.msg, th: g.th, scr: g.scr, a: g.a, b: g.b, n: 0 }] });
@@ -586,6 +598,238 @@ describe('the reply notice opens the board as its owner on any device of the acc
   it('without ?o=1 a device that did not make the board does not ask as the owner (as before)', async () => {
     const P = pageOf(g, KST('2026-11-25T19:00:00'), { respond: () => null });
     try { await P.load('giftpage.js'); assert.equal(P.sent.some((x) => x.url === '/rt/gift/' + g.id && x.auth), false); } finally { P.done(); }
+  });
+});
+
+// ---- 점등식 on the recipient page (giftpage.js), the owner's share line, the admin columns -------------------------------------------
+import { CER_TEXT, cerInvite, cerButton, revealAt, pageLook, hiddenWords } from '../giftrules.js';
+describe('점등식 on the recipient page', () => {
+  const g = view(), ID = g.id, URL_ = 'https://sq.example/g/' + ID; // the 25th, 18:00: a fixed start
+  const cerBox = (P) => P.all('div').find((n) => n.className === 'cer') || null;
+  const cerCtl = (P) => cerBox(P)?.kids[0] || null;
+  const cerLine = (P) => cerBox(P)?.kids[1] || null;
+  const sticky = (P) => P.all('div').find((n) => n.className === 'sticky');
+  it('the pure button and invitation take the localhost seam\'s start in place of the board\'s', () => {
+    const at = KST('2026-11-20T12:00:00');
+    assert.equal(cerButton(g, at).act, 'early');
+    const b = cerButton(g, at, { start: at + 75000 });
+    assert.deepEqual(b, { label: '🎆 점등식 들어가기 · 01:15 남음', act: 'go', href: '/?gb=' + ID + '&cer=1' });
+    assert.equal(cerButton(view({ a: KST('2026-11-25T12:20:00') }), at, { start: at - 30000 }).act, 'go', 'any board, even a "지금" one');
+    assert.deepEqual(cerInvite(g, URL_, 0), cerInvite(g, URL_));
+    assert.match(cerInvite(g, URL_, KST('2026-11-20T12:01:15')).text, /^11월 20일 12:01, /);
+  });
+  it('before the day: a gold button under the countdown; a tap says 10분 전부터 and opens the share sheet with the invitation', async () => {
+    const P = pageOf(g, KST('2026-11-20T12:00:00'));
+    try {
+      globalThis.navigator.share = async (o) => { P.shared.push(o); };
+      await P.load('giftpage.js');
+      const ctl = cerCtl(P), box = cerBox(P), col = sticky(P);
+      assert.ok(ctl, 'the ceremony button');
+      assert.deepEqual([ctl.tag, ctl.className, ctl.textContent, ctl.attrs.type], ['button', 'btn gold', '🎆 점등식 같이 보기 · 11월 25일 18:00', 'button']);
+      assert.equal(col.kids[col.kids.indexOf(box) - 1].className, 'card', 'right under the countdown card');
+      assert.equal(col.kids[col.kids.indexOf(box) + 1].tag, 'canvas', 'above the preview');
+      assert.equal(cerLine(P).textContent, '');
+      await P.press(ctl);
+      assert.equal(cerLine(P).textContent, CER_TEXT.early); assert.equal(cerLine(P).attrs.role, 'status');
+      assert.deepEqual(P.shared, [cerInvite(g, URL_)]);
+      assert.equal(P.shared[0].title, '🎆 민지님 선물 전광판 점등식');
+      assert.equal(P.loc.went, undefined, 'nothing navigates');
+    } finally { P.done(); }
+  });
+  it('without a share sheet the invitation is copied; a sheet the person closes says nothing more', async () => {
+    let P = pageOf(g, KST('2026-11-20T12:00:00'));
+    try {
+      await P.load('giftpage.js'); await P.press(cerCtl(P));
+      const inv = cerInvite(g, URL_);
+      assert.deepEqual(P.copied, [inv.text + ' ' + inv.url]);
+      assert.equal(cerLine(P).textContent, CER_TEXT.early + ' 초대 문구를 복사했어요. 카카오톡에 붙여 넣어 보내세요.');
+    } finally { P.done(); }
+    P = pageOf(g, KST('2026-11-20T12:00:00'));
+    try {
+      globalThis.navigator.share = async () => { throw Object.assign(new Error('closed'), { name: 'AbortError' }); };
+      await P.load('giftpage.js'); await P.press(cerCtl(P));
+      assert.deepEqual(P.copied, []); assert.equal(cerLine(P).textContent, CER_TEXT.early);
+    } finally { P.done(); }
+  });
+  it('inside the window: a link into the plaza whose time left ticks; in the board\'s own view it stands under the where line while the rest waits for the film', async () => {
+    let P = pageOf(g, KST('2026-11-25T17:50:00'));
+    try {
+      await P.load('giftpage.js');
+      const ctl = cerCtl(P), col = sticky(P);
+      assert.deepEqual([ctl.tag, ctl.className, ctl.href, ctl.textContent], ['a', 'btn gold', '/?gb=' + ID + '&cer=1', '🎆 점등식 들어가기 · 10:00 남음']);
+      P.skew += 1000; P.tick();
+      assert.equal(cerCtl(P).textContent, '🎆 점등식 들어가기 · 09:59 남음');
+      // G6: a 점등식 board keeps the before look until its start, so before 18:00 the button stands under the countdown card.
+      assert.equal(col.kids[col.kids.indexOf(cerBox(P)) - 1].className, 'card');
+      await P.press(cerCtl(P));
+      assert.equal(P.seen(ID, 'go'), true, 'the plaza button\'s beacon'); assert.deepEqual(P.posted, []);
+    } finally { P.done(); }
+    P = pageOf(g, KST('2026-11-25T18:00:30')); // the lit minutes: the board's own view
+    try {
+      await P.load('giftpage.js');
+      const ctl = cerCtl(P), col = sticky(P);
+      const box = cerBox(P), where = col.kids[col.kids.indexOf(box) - 1];
+      assert.deepEqual([where.tag, where.className], ['p', 'sub'], 'directly under the where line');
+      assert.ok(col.kids.indexOf(box) < col.kids.indexOf(col.kids.find((n) => /^stage/.test(n.className))), 'above the film');
+      const acts = col.kids.find((n) => n.className === 'stack');
+      assert.equal(acts.hidden, true, 'the other buttons wait for the film'); assert.equal(P.shown(ctl), true);
+    } finally { P.done(); }
+  });
+  it('the first two minutes after the start: 방금 켜졌어요; then no button, and the page as before', async () => {
+    let P = pageOf(g, KST('2026-11-25T18:00:30'));
+    try { await P.load('giftpage.js'); assert.deepEqual([cerCtl(P).tag, cerCtl(P).textContent], ['a', '🎆 방금 켜졌어요 · 점등식 보러 가기']); } finally { P.done(); }
+    P = pageOf(g, KST('2026-11-25T18:01:59.500'));
+    try {
+      await P.load('giftpage.js'); assert.ok(cerCtl(P));
+      P.skew += 1000; P.tick();
+      assert.equal(cerBox(P), null, 'gone once the late window is over'); assert.equal(P.btn(/점등식/), null);
+      assert.ok(P.btn(/직접 가서 보기/) || P.btn(/영상 건너뛰기/), 'the ordinary page stays');
+    } finally { P.done(); }
+    P = pageOf(g, KST('2026-11-25T18:02:00'));
+    try { await P.load('giftpage.js'); assert.equal(cerBox(P), null); assert.equal(P.btn(/점등식/), null); } finally { P.done(); }
+  });
+  it('a "지금" board, a page without data and a gone board have no ceremony button', async () => {
+    const now = view({ a: KST('2026-11-25T12:20:00'), b: KST('2026-11-25T18:20:00') });
+    let P = pageOf(now, KST('2026-11-25T12:30:00'));
+    try { await P.load('giftpage.js'); assert.equal(cerBox(P), null); assert.equal(P.btn(/점등식/), null); } finally { P.done(); }
+    P = pageOf(view({ phase: 'gone' }), KST('2026-11-25T17:55:00'));
+    try { await P.load('giftpage.js'); assert.equal(cerBox(P), null); } finally { P.done(); }
+    P = fakeDom({ path: '/g/' + ID, data: null, at: KST('2026-11-25T17:55:00') });
+    try { await P.load('giftpage.js'); assert.equal(P.loc.reloads, 1, 'as before: no data, the page asks again'); assert.equal(cerBox(P), null); } finally { P.done(); }
+  });
+  it('budget hard (the page data says hard): the label stays, the button enters nothing and says the plaza is busy', async () => {
+    const P = fakeDom({ path: '/g/' + ID, data: { id: ID, gift: g, now: KST('2026-11-25T17:55:00'), media: false, hard: true }, at: KST('2026-11-25T17:55:00'), store: { masil_gt: GUEST() } });
+    try {
+      await P.load('giftpage.js');
+      const ctl = cerCtl(P);
+      assert.deepEqual([ctl.tag, ctl.className, ctl.textContent, ctl.href || ''], ['button', 'btn gold', '🎆 점등식 들어가기 · 05:00 남음', '']);
+      await P.press(ctl);
+      assert.equal(cerLine(P).textContent, CER_TEXT.busy); assert.equal(cerLine(P).attrs.role, 'alert');
+      assert.equal(P.loc.went, undefined); assert.deepEqual(P.posted, []); assert.equal(P.seen(ID, 'go'), false);
+    } finally { P.done(); }
+  });
+  it('sent back from the plaza (?cer=busy, ?cer=early): the reason once under the button, and the address drops cer', async () => {
+    for (const [why, at] of [['busy', KST('2026-11-25T17:55:00')], ['early', KST('2026-11-25T17:30:00')]]) {
+      const P = pageOf(g, at, { search: '?cer=' + why });
+      try {
+        await P.load('giftpage.js');
+        assert.equal(cerLine(P).textContent, CER_TEXT[why], why); assert.equal(cerLine(P).attrs.role, 'status');
+        assert.equal(P.loc.search, '', 'a reload does not say it again'); assert.equal(P.loc.pathname, '/g/' + ID);
+      } finally { P.done(); }
+    }
+    const P = pageOf(g, KST('2026-11-25T17:55:00'), { search: '?cer=nope' });
+    try { await P.load('giftpage.js'); assert.equal(cerLine(P).textContent, ''); assert.equal(P.loc.search, '?cer=nope', 'not a reason: left alone'); } finally { P.done(); }
+  });
+  it('over the plaza (?in=1): the button tells the plaza instead of loading a second one', async () => {
+    const P = pageOf(g, KST('2026-11-25T17:55:00'), { search: '?in=1', embed: true });
+    try {
+      await P.load('giftpage.js');
+      await P.press(cerCtl(P));
+      assert.deepEqual(P.posted, [{ t: 'gift', act: 'cer', id: ID }]);
+    } finally { P.done(); }
+  });
+  it('the owner\'s 공유하기 adds the ceremony line until the start; a "지금" board never has it; admin lists the two beacons', async () => {
+    const LINE = ' 🎆 점등식 11월 25일 18:00에 같이 봐요!', BASE = '🎂 민지님을 위한 선물 전광판이 뉴욕 타임스퀘어 가상 광장에 걸려요! 친구들 메시지도 남겨 주세요 👉';
+    const owned = (b, at, made = KST('2026-11-20T10:00:00')) => pageOf(b, at, { store: { masil_gt: GUEST(), kts_gmine: JSON.stringify([b.id]) },
+      respond: (u) => (u === '/rt/gift/' + b.id ? { ok: true, gift: b, own: true, mine: { kids: 0, vd: 0, at: made, lk: 1 }, media: false } : u.endsWith('/interest') ? { ok: true } : null) });
+    const shareText = async (b, at, made, sheet = true) => {
+      const P = owned(b, at, made);
+      try {
+        if (sheet) globalThis.navigator.share = async (o) => { P.shared.push(o); };
+        await P.load('giftpage.js'); await P.press(P.btn(/^공유하기$/));
+        return sheet ? P.shared[0].text : P.copied[0];
+      } finally { P.done(); }
+    };
+    assert.equal(await shareText(g, KST('2026-11-24T12:00:00')), BASE + LINE, 'D-1: the line after the sentence, before the address');
+    assert.equal(await shareText(g, KST('2026-11-24T12:00:00'), undefined, false), BASE + LINE + ' ' + URL_, 'copied: the line, then the address');
+    assert.equal(await shareText(g, KST('2026-11-25T18:05:00')), BASE, 'after the start: without it');
+    const now = view({ a: KST('2026-11-25T12:00:00'), b: KST('2026-11-25T18:00:00') });
+    assert.equal(await shareText(now, KST('2026-11-25T12:05:00'), KST('2026-11-25T12:04:00')), BASE, 'made at its start ("지금" in the first 10 minutes after 12:00): the owner\'s read says so');
+    assert.equal(await shareText(view({ a: KST('2026-11-25T12:20:00'), b: KST('2026-11-25T18:20:00') }), KST('2026-11-25T12:21:00'), KST('2026-11-25T12:20:30')), BASE);
+    assert.match(src('admin-gift.js'), /\['ev:go', '직접 가서 봄'\], \['ev:cer', '점등식 온 기기'\], \['ev:cershot', '단체 사진 저장·공유'\], /);
+  });
+  it('the localhost seam: ?cerin=<s> on a local host runs the button against a start that far from load and carries the seconds on; elsewhere nothing', async () => {
+    const at = KST('2026-11-20T12:00:00'), on = async (host, search) => { const P = pageOf(g, at, { search }); P.loc.hostname = host; await P.load('giftpage.js'); return P; };
+    let P = await on('localhost', '?cerin=75');
+    try {
+      assert.deepEqual([cerCtl(P).tag, cerCtl(P).textContent, cerCtl(P).href], ['a', '🎆 점등식 들어가기 · 01:15 남음', '/?gb=' + ID + '&cer=1&cerin=75']);
+      P.skew += 1000; P.tick();
+      assert.deepEqual([cerCtl(P).textContent, cerCtl(P).href], ['🎆 점등식 들어가기 · 01:14 남음', '/?gb=' + ID + '&cer=1&cerin=74']);
+    } finally { P.done(); }
+    P = await on('127.0.0.1', '?cerin=-30');
+    try { assert.deepEqual([cerCtl(P).textContent, cerCtl(P).href], ['🎆 방금 켜졌어요 · 점등식 보러 가기', '/?gb=' + ID + '&cer=1&cerin=-30']); } finally { P.done(); }
+    P = await on('plaza.localhost', '?cerin=700');
+    try { assert.deepEqual([cerCtl(P).tag, cerCtl(P).textContent], ['button', '🎆 점등식 같이 보기 · 11월 20일 12:11']); } finally { P.done(); }
+    P = await on('studio.wishboard.workers.dev', '?cerin=75');
+    try { assert.deepEqual([cerCtl(P).tag, cerCtl(P).textContent], ['button', '🎆 점등식 같이 보기 · 11월 25일 18:00'], 'the real phase'); assert.equal(cerCtl(P).href || '', ''); } finally { P.done(); }
+    P = pageOf(g, KST('2026-11-25T17:55:00'), { search: '?cerin=75' }); P.loc.hostname = 'studio.wishboard.workers.dev';
+    try { await P.load('giftpage.js'); assert.equal(cerCtl(P).href, '/?gb=' + ID + '&cer=1', 'no cerin on the live site'); } finally { P.done(); }
+  });
+});
+
+describe('점등식: a ceremony board stays hidden until the lighting (G6)', () => {
+  const g = view(), A = g.a; // 18:00 on the 25th
+  const now = view({ a: KST('2026-11-25T12:20:00'), b: KST('2026-11-25T18:20:00') }); // a "지금" board (no fixed start)
+  const plain = { id: 'pppppppp', day: '2026-11-25', a: KST('2026-11-25T12:20:00'), b: KST('2026-11-25T18:20:00') };
+  it('the reveal time and the page\'s view: the start for a ceremony board, 00:00 of the day for any other', () => {
+    assert.equal(revealAt(g), A); assert.equal(revealAt(now), KST('2026-11-25T00:00:00')); assert.equal(revealAt(g, 12345), 12345, 'the localhost seam');
+    for (const [t, want] of [['2026-11-24T12:00:00', 'before'], ['2026-11-25T00:00:00', 'before'], [A - 1, 'before'], [A, 'live'], [g.b - 1, 'live'], [g.b, 'after'], ['2026-11-28T12:00:00', 'after']]) {
+      const at = typeof t === 'number' ? t : KST(t);
+      assert.equal(pageLook(g, at), want, String(t));
+    }
+    assert.equal(pageLook(now, KST('2026-11-24T23:59:59')), 'before'); assert.equal(pageLook(now, KST('2026-11-25T00:00:00')), 'day', '"지금": the day as before');
+    assert.equal(pageLook(now, now.a), 'live');
+    assert.equal(plazaLook(g, KST('2026-11-25T00:00:00')), 'wait', 'no preview in the plaza before the lighting'); assert.equal(plazaLook(g, A - 1), 'wait');
+    assert.equal(plazaLook(g, A), 'live'); assert.equal(plazaLook(g, g.b), 'replay', 'after the window: the replay as before');
+    assert.equal(plazaLook(plain, KST('2026-11-25T00:00:00')), 'replay', 'no fixed start: the preview from the day as before');
+  });
+  it('the words of the hidden view: D-1, 00:00 of the day, five minutes before; a board without a fixed start keeps today\'s', () => {
+    assert.deepEqual(hiddenWords(g, KST('2026-11-24T12:00:00')), { label: '그날까지', count: 'D-1', fine: '11월 25일 (수) 18:00에 전광판이 켜지면 축하 영상이 함께 열려요.', hush: '그날 공개돼요 🤫' });
+    assert.deepEqual(hiddenWords(g, KST('2026-11-25T00:00:00')), { label: '켜지기까지', count: '18시간 0분', fine: '오늘 18:00에 전광판이 켜지면 축하 영상이 함께 열려요.', hush: '18:00에 공개돼요 🤫' });
+    assert.deepEqual(hiddenWords(g, KST('2026-11-25T17:55:00')), { label: '켜지기까지', count: '5분 0초', fine: '오늘 18:00에 전광판이 켜지면 축하 영상이 함께 열려요.', hush: '18:00에 공개돼요 🤫' });
+    assert.deepEqual(hiddenWords(now, KST('2026-11-23T12:00:00')), { label: '그날까지', count: 'D-2', fine: '11월 25일 (수)이 되면 축하 영상과 친구들의 메시지가 함께 열려요.', hush: '그날 공개돼요 🤫' });
+  });
+  const stageOf = (P) => P.all('div').find((n) => /^stage/.test(n.className)) || null;
+  const cerCtl = (P) => P.all('div').find((n) => n.className === 'cer')?.kids[0];
+  const words = (P) => { const c = P.all('section').find((n) => n.kids[0]?.className === 'label'); return c ? [c.kids[0].textContent, c.kids[1].textContent, c.kids[2].textContent] : null; };
+  it('on its day before the start a visitor sees the before look: no film, no message, the countdown to the lighting and the ceremony button', async () => {
+    for (const [t, want] of [['2026-11-25T00:00:00', ['켜지기까지', '18시간 0분', '오늘 18:00에 전광판이 켜지면 축하 영상이 함께 열려요.']], ['2026-11-25T17:55:00', ['켜지기까지', '5분 0초', '오늘 18:00에 전광판이 켜지면 축하 영상이 함께 열려요.']],
+      ['2026-11-24T12:00:00', ['그날까지', 'D-1', '11월 25일 (수) 18:00에 전광판이 켜지면 축하 영상이 함께 열려요.']]]) {
+      const P = pageOf(g, KST(t));
+      try {
+        await P.load('giftpage.js');
+        assert.deepEqual(P.heads('h1'), ['🎂 민지님을 위한 선물 전광판'], t);
+        assert.equal(stageOf(P), null, 'no film'); assert.equal(P.says(/생일 축하해!/), false, 'the message is nowhere on the page');
+        assert.equal(P.heads().includes('📺 광장에 걸린 글'), false); assert.equal(P.btn(/^🗽/), null, 'no plaza preview');
+        assert.equal(P.btn(/답장|고마워 전광판/), null); assert.ok(P.btn(/점등식/), 'the ceremony button');
+        P.tick(); assert.deepEqual(words(P), want, t);
+      } finally { P.done(); }
+    }
+  });
+  it('at the start the page turns into the board by itself (the lighting is the reveal); from then on it is today\'s page', async () => {
+    let P = pageOf(g, KST('2026-11-25T17:59:59.500'));
+    try {
+      await P.load('giftpage.js'); assert.equal(stageOf(P), null);
+      P.skew += 1000; P.tick();
+      assert.ok(stageOf(P), 'the film'); assert.ok(P.heads().includes('📺 광장에 걸린 글')); assert.equal(P.says(/^생일 축하해!$/), true);
+      assert.equal(cerCtl(P).textContent, '🎆 방금 켜졌어요 · 점등식 보러 가기');
+      await P.press(P.btn(/영상 건너뛰기/)); assert.equal(P.btn(/^🗽/).textContent, '🗽 직접 가서 보기');
+    } finally { P.done(); }
+    P = pageOf(g, KST('2026-11-26T09:00:00'));
+    try { await P.load('giftpage.js'); assert.ok(stageOf(P)); } finally { P.done(); }
+  });
+  it('a board without a fixed start on its day, and the owner\'s own page, are as they were; the owner\'s "what the recipient sees" follows the recipient', async () => {
+    let P = pageOf(now, KST('2026-11-25T12:10:00'));
+    try { await P.load('giftpage.js'); assert.ok(stageOf(P), '"지금" on its day: the film as before'); assert.equal(P.says(/^생일 축하해!$/), true); } finally { P.done(); }
+    P = pageOf(g, KST('2026-11-25T10:00:00'), { store: { masil_gt: GUEST(), kts_gmine: JSON.stringify([g.id]) },
+      respond: (u) => (u === '/rt/gift/' + g.id ? { ok: true, gift: g, own: true, mine: { kids: 0, vd: 0, at: 1, lk: 1 }, media: false } : u.endsWith('/interest') ? { ok: true } : null) });
+    try {
+      await P.load('giftpage.js');
+      assert.ok(stageOf(P), 'the owner\'s preview film'); assert.ok(P.heads().includes('🔗 링크 보내기'));
+      await P.press(P.btn(/받는 사람에게 보이는 화면/));
+      assert.deepEqual(P.heads('h1'), ['🎂 민지님을 위한 선물 전광판']); assert.equal(stageOf(P), null, 'what a recipient sees now');
+      assert.ok(P.btn(/내 관리 화면으로/));
+    } finally { P.done(); }
   });
 });
 
@@ -880,7 +1124,12 @@ describe('the gift pages on a phone: what the page script builds (giftpage.js)',
     P = pageOf(view({ paper: [{ id: 'p00001', nick: '친구', txt: '축하해' }] }), AT);
     try { await P.load('giftpage.js'); await P.press(P.btn(/영상 건너뛰기/)); assert.ok(P.btn(/^신고$/)); sweep(P, 'the recipient page'); } finally { P.done(); }
     P = pageOf(view({ phase: 'before' }), KST('2026-11-24T12:00:00'));
-    try { await P.load('giftpage.js'); sweep(P, 'the page before the day'); } finally { P.done(); }
+    try { await P.load('giftpage.js'); assert.ok(P.btn(/점등식 같이 보기/), 'the ceremony button before the day'); sweep(P, 'the page before the day'); } finally { P.done(); }
+    // 점등식 inside its window: the link into the plaza, and the button that says the plaza is busy (budget hard).
+    for (const hard of [false, true]) {
+      P = fakeDom({ path: '/g/abcd1234', data: { id: 'abcd1234', gift: view(), now: KST('2026-11-25T17:55:00'), media: false, ...(hard ? { hard } : {}) }, at: KST('2026-11-25T17:55:00'), store: { masil_gt: GUEST() } });
+      try { await P.load('giftpage.js'); assert.equal(P.btn(/점등식 들어가기/).tag, hard ? 'button' : 'a'); sweep(P, 'the page in the ceremony window' + (hard ? ' at budget hard' : '')); } finally { P.done(); }
+    }
     P = fakeDom({ path: '/g/abcd1234', data: { id: 'abcd1234', gift: null, now: AT, media: false }, at: AT });
     try { await P.load('giftpage.js'); assert.deepEqual(P.heads('h1'), ['기념 페이지가 끝났거나 가려졌어요']); sweep(P, 'the page that is gone'); } finally { P.done(); }
     assert.deepEqual([...seen].sort(), Object.keys(RULE).sort(), 'and every kind of control was met');
