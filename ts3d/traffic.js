@@ -1356,8 +1356,8 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk, 
     const p = hit.seg, L = segLen(p), na = G.nodeAt(R.xs[p], R.zs[p]), nb = G.nodeAt(R.xs[p + 1], R.zs[p + 1]);
     const lo = (na == null ? 0 : junctionR[na]) + CAR_HL + 4, hi = L - (nb == null ? 0 : junctionR[nb]) - CAR_HL - 4;
     let s = lo < hi ? Math.max(lo, Math.min(hi, hit.t * L)) : L / 2;
-    // and not across the way in to the lots' street (the 건물 구역 stand is right in front of the arch): the nearest
-    // place along this curb that leaves the arch's whole span clear, so the cab waits beside the entrance
+    // and not across the way in to the lots' street (no stand is there now, but a stand near it would pull its cab in
+    // front of the arch): the nearest place along this curb that leaves the arch's whole span clear
     const kx = R.xs[p] - tz * off, kz = R.zs[p] + tx * off; // the curb line at the segment's start
     const inWay = (at) => cabInRect(mouth, kx + hit.fx * at, kz + hit.fz * at, tx, tz) || cabInRect(NO_ROAD, kx + hit.fx * at, kz + hit.fz * at, tx, tz);
     if (inWay(s)) {

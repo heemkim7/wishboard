@@ -327,11 +327,19 @@ describe('the floating stack: the hint, a far-board card, 홈 화면 추가, a b
     assert.ok(46 >= 8 + px(rule(css, 'html.touch .news'), 'height') + 8);
     assert.equal(182, 174 + 8);
     const pill = rule(PHONE_UP, 'html.touch .waypill');
-    assert.equal(px(pill, 'top'), 174 + 6);
+    // under the tiles (174px) and under the 속보 slot: a named pill is wider than the room beside the line, so it never
+    // shares its rows. --hudl-b + 8 + 30 is the line's bottom, then 6px and the 3px its taps reach over it (::before).
+    assert.match(pill, /top: max\(calc\(180px \+ var\(--safe-t\)\), calc\(var\(--hudl-b, 142px\) \+ 47px\)\);/);
+    assert.equal(180, 174 + 6);
+    assert.equal(47, 8 + px(rule(css, 'html.touch .news'), 'height') + 6 + 3);
+    assert.match(rule(css, 'html.touch .waypill::before'), /content: ''; position: absolute; inset: -3px 0;/);
+    assert.equal(38 + 2 * 3, 44);
     assert.equal(px(pill, 'right'), 8);
     assert.match(pill, /bottom: auto; left: auto;/);
-    assert.match(rule(PHONE_UP, 'html.touch body:has(#ui > .waypill:not([hidden])) .toasts'), /--stack-top: max\(calc\(var\(--hudl-b, 142px\) \+ 46px\), calc\(226px \+ var\(--safe-t\)\)\);/);
-    assert.equal(226, px(pill, 'top') + 38 + 8);
+    // the stack starts 8px under the pill, wherever the pill is
+    assert.match(rule(PHONE_UP, 'html.touch body:has(#ui > .waypill:not([hidden])) .toasts'), /--stack-top: max\(calc\(var\(--hudl-b, 142px\) \+ 93px\), calc\(226px \+ var\(--safe-t\)\)\);/);
+    assert.equal(226, 180 + 38 + 8);
+    assert.equal(93, 47 + 38 + 8);
     // a 640px tall phone: a three-line notice (about 70px) from 190px ends by 260px, above the avatar's head (about 300px down)
     assert.ok(190 + 70 <= 300);
     // the stack's top is a variable set by the states (pill, taxi), so a sheet's own rule for `top` still wins

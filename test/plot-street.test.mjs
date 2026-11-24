@@ -15,6 +15,7 @@ import {
 } from '../ts3d/layout.js';
 import { createNYC, ROAD } from '../ts3d/nyc.js';
 import { boardVantage, facesBlock, portraitFov } from '../camrig.js';
+import { BALANCE } from '../balance.js';
 
 register(new URL('./nine-three-hook.mjs', import.meta.url)); // 'three' -> the vendored build, so ts3d/landmarks.js loads in Node
 
@@ -422,7 +423,7 @@ describe('the street is free from the entrance to the stage', () => {
     near(Math.abs(lotPost(one).x - S.x) - lotPost(one).r, 12.26, 'post', 0.01);
     for (const s of PLOT_SLOTS) for (const piece of [...outline(s), ...LEVELS.map((l) => footAt(s, l))]) assert.ok(toCentre(piece) > S.half + 0.25, 'lot ' + s.id);
   });
-  it('the entrance arch: two posts either side of the street at its north end, the 건물 구역 stand 2 m before it', () => {
+  it('the entrance arch: two posts either side of the street at its north end, and a jump to the street lands 1 m before it, facing down it', () => {
     const posts = streetPosts().filter((p) => p.arch);
     assert.deepEqual(posts.map((p) => [p.arch, p.x, p.z]), [[-1, -10.7, 262], [1, 10.7, 262]]);
     for (const p of posts) {
@@ -430,23 +431,47 @@ describe('the street is free from the entrance to the stage', () => {
       assert.ok(inside(square(p), PAD));
       for (const s of PLOT_SLOTS) for (const piece of outline(s)) assert.equal(cross(boxAt(square(p)), piece), false);
     }
-    // north of it: the 건물 구역 stand on the centre line, between the arch and the roadway of W 42nd St (whose south
-    // edge is at z 258.7: the map test below measures it), and the point a jump to the lots aims at, between the two
-    const stand = TAXI_STANDS.find((t) => t.name === '건물 구역');
-    assert.deepEqual([stand.x, stand.z], [S.x, S.z0 - 2]);
-    assert.equal(stand.z, 260);
+    // north of it, on the centre line between the arch and the roadway of W 42nd St (whose south edge is at z 258.7:
+    // the map test below measures it): the point a jump to the lots aims at
     assert.deepEqual(S.entry, { x: S.x, z: 261 });
-    assert.ok(S.entry.z > stand.z && S.entry.z < S.z0);
+    assert.ok(S.entry.z > 258.7 + 2 && S.entry.z < S.z0);
     assert.ok(insideLoop(S.entry.x, S.entry.z, 4));
-    // a jump to the entry lands on the stand, facing south, down the street: timesSquare3d.js approachOf takes the
-    // nearest of its spots within 6 m, and the stand is 1 m away
-    assert.ok(Math.hypot(S.entry.x - stand.x, S.entry.z - stand.z) <= 1);
-    assert.match(read('timesSquare3d.js'), /\.\.\.TAXI_STANDS\.map\(\(s\) => \(\{ x: s\.x, z: s\.z, yaw: s\.axis === 'x' \? Math\.PI \/ 2 : 0 \}\)\),/);
-    assert.match(read('timesSquare3d.js'), /if \(d < 6 && \(!best \|\| d < best\.d\)\) best = \{ \.\.\.s, d \};/);
-    assert.equal(stand.axis, 'z');
-    for (const t of TAXI_STANDS) if (t !== stand) assert.ok(Math.hypot(t.x - S.entry.x, t.z - S.entry.z) > 100);
-    // the stand's post is not in the way of the arch's posts or of a lot
-    for (const p of posts) assert.ok(Math.hypot(p.x - stand.x, p.z - stand.z) > 10);
+    // a jump to the entry lands on it facing south (yaw 0), down the street: timesSquare3d.js approachOf takes the
+    // nearest of its spots within 6 m, and the entry is one of them. No stand is within 6 m to pull the jump aside.
+    const w = read('timesSquare3d.js');
+    assert.match(w, /\{ x: LAYOUT\.street\.entry\.x, z: LAYOUT\.street\.entry\.z, yaw: 0 \},/);
+    assert.match(w, /\.\.\.TAXI_STANDS\.map\(\(s\) => \(\{ x: s\.x, z: s\.z, yaw: s\.axis === 'x' \? Math\.PI \/ 2 : 0 \}\)\),/);
+    assert.match(w, /if \(d < 6 && \(!best \|\| d < best\.d\)\) best = \{ \.\.\.s, d \};/);
+    for (const t of TAXI_STANDS) assert.ok(Math.hypot(t.x - S.entry.x, t.z - S.entry.z) > 12, t.name);
+  });
+  it('nothing stands in the entrance: no taxi stand, post or sign in the clear width or the arch\'s opening, from W 42nd St\'s kerb to the stage', () => {
+    // A stand is its post (0.2 m around) and its 1.2 m sign at 2.8 m, which lies along its axis (ts3d/landmarks.js).
+    // It stood on the centre line 2 m before the arch: from the chase camera of someone walking in, the lit sign was
+    // between the camera and the player and filled a phone's screen, and it hid the arch's name board from W 42nd St.
+    const opening = { x0: S.x - S.arch.post - S.arch.r - 0.5, x1: S.x + S.arch.post + S.arch.r + 0.5, z0: S.arch.z - 10, z1: S.z1 };
+    for (const t of TAXI_STANDS) {
+      const r = t.axis === 'z' ? { x0: t.x - 0.6, x1: t.x + 0.6, z0: t.z - 0.2, z1: t.z + 0.2 } : { x0: t.x - 0.2, x1: t.x + 0.2, z0: t.z - 0.6, z1: t.z + 0.6 };
+      assert.equal(overlap(r, opening), false, `stand ${t.name} at (${t.x}, ${t.z})`);
+    }
+    // nor anything else north of the arch: the arch's posts are the first thing beside the way in
+    for (const p of streetPosts()) if (!p.arch) assert.ok(p.z > S.arch.z, 'number post ' + p.lot);
+  });
+  it('the 위시 스트리트 stand is beside the entrance, east of the arch: off the roadway, clear of the posts and lots, its sign along W 42nd St', () => {
+    const stand = TAXI_STANDS.find((t) => t.name === '위시 스트리트'), posts = streetPosts();
+    assert.ok(stand);
+    assert.deepEqual([stand.x, stand.z, stand.axis], [S.x + 22.5, S.z0 - 2, 'x']);
+    // its sign faces west, toward the crossing in front of the arch, and east along the kerb, not into a lot
+    for (const p of posts) assert.ok(Math.hypot(p.x - stand.x, p.z - stand.z) > 6, p.arch ? 'arch post' : 'number post ' + p.lot);
+    for (const s of PLOT_SLOTS) assert.equal(overlap(square({ x: stand.x, z: stand.z, r: 0.6 }), widest(s)), false, 'lot ' + s.id);
+    assert.ok(insideLoop(stand.x, stand.z, 4) && inside(square({ x: stand.x, z: stand.z, r: 0.6 }), PAD));
+    // timesSquare3d.js asks "at a stand?" (within BALANCE.taxiStandR) before "at a lot's front?" (3.6 m around the spot
+    // 5.4 m before it): no lot's front spot is within reach of the stand, so E there opens the lot, not the cab
+    for (const s of PLOT_SLOTS) {
+      const f = lotFacing(s), spot = { x: s.x + f.x * 5.4 * s.scale, z: s.z + f.z * 5.4 * s.scale };
+      assert.ok(Math.hypot(spot.x - stand.x, spot.z - stand.z) > BALANCE.taxiStandR + 3.6, 'lot ' + s.id);
+    }
+    // and the entrance is not within reach of it either: arriving there is arriving at the street, not at a cab
+    assert.ok(Math.hypot(S.entry.x - stand.x, S.entry.z - stand.z) > BALANCE.taxiStandR);
   });
   it('a number post by each lot\'s front, on the side nearer the entrance: it turns with the lot, off the pads, outside the clear width, readable from the street', () => {
     const posts = streetPosts().filter((p) => p.lot);
@@ -494,23 +519,24 @@ describe('the street is free from the entrance to the stage', () => {
       }
     }
   });
-  it('a board\'s front point is in the street, and none is within the 6 m in which a jump is pulled to the stand or to the stage', () => {
+  it('a board\'s front point is in the street, and none is within the 6 m in which a jump is pulled to the entry, a stand or the stage', () => {
     // timesSquare3d.js slotPose: front = the face's centre + 9 m along its normal. buildPlot hangs every board between the
     // lot's centre and the pad's front edge, so the front point is 9..12.42 m before the lot's centre, the way it faces.
     const edge = { x: G.spot.x, z: G.spot.z - 5 }; // approachOf's spot for the stage
-    const stand = TAXI_STANDS.find((t) => t.name === '건물 구역');
-    let toStage = Infinity, toStand = Infinity;
+    let toStage = Infinity, toEntry = Infinity, toStand = Infinity;
     for (const s of PLOT_SLOTS) for (const t of [0, (LOT.d / 2) * s.scale]) {
       const f = lotFacing(s), p = { x: s.x + f.x * (t + 9), z: s.z + f.z * (t + 9) };
       assert.ok(Math.abs(p.x - S.x) < S.half && p.z > S.z0 && p.z < S.z1, 'lot ' + s.id);
       assert.ok(insideLoop(p.x, p.z, 4));
       toStage = Math.min(toStage, Math.hypot(p.x - edge.x, p.z - edge.z));
-      toStand = Math.min(toStand, Math.hypot(p.x - stand.x, p.z - stand.z));
+      toEntry = Math.min(toEntry, Math.hypot(p.x - S.entry.x, p.z - S.entry.z));
+      for (const st of TAXI_STANDS) toStand = Math.min(toStand, Math.hypot(p.x - st.x, p.z - st.z));
     }
     // approachOf moves a jump that lands within 6 m of one of its spots onto that spot: every lot's front point is
-    // 8.4 m or more from the stand and 11.6 m or more from the stage's edge
-    near(toStand, 8.44, 'stand', 0.01);
+    // 7.4 m or more from the entry, 11.6 m or more from the stage's edge, and farther still from any stand
+    near(toEntry, 7.53, 'entry', 0.01);
     near(toStage, 11.73, 'stage', 0.01);
+    assert.ok(toStand > 12, 'stand ' + toStand);
     const w = read('timesSquare3d.js');
     assert.match(w, /\{ x: G\.spot\.x, z: G\.spot\.z - 5, yaw: 0 \},/);
     assert.match(w, /front: \{ x: p\.x \+ f\.x \* 9, z: p\.z \+ f\.z \* 9 \}/);
@@ -594,7 +620,15 @@ describe('zones and the map follow the street', () => {
     assert.deepEqual([stage.x, stage.z], [G.spot.x, G.spot.z]);
     const ui = read('ui.js');
     assert.match(ui, /const lotCenter = \{ x: LAYOUT\.street\.entry\.x, z: LAYOUT\.street\.entry\.z \};/);
-    assert.match(ui, /\{ ico: 'building', ko: '건물 구역', x: LAYOUT\.street\.entry\.x, z: LAYOUT\.street\.entry\.z \},/);
+    assert.match(ui, /\{ ico: 'building', ko: '위시 스트리트', x: LAYOUT\.street\.entry\.x, z: LAYOUT\.street\.entry\.z \},/);
+    // one name for the district wherever a person reads it: 위시 스트리트, as the arch says (WISH STREET)
+    assert.equal(lots.ko, '위시 스트리트');
+    assert.equal(TAXI_STANDS.filter((t) => t.x > S.x - 40 && t.x < S.x + 40 && t.z > 240).map((t) => t.name).join(), '위시 스트리트');
+    for (const f of ['ui.js', 'main.js', 'timesSquare3d.js', 'ts3d/layout.js', 'index.html']) assert.equal(/K-타운|32번가|건물 구역/.test(read(f)), false, f);
+    // a lot's sheet says where it is as one walks in: the pair from the entrance, and left (east, odd) or right (west, even)
+    assert.match(ui, /`위시 스트리트 · 입구에서 \$\{Math\.ceil\(id \/ 2\)\}번째 · \$\{slot\.side === 'E' \? '왼쪽' : '오른쪽'\}`/);
+    assert.deepEqual([...new Set(PLOT_SLOTS.map((s) => s.side))].sort(), ['E', 'W']);
+    for (const s of PLOT_SLOTS) assert.equal(s.side, s.id % 2 ? 'E' : 'W', 'lot ' + s.id);
     assert.match(ui, /\{ ico: 'music', ko: 'K-POP 스테이지', x: LAYOUT\.stage\.spot\.x, z: LAYOUT\.stage\.spot\.z - 5 \},/);
     assert.equal(/z: 305\b/.test(ui), false);
     // nothing reads the old rows any more
@@ -875,21 +909,21 @@ describe('the street on the real map', { skip: !existsSync(MAP) }, () => {
     assert.equal(nyc.roadName(hit.road), '7th Avenue');
     assert.ok(hit.d < 3, String(hit.d));
   });
-  it('the 건물 구역 stand is off West 42nd Street\'s roadway: 1.3 m south of its south edge (z 258.7), 2 m before the arch', () => {
-    const R = load().roads, stand = TAXI_STANDS.find((t) => t.name === '건물 구역');
-    const w42 = nyc.nearestRoad(stand.x, stand.z, 30, (r) => nyc.roadName(r) === 'West 42nd Street');
-    const edge = w42.pz + R.width[w42.road] / 2; // the street runs east-west here: its south edge
-    assert.ok(Math.abs(edge - 258.7) < 0.1, String(edge));
-    assert.ok(stand.z - edge > 1.2 && S.arch.z - stand.z === 2, String(stand.z - edge));
-    assert.ok(S.entry.z - edge > 2); // the point a jump aims at is off the roadway as well
-    // where it stood, (0, 255), was 3.7 m inside that roadway, in the outer eastbound lane (test/street-traffic.test.mjs
-    // sees cars drive over that point, and none within 2 m of the post now)
-    assert.ok(edge - 255 > 3.5);
-    // The ground it stands on is the stub of 7th Avenue between that edge and the arch: closed to cars with the rest of
-    // the avenue under the street (ts3d/traffic.js closes every road that reaches into NO_ROAD), still drawn as roadway.
-    const on = nyc.nearestRoad(stand.x, stand.z, 30, (r) => nyc.roadName(r) === '7th Avenue');
-    assert.ok(on.d < R.width[on.road] / 2);
-    const z = [R.zs[on.seg], R.zs[on.seg + 1]];
-    assert.ok(Math.max(...z) > NO_ROAD.z0 + 10, 'the segment under the stand runs on into the street: ' + z);
+  it('the 위시 스트리트 stand is on the pavement south of West 42nd Street: 1.5 m south of its south edge, on no roadway, by no building', () => {
+    const R = load().roads, stand = TAXI_STANDS.find((t) => t.name === '위시 스트리트');
+    const edgeAt = (x) => { const w = nyc.nearestRoad(x, stand.z, 30, (r) => nyc.roadName(r) === 'West 42nd Street'); return w.pz + R.width[w.road] / 2; };
+    // the street runs east-west here: its south edge is at z 258.7 in front of the arch and 258.54 at the stand
+    assert.ok(Math.abs(edgeAt(S.entry.x) - 258.7) < 0.1, String(edgeAt(S.entry.x)));
+    const edge = edgeAt(stand.x);
+    near(edge, 258.54, 'edge at the stand', 0.01);
+    assert.ok(stand.z - edge > 1.4 && S.arch.z - stand.z === 2, String(stand.z - edge));
+    assert.ok(S.entry.z - edgeAt(S.entry.x) > 2); // the point a jump aims at is off the roadway as well
+    // its post and sign are on no road of the map (it stood on the closed stub of 7th Avenue before, still drawn as
+    // roadway; and before that at (0, 255), in the outer eastbound lane of W 42nd St), and no building stands there
+    for (const [dx, dz] of [[0, 0], [0, -0.6], [0, 0.6]]) {
+      const x = stand.x + dx, z = stand.z + dz, any = nyc.nearestRoad(x, z, 30, () => true);
+      assert.ok(any.d > R.width[any.road] / 2 + 0.5, `${nyc.roadName(any.road)} at (${x}, ${z})`);
+      assert.deepEqual(nyc.collide(x, z, 0.4), [x, z]);
+    }
   });
 });

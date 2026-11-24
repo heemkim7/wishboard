@@ -491,6 +491,7 @@ void main(){
     const spots = [
       { x: S.x, z: S.z + 4.4, yaw: Math.PI },
       { x: G.spot.x, z: G.spot.z - 5, yaw: 0 },
+      { x: LAYOUT.street.entry.x, z: LAYOUT.street.entry.z, yaw: 0 }, // in front of the arch, looking down the street
       ...TAXI_STANDS.map((s) => ({ x: s.x, z: s.z, yaw: s.axis === 'x' ? Math.PI / 2 : 0 })),
     ];
     let best = null;
@@ -2807,7 +2808,7 @@ void main(){
       if (!p) return { title: slotName(id), line: '아직 지도에 없습니다' };
       const dx = p.x - LAYOUT.oneTimes.x, dz = p.z - LAYOUT.oneTimes.z;
       const dir = Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? '동쪽' : '서쪽') : (dz > 0 ? '남쪽' : '북쪽');
-      const kind = String(id).startsWith('SUB_') ? '교차로 코너 빌딩' : String(id).startsWith('PLOT_') ? '건물 구역 상가 정면' : '메인거리를 보는 건물 벽';
+      const kind = String(id).startsWith('SUB_') ? '교차로 코너 빌딩' : String(id).startsWith('PLOT_') ? '위시 스트리트 상가 정면' : '메인거리를 보는 건물 벽';
       const h = p.y < 14 ? '길에서 바로 보이는 높이' : p.y < 30 ? '중간 층' : '높은 층';
       return { title: kind, line: `원 타임스퀘어에서 ${dir} ${Math.round(Math.hypot(dx, dz))}m · ${h}`, x: p.x, y: p.y, z: p.z };
     },

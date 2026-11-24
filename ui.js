@@ -3290,7 +3290,8 @@ export function createUI(root, hooks) {
     const id = Number(plotId);
     const slot = PLOT_SLOTS[id - 1];
     if (!slot) return;
-    openSheet(['building', `${id}번 토지`], `K-타운 · 32번가 ${slot.side === 'N' ? '북쪽' : '남쪽'}`, (host) => {
+    // Where it is in words a walker uses: the k-th pair from the entrance, east (left when walking in) or west.
+    openSheet(['building', `${id}번 토지`], `위시 스트리트 · 입구에서 ${Math.ceil(id / 2)}번째 · ${slot.side === 'E' ? '왼쪽' : '오른쪽'}`, (host) => {
       const plot = plotById(id) || { plot_id: id, level: 0, price: 500, theme_color: '#00ffcc' };
       const level = Math.max(0, Math.min(4, Number(plot.level) || 0));
       const mine = !!plot.owner_id && plot.owner_id === hooks.actorId();
@@ -3377,10 +3378,10 @@ export function createUI(root, hooks) {
       const mine = myPlots();
       const where = h('div', { class: 'place' },
         h('div', { class: 'where' },
-          h('b', null, ...withIcon('pin', '토지는 K-타운 건물 구역에 있어요'))),
+          h('b', null, ...withIcon('pin', '토지는 위시 스트리트에 있어요'))),
         h('div', { class: 'go' },
-          h('button', { class: 'btn ghost', type: 'button', onclick: () => goWaypoint(lotCenter, 'K-타운 건물 구역') }, ...withIcon('pin', '길안내')),
-          h('button', { class: 'btn gold', type: 'button', onclick: () => goTeleport(lotCenter, 'K-타운 건물 구역') }, ...withIcon('bolt', '바로 가기'))),
+          h('button', { class: 'btn ghost', type: 'button', onclick: () => goWaypoint(lotCenter, '위시 스트리트') }, ...withIcon('pin', '길안내')),
+          h('button', { class: 'btn gold', type: 'button', onclick: () => goTeleport(lotCenter, '위시 스트리트') }, ...withIcon('bolt', '바로 가기'))),
         mine.length ? h('div', { class: 'mine' }, h('small', { text: '내 건물' }), ...mine.map(s => h('button', { class: 'chip-btn', type: 'button', onclick: () => goTeleport(plotFront(s), `내 건물(${s.id}번)`) }, icon('building'), ` ${s.id}번 `, icon('bolt')))) : null);
       host.append(
         h('div', { class: 'holder' },
@@ -3391,7 +3392,7 @@ export function createUI(root, hooks) {
           h('button', { type: 'button', onclick: () => openBillboard('') }, h('img', { class: 'big', src: 'icons/board.jpg?v=4', alt: '', draggable: 'false' }), h('h4', { text: '전광판 걸기' }), h('p', { text: '거리 전광판에 내 문구를 걸어요.' })),
           h('button', { type: 'button', onclick: () => openPlot(PLOT_SLOTS.find(s => !plotById(s.id)?.owner_id)?.id || 1) }, h('img', { class: 'big', src: LEVELS[4].src, alt: '', draggable: 'false' }), h('h4', { text: '내 건물 짓기 · 증축' }), h('p', { text: '텐트에서 타워까지 5단계.' }))),
         where,
-        h('div', { class: 'field' }, h('label', null, 'K-타운 토지 현황', h('span', { text: '1~18번 · 번호를 눌러 상세 보기' })), plots),
+        h('div', { class: 'field' }, h('label', null, '위시 스트리트 토지 현황', h('span', { text: '1~18번 · 번호를 눌러 상세 보기' })), plots),
       );
     });
   }
@@ -5370,7 +5371,7 @@ export function createUI(root, hooks) {
     { ico: 'ring', ko: '황금 링', x: RINGS[0].x, z: RINGS[0].z - 4 },
     { ico: 'taxi', ko: '승강장', x: TAXI_STANDS[0].x, z: TAXI_STANDS[0].z },
     { ico: 'music', ko: 'K-POP 스테이지', x: LAYOUT.stage.spot.x, z: LAYOUT.stage.spot.z - 5 },
-    { ico: 'building', ko: '건물 구역', x: LAYOUT.street.entry.x, z: LAYOUT.street.entry.z },
+    { ico: 'building', ko: '위시 스트리트', x: LAYOUT.street.entry.x, z: LAYOUT.street.entry.z },
     ...['esb', 'rock', 'cpark', 'gct', 'owtc', 'flatiron', 'vessel', 'washsq', 'bklyn', 'harlem'].map(id => LANDMARKS.find(l => l.id === id)).filter(Boolean).map(l => ({ ko: l.ko, x: l.x, z: l.z })),
   ].filter((q) => insideLoop(q.x, q.z, 0));
   function starQuick() {
@@ -5515,7 +5516,7 @@ export function createUI(root, hooks) {
       host.append(
         howTo,
         chips, wrap, h('div', { class: 'legend' },
-        h('span', null, '🔴 TKTS'), h('span', null, '🐟 붕어빵'), h('span', null, '🥠 포춘 분수'), h('span', null, '💍 황금 링'), h('span', null, '💃 K-POP 스테이지'), h('span', null, '🏗️ K-타운 건물'), h('span', null, '🚕 택시 승강장'),
+        h('span', null, '🔴 TKTS'), h('span', null, '🐟 붕어빵'), h('span', null, '🥠 포춘 분수'), h('span', null, '💍 황금 링'), h('span', null, '💃 K-POP 스테이지'), h('span', null, '🏗️ 위시 스트리트'), h('span', null, '🚕 택시 승강장'),
         h('span', null, h('i', { style: { background: '#ffc21a' } }), '택시'), h('span', null, h('i', { style: { background: '#3fe6ff' } }), '목적지'),
         h('a', { class: 'osm', href: 'https://www.openstreetmap.org/copyright', target: '_blank', rel: 'noopener', text: '© OpenStreetMap contributors' })));
       requestAnimationFrame(() => { size(); draw(); });
