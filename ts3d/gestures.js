@@ -15,7 +15,7 @@ export const GESTURES = Object.freeze({
   // the dock emotes (EMOTES 1 and 3) and the pouch throw
   Pray: { pose: true, ms: 2400 },
   Cheer: { pose: true, ms: 2400 },
-  Throw: { pose: true, ms: 980, fadeIn: 0, fadeOut: 0, keep: true },
+  Throw: { pose: true, ms: 700, fadeIn: 0.06, fadeOut: 0.25, keep: true },
   // quick reactions, one each
   Wave: { clip: 'Wave', reps: 3, ms: 1600 },
   Laugh: { pose: true, ms: 2100 },
@@ -97,4 +97,26 @@ export function pulses(s, a, b, count) {
 }
 export function ease(s, a, b) {
   return smooth((s - a) / (b - a));
+}
+
+// The pouch throw (ts3d/avatars.js POSES.Throw, timesSquare3d.js throwPouch): an underhand toss up at the balloon, short enough
+// to play whole between two throws 250 ms apart (the old one took 980 ms and a new throw started it again, so a tapped button
+// never got past the wind-up).
+//   wind..swing  the arm swings from behind the hip to the top between these seconds
+//   release      the pouch leaves the hand here; until then it rides in the hand at `inHand` of its flying size
+//   grow         and it is full size after this share of its flight
+//   hop, hopS    one small hop (m) that is back on the ground after hopS s, when the next throw can start (it was 0.75 m
+//                over 0.8 s: it dropped back at every tap and carried the head over the avatar's own name tag)
+export const THROW = Object.freeze({ wind: 0.05, swing: 0.2, release: 0.15, inHand: 0.2, grow: 0.25, hop: 0.3, hopS: 0.25 });
+/** How far through its swing the throwing arm is, s seconds into the throw: 0 wound up behind the hip, 1 at the top. */
+export function throwSwing(s) {
+  return ease(s, THROW.wind, THROW.swing);
+}
+/** The hop under a throw (m), s seconds into it. */
+export function throwHop(s) {
+  return s > 0 && s < THROW.hopS ? THROW.hop * Math.sin((s / THROW.hopS) * Math.PI) : 0;
+}
+/** The pouch's size (a share of its flying size) u of the way through its flight: THROW.inHand in the hand, 1 from THROW.grow on. */
+export function throwSize(u) {
+  return THROW.inHand + (1 - THROW.inHand) * smooth(u / THROW.grow);
 }

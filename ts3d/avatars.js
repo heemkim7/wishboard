@@ -8,7 +8,7 @@ import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeCanvas, paintNameTag, paintBubble, paintRingFx, TAG_THEMES, RING_FX, RING_FX_SIZE } from './art.js?v=202611241127';
 import { MODEL_URL, modelFor } from './loadplan.js?v=202611241127';
-import { GESTURES, REACTIONS, gestureWeight, pulses, ease } from './gestures.js?v=202611241127';
+import { GESTURES, REACTIONS, gestureWeight, pulses, ease, throwSwing, throwHop } from './gestures.js?v=202611241127';
 
 const LOOPS = new Set(['Idle', 'Walking', 'Running', 'Dance', 'Sitting', 'Standing']);
 export const EMOTES = {
@@ -221,10 +221,27 @@ function buildProps() {
   };
 }
 
+// One bounding sphere for the whole body, shared by its skinned meshes (one per material: fur, hoodie, muzzle, eyes, ear
+// linings). three.js makes a skinned mesh's sphere once, from the pose it is first drawn in, and culls by it from then on:
+// the hoodie's was 0.44 m around the idle torso, so with the torso just off the screen (the view tilted up at the balloon)
+// the hoodie and its raised sleeve were dropped while the head and the hands, in a bigger sphere, were still drawn. Half
+// again as wide as the rest pose, so a jump or an arm thrown up stays inside, and the body is drawn or culled as one.
+const _ball = new THREE.Sphere(), _one = new THREE.Sphere(), _inv = new THREE.Matrix4();
+function wholeBodySphere(model) {
+  const skins = [];
+  model.traverse((o) => { if (o.isSkinnedMesh) skins.push(o); });
+  if (!skins.length) return;
+  model.updateMatrixWorld(true);
+  _ball.makeEmpty();
+  for (const m of skins) { m.computeBoundingSphere(); _ball.union(_one.copy(m.boundingSphere).applyMatrix4(m.matrixWorld)); }
+  _ball.radius *= 1.5;
+  for (const m of skins) m.boundingSphere.copy(_ball).applyMatrix4(_inv.copy(m.matrixWorld).invert());
+}
+
 // Two-bone aim so the hands meet a world point. The Mixamo clip set has no prayer or cheer.
 // A held pose runs every frame for each avatar that holds it, so the vectors below are module temporaries, not new objects
 // per call. None outlives a call. pointY, foldArm and aimHand each write only their own temporaries, and read their
-// arguments first. holdPose builds its targets in _t1.._t5 and hands them to foldArm and aimHand.
+// arguments first. holdPose builds its targets in _t1.._t4 and hands them to foldArm and aimHand.
 const _q = new THREE.Quaternion();
 const _qP = new THREE.Quaternion();
 const _qI = new THREE.Quaternion(); // _qP inverted
@@ -236,7 +253,7 @@ const _cur = new THREE.Vector3(), _want = new THREE.Vector3(); // pointY
 const _bone = new THREE.Vector3(), _aim = new THREE.Vector3(); // foldArm
 const _hx = new THREE.Vector3(), _hy = new THREE.Vector3(), _hz = new THREE.Vector3(); // aimHand
 const _chest = new THREE.Vector3(), _headP = new THREE.Vector3(), _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _off = new THREE.Vector3();
-const _t1 = new THREE.Vector3(), _t2 = new THREE.Vector3(), _t3 = new THREE.Vector3(), _t4 = new THREE.Vector3(), _t5 = new THREE.Vector3();
+const _t1 = new THREE.Vector3(), _t2 = new THREE.Vector3(), _t3 = new THREE.Vector3(), _t4 = new THREE.Vector3();
 const POSE_UP = new THREE.Vector3(0, 1, 0.18); // read only
 const UPPER_ARM = { Left: 'LeftArm', Right: 'RightArm' }, FORE_ARM = { Left: 'LeftForeArm', Right: 'RightForeArm' };
 // The reaction poses (POSES below) work in a frame of model axes and two body anchors, all module temporaries too:
@@ -366,6 +383,23 @@ function thumbTo(B, side, x, y, z) {
 const POSES = {
   // The head is most of the toy's height and the arms reach about 0.37 m, so hands near the face hide behind it from the
   // front: the poses below keep the hands in front of the chest, beside the jaw, or well out to the sides.
+  // The pouch throw: an underhand toss up at the balloon. It was an overhand throw aimed at points behind and above the head
+  // bone; the shoulder sits right under a head 0.8 m wide and the arm is 0.37 m, so the hand spent the throw inside the head
+  // (hidden from every side from 0.35 s on). Now the right arm swings in a plane beside the body: wound up behind the hip,
+  // forward, then up; the plane leans out as the arm rises, so the hand ends beside the head, clear of it.
+  Throw(B, s) {
+    const u = throwSwing(s);
+    const a = -0.7 + 2.9 * u; // the arm's angle in its plane: 40° behind straight down, to 36° past level in front
+    const ox = 0.25 + 0.85 * u, oy = -Math.cos(a), oz = Math.sin(a), k = 0.5 / Math.hypot(ox, oy, oz); // out, up, forward
+    if (B.RightArm) boneAt(B.RightArm, _t7); else _t7.copy(_c0);
+    bend(B.Spine, 0.1 - 0.16 * u, 0, -0.2 + 0.3 * u); // bowed and turned away for the wind-up, up and round with the arm
+    bend(B.Head, -0.26 * u); // the eyes follow the pouch up
+    settle();
+    // half a metre from the shoulder along that line: farther than the arm, so it is straight all the way round
+    _t1.copy(_t7).addScaledVector(_right, -ox * k).addScaledVector(UP, oy * k).addScaledVector(_fwd, oz * k).applyMatrix4(_mC);
+    reach(B, 'Right', _t1, 1, -0.4, -0.4);
+    handTo(B, 'Right', ox, oy, oz, 0, oz, -oy); // fingers along the arm, the palm leading the swing (up at the release)
+  },
   Laugh(B, s) {
     const ha = pulses(s, 0.15, 1.95, 9), slap = pulses(s, 0.2, 1.9, 4);
     bend(B.Spine, -0.14, 0.06 * Math.sin(s * 3));
@@ -591,11 +625,11 @@ const POSES = {
   },
 };
 
-// Lay a held pose over the clip's pose this frame. t: 0..1 through the gesture, s: seconds since it began, w: its
-// weight (gestures.js gestureWeight), kept: one quaternion per BLEND bone, filled with the clip's rotations. Writes
-// POSE_FX for the caller; true when it turned bones (kept is then valid).
-function holdPose(model, pose, t, s, w, kept) {
-  POSE_FX.hop = pose === 'Throw' ? Math.sin(Math.min(1, t * 1.2) * Math.PI) * 0.75 : 0;
+// Lay a held pose over the clip's pose this frame. s: seconds since the gesture began, w: its weight (gestures.js
+// gestureWeight), kept: one quaternion per BLEND bone, filled with the clip's rotations. Writes POSE_FX for the caller;
+// true when it turned bones (kept is then valid).
+function holdPose(model, pose, s, w, kept) {
+  POSE_FX.hop = pose === 'Throw' ? throwHop(s) : 0; // also for the stand-in body, which has no bones to pose
   POSE_FX.step = 0;
   POSE_FX.spin = 0;
   POSE_FX.fly = -1;
@@ -634,17 +668,6 @@ function holdPose(model, pose, t, s, w, kept) {
     foldArm(model, 'Right', rightT, rightT);
     if (bones.LeftHand) aimHand(bones.LeftHand, _t3.copy(right).add(_off.set(0, 1.2, 0)), fwd);
     if (bones.RightHand) aimHand(bones.RightHand, _t3.copy(right).multiplyScalar(-1).add(_off.set(0, 1.2, 0)), fwd);
-  } else if (pose === 'Throw') {
-    // No throw clip in the GLB. Overhand: cock behind the head, then the hand leads forward and up.
-    const u = Math.max(0, Math.min(1, t));
-    const fire = u < 0.28 ? 0 : Math.min(1, (u - 0.28) / 0.3);
-    // each .add(_off.set(...)) finishes before the next _off.set: the receiver of .lerp is evaluated before its argument
-    const elbow = _t1.copy(headP).addScaledVector(right, -0.34).addScaledVector(fwd, -0.22).add(_off.set(0, 0.12, 0))
-      .lerp(_t2.copy(headP).addScaledVector(right, -0.08).addScaledVector(fwd, 0.26).add(_off.set(0, 0.32, 0)), fire);
-    const hand = _t3.copy(headP).addScaledVector(right, -0.16).addScaledVector(fwd, -0.42).add(_off.set(0, 0.04, 0))
-      .lerp(_t4.copy(headP).addScaledVector(fwd, 0.62).add(_off.set(0, 0.72, 0)), fire);
-    foldArm(model, 'Right', elbow, hand);
-    if (bones.RightHand) aimHand(bones.RightHand, _t2.copy(fwd).add(_off.set(0, fire > 0.15 ? 1 : 0.25, 0)), _t5.copy(right).multiplyScalar(-1));
   }
   if (w < 1) for (let i = 0; i < BLEND.length; i++) { const b = bones[BLEND[i]]; if (b) { _qB.copy(b.quaternion); b.quaternion.copy(kept[i]).slerp(_qB, w); } }
   POSE_FX.hop *= w;
@@ -817,6 +840,7 @@ class Avatar {
     this.holder.add(model);
     this.model = model;
     this.modelSpecies = p.show;
+    wholeBodySphere(model);
     this.mixer = new THREE.AnimationMixer(model);
     this.actions = {};
     for (const clip of spec.gltf.animations) {
@@ -1043,6 +1067,17 @@ class Avatar {
     this.propKind = '';
   }
 
+  // Where a thing carried in the right hand is, in the world: a hand's breadth along the fingers and off the palm (the pouch
+  // before it leaves the hand). Writes `out` and returns it; null for the stand-in body, which has no hand.
+  holdPoint(out) {
+    const hand = this.model && !this.fallback ? poseBones(this.model).RightHand : null;
+    if (!hand) return null;
+    hand.updateWorldMatrix(true, false);
+    out.setFromMatrixPosition(hand.matrixWorld);
+    // the hand's own +Y runs along the fingers and +Z out of the palm (aimHand)
+    return out.addScaledVector(_hy.setFromMatrixColumn(hand.matrixWorld, 1).normalize(), 0.1).addScaledVector(_hz.setFromMatrixColumn(hand.matrixWorld, 2).normalize(), 0.1);
+  }
+
   say(glyph) {
     this.bubble.material.map = this.sys.bubbleTex(glyph);
     this.bubble.material.needsUpdate = true;
@@ -1073,12 +1108,13 @@ class Avatar {
       const g = GESTURES[this.pose], len = Math.max(1, this.poseUntil - this.poseAt), s = (now - this.poseAt) / 1000;
       const w = gestureWeight(s, len / 1000, g);
       this.kept ||= BLEND.map(() => new THREE.Quaternion());
-      this.keptOn = holdPose(this.model, this.pose, Math.min(1, (now - this.poseAt) / len), s, w, this.kept);
+      this.keptOn = holdPose(this.model, this.pose, s, w, this.kept);
       const seated = this.base === 'Sitting' && this.pose !== 'Throw'; // a seated avatar gestures without hopping, stepping or turning
       this.holder.position.y = seated ? 0 : POSE_FX.hop;
       if (this.model && !this.fallback) { this.model.position.z = seated ? 0 : POSE_FX.step; this.model.rotation.y = seated ? 0 : POSE_FX.spin; }
       if (g.prop) this.showProp(g.prop, w, s);
     }
+    this.tag.position.y = this.sys.height + 0.42 + this.holder.position.y; // the name tag rides a hop: the head never covers it
     if (this.fallback) this.model.position.y = this.speed > 0.35 ? Math.abs(Math.sin(t * 9)) * 0.08 : Math.sin(t * 2) * 0.02;
     if (this.bubble.visible) {
       const b = (this.bubbleT += dt);

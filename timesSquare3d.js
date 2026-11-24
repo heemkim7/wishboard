@@ -26,12 +26,13 @@ import { claimIcons, buildIcons } from './ts3d/icons.js?v=202611241127';
 import { buildLandmarks } from './ts3d/landmarks.js?v=202611241127';
 import { createAvatars, EMOTES, REACTIONS, AVATAR_COLORS, STARTER_COLORS, speciesId } from './ts3d/avatars.js?v=202611241127';
 import { createPouchKit } from './ts3d/pouch.js?v=202611241127';
+import { THROW, throwSize } from './ts3d/gestures.js?v=202611241127';
 import { seesAvatar, prefetchDelay, prefetchIds } from './ts3d/loadplan.js?v=202611241127';
 import { THEMES, paintBillboard, makeCanvas, paintGlow, paintBeam, paintMarker, paintLabel, fontsReady, chars, hashStr, FRAME_FX } from './ts3d/art.js?v=202611241127';
 import { taxiTrainMult, applyTaxiHardHit } from './taxiTrain.js?v=202611241127';
-import { taxiExit, EXIT_SLOW, nextOfferDelay, fareWait } from './interact.js?v=202611241127';
+import { taxiExit, EXIT_SLOW, nextOfferDelay, fareWait, isTouchUI, AUTO_WALK, gridPath, walkSteer, walkStall, walkPace, autoWalkEnds } from './interact.js?v=202611241127';
 import { WELCOME } from './ftue.js?v=202611241127';
-import { RETURN_MS, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, portraitFov, fitDistance, reverseTime, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange, boardVantage, facesBlock } from './camrig.js?v=202611241127';
+import { RETURN_MS, glideMs, easeOutCubic, easeInOutCubic, tweenU, focusOptions, cineCancels, behindCar, followYawRate, chaseYawRate, CHASE, stickFrame, dragSpeed, viewDragged, portraitFov, fitDistance, BALLOON_LOOK, balloonLook, reverseTime, driveView, driveWiden, driveCamera, easeCamDist, shortenFocus, pickNearBoard, boardPrompt, proximityKey, tapRoute, EMOTE_GAP_MS, cooldownOk, isGiftBoard, FIREWORK, fadeOldest, fireworkAlpha, fireworkDone, SPARK, sparkGlide, sparkDrop, celebrationDue, faceAbove, celebrationPlan, fanVelocity, frameDistance, boardRange, boardVantage, facesBlock } from './camrig.js?v=202611241127';
 
 export { paintBillboard, THEMES, LAYOUT, PLOT_SLOTS, groundHeight, EMOTES, AVATAR_COLORS, STARTER_COLORS, taxiTrainMult, applyTaxiHardHit };
 export const PLAZA = LAYOUT;
@@ -295,7 +296,10 @@ void main(){
   controls.enableDamping = true;
   controls.dampingFactor = 0.085;
   controls.enablePan = false;
-  controls.rotateSpeed = low ? 0.85 : 0.6;
+  // Half as fast again under a finger as it was (camrig.js DRAG_SPEED); a mouse turns the view as before.
+  controls.rotateSpeed = dragSpeed({ touch: isTouchUI({ coarse: matchMedia('(pointer: coarse)').matches, points: navigator.maxTouchPoints }), low });
+  // A player who asked the system for less motion gets cuts where the scripted cameras glide (camrig.js glideMs).
+  const calm = matchMedia('(prefers-reduced-motion: reduce)');
   controls.enableZoom = false;
   controls.minDistance = 2.8;
   controls.maxDistance = 26;
@@ -333,8 +337,14 @@ void main(){
     controls.update();
   }, { signal, passive: false });
   canvas.addEventListener('touchend', () => { pinch = null; }, { signal });
-  controls.addEventListener('start', () => { orbiting = true; });
-  controls.addEventListener('end', () => { orbiting = false; orbitEnd = performance.now(); });
+  // A touch that turned the view is a drag: the follow rules (camrig.js CHASE, FOLLOW, DRIVE_CAM) hold off for a while after it.
+  // A tap that left the view where it was (on a board, on the ATM) is not one.
+  let orbitYaw0 = 0, orbitPolar0 = 0;
+  controls.addEventListener('start', () => { orbiting = true; orbitYaw0 = controls.getAzimuthalAngle(); orbitPolar0 = controls.getPolarAngle(); });
+  controls.addEventListener('end', () => {
+    orbiting = false;
+    if (viewDragged(controls.getAzimuthalAngle() - orbitYaw0, controls.getPolarAngle() - orbitPolar0)) orbitEnd = performance.now();
+  });
   let eye = EYE;
   const follow = new THREE.Vector3(pos.x, pos.y + eye, pos.z);
   controls.target.copy(follow);
@@ -350,6 +360,11 @@ void main(){
   // not the same thing as sitting in a taxi.
   const homePos = camera.position.clone(), homeLook = follow.clone(), viewLook = follow.clone();
   let hidMe = false, clipDist = Infinity, reverseT = 0, lastEmote = -1e9, stuntAt = -1e9, ringDim = false, boardAt = 0, boardNear = null;
+  // The follow cameras (camrig.js). travel: the heading the walk is asked to take this frame (the stick or the auto-walk), which
+  // the view comes round behind. stick: the stick's frame (stickFrame). backT: ms the walk has pointed back toward the lens.
+  // driveYaw0 / driveOrbit: the car's heading last frame and this frame's orbit angles (driveCamera).
+  const travel = { on: false, yaw: 0 }, stick = { ref: null, lag: 0 }, driveOrbit = { theta: 0, phi: 0 };
+  let backT = 0, driveYaw0 = 0;
   // The world has one free-form line to the HUD: onInteract('notice', null, { text, tone }).
   const tell = (text, tone = '', extra = null) => opts.onInteract?.('notice', null, { text, tone, ...extra });
 
@@ -359,7 +374,7 @@ void main(){
   let lastNearKey = '', near = null, lastJump = 0;
   window.addEventListener('keydown', (e) => {
     if (isTyping(e)) return;
-    if (e.code === 'Escape') { endCine(true); return; }
+    if (e.code === 'Escape') { endAutoWalk(); endCine(true); return; }
     if (MOVE_CODES.has(e.code)) {
       // Not while input is switched off: auto-repeat would refill the set that setInputEnabled(false) just emptied.
       // A key still held when input comes back counts again on its next repeat.
@@ -426,7 +441,7 @@ void main(){
     }
     else if (info.kind === 'plot') opts.onPlot?.(info.plotId);
     else if (info.kind === 'adscreen') opts.onInteract?.('adscreen', info.id, { clicked: true, dist, ...adScreens.info(info.id) });
-    else if (info.kind === 'atm' && route === 'waypoint') opts.onInteract?.('atm', null, { clicked: true, near: false, far: true, at: { x: LAYOUT.atm.x, z: LAYOUT.atm.z } });
+    else if (info.kind === 'atm' && route === 'waypoint') opts.onInteract?.('atm', null, { clicked: true, near: false, far: true, at: { x: LAYOUT.atm.x, z: LAYOUT.atm.z, name: '황금 ATM' } });
     else opts.onInteract?.(info.kind, null, { clicked: true, near: near?.kind === info.kind });
   };
   canvas.addEventListener('pointermove', (ev) => {
@@ -652,6 +667,77 @@ void main(){
     if (p) passenger.position.set(p.x, groundHeight(p.x, p.z), p.z);
   }
   let waypoint = null;
+  // ---- auto-walk (interact.js AUTO_WALK): 길안내 알약의 `자동으로 가기` ---------------------------------------------------
+  // The avatar walks to the guide's target by itself: a route over walkable ground (gridPath, tested with this world's own
+  // collision), followed by the same walk step the stick drives (stepWalk). The position still comes from this local
+  // simulation only, and nothing new goes on the wire: the position packets are what they always were.
+  // autoWalk: { route, st: { i, side }, stall: { best, t }, replanned } while it is on, else null.
+  let autoWalk = null;
+  const walkOut = { dx: 0, dz: 0, left: 0, done: false }, walkGo = { dx: 0, dz: 0, top: RUN };
+  const WALK_BOUNDS = { x0: LOOP.x0 + 1.4, x1: LOOP.x1 - 1.4, z0: LOOP.z0 + 1.4, z1: LOOP.z1 - 1.4 }; // where collide() keeps a walker
+  /** Nobody can stand here: inside a building, or within AUTO_WALK.clear of a wall, a landmark or a street prop (cars come and go: walkSteer goes round them). */
+  function walkBlocked(x, z) {
+    if (nyc.buildingAt(x, z) >= 0) return true;
+    let [cx, cz] = pushOut(x, z, AUTO_WALK.clear, colliders);
+    if (world) [cx, cz] = world.collideProps(cx, cz, AUTO_WALK.clear);
+    [cx, cz] = nyc.collide(cx, cz, AUTO_WALK.clear);
+    return Math.hypot(cx - x, cz - z) > 0.02;
+  }
+  /** The avatar can stand here right now: walls, landmarks, props and the cars as they are this frame. */
+  const walkFree = (x, z) => { const [cx, cz] = collide(x, z, RADIUS, false); return Math.hypot(cx - x, cz - z) < 0.06; };
+  function planWalk() {
+    if (!nyc || !waypoint) return null;
+    nyc.ensureSolid(pos.x, pos.z); // from anywhere inside the fence this loads the walls of the whole fenced square
+    return gridPath({ from: { x: pos.x, z: pos.z }, to: waypoint, bounds: WALK_BOUNDS, blocked: walkBlocked });
+  }
+  function beginAutoWalk() {
+    if (drive) { tell('택시에서 내린 뒤에 자동으로 갈 수 있어요'); return false; }
+    if (!inputEnabled) return false;
+    if (!nyc) { tell('지도를 불러오는 중이에요. 잠시 뒤에 다시 눌러 주세요'); return false; }
+    if (cine && cine.pin && !cine.back) return false; // a photo is being framed: the avatar is not even drawn
+    const plan = planWalk();
+    if (!plan) { tell('여기서는 걸어서 더 가까이 갈 길이 없어요', 'err'); return false; }
+    // A board focus or the lounge tour ends: the walk is watched from behind the avatar.
+    if (lounge || (cine && !cine.back)) endCine();
+    autoWalk = { route: plan.points, st: { i: 1, side: 0 }, stall: { best: Infinity, t: 0 }, replanned: false };
+    tell('자동으로 가는 중 · 직접 움직이면 멈춰요', 'ok');
+    return true;
+  }
+  /** What the HUD's guide pill hears: where the guide points, the place's name if the caller gave one, and whether the avatar is walking there by itself. */
+  const sayGuide = () => opts.onWaypoint?.(waypoint && { x: waypoint.x, z: waypoint.z, name: waypoint.name, auto: !!autoWalk });
+  /** Ends the auto-walk (the guide stays on) and tells the HUD; `line`: what to say about it, if anything. */
+  function endAutoWalk(line = '', tone = '') {
+    if (!autoWalk) return;
+    autoWalk = null;
+    if (line) tell(line, tone);
+    if (waypoint) sayGuide();
+  }
+  /** This frame's step of the walk ({ dx, dz, top } for stepWalk), or null when it has just ended. */
+  function stepAutoWalk(dt) {
+    const a = autoWalk;
+    walkSteer(pos, a.route, a.st, walkFree, walkOut);
+    let t = walkOut.done ? 0 : walkStall(a.stall, walkOut.left, dt);
+    if (!t) a.replanned = false;
+    else if (t >= AUTO_WALK.replan && !a.replanned) {
+      // Not getting nearer: plan again from here once (a prop that streamed in, a lot that was built), the clock running on.
+      a.replanned = true;
+      const plan = planWalk();
+      if (plan) {
+        a.route = plan.points; a.st.i = 1; a.st.side = 0;
+        walkSteer(pos, a.route, a.st, walkFree, walkOut);
+        t = walkOut.done ? 0 : walkStall(a.stall, walkOut.left, 0, true);
+      }
+    }
+    // The end of the route, or as near to it as the avatar gets (the last steps of a target that stands against something).
+    if (walkOut.done || (t >= AUTO_WALK.stuck && walkOut.left < 3)) {
+      const short = Math.hypot(pos.x - waypoint.x, pos.z - waypoint.z) >= 7;
+      endAutoWalk(short ? '가장 가까운 곳까지 왔어요 · 목적지는 걸어서 들어갈 수 없어요' : '');
+      return null;
+    }
+    if (t >= AUTO_WALK.stuck) { endAutoWalk('길이 막혀서 자동으로 가기를 멈췄어요', 'err'); return null; }
+    walkGo.dx = walkOut.dx; walkGo.dz = walkOut.dz; walkGo.top = walkPace(walkOut.left, WALK, RUN);
+    return walkGo;
+  }
   const job = { phase: 'none', target: null, dest: null, t0: 0, limit: 0, nextAt: 0, startX: 0, startZ: 0, riders: 0, extra: null, extraAt: 0, extraReach: 0, detachAt: 0, wait: 0 };
   // fareAt: clock time (s) of the last fare sent this session (null = none). SLOW_V: pick-up and drop-off below 40 km/h.
   let fareAt = null;
@@ -720,13 +806,17 @@ void main(){
   function enterTaxi(i) {
     const t = traffic?.takeTaxi(i);
     if (!t) return false;
+    endAutoWalk(); // getting into a taxi ends the auto-walk
+    travel.on = false; stick.ref = null; stick.lag = 0;
     drive = { i, x: t.x, z: t.z, y: groundHeight(t.x, t.z), yaw: t.yaw, v: 0, steer: 0, odo: 0, fare: 3 };
     me.root.visible = false;
     vel.set(0, 0, 0);
     pos.set(t.x, 0, t.z);
     eye = CAR_EYE;
     follow.set(pos.x, eye, pos.z);
-    rescaleOrbit(11.5);
+    // Farther back in an upright frame (camrig.js driveView); from wherever the view was, it swings in behind the car (step()).
+    rescaleOrbit(driveView({ aspect: camera.aspect }).dist);
+    driveYaw0 = t.yaw;
     clearRide();
     exitArmed = 0;
     // The next passenger waits for the Room's fare gap (interact.js nextOfferDelay), counted from the last fare sent.
@@ -758,8 +848,11 @@ void main(){
     me.root.visible = true;
     me.root.position.copy(pos);
     eye = EYE;
+    // Back to the walking view, on the side the driving view was on: 8.4 m back and 1.25 m above the eye line (8.5 m away),
+    // not at the driving view's height (in an upright frame, and after a reverse, that looks down on the avatar).
+    const side = Math.atan2(camWant.x - follow.x, camWant.z - follow.z);
     follow.set(pos.x, pos.y + eye, pos.z);
-    rescaleOrbit(8.5);
+    camWant.set(follow.x + Math.sin(side) * 8.4, follow.y + 1.25, follow.z + Math.cos(side) * 8.4);
     // The driving FOV eases back in step() (fovGoal); nothing snaps here.
     clearRide();
     netState.equip = '';
@@ -983,9 +1076,18 @@ void main(){
     opts.onBalloon?.(balloon.hp);
   }
   // One throw per THROW_GAP_MS (a held or mashed button is not 30 throws a second). The balloon floats 58 m up, out of
-  // the usual view: the first throw of the session tilts the camera up to it for a moment (on foot, no other camera).
+  // the usual view: the first throw of the session tilts the camera up toward it for a moment (on foot, no other camera),
+  // once the pouch has left the hand, so the throw itself is seen first (camrig.js BALLOON_LOOK; lookAtBalloon in step()).
   const THROW_GAP_MS = 250;
-  let lastThrow = -1e9, balloonSeen = false;
+  let lastThrow = -1e9, balloonSeen = false, balloonLookAt = 0;
+  function lookAtBalloon(now) {
+    balloonLookAt = 0;
+    if (drive || cine || !balloon || balloon.hp <= 0) return;
+    const v = balloonLook(camera.position, viewLook, balloon.mesh.position);
+    // pulled back only where there is room behind the view (a wall behind the player keeps the view where it is)
+    const room = !nyc || nyc.rayBlock(camera.position.x, camera.position.y, camera.position.z, v.cam.x, v.cam.y, v.cam.z) >= 1;
+    startCine(room ? new THREE.Vector3(v.cam.x, v.cam.y, v.cam.z) : camera.position.clone(), new THREE.Vector3(v.look.x, v.look.y, v.look.z), { dur: BALLOON_LOOK.dur, until: now + BALLOON_LOOK.hold });
+  }
   function throwPouch() {
     if (!balloon || balloon.hp <= 0) return false;
     const now = performance.now();
@@ -993,27 +1095,36 @@ void main(){
     lastThrow = now;
     if (!balloonSeen && !drive && !cine) {
       balloonSeen = true;
-      startCine(camera.position.clone(), viewLook.clone().lerp(balloon.mesh.position, 0.8), { dur: 600, until: now + 1500 });
+      balloonLookAt = now + BALLOON_LOOK.after;
     }
     const from = new THREE.Vector3(pos.x, (pos.y || 0) + 1.5, pos.z);
     const mesh = makePouch(1.8);
+    // On foot the pouch starts small in the throwing hand, rides the swing and leaves the hand at its top (gestures.js
+    // THROW.release), growing to its flying size on the way up. From a taxi, or on the stand-in body, it leaves at once.
+    const held = !drive && !!me.holdPoint(from);
     mesh.position.copy(from);
+    mesh.scale.setScalar(1.8 * throwSize(0));
     scene.add(mesh);
     // It tumbles end over end and turns on the way up, so its round body, knot and tassel show from any camera.
     const r = Math.random;
-    mesh.rotation.set(r() * 6.3, r() * 6.3, 0);
-    pouchThrows.push({ mesh, from, t: 0, spin: { x: (r() < 0.5 ? -1 : 1) * (7 + r() * 4), y: 5 + r() * 4, rx: mesh.rotation.x, ry: mesh.rotation.y } });
+    mesh.rotation.set(held ? 0 : r() * 6.3, held ? yaw : r() * 6.3, 0);
+    pouchThrows.push({ mesh, from, t: held ? -THROW.release / 0.65 : 0, spin: { x: (r() < 0.5 ? -1 : 1) * (7 + r() * 4), y: 5 + r() * 4, rx: mesh.rotation.x, ry: mesh.rotation.y } });
     me?.emote?.('Throw');
     return true;
   }
   function updateThrows(dt) {
     for (let i = pouchThrows.length - 1; i >= 0; i--) {
       const p = pouchThrows[i];
+      const inHand = p.t < 0;
       p.t += dt / 0.65;
+      // In the hand until the release: the flight starts from where the hand is at that moment.
+      if (inHand && !drive && me.holdPoint(p.from) && p.t < 0) { p.mesh.position.copy(p.from); continue; }
+      if (p.t < 0) p.t = 0;
       const u = Math.min(1, p.t);
       const target = balloon?.mesh?.position || p.from;
       p.mesh.position.lerpVectors(p.from, target, u);
       p.mesh.position.y += Math.sin(u * Math.PI) * 8;
+      p.mesh.scale.setScalar(1.8 * throwSize(u));
       p.mesh.rotation.x = p.spin.rx + p.t * 0.65 * p.spin.x;
       p.mesh.rotation.y = p.spin.ry + p.t * 0.65 * p.spin.y;
       if (u < 1) continue;
@@ -1219,18 +1330,27 @@ void main(){
     return { f: clamp(f, -1, 1), r: clamp(r, -1, 1), walk: keys.has('ShiftLeft') || keys.has('ShiftRight'), joy: usingJoy };
   }
 
-  function stepWalk(dt, input) {
+  // auto: the auto-walk's step this frame ({ dx, dz, top }: a unit direction on the ground and a top speed), or null for the
+  // player's own input. Either way the avatar moves by this local simulation only.
+  function stepWalk(dt, input, auto) {
     // While a scripted camera runs (or eases back) the stick is read against the orbit the player will return to.
     if (cine) fwd.subVectors(homeLook, homePos); else camera.getWorldDirection(fwd);
     fwd.y = 0;
     if (fwd.lengthSq() < 1e-6) fwd.set(0, 0, -1);
     fwd.normalize();
+    // The stick is read against the view as it was before the follow camera turned it (camrig.js stickFrame), so a thumb held
+    // still walks one straight line while the view comes round behind it. Keys read the live view, as before.
+    stickFrame(stick, input.joy && !auto ? Math.atan2(input.r, input.f) : null);
+    if (stick.lag) fwd.applyAxisAngle(UP, -stick.lag);
     right.set(-fwd.z, 0, fwd.x);
-    wish.set(0, 0, 0).addScaledVector(fwd, input.f).addScaledVector(right, input.r);
+    if (auto) wish.set(auto.dx, 0, auto.dz);
+    else wish.set(0, 0, 0).addScaledVector(fwd, input.f).addScaledVector(right, input.r);
     const mag = Math.min(1, wish.length());
     if (mag > 1e-4) wish.normalize();
-    const top = input.walk ? WALK : input.joy ? WALK + (RUN - WALK) * clamp((mag - 0.45) / 0.45, 0, 1) : RUN;
+    const top = auto ? auto.top : input.walk ? WALK : input.joy ? WALK + (RUN - WALK) * clamp((mag - 0.45) / 0.45, 0, 1) : RUN;
     const moving = mag > 0.08;
+    travel.on = moving && (input.joy || !!auto);
+    if (travel.on) travel.yaw = Math.atan2(wish.x, wish.z);
     const k = 1 - Math.exp(-dt * (moving ? 10 : 13));
     vel.x += ((moving ? wish.x * top : 0) - vel.x) * k;
     vel.z += ((moving ? wish.z * top : 0) - vel.z) * k;
@@ -1454,7 +1574,7 @@ void main(){
     const pose = slotPose('MAIN_TOP', 28);
     cineFrom.copy(pose?.cam || new THREE.Vector3(LAYOUT.oneTimes.x, 42, LAYOUT.oneTimes.z + 30));
     cineL0.copy(pose?.look || new THREE.Vector3(LAYOUT.oneTimes.x, 26, LAYOUT.oneTimes.z));
-    cine = { t0: performance.now(), dur: 2200, back: true, ease: 'inout', tell: true };
+    cine = { t0: performance.now(), dur: glideMs(2200, calm.matches), back: true, ease: 'inout', tell: true };
   }
   /** Fly from wherever the view is now to `cam` looking at `look`, then hold (chains board to board without a cut). */
   function startCine(cam, look, o = {}) {
@@ -1463,6 +1583,7 @@ void main(){
     cineTo.copy(cam);
     cineL1.copy(look);
     cine = { t0: performance.now(), dur: o.dur || 700, back: false, until: o.until || 0, pin: !!o.pin, fov: o.fov || 0 };
+    cine.dur = glideMs(cine.dur, calm.matches); // a cut for a player who asked for less motion
   }
   /**
    * The one way out of a scripted camera: movement, a tap, Escape, a timed hold running out, 시점 해제, the lounge
@@ -1477,18 +1598,19 @@ void main(){
     if (cine && !cine.back) {
       if (drive) {
         // In a car the view comes back behind it, at the distance the orbit already had.
-        const d = clamp(tmp.subVectors(camWant, follow).length() || 11.5, controls.minDistance, controls.maxDistance);
-        const p = behindCar(follow, drive.yaw, d);
+        const seat = driveView({ aspect: camera.aspect });
+        const d = clamp(tmp.subVectors(camWant, follow).length() || seat.dist, controls.minDistance, controls.maxDistance);
+        const p = behindCar(follow, drive.yaw, d, seat.polar);
         camWant.set(p.x, p.y, p.z);
       }
       cineFrom.copy(camera.position);
       cineL0.copy(viewLook);
-      cine = { t0: now, dur: RETURN_MS, back: true, ease: 'out', tell: false };
+      cine = { t0: now, dur: glideMs(RETURN_MS, calm.matches), back: true, ease: 'out', tell: false };
       opts.onFocus?.(false);
     } else if (cine && force && cine.t0 + cine.dur - now > RETURN_MS) {
       cineFrom.copy(camera.position);
       cineL0.copy(viewLook);
-      cine = { t0: now, dur: RETURN_MS, back: true, ease: 'out', tell: cine.tell };
+      cine = { t0: now, dur: glideMs(RETURN_MS, calm.matches), back: true, ease: 'out', tell: cine.tell };
     }
     if (wasLounge) opts.onLoungeEnd?.();
   }
@@ -1498,6 +1620,7 @@ void main(){
     if (drive) { tell('운전 중에는 내린 뒤에 볼 수 있어요'); return null; }
     const pose = slotPose(slotId, 18, true);
     if (!pose) return null;
+    endAutoWalk(); // the view leaves the avatar: it does not walk on unseen
     if (hidMe) { hidMe = false; me.root.visible = true; }
     startCine(pose.cam, pose.look, { dur: 700, until: o.hold ? performance.now() + o.hold : 0, fov: pose.fov });
     // Fireworks around the board, and only when asked (a claim): a plain 보기 leaves it clear. When boards.set already
@@ -1516,6 +1639,7 @@ void main(){
     if (drive) return false;
     const pose = framePose(slotId);
     if (!pose) return false;
+    endAutoWalk();
     // A cut, not a flight: the photo is taken right away. Pinned: a drag or a step must not drop the frame.
     startCine(pose.cam, pose.look, { dur: 1, pin: true });
     cineFrom.copy(pose.cam);
@@ -1560,6 +1684,7 @@ void main(){
     if (drive) return null;
     const hold = slotPose(slotId, 15, true, false);
     if (!hold) return null;
+    endAutoWalk();
     const ms = Math.max(4000, Number(o.ms) || 15000), look = hold.look.clone();
     const f = new THREE.Vector3().subVectors(hold.cam, look); f.y = 0; if (f.lengthSq() < 1e-4) f.set(0, 0, 1); f.normalize();
     const side = new THREE.Vector3(f.z, 0, -f.x);
@@ -1774,9 +1899,15 @@ void main(){
     // While input is switched off (a sheet is open) a held key or a thumb resting on the stick does not count.
     if (cine && !cine.back && (drive || cineCancels({ active: true, pin: cine.pin, keys: keys.size, joy: Math.hypot(joy.x, joy.y), lounge, locked: !inputEnabled }))) endCine();
     else if (lounge && drive) endCine();
+    // The auto-walk: the player's own input (the stick, a movement key, a sheet, a taxi) ends it before this frame's step.
+    let auto = null;
+    if (autoWalk) {
+      if (autoWalkEnds({ joy: Math.hypot(joy.x, joy.y), keys: keys.size, locked: !inputEnabled, driving: !!drive, guide: !!waypoint })) endAutoWalk();
+      else auto = stepAutoWalk(dt);
+    }
     let sitting = false;
     if (drive) stepDrive(dt, input, t);
-    else sitting = stepWalk(dt, input);
+    else sitting = stepWalk(dt, input, auto);
     reverseT = drive ? reverseTime(reverseT, drive.v, dt) : 0;
     // The rings share one 20 s gap (PLAY.ring, no points: main.js only cheers through onStunt): dim while it runs, and no shake or burst.
     const ringWait = now - stuntAt < PLAY.ring.gapMs + 250;
@@ -1808,7 +1939,7 @@ void main(){
       hiveHint = close < 14;
     } else hiveHint = false;
     ensureBalloon(performance.now());
-    updateThrows(dt);
+    if (balloonLookAt && now >= balloonLookAt) lookAtBalloon(now);
     if (balloon && balloon.hp > 0) {
       balloon.mesh.position.y = 58 + Math.sin(t * 0.6) * 1.6;
       balloon.mesh.rotation.set(Math.sin(t * 0.45) * 0.06, t * 0.25, Math.sin(t * 0.6) * 0.05); // turns slowly, so it reads as round from the plaza
@@ -1819,6 +1950,7 @@ void main(){
       tourNext();
     }
     if (!drive) me.update(dt, t);
+    updateThrows(dt); // after the avatar is posed: a pouch still in the hand sits where the hand is this frame
     playerInfo.x = pos.x; playerInfo.y = pos.y; playerInfo.z = pos.z; playerInfo.yaw = yaw; playerInfo.driving = !!drive;
 
     // Network projection: meters → wire units (5 cm grid). Never read back into the local player.
@@ -1841,24 +1973,29 @@ void main(){
     camera.position.copy(camWant).add(tmp2.subVectors(follow, prevFollow));
     // FOV: wider in a portrait frame, wider again with speed in a taxi; every change (rotation, getting out) is eased.
     // A board camera that had to open the lens to fit the face (boardVantage) holds that FOV until it heads back.
-    const fovGoal = (cine && !cine.back && cine.fov) || portraitFov(camera.aspect, baseFov) + (drive ? clamp(Math.abs(drive.v) / 30, 0, 1) * 10 : 0);
+    const fovGoal = (cine && !cine.back && cine.fov) || portraitFov(camera.aspect, baseFov) + (drive ? driveWiden(camera.aspect, drive.v) : 0);
     if (Math.abs(camera.fov - fovGoal) > 0.05) { camera.fov += (fovGoal - camera.fov) * (1 - Math.exp(-dt * (drive ? 4 : 6))); camera.updateProjectionMatrix(); }
-    const driveCam = drive ? driveCamera({ v: drive.v, reverseT }) : null;
-    if (drive && !orbiting && now - orbitEnd > 1500 && driveCam.swing) {
+    if (drive) {
+      // Fixed to the car (camrig.js driveCamera): behind it and turning with it at any speed, in reverse too. A drag still looks
+      // around; a quarter second after the finger lifts the view is on its way back.
       off.subVectors(camera.position, follow);
-      const r = off.length();
-      const theta = Math.atan2(off.x, off.z);
-      const phi = Math.acos(clamp(off.y / r, -1, 1));
-      // Behind the car, also for a short reverse (steering stays car-relative); in front only after 1.2 s of reversing.
-      const want = driveCam.front ? drive.yaw : drive.yaw + Math.PI;
-      const nt = dampAngle(theta, want, 2.4, dt);
-      const np = phi + (1.2 - phi) * (1 - Math.exp(-dt * 1.2));
-      camera.position.set(follow.x + r * Math.sin(np) * Math.sin(nt), follow.y + r * Math.cos(np), follow.z + r * Math.sin(np) * Math.cos(nt));
-    } else if (!drive && !(cine && !cine.back)) {
-      // On foot the view turns gently toward where the stick steers, so a turn does not need a second finger.
-      const turn = followYawRate({ f: input.f, r: input.r, idleMs: now - orbitEnd, dragging: orbiting });
+      const r = off.length() || 1;
+      const o = driveCamera({ theta: Math.atan2(off.x, off.z), phi: Math.acos(clamp(off.y / r, -1, 1)), yaw: drive.yaw, turned: wrapAngle(drive.yaw - driveYaw0), dt, idleMs: now - orbitEnd, dragging: orbiting, aspect: camera.aspect, reverseT }, driveOrbit);
+      driveYaw0 = drive.yaw;
+      camera.position.set(follow.x + r * Math.sin(o.phi) * Math.sin(o.theta), follow.y + r * Math.cos(o.phi), follow.z + r * Math.sin(o.phi) * Math.cos(o.theta));
+    } else {
+      // On foot. The stick and the auto-walk: the view comes round behind the direction of travel (chaseYawRate), so walking
+      // needs no second finger on the view. Keys: the view turns with the sideways keys, as before (followYawRate).
+      const scripted = !!(cine && !cine.back);
+      let turn = 0; // rad/s of heading: + = counter-clockwise seen from above
+      if (travel.on) {
+        const err = wrapAngle(travel.yaw - Math.atan2(follow.x - camera.position.x, follow.z - camera.position.z));
+        backT = Math.abs(err) > CHASE.backAngle ? backT + dt * 1000 : 0;
+        turn = chaseYawRate({ err, idleMs: now - orbitEnd, dragging: orbiting, scripted, backMs: autoWalk ? Infinity : backT });
+        if (stick.ref != null) stick.lag += turn * dt; // the stick keeps reading against the view as it was (stepWalk)
+      } else if (!scripted) turn = -followYawRate({ f: input.f, r: input.r, idleMs: now - orbitEnd, dragging: orbiting });
       if (turn) {
-        off.subVectors(camera.position, follow).applyAxisAngle(UP, -turn * dt);
+        off.subVectors(camera.position, follow).applyAxisAngle(UP, turn * dt);
         camera.position.copy(follow).add(off);
       }
     }
@@ -2011,7 +2148,8 @@ void main(){
     if (key !== lastNearKey) { lastNearKey = key; near = nk; opts.onProximity?.(nk); }
     marks?.stall.setNear(near?.kind === 'cart', t);
     marks?.stage.setNear(near?.kind === 'stage', t);
-    if (waypoint && Math.hypot(pos.x - waypoint.x, pos.z - waypoint.z) < 7) setWaypoint(null); // reached: the guide goes out
+    // Reached: the guide goes out. The auto-walk goes on to the end of its route first (an ATM or a lot opens from closer than 7 m).
+    if (waypoint && !autoWalk && Math.hypot(pos.x - waypoint.x, pos.z - waypoint.z) < 7) setWaypoint(null);
     for (const m of markerList) if (m.g.visible) { m.icon.position.y = 6 + Math.sin(t * 2.4) * 0.4; m.ring.scale.setScalar(1 + Math.sin(t * 3) * 0.06); }
 
     syncRemotes(dt, t);
@@ -2189,11 +2327,17 @@ void main(){
     const camYaw = Math.atan2(tmp.x, tmp.z);
     return wrapAngle(Math.atan2(x - pos.x, z - pos.z) - camYaw);
   }
+  // p: { x, z } turns the guide on, null turns it off; `name` is the place's name for the pill (16 characters at most).
+  // { x, z, auto: true } also sets the avatar walking there by itself (the pill's 자동으로 가기); the same point without
+  // `auto` is 멈추기. onWaypoint hears { x, z, name, auto } (auto: is it walking now).
   function setWaypoint(p) {
     if (p && Number.isFinite(p.x) && Number.isFinite(p.z) && !insideLoop(p.x, p.z, 0)) p = null;
-    waypoint = p && Number.isFinite(p.x) && Number.isFinite(p.z) ? { x: p.x, z: p.z } : null;
+    const go = !!(p && p.auto);
+    autoWalk = null; // a new target, a cleared one and 멈추기 all end the walk under way
+    waypoint = p && Number.isFinite(p.x) && Number.isFinite(p.z) ? { x: p.x, z: p.z, name: chars(typeof p.name === 'string' ? p.name : '', 16) } : null;
     markers.way.set(waypoint);
-    opts.onWaypoint?.(waypoint);
+    if (go && waypoint) beginAutoWalk();
+    sayGuide();
   }
   function setDancing(on) {
     if (on === dancing || drive) return;
@@ -2758,6 +2902,7 @@ void main(){
     // false when it cannot start (in a taxi).
     startLounge() {
       if (drive) { tell('운전 중에는 내린 뒤에 볼 수 있어요'); return false; }
+      endAutoWalk();
       lounge = true;
       loungeAt = 0;
       loungeI = 0;
@@ -2779,6 +2924,8 @@ void main(){
     balloonUp: () => !!(balloon && balloon.hp > 0),
     teleport(x, z) {
       if (drive) exitTaxi();
+      endAutoWalk(); // the route was planned from the old place
+      stick.ref = null; stick.lag = 0;
       let tx = clamp(Number(x) || 0, LOOP.x0 + 4, LOOP.x1 - 4), tz = clamp(Number(z) || 0, LOOP.z0 + 4, LOOP.z1 - 4);
       const spot = approachOf(tx, tz);
       if (spot) { tx = spot.x; tz = spot.z; yaw = spot.yaw; }
@@ -2827,7 +2974,7 @@ void main(){
       if (drive && job.phase === 'none') out.offerIn = Math.max(0, job.nextAt - clockT);
       if (drive) out.exitArmed = exitArmed > performance.now();
       if (drive?.exiting) out.exiting = true;
-      if (waypoint) out.waypoint = { dist: Math.hypot(waypoint.x - pos.x, waypoint.z - pos.z), bearing: bearingTo(waypoint.x, waypoint.z) };
+      if (waypoint) out.waypoint = { dist: Math.hypot(waypoint.x - pos.x, waypoint.z - pos.z), bearing: bearingTo(waypoint.x, waypoint.z), auto: !!autoWalk };
       return out;
     },
     setMyBeacon,
