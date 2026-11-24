@@ -20,6 +20,7 @@ export const MODEL_URL = {
 // The real night photos only light the PMREM environment (cube faces are 256 px), so one small copy serves every tier.
 export const ENV_PHOTOS = ['night-2025', 'night-pano', 'night-steps', 'night-canyon'];
 export const envPhotoUrl = (name) => `/assets/times-square/${name}.env.jpg`;
+export const TAXI_URL = '/assets/models/taxi.glb'; // the cab and car model: ts3d/traffic.js asks for it once the street is on screen (the box cars stand in until it is there)
 
 // A remote avatar still on the stand-in asks for its model once it is in the view frustum and this close (m).
 export const SEE_R = 90;
