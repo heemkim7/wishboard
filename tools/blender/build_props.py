@@ -1406,16 +1406,19 @@ def air_dancer():
             from mathutils import Quaternion
             return Quaternion(Vector(to_blender(axis)), rad(deg))
         def pose(t):
-            s, c = math.sin, math.cos
+            # The arms rest 35 degrees above level. They flap between about level and 55 degrees up and the forearm
+            # never folds past upright, and they are held a little to the front: with a wider flap or a swing to
+            # the back an arm crossed the head or went behind it (seen on the 8-frame sheet of the first version).
+            s = math.sin
             return {
-                "Body1": about(FRONT, 9 * s(w * t)) @ about(SIDE, 5 * s(2 * w * t + 0.6)),
-                "Body2": about(FRONT, 14 * s(w * t - 0.9)) @ about(SIDE, 7 * s(2 * w * t + 0.1)),
-                "Body3": about(FRONT, 16 * s(w * t - 1.8)) @ about(SIDE, 8 * s(2 * w * t - 0.5)),
-                "Head":  about(FRONT, 18 * s(w * t - 2.7)) @ about(SIDE, 12 * s(2 * w * t - 1.1)) @ about(UPAX, 10 * s(w * t + 0.4)),
-                "ArmL1": about(FRONT, 12 + 38 * s(2 * w * t + 0.3)) @ about(UPAX, 22 * s(w * t + 1.0)),
-                "ArmL2": about(FRONT, 48 * s(2 * w * t - 0.8)),
-                "ArmR1": about(FRONT, -12 - 38 * s(2 * w * t + 2.0)) @ about(UPAX, 22 * s(w * t + 2.4)),
-                "ArmR2": about(FRONT, -48 * s(2 * w * t + 0.9)),
+                "Body1": about(FRONT, 8 * s(w * t)) @ about(SIDE, 5 * s(2 * w * t + 0.6)),
+                "Body2": about(FRONT, 13 * s(w * t - 0.9)) @ about(SIDE, 6 * s(2 * w * t + 0.1)),
+                "Body3": about(FRONT, 15 * s(w * t - 1.8)) @ about(SIDE, 7 * s(2 * w * t - 0.5)),
+                "Head":  about(FRONT, 13 * s(w * t - 2.7)) @ about(SIDE, 8 * s(2 * w * t - 1.1)) @ about(UPAX, 8 * s(w * t + 0.4)),
+                "ArmL1": about(FRONT, -10 + 28 * s(2 * w * t + 0.3)) @ about(UPAX, -(10 + 12 * s(w * t + 1.0))),
+                "ArmL2": about(FRONT, 5 + 30 * s(2 * w * t - 0.8)),
+                "ArmR1": about(FRONT, 10 - 28 * s(2 * w * t + 2.0)) @ about(UPAX, 10 + 12 * s(w * t + 2.4)),
+                "ArmR2": about(FRONT, -5 - 30 * s(2 * w * t + 0.9)),
             }
         rest = {b.name: b.matrix_local.to_quaternion() for b in ad.bones}
         for pb in arm.pose.bones:

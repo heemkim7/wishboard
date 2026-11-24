@@ -15,9 +15,15 @@
 #            --no-spill      leave out the small coloured lamps beside the glowing parts
 #            --frame <0..1>  where in its clip a rigged model is shown (default 0.2); given explicitly it writes a small
 #                            <name>_fNNN.png instead of the final files, to check the motion frame by frame
-#            --az <deg> --pitch <deg>   camera for the big picture (default 35 and 20; the icons use 35 and 26)
+#            --frames <n>    for a rigged model: n evenly spaced frames of its clip on one sheet, <name>_frames.png
+#            --icons-only    skip the big picture
+#            --az <deg> --pitch <deg>   camera for the big picture (default 35 and 20)
 #
-# Writes <name>.png (768 x 768), <name>_icon.png (256 x 256, buildings only), sheet.png, compare_buildings.png.
+# Writes <name>.png (768 x 768), sheet.png, compare_buildings.png and, for the buildings, two 256 x 256 icons:
+#   <name>_icon.png       for the interface: framed on the building itself (the FOCUS box below) from closer and lower
+#                         (32 degrees to the side, 14 up), the stand-in screen dimmed; the tent's and the stall's board
+#                         runs out of the top of the picture
+#   <name>_icon_full.png  the whole lot with its board, as the game shows it (35 degrees to the side, 26 up)
 #
 # What is in the picture besides the model:
 #   - a stand-in screen and a stand-in name sign where BoardAnchor and SignAnchor say the game mounts them (a soft
@@ -34,7 +40,7 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 ROOT = REPO.split(os.sep + ".claude" + os.sep + "worktrees" + os.sep)[0]
 argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 OPT = {"--glb": os.path.join(ROOT, "out", "blender", "glb"), "--out": os.path.join(ROOT, "out", "blender", "renders"),
-       "--tint": "#ff5a3c", "--az": "35", "--pitch": "20", "--frame": "0.2"}
+       "--tint": "#ff5a3c", "--az": "35", "--pitch": "20", "--frame": "0.2", "--frames": "0"}
 FRAME_GIVEN = "--frame" in argv
 FLAGS, names, i = set(), [], 0
 while i < len(argv):
@@ -48,6 +54,13 @@ GLB_DIR, OUT = os.path.abspath(OPT["--glb"]), os.path.abspath(OPT["--out"])
 ALL = ("lot0_empty", "lot1_tent", "lot2_pocha", "lot3_shop", "lot4_tower", "taxi", "xmas_tree", "air_dancer")
 LOTS = ALL[:5]
 OLD_ICON = dict(lot0_empty="lot.jpg", lot1_tent="tent.jpg", lot2_pocha="pocha.jpg", lot3_shop="shop.jpg", lot4_tower="tower.jpg")
+# What the small icon is framed on, in the game's axes (x0, x1, y0, y1, z0, z1): the building itself, not the whole
+# pad. Where the box stops below the board (tent, stall) the board runs out of the top of the picture.
+FOCUS = dict(lot0_empty=(-2.7, 2.7, 0.0, 5.05, 0.3, 3.0), lot1_tent=(-3.1, 3.1, 0.0, 3.3, -2.1, 2.7),
+             lot2_pocha=(-4.15, 4.0, 0.0, 4.35, -1.6, 3.0), lot3_shop=(-4.5, 5.0, 0.0, 9.0, -3.3, 3.5),
+             lot4_tower=(-4.2, 4.2, 0.0, 19.0, -3.3, 4.3))
+ICON_SCREEN = 0.36                         # the stand-in screen is drawn this much dimmer in the icons (1 = as in the big picture)
+FRAMES = int(OPT["--frames"])
 DUMMY, BARE = "--dummy" in FLAGS, "--bare" in FLAGS
 TMP = os.path.join(tempfile.gettempdir(), "kts-props")
 os.makedirs(OUT, exist_ok=True)
@@ -334,7 +347,7 @@ def glow_lamps(meshes, centre, size, extra):
     lamps.sort(key=lambda t: -t[0])
     lamps = lamps[:56] + [(power * spill, col, pos, 0.5) for pos, col, power in extra]
     for energy, col, pos, soft in lamps:
-        L = bpy.data.lights.new("Glow", "POINT")
+        L = bpy.data.lights.new("GlowScreen" if soft > 0.3 else "Glow", "POINT")
         L.color, L.energy, L.shadow_soft_size = col, energy, soft
         L.use_shadow = soft > 0.3                              # only the screen's lamp casts shadows
         L.specular_factor = 0.15
@@ -485,23 +498,63 @@ def render_asset(name):
     exr = os.path.join(TMP, name + ".exr")
     scene.render.filepath = exr
 
-    def shot(az, pitch, size_px, margin, out_name):
-        fit_camera(cam, fpts, az, pitch, margin)
+    screen_mat = bpy.data.materials.get("StandInScreen")
+    screen_em = next((n for n in screen_mat.node_tree.nodes if n.type == "EMISSION"), None) if screen_mat else None
+    screen_full = screen_em.inputs["Strength"].default_value if screen_em else 0.0
+    screen_lamps = [(L, L.energy) for L in bpy.data.lights if L.name.startswith("GlowScreen")]
+
+    def shot(az, pitch, size_px, margin, out_name, pts=None, screen=1.0, save=True):
+        if screen_em:                                          # the icons draw the stand-in screen dimmer
+            screen_em.inputs["Strength"].default_value = screen_full * screen
+            for L, e in screen_lamps:
+                L.energy = e * screen
+        fit_camera(cam, fpts if pts is None else pts, az, pitch, margin)
         scene.render.resolution_x = scene.render.resolution_y = size_px * 2
         bpy.ops.render.render(write_still=True)
-        out = os.path.join(OUT, out_name)
-        write_png(out, finish_picture(exr, size_px))
-        print("PICTURE", out)
+        img = finish_picture(exr, size_px)
+        if save:
+            out = os.path.join(OUT, out_name)
+            write_png(out, img)
+            print("PICTURE", out)
+        return img
 
+    az, pitch = float(OPT["--az"]), float(OPT["--pitch"])
     if DUMMY:
-        shot(float(OPT["--az"]), float(OPT["--pitch"]), 768, 0.06, name + "_dummy.png")
+        shot(az, pitch, 768, 0.06, name + "_dummy.png")
+    elif FRAMES > 0 and arm is not None and bpy.data.actions:   # the whole clip on one sheet, same camera for every frame
+        a0, a1 = bpy.data.actions[0].frame_range
+        frames = [int(round(a0 + (a1 - a0) * k / FRAMES)) for k in range(FRAMES)]
+        every = []
+        for f in frames:
+            scene.frame_set(f)
+            bpy.context.view_layer.update()
+            every.append(world_points(frame))
+        every = np.concatenate(every)
+        tile, label, cols = 384, 34, 4
+        rows = (FRAMES + cols - 1) // cols
+        sheet = canvas(rows * (tile + label), cols * tile)
+        for k, f in enumerate(frames):
+            scene.frame_set(f)
+            bpy.context.view_layer.update()
+            r, c = divmod(k, cols)
+            sheet[r * (tile + label):r * (tile + label) + tile, c * tile:(c + 1) * tile] = shot(az, pitch, tile, 0.05, "", pts=every, save=False)
+            t = "FRAME %d  %.2f S" % (f, (f - a0) / scene.render.fps)
+            draw_text(sheet, t, c * tile + (tile - text_width(t)) // 2, r * (tile + label) + tile + 9, color=(150, 160, 190))
+        out = os.path.join(OUT, name + "_frames.png")
+        write_png(out, sheet)
+        print("PICTURE", out)
     elif FRAME_GIVEN:                                           # a look at one moment of a clip, not a final picture
-        shot(float(OPT["--az"]), float(OPT["--pitch"]), 384, 0.06, name + "_f%03d.png" % round(float(OPT["--frame"]) * 100))
+        shot(az, pitch, 384, 0.06, name + "_f%03d.png" % round(float(OPT["--frame"]) * 100))
     else:
         if "--icons-only" not in FLAGS:
-            shot(float(OPT["--az"]), float(OPT["--pitch"]), 768, 0.06, name + ".png")
+            shot(az, pitch, 768, 0.06, name + ".png")
         if name in LOTS:
-            shot(35.0, 26.0, 256, 0.05, name + "_icon.png")
+            # two icons: the whole lot as the game shows it, and the one for the interface, framed on the building
+            # from closer and lower, the stand-in screen dimmed so the building carries the picture
+            shot(35.0, 26.0, 256, 0.05, name + "_icon_full.png")
+            x0, x1, y0, y1, z0, z1 = FOCUS[name]
+            box = np.array([(x, -z, y) for x in (x0, x1) for y in (y0, y1) for z in (z0, z1)])
+            shot(32.0, 14.0, 256, 0.03, name + "_icon.png", pts=box, screen=ICON_SCREEN)
     print("RENDERED", name, engine, "glow lamps", n_glow)
     return True
 
@@ -553,6 +606,6 @@ if __name__ == "__main__":
     if "--sheets-only" not in FLAGS:
         for n in todo:
             render_asset(n)
-    if "--no-sheets" not in FLAGS and not DUMMY and not FRAME_GIVEN:
+    if "--no-sheets" not in FLAGS and not DUMMY and not FRAME_GIVEN and FRAMES == 0:
         make_sheet()
         make_compare()
