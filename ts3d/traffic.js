@@ -12,9 +12,16 @@
 // - one direction at a time owns a junction (opposite directions share it when neither turns left);
 // - a car that cannot move is not left in the street: it goes around what blocks it if there is room, and after
 //   RULES.stuckS it fades out and comes back somewhere else.
+//
+// What a car looks like: boxes from the first frame (vehicleKits), and the modelled cab (assets/models/taxi.glb,
+// taxiModelKit) once it has been fetched, which is only asked for after the street has been drawn. If it never comes
+// the boxes stay. Either way every fleet is a handful of instanced meshes that share one matrix per vehicle.
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Kit } from './kit.js?v=202611241127';
 import { makeCanvas, paintTaxiSign, paintTaxiDecal } from './art.js?v=202611241127';
+import { TAXI_URL } from './loadplan.js?v=202611241127';
 
 // Headlight pool on the road: a wide soft fan (art.js paintBeam is now a narrow core meant for guide beams).
 function paintHeadlight(canvas) {
@@ -49,26 +56,29 @@ export function signalPhase(t) {
   return 'red';
 }
 
-// Metres and seconds. A car is 4.82 m bumper to bumper and 1.98 m over the wheels (vehicleKits below).
-const CAR_HL = 2.41, CAR_HW = 0.99;
+// Metres and seconds. The box a car takes up on the street is the modelled cab's (taxi.glb): 4.95 m from the rear
+// over-riders (z -2.46) to the front ones (z +2.49), so 2.49 either way of its origin, and 2.06 m over the wheel
+// arches. Its mirrors reach 8 cm further out on each side (2.22 m across); the hard rule keeps two boxes 0.2 m apart
+// side to side, so two mirrors never come closer than 4 cm. The box stand-in (vehicleKits: 4.82 x 1.98 m) is inside it.
+const CAR_HL = 2.49, CAR_HW = 1.03;
 export const RULES = {
   len: CAR_HL * 2, wid: CAR_HW * 2,
   gap: 1.8, // between bumpers in a queue
   gapParked: 6.5, // behind a stopped car that is not traffic (a parked or waiting cab): room to pull out around it
   gapWalker: 4.5, // nose to someone standing in the lane
-  stopBack: 7.7, // car centre before a junction's edge: the nose stops 0.4 m short of the stop line world.js paints
+  stopBack: 7.8, // car centre before a junction's edge: the nose stops 0.4 m short of the stop line world.js paints
   turnV: 4.5, // speed through a corner
   stuckS: 12, // blocked this long by something that is not traffic: off the street
   idleS: 80, // not moved for this long, whatever the reason (two signal cycles and more): off the street
   fadeS: 0.35, // a car comes and goes by growing / shrinking for this long
 };
 const SAFE_L = 0.3, SAFE_W = 0.1; // the hard rule: never closer than 0.6 m nose to tail, 0.2 m side to side
-const SIDE = 0.45; // a car is "in my lane" when it comes within this of my side (lanes are 0.9 m and more apart)
+const SIDE = 0.45; // a car is "in my lane" when it comes within this of my side (the cars of two lanes are 0.86 m and more apart)
 const PASS = 0.7; // side room given to what a car goes around
 const LOOK = 26; // how far ahead a car looks
 const SLEW = 0.6; // metres sideways per metre forward at walking pace (pulling out); a quarter of that at speed
 const CORNER = 4.5; // a corner starts and ends this far from the corner point
-const KERB = 0.75; // a cab called to a stand sits this far inside the road edge (0.3 m clear of the outside lane)
+const KERB = 0.67; // a cab called to a stand sits this far inside the road edge (0.3 m clear of the outside lane)
 
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const CAR_COLORS = ['#101114', '#e9eaec', '#8e9399', '#2b2f36', '#1c2b4a', '#6b1b1f', '#c2c5ca', '#3a3f45', '#0f2a24', '#5a5e63'].map(c => new THREE.Color(c));
@@ -179,6 +189,143 @@ function taxiDecalGeometry() {
   return g;
 }
 
+// ---- the modelled cab ------------------------------------------------------------------------------------------
+// assets/models/taxi.glb (tools/blender/build_props.py `taxi`): metres, origin on the ground under the middle of the
+// car, nose toward +z like the box kit. Nodes Body, Glass, Checker, Wheel_FL/FR/RL/RR, RoofSign, HeadLights,
+// TailLights; flat-colour materials Paint, Trim, Chrome, White, Glass, RoofSign, LightFront, LightRear; no textures.
+// A plain car is the same model without Checker and RoofSign.
+//
+// The fleets do not draw it node by node (18 primitives a car). Its triangles are sorted into a few groups, each one
+// geometry with the file's colour written on every vertex, and each group is one instanced mesh:
+//   paint   Body's Paint: the only part an instance colour tints (cab yellow, a shop colour, a car's colour)
+//   solid   Trim and White: tyres, bumpers, sills, the plates, and on a cab the checker stripe
+//   chrome  Chrome: bumper strips, grille, lamp rims, handles, the wheels' dishes
+//   glass   the windows
+//   glow    head and tail lamps, unlit: the file's emissive colour x its strength x LAMP_GAIN
+//   sign    the roof light: the file's box, drawn with the game's lettering (modelSignGeometry)
+// On the phone tier chrome and glass are one group, `shiny`. The wheels are in solid and chrome: they do not turn
+// (a wheel of this model is one turned shape with a plain dish, so a turning one looks like a still one, and a
+// wheel mesh of its own is 4 matrices a car a frame and one more draw call).
+const MODEL_GROUP = { Paint: 'paint', Trim: 'solid', White: 'solid', Chrome: 'chrome', Glass: 'glass', LightFront: 'glow', LightRear: 'glow' };
+const MODEL_NODES = ['Body', 'Glass', 'Checker', 'Wheel_FL', 'Wheel_FR', 'Wheel_RL', 'Wheel_RR', 'RoofSign', 'HeadLights', 'TailLights'];
+// The file's lamp strengths (3.0 head, 2.2 tail) were set for its own render. Under the game's bloom this takes them to
+// what the boxes' lamps gave: those were 5 and 3, on smaller lenses (4.05 and 2.97 here).
+const LAMP_GAIN = 1.35;
+
+/**
+ * The checker stripe is geometry: 12 cm dark squares standing on a pale band. Past 25 m on a phone a square is under
+ * four pixels and with no texture there is no mipmap to average it: it would crawl as the cab moves, which is what
+ * the old 10 cm decal did. So the shader does the averaging: where one pixel covers more than `near` metres of the
+ * car's side the squares and the band start to run together, and at `far` (a square is 1.6 pixels) they are one even
+ * tone. Measured on the screen (fwidth), so it is right at any resolution and when the side is seen at a slant.
+ */
+export const CHECKER_FADE = { near: 0.03, far: 0.075 };
+
+// The roof light of the model: the file's box (0.9 x 0.26 x 0.22 with a 6 cm chamfer), drawn with the same texture
+// as the stand-in's light (art.js paintTaxiSign). Its flat front and back faces (0.78 x 0.14) carry the lettering:
+// the full width of the texture and the band about its middle that has the face's shape, so the letters are not
+// squeezed. Every other triangle shows one plain corner texel, as on the stand-in.
+function modelSignGeometry(box, texAspect) {
+  const g = box.index ? box.toNonIndexed() : box.clone();
+  g.deleteAttribute('normal');
+  g.deleteAttribute('color');
+  g.computeBoundingBox();
+  const pos = g.attributes.position, n = pos.count, b = g.boundingBox, mid = (b.min.z + b.max.z) / 2;
+  const onFace = (i, z) => Math.abs(pos.getZ(i) - z) < 1e-4;
+  const flat = (t) => (onFace(t, b.max.z) && onFace(t + 1, b.max.z) && onFace(t + 2, b.max.z)) || (onFace(t, b.min.z) && onFace(t + 1, b.min.z) && onFace(t + 2, b.min.z));
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, faces = 0;
+  for (let t = 0; t < n; t += 3) {
+    if (!flat(t)) continue;
+    faces++;
+    for (let i = t; i < t + 3; i++) { x0 = Math.min(x0, pos.getX(i)); x1 = Math.max(x1, pos.getX(i)); y0 = Math.min(y0, pos.getY(i)); y1 = Math.max(y1, pos.getY(i)); }
+  }
+  if (faces < 4 || !(x1 > x0) || !(y1 > y0)) throw new Error('taxi model: RoofSign has no flat front and back face');
+  const band = Math.min(1, ((y1 - y0) / (x1 - x0)) * texAspect); // how much of the texture's height the face shows
+  const uv = new Float32Array(n * 2);
+  for (let t = 0; t < n; t += 3) {
+    const lettered = flat(t);
+    for (let i = t; i < t + 3; i++) {
+      if (!lettered) { uv[i * 2] = 0.012; uv[i * 2 + 1] = 0.95; continue; }
+      const u = (pos.getX(i) - x0) / (x1 - x0); // read from in front of the car (+z), x runs to the right
+      uv[i * 2] = pos.getZ(i) > mid ? u : 1 - u;
+      uv[i * 2 + 1] = 0.5 + ((pos.getY(i) - y0) / (y1 - y0) - 0.5) * band;
+    }
+  }
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  g.userData.face = { w: x1 - x0, h: y1 - y0, band };
+  return g;
+}
+
+/**
+ * The parsed taxi.glb (its scene) as the fleets draw it: { taxi, car } are lists of [group, geometry] with paint
+ * first, by tier (see above); `tris` is what one cab and one car cost. Geometry that is the same for both is one
+ * object in both lists. Throws when the file is not the cab this was written for (the caller keeps the boxes).
+ */
+export function taxiModelKit(root, quality = 'high', signAspect = 4) {
+  root.updateMatrixWorld(true);
+  const found = new Set(root.children.map((o) => o.name));
+  for (const name of MODEL_NODES) if (!found.has(name)) throw new Error('taxi model: no node ' + name);
+  const parts = { paint: [], solid: [], checker: [], chrome: [], glass: [], glow: [] };
+  const flat = [], c = new THREE.Color();
+  let sign = null;
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    let node = o;
+    while (node.parent && node.parent !== root) node = node.parent;
+    const src = o.geometry, mat = o.material, n = src.attributes.position.count;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', src.attributes.position.clone());
+    if (src.attributes.normal) g.setAttribute('normal', src.attributes.normal.clone());
+    g.setIndex(src.index ? src.index.clone() : Array.from({ length: n }, (_, i) => i));
+    if (!src.attributes.normal) g.computeVertexNormals();
+    g.applyMatrix4(o.matrixWorld); // a wheel's node sits on its axle: here every part is in the car's own frame
+    if (node.name === 'RoofSign') { sign = g; return; }
+    const group = node.name === 'Checker' ? 'checker' : MODEL_GROUP[mat.name] || 'solid';
+    if (group === 'glow') c.copy(mat.emissive).multiplyScalar((mat.emissiveIntensity ?? 1) * LAMP_GAIN); else c.copy(mat.color);
+    const col = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; }
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    parts[group].push(g);
+    flat.push(g);
+  });
+  if (!parts.paint.length || !parts.checker.length || !sign) throw new Error('taxi model: no Paint, Checker or RoofSign triangles');
+  // What a part fades to far away (CHECKER_FADE): itself, except the stripe, whose band and squares both go to the
+  // tone the two make together (they cover the stripe half and half).
+  const fadeTo = (g, to) => {
+    const col = g.attributes.color.array, out = to ? new Float32Array(col.length) : col.slice();
+    if (to) for (let i = 0; i < out.length; i += 3) { out[i] = to[0]; out[i + 1] = to[1]; out[i + 2] = to[2]; }
+    g.setAttribute('fadeTo', new THREE.BufferAttribute(out, 3));
+  };
+  const mean = [0, 0, 0];
+  for (const g of parts.checker) for (let k = 0; k < 3; k++) mean[k] += g.attributes.color.array[k] / parts.checker.length;
+  for (const g of parts.solid) fadeTo(g);
+  for (const g of parts.checker) fadeTo(g, mean);
+  const merge = (...lists) => {
+    const g = mergeGeometries(lists.flat(), false);
+    if (!g) throw new Error('taxi model: parts that do not merge');
+    g.computeBoundingSphere();
+    return g;
+  };
+  const tris = (g) => g.index.count / 3;
+  const paint = merge(parts.paint), glow = merge(parts.glow), signGeo = modelSignGeometry(sign, signAspect);
+  const shine = quality === 'low' ? [['shiny', merge(parts.chrome, parts.glass)]] : [['chrome', merge(parts.chrome)], ['glass', merge(parts.glass)]];
+  const kit = {
+    taxi: [['paint', paint], ['solid', merge(parts.solid, parts.checker)], ...shine, ['glow', glow], ['sign', signGeo]],
+    car: [['paint', paint], ['solid', merge(parts.solid)], ...shine, ['glow', glow]],
+  };
+  kit.tris = { taxi: kit.taxi.reduce((a, [k, g]) => a + (k === 'sign' ? g.attributes.position.count / 3 : tris(g)), 0), car: kit.car.reduce((a, [, g]) => a + tris(g), 0) };
+  for (const g of flat) g.dispose();
+  sign.dispose();
+  return kit;
+}
+
+/** Fetches and parses the model: one request. Rejects when it cannot be had (the caller keeps the boxes). */
+export function loadTaxiModel(url = TAXI_URL) {
+  return new GLTFLoader().loadAsync(url).then((gltf) => gltf.scene);
+}
+// When the page has a moment (at the latest 2 s on); where the browser cannot say (iOS), a little later.
+const whenIdle = (f) => (typeof requestIdleCallback === 'function' ? requestIdleCallback(() => f(), { timeout: 2000 }) : setTimeout(f, 250));
+
 /**
  * What each tier pays for the two taxi textures (sign 256 x 64 on every tier; mipmaps and trilinear filtering always):
  * low (phones): the door decal at 512 x 64 (0.17 MB with mipmaps), anisotropy 2;
@@ -197,7 +344,11 @@ export function carPaintTier(quality) {
   return quality === 'low' ? { clearcoat: false, roughness: 0 } : { clearcoat: true, roughness: quality === 'medium' ? 0.3 : 0 };
 }
 
-export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }) {
+/**
+ * `loadModel`: () => Promise of the parsed taxi.glb scene (loadTaxiModel). It is called once, after the street has
+ * been drawn with the box cars; without it, or when it fails, the boxes stay.
+ */
+export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk, loadModel = null }) {
   const low = quality === 'low';
   const N_TAXI = quality === 'high' ? 34 : quality === 'medium' ? 24 : 14;
   const N_CAR = quality === 'high' ? 34 : quality === 'medium' ? 22 : 12;
@@ -395,7 +546,7 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
   taxiParts[0].instanceColor.needsUpdate = true;
   for (let k = 0; k < N_CAR; k++) carParts[0].setColorAt(k, veh[N_TAXI + k].color);
   carParts[0].instanceColor.needsUpdate = true;
-  const wheels = mk(kits.wheel, kitMats.metal, total * 4);
+  let wheels = mk(kits.wheel, kitMats.metal, total * 4); // the stand-in's; null once the model (whose wheels are part of its body) is in
   const beamTex = new THREE.CanvasTexture(paintHeadlight(makeCanvas(64, 256)));
   const beams = mk(new THREE.PlaneGeometry(2.8, 9).rotateX(-Math.PI / 2).translate(0, 0.05, 6.7), new THREE.MeshBasicMaterial({ map: beamTex, color: new THREE.Color(0.5, 0.46, 0.38), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }), total);
   beams.layers.set(GROUND_LAYER);
@@ -407,12 +558,15 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
   const tq = new THREE.Quaternion(), wq = new THREE.Quaternion(), tm = new THREE.Matrix4(), wm = new THREE.Matrix4();
   const tv = new THREE.Vector3(), wv = new THREE.Vector3(), ts = new THREE.Vector3(1, 1, 1), ws = new THREE.Vector3(1, 1, 1), XA = new THREE.Vector3(1, 0, 0);
   const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
+  let cabTop = 0; // one past the last cab slot placed this frame (update): the model's meshes draw no further
   function place(i, x, z, yaw, spin, y = 0, size = 1) {
     const { parts, k } = slotOf(i);
     tq.setFromAxisAngle(Y_AXIS, yaw);
     tm.compose(tv.set(x, y, z), tq, ts.setScalar(size));
     for (const p of parts) p.setMatrixAt(k, tm);
     beams.setMatrixAt(i, tm);
+    if (parts === taxiParts && k >= cabTop) cabTop = k + 1;
+    if (!wheels) return;
     wq.setFromAxisAngle(XA, spin);
     for (let w = 0; w < 4; w++) {
       wm.compose(wv.set(WHEELS[w][0], 0.34, WHEELS[w][1]), wq, ws).premultiply(tm);
@@ -423,7 +577,69 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
     const { parts, k } = slotOf(i);
     for (const p of parts) p.setMatrixAt(k, ZERO);
     beams.setMatrixAt(i, ZERO);
-    for (let w = 0; w < 4; w++) wheels.setMatrixAt(i * 4 + w, ZERO);
+    if (wheels) for (let w = 0; w < 4; w++) wheels.setMatrixAt(i * 4 + w, ZERO);
+  }
+
+  // ---- the model takes the boxes' place ---------------------------------------------------------------------------
+  // The model's dark and pale parts: the kit's plain material, with the stripe's far-away tone (CHECKER_FADE). vSide
+  // is the car's own z and y (along its side and up it); fwidth of it is how many metres of the side one pixel covers.
+  function solidMaterial() {
+    const m = kitMats.base.clone();
+    m.onBeforeCompile = (sh) => {
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute vec3 fadeTo;\nvarying vec3 vFadeTo;\nvarying vec2 vSide;')
+        .replace('#include <color_vertex>', '#include <color_vertex>\n\tvFadeTo = fadeTo;\n\tvSide = position.zy;');
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vFadeTo;\nvarying vec2 vSide;')
+        .replace('#include <color_fragment>', `float sidePerPixel = max( fwidth( vSide.x ), fwidth( vSide.y ) );
+	diffuseColor.rgb *= mix( vColor, vFadeTo, smoothstep( ${CHECKER_FADE.near.toFixed(3)}, ${CHECKER_FADE.far.toFixed(3)}, sidePerPixel ) );`);
+    };
+    return m;
+  }
+  let shape = 'kit'; // what the fleets are drawn as: 'kit' (the boxes) or 'model'
+  /**
+   * Draws every cab and car as the model from now on. `root` is the parsed taxi.glb scene. The new meshes take over
+   * the matrices and colours the boxes have this frame, so nothing moves and no frame is drawn without cars; the
+   * boxes, their wheels and the door decal's texture are freed. Returns false, and changes nothing, when the file is
+   * not the cab this was written for.
+   */
+  function useModel(root) {
+    if (shape === 'model') return true;
+    let kit = null;
+    try { kit = taxiModelKit(root, quality, tier.signW / tier.signH); } catch (err) { console.error('[taxi model]', err); return false; }
+    const mats = { solid: solidMaterial(), chrome: kitMats.metal, glass: kitMats.gloss, shiny: kitMats.gloss, glow: kitMats.glow, sign: signMat };
+    const old = [...taxiParts, ...carParts, wheels];
+    const fleet = (parts, list, paint) => {
+      const was = parts[0], next = [];
+      for (const [group, geo] of list) {
+        const m = mk(geo, group === 'paint' ? paint : mats[group], was.count);
+        m.instanceMatrix.array.set(was.instanceMatrix.array);
+        if (group === 'paint') { m.setColorAt(0, TAXI_BODY); m.instanceColor.array.set(was.instanceColor.array); }
+        next.push(m);
+      }
+      parts.length = 0;
+      parts.push(...next);
+    };
+    fleet(taxiParts, kit.taxi, paintTaxi);
+    fleet(carParts, kit.car, paintCar);
+    wheels = null;
+    for (const m of old) {
+      scene.remove?.(m);
+      m.geometry.dispose();
+      m.dispose();
+    }
+    decalMat.map.dispose();
+    decalMat.dispose();
+    shape = 'model';
+    return true;
+  }
+  // The model is asked for once, when two frames of the street have been drawn and the page has a moment: the first
+  // screen never waits for it, and a file that does not come (or is not the cab) leaves the boxes as they are.
+  let drawn = 0, asked = !loadModel;
+  function askModel() {
+    let coming = null;
+    try { coming = Promise.resolve(loadModel()); } catch (err) { coming = Promise.reject(err); }
+    coming.then(useModel).catch((err) => console.error('[taxi model]', err));
   }
 
   // ---- a car on its lane ----------------------------------------------------------------------------------
@@ -978,6 +1194,8 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
   let clockT = 0;
   function update(dt, t, player) {
     clockT = t;
+    if (!asked && ++drawn > 2) { asked = true; whenIdle(askModel); }
+    cabTop = 0;
     dt = Math.min(dt, 0.1); // a tab that was away comes back with one long frame: the street does not jump ahead
     phase = signalPhase(t);
     paintSignals();
@@ -1024,9 +1242,12 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
       place(i, rc.x, rc.z, rc.yaw, rc.spin);
       paintCab(i, rc.tint || (rc.yellow ? TAXI_YELLOW : ''));
     }
-    for (const p of taxiParts) p.instanceMatrix.needsUpdate = true;
+    // The model is 3,328 triangles a cab: its meshes stop at the last cab on the street, so the 16 slots kept for
+    // called and remote cabs cost nothing while they are empty. (The boxes draw every slot, as they always did.)
+    const cabs = shape === 'model' ? cabTop : nTaxiSlots;
+    for (const p of taxiParts) { p.count = cabs; p.instanceMatrix.needsUpdate = true; }
     for (const p of carParts) p.instanceMatrix.needsUpdate = true;
-    wheels.instanceMatrix.needsUpdate = true;
+    if (wheels) wheels.instanceMatrix.needsUpdate = true;
     beams.instanceMatrix.needsUpdate = true;
   }
   function warm(px, pz) {
@@ -1131,20 +1352,23 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
     remoteList.length = n;
   }
   // The point collide is pushing (colX, colZ) and its radius: pushCar moves it. collide runs a few times a frame, so the
-  // car test is one function over these instead of a closure (and an axle array) per call.
+  // car test is one function over these instead of a closure per call.
+  // A car as someone on foot (or the player's cab) runs into it: its box with round ends, CAR_HW around the line
+  // from BODY_A behind its middle to BODY_A ahead of it. That is the model's 2.06 m of width along the whole body
+  // and its bumpers at 2.49 m. (It was two discs of 1.0 m on points 1.3 m either way of the middle: they stopped
+  // 19 cm short of the model's bumpers and left a gap at the doors that someone could walk into.)
   let colX = 0, colZ = 0, colR = 0;
-  const AXLES = [1.3, -1.3];
+  const BODY_A = CAR_HL - CAR_HW;
   function pushCar(cx, cz, yaw) {
     const fx = Math.sin(yaw), fz = Math.cos(yaw);
-    for (let j = 0; j < AXLES.length; j++) {
-      const s = AXLES[j];
-      const qx = cx + fx * s, qz = cz + fz * s;
-      const dx = colX - qx, dz = colZ - qz, rr = colR + 1.0, d2 = dx * dx + dz * dz;
-      if (d2 >= rr * rr || d2 < 1e-8) continue;
-      const d = Math.sqrt(d2);
-      colX = qx + (dx / d) * rr;
-      colZ = qz + (dz / d) * rr;
-    }
+    const s = Math.max(-BODY_A, Math.min(BODY_A, (colX - cx) * fx + (colZ - cz) * fz));
+    const qx = cx + fx * s, qz = cz + fz * s; // the nearest point of the car's centre line
+    const dx = colX - qx, dz = colZ - qz, rr = colR + CAR_HW, d2 = dx * dx + dz * dz;
+    if (d2 >= rr * rr) return;
+    if (d2 < 1e-8) { colX = qx + fz * rr; colZ = qz - fx * rr; return; } // on the centre line itself: out to one side
+    const d = Math.sqrt(d2);
+    colX = qx + (dx / d) * rr;
+    colZ = qz + (dz / d) * rr;
   }
   /** Pushes a circle out of every car except the one being driven. */
   function collide(x, z, r) {
@@ -1178,5 +1402,6 @@ export function createTraffic({ scene, nyc, kitMats, quality, renderer, onHonk }
   return {
     update, warm, phase: () => phase,
     nearestTaxi, takeTaxi, driveTaxi, releaseTaxi, callTaxi, setRemoteTaxis, setCabYellow, setCabTint, collide, positions,
+    useModel, shape: () => shape,
   };
 }

@@ -123,6 +123,16 @@ describe('the world, run in Node: an upright phone (375 x 812)', { skip }, () =>
     assert.ok(Math.abs(W.cam.fov - 72) < 0.5, String(W.cam.fov));
     assert.equal(W.world.isDriving(), false);
   });
+  it('the street starts with the box cars; the modelled cab takes their place once it has been fetched, and the taxi below is that model', async () => {
+    // (ts3d/traffic.js: the model's dark parts carry a `fadeTo` colour for the checker stripe; no box part has one)
+    const modelled = () => W.world.scene.children.filter((o) => o.isInstancedMesh && o.geometry.attributes.fadeTo).length;
+    assert.equal(modelled(), 0, 'boxes for the first frames: the file is only asked for once the street has been drawn');
+    const before = W.world.scene.children.filter((o) => o.isInstancedMesh).length;
+    for (let i = 0; i < 300 && !modelled(); i++) await new Promise((r) => real.setTimeout(r, 10)); // (the loader above reads the file from the disk)
+    assert.equal(modelled(), 2, 'the cabs\' and the cars\' dark parts');
+    assert.equal(W.world.scene.children.filter((o) => o.isInstancedMesh).length, before - 2, 'two draw calls fewer than the boxes on a phone');
+    run(0.2);
+  });
   it('the stick held to the right walks one straight line and the view comes round behind it in about 1.3 s', () => {
     const { rows, v0, run: full } = stick(1, 0, 3.5);
     assert.ok(full.length > 100);

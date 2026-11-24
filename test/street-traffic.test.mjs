@@ -59,7 +59,7 @@ function corners(c) {
   const fx = Math.sin(c.yaw), fz = Math.cos(c.yaw), rx = -fz, rz = fx;
   return [[c.x + fx * HL + rx * HW, c.z + fz * HL + rz * HW], [c.x + fx * HL - rx * HW, c.z + fz * HL - rz * HW], [c.x - fx * HL - rx * HW, c.z - fz * HL - rz * HW], [c.x - fx * HL + rx * HW, c.z - fz * HL + rz * HW]];
 }
-/** Do the bodies of two drawn cars (4.82 x 1.98 m boxes) overlap? */
+/** Do the bodies of two drawn cars (RULES.len x RULES.wid boxes: the modelled cab's 4.98 x 2.06 m) overlap? */
 function overlap(a, b) {
   if (Math.abs(a.x - b.x) > 8 || Math.abs(a.z - b.z) > 8) return false;
   const A = corners(a), B = corners(b);
@@ -244,14 +244,15 @@ describe('the rules of the street', () => {
     for (let t = 0; t < 72; t += 0.5) { const p = signalPhase(t); if (run.at(-1)?.[0] !== p) run.push([p, 0]); run.at(-1)[1] += 0.5; }
     assert.deepEqual(run, [['nsG', 14], ['nsY', 3], ['red', 2], ['ewG', 12], ['ewY', 3], ['red', 2], ['nsG', 14], ['nsY', 3], ['red', 2], ['ewG', 12], ['ewY', 3], ['red', 2]]);
   });
-  it('a car is 4.82 x 1.98 m; a queue keeps 1.8 m; the nose stops short of the painted stop line', () => {
-    assert.equal(RULES.len, 4.82); assert.equal(RULES.wid, 1.98); assert.equal(RULES.gap, 1.8);
+  it('a car is 4.98 x 2.06 m (the modelled cab; the box stand-in was 4.82 x 1.98); a queue keeps 1.8 m; the nose stops short of the painted stop line', () => {
+    assert.equal(RULES.len, 4.98); assert.equal(RULES.wid, 2.06); assert.equal(RULES.gap, 1.8);
     // world.js paints the stop line 4.9 to 4.45 m before the junction's edge (the crosswalk is the 3.4 m after it)
     const w = read('ts3d/world.js');
     assert.match(w, /const s0 = end \? L - jr - 0\.6 - 3\.4 : jr \+ 0\.6, s1 = s0 \+ 3\.4;/);
     assert.match(w, /const sl = end \? s0 - 0\.9 : s1 \+ 0\.45;/);
     const nose = RULES.stopBack - RULES.len / 2;
     assert.ok(nose >= 4.9 + 0.3 && nose < 4.9 + 1, `the nose stops ${(nose - 4.9).toFixed(2)} m before the line`);
+    assert.equal(RULES.stopBack, 7.8); // 7.7 with the 4.82 m box: the model's nose is 8 cm further forward, and still stops 0.4 m short
     // the car that was the pile: 4.6 m + 0.4 m back, its nose 2.6 m from the junction's edge, on the crosswalk
     assert.ok(4.6 + 0.4 - RULES.len / 2 < 4.0);
     assert.ok(RULES.stuckS >= 10 && RULES.stuckS <= 20 && RULES.idleS > 36 * 2 && RULES.fadeS > 0.2 && RULES.fadeS < 1);
@@ -436,8 +437,9 @@ describe('cabs called to the stands', needsMap, () => {
       assert.ok(Math.hypot(c.x - s.x, c.z - s.z) < 18, `${s.name}: the cab is ${Math.hypot(c.x - s.x, c.z - s.z).toFixed(1)} m from its stand (the game looks within 18 m)`);
       assert.equal(inStreet(c), false, s.name);
       const hit = nyc.nearestRoad(c.x, c.z, 20, (r) => R.cls[r] !== ROAD.PEDESTRIAN && R.cls[r] !== ROAD.SERVICE);
-      // beside the road edge, along the road, and not on a crossing
-      assert.ok(Math.abs(hit.d - (R.width[hit.road] / 2 - 0.75)) < 0.05, `${s.name}: ${hit.d.toFixed(2)} m from the centre line of a ${R.width[hit.road]} m road`);
+      // beside the road edge (0.67 m inside it: 8 cm nearer the kerb than the 1.98 m box stood, so the wider model keeps the same
+      // 0.3 m from the outside lane's cars), along the road, and not on a crossing
+      assert.ok(Math.abs(hit.d - (R.width[hit.road] / 2 - 0.67)) < 0.05, `${s.name}: ${hit.d.toFixed(2)} m from the centre line of a ${R.width[hit.road]} m road`);
       assert.ok(Math.abs(Math.abs(Math.sin(c.yaw) * hit.fx + Math.cos(c.yaw) * hit.fz) - 1) < 1e-3, s.name + ': along the road');
       for (const p of [hit.seg, hit.seg + 1]) {
         const n = G.nodeAt(R.xs[p], R.zs[p]), jr = G.nodeAdj[n].length >= 3 ? Math.max(...G.nodeAdj[n].map((e) => R.width[e.road])) / 2 : 0;
@@ -445,9 +447,9 @@ describe('cabs called to the stands', needsMap, () => {
       }
     });
   });
-  it('the API the game uses is what it was', () => {
+  it('the API the game uses is what it was, plus the two for the model (useModel, shape)', () => {
     const W = world('low', 1);
-    assert.deepEqual(Object.keys(W.traffic).sort(), ['callTaxi', 'collide', 'driveTaxi', 'nearestTaxi', 'phase', 'positions', 'releaseTaxi', 'setCabTint', 'setCabYellow', 'setRemoteTaxis', 'takeTaxi', 'update', 'warm']);
+    assert.deepEqual(Object.keys(W.traffic).sort(), ['callTaxi', 'collide', 'driveTaxi', 'nearestTaxi', 'phase', 'positions', 'releaseTaxi', 'setCabTint', 'setCabYellow', 'setRemoteTaxis', 'shape', 'takeTaxi', 'update', 'useModel', 'warm']);
     W.traffic.warm(16, 28);
     for (let k = 0; k < 90; k++) W.traffic.update(1 / 30, k / 30, onFoot(16, 28));
     // a called cab: found from its stand, taken, driven, left where the player got out; the map shows it
@@ -598,7 +600,7 @@ describe('the lots\' pedestrian street', needsMap, () => {
     // along the south curb of W 42nd St (the open road beside the entrance), facing the way that side drives: east
     const R = nyc.roads, hit = nyc.nearestRoad(cab.x, cab.z, 20, carRoad);
     assert.equal(nyc.roadName(hit.road), 'West 42nd Street');
-    assert.ok(Math.abs(hit.d - (R.width[hit.road] / 2 - 0.75)) < 0.05 && cab.z > hit.pz);
+    assert.ok(Math.abs(hit.d - (R.width[hit.road] / 2 - 0.67)) < 0.05 && cab.z > hit.pz);
     assert.ok(Math.abs(wrap(cab.yaw - 90 * deg)) < 0.02);
     // it was at (4.3, 255) facing into the arch, and without this at (0, 257.5), across the entrance
     assert.equal(inRect(mouth, 4.3, 255), true); assert.equal(inRect(mouth, 0, 257.5), true);
