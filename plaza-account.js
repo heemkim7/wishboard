@@ -39,6 +39,7 @@ export const EVENT_NAMES = Object.freeze([
   'bake_start',
   'todo_done',   // 오늘 할 일 (todo.js): kind = the row's id (attend | cheer | wish | heart | team)
   'todo_all',    // the whole list, once a day per device: streak
+  'claim_start', // the 전광판 걸기 wizard opened at its first step, once per open: tier, kind (starter | claim), from (tool | goal | toast)
 ]);
 const GUEST_SUB = /^g-[0-9a-f-]{36}$/i;
 const TICKET = /^h1\.[A-Za-z0-9_-]{20,200}\.[A-Za-z0-9_-]{20,90}$/;

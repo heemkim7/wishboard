@@ -65,7 +65,15 @@ const pendOf = res => { const h = String(res?.headers?.get?.('x-pend') || ''); i
 // (the Room counts the connection). A tail lost with the isolate is accepted (for q, the Meter adds WREQ_PAD); a failed add is not retried, so
 // nothing is counted twice. LVL is the level the last add answered, at most LVL_TTL old.
 const TALLY_MS = 25000, LVL_TTL = 60000, FLUSH_DEAD = 10000, WREQ_MIN = 250, WREQ_IDLE = 600000, CTX = Symbol('ctx');
-let TALLY = { n: 0, at: 0, p: null, pAt: 0, q: 0, q0: 0, w: 0, r: 0 }, LVL = { l: 0, at: 0 };
+let TALLY = { n: 0, at: 0, p: null, pAt: 0, q: 0, q0: 0, w: 0, r: 0, h: {} }, LVL = { l: 0, at: 0 };
+// Share-page hits (GET /rt/card/<slot>, /rt/w/<id>, /rt/s/<id> answered with the HTML page), per KST day, kind and people | auto. h holds
+// 'day|kind|who' -> n and rides the tally add above to Meter 'day' (table lh): no DO call of its own, at most one add per TALLY_MS per isolate
+// while hits come in. Nothing of the visitor is kept, only the counts. Not counted at budget hard (LVL.l 2), so no add is started for them then.
+export const LINK_KINDS = Object.freeze(['card', 'wish', 'shot']);
+// Link-preview fetchers and crawlers: named ones, then anything that says bot, crawler, spider or preview. Daum's crawler is Daumoa:
+// "DaumApps" (the Daum app's own browser, a person) does not match. No User-Agent at all is automated too.
+const LINK_BOT = /kakaotalk-scrap|facebookexternalhit|twitterbot|slackbot|discordbot|telegrambot|whatsapp|googlebot|bingbot|yeti|daumoa|linkedinbot|bot|crawler|spider|preview/i;
+export function linkWho(ua) { const s = String(ua ?? '').trim(); return !s || LINK_BOT.test(s) ? 'auto' : 'people'; }
 // A socket the server will not keep: accepted, told why, closed with a code the page reads (4001 from the Worker: the token was refused, get a
 // fresh one; 4002 after { t:'down' } from a Room at budget hard: wait for the 00:00 UTC reset). A refused upgrade (401, 503) reaches the page only
 // as 1006, the same as a network blip, so it renewed its guest token on every retry and kept retrying a room that was closed for the day.
@@ -75,7 +83,8 @@ function wsShut(code, why, v2, msg, accept) { const [c, s] = Object.values(new W
 const stale = (at, ms, now = Date.now()) => now - at >= ms || now < at;
 const upgrade = r => /^websocket$/i.test(String(r?.headers?.get?.('Upgrade') || ''));
 const wreqOne = () => { if (!TALLY.q++) TALLY.q0 = Date.now(); };
-const tallyDue = (now = Date.now()) => ((TALLY.n > 0 || TALLY.w > 0 || TALLY.r > 0 || (TALLY.q >= WREQ_MIN && LVL.l < 2)) && stale(TALLY.at, TALLY_MS, now)) || (TALLY.q > 0 && stale(TALLY.q0, WREQ_IDLE, now));
+const hitsWait = () => { for (const k in TALLY.h) return true; return false; };
+const tallyDue = (now = Date.now()) => ((TALLY.n > 0 || TALLY.w > 0 || TALLY.r > 0 || (TALLY.q >= WREQ_MIN && LVL.l < 2) || (LVL.l < 2 && hitsWait())) && stale(TALLY.at, TALLY_MS, now)) || (TALLY.q > 0 && stale(TALLY.q0, WREQ_IDLE, now));
 const pendTally = p => (p && typeof p.then === 'function' ? p.then(res => { const v = pendOf(res); if (v) { TALLY.n += v[0]; TALLY.w += v[1]; TALLY.r += v[2]; } return res; }) : p);
 // Every function handed out runs on the real stub (never with the Proxy as receiver). Not counted: add (counts itself), the /rt/ws upgrade, symbol keys.
 // Non-functions and then pass through untouched. A fetch answer is the same Response, read for x-pend on the way.
@@ -84,7 +93,7 @@ const tallyStub = s => new Proxy(s, { get(t, k) { const v = Reflect.get(t, k); i
 const tallyNs = ns => ns && new Proxy(ns, { get(t, k) { const v = Reflect.get(t, k); if (typeof v !== 'function') return v;
   return k === 'get' || k === 'getByName' ? (...a) => tallyStub(Reflect.apply(v, t, a)) : k === 'jurisdiction' ? (...a) => tallyNs(Reflect.apply(v, t, a)) : (...a) => Reflect.apply(v, t, a); } });
 // One add carrying the pending counts; it sets LVL. A throw drops the taken counts (never re-added) and keeps the old level until LVL_TTL (fail open).
-async function tallyAdd(env) { const T = TALLY, n = T.n, x = { w: T.w, r: T.r, q: T.q }; T.n = 0; T.w = 0; T.r = 0; T.q = 0; T.q0 = 0; T.at = Date.now();
+async function tallyAdd(env) { const T = TALLY, n = T.n, x = { w: T.w, r: T.r, q: T.q }; if (hitsWait()) { x.h = T.h; T.h = {}; } T.n = 0; T.w = 0; T.r = 0; T.q = 0; T.q0 = 0; T.at = Date.now();
   try { const r = await env.METER.get(env.METER.idFromName('day')).add(n, 0, x); LVL = { l: Number(r?.lvl) || 0, at: Date.now() }; return r; } catch (e) { LVL.at = Date.now(); throw e; } }
 // Starts an add in this request's waitUntil, or null while another request's add is in flight. One older than FLUSH_DEAD (its request may have been
 // cancelled) is forgotten, so a lost promise never blocks later requests.
@@ -97,6 +106,17 @@ function tallied(env, ctx) { const me = { ctx, own: tallyDue() ? tallyFlush(env,
 // The level the wish, share and push routes obey, without a DO call per request: once LVL_TTL old, this request refreshes it with its own add
 // (carrying the tally). It never waits on another request's add: while one is in flight the current level stands.
 async function lvlNow(env) { if (stale(LVL.at, LVL_TTL)) { const me = env[CTX], p = tallyFlush(env, me?.ctx) || me?.own; if (p) await p; } return LVL.l; }
+// A share page went out: count it (see LINK_KINDS). The page never waits: the count is a number in memory, and a due add runs in waitUntil.
+function linkHit(env, ctx, req, kind, res) {
+  try {
+    if (req.method !== 'GET' || res?.status !== 200 || !/^text\/html/i.test(String(res.headers?.get?.('content-type') || '')) || !LINK_KINDS.includes(kind)) return res;
+    if (LVL.l >= 2) return res; // budget hard: not counted, and no add is started for it
+    const k = kstDay() + '|' + kind + '|' + linkWho(req.headers.get('user-agent'));
+    TALLY.h[k] = (TALLY.h[k] || 0) + 1;
+    if (tallyDue()) tallyFlush(env, ctx);
+  } catch { /* a count must never break the page */ }
+  return res;
+}
 const SUPA = 'https://yxddhpacuyaffaoutxjn.supabase.co', ANON = 'sb_publishable_Vd-7c6e2f2s3G1d5Jbx9vw_0UCuHm-B'; // public
 // Supabase JWT check (guest = anonymous sign-in tokens too). Public JWKS only: no secret needed or stored.
 let JW = { at: 0, keys: new Map() };
@@ -142,9 +162,11 @@ const RELAY = ['take', 'react', 'jump'], RELAY_N = 30, RELAY_MS = 10000; // clie
 // (4008) and the account cannot join this room for FLOOD_BAN. Reactions (E) are broadcast at most RELAY_N per RELAY_MS, presence (tr) TR_N.
 const SOCK_PER = 3, FLOOD_N = 120, FLOOD_MS = 10000, FLOOD_BAN = 60000, TR_N = 20;
 const burst = (a, f, n, now = Date.now()) => { const t = a[f + 't'] || 0; if (now - t > RELAY_MS || now < t) { a[f + 't'] = now; a[f + 'n'] = 0; } a[f + 'n'] = (a[f + 'n'] || 0) + 1; return a[f + 'n'] <= n; };
-const EV_STEP = { page_landing: 1, enter_square: 2, first_coin: 4, board_claim: 8 }, EV_RET = [1, 7, 30], EV_KEEP = 14;
+const EV_STEP = { page_landing: 1, enter_square: 2, first_coin: 4, board_claim: 8 }, EV_RET = [1, 7, 30], EV_KEEP = 14, LH_KEEP = 100, CH_KEEP = 100;
 // Growth funnel steps (admin 성장 퍼널), one bit each: landing, entered, posted a wish, shared a link, arrived by a shared link, came back on a later day.
 const EV_GROW = { page_landing: 1, enter_square: 2, wish_post: 4, wish_share: 8, share_link: 8, share_send: 8, wish_land: 16, focus_enter: 16, return_visit: 32 };
+// A first meaningful action (admin 성장 퍼널, act_new): posted a wish, gave a heart, cheered a board (wish_cheer is the board cheer), lit a board.
+const EV_ACT = new Set(['wish_post', 'wish_heart', 'wish_cheer', 'board_claim']);
 // Once-only and per-day gates per account: (uid, k, d) -> count, d = KST day or '' for ever. Counts only grow, so copies merge by max.
 const PS_MAX = 50000, PS_TTL = 60 * 864e5; // immediate-push subscriptions kept in the 'push' instance, and how long one lives without a re-subscribe
 const AG = 'create table if not exists ag(uid text, k text, d text, v integer not null, primary key(uid, k, d))';
@@ -167,9 +189,21 @@ export class Meter extends DurableObject {
     const own = rowsTake(this.rows);
     q.exec('insert into d(day, n, s, w, r, q) values(?, ?, ?, ?, ?, ?) on conflict(day) do update set n = n + excluded.n, s = s + excluded.s, w = w + excluded.w, r = r + excluded.r, q = q + excluded.q',
       d, num(n) + 1, num(gbs), num(x?.w) + own.w, num(x?.r) + own.r, num(x?.q) * WREQ_PAD);
+    if (x?.h && typeof x.h === 'object') this.lhAdd(x.h);
     const t = q.exec('select n, s, w, r, q from d where day = ?', d).one(), g = (Number(t.s) || 0) + (Number(q.exec('select s from g where day = ?', d).toArray()[0]?.s) || 0);
     const w = Number(t.w) || 0, r = Number(t.r) || 0, wq = Number(t.q) || 0;
     return { n: t.n, g, w, r, q: wq, lvl: lvlOf(t.n, g, w, r, wq) }; }
+  // Share-page hits ('day' only, carried by add): 'KST day|kind|people|auto' -> n, kept LH_KEEP days. lhDays: { day: { card: { people, auto }, ... } }.
+  lhInit() { if (this.lhOk) return; this.lhOk = 1; this.ctx.storage.sql.exec('create table if not exists lh(d text not null, k text not null, w text not null, n integer not null, primary key(d, k, w))'); }
+  lhAdd(h) { this.lhInit(); const q = this.ctx.storage.sql; let i = 0;
+    for (const [key, v] of Object.entries(h)) { if (++i > 60) break; const [d, k, w] = String(key).split('|'), n = Math.floor(Number(v));
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d || '') || !LINK_KINDS.includes(k) || (w !== 'people' && w !== 'auto') || !(n > 0 && n < 1e7)) continue;
+      q.exec('insert into lh(d, k, w, n) values(?, ?, ?, ?) on conflict(d, k, w) do update set n = n + excluded.n', d, k, w, n); }
+    if (i) q.exec('delete from lh where d < ?', dayShift(kstDay(), -LH_KEEP)); }
+  lhDays(today, n) { this.lhInit(); const out = {}, lo = dayShift(String(today || ''), 1 - Math.max(1, Math.min(120, Math.floor(Number(n)) || 1)));
+    for (const r of this.ctx.storage.sql.exec('select d, k, w, n from lh where d >= ? and d <= ?', lo, String(today || '')).toArray()) {
+      const day = out[r.d] ||= Object.fromEntries(LINK_KINDS.map((k) => [k, { people: 0, auto: 0 }])); day[r.k][r.w] = Number(r.n) || 0; }
+    return out; }
   // Any other instance sends what it wrote and read to 'day' in one add (which counts that call too), checked after each turn that ran SQL: at most
   // once per REP with ROWS_MIN written (or ROWS_MIN * 50 read) waiting, otherwise once ROWS_IDLE old; at hard only once ROWS_IDLE old. Never a call
   // per write. An instance evicted from memory loses what it held (under ROWS_MIN, or under ROWS_IDLE of a trickle).
@@ -209,7 +243,17 @@ export class Meter extends DurableObject {
     q.exec('delete from snap where id in (select id from snx where u = ?)', u); q.exec('delete from snx where u = ?', u); return { ok: true }; }
   // Board report (instance 'ad', adreport.js): what the rooms counted per slot and KST day, since the current holder's tenure began.
   adI() { if (!this.ai) { this.ai = 1; adTables(this.ctx.storage.sql); } }
-  adAdd(items, people) { this.adI(); return adIngest(this.ctx.storage.sql, items, people); }
+  // cheers: the rooms' landed cheers per KST day [{ d, paid, free }] (Room.cheer), kept CH_KEEP days for the admin readout (chDays).
+  adAdd(items, people, cheers) { this.adI(); if (Array.isArray(cheers) && cheers.length) this.chAdd(cheers); return adIngest(this.ctx.storage.sql, items, people); }
+  chAdd(rows) { const q = this.ctx.storage.sql; q.exec('create table if not exists chs(d text primary key, paid integer not null default 0, free integer not null default 0)');
+    for (const r of rows.slice(0, 40)) { const d = String(r?.d || ''), p = Math.floor(Number(r?.paid)) || 0, f = Math.floor(Number(r?.free)) || 0;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || p < 0 || f < 0 || p > 1e7 || f > 1e7 || !(p || f)) continue;
+      q.exec('insert into chs(d, paid, free) values(?, ?, ?) on conflict(d) do update set paid = paid + excluded.paid, free = free + excluded.free', d, p, f); }
+    q.exec('delete from chs where d < ?', dayShift(kstDay(), -CH_KEEP)); }
+  chDays(today, n) { const q = this.ctx.storage.sql; q.exec('create table if not exists chs(d text primary key, paid integer not null default 0, free integer not null default 0)');
+    const lo = dayShift(String(today || ''), 1 - Math.max(1, Math.min(120, Math.floor(Number(n)) || 1))), out = {};
+    for (const r of q.exec('select d, paid, free from chs where d >= ? and d <= ?', lo, String(today || '')).toArray()) out[r.d] = { paid: Number(r.paid) || 0, free: Number(r.free) || 0 };
+    return out; }
   adClaim(slot, holder, prev) { this.adI(); return adTenure(this.ctx.storage.sql, slot, holder, prev); }
   adMove(from, to) { this.adI(); return adRename(this.ctx.storage.sql, from, to); }
   adForget(uid) { this.adI(); return adForget(this.ctx.storage.sql, uid); }
@@ -418,23 +462,26 @@ export class Meter extends DurableObject {
     const list = [...ids]; return { ids: list, old: !!q.exec('select 1 from seen where uid in (' + list.map(() => '?').join(',') + ') and d0 < ? limit 1', ...list, String(day || '')).toArray()[0] }; }
   // One day's rows (ids lo..hi) -> summary. A session is a tab (sid) and belongs to the last account it reported; a visitor is an account.
   // funnel = [landing, enter, first coin, claim] over visitors plus account-less sessions; funnel_new = the same over accounts first seen that day.
+  // start_accounts / claim_accounts: accounts that opened the 전광판 걸기 wizard (claim_start) / published a board (board_claim) that day;
+  // act_new: accounts first seen that day that did at least one EV_ACT.
   evSum(day, lo, hi) { const q = this.ctx.storage.sql, S = new Map(), events = {};
     for (const r of q.exec('select t, sid, uid, k, p from evt where id >= ? and id < ?', lo, hi).toArray()) { const k = String(r.k); events[k] = (events[k] || 0) + 1; if (!r.sid) continue;
-      let s = S.get(r.sid); if (!s) S.set(r.sid, s = { uid: '', t0: Number(r.t), t1: 0, dur: 0, f: 0, g: 0, share: 0, claim: 0, focus: 0 }); if (r.uid) s.uid = String(r.uid); s.t1 = Number(r.t); s.f |= EV_STEP[k] || 0; s.g |= EV_GROW[k] || 0;
-      if (k === 'share_send') s.share = 1; else if (k === 'board_claim') s.claim = 1; else if (k === 'focus_enter') s.focus = 1;
+      let s = S.get(r.sid); if (!s) S.set(r.sid, s = { uid: '', t0: Number(r.t), t1: 0, dur: 0, f: 0, g: 0, share: 0, claim: 0, focus: 0, start: 0, act: 0 }); if (r.uid) s.uid = String(r.uid); s.t1 = Number(r.t); s.f |= EV_STEP[k] || 0; s.g |= EV_GROW[k] || 0;
+      if (k === 'share_send') s.share = 1; else if (k === 'board_claim') s.claim = 1; else if (k === 'focus_enter') s.focus = 1; else if (k === 'claim_start') s.start = 1;
+      if (EV_ACT.has(k)) s.act = 1;
       if (k === 'session_end') { try { s.dur = Math.max(s.dur, Math.min(86400, Number(JSON.parse(r.p).dur) || 0)); } catch { } } }
-    const who = new Map(), whoG = new Map(), al = new Map(), lens = [], fAll = [0, 0, 0, 0], fNew = [0, 0, 0, 0], grow = [0, 0, 0, 0, 0, 0], fresh = [], back = [], shareIds = new Set(), claimIds = new Set(), focusIds = new Set(); let anon = 0;
+    const who = new Map(), whoG = new Map(), al = new Map(), lens = [], fAll = [0, 0, 0, 0], fNew = [0, 0, 0, 0], grow = [0, 0, 0, 0, 0, 0], fresh = [], back = [], shareIds = new Set(), claimIds = new Set(), focusIds = new Set(), startIds = new Set(), actIds = new Set(); let anon = 0;
     const step = (f, to) => { for (let i = 0; i < 4; i++) if (f & (1 << i)) to[i]++; };
     const stepG = (g) => { for (let i = 0; i < 6; i++) if (g & (1 << i)) grow[i]++; };
     for (const s of S.values()) { lens.push(Math.round(s.dur || (s.t1 - s.t0) / 1000)); let id = s.uid;
       if (id.startsWith('guest:')) { if (!al.has(id)) al.set(id, String(q.exec('select user from alias where guest = ?', id).toArray()[0]?.user || id)); id = al.get(id); }
-      if (id) { who.set(id, (who.get(id) || 0) | s.f); whoG.set(id, (whoG.get(id) || 0) | s.g); if (s.share) shareIds.add(id); if (s.claim) claimIds.add(id); if (s.focus) focusIds.add(id); } else { anon++; step(s.f, fAll); stepG(s.g); } }
+      if (id) { who.set(id, (who.get(id) || 0) | s.f); whoG.set(id, (whoG.get(id) || 0) | s.g); if (s.share) shareIds.add(id); if (s.claim) claimIds.add(id); if (s.focus) focusIds.add(id); if (s.start) startIds.add(id); if (s.act) actIds.add(id); } else { anon++; step(s.f, fAll); stepG(s.g); } }
     for (const g of whoG.values()) stepG(g); // accounts (guests folded into their user) count once a day; account-less sessions count one each
-    let focus_new = 0;
+    let focus_new = 0, act_new = 0;
     for (const [id, f] of who) { step(f, fAll); const d0 = q.exec('select d0 from seen where uid = ?', id).toArray()[0]?.d0;
-      if (!d0 || d0 >= day) { fresh.push(id); step(f, fNew); if (focusIds.has(id)) focus_new++; } else back.push(Math.round((Date.parse(day) - Date.parse(d0)) / 864e5)); }
+      if (!d0 || d0 >= day) { fresh.push(id); step(f, fNew); if (focusIds.has(id)) focus_new++; if (actIds.has(id)) act_new++; } else back.push(Math.round((Date.parse(day) - Date.parse(d0)) / 864e5)); }
     lens.sort((a, b) => a - b); const len_avg = lens.length ? Math.round(lens.reduce((a, b) => a + b, 0) / lens.length) : 0, len_med = lens.length ? lens[lens.length >> 1] : 0;
-    return { fresh, back, sum: { visitors: who.size, new: fresh.length, returning: back.length, anon, sessions: S.size, len_avg, len_med, funnel: fAll, funnel_new: fNew, grow, events, share_accounts: shareIds.size, claim_accounts: claimIds.size, focus_new } }; }
+    return { fresh, back, sum: { visitors: who.size, new: fresh.length, returning: back.length, anon, sessions: S.size, len_avg, len_med, funnel: fAll, funnel_new: fNew, grow, events, share_accounts: shareIds.size, claim_accounts: claimIds.size, focus_new, start_accounts: startIds.size, act_new } }; }
   evFold(today) { const q = this.ctx.storage.sql;
     for (const m of q.exec('select day, id0 from mark where day < ? and day not in (select day from daily) order by day', today).toArray()) this.ctx.storage.transactionSync(() => {
       const hi = q.exec('select min(id0) hi from mark where day > ?', m.day).one().hi ?? Number.MAX_SAFE_INTEGER, { fresh, back, sum } = this.evSum(String(m.day), m.id0, hi);
@@ -976,7 +1023,9 @@ export class Room extends DurableObject {
     q.exec('create table if not exists adstat(slot text primary key, views integer not null, clicks integer not null, dirty integer not null)');
     q.exec('create table if not exists adq(slot text not null, b integer not null, v integer not null default 0, c integer not null default 0, h integer not null default 0, primary key(slot, b))');
     q.exec('create table if not exists adw(slot text not null, d text not null, uid text not null, b integer not null, primary key(slot, d, uid))');
-    if (q.exec('select 1 from adq union all select 1 from adw limit 1').toArray().length) this.adDirty = 1; // tallies from before hibernation still go out
+    // Cheers that landed per KST day: paid (points paid) and free (landed with amount 0, why 'full'). Handed to Meter 'ad' with the ad tallies.
+    q.exec('create table if not exists chd(d text primary key, paid integer not null default 0, free integer not null default 0)');
+    if (q.exec('select 1 from adq union all select 1 from adw union all select 1 from chd limit 1').toArray().length) this.adDirty = 1; // tallies from before hibernation still go out
     q.exec('create table if not exists seat(uid text primary key, fl integer not null)'); q.exec(AG);
     q.exec('create table if not exists sess(id text primary key, uid text not null, kind text not null, t0 integer not null, x integer not null, z integer not null)');
     q.exec('create table if not exists stk(slot text primary key, g text not null)');
@@ -1151,6 +1200,7 @@ export class Room extends DurableObject {
     const amount = this.dayPay(a, 'cheer', base, PAY.cheer.perDay, '', now);
     agPut(q, a.k, 'qc', day, agGet(q, a.k, 'qc', day) + 1);
     this.tx(w, amount > 0 ? { t: 'PAY', kind: 'cheer', amount } : { t: 'PAY', kind: 'cheer', amount: 0, why: 'full' });
+    q.exec('insert into chd(d, paid, free) values(?, ?, ?) on conflict(d) do update set paid = paid + excluded.paid, free = free + excluded.free', day, amount > 0 ? 1 : 0, amount > 0 ? 0 : 1); // no DO call: flushAds hands it over
     this.adTally(slot, 'h', a.k);
     this.shareCheer(slot, p);
     const holder = String(board.holder_id);
@@ -1289,13 +1339,16 @@ export class Room extends DurableObject {
   async adPush() { const q = this.ctx.storage.sql, now = Date.now();
     // Bounded while the Meter keeps failing: what it would drop anyway (older than its 35 days, people of another day) goes here first.
     q.exec('delete from adq where b < ?', Math.floor((now - 35 * 864e5) / 60000)); q.exec('delete from adw where d <> ?', kstDay(now));
-    const rows = q.exec('select slot, b, v, c, h from adq limit 200').toArray(), ppl = q.exec('select slot, d, uid, b from adw limit 400').toArray();
-    if (rows.length || ppl.length) { this.conns++; // one DO call, counted toward the daily budget like the seat calls
-      try { await this.env.METER.get(this.env.METER.idFromName('ad')).adAdd(rows.map(r => ({ s: String(r.slot), b: Number(r.b), v: Number(r.v) || 0, c: Number(r.c) || 0, h: Number(r.h) || 0 })), ppl.map(r => ({ s: String(r.slot), d: String(r.d), u: String(r.uid), b: Number(r.b) })));
+    q.exec('delete from chd where d < ?', dayShift(kstDay(now), -CH_KEEP));
+    const rows = q.exec('select slot, b, v, c, h from adq limit 200').toArray(), ppl = q.exec('select slot, d, uid, b from adw limit 400').toArray(), chs = q.exec('select d, paid, free from chd limit 40').toArray();
+    if (rows.length || ppl.length || chs.length) { this.conns++; // one DO call, counted toward the daily budget like the seat calls
+      try { await this.env.METER.get(this.env.METER.idFromName('ad')).adAdd(rows.map(r => ({ s: String(r.slot), b: Number(r.b), v: Number(r.v) || 0, c: Number(r.c) || 0, h: Number(r.h) || 0 })), ppl.map(r => ({ s: String(r.slot), d: String(r.d), u: String(r.uid), b: Number(r.b) })),
+        chs.map(r => ({ d: String(r.d), paid: Number(r.paid) || 0, free: Number(r.free) || 0 })));
         for (const r of rows) q.exec('update adq set v = v - ?, c = c - ?, h = h - ? where slot = ? and b = ?', r.v, r.c, r.h, r.slot, r.b);
         q.exec('delete from adq where v <= 0 and c <= 0 and h <= 0'); for (const r of ppl) q.exec('delete from adw where slot = ? and d = ? and uid = ?', r.slot, r.d, r.uid);
+        for (const r of chs) q.exec('update chd set paid = paid - ?, free = free - ? where d = ?', r.paid, r.free, r.d); q.exec('delete from chd where paid <= 0 and free <= 0');
       } catch { /* the rows wait for the next flush */ } }
-    return Number(q.exec('select (select count(*) from adq) + (select count(*) from adw) n').one().n) || 0; }
+    return Number(q.exec('select (select count(*) from adq) + (select count(*) from adw) + (select count(*) from chd) n').one().n) || 0; }
   // Link visit pays once per account per board per KST day, AD_DAY boards a day.
   adClick(w, a, nick, slot) { if (!a?.k || !AD_SLOT.test(slot)) return false; this.tapDb(); const q = this.ctx.storage.sql, day = kstDay(), n = agGet(q, a.k, 'adn', day);
     if (n >= AD_DAY || agGet(q, a.k, 'ad:' + slot, day)) { if (w) this.tx(w, { t: 'PAY', kind: 'click', amount: 0, why: 'day', key: slot }); return false; }
@@ -2869,6 +2922,11 @@ async function photos(req, env, ctx, u) {
     const today = kstDay(), n = Math.min(90, Math.max(1, Math.floor(Number(u.searchParams.get('days'))) || 14));
     try {
       const days = await env.METER.get(env.METER.idFromName('ev')).evStats(today, n);
+      // Two more calls on this admin-only read: share-page hits (Meter 'day', lhDays) and landed cheers (Meter 'ad', chDays). A failed one leaves
+      // its field out (unknown), never zeros. A day with events gets links { card | wish | shot: { people, auto } } and cheers { paid, free }.
+      const [links, cheers] = await Promise.all([env.METER.get(env.METER.idFromName('day')).lhDays(today, n).catch(() => null), env.METER.get(env.METER.idFromName('ad')).chDays(today, n).catch(() => null)]);
+      const zeroLinks = () => Object.fromEntries(LINK_KINDS.map((k) => [k, { people: 0, auto: 0 }]));
+      for (const d of days) { if (links) d.links = links[d.day] || zeroLinks(); if (cheers) d.cheers = cheers[d.day] || { paid: 0, free: 0 }; }
       return J({ ok: true, today, days: days.map(d => ({ ...d, ...statsFromCounts(d.events) })), tally: { pending: TALLY.n, wreq: TALLY.q, rows: TALLY.w, flushAgeMs: TALLY.at ? Date.now() - TALLY.at : -1, lvl: LVL.l } }); // this isolate's budget tally, numbers only
     } catch { return J({ err: 'meter' }, 503); }
   }
@@ -3397,7 +3455,7 @@ export default {
       if (sk) memo(SNX, sk + ':' + sr + ':' + actor.id, id);
       return J({ ok: true, url: new URL('/rt/snap/' + id, req.url).href, page: new URL('/rt/s/' + id, req.url).href });
     }
-    if (u.pathname.startsWith('/rt/s/')) return snapPage(req, env, u);
+    if (u.pathname.startsWith('/rt/s/')) return linkHit(env, ctx, req, 'shot', await snapPage(req, env, u)); // share-page hits: counted, never waited for
     const snapId = u.pathname.startsWith('/rt/snap/') ? u.pathname.slice('/rt/snap/'.length) : '';
     if (snapId && /^[0-9a-f]{32}$/.test(snapId) && req.method === 'GET') {
       if (!(await rateOk(env.EVENT_RL, req))) return new Response('rate', { status: 429, headers: { 'retry-after': '60' } }); // random ids must not reach the DO unthrottled
@@ -3446,7 +3504,7 @@ export default {
     if (u.pathname.startsWith('/g/')) return giftPage(req, env, ctx, u, giftKit(env, req)); // its recipient page: no room, no 3D
     if (u.pathname === '/rt/share-bonus' || u.pathname === '/rt/redeem-code' || u.pathname === '/rt/link-reward') return promo(req, env, u);
     if (u.pathname === '/rt/report') return fileReport(req, env);
-    if (u.pathname.startsWith('/rt/card/')) return cardPage(req, env, u);
+    if (u.pathname.startsWith('/rt/card/')) return linkHit(env, ctx, req, 'card', await cardPage(req, env, u));
     if (u.pathname === '/rt/relight') return relightBoard(req, env, ctx);
     if (u.pathname === '/rt/ad-report') return adReportApi(req, env, u);
     if (u.pathname === '/rt/tribe' || u.pathname === '/rt/tribe/pledge') return tribeApi(req, env, u);
@@ -3454,7 +3512,7 @@ export default {
     if (u.pathname === '/rt/recap') return recapApi(req, env);
     if (u.pathname === '/rt/world' || u.pathname === '/rt/wallet' || u.pathname === '/rt/claim-billboard' || u.pathname === '/rt/buy-plot' || u.pathname === '/rt/sell-coins' || u.pathname === '/rt/flush-wallet' || u.pathname === '/rt/spend') return plaza(req, env, ctx, u);
     if (WISH_PATHS.has(u.pathname)) return wishApi(req, env, ctx, u);
-    if (u.pathname.startsWith('/rt/w/')) return wishPage(req, env, u);
+    if (u.pathname.startsWith('/rt/w/')) return linkHit(env, ctx, req, 'wish', await wishPage(req, env, u));
     if (u.pathname === '/rt/invite') return inviteApi(req, env, ctx);
     if (u.pathname === '/rt/billboard-photo' || u.pathname.startsWith('/rt/photo/') || u.pathname.startsWith('/rt/admin/')) return photos(req, env, ctx, u);
     if (u.pathname === '/rt/grp') { const M = env.METER.get(env.METER.idFromName('grp'));

@@ -7,7 +7,7 @@ import { createTeamUI } from './teamui.js?v=202611250713';
 import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611250713';
 import { WISH, WISH_ERR, cleanWish, wishRejected, wishShareText, staffNick } from './wish.js';
 import { botNick } from './league.js';
-import { backFields, returnGap } from './growth.js?v=202611250713';
+import { backFields, returnGap, claimStarter } from './growth.js?v=202611250713';
 import { A2HS_KEY, VISITS_KEY, bumpVisits, isStandalone, isIosSafari, installMode, installDue, INSTALL_COPY, INSTALL_CRAMPED_Q } from './install.js?v=202611250713';
 import { RECAP_KEY, RECAP_SHOWN_KEY, noteDay, noteHeld, noteHearts, noteClaim as recapClaim, recapDue, recapLines, recapShareText, weekOf } from './recap.js?v=202611250713';
 import { nowMs } from './live.js';
@@ -16,7 +16,7 @@ import { inviteView } from './invite.js';
 import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611250713';
 import { EMOTES, REACTIONS, AVATAR_COLORS, AVATAR_COLOR_NAMES, SPECIES } from './ts3d/avatars.js?v=202611250713';
 import { trackEvent, statsOff, statsGpc, setStatsOff } from './analytics.js?v=202611250713';
-import { CHEER_PHRASES, SITE, accountLabel, allowedLink, blockedText, linkedActor } from './plaza-account.js';
+import { CHEER_PHRASES, SITE, accountLabel, allowedLink, blockedText, linkedActor, slotTier } from './plaza-account.js';
 import { codeStart, codeStep, codeView, otpField } from './mailcode.js?v=202611250713';
 import { policyDoc } from './legal.js?v=202611250713';
 import { setOperator, operatorInfo } from './legal.js?v=202611250713';
@@ -438,7 +438,7 @@ export function createUI(root, hooks) {
       h('div', { class: 'glass tools' },
         h('button', { class: 'btn icon tool-board', type: 'button', 'aria-label': '전광판 걸기', title: '전광판 걸기', onclick: () => {
           const slot = firstOpenStarter();
-          if (slot && !myBoards().length) openClaimStep(1, claimWizard(slot));
+          if (slot && !myBoards().length) openClaimStep(1, claimWizard(slot), 'tool');
           else openBillboard(slot || '');
         } }, icon('board')),
         wishBtn,
@@ -1816,7 +1816,7 @@ export function createUI(root, hooks) {
     if (g.undecided) return; // not decided yet: the line is not on screen
     if (g.team) { openTribeSheet(); return; }
     if (g.relight || !g.free) { openBillboard(g.slot); return; }
-    openClaimStep(1, claimWizard(g.slot));
+    openClaimStep(1, claimWizard(g.slot), 'goal');
   }
   function kstWeek() {
     const d = new Date(Date.now() + 9 * 36e5);
@@ -2222,7 +2222,7 @@ export function createUI(root, hooks) {
     const id = firstOpenStarter();
     if (!id) return;
     starterToastShown = true;
-    note('거리 무료 칸이 비어 있어요', 'ok', () => openClaimStep(1, claimWizard(id)));
+    note('거리 무료 칸이 비어 있어요', 'ok', () => openClaimStep(1, claimWizard(id), 'toast'));
   }
   const plotById = (id) => world.plots.find(p => Number(p.plot_id) === Number(id)) || null;
   const myPlots = () => world.plots.filter(p => p.owner_id && p.owner_id === hooks.actorId()).map(p => PLOT_SLOTS[Number(p.plot_id) - 1]).filter(Boolean);
@@ -4022,8 +4022,11 @@ export function createUI(root, hooks) {
     const b = boardById(id);
     return BALANCE.starterSlots.includes(id) && !b?.holder_id;
   }
-  function openClaimStep(n, model) {
+  // from: where a fresh wizard was opened (tool | goal | toast). claim_start goes out once per model, at step 1 (이전 back to it sends nothing).
+  const claimStart = claimStarter(slotTier);
+  function openClaimStep(n, model, from = '') {
     if (!model) return;
+    if (n === 1) { const start = claimStart(model, from); if (start) trackEvent('claim_start', start); }
     // The 'wiz' sheet: on a short, wide screen (a phone on its side) the preview is a left column and the fields the right
     // one (index.html .sheet.wiz), so the lines and 다음 / 걸기 are on the first screen.
     openSheet('전광판 걸기', n + '/3', (host) => {

@@ -42,6 +42,57 @@ export function stepPct(counts, i) {
   return of < MIN_BASE ? '—' : Math.round(num(counts[i]) / of * 100) + '%';
 }
 
+// ---- More per-day rows under the funnel (admin.html renderGrow), read from fields of the same /rt/admin/stats day rows:
+// new / act_new (accounts first seen that day, and those of them that posted a wish, gave a heart, cheered a board or lit one),
+// start_accounts / claim_accounts (opened the 전광판 걸기 wizard / published a board), links.<kind>.<people|auto> (share pages served),
+// cheers.<paid|free> (cheers that landed paying points / after the day's paid cheers). base: the row a percentage is measured against.
+export const DAY_ROWS = Object.freeze([
+  { key: 'new', label: '신규 계정', base: '' },
+  { key: 'act_new', label: '첫 행동 (소원·하트·응원·전광판)', base: 'new' },
+  { key: 'start_accounts', label: '전광판 걸기 시작', base: '' },
+  { key: 'claim_accounts', label: '전광판 걸기 완료', base: 'start_accounts' },
+  { key: 'links.card.people', label: '전광판 카드 링크 열림 · 사람', base: '' },
+  { key: 'links.card.auto', label: '전광판 카드 링크 열림 · 자동', base: '' },
+  { key: 'links.wish.people', label: '소원 링크 열림 · 사람', base: '' },
+  { key: 'links.wish.auto', label: '소원 링크 열림 · 자동', base: '' },
+  { key: 'links.shot.people', label: '사진 링크 열림 · 사람', base: '' },
+  { key: 'links.shot.auto', label: '사진 링크 열림 · 자동', base: '' },
+  { key: 'cheers.paid', label: '응원 · 포인트 지급', base: '' },
+  { key: 'cheers.free', label: '응원 · 포인트 없이', base: '' },
+]);
+// A field of a day row: a day with no row had nothing (0); a row without the field was folded before it existed (null: unknown).
+export function dayVal(row, key) {
+  if (!row) return 0;
+  let v = row;
+  for (const p of String(key).split('.')) { if (!v || typeof v !== 'object' || !(p in v)) return null; v = v[p]; }
+  return num(v);
+}
+const dayCell = (v, b) => v == null ? '—' : b == null || num(b) < MIN_BASE ? String(v) : `${v} (${Math.round(v / num(b) * 100)}%)`;
+// -> one row of text cells per DAY_ROWS entry: label, base label, the first `show` days (today first), then the 7- and 14-day sums of the known days.
+export function dayTable(days, today, show = 7) {
+  const by = new Map((Array.isArray(days) ? days : []).map((d) => [String(d?.day), d]));
+  const cols = []; for (let i = 0; i < 14; i++) cols.push(by.get(dayShift(today, -i)) || null);
+  const sum = (key, n) => { let s = 0, known = 0; for (const r of cols.slice(0, n)) { const v = dayVal(r, key); if (v != null) { s += v; known++; } } return known ? s : null; };
+  const label = (key) => DAY_ROWS.find((r) => r.key === key)?.label || '';
+  return DAY_ROWS.map((r) => [r.label, r.base ? label(r.base) : '',
+    ...cols.slice(0, show).map((row) => dayCell(dayVal(row, r.key), r.base ? dayVal(row, r.base) : null)),
+    dayCell(sum(r.key, 7), r.base ? sum(r.base, 7) : null), dayCell(sum(r.key, 14), r.base ? sum(r.base, 14) : null)]);
+}
+
+// ---- claim_start: the 전광판 걸기 wizard (ui.js openClaimStep) reports its opening once per open. Each open makes a fresh wizard model
+// (ftue.js claimWizard); going back to step 1 with 이전 reuses it and sends nothing. -> the properties to send (the same kind board_claim
+// carries: tier, plus kind starter | claim and where it was opened from), or null.
+export function claimStarter(tierOf = () => '') {
+  const seen = new WeakSet();
+  return (model, from = '') => {
+    if (!model || typeof model !== 'object' || seen.has(model)) return null;
+    seen.add(model);
+    const out = { tier: String(tierOf(model.slot) || ''), kind: model.free ? 'starter' : 'claim' };
+    if (from) out.from = String(from);
+    return out;
+  };
+}
+
 // ---- return_visit: decided from the day record the browser keeps in kts_daily ({ day, last, back, backSent, ... }).
 export const daysBetween = (a, b) => { const n = Math.round((Date.parse(b) - Date.parse(a)) / 864e5); return n > 0 ? Math.min(n, 365) : 0; };
 // back/backSent for the day record of `day`, from the stored record `prev`. On a later day than the stored one, back = days since its `last`

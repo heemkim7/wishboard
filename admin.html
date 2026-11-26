@@ -122,7 +122,7 @@
   <div class="msg" id="statsMsg"></div>
   <div class="scroll"><table id="stats"></table></div>
   <h2>🚀 성장 퍼널</h2>
-  <p class="sub">한국 시간 하루마다 단계별로 몇 명(계정 수, 계정 없는 세션은 하나씩)이 거쳤는지 세고, % 는 기준 단계 대비입니다. 기준 단계가 20 미만이면 숫자가 흔들려 '—'로 둡니다. 공유는 소원 공유·사진 공유·초대 문구 복사 중 하나라도 한 사람이고 입장 대비입니다. 공유로 들어옴은 공유 링크(소원·전광판 카드)로 열고 온 사람이고 공유 대비이며, 100%를 넘을 수 있습니다. 재방문은 이전 접속일이 따로 있는 브라우저가 입장한 수이고 입장 대비입니다. 7일·14일 합계는 일별 인원을 더한 연인원이라 같은 사람이 여러 날이면 여러 번 셉니다. 지표 표의 새로고침 버튼이 이 표도 다시 불러옵니다.</p>
+  <p class="sub">한국 시간 하루마다 단계별로 몇 명(계정 수, 계정 없는 세션은 하나씩)이 거쳤는지 세고, % 는 기준 단계 대비입니다. 기준 단계가 20 미만이면 숫자가 흔들려 '—'로 둡니다. 공유는 소원 공유·사진 공유·초대 문구 복사 중 하나라도 한 사람이고 입장 대비입니다. 공유로 들어옴은 공유 링크(소원·전광판 카드)로 열고 온 사람이고 공유 대비이며, 100%를 넘을 수 있습니다. 재방문은 이전 접속일이 따로 있는 브라우저가 입장한 수이고 입장 대비입니다. 7일·14일 합계는 일별 인원을 더한 연인원이라 같은 사람이 여러 날이면 여러 번 셉니다. 지표 표의 새로고침 버튼이 이 표도 다시 불러옵니다. 아래 줄: 첫 행동은 그날 신규 계정 가운데 소원 걸기·하트·전광판 응원·전광판 걸기 중 하나라도 한 수입니다. 전광판 걸기 시작은 걸기 창을 연 계정, 완료는 실제로 건 계정입니다. 링크 열림은 공유 페이지(전광판 카드·소원·사진)가 나간 횟수이고, 자동은 카카오톡·SNS 미리보기와 검색 로봇, User-Agent 없는 요청입니다. 응원은 그날 전해진 응원 가운데 포인트가 나간 것과 그날 받을 포인트를 다 받은 뒤 포인트 없이 전해진 것입니다. 기록 전 날은 '—'입니다.</p>
   <div class="msg" id="growMsg"></div>
   <div class="scroll"><table id="grow"></table></div>
 </main>
@@ -130,7 +130,7 @@
 <script type="module" src="./admin-gift.js?v=202611250713"></script>
 <script type="module" src="./admin-team.js?v=202611250713"></script>
 <script type="module">
-import { GROW_STEPS, growDays, growSum, stepPct } from './growth.js?v=202611250713';
+import { GROW_STEPS, growDays, growSum, stepPct, dayTable } from './growth.js?v=202611250713';
 import { kstDay } from './adsale.js'; // admin-ads.js loads the same module
 const $ = (id) => document.getElementById(id);
 const TABS = [['pending', '⏳ 검수 대기'], ['approved', '✅ 송출 중'], ['rejected', '거절함'], ['removed', '내림']];
@@ -243,7 +243,9 @@ function renderGrow(d) {
   });
   const hr = document.createElement('tr');
   head.forEach((t) => { const th = document.createElement('th'); th.textContent = t; hr.append(th); });
-  $('grow').replaceChildren(hr, ...rows);
+  // More rows of the same days (growth.js dayTable): first action of new accounts, wizard started vs published, share pages served, cheers.
+  const more = dayTable(d.days, d.today, shown.length).map((cells) => { const tr = document.createElement('tr'); cells.forEach((t) => { const td = document.createElement('td'); td.textContent = t; tr.append(td); }); return tr; });
+  $('grow').replaceChildren(hr, ...rows, ...more);
   const unknown = cols.filter((c) => !c.counts).length;
   $('growMsg').textContent = unknown ? `이 퍼널을 기록하기 전에 집계된 ${unknown}일은 '—'이고 합계에서 뺍니다.` : '';
 }
