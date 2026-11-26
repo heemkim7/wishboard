@@ -1247,3 +1247,124 @@ describe('the gift page over the plaza is a dialog like the sheets (gift.js)', (
     assert.ok(px(rec['line-height']) + 2 * vpad + 2 * recPad[0] >= 44); assert.ok(px(rec['min-width']) >= 44);
   });
 });
+
+// ---- the loop's gaps (2026-11-27): the visitor's 공유하기, 💖, the maker's start beacon, the admin numbers ------------------------------
+describe('the recipient page passes itself on and takes a heart; the maker counts its start', () => {
+  const g = view({ hearts: 12 }), AT = KST('2026-11-25T19:00:00'), URL_ = 'https://sq.example/g/' + g.id;
+  // sendBeacon as the page calls it: [url, the JSON body] (the fake one only says it went).
+  const beacons = (P) => { const out = []; globalThis.navigator.sendBeacon = (u, b) => { out.push(b.text().then((t) => [String(u), JSON.parse(t)])); return true; }; return async () => Promise.all(out); };
+  const open = async (P) => { await P.load('giftpage.js'); await P.press(P.btn(/영상 건너뛰기/)); };
+  const heartOf = (P) => P.btn(/하트 \d+$/);
+
+  it('a visitor gets 🔗 공유하기 beside the heart, under the reply (the reply stays first); it sends the /g/<id> address and counts as reshare', async () => {
+    let P = pageOf(g, AT);
+    try {
+      P.shared.length = 0; globalThis.navigator.share = async (o) => { P.shared.push(o); };
+      await open(P);
+      const share = P.btn(/^🔗 공유하기$/), acts = share.parent.parent;
+      assert.equal(acts.className, 'stack');
+      assert.equal(acts.kids[0].textContent, '💌 지수님에게 답장 전광판 걸기', 'the reply is still the first button');
+      assert.equal(acts.kids[1], share.parent, 'the share and heart row right under it');
+      assert.deepEqual(share.parent.kids.map((n) => n.textContent), ['🔗 공유하기', '🤍 하트 12']);
+      assert.equal(share.parent.className, 'row');
+      await P.press(share);
+      assert.deepEqual(P.shared, [{ title: '민지님을 위한 선물 전광판', text: '🎂 민지님을 위한 선물 전광판이 뉴욕 타임스퀘어 가상 광장에 걸려 있어요! 같이 축하 메시지 남겨 주세요 👉', url: URL_ }]);
+      assert.equal(P.seen(g.id, 'reshare'), true); assert.equal(P.seen(g.id, 'share'), false, 'not the owner\'s count');
+      for (const w of [/게임|코인|점령|레벨|명성/]) assert.equal(w.test(P.shared[0].text), false);
+    } finally { P.done(); }
+    // No share sheet: the clipboard (the words, then the address); no clipboard either: the address shown to copy by hand.
+    P = pageOf(view({ takes: false }), KST('2026-11-26T09:00:00'));
+    try {
+      await open(P); await P.press(P.btn(/^🔗 공유하기$/));
+      assert.deepEqual(P.copied, ['🎂 민지님을 위한 선물 전광판이 뉴욕 타임스퀘어 가상 광장에 걸렸어요! 같이 봐 주세요 👉 ' + URL_]);
+      assert.equal(P.says(/링크를 복사했어요/), true); assert.equal(P.seen(g.id, 'reshare'), true);
+    } finally { P.done(); }
+    P = pageOf(g, AT);
+    try {
+      await open(P);
+      const box = P.all('div').find((n) => n.className === 'link');
+      assert.equal(P.shown(box), false, 'the copy box waits');
+      globalThis.navigator.clipboard.writeText = async () => { throw new Error('no'); };
+      await P.press(P.btn(/^🔗 공유하기$/));
+      assert.equal(P.shown(box), true); assert.equal(box.textContent, URL_); assert.equal(P.says(/아래 주소를 길게 눌러 복사해 주세요/), true);
+      assert.equal(P.seen(g.id, 'reshare'), false, 'nothing was handed over');
+    } finally { P.done(); }
+  });
+
+  it('nothing to pass on or heart before the board is revealed; the owner\'s preview shows the heart as it stands and no share', async () => {
+    let P = pageOf(view({ phase: 'before' }), KST('2026-11-24T12:00:00'));
+    try { await P.load('giftpage.js'); assert.equal(P.btn(/공유하기/), null); assert.equal(heartOf(P), null); } finally { P.done(); }
+    P = pageOf(g, AT, { store: { masil_gt: GUEST(), kts_gmine: JSON.stringify([g.id]) }, respond: (u) => (u === '/rt/gift/' + g.id ? { ok: true, gift: g, own: true, mine: { kids: 0, vd: 0, at: 1, lk: 1 }, media: false } : u.endsWith('/interest') ? { ok: true } : null) });
+    try {
+      await P.load('giftpage.js');
+      const stats = P.all('div').find((n) => n.className === 'stats');
+      assert.deepEqual(stats.kids.map((n) => n.textContent), ['0열어 본 사람', '0친구 메시지', '12💖 하트', '0이어서 걸린 전광판'], 'the owner sees the count');
+      await P.press(P.btn(/받는 사람에게 보이는 화면/));
+      assert.equal(P.btn(/🔗 공유하기/), null);
+      assert.equal(heartOf(P).disabled, true); assert.equal(heartOf(P).textContent, '🤍 하트 12');
+      await P.press(heartOf(P)); assert.equal(P.sent.some((s) => s.url.endsWith('/heart')), false, 'the owner looking does not heart');
+    } finally { P.done(); }
+  });
+
+  it('💖: one press per device, sent with the device id, kept pressed on this device; a refusal goes back quietly', async () => {
+    const store = { masil_gt: GUEST() };
+    let P = pageOf(g, AT, { store, respond: (u) => (u.endsWith('/heart') ? { ok: true } : null) });
+    try {
+      await open(P);
+      const btn = heartOf(P);
+      assert.deepEqual([btn.textContent, btn.attrs['aria-pressed'], btn.attrs['aria-label'], btn.className], ['🤍 하트 12', 'false', '하트 보내기, 12개', 'btn']);
+      await P.press(btn); await P.press(btn);
+      const sent = P.sent.filter((s) => s.url === '/rt/gift/' + g.id + '/heart');
+      assert.equal(sent.length, 1, 'one press'); assert.equal(sent[0].method, 'POST'); assert.match(sent[0].body.v, /^[0-9a-f]{16}$/); assert.equal(sent[0].body.v, store.kts_gv, 'the device id a view uses');
+      assert.equal(sent[0].auth, '', 'no token, no account');
+      assert.deepEqual([btn.textContent, btn.attrs['aria-pressed']], ['💖 하트 13', 'true']);
+    } finally { P.done(); }
+    P = pageOf(g, AT, { store });
+    try { await open(P); assert.deepEqual([heartOf(P).textContent, heartOf(P).attrs['aria-pressed']], ['💖 하트 13', 'true'], 'opened again: still pressed, still counted while the copies catch up'); } finally { P.done(); }
+    P = pageOf(view({ hearts: 20 }), AT, { store });
+    try { await open(P); assert.equal(heartOf(P).textContent, '💖 하트 20', 'the board\'s own count once it is past this device\'s'); } finally { P.done(); }
+    P = pageOf(view({ id: 'zzzz1234', hearts: 3 }), AT, { respond: () => null }); // busy (503) or the minute (429): the Worker says no
+    try {
+      await open(P); await P.press(heartOf(P));
+      assert.deepEqual([heartOf(P).textContent, heartOf(P).attrs['aria-pressed']], ['🤍 하트 3', 'false']);
+      assert.equal(P.says(/^잠시 뒤에 다시 눌러 주세요\.$/), true); assert.equal(P.says(/오류|실패|error/i), false);
+      assert.equal(JSON.parse(P.store.kts_ghearts || '{}').zzzz1234, undefined);
+    } finally { P.done(); }
+  });
+
+  it('the maker sends one start beacon per page load: 0 for a fresh form, 1 from another board; not again when the form is built again', async () => {
+    let P = fakeDom({ path: '/gift', at: AT, store: { masil_gt: GUEST() } }), got = beacons(P);
+    try { await P.load('giftpage.js'); assert.deepEqual(await got(), [['/rt/gift/start', { r: 0 }]]); } finally { P.done(); }
+    P = fakeDom({ path: '/gift', search: '?ref=abcd1234', at: AT, store: { masil_gt: GUEST() } }); got = beacons(P);
+    try { await P.load('giftpage.js'); assert.deepEqual(await got(), [['/rt/gift/start', { r: 1 }]]); } finally { P.done(); }
+    P = pageOf(g, AT); got = beacons(P);
+    try {
+      await open(P);
+      assert.deepEqual((await got()).filter(([u]) => u === '/rt/gift/start'), [], 'the board page is not the maker');
+      await P.press(P.btn(/답장 전광판 걸기/)); // the reply's maker
+      await P.step(-1); await P.step(1); // back to the board and forward to the maker: built again
+      assert.deepEqual(P.heads('h1'), ['💌 답장 전광판을 걸어요']);
+      assert.deepEqual((await got()).filter(([u]) => u === '/rt/gift/start'), [['/rt/gift/start', { r: 1 }]], 'once, as one from another board');
+    } finally { P.done(); }
+  });
+
+  it('admin: the new counters and the two ratios in the table, and the makers line', async () => {
+    const days = [{ d: '2026-11-25', start: 10, made: 4, made_ref: 1, hit: 20, hitbot: 7, view: 15, heart: 3, 'ev:reshare': 2, 'ev:share': 5, start_ref: 2, made_again: 1 }, { d: '2026-11-24', start: 0, made: 0, hit: 0 }];
+    const P = fakeDom({ path: '/admin.html', at: AT, respond: (u) => (u.startsWith('/rt/admin/gift/stats') ? { ok: true, days, arms: [], optins: [], makers: { week: { from: '2026-11-23', n: 3 }, d30: { one: 2, more: 1 }, keptFrom: 1 } } : u.startsWith('/rt/admin/gift?') ? { ok: true, boards: [], media: false, e3: false } : null) });
+    const nodes = () => { const out = []; const walk = (n) => { if (n.nodeType === 1) { out.push(n); for (const k of n.kids) walk(k); } }; walk(P.app); return out; };
+    P.doc.getElementById = (id) => nodes().find((n) => n.attrs.id === id) || null; P.doc.querySelector = () => P.app;
+    globalThis.sessionStorage = { getItem: () => 'admin-key' };
+    try {
+      await P.load('admin-gift.js');
+      const rows = P.all('tr').map((r) => r.kids.map((c) => c.textContent)), head = rows[0], col = (name) => head.indexOf(name);
+      for (const n of ['만들기 시작', '다른 보드에서 와서 시작', '두 번째부터', '링크 열림(사람)', '링크 열림(미리보기·봇)', '공유(주인)', '공유(받는 사람)', '💖 하트', 'K', '시작→만듦', '링크(사람)→방문']) assert.ok(col(n) > 0, n);
+      const day = rows.find((r) => r[0] === '2026-11-25'), sum = rows.at(-1);
+      assert.deepEqual([day[col('만들기 시작')], day[col('공유(받는 사람)')], day[col('공유(주인)')], day[col('💖 하트')], day[col('링크 열림(미리보기·봇)')]], ['10', '2', '5', '3', '7']);
+      assert.deepEqual([day[col('시작→만듦')], day[col('링크(사람)→방문')], day[col('K')]], ['0.40', '0.75', '0.25']);
+      assert.deepEqual(rows.find((r) => r[0] === '2026-11-24').slice(-2), ['—', '—'], 'nothing to divide by');
+      assert.deepEqual([sum[0], sum[col('시작→만듦')], sum[col('링크(사람)→방문')]], ['30일', '0.40', '0.75']);
+      assert.equal(P.says(/^이번 주\(2026-11-23 월요일부터\) 3명 · 30일 안: 1개 2명, 2개 이상 1명/), true);
+    } finally { P.done(); delete globalThis.sessionStorage; }
+    assert.match(src('admin-gift.js'), /\['ev:go', '직접 가서 봄'\], \['ev:cer', '점등식 온 기기'\], \['ev:cershot', '단체 사진 저장·공유'\], /);
+  });
+});

@@ -39,26 +39,33 @@ async function api(path, body) {
   const d = await r.json().catch(() => ({})); if (!r.ok || d.ok === false) throw new Error(d.error || '처리하지 못했어요.');
   return d;
 }
-const COLS = [['made', '만든 보드'], ['made_ref', '페이지에서 와서 만든'], ['reply', '답장'], ['view', '새 방문자'], ['view_day', '그날 방문자'], ['return_day', '그날 다시 온'], ['msg', '메시지'], ['video', '영상'], ['ev:film', '그린 영상 재생'], ['ev:play', '저장 영상 재생'], ['ev:done', '끝까지 봄'], ['ev:save', '영상 저장'], ['ev:go', '직접 가서 봄'], ['ev:cer', '점등식 온 기기'], ['ev:cershot', '단체 사진 저장·공유'], ['ev:cta', '나도 걸기 누름'], ['ladder', '가격표 본 보드'], ['pick:1', '3,900 고름'], ['pick:2', '7,900 고름'], ['pick:3', '14,900 고름'], ['notify:1', '알림 1'], ['notify:2', '알림 2'], ['notify:3', '알림 3'], ['report', '신고']];
+// The daily keys (giftsrv.js gd), then the ratios read at a glance: [name, numerator, denominator] of the same day (or the 30 days).
+const COLS = [['start', '만들기 시작'], ['start_ref', '다른 보드에서 와서 시작'], ['made', '만든 보드'], ['made_ref', '페이지에서 와서 만든'], ['reply', '답장'], ['made_again', '두 번째부터'],
+  ['hit', '링크 열림(사람)'], ['hitbot', '링크 열림(미리보기·봇)'], ['view', '새 방문자'], ['view_day', '그날 방문자'], ['return_day', '그날 다시 온'], ['msg', '메시지'], ['video', '영상'], ['ev:film', '그린 영상 재생'], ['ev:play', '저장 영상 재생'], ['ev:done', '끝까지 봄'], ['ev:save', '영상 저장'], ['ev:go', '직접 가서 봄'], ['ev:cer', '점등식 온 기기'], ['ev:cershot', '단체 사진 저장·공유'], ['ev:share', '공유(주인)'], ['ev:reshare', '공유(받는 사람)'], ['heart', '💖 하트'], ['ev:cta', '나도 걸기 누름'], ['ladder', '가격표 본 보드'], ['pick:1', '3,900 고름'], ['pick:2', '7,900 고름'], ['pick:3', '14,900 고름'], ['notify:1', '알림 1'], ['notify:2', '알림 2'], ['notify:3', '알림 3'], ['report', '신고']];
+const RATIOS = [['K', 'made_ref', 'made'], ['시작→만듦', 'made', 'start'], ['링크(사람)→방문', 'view', 'hit']];
+const ratioOf = (x, [, a, b]) => (x[b] ? ((x[a] || 0) / x[b]).toFixed(2) : '—');
 async function load() {
   say('불러오는 중…');
   try {
     const d1 = kstDay(), st = await api('/rt/admin/gift/stats?d0=' + addDays(d1, -29) + '&d1=' + d1);
-    const t = $('giftStats'); t.replaceChildren(h('tr', {}, h('th', { text: '날짜' }), ...COLS.map(([, n]) => h('th', { text: n })), h('th', { text: 'K' })));
+    const t = $('giftStats'); t.replaceChildren(h('tr', {}, h('th', { text: '날짜' }), ...COLS.map(([, n]) => h('th', { text: n })), ...RATIOS.map(([n]) => h('th', { text: n }))));
     const sum = {};
     for (const day of [...st.days].reverse()) {
       for (const [k] of COLS) sum[k] = (sum[k] || 0) + (day[k] || 0);
-      t.append(h('tr', {}, h('td', { text: day.d }), ...COLS.map(([k]) => h('td', { text: String(day[k] || 0) })), h('td', { text: day.made ? (day.made_ref / day.made).toFixed(2) : '—' })));
+      t.append(h('tr', {}, h('td', { text: day.d }), ...COLS.map(([k]) => h('td', { text: String(day[k] || 0) })), ...RATIOS.map((r) => h('td', { text: ratioOf(day, r) }))));
     }
-    t.append(h('tr', {}, h('td', {}, h('b', { text: '30일' })), ...COLS.map(([k]) => h('td', {}, h('b', { text: String(sum[k] || 0) }))), h('td', {}, h('b', { text: sum.made ? (sum.made_ref / sum.made).toFixed(2) : '—' }))));
-    const arms = $('giftArms'); arms.replaceChildren(...st.arms.map((a) => h('div', { class: 'hit' }, h('b', { text: a.lk ? '잠금(그날 공개)' : '바로 공개' }),
+    t.append(h('tr', {}, h('td', {}, h('b', { text: '30일' })), ...COLS.map(([k]) => h('td', {}, h('b', { text: String(sum[k] || 0) }))), ...RATIOS.map((r) => h('td', {}, h('b', { text: ratioOf(sum, r) })))));
+    // Makers by the board's account or guest id, from the boards still kept (a guest is one browser; linking an account joins them).
+    const mk = st.makers, makers = mk ? h('div', { class: 'hit' }, h('b', { text: '만든 사람' }),
+      h('span', { text: `이번 주(${mk.week.from} 월요일부터) ${mk.week.n}명 · 30일 안: 1개 ${mk.d30.one}명, 2개 이상 ${mk.d30.more}명 (남아 있는 보드 기준. 보드는 그날 7일 뒤 지워져요. 손님은 브라우저마다 따로 세요)` })) : null;
+    const arms = $('giftArms'); arms.replaceChildren(...(makers ? [makers] : []), ...st.arms.map((a) => h('div', { class: 'hit' }, h('b', { text: a.lk ? '잠금(그날 공개)' : '바로 공개' }),
       h('span', { text: `보드 ${a.boards} · 보드당 방문자 ${a.boards ? (a.visitors / a.boards).toFixed(1) : 0} · 그날 방문자 ${a.dayVisitors} · 보드당 메시지 ${a.boards ? (a.lines / a.boards).toFixed(1) : 0} · 이어 만든 보드 ${a.kids} · 영상 ${a.videos}` }))),
       h('div', { class: 'hit' }, h('b', { text: '알림 신청' }), h('span', { text: (st.optins || []).map((o) => `${TIERS[o.t]?.name || o.t} ${o.n}명(보냄 ${o.sent})`).join(' · ') || '없음' })));
     const list = await api('/rt/admin/gift?day=' + (dayIn.value || kstDay()));
     const L = $('giftList');
     L.replaceChildren(...(list.boards.length ? list.boards.map((g) => h('div', { class: 'hit' },
       h('b', { text: (OCCASIONS[g.occ]?.emoji || '🎁') + ' To. ' + g.to }), h('span', { text: (g.msg || '') + (g.from ? ' · From. ' + g.from : '') }),
-      h('span', { text: windowText(g.a, g.b) + ' · ' + g.scr + ' · ' + g.phase + (g.st !== 'live' ? ' · ' + g.st : '') + ' · 방문 ' + g.v + ' · 메시지 ' + g.n + ' · 신고 ' + g.rp + (g.vid ? ' · 영상' : '') }),
+      h('span', { text: windowText(g.a, g.b) + ' · ' + g.scr + ' · ' + g.phase + (g.st !== 'live' ? ' · ' + g.st : '') + ' · 방문 ' + g.v + ' · 메시지 ' + g.n + ' · 하트 ' + (g.hr || 0) + ' · 신고 ' + g.rp + (g.vid ? ' · 영상' : '') }),
       h('a', { href: '/g/' + g.id, target: '_blank', rel: 'noopener', text: '/g/' + g.id }),
       h('button', { type: 'button', class: g.st === 'live' ? 'no' : 'ok', text: g.st === 'live' ? '가리기' : '되살리기', onclick: () => hide(g.id, '', g.st === 'live') }),
       ...g.lines.map((m) => h('div', { class: 'hit', style: 'width:100%' }, h('b', { text: m.nick }), h('span', { text: m.txt + ' · 신고 ' + m.rp + (m.st !== 'live' ? ' · 가려짐' : '') }),

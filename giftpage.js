@@ -1,7 +1,7 @@
 // 선물 전광판 light pages (gift.html): the maker at /gift and the board page at /g/<id> (owner preview with the price ladder, the
 // recipient page, the 롤링페이퍼). No three.js, no realtime room, no Supabase client: what the page needs from the Worker comes inline in
 // #gift-data (the Worker renders /g/<id>), the rest is a few small JSON calls. Text people wrote is only set with textContent.
-import { GIFT, GIFT_ID, OCCASIONS, OCC_KEYS, GIFT_THEMES, THEME_KEYS, TIERS, TIER_NOTE, TIER_ASK, won, giftFault, paperFault, startChoices, windowText, dayText, hourText, kstDay, addDays, countdown, dDay, refOf, keptRef, cpLen, norm, windowFor, replyDraft, replyLabel, PLAZA_BTN, videoFirst, CER_TEXT, cerStart, cerButton, cerInvite, cerShareLine, cerBackWhy, cerDebugStart, pageLook, hiddenWords } from './giftrules.js';
+import { GIFT, GIFT_ID, OCCASIONS, OCC_KEYS, GIFT_THEMES, THEME_KEYS, TIERS, TIER_NOTE, TIER_ASK, won, giftFault, paperFault, startChoices, windowText, dayText, hourText, kstDay, addDays, countdown, dDay, refOf, keptRef, cpLen, norm, windowFor, replyDraft, replyLabel, PLAZA_BTN, videoFirst, CER_TEXT, cerStart, cerButton, cerInvite, cerShareLine, cerBackWhy, cerDebugStart, pageLook, hiddenWords, visitorShareText } from './giftrules.js';
 import { paintGift, giftCardJpeg } from './giftart.js?v=202611250713';
 import { createFilm, FILM_MS, recordCanvas, canRecord, saveBlob, fileName } from './giftfilm.js?v=202611250713';
 
@@ -179,8 +179,36 @@ async function saveVideo(g, st, btn, note) {
 async function share(g, url, note, made) {
   const o = OCCASIONS[g.occ] || OCCASIONS.bday, text = `${o.emoji} ${g.to}님을 위한 선물 전광판이 뉴욕 타임스퀘어 가상 광장에 걸려요! 친구들 메시지도 남겨 주세요 👉`
     + cerShareLine(made ? { ...g, at: made } : g, now()); // 점등식: ' 🎆 점등식 12월 25일 18:00에 같이 봐요!' until the start
-  try { if (navigator.share) { await navigator.share({ title: `${g.to}님을 위한 선물 전광판`, text, url }); beacon(g.id, 'share'); return; } } catch (e) { if (e?.name === 'AbortError') return; }
-  try { await navigator.clipboard.writeText(text + ' ' + url); beacon(g.id, 'share'); say(note, '링크를 복사했어요. 카카오톡에 붙여 넣어 보내세요.', true); } catch { say(note, '아래 주소를 길게 눌러 복사해 주세요.'); }
+  return sendLink(g.id, { title: `${g.to}님을 위한 선물 전광판`, text, url }, note, 'share');
+}
+// The system share sheet, else the clipboard, else the address shown to copy by hand (box: the copy box, shown only then when it is hidden).
+// ev: the beacon once something was handed over ('share' the owner, 'reshare' a visitor).
+async function sendLink(id, { title, text, url }, note, ev, box = null) {
+  try { if (navigator.share) { await navigator.share({ title, text, url }); beacon(id, ev); return; } } catch (e) { if (e?.name === 'AbortError') return; }
+  try { await navigator.clipboard.writeText(text + ' ' + url); beacon(id, ev); say(note, '링크를 복사했어요. 카카오톡에 붙여 넣어 보내세요.', true); } catch { if (box) box.hidden = false; say(note, '아래 주소를 길게 눌러 복사해 주세요.'); }
+}
+// 💖 on the recipient page: one per device and board (the Worker keeps it so). kts_ghearts: { id: the count shown after this device's press },
+// so the press stays shown while the board's copies catch up. Nothing at all is said about a refusal (budget hard, the minute): the
+// button simply goes back, with one calm line.
+const hearted = () => { const o = json('kts_ghearts', {}); return o && typeof o === 'object' && !Array.isArray(o) ? o : {}; };
+function heartBtn(g, note, { off = false } = {}) {
+  const mark = hearted(), base = Number(g.hearts) || 0;
+  let on = !!mark[g.id], n = on ? Math.max(base, Number(mark[g.id]) || 0) : base;
+  const btn = h('button', { class: 'btn', type: 'button', disabled: off });
+  const paint = () => { btn.textContent = (on ? '💖 ' : '🤍 ') + '하트 ' + n; btn.setAttribute('aria-pressed', String(on)); btn.setAttribute('aria-label', (on ? '하트를 보냈어요' : '하트 보내기') + ', ' + n + '개'); };
+  btn.addEventListener('click', async () => {
+    if (on || off) return;
+    on = true; n += 1; paint();
+    const keep = hearted(); keep[g.id] = n; const ks = Object.keys(keep); if (ks.length > 300) for (const k of ks.slice(0, 150)) delete keep[k]; ls.set('kts_ghearts', JSON.stringify(keep));
+    let ok = false;
+    try { const r = await fetch('/rt/gift/' + g.id + '/heart', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ v: visitor() }) }); ok = !!r.ok; } catch { ok = false; }
+    if (ok) return;
+    on = false; n -= 1; paint();
+    const back = hearted(); delete back[g.id]; ls.set('kts_ghearts', JSON.stringify(back));
+    say(note, '잠시 뒤에 다시 눌러 주세요.', true);
+  });
+  paint();
+  return btn;
 }
 function twoTap(btn, label, run) {
   let armed = 0;
@@ -199,6 +227,7 @@ function maker({ re: answers = '', ...prefill } = {}) {
   try { document.title = (answers ? '답장 전광판' : '선물 전광판') + ' · WISH BOARD'; } catch { /* the tab keeps its name */ } // a reply opens here from a board page: not that board's title
   const q = new URLSearchParams(location.search), ref = refOf(q.get('ref')), re = refOf(answers);
   if (ref) { ls.set('kts_gref', JSON.stringify({ id: ref, at: Date.now() })); history.replaceState(null, '', '/gift'); }
+  started(re || keptRef(ls.get('kts_gref'), Date.now()) ? 1 : 0);
   const today = kstDay(now()), sendLabel = re ? '💌 답장 걸기' : '🎁 무료로 걸기';
   const f = { to: '', from: '', occ: 'bday', msg: '', th: '', day: today, at: 'now', ...prefill };
   const cv = h('canvas', { class: 'preview', width: 1024, height: 576, 'aria-label': '광장 화면 미리보기' });
@@ -272,6 +301,15 @@ function maker({ re: answers = '', ...prefill } = {}) {
   // without a sender leaves the name to write. The page stays at its top (preventScroll): the title and the preview are read first.
   if (FINE && (!re || !f.to)) setTimeout(() => { try { toIn.focus({ preventScroll: true }); } catch { toIn.focus(); } }, 50);
 }
+// The maker form was shown: one count per page load (a form built again, after a delete or back and forward, is not counted again).
+// r: 1 when it came from another board (a kept ref or a reply), as made_ref is to made. No device id: a daily total only.
+let STARTED = false;
+function started(r) {
+  if (STARTED) return; STARTED = true;
+  const body = JSON.stringify({ r });
+  try { if (navigator.sendBeacon?.('/rt/gift/start', new Blob([body], { type: 'text/plain' }))) return; } catch { /* fetch below */ }
+  fetch('/rt/gift/start', { method: 'POST', body, keepalive: true }).catch(() => { });
+}
 // What a board may carry and how long its page lives. It used to stand under the button with the two lines that are there now.
 const MAKER_RULES = '글자만 걸고 사진은 받지 않아요. 받는 사람의 연락처는 적지 않아요. 신고가 쌓이면 문구가 가려지고, 기념 페이지는 그날이 지나고 7일 뒤에 지워져요.';
 
@@ -342,7 +380,7 @@ function owner(g, { fresh = false, mine: extra = null, media = false } = {}) {
       h('button', { class: 'btn', type: 'button', onclick: () => sendOr(async () => { try { await navigator.clipboard.writeText(url); say(note, '링크를 복사했어요.', true); } catch { say(note, '아래 주소를 길게 눌러 복사해 주세요.'); } }) }, '링크 복사')),
     vfirst ? nudge : null, linkBox, note,
     h('p', { class: 'fine', text: '친구들에게 먼저 보내 메시지를 모으고, 그날 ' + g.to + '님에게 보내세요. ' + (g.lk ? '메시지는 그날(' + dayText(g.day) + ') 0시에 함께 열려요.' : '메시지는 남기는 대로 바로 보여요.') }));
-  const stats = h('div', { class: 'stats' }, h('div', {}, h('b', { text: String(g.v || 0) }), h('span', { text: '열어 본 사람' })), h('div', {}, h('b', { text: String(g.n || 0) }), h('span', { text: '친구 메시지' })), h('div', {}, h('b', { text: String(extra?.kids || 0) }), h('span', { text: '이어서 걸린 전광판' })));
+  const stats = h('div', { class: 'stats' }, h('div', {}, h('b', { text: String(g.v || 0) }), h('span', { text: '열어 본 사람' })), h('div', {}, h('b', { text: String(g.n || 0) }), h('span', { text: '친구 메시지' })), h('div', {}, h('b', { text: String(g.hearts || 0) }), h('span', { text: '💖 하트' })), h('div', {}, h('b', { text: String(extra?.kids || 0) }), h('span', { text: '이어서 걸린 전광판' })));
   const del = twoTap(h('button', { class: 'linkbtn', type: 'button' }, '이 선물 전광판 지우기'), '한 번 더 누르면 지워요(되돌릴 수 없어요)', async () => {
     const r = await post('/rt/gift/' + g.id + '/delete', {});
     if (r.ok) { dropMine(g.id); history.replaceState(null, '', '/gift'); maker(); } else say(note, r.error || '지우지 못했어요.');
@@ -414,7 +452,7 @@ async function pushOn(tok) {
 }
 
 // The recipient page (and anyone with the link): before the day a countdown and the 롤링페이퍼; from the day the film first, then
-// [답장 전광판 걸기] [영상 저장] [직접 가서 보기 / 광장에서 미리 보기 / 광장에서 다시 보기] [나도 누군가에게 걸어 주기], the messages, and a
+// [답장 전광판 걸기] [🔗 공유하기 | 💖 하트] [영상 저장] [직접 가서 보기 / 광장에서 미리 보기 / 광장에서 다시 보기] [나도 누군가에게 걸어 주기], the messages, and a
 // line about when and where it hangs. A 점등식 board (a fixed start) keeps the before look until its start (giftrules.js revealAt,
 // pageLook): the lighting is the reveal, and the page turns into the board by itself at that second.
 // swap: the page turning by itself (the lighting, or 00:00 of the day on a 점등식 board): { left, right, paper } of the page that is up.
@@ -462,7 +500,13 @@ function visit(g, { preview = false, swap = null } = {}) {
     beacon(g.id, 'reply'); ls.set('kts_gref', JSON.stringify({ id: g.id, at: Date.now() })); // kept like ?ref=: a board made later still counts as led here
     history.pushState({ re: g.id }, '', '/gift'); maker({ ...replyDraft(g), re: g.id }); // the state: back and forward come to the reply again (route)
   } }, replyLabel(g));
-  const acts = h('div', { class: 'stack', hidden: !preview && !st.ended }, reply, saveBtn, go, h('a', { class: 'btn', href: '/gift?ref=' + g.id, onclick: () => beacon(g.id, 'cta') }, '🎁 나도 누군가에게 걸어 주기'), saveNote);
+  // 🔗 공유하기 (a visitor passing the page on: its own words and its own count, ev:reshare) and 💖, side by side under the reply: the
+  // reply stays the first button, and the row is one button tall, so the film and that first button keep the first screen of a phone.
+  // The owner's preview shows the heart as it stands (not pressable) and no share (the owner has its own).
+  const url = location.origin + '/g/' + g.id, shareNote = h('p', { class: 'okmsg', role: 'status' }), copyBox = h('div', { class: 'link', text: url, hidden: true });
+  const reshare = preview ? null : h('button', { class: 'btn', type: 'button', onclick: () => sendLink(g.id, { ...visitorShareText(g, phase()), url }, shareNote, 'reshare', copyBox) }, '🔗 공유하기');
+  const pass = h('div', { class: 'row' }, reshare, heartBtn(g, shareNote, { off: preview }));
+  const acts = h('div', { class: 'stack', hidden: !preview && !st.ended }, reply, pass, copyBox, shareNote, saveBtn, go, h('a', { class: 'btn', href: '/gift?ref=' + g.id, onclick: () => beacon(g.id, 'cta') }, '🎁 나도 누군가에게 걸어 주기'), saveNote);
   const skip = h('button', { class: 'linkbtn', type: 'button', onclick: () => { acts.hidden = false; skip.remove(); } }, '영상 건너뛰기');
   st.ends.add(() => { acts.hidden = false; skip.remove(); });
   const rp = twoTap(h('button', { class: 'linkbtn', type: 'button' }, '이 전광판 신고'), '한 번 더 누르면 신고해요', async () => { const r = await fetch('/rt/gift/' + g.id + '/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then((x) => x.json()).catch(() => null); rp.textContent = r?.ok ? '신고했어요' : '신고하지 못했어요'; rp.disabled = true; });
