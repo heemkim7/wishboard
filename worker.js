@@ -9,7 +9,7 @@ import { BALANCE, slotName, josa, SLOT_IDS, PAY, PLAY, BONUS_KINDS, ballOpen, fl
 import { nextBallUntil } from './live.js';
 import { CHEER_PHRASES, EVENT_NAMES, allowedLink, blockedText, parseGuestHandover, statsFromCounts } from './plaza-account.js';
 import { renderCardPng } from './cardpng.js';
-import { WISH, WISH_ERR, cleanWish, cleanNick, wishFault, wishNickFault, ipNet, rankWishes, prizeFor, boardMix, wishShareText, wishDay as kstDay } from './wish.js';
+import { WISH, WISH_ERR, cleanWish, cleanNick, wishFault, wishNickFault, staffNick, ipNet, rankWishes, prizeFor, boardMix, wishShareText, wishDay as kstDay } from './wish.js';
 import { ghostPacket } from './ts3d/walkers.js';
 import { LEAGUE, leagueBoard, leagueCut, weekEnds, botNick, leagueWeek as isoWeek } from './league.js';
 import { DARK, quietShift, darkNext, darkHours, darkText, litOf } from './dark.js';
@@ -1722,7 +1722,7 @@ async function profileApi(req, env, u, ctx) {
     }
     if (typeof b.nickname === 'string') {
       const nick = clip(b.nickname, 16);
-      if (!nick || rejectedCopy(nick) || botNick(nick)) return J({ ok: false, error: '그 이름은 쓸 수 없어요' }, 400);
+      if (!nick || rejectedCopy(nick) || botNick(nick) || staffNick(nick)) return J({ ok: false, error: '그 이름은 쓸 수 없어요' }, 400);
       const rpc = await supabaseRpc('set_nickname', { p_key: env.FLUSH_KEY, p_actor_id: actor.id, p_nickname: nick });
       if (loginGone(rpc)) return J({ ok: false, err: 'gone', error: GONE_ERR }, 401);
       if (!rpc.ok || rpc.data?.ok === false) return J({ ok: false, error: '이름을 저장하지 못했어요' }, rpc.ok ? 400 : 502);
@@ -2577,7 +2577,7 @@ async function plaza(req, env, ctx, u) {
     }
     const theme = String(b.bg_theme || '');
     if (rejectedCopy(nick, b.line1, b.line2, b.line3)) return J({ ok: false, error: 'blocked' }, 400);
-    if (botNick(nick)) return J({ ok: false, error: BOT_NAME_ERR }, 400);
+    if (botNick(nick) || staffNick(nick)) return J({ ok: false, error: BOT_NAME_ERR }, 400);
     if (mode === 'starter') { // one atomic take of today's 3 per IP; given back below if the claim is refused
       try { sip = { h: await ipHash(env, req), d: kstDay() }; if (!(await acct(env).sipTake(sip.h, sip.d, 3))) return J({ ok: false, error: '오늘 무료 칸은 이 연결에서 세 번까지예요' }, 400); } catch { sip = null; }
     }
@@ -2586,7 +2586,7 @@ async function plaza(req, env, ctx, u) {
   } else {
     if (!Number.isInteger(b.plot_id) || b.plot_id < 1 || b.plot_id > 18) return J({ ok: false, error: '토지 번호가 올바르지 않습니다.' }, 400);
     if (rejectedCopy(nick, b.sign_text)) return J({ ok: false, error: 'blocked' }, 400);
-    if (botNick(nick)) return J({ ok: false, error: BOT_NAME_ERR }, 400);
+    if (botNick(nick) || staffNick(nick)) return J({ ok: false, error: BOT_NAME_ERR }, 400);
     // The same rule for plots: someone else's building stays theirs for PLOT_HOLD_MS after its last purchase or upgrade (the database's own rule,
     // 7 idle days, is the weaker one), so nobody takes a plot that is in use.
     const plot = await plotFresh(b.plot_id);
@@ -3141,7 +3141,7 @@ async function accountApi(req, env, ctx, u) {
   // does not skip the take-back. Only a link that moved coins or was paid the reward asks 'acct' anything (one call); a take-back is at most 16 RPCs
   // (5 without the reward). The 'acct' call failing: as if no mark, and a later link gives back the first ARRIVAL coins of what it moved.
   const work = (async () => {
-    const rpc = await supabaseRpc('merge_guest_account', { p_key: env.FLUSH_KEY || '', p_user_id: actor.id, p_guest_id: guestId, p_nickname: botNick(b?.nickname) ? '' : clip(b?.nickname || '', 16) });
+    const rpc = await supabaseRpc('merge_guest_account', { p_key: env.FLUSH_KEY || '', p_user_id: actor.id, p_guest_id: guestId, p_nickname: botNick(b?.nickname) || staffNick(b?.nickname) ? '' : clip(b?.nickname || '', 16) });
     const data = rpc.data || {}; mergeSeen(data); if (!rpc.ok || data.ok === false) return { rpc, data, back: 0, again: false };
     const bonus = Math.max(0, Math.floor(Number(data.bonus)) || 0);
     if (data.guard === 2) { // the database did the move and its take-back in one step; only an 'acct' mark from before the migration is left to check

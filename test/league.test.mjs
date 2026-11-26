@@ -278,6 +278,27 @@ describe('bots out of the ranking', () => {
       clock.add(1000);
     } finally { done(); }
   });
+  // The wish rule (wish.js STAFF, spaces ignored) for plaza nicknames: the profile save, a claim, a plot. An ordinary name still passes.
+  it('refuses staff-like plaza nicknames (운영자, 공 식, Official팀) on the profile, claim and plot paths', async () => {
+    const { clock, state, done } = setup();
+    try {
+      const env = makeEnv(), { guest, post, claim } = harness(env);
+      const g = await guest();
+      for (const nickname of ['운영자', '공 식', 'Official팀']) {
+        const named = await post('/rt/profile', { nickname }, g.token);
+        assert.equal(named.status, 400, nickname); assert.equal((await named.json()).error, '그 이름은 쓸 수 없어요');
+        const r = await claim(g, 'STREET_21', 300, nickname);
+        assert.equal(r.status, 400, nickname); assert.equal((await r.json()).error, '그 이름은 쓸 수 없어요. 프로필에서 이름을 바꿔 주세요.');
+        assert.equal((await post('/rt/buy-plot', { topic: 'chapel:square', plot_id: 4, nickname }, g.token)).status, 400, nickname);
+      }
+      assert.equal(rpcs(state, 'set_nickname').length, 0);
+      assert.equal(rpcs(state, 'claim_billboard').length, 0);
+      assert.equal(rpcs(state, 'buy_or_upgrade_plot').length, 0);
+      assert.equal((await post('/rt/profile', { nickname: '참새' }, g.token)).status, 200);
+      assert.equal((await claim(g, 'STREET_21', 300, '참새')).status, 200);
+      clock.add(1000);
+    } finally { done(); }
+  });
 });
 
 describe('lazy tribe settlement', () => {

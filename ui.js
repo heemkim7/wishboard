@@ -5,7 +5,7 @@ import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, LANDMARKS } from './
 import { BALANCE, PAY, chainBoost, floorOf, slotName, josa, STREET_N, SLOT_SOON, slotOpen, SHOP_KINDS, shopTiles, shopItem, isPrimeSlot } from './balance.js';
 import { createTeamUI } from './teamui.js?v=202611250713';
 import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611250713';
-import { WISH, WISH_ERR, cleanWish, wishRejected, wishShareText } from './wish.js';
+import { WISH, WISH_ERR, cleanWish, wishRejected, wishShareText, staffNick } from './wish.js';
 import { botNick } from './league.js';
 import { backFields, returnGap } from './growth.js?v=202611250713';
 import { A2HS_KEY, VISITS_KEY, bumpVisits, isStandalone, isIosSafari, installMode, installDue, INSTALL_COPY, INSTALL_CRAMPED_Q } from './install.js?v=202611250713';
@@ -3794,7 +3794,7 @@ export function createUI(root, hooks) {
       const save = h('button', { class: 'btn gold cta', type: 'button', text: '저장하기', onclick: async () => {
         if (save.disabled) return;
         const name = chars(input.value, 16).trim() || hooks.nick();
-        if (blockedText(name) || botNick(name)) { note('그 이름은 쓸 수 없어요', 'err'); return; }
+        if (blockedText(name) || botNick(name) || staffNick(name)) { note('그 이름은 쓸 수 없어요', 'err'); return; }
         save.disabled = true;
         save.textContent = '저장 중…';
         try {
@@ -4512,7 +4512,7 @@ export function createUI(root, hooks) {
       if (entered) return;
       // 네온봇N is the seeded bots' name: a typed one is refused here, a stored one is dropped for the default.
       const name = chars(known ? hooks.nick() : nick.value, 16).trim() || hooks.nick();
-      if (botNick(name) && !known) { nickErr.textContent = '그 이름은 쓸 수 없어요'; nickErr.hidden = false; nick.focus?.(); return; }
+      if ((botNick(name) || staffNick(name)) && !known) { nickErr.textContent = '그 이름은 쓸 수 없어요'; nickErr.hidden = false; nick.focus?.(); return; }
       entered = true;
       trackEvent('enter_square', { load_ms: Math.round(performance.now()) });
       ac();

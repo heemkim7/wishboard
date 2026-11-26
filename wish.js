@@ -66,6 +66,8 @@ export function wishRejected(text) { const k = wishFault(text); return k ? WISH_
 // Names that read as staff are not allowed on a wish, nor banned words, links or phone numbers (the same rules as the text): '' or 'nick'.
 // The staff check ignores spaces ("운 영 자"). Nor the seeded bots' 네온봇N.
 const STAFF = /운영자|관리자|공식|admin|official/i;
+// The same staff rule for plaza nicknames (worker.js /rt/profile, claims, plots, the guest merge; ui.js profile and entry): true when refused.
+export function staffNick(nick) { return STAFF.test(norm(nick).replace(/\s+/g, '')); }
 export function wishNickFault(nick) { const s = norm(nick), t = s.replace(/\s+/g, ''); return s && (blockedText(s) || STAFF.test(t) || botNick(t) || contact(s)) ? 'nick' : ''; }
 // The nick a wish stores and shows: the same normalising as the text (no zero-width or bidi marks), 16 code points.
 export function cleanNick(nick) { return Array.from(norm(nick)).slice(0, 16).join('').trim(); }
