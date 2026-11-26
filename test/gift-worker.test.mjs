@@ -16,7 +16,7 @@ registerHooks({
 globalThis.WebSocketRequestResponsePair = class { constructor(req, res) { this.req = req; this.res = res; } };
 const { Meter, Room } = await import('../worker.js');
 const worker = (await import('../worker.js')).default;
-const { GIFT, REPLY_MSG, kstDay, addDays } = await import('../giftrules.js');
+const { GIFT, REPLY_MSG, kstDay, addDays, botAgent } = await import('../giftrules.js');
 const { giftSeenFlush, vidKey } = await import('../giftsrv.js');
 
 function sqliteStorage(db = new DatabaseSync(':memory:')) {
@@ -648,6 +648,177 @@ describe('점등식 on the Worker: two beacon keys and the hard flag on the two 
       assert.equal((await H.get('/rt/gift/zzzzzzzz')).status, 404, 'the 404 is unchanged');
       delete env.BUDGET_REQ_DAY; clock.add(61000);
       assert.equal('hard' in (await (await H.get('/rt/gift/' + r.id)).json()), false, 'back at level 0');
+    } finally { done(); }
+  });
+});
+
+// ---- the loop's gaps (2026-11-27): the visitor's 공유하기, 💖, creation start, link hits, makers ---------------------------------------
+describe('the gift loop: reshare, hearts, starts, link hits and makers on the Worker', { concurrency: false }, () => {
+  const dataOf = (html) => JSON.parse(/<script id="gift-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html)[1]);
+  // The isolate's batch is shared by every env in this file: what earlier tests left goes to a throwaway store first.
+  const drain = async () => { const e = makeEnv(); await giftSeenFlush(e, { waitUntil() {} }); };
+  const heart = (H, id, v, ip = '7.7.7.7') => H.post('/rt/gift/' + id + '/heart', { v: VIS(v) }, null, ip);
+
+  it('a visitor\'s 공유하기 counts under ev:reshare, apart from the owner\'s ev:share', async () => {
+    const { done } = setup();
+    try {
+      await drain();
+      const env = makeEnv(), H = harness(env), A = await H.guest();
+      const r = await (await H.post('/rt/gift', FORM(), A.token)).json();
+      const seen = (v, e) => H.post('/rt/gift/' + r.id + '/seen', { v: VIS(v), e });
+      assert.equal((await seen(1, 'reshare')).status, 204); await seen(2, 'reshare');
+      await giftSeenFlush(env, H.ctx);
+      let d = dayCounts(env);
+      assert.equal(d['ev:reshare'], 2); assert.equal('ev:share' in d, false, 'the owner\'s key does not move');
+      await seen(3, 'share'); await giftSeenFlush(env, H.ctx);
+      d = dayCounts(env); assert.equal(d['ev:share'], 1); assert.equal(d['ev:reshare'], 2);
+    } finally { done(); }
+  });
+
+  it('💖: one per device and board, in every read of the board once revealed, the owner\'s too; gone with the board', async () => {
+    const { clock, done } = setup();
+    try {
+      await drain();
+      const env = makeEnv(), H = harness(env), A = await H.guest();
+      const r = await (await H.post('/rt/gift', FORM(), A.token)).json();
+      assert.equal(r.gift.hearts, 0, 'a "지금" board is revealed at once: the count is there, at 0');
+      for (const v of [1, 1, 2, 1]) assert.equal((await heart(H, r.id, v)).status, 200);
+      await giftSeenFlush(env, H.ctx);
+      assert.equal(db(env).prepare('select hr from gb where id = ?').get(r.id).hr, 2, 'two devices, one heart each');
+      assert.equal(dayCounts(env).heart, 2);
+      assert.equal(db(env).prepare('select v from gb where id = ?').get(r.id).v, 2, 'a heart before its open beacon counts the device as a visitor once');
+      await H.post('/rt/gift/' + r.id + '/seen', { v: VIS(1), e: 'open' }); await giftSeenFlush(env, H.ctx);
+      assert.equal(db(env).prepare('select v from gb where id = ?').get(r.id).v, 2, 'and its open later adds nothing');
+      const cols = db(env).prepare('pragma table_info(gv)').all().map((c) => c.name);
+      assert.deepEqual(cols, ['g', 'v', 'at', 'dd', 'h'], 'kept on the visitor row: nothing new about the person');
+      clock.add(25000); // past the isolate's 20 s copy
+      assert.equal((await (await H.get('/rt/gift/' + r.id)).json()).gift.hearts, 2);
+      assert.equal(dataOf(await (await H.get('/g/' + r.id)).text()).gift.hearts, 2, 'in the page data');
+      assert.equal((await (await H.get('/rt/gift/' + r.id, A.token)).json()).gift.hearts, 2, 'the owner reads it');
+      assert.ok(db(env).prepare("select count(*) n from gr where k like 'h:%'").get().n >= 1);
+      assert.equal((await H.post('/rt/gift/' + r.id + '/delete', {}, A.token)).status, 200);
+      assert.equal(db(env).prepare('select count(*) n from gv where g = ?').get(r.id).n, 0);
+      assert.equal(db(env).prepare("select count(*) n from gr where k like 'h:%'").get().n, 0, 'the per-network marks go with it');
+      assert.equal((await H.get('/rt/gift/' + r.id)).status, 404);
+    } finally { done(); }
+  });
+
+  it('💖 is hidden and refused before the board is revealed (a scheduled board until its lighting)', async () => {
+    const { clock, done } = setup();
+    try {
+      await drain();
+      const env = makeEnv(), H = harness(env), A = await H.guest();
+      const r = await (await H.post('/rt/gift', FORM({ day: addDays(today(), 1), at: 9 }), A.token)).json();
+      assert.equal('hearts' in r.gift, false);
+      assert.equal('hearts' in (await (await H.get('/rt/gift/' + r.id)).json()).gift, false, 'no count in the public read');
+      await heart(H, r.id, 1); await giftSeenFlush(env, H.ctx);
+      assert.equal(db(env).prepare('select hr from gb where id = ?').get(r.id).hr, 0, 'dropped before the reveal');
+      clock.add(21 * 36e5 + 60000); // 09:01 the next day: lit
+      await heart(H, r.id, 1); await giftSeenFlush(env, H.ctx);
+      assert.equal(db(env).prepare('select hr from gb where id = ?').get(r.id).hr, 1, 'the same device, once it is revealed');
+      assert.equal((await (await H.get('/rt/gift/' + r.id)).json()).gift.hearts, 1);
+    } finally { done(); }
+  });
+
+  it('💖 is rate-limited per network: 20 a minute at the door, GIFT.heartNet per board and day in the store', async () => {
+    const { clock, done } = setup();
+    try {
+      await drain();
+      const env = makeEnv(), H = harness(env), A = await H.guest();
+      const r = await (await H.post('/rt/gift', FORM(), A.token)).json();
+      const codes = []; for (let i = 1; i <= 21; i++) codes.push((await heart(H, r.id, i, '8.8.8.8')).status);
+      assert.deepEqual([codes.filter((c) => c === 200).length, codes.at(-1)], [20, 429]);
+      assert.equal((await (await heart(H, r.id, 21, '8.8.8.8')).json()).code, 'rate');
+      for (let i = 22; i <= 40; i++) { if (i === 22 || i === 35) clock.add(61000); await heart(H, r.id, i, '8.8.8.8'); }
+      await giftSeenFlush(env, H.ctx);
+      assert.equal(db(env).prepare('select hr from gb where id = ?').get(r.id).hr, GIFT.heartNet, 'at most ' + GIFT.heartNet + ' from one network');
+      await heart(H, r.id, 99, '9.9.9.9'); await giftSeenFlush(env, H.ctx);
+      assert.equal(db(env).prepare('select hr from gb where id = ?').get(r.id).hr, GIFT.heartNet + 1, 'another network still can');
+      assert.equal((await H.post('/rt/gift/' + r.id + '/heart', { v: 'nope' }, null, '6.6.6.6')).status, 400, 'a device id or nothing');
+    } finally { done(); }
+  });
+
+  it('💖 at budget hard: 503 busy with no gift DO call, nothing kept', async () => {
+    const { clock, done } = setup();
+    try {
+      await drain();
+      const env = makeEnv(), H = harness(env), A = await H.guest();
+      const r = await (await H.post('/rt/gift', FORM(), A.token)).json();
+      env.BUDGET_REQ_DAY = '1'; clock.add(61000);
+      const calls = spyGift(env);
+      const res = await heart(H, r.id, 1);
+      assert.equal(res.status, 503); assert.equal((await res.json()).code, 'busy');
+      assert.deepEqual(calls, []);
+      delete env.BUDGET_REQ_DAY; clock.add(61000);
+      await giftSeenFlush(env, H.ctx);
+      assert.equal(db(env).prepare('select hr from gb where id = ?').get(r.id).hr, 0);
+    } finally { done(); }
+  });
+
+  it('the maker form shown: start, and start_ref when it came from another board; nothing at hard', async () => {
+    const { clock, done } = setup();
+    try {
+      await drain();
+      const env = makeEnv(), H = harness(env);
+      assert.equal((await H.post('/rt/gift/start', {})).status, 204);
+      await H.post('/rt/gift/start', { r: 1 }); await H.post('/rt/gift/start', { r: 'x' });
+      await giftSeenFlush(env, H.ctx);
+      let d = dayCounts(env); assert.equal(d.start, 3); assert.equal(d.start_ref, 1);
+      env.BUDGET_REQ_DAY = '1'; clock.add(61000);
+      await H.post('/rt/gift/start', { r: 1 }); await giftSeenFlush(env, H.ctx);
+      d = dayCounts(env); assert.equal(d.start, 3, 'dropped at hard');
+    } finally { done(); }
+  });
+
+  it('link hits: each GET of /g/<id> counted as a person or an automated fetcher, with no DO call of its own; not at hard', async () => {
+    const { clock, done } = setup();
+    try {
+      await drain();
+      const env = makeEnv(), H = harness(env), A = await H.guest();
+      const r = await (await H.post('/rt/gift', FORM(), A.token)).json();
+      const page = (ua, method = 'GET') => H.call('/g/' + r.id, { method, headers: { 'cf-connecting-ip': '5.5.5.5', ...(ua == null ? {} : { 'user-agent': ua }) } });
+      const PHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 KAKAOTALK 10.8.0';
+      await page(PHONE); // the board's copy is now in the isolate
+      const calls = spyGift(env);
+      for (const ua of [PHONE, 'facebookexternalhit/1.1', 'kakaotalk-scrap/1.0', null, 'Mozilla/5.0 (compatible; Yeti/1.1; +https://naver.me/spd)']) assert.equal((await page(ua)).status, 200);
+      await page(PHONE, 'HEAD');
+      assert.deepEqual(calls, [], 'the page answers from the copy: the counts add no call');
+      await giftSeenFlush(env, H.ctx);
+      assert.deepEqual(calls, ['giftSeen'], 'they ride on the beacon batch');
+      let d = dayCounts(env); assert.equal(d.hit, 2, 'two people (HEAD is not a hit)'); assert.equal(d.hitbot, 4);
+      assert.equal(JSON.stringify(db(env).prepare('select * from gd').all()).includes('5.5.5.5'), false);
+      env.BUDGET_REQ_DAY = '1'; clock.add(61000);
+      await page(PHONE); await giftSeenFlush(env, H.ctx);
+      d = dayCounts(env); assert.equal(d.hit, 2, 'not counted at hard');
+    } finally { done(); }
+  });
+
+  it('botAgent: link previews, crawlers and no User-Agent are automated; phones and in-app browsers are people', () => {
+    for (const ua of ['kakaotalk-scrap/1.0; +https://devtalk.kakao.com/', 'facebookexternalhit/1.1', 'Twitterbot/1.0', 'Slackbot-LinkExpanding 1.0', 'Mozilla/5.0 (compatible; Discordbot/2.0)', 'TelegramBot (like TwitterBot)',
+      'WhatsApp/2.23.20.0', 'Mozilla/5.0 (compatible; Googlebot/2.1)', 'Mozilla/5.0 (compatible; bingbot/2.0)', 'Mozilla/5.0 (compatible; Yeti/1.1)', 'Daum/4.1', 'LinkedInBot/1.0', 'SomeCrawler/1', 'my-spider', 'Link Preview', '', '   ', null, undefined]) assert.equal(botAgent(ua), true, String(ua));
+    for (const ua of ['Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 KAKAOTALK 10.8.0', 'Mozilla/5.0 (Linux; Android 14; SM-S921N) AppleWebKit/537.36 Chrome/131.0 Mobile Safari/537.36 NAVER(inapp; search; 2000; 12.10.4)',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36']) assert.equal(botAgent(ua), false, ua);
+  });
+
+  it('makers in the admin statistics: distinct this KST week (from Monday), one board or two and more over 30 days; made_again', async () => {
+    const { clock, done } = setup();
+    try {
+      await drain();
+      const env = makeEnv(), H = harness(env), A = await H.guest('1.1.1.1'), B = await H.guest('2.2.2.2'), C = await H.guest('3.3.3.3');
+      await H.post('/rt/gift', FORM(), A.token, '1.1.1.1'); await H.post('/rt/gift', FORM({ to: '수아' }), A.token, '1.1.1.1');
+      await H.post('/rt/gift', FORM(), B.token, '2.2.2.2'); await H.post('/rt/gift', FORM(), C.token, '3.3.3.3');
+      let st = await (await H.admin('/rt/admin/gift/stats')).json();
+      const dow = (new Date(today() + 'T00:00:00Z').getUTCDay() + 6) % 7;
+      assert.deepEqual(st.makers.week, { from: addDays(today(), -dow), n: 3 });
+      assert.equal(new Date(st.makers.week.from + 'T00:00:00Z').getUTCDay(), 1, 'a Monday');
+      assert.deepEqual(st.makers.d30, { one: 2, more: 1 });
+      assert.equal(st.days.find((x) => x.d === today()).made_again, 1, 'A\'s second board');
+      clock.add(7 * 864e5); // the same weekday next week: last week's makers are not this week's
+      st = await (await H.admin('/rt/admin/gift/stats')).json();
+      assert.equal(st.makers.week.n, 0); assert.deepEqual(st.makers.d30, { one: 2, more: 1 }, 'still in the 30 days (and still kept)');
+      await H.post('/rt/gift', FORM(), B.token, '2.2.2.2');
+      st = await (await H.admin('/rt/admin/gift/stats')).json();
+      assert.equal(st.makers.week.n, 1); assert.deepEqual(st.makers.d30, { one: 1, more: 2 });
     } finally { done(); }
   });
 });

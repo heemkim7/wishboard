@@ -28,6 +28,7 @@ export const GIFT = Object.freeze({
   report: 3, // reports from this many networks hide a board or a message
   video: Object.freeze({ max: 8000000, min: 20000, perBoard: 3, perNetDay: 10, ms: 15000 }),
   seenBatch: 25, seenMs: 30000, // beacons kept in an isolate before one DO call
+  heartNet: 30, // 💖: one per device and board; at most this many per board from one network and KST day
   idLen: 8,
 });
 
@@ -355,8 +356,21 @@ export function giftView(g, now = Date.now()) {
     // fx: the board was made before its window began (a scheduled hour, not "지금"), from the stored making time; the view of a row
     // without one (and an older cached view) has no fx, and cerStart then keeps its old rule.
     ...(Number(g.at) > 0 ? { fx: Number(g.at) < Number(g.a) ? 1 : 0 } : {}),
+    // hearts (💖): only once the content is revealed (heartsOpen); before that the view has no such key.
+    ...(heartsOpen(g, now) ? { hearts: Number(g.hr) || 0 } : {}),
   };
 }
+// 💖 is taken and shown once the recipient page shows the board itself (pageLook past 'before'), and while the board's page lives.
+export function heartsOpen(g, now = Date.now()) { return !!g && giftPhase(g, now) !== 'gone' && Number(now) >= revealAt(g); }
+// The recipient page's 🔗 공유하기: a visitor passing the page on (the owner's own words are in giftpage.js share). look: pageLook's.
+export function visitorShareText(g, look = 'live') {
+  const o = OCCASIONS[g?.occ] || OCCASIONS.bday, to = String(g?.to || '') || '당신';
+  const hang = look === 'after' ? '걸렸어요' : look === 'live' ? '걸려 있어요' : '걸려요';
+  return { title: `${to}님을 위한 선물 전광판`, text: `${o.emoji} ${to}님을 위한 선물 전광판이 뉴욕 타임스퀘어 가상 광장에 ${hang}! ` + (g?.takes ? '같이 축하 메시지 남겨 주세요 👉' : '같이 봐 주세요 👉') };
+}
+// A GET of /g/<id> by a link-preview fetcher or a crawler (or with no User-Agent at all): counted apart from people (hitbot).
+const BOT_UA = /kakaotalk-scrap|facebookexternalhit|twitterbot|slackbot|discordbot|telegrambot|whatsapp|googlebot|bingbot|yeti|daum|linkedinbot|bot|crawler|spider|preview/i;
+export function botAgent(ua) { const s = String(ua ?? '').trim(); return !s || BOT_UA.test(s); }
 // The link preview words.
 export function giftShareText(g) {
   const o = OCCASIONS[g?.occ] || OCCASIONS.bday, to = String(g?.to || '') || '당신';

@@ -15,16 +15,18 @@
 // an account link moves a guest's boards and lines to the account.
 //
 // Tables in instance 'gift' (made on first use):
-//   gb(id, at, uid, ip, day, a, b, scr, st, lk, ref, n, v, vd, kids, rp, vid, j, re)  boards; j: { to, from, occ, msg, th }; re: the first
-//                                              답장 전광판 (a board made with re: 1 whose ref is this one), '' when none; added to older stores
+//   gb(id, at, uid, ip, day, a, b, scr, st, lk, ref, n, v, vd, kids, rp, vid, j, re, hr)  boards; j: { to, from, occ, msg, th }; re: the first
+//                                              답장 전광판 (a board made with re: 1 whose ref is this one), '' when none; hr: 💖 count. re and
+//                                              hr are added to older stores
 //   gm(g, id, at, uid, nick, txt, ip, st, rp)  롤링페이퍼 lines; uid: the writer (guest or account), ip: network hash (both only for caps and reports)
-//   gv(g, v, at, dd)                           distinct visitors per board (v: a hash of the device's random id), dd: seen on the day
-//   gd(d, k, n)                                daily counters (KST): made, made_ref, view, view_day, return_day, msg, video, ladder, pick:t, ...
+//   gv(g, v, at, dd, h)                        distinct visitors per board (v: a hash of the device's random id), dd: seen on the day, h: gave 💖
+//   gd(d, k, n)                                daily counters (KST): made, made_ref, made_again, start, start_ref, view, view_day, return_day,
+//                                              heart, hit, hitbot, msg, video, ladder, pick:t, ev:<beacon>, ...
 //   gr(k, d, n)                                limits: per account / network and KST day, video uploads per board ('*')
 //   gi(uid, t, at, sent)                       "열리면 알림" opt-ins (consented) per paid tier; sent: when the opening notice went
 //   grp(g, m, ip)                              reports per board ('') or line (its id), one per network
 //   gc(g, jpg, at)                             the link-preview card (JPEG the sender's device drew)
-import { GIFT, GIFT_ID, PAPER_ID, VISITOR_ID, GIFT_ERR, giftFault, paperFault, pickScreen, nextFree, giftPhase, paperTakes, lockArm, giftView, giftShareText, refOf, kstDay, addDays, pruneDay, quietNow, AD_LABEL, videoKind, VIDEO_TYPE, rangeOf, windowText, OCCASIONS, TIERS, CER_BEACONS } from './giftrules.js';
+import { GIFT, GIFT_ID, PAPER_ID, VISITOR_ID, GIFT_ERR, giftFault, paperFault, pickScreen, nextFree, giftPhase, paperTakes, lockArm, giftView, giftShareText, refOf, kstDay, addDays, pruneDay, quietNow, AD_LABEL, videoKind, VIDEO_TYPE, rangeOf, windowText, OCCASIONS, TIERS, CER_BEACONS, heartsOpen, dayStart, botAgent } from './giftrules.js';
 import { opsRate } from './ops.js';
 
 const J = (o, s = 200, h = {}) => new Response(JSON.stringify(o), { status: s, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...h } });
@@ -44,7 +46,7 @@ const rowOf = (r) => {
   if (!r) return null;
   const j = parse(r.j), v = r.vid ? parse(r.vid) : null;
   return { id: String(r.id), at: Number(r.at), uid: String(r.uid), ip: String(r.ip), day: String(r.day), a: Number(r.a), b: Number(r.b), scr: String(r.scr), st: String(r.st), lk: Number(r.lk) || 0,
-    ref: String(r.ref || ''), re: String(r.re || ''), n: Number(r.n) || 0, v: Number(r.v) || 0, vd: Number(r.vd) || 0, kids: Number(r.kids) || 0, rp: Number(r.rp) || 0,
+    ref: String(r.ref || ''), re: String(r.re || ''), hr: Number(r.hr) || 0, n: Number(r.n) || 0, v: Number(r.v) || 0, vd: Number(r.vd) || 0, kids: Number(r.kids) || 0, rp: Number(r.rp) || 0,
     vid: v && v.t ? { t: String(v.t), n: Number(v.n) || 0, at: Number(v.at) || 0 } : null,
     to: String(j.to || ''), from: String(j.from || ''), occ: String(j.occ || 'bday'), msg: String(j.msg || ''), th: String(j.th || '') };
 };
@@ -56,9 +58,27 @@ function dropBoards(q, ids) {
   for (const id of ids) for (const t of ['gm', 'gv', 'grp', 'gc']) q.exec(`delete from ${t} where g = ?`, id);
   for (const id of ids) {
     q.exec('delete from gr where k = ?', 'vb:' + id); q.exec('delete from gr where k = ?', 'rn:' + id);
+    q.exec('delete from gr where k like ?', 'h:' + id + ':%'); // today's 💖 per network (ids are [0-9a-z]: no LIKE wildcards)
     q.exec("update gb set re = '' where id = (select ref from gb where id = ?) and re = ?", id, id);
     q.exec('delete from gb where id = ?', id);
   }
+}
+// A device seen on a board ('open'): a distinct visitor (and, on the board's own day, a distinct visitor that day, or a returning one).
+function visitAdd(q, g, v, onDay, d, now) {
+  const fresh = q.exec('insert or ignore into gv(g, v, at, dd) values(?, ?, ?, ?)', g, v, now, onDay ? 1 : 0).rowsWritten > 0;
+  if (fresh) { q.exec('update gb set v = v + 1' + (onDay ? ', vd = vd + 1' : '') + ' where id = ?', g); bump(q, d, 'view'); if (onDay) bump(q, d, 'view_day'); return; }
+  if (onDay && q.exec('update gv set dd = 1 where g = ? and v = ? and dd = 0', g, v).rowsWritten > 0) { q.exec('update gb set vd = vd + 1 where id = ?', g); bump(q, d, 'view_day'); bump(q, d, 'return_day'); }
+}
+// 💖 from a device: kept on its visitor row (gv.h, the same hash a view keeps: nothing new about the person). A device that hearts before
+// its 'open' beacon arrived is seen here first (its later open then changes nothing). -> true when it was counted.
+function heartAdd(q, g, v, net, d, now) {
+  if (!g || !heartsOpen(g, now)) return false;
+  const nk = 'h:' + g.id + ':' + net;
+  if (!net || lim(q, nk, d) >= GIFT.heartNet) return false;
+  visitAdd(q, g.id, v, g.day === d, d, now);
+  if (q.exec('update gv set h = 1 where g = ? and v = ? and h = 0', g.id, v).rowsWritten < 1) return false;
+  q.exec('update gb set hr = hr + 1 where id = ?', g.id); limAdd(q, nk, d); bump(q, d, 'heart');
+  return true;
 }
 // A board's line count, from what is left (after lines of one writer went).
 const recount = (q, g) => q.exec('update gb set n = (select count(*) from gm where gm.g = gb.id) where id = ?', g);
@@ -71,9 +91,11 @@ export const giftDb = {
     // re (the first reply's id) came after the first stores were made: those get the column here, the way worker.js adds its own
     // (a second try fails on the duplicate name and changes nothing). No Supabase migration.
     try { q.exec("alter table gb add column re text not null default ''"); } catch { /* column already exists */ }
+    try { q.exec('alter table gb add column hr integer not null default 0'); } catch { /* column already exists */ } // 💖 (2026-11-27), the same way
     q.exec("create table if not exists gm(g text not null, id text not null, at integer not null, uid text not null, nick text not null, txt text not null, ip text not null, st text not null default 'live', rp integer not null default 0, primary key(g, id))");
     q.exec('create index if not exists gm_uid on gm(uid)');
     q.exec('create table if not exists gv(g text not null, v text not null, at integer not null, dd integer not null default 0, primary key(g, v))');
+    try { q.exec('alter table gv add column h integer not null default 0'); } catch { /* column already exists */ } // this device gave 💖
     q.exec('create table if not exists gd(d text not null, k text not null, n integer not null, primary key(d, k))');
     q.exec('create table if not exists gr(k text not null, d text not null, n integer not null, primary key(k, d))');
     q.exec('create table if not exists gi(uid text not null, t integer not null, at integer not null, sent integer not null default 0, primary key(uid, t))');
@@ -108,10 +130,13 @@ export const giftDb = {
     let ref = refOf(o.ref);
     const parent = ref ? rowOf(q.exec('select * from gb where id = ?', ref).toArray()[0]) : null;
     if (!parent || parent.uid === o.uid) ref = '';
+    // made_again: the maker (account or guest id) has another board still kept (boards go 7 days after their day, so "again" is judged
+    // against those only). A daily total: nothing new about the maker is stored.
+    const again = q.exec('select 1 from gb where uid = ? limit 1', o.uid).toArray().length > 0;
     q.exec("insert into gb(id, at, uid, ip, day, a, b, scr, st, lk, ref, j) values(?, ?, ?, ?, ?, ?, ?, ?, 'live', ?, ?, ?)", id, now, o.uid, o.ip, v.day, v.a, v.b, scr, lockArm(id, !!o.split), ref,
       JSON.stringify({ to: v.to, from: v.from, occ: v.occ, msg: v.msg, th: v.th }));
     limAdd(q, 'u:' + o.uid, d); limAdd(q, 'n:' + o.ip, d);
-    bump(q, d, 'made');
+    bump(q, d, 'made'); if (again) bump(q, d, 'made_again');
     if (ref) { q.exec('update gb set kids = kids + 1 where id = ?', ref); bump(q, d, 'made_ref'); }
     // Only a board whose page can still be opened is answered (not a hidden one, not one past its 7 days), and the place is taken only
     // while the reply in it can be opened too: a reply that was hidden or is over does not keep later ones out.
@@ -150,19 +175,22 @@ export const giftDb = {
   },
   // Page beacons, many boards in one call: [{ g, v (visitor hash), e }]. 'open' counts a distinct visitor per board (and, on the
   // board's own day, a distinct visitor that day and a returning one); every other event is a daily count only.
+  // Also carried in the same call, with no board: { e: 'hit' | 'hitbot', d, n } (GETs of /g/<id> HTML, summed in the isolate per KST day)
+  // and { e: 'start', r } (the maker form shown; r: 1 when it came from another board: start_ref). 'heart' ({ g, v, e, n: network hash})
+  // is 💖: once per device and board for good (gv.h), only while heartsOpen, at most GIFT.heartNet per board, network and day.
   seen(q, items, now = Date.now()) {
     const d = kstDay(now); let n = 0;
     for (const it of (Array.isArray(items) ? items : []).slice(0, 200)) {
       const g = String(it?.g || ''), v = String(it?.v || ''), e = String(it?.e || '');
-      if (!GIFT_ID.test(g) || !/^[0-9a-f]{16}$/.test(v) || !SEEN_EV.has(e)) continue;
-      const row = q.exec('select day from gb where id = ?', g).toArray()[0];
+      if (e === 'hit' || e === 'hitbot') { const day = String(it?.d || ''), k = Math.floor(Number(it?.n)); if (/^\d{4}-\d{2}-\d{2}$/.test(day) && k > 0 && k <= 1e6) { bump(q, day, e, k); n++; } continue; }
+      if (e === 'start') { bump(q, d, 'start'); if (Number(it?.r) === 1) bump(q, d, 'start_ref'); n++; continue; }
+      if (!GIFT_ID.test(g) || !/^[0-9a-f]{16}$/.test(v) || !(SEEN_EV.has(e) || e === 'heart')) continue;
+      const row = q.exec(e === 'heart' ? 'select * from gb where id = ?' : 'select day from gb where id = ?', g).toArray()[0];
       if (!row) continue;
       n++;
+      if (e === 'heart') { heartAdd(q, rowOf(row), v, String(it?.n || ''), d, now); continue; }
       if (e !== 'open') { bump(q, d, 'ev:' + e); continue; }
-      const onDay = String(row.day) === d;
-      const fresh = q.exec('insert or ignore into gv(g, v, at, dd) values(?, ?, ?, ?)', g, v, now, onDay ? 1 : 0).rowsWritten > 0;
-      if (fresh) { q.exec('update gb set v = v + 1' + (onDay ? ', vd = vd + 1' : '') + ' where id = ?', g); bump(q, d, 'view'); if (onDay) bump(q, d, 'view_day'); continue; }
-      if (onDay && q.exec('update gv set dd = 1 where g = ? and v = ? and dd = 0', g, v).rowsWritten > 0) { q.exec('update gb set vd = vd + 1 where id = ?', g); bump(q, d, 'view_day'); bump(q, d, 'return_day'); }
+      visitAdd(q, g, v, String(row.day) === d, d, now);
     }
     return { ok: true, n };
   },
@@ -258,6 +286,18 @@ export const giftDb = {
     q.exec('delete from gi where uid = ?', uid);
     return { ok: true, ids, lines: touched.length };
   },
+  // Makers, by the board row's uid (the account, or the guest id this browser keeps; a guest's boards move to the account on linking).
+  // Counted from the boards still kept, by when they were made (at): the KST week from Monday 00:00, and the last 30 days split into
+  // makers with one board and makers with two or more. Boards go 7 days after their day, so the 30 days see only boards still kept
+  // (made_again, a daily total, is the durable count). -> { week: { from, n }, d30: { one, more }, keptFrom }.
+  makers(q, now = Date.now()) {
+    const today = kstDay(now), dow = (new Date(today + 'T00:00:00Z').getUTCDay() + 6) % 7, monday = addDays(today, -dow);
+    const wk = dayStart(monday), from30 = now - 30 * 864e5;
+    const week = Number(q.exec('select count(distinct uid) n from gb where at >= ?', wk).one().n) || 0;
+    const per = q.exec('select count(*) c from gb where at >= ? group by uid', from30).toArray().map((r) => Number(r.c) || 0);
+    const kept = q.exec('select min(at) t from gb').toArray()[0]?.t;
+    return { week: { from: monday, n: week }, d30: { one: per.filter((c) => c === 1).length, more: per.filter((c) => c >= 2).length }, keptFrom: kept == null ? null : Number(kept) };
+  },
   // admin: 'list' (one KST day's boards, every state, with their lines), 'stats' (daily counters d0..d1 and board totals by lock arm),
   // 'hide', 'optins' (counts per tier), 'notify' (the next NOTIFY_N consented accounts not sent yet: marks them sent and hands them over).
   admin(q, op, arg = {}, now = Date.now()) {
@@ -279,7 +319,7 @@ export const giftDb = {
       // Boards whose day is in the range, as they stand now: visitors and lines per board, boards that led to another, by lock arm (E3).
       const arms = q.exec("select lk, count(*) b, sum(v) v, sum(vd) vd, sum(n) n, sum(kids) kids, sum(case when vid <> '' then 1 else 0 end) vid from gb where day >= ? and day <= ? group by lk", d0, d1).toArray()
         .map((r) => ({ lk: Number(r.lk) || 0, boards: Number(r.b) || 0, visitors: Number(r.v) || 0, dayVisitors: Number(r.vd) || 0, lines: Number(r.n) || 0, kids: Number(r.kids) || 0, videos: Number(r.vid) || 0 }));
-      return { ok: true, d0, d1, days: [...days].map(([d, k]) => ({ d, ...k })), arms, optins: this.admin(q, 'optins', {}, now).optins };
+      return { ok: true, d0, d1, days: [...days].map(([d, k]) => ({ d, ...k })), arms, makers: this.makers(q, now), optins: this.admin(q, 'optins', {}, now).optins };
     }
     if (op === 'optins') {
       return { ok: true, optins: q.exec('select t, count(*) n, sum(case when sent > 0 then 1 else 0 end) s from gi group by t order by t').toArray().map((r) => ({ t: Number(r.t), n: Number(r.n) || 0, sent: Number(r.s) || 0 })) };
@@ -299,7 +339,8 @@ export const giftDb = {
   },
 };
 // reply: the recipient page's 답장 button; cer, cershot (점등식): a device came to a ceremony, it saved or shared the group photo.
-const SEEN_EV = new Set(['open', 'film', 'play', 'done', 'save', 'go', 'share', 'cta', 'reply', 'paper_open', ...CER_BEACONS]);
+// share: the owner's 공유하기; reshare: a visitor's 🔗 공유하기 on the recipient page (its own key, ev:reshare).
+const SEEN_EV = new Set(['open', 'film', 'play', 'done', 'save', 'go', 'share', 'reshare', 'cta', 'reply', 'paper_open', ...CER_BEACONS]);
 
 // ---- isolate caches ------------------------------------------------------------------------------------------------------
 const ONE = new Map(); // id -> { at, v: stored board | null }
@@ -328,11 +369,22 @@ export async function giftWorld(env, k) {
 }
 // Page beacons: kept here, one DO call per GIFT.seenBatch or once the oldest is GIFT.seenMs old (the next beacon's waitUntil sends it).
 // An isolate that dies loses what it held (like the request tally).
-const SEEN = { list: [], at: 0, p: null };
+// Link hits (GETs of /g/<id>) are only sums here, per KST day: { hit, hitbot }. They never start a DO call of their own: they ride on the
+// next beacon batch (or a forced flush), first in its list.
+const SEEN = { list: [], at: 0, p: null }, HITS = new Map();
+const seenAdd = (it) => { if (!SEEN.list.length) SEEN.at = Date.now(); if (SEEN.list.length < 1000) SEEN.list.push(it); };
+function hitAdd(bot, now = Date.now()) {
+  const d = kstDay(now), x = HITS.get(d) || { hit: 0, hitbot: 0 };
+  x[bot ? 'hitbot' : 'hit']++; HITS.set(d, x);
+  if (HITS.size > 3) HITS.delete(HITS.keys().next().value); // an isolate that saw no beacon for days keeps three days at most
+}
 function seenFlush(env, ctx, force = false) {
   const now = Date.now();
-  if (SEEN.p || !SEEN.list.length || (!force && SEEN.list.length < GIFT.seenBatch && now - SEEN.at < GIFT.seenMs)) return SEEN.p;
-  const items = SEEN.list.splice(0); SEEN.at = 0;
+  if (SEEN.p || (!SEEN.list.length && !(force && HITS.size)) || (!force && SEEN.list.length < GIFT.seenBatch && now - SEEN.at < GIFT.seenMs)) return SEEN.p;
+  const items = [];
+  for (const [d, x] of HITS) for (const e of ['hit', 'hitbot']) if (x[e]) items.push({ e, d, n: x[e] });
+  HITS.clear();
+  items.push(...SEEN.list.splice(0)); SEEN.at = 0;
   SEEN.p = Promise.resolve().then(() => giftM(env).giftSeen(items, now)).catch(() => { }).finally(() => { SEEN.p = null; });
   try { ctx?.waitUntil?.(SEEN.p); } catch { /* tests */ }
   return SEEN.p;
@@ -365,10 +417,12 @@ export async function giftApi(req, env, ctx, u, k) {
   seenFlush(env, ctx); // beacons kept here go out with any gift request once they are due (no-op otherwise)
   if (p === '/rt/admin/gift' || p.startsWith('/rt/admin/gift/')) return adminApi(req, env, ctx, u, k);
   if (p === '/rt/gift') return make(req, env, ctx, k);
-  const m = /^\/rt\/gift\/([0-9a-z]{8})(?:\/(paper|seen|interest|video|card\.jpg|card|report|delete))?$/.exec(p);
+  if (p === '/rt/gift/start') return startSeen(req, env, ctx, k);
+  const m = /^\/rt\/gift\/([0-9a-z]{8})(?:\/(paper|seen|heart|interest|video|card\.jpg|card|report|delete))?$/.exec(p);
   if (!m) return J({ err: 'not found' }, 404);
   const id = m[1], sub = m[2] || '';
   if (sub === 'seen') return seen(req, env, ctx, id, k);
+  if (sub === 'heart') return heart(req, env, ctx, id, k);
   if (sub === 'video') return req.method === 'POST' ? videoUp(req, env, ctx, id, k) : videoGet(req, env, id, k);
   if (sub === 'card.jpg') return cardGet(req, env, id, k);
   if (sub === 'card') return cardUp(req, env, id, k);
@@ -449,8 +503,34 @@ async function seen(req, env, ctx, id, k) {
   const got = await readSmall(req, 400); const b = got.b || {};
   const e = String(b.e || ''); if (!VISITOR_ID.test(String(b.v || '')) || !SEEN_EV.has(e)) return ok();
   if (await hard(k, env)) return ok();
-  if (!SEEN.list.length) SEEN.at = Date.now();
-  if (SEEN.list.length < 1000) SEEN.list.push({ g: id, v: await visitorHash(env, b.v), e });
+  seenAdd({ g: id, v: await visitorHash(env, b.v), e });
+  seenFlush(env, ctx);
+  return ok();
+}
+
+// POST /rt/gift/<id>/heart { v }: 💖 from this device (v: the page's random device id, hashed as for a view). No token, no account,
+// no notice to anyone. The network's minute, budget hard (503 busy, no DO call), then it waits in the isolate with the beacons: the DO
+// keeps one per device and board, only while the board's content is revealed, GIFT.heartNet per board, network and day. The answer
+// cannot say whether it was counted (the page shows its own press); a heart on a board that is gone or not yet revealed is dropped there.
+async function heart(req, env, ctx, id, k) {
+  if (req.method !== 'POST') return J({ err: 'post' }, 405);
+  if (!(await opsRate(env, req, 'gheart', 20))) return no('rate', 429);
+  const got = await readSmall(req, 300); const b = got.b || {};
+  if (!VISITOR_ID.test(String(b.v || ''))) return no('down', 400);
+  if (await hard(k, env)) return no('busy', 503);
+  seenAdd({ g: id, v: await visitorHash(env, b.v), e: 'heart', n: await k.ipHash(env, req) });
+  seenFlush(env, ctx);
+  return J({ ok: true });
+}
+// POST /rt/gift/start { r }: the maker form was shown (one per page load, the page decides). r: 1 when the maker came from another board
+// (a kept ref or a reply): start_ref, as made_ref is to made. A daily count with the beacons; nothing at hard. 204 always.
+async function startSeen(req, env, ctx, k) {
+  const ok = () => new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
+  if (req.method !== 'POST') return ok();
+  if (!(await opsRate(env, req, 'gseen', 120, env.EVENT_RL))) return ok();
+  const got = await readSmall(req, 200); const b = got.b || {};
+  if (await hard(k, env)) return ok();
+  seenAdd({ e: 'start', r: Number(b.r) === 1 ? 1 : 0 });
   seenFlush(env, ctx);
   return ok();
 }
@@ -631,6 +711,10 @@ export async function giftPage(req, env, ctx, u, k) {
   if (!GIFT_ID.test(id)) return Response.redirect(new URL('/gift', req.url).href, 302);
   if (!(await opsRate(env, req, 'gpage', 120, env.EVENT_RL))) return Response.redirect(new URL('/gift', req.url).href, 302);
   let g = null, down = false, h = false; try { ({ v: g, h } = await loadGiftH(env, k, id)); } catch { down = true; }
+  // A link hit: a GET of this HTML, summed in the isolate as people or automated fetchers (botAgent: link previews, crawlers, no
+  // User-Agent). Nothing about the request is kept, the answer does not wait, and no DO call is added: the sums ride on the next beacon
+  // batch. Not at budget hard (the level the read above asked anyway), nor while the store is down.
+  if (req.method === 'GET' && !h && !down) hitAdd(botAgent(req.headers.get('user-agent')));
   const now = Date.now(), live = !!g && giftPhase(g, now) !== 'gone', origin = new URL(req.url).origin;
   const view = live ? giftView(g, now) : null;
   const words = live ? giftShareText(view) : { title: down ? '잠시 뒤에 다시 열어 주세요 · WISH BOARD' : '선물 전광판 · WISH BOARD', text: down ? '지금은 광장이 붐벼요.' : '뉴욕 타임스퀘어를 본뜬 가상 광장에 친구를 위한 전광판을 6시간 무료로 걸어 보세요.' };
