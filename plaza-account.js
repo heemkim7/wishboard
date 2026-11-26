@@ -268,6 +268,17 @@ export function slotTier(slotId) {
   return 'C';
 }
 
+// 응원 순위 › 새로 걸린 (ui.js): boards lit now by a person (a guest or user holder, not a team), most recently lit first. /rt/world rows carry no
+// "lit at" column, but every light-up (a claim, a relight) sets lit_until to now + 72 hours, so the later lit_until is the later light-up.
+// Ties: the later updated_at, then the slot id. Vacant, dark and expired boards are left out.
+export function freshBoards(rows, now = Date.now(), n = 10) {
+  const t = (v) => { const x = Date.parse(String(v || '')); return Number.isFinite(x) ? x : 0; };
+  return (Array.isArray(rows) ? rows : [])
+    .filter((b) => b && /^(guest|user):/.test(String(b.holder_id || '')) && t(b.lit_until || b.expires_at) > now)
+    .sort((a, b) => t(b.lit_until || b.expires_at) - t(a.lit_until || a.expires_at) || t(b.updated_at) - t(a.updated_at) || String(a.slot_id).localeCompare(String(b.slot_id)))
+    .slice(0, n);
+}
+
 export function linkedActor(id, flag) {
   return flag === true || String(id || '').startsWith('user:');
 }

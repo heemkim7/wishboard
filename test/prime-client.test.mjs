@@ -129,7 +129,7 @@ describe('the board sheet and the team sheets', () => {
   it('the 🏆 sheet is 응원 순위 (people, participation, goals) and the HUD board shows today\'s teams', () => {
     const r = ui.slice(ui.indexOf('  function openRanks('), ui.indexOf('  function openCredits() {'));
     // short tab names, so all five fit a phone's width (인기 전광판 was cut and 해시태그 out of sight at 375px)
-    assert.match(r, /tabBtn\('today', '오늘'\), tabBtn\('rate', '참여율'\), tabBtn\('week', '이번 주'\), tabBtn\('hot', '전광판'\), tabBtn\('team', '태그'\)/);
+    assert.match(r, /tabBtn\('today', '오늘'\), tabBtn\('rate', '참여율'\), tabBtn\('week', '이번 주'\), tabBtn\('hot', '전광판'\), tabBtn\('new', '새로 걸린'\), tabBtn\('team', '태그'\)/);
     // the chosen tab is told to a screen reader too, not by colour alone
     assert.match(r, /'aria-pressed': String\(id === tab\)/);
     assert.doesNotMatch(r, /누적|쓴 응원 포인트|spent/);

@@ -16,7 +16,7 @@ import { inviteView } from './invite.js';
 import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611250713';
 import { EMOTES, REACTIONS, AVATAR_COLORS, AVATAR_COLOR_NAMES, SPECIES } from './ts3d/avatars.js?v=202611250713';
 import { trackEvent, statsOff, statsGpc, setStatsOff } from './analytics.js?v=202611250713';
-import { CHEER_PHRASES, SITE, accountLabel, allowedLink, blockedText, linkedActor, slotTier } from './plaza-account.js';
+import { CHEER_PHRASES, SITE, accountLabel, allowedLink, blockedText, linkedActor, slotTier, freshBoards } from './plaza-account.js';
 import { codeStart, codeStep, codeView, otpField } from './mailcode.js?v=202611250713';
 import { policyDoc } from './legal.js?v=202611250713';
 import { setOperator, operatorInfo } from './legal.js?v=202611250713';
@@ -3673,7 +3673,7 @@ export function createUI(root, hooks) {
       const list = h('div', { class: 'ranks' });
       const note = h('p', { class: 'note' });
       const meEl = h('p', { class: 'note', hidden: true });
-      let tab = ['today', 'rate', 'week', 'hot', 'team'].includes(start) ? start : 'today', gen = 0;
+      let tab = ['today', 'rate', 'week', 'hot', 'new', 'team'].includes(start) ? start : 'today', gen = 0;
       const go = (slot) => { closeSheet(); hooks.focusShot?.(slot); };
       const linkBtn = (b) => {
         const url = /^https:\/\//.test(String(b.external_url || '')) ? b.external_url : '';
@@ -3699,23 +3699,24 @@ export function createUI(root, hooks) {
           note.textContent = '문구에 넣은 #태그예요. 메인 타워 지붕에는 가장 최근 밤 9시 주인공 팀의 이름이 떠요.';
           return;
         }
-        const rows = hotBoards().slice(0, 10);
+        // 전광판 (most cheers and taxi stops) and 새로 걸린 (plaza-account.js freshBoards: lit now by a person, most recently lit first): the same row.
+        const fresh = tab === 'new', rows = fresh ? freshBoards(world.billboards, Date.now(), 10) : hotBoards().slice(0, 10);
         list.replaceChildren(...(rows.length ? rows.map((b, i) => h('div', { class: 'rank' },
           h('span', { class: 'n', text: String(i + 1) }),
           h('b', { text: [b.line1, b.line2, b.line3].map((s) => String(s || '').trim()).filter(Boolean).join(' · ') || b.holder_name || b.slot_id }),
-          h('span', { class: 'pts tnum', text: String(b.heat) }),
+          fresh ? null : h('span', { class: 'pts tnum', text: String(b.heat) }),
           h('button', { type: 'button', class: 'mini', text: '열기', onclick: () => openAd(b.slot_id) }),
           h('button', { type: 'button', class: 'mini', text: '보러가기', onclick: () => go(b.slot_id) }),
           linkBtn(b))) : [h('p', { class: 'note', text: '아직 켜진 전광판이 없어요.' })]));
-        note.textContent = '응원 수와 택시가 선 횟수를 더합니다. 1위 전광판 위로 황금 빛기둥이 섭니다.';
+        note.textContent = fresh ? '가장 최근에 켜진 전광판부터 보여요.' : '응원 수와 택시가 선 횟수를 더합니다. 1위 전광판 위로 황금 빛기둥이 섭니다.';
       };
       const tabBtn = (id, text) => h('button', { type: 'button', class: id === tab ? 'on' : '', 'aria-pressed': String(id === tab), text, onclick: (e) => { tab = id; for (const c of e.currentTarget.parentElement.children) { c.classList.toggle('on', c === e.currentTarget); c.setAttribute('aria-pressed', String(c === e.currentTarget)); } paint(); } });
-      rankRefresh = () => { if (tab === 'hot' || tab === 'team') paint(); }; // the world's 1 s refresh repaints only the board lists
+      rankRefresh = () => { if (tab === 'hot' || tab === 'new' || tab === 'team') paint(); }; // the world's 1 s refresh repaints only the board lists
       paint();
       // 광장 소식: the compact phone HUD has no live board, so its feed list opens from here (index.html .phone-only).
       const feedBtn = h('button', { class: 'btn ghost phone-only', type: 'button', onclick: () => openFeed() }, ...withIcon('megaphone', '광장 소식'));
-      // Short tab names: all five fit a phone's width (인기 전광판 was cut and 해시태그 out of sight).
-      host.append(h('div', { class: 'seg', role: 'group', 'aria-label': '순위 종류' }, tabBtn('today', '오늘'), tabBtn('rate', '참여율'), tabBtn('week', '이번 주'), tabBtn('hot', '전광판'), tabBtn('team', '태그')), meEl, list, note,
+      // Short tab names (인기 전광판 was cut and 해시태그 out of sight). On a touch screen the row scrolls sideways when six do not fit (index.html .seg).
+      host.append(h('div', { class: 'seg', role: 'group', 'aria-label': '순위 종류' }, tabBtn('today', '오늘'), tabBtn('rate', '참여율'), tabBtn('week', '이번 주'), tabBtn('hot', '전광판'), tabBtn('new', '새로 걸린'), tabBtn('team', '태그')), meEl, list, note,
         h('button', { class: 'btn gold', type: 'button', onclick: () => openTribeSheet() }, ...withIcon('users', '응원 팀 보기')), feedBtn);
       return () => { rankRefresh = null; };
     }, false, 'steady');
