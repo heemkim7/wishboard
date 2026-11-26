@@ -86,7 +86,7 @@ function defaultData(slotId, soon = false) {
     const n = Number(String(slotId).replace(/\D/g, '')) || 1;
     const upper = /A$/.test(slotId);
     const theme = ['neon_pink', 'gold_luxury', 'sunset_red', 'matrix_green'][(n - 1) % 4];
-    row = { slot_id: slotId, emoji: ['💖', '👑', '🌇', '💎'][(n - 1) % 4], bg_theme: theme, text_color: '#ffffff', line1: `${n}번 코너 ${upper ? '상단' : '하단'}`, line2: '내 이름을 뉴욕 한복판에', line3: price, holder_id: null };
+    row = { slot_id: slotId, emoji: ['💖', '👑', '🌇', '💎'][(n - 1) % 4], bg_theme: theme, text_color: '#ffffff', line1: `${n}번 코너 ${upper ? '상단' : '하단'}`, line2: '내 이름을 가상 타임스퀘어에', line3: price, holder_id: null };
   } else {
     const n = Number(String(slotId).replace(/\D/g, '')) || 1;
     const theme = ['matrix_green', 'neon_pink', 'sunset_red', 'cyber_navy', 'gold_luxury'][n % 5];

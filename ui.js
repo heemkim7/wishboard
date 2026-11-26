@@ -3706,7 +3706,7 @@ export function createUI(root, hooks) {
           h('span', { class: 'pts tnum', text: String(b.heat) }),
           h('button', { type: 'button', class: 'mini', text: '열기', onclick: () => openAd(b.slot_id) }),
           h('button', { type: 'button', class: 'mini', text: '보러가기', onclick: () => go(b.slot_id) }),
-          linkBtn(b))) : [h('p', { class: 'note', text: '아직 걸린 소원이 없어요.' })]));
+          linkBtn(b))) : [h('p', { class: 'note', text: '아직 켜진 전광판이 없어요.' })]));
         note.textContent = '응원 수와 택시가 선 횟수를 더합니다. 1위 전광판 위로 황금 빛기둥이 섭니다.';
       };
       const tabBtn = (id, text) => h('button', { type: 'button', class: id === tab ? 'on' : '', 'aria-pressed': String(id === tab), text, onclick: (e) => { tab = id; for (const c of e.currentTarget.parentElement.children) { c.classList.toggle('on', c === e.currentTarget); c.setAttribute('aria-pressed', String(c === e.currentTarget)); } paint(); } });
@@ -3819,7 +3819,6 @@ export function createUI(root, hooks) {
       const prof = hooks.profile?.() || { level: 1, reputation: 0, equip: [], owned: [] };
       const equipped = new Set(Array.isArray(prof.equip) ? prof.equip : []);
       const owned = new Set(Array.isArray(prof.owned) ? prof.owned : []);
-      fields.push(h('p', { class: 'note', text: `레벨 ${Math.min(99, Math.max(1, Math.floor(Number(prof.level) || 1)))} · 명성 ${Math.max(0, Math.floor(Number(prof.reputation) || 0))}` }));
       if (hooks.wear) {
         // 꾸미기: what is worn now, and the shop (which is also the locker: owned items are worn or taken off there).
         const worn = [...equipped].map((id) => shopItem(id)?.label).filter(Boolean);
@@ -4652,8 +4651,8 @@ export function createUI(root, hooks) {
     const link = cardUrl(slot, opts);
     if (!link) { note('이 칸은 초대 링크를 만들 수 없어요', 'err'); return; }
     const line = who
-      ? `🎁 ${who}님! ${hooks.nick?.() || '친구'}님이 뉴욕 타임스퀘어 전광판에 당신만을 위한 깜짝 메시지를 걸었습니다! 지금 바로 링크를 눌러 타임스퀘어 한복판을 확인해 보세요 👉`
-      : '뉴욕 타임스퀘어 전광판에 내 광고 걸었습니다! 링크 누르면 내 전광판 앞으로 바로 이동합니다 👉';
+      ? `🎁 ${who}님! ${hooks.nick?.() || '친구'}님이 가상 타임스퀘어 전광판에 당신만을 위한 깜짝 메시지를 걸었습니다! 지금 바로 링크를 눌러 그 전광판을 확인해 보세요 👉`
+      : '가상 타임스퀘어 전광판에 내 문구를 걸었어요! 링크 누르면 내 전광판 앞으로 바로 이동합니다 👉';
     const how = await sendLink({ kind: 'invite', text: line, url: link, into });
     if (how === 'copied') {
       trackEvent('share_send', { slot });
@@ -5098,7 +5097,7 @@ export function createUI(root, hooks) {
         // The most useful link: today's wish, else one of my lit boards, else the site. The bonus only after it really went out.
         const pick = vipShareLink({ origin: location.origin, wish: wishView.mine, boards: world.billboards, me: hooks.actorId?.(), now: Date.now() });
         const words = pick.kind === 'wish' ? wishShareText(wishView.mine)
-          : pick.kind === 'board' ? { title: 'WISH BOARD : 모두의 전광판', text: '뉴욕 타임스퀘어 전광판에 내 자리를 걸었어요. 같이 보러 와요 👉' }
+          : pick.kind === 'board' ? { title: 'WISH BOARD : 모두의 전광판', text: '가상 타임스퀘어 전광판에 내 자리를 걸었어요. 같이 보러 와요 👉' }
             : { title: 'WISH BOARD : 모두의 전광판', text: SHARE_TEXT };
         share.disabled = true;
         const how = await sendLink({ kind: 'vip', native: true, title: words.title, text: words.text, url: pick.url, into: shareBox });

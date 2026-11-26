@@ -7,7 +7,7 @@ it('uses the fixed cheer list and the link allowlist', () => {
   assert.deepEqual(CHEER_PHRASES, [
     '응원해요', '오늘도 빛나요', '이름이 보여요', '같이 걸어요',
     '대단해요', '축하해요', '힘을 내요', '보고 있어요',
-    '최고예요', '내일도 켜요', '우리 편이에요', '타임스퀘어에 걸렸어요',
+    '최고예요', '내일도 켜요', '우리 편이에요', '전광판에 걸렸어요',
   ]);
   assert.equal(BAN_WORDS.length > 0, true);
   assert.equal(blockedText('안녕'), false);

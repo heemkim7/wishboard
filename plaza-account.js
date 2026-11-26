@@ -274,7 +274,7 @@ export function linkedActor(id, flag) {
 export const CHEER_PHRASES = Object.freeze([
   '응원해요', '오늘도 빛나요', '이름이 보여요', '같이 걸어요',
   '대단해요', '축하해요', '힘을 내요', '보고 있어요',
-  '최고예요', '내일도 켜요', '우리 편이에요', '타임스퀘어에 걸렸어요',
+  '최고예요', '내일도 켜요', '우리 편이에요', '전광판에 걸렸어요',
 ]);
 
 export const BAN_WORDS = Object.freeze([

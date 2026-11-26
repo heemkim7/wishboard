@@ -943,11 +943,7 @@ async function relight(slot) {
     world.updateBillboardTexture(slot, row, false);
     ui.setWorld(state);
   }
-  if (data?.scored === true) {
-    const reputation = Math.max(0, Math.floor(Number(state.profile.reputation) || 0)) + 1;
-    state.profile = { ...state.profile, reputation, level: Math.min(99, 1 + Math.floor(reputation / 10)) };
-    ui.note('명성 +1', 'ok');
-  }
+  // The server still answers `scored` (the day's first relight); nothing on screen shows it any more, so it is not counted here.
   markMine(slot);
   trackEvent('relight', { slot });
   return data;
