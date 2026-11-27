@@ -19,9 +19,9 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { Kit } from './kit.js?v=202611271045';
-import { makeCanvas, paintTaxiSign, paintTaxiDecal } from './art.js?v=202611271045';
-import { TAXI_URL } from './loadplan.js?v=202611271045';
+import { Kit } from './kit.js?v=202611272230';
+import { makeCanvas, paintTaxiSign, paintTaxiDecal } from './art.js?v=202611272230';
+import { TAXI_URL } from './loadplan.js?v=202611272230';
 
 // Headlight pool on the road: a wide soft fan (art.js paintBeam is now a narrow core meant for guide beams).
 function paintHeadlight(canvas) {
@@ -42,9 +42,9 @@ function paintHeadlight(canvas) {
   g.fillRect(0, 0, W, H);
   return canvas;
 }
-import { GROUND_LAYER } from './ground.js?v=202611271045';
-import { ROAD } from './nyc.js?v=202611271045';
-import { LAYOUT, NO_ROAD } from './layout.js?v=202611271045';
+import { GROUND_LAYER } from './ground.js?v=202611272230';
+import { ROAD } from './nyc.js?v=202611272230';
+import { LAYOUT, NO_ROAD } from './layout.js?v=202611272230';
 
 export function signalPhase(t) {
   const c = t % 36;

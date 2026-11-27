@@ -1,15 +1,15 @@
 // Plaza landmarks: TKTS red stairs, Times Square Station exit 1, the golden bungeo-ppang pocha,
 // the Golden ATM, the K-POP stage, and the 18 plot buildings (levels 0–4) on their street, 가운데 거리.
 import * as THREE from 'three';
-import { LAYOUT, LOOP, LOT, PLOT_SLOTS, TAXI_STANDS, fountainSpot, insideLoop, lotBoxes, streetPosts } from './layout.js?v=202611271045';
-import { Kit, fishGeometry, cropPlane, imgCrop } from './kit.js?v=202611271045';
-import { GROUND_LAYER } from './ground.js?v=202611271045';
-import { nearLots } from './loadplan.js?v=202611271045';
-import { createLotModels, EMPTY_ACCENT, EMPTY_GLOW, ACCENT_GLOW } from './lotmodels.js?v=202611271045';
+import { LAYOUT, LOOP, LOT, PLOT_SLOTS, TAXI_STANDS, fountainSpot, insideLoop, lotBoxes, streetPosts } from './layout.js?v=202611272230';
+import { Kit, fishGeometry, cropPlane, imgCrop } from './kit.js?v=202611272230';
+import { GROUND_LAYER } from './ground.js?v=202611272230';
+import { nearLots } from './loadplan.js?v=202611272230';
+import { createLotModels, EMPTY_ACCENT, EMPTY_GLOW, ACCENT_GLOW } from './lotmodels.js?v=202611272230';
 import {
   makeCanvas, paintStationSign, paintPylon, paintMenuBoard, paintTKTS, paintNeonSign,
   paintPlotBadge, paintLabel, paintTaxiStand, SANS, EMOJI,
-} from './art.js?v=202611271045';
+} from './art.js?v=202611272230';
 
 const tex = (canvas, aniso = 4) => {
   const t = new THREE.CanvasTexture(canvas);
