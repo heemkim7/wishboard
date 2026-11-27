@@ -383,7 +383,7 @@ describe('the entry flow shows it once (main.js, ui.js: source checks)', () => {
     assert.equal(deep('', 'STREET_3'), true);
     assert.equal(deep('', '', 'abcdefghij'), true);
     assert.equal(deep('?gb=nope&team=x'), false, 'a broken id opens nothing, so the welcome runs');
-    assert.match(main, /^import \{ GIFT_ID \} from '\.\/giftrules\.js';$/m);
+    assert.match(main, /^import \{ GIFT_ID, giftBack \} from '\.\/giftrules\.js';$/m); // giftBack: ?back= after 계정에 남겨 두기 (2026-11-27)
   });
   it('the wish sheet stays closed after it, and the intro hands over as before', () => {
     const fn = main.slice(main.indexOf('async function afterIntro()'), main.indexOf('let crownSig'));

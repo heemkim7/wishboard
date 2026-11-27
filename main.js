@@ -18,7 +18,7 @@ import { authErrorText, cleanAddress, externalRoutes, oauthErrorText, oauthMessa
 import { invCode, inviteFrom, inviteView } from './invite.js';
 import { saveClip, dropParams } from './share.js?v=202611272230';
 import { mountGift } from './gift.js?v=202611272230';
-import { GIFT_ID } from './giftrules.js';
+import { GIFT_ID, giftBack } from './giftrules.js';
 import { TOWER, towerAt, towerKey, towerWire } from './towerrules.js';
 import { welcomeDue, WELCOME, crowdFacts, kstDay, lockCelebration, wishAutoOpen, wishBootLine, awayRows, inboxUnread, seenAdd, liveKey, liveSeenAdd } from './ftue.js?v=202611272230';
 import { photoVerdicts } from './ftue.js?v=202611272230';
@@ -62,6 +62,9 @@ const FOCUS = (() => {
   return slotOf(f) ? f : '';
 })();
 const GIFT = new URLSearchParams(location.search).get('gift') === '1';
+// ?login=1 (a board page's 계정에 남겨 두기, giftpage.js nudgeLine): the sign-in sheet opens over the boot card for a browser with no session
+// (bootAccount); ?back= (only a board page, giftrules.js giftBack) is where the browser goes once the account is linked (finishLink).
+const SIGN_BACK = (() => { try { const q = new URLSearchParams(location.search); return { ask: q.get('login') === '1', to: giftBack(q.get('back')), went: false }; } catch { return { ask: false, to: '', went: false }; } })();
 const FOCUS_REF = (() => {
   const r = new URLSearchParams(location.search).get('ref') || '';
   return /^[a-z0-9]{8}$/.test(r) ? r : '';
@@ -1797,6 +1800,8 @@ async function finishLink(session, fresh, echo = false) {
   }
   if (sessionUser !== user) return merged; // signed out (or another account) while the merge was out: that path paints the window
   ui.setAccount?.({ ready: true, guest: false, linked: true });
+  // 계정에 남겨 두기 (a board page, giftpage.js nudgeLine): /?login=1&back=/g/<id> goes back to that page once the account is linked.
+  if (SIGN_BACK.to && !SIGN_BACK.went) { SIGN_BACK.went = true; ui.note('계정에 남겼어요. 전광판 페이지로 돌아가요', 'ok'); setTimeout(() => location.assign(SIGN_BACK.to), 1200); }
   ui.refreshProfile?.();
   try { await refreshWallet(); } catch { /* balance paints on the next sync */ }
   try { await refreshWorld(); } catch { /* boards refresh on the next poll */ }
@@ -1848,6 +1853,7 @@ async function bootAccount() {
     if (next !== location.pathname + location.search + location.hash) history.replaceState(history.state, '', next);
   } catch { /* the address just stays */ }
   if (resume) ui.openLogin?.({ resume: true });
+  else if (SIGN_BACK.ask && !session?.user) ui.openLogin?.();
 }
 
 // ---- Google sign-in in a second window -------------------------------------------------------
