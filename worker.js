@@ -19,6 +19,7 @@ import { OPS_THEME_KEYS } from './seasons.js';
 import * as ops from './ops.js'; // 운영 장치: error reports, 문의하기, operator details, maintenance, /rt/health extras
 import { adsApi, adsDb, adsWorld } from './adsrv.js';
 import { giftApi, giftDb, giftPath, giftPage, giftWorld, giftMove, giftForget, shareOpen, shareReact, shareMaker, shareCount } from './giftsrv.js'; // 선물 전광판 (docs/gift-board.md); 공유 보상 on wish and board links
+import { sharePage } from './sharepage.js'; // /rt/card/<slot> and /rt/w/<id>: their own pages, no jump into the 3D plaza
 import { friendsText } from './towerrules.js';
 import { GIFT_ID } from './giftrules.js';
 import { towerWire } from './towerrules.js'; // 메인 타워 축하 1분: the rooms' TOWER push
@@ -2392,17 +2393,12 @@ async function wishPage(req, env, u, ctx) {
   const id = u.pathname.slice('/rt/w/'.length); let w = null;
   if (WISH_ID.test(id)) { try { w = await wishOne(env, id, req); } catch { w = null; } }
   if (!w) return Response.redirect(new URL('/' + invTail(u, true), req.url).href, 302);
-  const au = await wishAuthor(env, id), sl = await shareLink(env, ctx, req, 'w:' + id, au), fr = esc(sl.fr);
-  const s = wishShareText(w), dest = '/?wish=' + id + invTail(u), title = esc(s.title), desc = esc(w.txt) + (fr ? ' · ' + fr : ''), shot = await snapFor(env, 'wish', id, au); // only the author's own shot
-  const html = '<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>' + title + '</title>'
-    + '<meta property="og:title" content="' + title + '">'
-    + '<meta property="og:description" content="' + desc + '">'
-    + '<meta property="og:image" content="' + esc(new URL(shot ? '/rt/snap/' + shot : '/og.jpg', req.url).href) + '">'
-    + '<meta property="og:url" content="' + esc(new URL('/rt/w/' + id, req.url).href) + '">'
-    + '<meta name="twitter:card" content="summary_large_image">'
-    + '<meta http-equiv="refresh" content="0;url=' + esc(dest) + '">'
-    + '<script>location.replace(' + JSON.stringify(dest) + ')</script>'
-    + '</head><body>' + (fr ? '<p>' + fr + '</p>' : '') + '<p><a href="' + esc(dest) + '">타임스퀘어에서 이 소원 보기</a></p></body></html>';
+  const au = await wishAuthor(env, id), sl = await shareLink(env, ctx, req, 'w:' + id, au);
+  const s = wishShareText(w), dest = '/?wish=' + id + invTail(u), desc = w.txt + (sl.fr ? ' · ' + sl.fr : ''), shot = await snapFor(env, 'wish', id, au); // only the author's own shot
+  // Its own page (sharepage.js, 2026-11-27) with 3D 광장에서 보기 (dest, where it used to jump at once), 공유하기 and 나도 만들기.
+  const image = new URL(shot ? '/rt/snap/' + shot : '/og.jpg', req.url).href;
+  const html = sharePage({ kind: 'wish', title: s.title, desc, image, url: new URL('/rt/w/' + id, req.url).href, dest, chip: '오늘의 소원', big: clip(w.txt, WISH.maxLen),
+    by: w.nick ? clip(w.nick, 16) + '님의 소원' : '', fr: sl.fr, shot: shot ? image : '', share: { title: s.title, text: w.txt + ' · 가상 타임스퀘어의 소원' } });
   // A page that sets kts_via is this person's: never kept by a shared cache. The preview fetchers' copy stays public for 30 s.
   return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', ...(sl.cookie ? { 'cache-control': 'private, no-store', 'set-cookie': sl.cookie } : { 'cache-control': 'public, max-age=30' }) } });
 }
@@ -3577,16 +3573,14 @@ async function cardPage(req, env, u, ctx) {
   const image = shot ? new URL('/rt/snap/' + shot, req.url).href : env.PLAN === 'paid' ? new URL('/rt/card/' + parsed.slot + '.png', req.url).href : 'https://studio.wishboard.workers.dev/og.jpg';
   const page = new URL('/rt/card/' + parsed.slot, req.url).href;
   const dest = cardTarget(parsed.slot, u.searchParams, card.ref);
-  const title = esc([clip(card.holder_name, 16), clip(card.line1, 16)].filter(Boolean).join(' ') || '타임스퀘어 전광판');
-  const sl = await shareLink(env, ctx, req, 'c:' + parsed.slot, String(card.holder || '')), fr = esc(sl.fr);
-  const desc = esc(clip(card.line2, 16)) + (fr ? (card.line2 ? ' · ' : '') + fr : '');
-  const html = '<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>' + title + '</title>'
-    + '<meta property="og:title" content="' + title + '">'
-    + '<meta property="og:description" content="' + desc + '">'
-    + '<meta property="og:image" content="' + esc(image) + '">'
-    + '<meta property="og:url" content="' + esc(page) + '">'
-    + '<meta http-equiv="refresh" content="0;url=' + esc(dest) + '">'
-    + '</head><body>' + (fr ? '<p>' + fr + '</p>' : '') + '<p><a href="' + esc(dest) + '">타임스퀘어에서 이 전광판 보기</a></p></body></html>';
+  const title = [clip(card.holder_name, 16), clip(card.line1, 16)].filter(Boolean).join(' ') || '타임스퀘어 전광판';
+  const sl = await shareLink(env, ctx, req, 'c:' + parsed.slot, String(card.holder || ''));
+  const desc = clip(card.line2, 16) + (sl.fr ? (card.line2 ? ' · ' : '') + sl.fr : '');
+  // The page itself (sharepage.js, 2026-11-27): the board drawn as a card with 3D 광장에서 보기 (dest, where it used to jump at once),
+  // 공유하기 and 나도 만들기. The preview tags carry the same words as before; sharePage escapes them and the card's text.
+  const lines = [card.line1, card.line2, card.line3].map((s) => clip(s, 24)).filter(Boolean);
+  const html = sharePage({ kind: 'card', title, desc, image, url: page, dest, chip: '가상 타임스퀘어 전광판', big: lines[0] || clip(card.holder_name, 16) || '빈 전광판', line: lines.slice(1).join(' · '),
+    by: card.holder_name ? 'by ' + clip(card.holder_name, 16) : '', fr: sl.fr, shot: shot ? image : '', share: { title, text: (lines.join(' ') || title) + ' · 가상 타임스퀘어 전광판' } });
   // Not for search results (a player's name and line); link-preview crawlers still read the Open Graph tags (robots.txt allows /rt/card/).
   return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex', ...(sl.cookie ? { 'set-cookie': sl.cookie } : {}) } });
 }
