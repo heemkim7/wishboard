@@ -942,6 +942,7 @@ async function seen(req, env, ctx, id, k) {
   if (!(await opsRate(env, req, 'gseen', 120, env.EVENT_RL))) return ok();
   const got = await readSmall(req, 400); const b = got.b || {};
   const e = String(b.e || ''); if (!VISITOR_ID.test(String(b.v || '')) || !SEEN_EV.has(e)) return ok();
+  if (k.testTraffic?.(req)) return ok(); // the operator's device or tools/prod-e2e.mjs (ordersrv.js testTraffic): not a visitor
   if (await hard(k, env)) return ok();
   seenAdd({ g: id, v: await visitorHash(env, b.v), e });
   seenFlush(env, ctx);
@@ -976,6 +977,7 @@ async function startSeen(req, env, ctx, k) {
   if (req.method !== 'POST') return ok();
   if (!(await opsRate(env, req, 'gseen', 120, env.EVENT_RL))) return ok();
   const got = await readSmall(req, 200); const b = got.b || {};
+  if (k.testTraffic?.(req)) return ok(); // not counted for the operator or the e2e tool
   if (await hard(k, env)) return ok();
   seenAdd({ e: 'start', r: Number(b.r) === 1 ? 1 : 0 });
   seenFlush(env, ctx);
