@@ -27,6 +27,13 @@ describe('share page', () => {
     assert.match(html, /친구 3명이 응원했어요/);
     assert.equal(sharePage({ ...base, fr: '' }).includes('응원했어요'), false, 'no line without friends');
   });
+  it('a long card grows instead of clipping (16:9 is the least it is), and the chip has a row of its own', () => {
+    const css = /<style>([\s\S]*?)<\/style>/.exec(sharePage(base))[1], rule = (sel) => new RegExp('(^|\\})' + sel.replace(/[.*]/g, '\\$&') + '\\{([^}]*)\\}').exec(css)?.[2] || '';
+    assert.match(rule('.card'), /aspect-ratio:16\/9/); assert.doesNotMatch(rule('.card'), /overflow:hidden/);
+    assert.doesNotMatch(rule('.chip'), /position:absolute/);
+    const html = sharePage({ ...base, big: '가'.repeat(24), line: '나'.repeat(24) + ' · ' + '다'.repeat(24) });
+    assert.match(html, /<section class="card"[^>]*><span class="chip">[^<]*<\/span><div class="mid">/);
+  });
   it('escapes every field and keeps people\'s words out of the script', () => {
     const bad = '"><script>alert(1)</script><b>x</b>&\'';
     const html = sharePage({ ...base, title: bad, desc: bad, chip: bad, big: bad, line: bad, by: bad, fr: bad, dest: '/?x="><script>' });

@@ -93,8 +93,8 @@ function face(it) {
     try { paintGift(cv, it.art, it.sample ? { chip: false } : {}); } catch { /* the label still reads */ } // a sample never says 선물 전광판
     return cv;
   }
-  return h('div', { class: 'face' + (it.kind === 'wish' ? ' wish' : '') }, h('span', { class: 'chip', text: it.chip }), h('p', { class: 'big', text: it.big }),
-    it.line ? h('p', { class: 'line', text: it.line }) : null, it.by ? h('p', { class: 'by', text: it.by }) : null);
+  return h('div', { class: 'face' + (it.kind === 'wish' ? ' wish' : '') }, h('span', { class: 'chip', text: it.chip }), h('div', { class: 'mid' }, h('p', { class: 'big', text: it.big }),
+    it.line ? h('p', { class: 'line', text: it.line }) : null, it.by ? h('p', { class: 'by', text: it.by }) : null));
 }
 function itemCard(it) {
   const note = h('p', { class: 'note', role: 'status' });
@@ -109,7 +109,10 @@ const TAB_KEY = 'kts_dtab';
 let ITEMS = [], tab = (() => { const q = new URLSearchParams(location.search).get('tab') || ls.get(TAB_KEY) || 'hot'; return TABS.some((t) => t.k === q) ? q : 'hot'; })(), DOWN = false;
 function paint() {
   const list = discoverTab(ITEMS, tab), name = TABS.find((t) => t.k === tab)?.name || '';
-  const tabs = h('div', { class: 'tabs', role: 'tablist', 'aria-label': '둘러보기 목록' }, ...TABS.map((t) => h('button', { class: 'tab', type: 'button', role: 'tab', 'aria-selected': String(t.k === tab), onclick: () => { tab = t.k; ls.set(TAB_KEY, tab); paint(); } }, t.name)));
+  // A tablist with one panel: the chosen tab is the one in the Tab order; ←/→ (Home/End) move to the next tab, choose it and keep the focus there.
+  const pick = (k, focus = false) => { tab = k; ls.set(TAB_KEY, tab); paint(); if (focus) { try { document.getElementById('tab-' + k)?.focus(); } catch { /* the tab is chosen */ } } };
+  const keys = (e) => { const i = TABS.findIndex((t) => t.k === tab), n = TABS.length, to = e.key === 'ArrowRight' ? (i + 1) % n : e.key === 'ArrowLeft' ? (i - 1 + n) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1; if (to < 0) return; e.preventDefault(); pick(TABS[to].k, true); };
+  const tabs = h('div', { class: 'tabs', role: 'tablist', 'aria-label': '둘러보기 목록', onkeydown: keys }, ...TABS.map((t) => h('button', { class: 'tab', type: 'button', role: 'tab', id: 'tab-' + t.k, 'aria-controls': 'panel', 'aria-selected': String(t.k === tab), tabindex: t.k === tab ? '0' : '-1', onclick: () => pick(t.k) }, t.name)));
   const body = list.length ? h('div', { class: 'grid' }, ...list.map(itemCard))
     : h('p', { class: 'empty', text: DOWN ? '지금은 목록을 불러오지 못했어요. 잠시 뒤에 다시 열어 주세요.' : `아직 ‘${name}’에 걸린 전광판이 없어요. 첫 전광판을 걸어 보세요.` });
   const samples = list.length < DISCOVER.min ? h('section', { class: 'samples', 'aria-label': SAMPLE_LABEL }, h('h2', { text: SAMPLE_LABEL }),
@@ -119,7 +122,7 @@ function paint() {
     h('h1', { text: '가상 타임스퀘어에 걸린 전광판' }),
     h('p', { class: 'sub', text: '지금 걸린 전광판과 오늘의 소원을 3D 없이 둘러봐요. 선물 전광판은 만든 사람이 ‘DISCOVER에 보이기’를 켠 것만 보여요.' }),
     h('div', { class: 'make' }, h('a', { class: 'btn gold', href: '/gift' }, '🎁 누군가에게 선물하기'), h('a', { class: 'btn', href: '/gift?me=1' }, '✨ 내 전광판 만들기')),
-    tabs, body, samples,
+    tabs, h('div', { id: 'panel', role: 'tabpanel', 'aria-labelledby': 'tab-' + tab }, body, samples),
     h('p', { class: 'foot' }, '뉴욕 타임스퀘어를 본뜬 가상 광장이에요. 실제 타임스퀘어와는 관계가 없어요. 많이 반응한 순서로 보여 줄 뿐, 순위를 매기지 않아요.', h('br'), h('a', { href: '/' }, '3D 광장 둘러보기')));
 }
 let LAST = 0, LOADING = false;

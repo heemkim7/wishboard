@@ -89,6 +89,16 @@ describe('the page', () => {
     assert.equal(/three|timesSquare3d|net\.js|WebSocket/.test(page), false);
     assert.equal(/innerHTML|outerHTML|insertAdjacentHTML|document\.write/.test(page), false, 'what people wrote is only set as text');
   });
+  it('a long board or wish card grows instead of clipping; the chip has its own row; the big words have a shadow on the light corner', () => {
+    const css = /<style>([\s\S]*?)<\/style>/.exec(html)[1], rule = (sel) => new RegExp('\\n\\s*' + sel.replace(/[.*]/g, '\\$&') + ' \\{([^}]*)\\}').exec(css)?.[1] || '';
+    assert.match(rule('.face'), /aspect-ratio: 16 \/ 9/); assert.doesNotMatch(rule('.face'), /overflow: hidden/);
+    assert.doesNotMatch(rule('.face .chip'), /position: absolute/); assert.match(rule('.face .big'), /text-shadow/);
+    assert.match(page, /h\('div', \{ class: 'mid' \}/);
+  });
+  it('the tabs are a tablist with one panel, moved through with the arrow keys', () => {
+    assert.match(page, /role: 'tabpanel'/); assert.match(page, /'aria-controls'/); assert.match(page, /ArrowRight/); assert.match(page, /ArrowLeft/);
+    assert.match(page, /tabindex: t\.k === tab \? '0' : '-1'/);
+  });
   it('is noindex, names the samples, and says the plaza is virtual', () => {
     assert.match(html, /<meta name="robots" content="noindex"/);
     assert.match(page, /SAMPLE_LABEL/);

@@ -43,15 +43,18 @@
   .tab { flex: none; min-height: 44px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--stroke); background: rgba(255,255,255,.04); color: var(--text); font: inherit; font-weight: 800; font-size: 14px; cursor: pointer; }
   .tab[aria-selected=true] { border-color: rgba(255,207,90,.85); background: rgba(255,207,90,.16); color: var(--gold2); }
   .tab:active { background: var(--press); }
+  .tab:focus-visible { outline: 2px solid var(--gold2); outline-offset: 2px; }
   .grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
   @media (min-width: 700px) { .grid { grid-template-columns: 1fr 1fr; } }
   .item { background: var(--card); border: 1px solid var(--stroke); border-radius: 18px; padding: 10px; }
   .grid > *, .make > * { min-width: 0; } /* a card's 640px canvas must not widen its column past the screen */
   .item canvas { display: block; width: 100%; max-width: 100%; height: auto; aspect-ratio: 16 / 9; border-radius: 12px; }
-  .face { aspect-ratio: 16 / 9; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; position: relative; overflow: hidden; background: linear-gradient(135deg, #ff4fa3, #5b21ff); box-shadow: inset 0 0 0 3px rgba(255,224,138,.8); }
+  /* 16:9 is the least a card is: a long line grows it rather than being cut; the chip has a row of its own above the words. */
+  .face { aspect-ratio: 16 / 9; border-radius: 12px; padding: 10px 14px 14px; display: flex; flex-direction: column; text-align: center; background: linear-gradient(135deg, #ff4fa3, #5b21ff); box-shadow: inset 0 0 0 3px rgba(255,224,138,.8); }
   .face.wish { background: linear-gradient(135deg, #312e81, #020617); }
-  .face .chip { position: absolute; top: 10px; left: 10px; padding: 3px 10px; border-radius: 999px; background: rgba(8,6,28,.6); color: #ffffff; font-weight: 800; font-size: 12px; }
-  .face .big { margin: 0; font-size: clamp(19px, 5.6vw, 26px); font-weight: 900; line-height: 1.25; color: #ffe08a; }
+  .face .mid { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 6px 0; }
+  .face .chip { align-self: flex-start; padding: 3px 10px; border-radius: 999px; background: rgba(8,6,28,.6); color: #ffffff; font-weight: 800; font-size: 12px; }
+  .face .big { margin: 0; font-size: clamp(19px, 5.6vw, 26px); font-weight: 900; line-height: 1.25; color: #ffe08a; text-shadow: 0 1px 2px rgba(20,4,40,.85), 0 0 1px rgba(20,4,40,.9); } /* gold on the pink corner is under 3:1 by itself */
   .face .line { margin: 6px 0 0; font-weight: 800; font-size: 15px; color: #ffffff; }
   .face .by { margin: 8px 0 0; font-size: 12px; font-weight: 700; color: #ffffff; }
   .acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
