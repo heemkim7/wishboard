@@ -332,7 +332,8 @@ describe('admin login (worker.js admGate)', { concurrency: false }, () => {
     // the etag keys the cache: a new page under a new etag gets its own hash
     const { env } = makeEnv(); const c = await session(env);
     env.etag = '"a1"'; const h1 = (await call(env, '/admin', { headers: { cookie: c } })).headers.get('content-security-policy');
-    env.page = ADMIN_HTML.replaceAll('?v=202611270945', '?v=209912312359'); env.etag = '"a2"';
+    assert.ok(/\?v=\d{12}/.test(ADMIN_HTML), 'the page has a stamped ?v= to change');
+    env.page = ADMIN_HTML.replace(/\?v=\d{12}/g, '?v=209912312359'); env.etag = '"a2"';
     const h2 = (await call(env, '/admin', { headers: { cookie: c } })).headers.get('content-security-policy');
     assert.notEqual(h1, h2);
     // what the policy leaves out: the page must not need it
