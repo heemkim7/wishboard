@@ -11,10 +11,10 @@ const read = (f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8').re
 
 it('refuses staff-like names in every spelling the rule covers, the same on wishes', () => {
   const refused = ['admin', 'Admin', 'ADMIN', '공식', '공 식', '공식계정', 'official', 'Official팀', '운영자', '운 영 자', '관리자', '관리자님', 'administrator',
-    'ａｄｍｉｎ', '운‍영자', 'ad­min', '공​식', 'OFFICIAL 계정', 'a d m i n', 'the Official'];
+    'ａｄｍｉｎ', '운‍영자', 'ad­min', '공​식', 'OFFICIAL 계정', 'a d m i n', 'the Official', 'kimadmin', 'KIMADMIN', 'TheOfficial', 'sysadmin', 'officiallyadmin', '수학공식'];
   for (const n of refused) { assert.equal(staffNick(n), true, n); assert.equal(wishNickFault(n), 'nick', n); assert.equal(nickRefused(n), true, n); }
-  for (const n of ['badminton', 'unofficial', 'officially', '비공식', '참새', '네온후드', '공원산책', '', null]) assert.equal(staffNick(n), false, String(n));
-  for (const n of ['badminton', 'unofficial', 'officially', '비공식', '참새']) assert.equal(wishNickFault(n), '', n);
+  for (const n of ['badminton', 'unofficial', 'officially', '비공식', '비공식팬', '참새', '네온후드', '공원산책', '', null]) assert.equal(staffNick(n), false, String(n));
+  for (const n of ['badminton', 'unofficial', 'officially', '비공식', '비공식팬', '참새']) assert.equal(wishNickFault(n), '', n);
   assert.equal(nickRefused('네온봇3'), true); assert.equal(nickRefused('네온봇 팬'), false);
   assert.equal(NICK_FIX, '그 닉네임은 쓸 수 없어요. 닉네임을 바꿔 주세요');
   assert.equal(cleanNick('ａｄｍｉｎ'), 'ａｄｍｉｎ'); // the stored wish nick is unchanged; only the check folds it
@@ -27,7 +27,7 @@ it('the room shows a staff-like or 네온봇N presence name as 네온손님, in 
   const watcher = sock('guest:watcher');
   const say = async (id, name) => { const ws = sock(id); await room.webSocketMessage(ws, JSON.stringify({ t: 'tr', m: { name, x: 1500, y: 1500 } })); return ws; };
   env.calls.length = 0;
-  for (const [id, name, shown] of [['guest:a', '운영자', '네온손님'], ['guest:b', 'ａｄｍｉｎ', '네온손님'], ['guest:c', '네온봇7', '네온손님'], ['guest:d', '참새', '참새'], ['guest:e', 'badminton', 'badminton']]) {
+  for (const [id, name, shown] of [['guest:a', '운영자', '네온손님'], ['guest:b', 'ａｄｍｉｎ', '네온손님'], ['guest:c', '네온봇7', '네온손님'], ['guest:d', '참새', '참새'], ['guest:e', 'badminton', 'badminton'], ['guest:f', 'The Officially', '네온손님'], ['guest:g', 'kimadmin', '네온손님']]) {
     const ws = await say(id, name);
     assert.equal(ws.a.m.name, shown, name);
     const pj = watcher.sent.filter((m) => m.t === 'pj' && m.k === id).pop(); assert.equal(pj.m.name, shown, name);
