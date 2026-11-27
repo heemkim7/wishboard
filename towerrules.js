@@ -76,7 +76,8 @@ export const TOWER_ERR = Object.freeze({
   prep: '포인트로 올리기는 준비 중이에요.',
   paid: '메인 타워 주인공 결제가 게시된 전광판만 바로 고를 수 있어요.',
 });
-export const TOWER_WORD = Object.freeze({ bday: '생일', anniv: '기념일', pass: '합격', cheer: '응원', just: '특별한 날', thanks: '고마운 날' });
+// '민지의 생일'. me (내 전광판): '민지의 전광판'. Every OCCASIONS key has its word (test/tower.test.mjs).
+export const TOWER_WORD = Object.freeze({ bday: '생일', anniv: '기념일', pass: '합격', cheer: '응원', just: '특별한 날', thanks: '고마운 날', love: '사랑 고백', grad: '졸업·승진', me: '전광판' });
 
 const H = 36e5;
 const kstHM = (m) => { const d = new Date(Number(m) + 9 * H); return { h: d.getUTCHours(), mi: d.getUTCMinutes() }; };

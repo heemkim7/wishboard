@@ -2,6 +2,7 @@
 // ladder and its experiment arms, the account nudge's return address, and the card words that say "by" on a board of one's own.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import {
   GIFT, OCCASIONS, OCC_KEYS, GIFT_PICK, ME_KINDS, TIERS, TIER_NOTE, giftFault, isMe, toLine, boardTitle, giftShareText, visitorShareText, plazaNote,
   replyDraft, replyLabel, cerBand, cerTeaser, ladderArm, armsFrom, LADDER_ARMS, giftBack, MORE_BEACONS, cpLen, kstDay,
@@ -92,6 +93,17 @@ describe('the honest ladder (E1) and its arms', () => {
       const x = ladderArm(id, spec); seen.add(x.a); assert.deepEqual(x, ladderArm(id, spec), 'the same board always gets the same arm');
     }
     assert.deepEqual([...seen].sort(), ['A', 'B']);
+  });
+});
+
+describe('the plaza says by on a board of one\'s own', () => {
+  const src = (f) => fs.readFileSync(new URL('../' + f, import.meta.url), 'utf8');
+  it('the screen ticker (the ceremony and the board) and the group photo\'s alt text', () => {
+    const s = src('ts3d/screens.js');
+    assert.equal(/To\. \$\{gift\.to\}/.test(s), false, 'no fixed To. for a gift');
+    assert.match(s, /점등식   ·   \$\{toLine\(gift\)\}/);
+    assert.match(s, /isMe\(gift\) \? '💌 응원 메시지 ' : '💌 친구 메시지 '/);
+    assert.match(src('gift.js'), /img\.alt = toLine\(g\) \+ ' 단체 사진'/);
   });
 });
 

@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { TOWER, SHARE, shareAmount, shareDayMax, linkFault, friendsText, SPEND_OLD, TOWER_WORD, minuteBlock, minuteFault, towerMinutes, towerDays, towerFault, reactCounts, towerEntry, towerWire, towerAt, towerKey, towerNews, towerClock, towerLook, towerCard } from '../towerrules.js';
-import { giftView, heartTakes, heartsOpen } from '../giftrules.js';
+import { giftView, heartTakes, heartsOpen, OCC_KEYS } from '../giftrules.js';
 
 const KST = (s) => Date.parse(s + '+09:00');
 const MIN = 60e3;
@@ -107,6 +107,10 @@ describe('the plaza in that minute', () => {
     assert.equal(towerNews(e), '🎉 지금 메인 타워: 민지의 생일');
     assert.equal(towerNews({ ...e, occ: 'just' }), '🎉 지금 메인 타워: 민지의 ' + TOWER_WORD.just);
     assert.equal(/포인트|2,000|친구 응원|응원 10곳/.test(towerNews(e)), false);
+    for (const k of OCC_KEYS) assert.ok(Object.hasOwn(TOWER_WORD, k) && TOWER_WORD[k], 'a word for every day: ' + k); // 2026-11-27: love, grad, me
+    assert.equal(towerNews({ ...e, occ: 'me' }), '🎉 지금 메인 타워: 민지의 전광판');
+    assert.equal(towerNews({ ...e, occ: 'love' }), '🎉 지금 메인 타워: 민지의 사랑 고백');
+    assert.equal(towerNews({ ...e, occ: 'grad' }), '🎉 지금 메인 타워: 민지의 졸업·승진');
     assert.equal(towerClock(m), '20:30');
   });
   it('towerLook: soon, live for the minute, done after', () => {

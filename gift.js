@@ -5,7 +5,7 @@
 // cheering crew (timesSquare3d.js giftShow), drawn into a 9:16 frame with the words and the free watermark, recorded with
 // MediaRecorder (MP4 where it can, WebM otherwise) and uploaded to the board when the Worker has the R2 store (else kept on the device).
 // main.js calls mountGift once and gift.apply(remote.gifts) with every world; ui.js is not touched (the button is put next to 🌠); the frame asks it for ui.layer.
-import { GIFT_ID, OCCASIONS, windowText, plazaLook, plazaNote, CER, CER_TEXT, cerStart, cerArrive, cerBack, cerDebugStart, cerSteps, cerDigit, cerPinMs, cerArriveNote, cerBand, cerPhotoText, beaconOnce, kstDay, revealAt, isMe, filmMark } from './giftrules.js';
+import { GIFT_ID, OCCASIONS, windowText, plazaLook, plazaNote, CER, CER_TEXT, cerStart, cerArrive, cerBack, cerDebugStart, cerSteps, cerDigit, cerPinMs, cerArriveNote, cerBand, cerPhotoText, beaconOnce, kstDay, revealAt, isMe, filmMark, toLine } from './giftrules.js';
 import { towerLook } from './towerrules.js';
 import { nowMs, clock, skewOf } from './live.js';
 import { GIFT_SANS, fitSize } from './giftart.js?v=202611272230';
@@ -505,7 +505,7 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown, netDown
     wrap.setAttribute('role', 'dialog'); wrap.setAttribute('aria-modal', 'true'); wrap.setAttribute('aria-label', '단체 사진'); wrap.setAttribute('tabindex', '-1');
     const box = document.createElement('div'); box.className = 'box';
     const h2 = document.createElement('h2'); h2.textContent = CER_TEXT.shotHead;
-    const img = document.createElement('img'); cardUrl = URL.createObjectURL(blob); img.src = cardUrl; img.alt = 'To. ' + (g.to || '') + ' 단체 사진';
+    const img = document.createElement('img'); cardUrl = URL.createObjectURL(blob); img.src = cardUrl; img.alt = toLine(g) + ' 단체 사진';
     const line = document.createElement('p'); line.setAttribute('role', 'status');
     const save = document.createElement('button'); save.type = 'button'; save.className = 'b gold'; save.textContent = CER_TEXT.save;
     save.addEventListener('click', async () => {
