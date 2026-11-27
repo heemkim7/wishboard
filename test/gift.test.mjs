@@ -241,7 +241,7 @@ describe('phases, keeping and the 롤링페이퍼 lock (E3)', () => {
 
 describe('the reply board (답장 전광판) and the plaza replay', () => {
   it('고마움 is an occasion of its own: the same table for the server, the pages and the art', () => {
-    assert.deepEqual(OCC_KEYS, ['bday', 'anniv', 'pass', 'cheer', 'just', 'thanks'], 'the five days people pick first, then 고마움');
+    assert.deepEqual(OCC_KEYS, ['bday', 'anniv', 'pass', 'cheer', 'just', 'thanks', 'love', 'grad', 'me'], 'the five days people pick first, then 고마움; 사랑, 졸업·승진 and 내 전광판 (2026-11-27) after them');
     assert.equal(OCCASIONS.thanks.name, '고마움'); assert.equal(OCCASIONS.thanks.hint, REPLY_MSG);
     const r = giftFault({ to: '지수', occ: 'thanks', day: '2026-11-23', at: 'now' }, NOW);
     assert.equal(r.ok, true); assert.equal(r.v.occ, 'thanks'); assert.equal(r.v.th, 'rose');
@@ -619,7 +619,7 @@ describe('attribution (E2), the price ladder (E1), quiet hours', () => {
     assert.equal(TIERS.filter((t) => t.best).map((t) => t.t).join(), '2');
     assert.equal(TIERS.filter((t) => /커피 한 잔/.test(t.tag)).map((t) => t.t).join(), '1', 'the coffee words only on the 3,900 tier');
     assert.match(TIER_NOTE, /부가세 포함/); assert.match(TIER_ASK, /결제는 준비 중이에요 · 열리면 알려 드릴까요\?/);
-    assert.match(TIERS[3].items.join(), /메인 타워와 따로/, 'the parade is not the fans\' 9 pm main tower');
+    assert.equal(/퍼레이드|24시간/.test(JSON.stringify(TIERS)), false, 'no parade and no 24-hour big screen: the code has neither (b2c-rules.test.mjs)');
     assert.equal(/남은|마감|한정/.test(JSON.stringify(TIERS)), false);
     assert.equal(won(7900), '7,900원'); assert.equal(won(0), '0원');
     const page = fs.readFileSync(new URL('../giftpage.js', import.meta.url), 'utf8');
