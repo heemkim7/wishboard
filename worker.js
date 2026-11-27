@@ -243,9 +243,15 @@ export class Meter extends DurableObject {
     q.exec('delete from snap where id in (select id from snx where u = ?)', u); q.exec('delete from snx where u = ?', u); return { ok: true }; }
   // Board report (instance 'ad', adreport.js): what the rooms counted per slot and KST day, since the current holder's tenure began.
   adI() { if (!this.ai) { this.ai = 1; adTables(this.ctx.storage.sql); } }
-  // cheers: the rooms' landed cheers per KST day [{ d, paid, free }] (Room.cheer), kept CH_KEEP days for the admin readout (chDays).
-  adAdd(items, people, cheers) { this.adI(); if (Array.isArray(cheers) && cheers.length) this.chAdd(cheers); return adIngest(this.ctx.storage.sql, items, people); }
-  chAdd(rows) { const q = this.ctx.storage.sql; q.exec('create table if not exists chs(d text primary key, paid integer not null default 0, free integer not null default 0)');
+  // cheers: the rooms' landed cheers per KST day, { k: batch key, rows: [{ d, paid, free }] } (Room.adPush), kept CH_KEEP days for the admin
+  // readout (chDays). A batch is applied once per key (table chk, in the same transaction as the counts): the Room re-sends the same key and rows
+  // after a throw or a lost reply, so nothing is counted twice whatever happens to adIngest after it.
+  adAdd(items, people, cheers) { this.adI(); if (cheers && typeof cheers === 'object' && Array.isArray(cheers.rows) && cheers.rows.length) this.chAdd(cheers.k, cheers.rows); return adIngest(this.ctx.storage.sql, items, people); }
+  chAdd(key, rows) { const q = this.ctx.storage.sql, k = String(key || '').slice(0, 64); if (!/^[\w-]{8,64}$/.test(k)) return false;
+    q.exec('create table if not exists chs(d text primary key, paid integer not null default 0, free integer not null default 0)'); q.exec('create table if not exists chk(k text primary key, at integer not null)');
+    return this.ctx.storage.transactionSync(() => { if (!q.exec('insert or ignore into chk(k, at) values(?, ?)', k, Date.now()).rowsWritten) return false; this.chRows(q, rows);
+      q.exec('delete from chk where at < ?', Date.now() - 7 * 864e5); return true; }); }
+  chRows(q, rows) {
     for (const r of rows.slice(0, 40)) { const d = String(r?.d || ''), p = Math.floor(Number(r?.paid)) || 0, f = Math.floor(Number(r?.free)) || 0;
       if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || p < 0 || f < 0 || p > 1e7 || f > 1e7 || !(p || f)) continue;
       q.exec('insert into chs(d, paid, free) values(?, ?, ?) on conflict(d) do update set paid = paid + excluded.paid, free = free + excluded.free', d, p, f); }
@@ -1025,7 +1031,8 @@ export class Room extends DurableObject {
     q.exec('create table if not exists adw(slot text not null, d text not null, uid text not null, b integer not null, primary key(slot, d, uid))');
     // Cheers that landed per KST day: paid (points paid) and free (landed with amount 0, why 'full'). Handed to Meter 'ad' with the ad tallies.
     q.exec('create table if not exists chd(d text primary key, paid integer not null default 0, free integer not null default 0)');
-    if (q.exec('select 1 from adq union all select 1 from adw union all select 1 from chd limit 1').toArray().length) this.adDirty = 1; // tallies from before hibernation still go out
+    q.exec('create table if not exists chp(k text not null, d text not null, paid integer not null default 0, free integer not null default 0, primary key(k, d))'); // the batch on its way
+    if (q.exec('select 1 from adq union all select 1 from adw union all select 1 from chd union all select 1 from chp limit 1').toArray().length) this.adDirty = 1; // tallies from before hibernation still go out
     q.exec('create table if not exists seat(uid text primary key, fl integer not null)'); q.exec(AG);
     q.exec('create table if not exists sess(id text primary key, uid text not null, kind text not null, t0 integer not null, x integer not null, z integer not null)');
     q.exec('create table if not exists stk(slot text primary key, g text not null)');
@@ -1340,15 +1347,19 @@ export class Room extends DurableObject {
     // Bounded while the Meter keeps failing: what it would drop anyway (older than its 35 days, people of another day) goes here first.
     q.exec('delete from adq where b < ?', Math.floor((now - 35 * 864e5) / 60000)); q.exec('delete from adw where d <> ?', kstDay(now));
     q.exec('delete from chd where d < ?', dayShift(kstDay(now), -CH_KEEP));
-    const rows = q.exec('select slot, b, v, c, h from adq limit 200').toArray(), ppl = q.exec('select slot, d, uid, b from adw limit 400').toArray(), chs = q.exec('select d, paid, free from chd limit 40').toArray();
+    // Cheer counts go out as one keyed batch (chp): taken out of chd once, then re-sent with the same key and rows until the Meter answers, so a
+    // throw or a lost reply never counts them twice (Meter.chAdd applies a key once). Cheers landing meanwhile wait in chd for the next batch.
+    if (!q.exec('select 1 from chp limit 1').toArray().length && q.exec('select 1 from chd limit 1').toArray().length) {
+      const k = crypto.randomUUID(); q.exec('insert into chp(k, d, paid, free) select ?, d, paid, free from chd', k); q.exec('delete from chd'); }
+    const rows = q.exec('select slot, b, v, c, h from adq limit 200').toArray(), ppl = q.exec('select slot, d, uid, b from adw limit 400').toArray(), chs = q.exec('select k, d, paid, free from chp limit 40').toArray();
     if (rows.length || ppl.length || chs.length) { this.conns++; // one DO call, counted toward the daily budget like the seat calls
       try { await this.env.METER.get(this.env.METER.idFromName('ad')).adAdd(rows.map(r => ({ s: String(r.slot), b: Number(r.b), v: Number(r.v) || 0, c: Number(r.c) || 0, h: Number(r.h) || 0 })), ppl.map(r => ({ s: String(r.slot), d: String(r.d), u: String(r.uid), b: Number(r.b) })),
-        chs.map(r => ({ d: String(r.d), paid: Number(r.paid) || 0, free: Number(r.free) || 0 })));
+        chs.length ? { k: String(chs[0].k), rows: chs.map(r => ({ d: String(r.d), paid: Number(r.paid) || 0, free: Number(r.free) || 0 })) } : null);
         for (const r of rows) q.exec('update adq set v = v - ?, c = c - ?, h = h - ? where slot = ? and b = ?', r.v, r.c, r.h, r.slot, r.b);
         q.exec('delete from adq where v <= 0 and c <= 0 and h <= 0'); for (const r of ppl) q.exec('delete from adw where slot = ? and d = ? and uid = ?', r.slot, r.d, r.uid);
-        for (const r of chs) q.exec('update chd set paid = paid - ?, free = free - ? where d = ?', r.paid, r.free, r.d); q.exec('delete from chd where paid <= 0 and free <= 0');
-      } catch { /* the rows wait for the next flush */ } }
-    return Number(q.exec('select (select count(*) from adq) + (select count(*) from adw) + (select count(*) from chd) n').one().n) || 0; }
+        if (chs.length) q.exec('delete from chp where k = ?', String(chs[0].k));
+      } catch { /* the rows wait for the next flush; the cheer batch is re-sent as it is */ } }
+    return Number(q.exec('select (select count(*) from adq) + (select count(*) from adw) + (select count(*) from chd) + (select count(*) from chp) n').one().n) || 0; }
   // Link visit pays once per account per board per KST day, AD_DAY boards a day.
   adClick(w, a, nick, slot) { if (!a?.k || !AD_SLOT.test(slot)) return false; this.tapDb(); const q = this.ctx.storage.sql, day = kstDay(), n = agGet(q, a.k, 'adn', day);
     if (n >= AD_DAY || agGet(q, a.k, 'ad:' + slot, day)) { if (w) this.tx(w, { t: 'PAY', kind: 'click', amount: 0, why: 'day', key: slot }); return false; }
@@ -1578,7 +1589,10 @@ export class Room extends DurableObject {
         if (now - (a.bt || 0) > RELAY_MS) { a.bt = now; a.bn = 0; }
         if (++a.bn <= RELAY_N) { const P = { id: a.k }; for (const f of ['seed', 'i', 'r']) if (Number.isFinite(p[f])) P[f] = p[f]; this.bc({ t: 'b', e, p: P }, w); } } }
     else if (m.t === 'tr' && m.m && typeof m.m === 'object' && JSON.stringify(m.m).length < 1500 && burst(a, 'xr', TR_N)) { const M = m.m, keep = ['name', 'outfit', 'av', 'equip', 'rank', 'fl', 'x', 'y', 'face', 'anim', 'st', 'seat', 'g', 'hair', 'dong', 'shard', 'act', 'at', 'seat_id', 'look', 'state', 'step', 'mode', 'joined_at'];
-      a.m = { id: a.k }; for (const f of keep) if (M[f] !== undefined) a.m[f] = M[f]; if (a.prof) { if (M.equip === 'taxi') a.m.seat = 'taxi'; a.m.av = a.prof.av; a.m.equip = a.prof.equip; } else if (M.equip !== undefined) a.m.equip = peerEquip(M.equip); if (!a.welcomed && typeof M.name === 'string' && M.name.trim()) { a.welcomed = true; this.bc({ t: 'WELCOME', name: M.name.trim().slice(0, 16) }); } if (typeof a.m.name === 'string') a.m.name = a.m.name.slice(0, 12); a.m.fl = 0; a.fl = 0; this.save(w, a); if (a.q) this.bc({ t: 'pj', k: a.k, m: a.m }); }
+      a.m = { id: a.k }; for (const f of keep) if (M[f] !== undefined) a.m[f] = M[f]; if (a.prof) { if (M.equip === 'taxi') a.m.seat = 'taxi'; a.m.av = a.prof.av; a.m.equip = a.prof.equip; } else if (M.equip !== undefined) a.m.equip = peerEquip(M.equip);
+      // A name that reads as staff or as the seeded bots (the profile's own rule, wish.js staffNick / league.js botNick) is shown as the default guest name.
+      if (typeof a.m.name === 'string' && (staffNick(a.m.name) || botNick(a.m.name))) a.m.name = GUEST_NAME;
+      if (!a.welcomed && typeof a.m.name === 'string' && a.m.name.trim()) { a.welcomed = true; this.bc({ t: 'WELCOME', name: a.m.name.trim().slice(0, 16) }); } if (typeof a.m.name === 'string') a.m.name = a.m.name.slice(0, 12); a.m.fl = 0; a.fl = 0; this.save(w, a); if (a.q) this.bc({ t: 'pj', k: a.k, m: a.m }); }
     else if (m.t === 'ut') { a.m = null; this.save(w, a); if (a.q) this.leaveK(a.k, w); }
     this.scan(); this.meter(); }
   noteGhost(w) {
@@ -2441,6 +2455,9 @@ const LGA = new Map(); let LGG = 0; // a signed-in /rt/league answer per week an
 const lgDrop = () => { LGW.at = 0; LGC.at = 0; LGA.clear(); LGG++; }; // after a link, a withdrawal or a new name in this isolate: the next read is fresh
 // The nick a spend may write on the public list: '' (keep the stored one) when it is banned or the bots' shape. Sticker and photo routes never check it.
 const BOT_NAME_ERR = '그 이름은 쓸 수 없어요. 프로필에서 이름을 바꿔 주세요.'; // claims, plots, air: the name comes from the profile
+// The default guest name, and a name as the plaza shows it where it is not refused outright (presence, photo submissions): staff-like or 네온봇N -> the default.
+const GUEST_NAME = '네온손님';
+export function plazaName(raw) { const n = clip(raw || '', 16); return !n || staffNick(n) || botNick(n) ? GUEST_NAME : n; }
 // The weekly spend league is retired (2026-11-23, docs/prime-screens.md): ranking people by the points they spent is a game's league. 응원 순위
 // (teamsrv.js /rt/teams) ranks teams by distinct supporters, participation and goals reached. GET /rt/league answers an empty week without a DO
 // call, so a page opened before the change shows "아직 비어 있어요"; the 'lg' rows stay for the account flows (lgMove, lgForget, lgNick).
@@ -2595,6 +2612,7 @@ async function plaza(req, env, ctx, u) {
   let rpc, mode = 'claim', sip = null;
   if (claim) {
     const slot = String(b.slot_id || ''); if (!SLOT_RE.test(slot)) return J({ ok: false, error: '전광판 슬롯이 올바르지 않습니다.' }, 400);
+    if (botNick(nick) || staffNick(nick)) return J({ ok: false, error: BOT_NAME_ERR }, 400); // before any read or Room call
     mode = ['claim', 'edit', 'starter', 'tribe'].includes(b.mode) ? b.mode : 'claim';
     // No takeovers (docs/prime-screens.md, legal.js 명당과 전광판): a prime screen is never lit with points; an ordinary board is lit only while
     // nobody has it lit, at its fixed price for 72 h; the 소속 claim (pooled points) is closed. Old pages that still send a bid or a takeover get these.
@@ -2630,7 +2648,6 @@ async function plaza(req, env, ctx, u) {
     }
     const theme = String(b.bg_theme || '');
     if (rejectedCopy(nick, b.line1, b.line2, b.line3)) return J({ ok: false, error: 'blocked' }, 400);
-    if (botNick(nick) || staffNick(nick)) return J({ ok: false, error: BOT_NAME_ERR }, 400);
     if (mode === 'starter') { // one atomic take of today's 3 per IP; given back below if the claim is refused
       try { sip = { h: await ipHash(env, req), d: kstDay() }; if (!(await acct(env).sipTake(sip.h, sip.d, 3))) return J({ ok: false, error: '오늘 무료 칸은 이 연결에서 세 번까지예요' }, 400); } catch { sip = null; }
     }
@@ -2870,7 +2887,7 @@ async function photos(req, env, ctx, u) {
     const tag = new TextEncoder().encode(actor.id + '\n' + slot + '\n'), buf = new Uint8Array(tag.length + img.bytes.length);
     buf.set(tag); buf.set(img.bytes, tag.length);
     const id = [...new Uint8Array(await crypto.subtle.digest('SHA-256', buf))].map(x => x.toString(16).padStart(2, '0')).join('').slice(0, 40);
-    const rpc = await supabaseRpc('submit_billboard_photo', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_nickname: clip(b.nickname || b.nick || '', 16) || '네온손님', p_slot_id: slot, p_photo_id: id, p_jpeg_b64: b64of(img.bytes) });
+    const rpc = await supabaseRpc('submit_billboard_photo', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_nickname: plazaName(b.nickname || b.nick || ''), p_slot_id: slot, p_photo_id: id, p_jpeg_b64: b64of(img.bytes) });
     const data = rpc.data || {}, msg = String(data.message || '');
     if (!rpc.ok || data.ok === false) return J({ ok: false, error: data.error || (/schema cache|Could not find the function/i.test(msg) ? '사진 전광판이 아직 준비 중이에요. 잠시 후 다시 시도해 주세요.' : '사진을 올리지 못했어요. 잠시 후 다시 시도해 주세요.') }, rpc.ok ? 400 : 502);
     const row = data.billboard; if (!row || typeof row !== 'object') return J({ ok: false, error: 'empty' }, 502);

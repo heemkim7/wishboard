@@ -90,4 +90,30 @@ describe('landed cheers, paid and free', { concurrency: false }, () => {
       } finally { restore(); }
     });
   });
+  it('never counts a batch twice: a reply lost after the Meter applied it, or a throw in the ad ingest after the cheers, re-sends the same key', async () => {
+    await withClock(Date.parse('2027-06-12T03:00:00Z'), async (clock) => {
+      const restore = net([lit('PLOT_9', 'guest:holder')]);
+      try {
+        const env = makeEnv(), { ev, stats } = harness(env), R = env.room('chapel:square'), b = sock(R.do, 'guest:fan'), A = env.meter('ad').do;
+        assert.equal((await cheer(R.do, b, 'PLOT_9')).amount, 4);
+        // 1. The Meter applies the batch, then the answer is lost (the call throws on the way back).
+        const real = A.adAdd.bind(A); let lose = 1;
+        A.adAdd = async (...a) => { const out = await real(...a); if (lose-- > 0) throw new Error('reply lost'); return out; };
+        await R.do.flushAds();
+        assert.equal(R.sql.db.prepare('select count(*) n from chp').get().n, 1, 'the batch waits to be re-sent');
+        clock.add(13000); assert.equal((await cheer(R.do, b, 'PLOT_9')).amount, 4); // a cheer landing meanwhile waits for the next batch
+        await R.do.flushAds(); // the same key again: applied once; the new cheer is not in it
+        assert.deepEqual([R.sql.db.prepare('select count(*) n from chp').get().n, R.sql.db.prepare('select paid from chd').get()?.paid], [0, 1]);
+        await R.do.flushAds();
+        // 2. adIngest throws after the cheers were applied: the re-send does not add them again.
+        clock.add(13000); assert.equal((await cheer(R.do, b, 'PLOT_9')).amount, 4);
+        let boom = 1;
+        A.adAdd = async (items, people, cheers) => { if (boom-- > 0) { A.adI(); A.chAdd(cheers.k, cheers.rows); throw new Error('ingest failed'); } return real(items, people, cheers); };
+        await R.do.flushAds(); await R.do.flushAds();
+        assert.equal(A.chAdd('short', [{ d: '2027-06-12', paid: 5, free: 0 }]), false, 'a batch without a proper key is refused');
+        await ev('page_landing', 'sess-c-0002');
+        assert.deepEqual((await stats()).days[0].cheers, { paid: 3, free: 0 });
+      } finally { restore(); }
+    });
+  });
 });
