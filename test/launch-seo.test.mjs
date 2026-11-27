@@ -33,10 +33,10 @@ describe('robots.txt and sitemap.xml', () => {
     assert.match(sitemap, /^<\?xml version="1.0" encoding="UTF-8"\?>\s*<urlset xmlns="http:\/\/www\.sitemaps\.org\/schemas\/sitemap\/0\.9">/);
     assert.equal((sitemap.match(/<url>/g) || []).length, 2);
   });
-  it('are served: not in .assetsignore, and not behind the worker-first routes (those are /rt/*, /.env*, /.git/*)', () => {
+  it('are served: not in .assetsignore, and not behind the worker-first routes (those are /rt/*, /.env*, /.git/*, /admin*)', () => {
     for (const f of ['robots.txt', 'sitemap.xml', 'manifest.webmanifest', 'icons/app-icon-192.png', 'icons/app-icon-512.png', 'icons/app-icon-maskable-512.png', 'og.jpg']) assert.equal(C.ignoredBy(rules, f), false, f);
     const wrangler = read('wrangler.jsonc');
-    assert.match(wrangler, /"run_worker_first": \["\/rt\/\*", "\/\.env\*", "\/\.git\/\*"\]/);
+    assert.match(wrangler, /"run_worker_first": \["\/rt\/\*", "\/\.env\*", "\/\.git\/\*", "\/admin\*"\]/); // /admin*: the operator screen's login gate
     assert.equal(/robots|sitemap/.test(wrangler), false);
   });
   it('prod-check knows what a good robots.txt, sitemap and manifest look like', () => {

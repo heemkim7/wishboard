@@ -19,8 +19,9 @@ export const OPS = {
   sameMs: 30000, // one isolate sends one group at most once per 30 s; repeats ride along as a count
   maintTtl: 300000, maintHardTtl: 900000, maintWait: 800, // one DO read per isolate per 5 min (15 at hard): a maintenance notice may lag that long
   dbTtl: 30000, dbSlow: 1000, dbTimeout: 2000,
+  loginKeep: 50, // 운영자 로그인 attempts kept (worker.js admTrail): time, success or not, 6 characters of the network hash
 };
-export const OPS_PATHS = new Set(['/rt/err', '/rt/support', '/rt/admin/errors', '/rt/admin/errors/clear', '/rt/admin/support', '/rt/admin/maint']);
+export const OPS_PATHS = new Set(['/rt/err', '/rt/support', '/rt/admin/errors', '/rt/admin/errors/clear', '/rt/admin/support', '/rt/admin/maint', '/rt/admin/logins']);
 const SUPA = 'https://yxddhpacuyaffaoutxjn.supabase.co', ANON = 'sb_publishable_Vd-7c6e2f2s3G1d5Jbx9vw_0UCuHm-B'; // public (worker.js has the same pair)
 const J = (o, s = 200, h = {}) => new Response(JSON.stringify(o), { status: s, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...h } });
 const opsM = (env) => env.METER.get(env.METER.idFromName('ops'));
@@ -33,6 +34,7 @@ export function opsInit(q) {
   q.exec('create table if not exists orl(k text not null, at integer not null)');
   q.exec('create index if not exists orl_k on orl(k, at)');
   q.exec('create table if not exists okv(k text primary key, v text not null)');
+  q.exec('create table if not exists olog(at integer not null, ok integer not null, net text not null)');
 }
 // One report (n of them when an isolate held repeats back). Same group: count up, newest sample, up to five build ids (newest last).
 export function errPut(q, r, now = Date.now()) {
@@ -96,6 +98,15 @@ export function supMark(q, id, status, now = Date.now()) {
 }
 // Read by every isolate about once every 5 minutes (maintFor), so it also does the store's upkeep: rate rows older than an hour and inquiries
 // handled more than a year ago go here even when nobody writes an inquiry (the privacy policy's retention holds without a cron or alarm).
+// 운영자 로그인 trail: one row per attempt, the newest OPS.loginKeep kept. Never the key, never an address.
+export function loginPut(q, e) {
+  q.exec('insert into olog(at, ok, net) values(?, ?, ?)', Math.floor(Number(e?.at) || Date.now()), e?.ok === true ? 1 : 0, String(e?.net || '').replace(/[^0-9a-f]/g, '').slice(0, 6));
+  q.exec('delete from olog where rowid not in (select rowid from olog order by at desc, rowid desc limit ?)', OPS.loginKeep);
+  return { ok: true };
+}
+export function loginList(q) { return q.exec('select at, ok, net from olog order by at desc, rowid desc limit ?', OPS.loginKeep).toArray().map((r) => ({ at: Number(r.at), ok: Number(r.ok) === 1, net: String(r.net) })); }
+// worker.js admTrail: one DO call (the env it passes is the tallied one; it skips this at budget hard).
+export const opsLoginNote = (env, e) => opsM(env).opsLoginPut(e);
 export function maintGet(q) { supPrune(q, Date.now()); const r = q.exec("select v from okv where k = 'maint'").toArray()[0]; if (!r) return null; try { return JSON.parse(r.v); } catch { return null; } }
 export function maintPut(q, m) { const v = maintOf(m) ? { on: true, ...maintOf(m), at: Date.now() } : { on: false, at: Date.now() }; q.exec("insert into okv(k, v) values('maint', ?) on conflict(k) do update set v = excluded.v", JSON.stringify(v)); return v; }
 
@@ -186,6 +197,7 @@ export async function opsApi(req, env, ctx, u, deps) {
     if (!/^[0-9a-f]{12}$/.test(String(b.id || '')) || (b.status !== 'open' && b.status !== 'done')) return J({ ok: false, err: 'bad' }, 400);
     const r = await opsM(env).opsSupMark(b.id, b.status); return J(r, r.ok ? 200 : 404);
   }
+  if (p === '/rt/admin/logins') { if (req.method !== 'GET') return J({ err: 'get' }, 405); return J({ ok: true, items: await opsM(env).opsLoginList() }); }
   if (p === '/rt/admin/maint') {
     if (req.method === 'GET') { const v = await opsM(env).opsMaintGet(); MAINT = { at: Date.now(), v: maintOf(v), p: null }; return J({ ok: true, maint: v || { on: false } }); }
     if (req.method !== 'POST') return J({ err: 'method' }, 405);

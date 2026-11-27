@@ -12,7 +12,7 @@
     "binding": "ASSETS",
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "none",
-    "run_worker_first": ["/rt/*", "/.env*", "/.git/*"]
+    "run_worker_first": ["/rt/*", "/.env*", "/.git/*", "/admin*"]
   },
   "durable_objects": {
     "bindings": [
@@ -32,7 +32,9 @@
     { "name": "OPS_RL", "namespace_id": "4711", "simple": { "limit": 20, "period": 60 } },
     // per account, not per IP (bot protection, docs/bot-protection.md): 'ws:<account>' socket joins, 'plaza:<account>' the plaza's writes,
     // 'misc:<account>' push, report, inbox read, profile and equip writes, photo upload, /rt/grp
-    { "name": "ACT_RL", "namespace_id": "4712", "simple": { "limit": 60, "period": 60 } }
+    { "name": "ACT_RL", "namespace_id": "4712", "simple": { "limit": 60, "period": 60 } },
+    // 운영자 로그인 (worker.js admRate): POST /rt/admin/login and requests with a wrong x-admin-key, key 'admin:<network>' (IPv6 by /64)
+    { "name": "ADMIN_RL", "namespace_id": "4713", "simple": { "limit": 5, "period": 60 } }
   ],
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Meter", "Room"] }

@@ -437,6 +437,8 @@ export class Meter extends DurableObject {
   opsSupMark(id, status) { return ops.supMark(this.opsQ(), id, status); }
   opsMaintGet() { return ops.maintGet(this.opsQ()); }
   opsMaintPut(m) { return ops.maintPut(this.opsQ(), m); }
+  opsLoginPut(e) { return ops.loginPut(this.opsQ(), e); }
+  opsLoginList() { return ops.loginList(this.opsQ()); }
   // Boot screen "today": distinct accounts that connected to the plaza and successful billboard claims, per KST day.
   visit(uid, day) { this.acInit(); const q = this.ctx.storage.sql; if (q.exec('insert or ignore into vis(d, uid) values(?, ?)', day, uid).rowsWritten) this.tally(day, 'v');
     if (Math.random() < 0.01) q.exec('delete from vis where d < ?', dayShift(day, -2)); return { ok: 1 }; }
@@ -2781,11 +2783,111 @@ function isoDay(v) {
   return s;
 }
 function kstDow(now = Date.now()) { return new Date(now + 9 * 3600000).getUTCDay(); }
-function adminOk(env, req) {
-  const want = env.ADMIN_KEY, got = req.headers.get('x-admin-key') || '';
-  if (typeof want !== 'string' || want.length < 12 || got.length !== want.length) return false;
+function adminOk(env, req) { return keyEq(env.ADMIN_KEY, req.headers.get('x-admin-key') || ''); }
+// The ADMIN_KEY check itself (at least 12 characters, constant time): the x-admin-key header above and the login form below.
+function keyEq(want, got) {
+  if (typeof want !== 'string' || want.length < 12 || typeof got !== 'string' || got.length !== want.length) return false;
   let d = 0; for (let i = 0; i < want.length; i++) d |= want.charCodeAt(i) ^ got.charCodeAt(i);
   return d === 0;
+}
+// ---- 운영자 로그인 -----------------------------------------------------------------------------------------------------------------
+// wrangler.jsonc run_worker_first "/admin*": /admin (and /admin.html, /admin/) and the admin-*.js modules reach the Worker before the static
+// assets. Without a session, the page path answers a small login page and everything else under /admin is 404; with one, env.ASSETS answers
+// as before. POST /rt/admin/login takes ADMIN_KEY as the password and sets kts_adm = '1.<expiry s>.<16 random bytes>.<HMAC-SHA256>' (base64url),
+// signed with a key derived from ADMIN_KEY, so changing the secret logs everyone out; no session store. A request to /rt/admin/* (and the review
+// photo /rt/photo/<id>.jpg?review) with a valid cookie goes on as a copy carrying the internal x-admin-key, so adminOk stays the one check; the
+// key itself never leaves the Worker. A cookie POST must carry the request's own Origin. The x-admin-key header path is unchanged (tools).
+// ADMIN_RL (5 a minute per network, IPv6 by /64) counts login attempts and wrong x-admin-key headers; no Durable Object call on that path.
+// The trail: the last 50 login attempts in the operator store (Meter 'ops', ops.js loginPut), one DO call per attempt, none at budget hard.
+const ADM = { cookie: 'kts_adm', ttl: 12 * 3600 };
+const ADM_ERR = { key: '키가 맞지 않아요.', rate: '잠시 뒤에 다시 시도해 주세요.' };
+const ADM_HEAD = { 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', 'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff' };
+const ADM_RE = /^1\.(\d{10})\.([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{43})$/;
+const admPage = p => p === '/admin' || p === '/admin/' || p === '/admin.html' || p === '/admin/index.html';
+const admPhoto = u => u.pathname.startsWith('/rt/photo/') && u.searchParams.has('review');
+const admArea = u => u.pathname.startsWith('/admin') || u.pathname.startsWith('/rt/admin/') || admPhoto(u);
+function admHeaders(res) {
+  if (!res || res.status === 101) return res;
+  const r = new Response(res.body, res); for (const [k, v] of Object.entries(ADM_HEAD)) r.headers.set(k, v); return r;
+}
+let ADMK = { s: null, k: null }; // the signing key for the current ADMIN_KEY, derived once per isolate
+async function admKey(env) {
+  const s = env.ADMIN_KEY; if (typeof s !== 'string' || s.length < 12) return null;
+  if (ADMK.s === s && ADMK.k) return ADMK.k;
+  const enc = new TextEncoder(), base = await crypto.subtle.importKey('raw', enc.encode(s), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const raw = await crypto.subtle.sign('HMAC', base, enc.encode('kts-admin-session-v1'));
+  const k = await crypto.subtle.importKey('raw', raw, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
+  ADMK = { s, k }; return k;
+}
+async function admMint(env) {
+  const k = await admKey(env); if (!k) return '';
+  const body = '1.' + (Math.floor(Date.now() / 1000) + ADM.ttl) + '.' + b64e(crypto.getRandomValues(new Uint8Array(16)));
+  return body + '.' + b64e(new Uint8Array(await crypto.subtle.sign('HMAC', k, new TextEncoder().encode(body))));
+}
+async function admSession(env, req) {
+  const vals = String(req.headers.get('cookie') || '').split(';').map(x => x.trim()).filter(x => x.startsWith(ADM.cookie + '=')).map(x => x.slice(ADM.cookie.length + 1)).slice(0, 3);
+  if (!vals.length) return false;
+  const k = await admKey(env); if (!k) return false;
+  const now = Math.floor(Date.now() / 1000);
+  for (const v of vals) {
+    const m = ADM_RE.exec(v); if (!m) continue;
+    const exp = Number(m[1]); if (!(exp > now && exp <= now + ADM.ttl + 60)) continue;
+    let sig; try { sig = b64u(m[3]); } catch { continue; }
+    if (await crypto.subtle.verify('HMAC', k, sig, new TextEncoder().encode(v.slice(0, v.lastIndexOf('.'))))) return true;
+  }
+  return false;
+}
+const admCookie = (v, age) => `${ADM.cookie}=${v}; Max-Age=${age}; Path=/; HttpOnly; Secure; SameSite=Strict`;
+const admRate = (env, req) => rateKey(env.ADMIN_RL, 'admin:' + (ipNet(req.headers.get('cf-connecting-ip') || '') || 'x'));
+// A form POST from a page sent with Referrer-Policy: no-referrer carries Origin: null; only another real origin is refused here.
+const admForeign = (req, u) => { const o = req.headers.get('origin'); return !!o && o !== 'null' && o !== u.origin; };
+function admLogin(note = '', status = 200, head = {}) {
+  const html = '<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+    + '<meta name="robots" content="noindex, nofollow"><title>운영자 로그인 · WISH BOARD</title><style>'
+    + 'body{margin:0;min-height:100vh;display:grid;place-items:center;background:#070a16;color:#eef1ff;font-family:"Pretendard Variable",Pretendard,"Malgun Gothic",sans-serif}'
+    + 'form{width:min(340px,calc(100% - 32px));display:grid;gap:12px}h1{margin:0 0 4px;font-size:22px;font-weight:900}'
+    + 'input,button{height:44px;border-radius:12px;font:inherit;font-weight:700}input{padding:0 14px;border:1px solid rgba(255,255,255,.14);background:rgba(0,0,0,.3);color:inherit}'
+    + 'button{border:0;color:#2a1800;background:linear-gradient(135deg,#ffe9a8,#ffcf5a 45%,#e6a52a);cursor:pointer}p{margin:0;font-size:14px;font-weight:700;color:#ff9cb0}'
+    + '</style></head><body><form method="post" action="/rt/admin/login"><h1>운영자 로그인</h1>'
+    + (note ? '<p role="alert">' + note + '</p>' : '')
+    + '<input type="password" name="key" autocomplete="off" required aria-label="운영자 키" placeholder="운영자 키"><button type="submit">들어가기</button></form></body></html>';
+  return new Response(html, { status, headers: { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'", ...head } });
+}
+const admBack = (cookie) => new Response(null, { status: 303, headers: { location: '/admin', ...(cookie ? { 'set-cookie': cookie } : {}) } });
+// The trail: never the key, never an address; the first 6 characters of the salted network hash (wishIp). Skipped at budget hard.
+function admTrail(env, ctx, req, ok) {
+  const job = (async () => { if ((await lvlNow(env)) >= 2) return; const net = String(await wishIp(env, req)).slice(0, 6); await ops.opsLoginNote(env, { at: Date.now(), ok, net }); })().catch(() => { });
+  try { ctx?.waitUntil?.(job); } catch { } return job;
+}
+async function admLoginPost(req, env, ctx, u) {
+  if (req.method !== 'POST') return admBack();
+  if (admForeign(req, u)) return admLogin('', 403);
+  if (!(await admRate(env, req))) return admLogin(ADM_ERR.rate, 429, { 'retry-after': '60' });
+  let key = '';
+  if (Number(req.headers.get('content-length') || 0) <= 2000) { let t = ''; try { t = await req.text(); } catch { t = ''; } if (t.length <= 2000) key = new URLSearchParams(t).get('key') || ''; }
+  const ok = keyEq(env.ADMIN_KEY, key), v = ok ? await admMint(env) : '';
+  admTrail(env, ctx, req, !!v);
+  if (!v) return admLogin(ADM_ERR.key, 401);
+  return admBack(admCookie(v, ADM.ttl));
+}
+// Before the router: { res } answers here, { req } goes on (a copy with the internal header when the cookie opened an admin call).
+async function admGate(req, env, ctx, u) {
+  const p = u.pathname;
+  if (p.startsWith('/admin')) { // the operator screen: the session cookie only (a header key does not open it)
+    if (await admSession(env, req)) return { res: await env.ASSETS.fetch(req) };
+    if (admPage(p)) return { res: req.method === 'GET' || req.method === 'HEAD' ? admLogin() : new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } }) };
+    return { res: new Response('not found', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' } }) };
+  }
+  if (p === '/rt/admin/login') return { res: await admLoginPost(req, env, ctx, u) };
+  if (p === '/rt/admin/logout') return { res: req.method !== 'POST' ? admBack() : admForeign(req, u) ? J({ err: 'origin' }, 403) : admBack(admCookie('', 0)) };
+  if (req.headers.has('x-admin-key')) { // the tools' path, as it was; a wrong key counts as a guess
+    if (!adminOk(env, req) && !(await admRate(env, req))) return { res: J({ err: 'rate', error: ADM_ERR.rate }, 429, { 'retry-after': '60' }) };
+    return { req };
+  }
+  if (!(p.startsWith('/rt/admin/') || admPhoto(u)) || !(await admSession(env, req))) return { req }; // no session: the route answers 401 as before
+  if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers.get('origin') !== u.origin) return { res: J({ err: 'origin' }, 403) };
+  const h = new Headers(req.headers); h.set('x-admin-key', env.ADMIN_KEY);
+  return { req: new Request(req, { headers: h }) };
 }
 // 소속 (Supabase tribes) is replaced by 응원 팀 (teamsrv.js). /rt/tribe is what pages opened before the change still call: the answer says so and
 // points at a reload, before any token check, DO or database call. 소속 모금 (/rt/tribe/pledge) stays closed. An account's old 소속 is brought over
@@ -3456,9 +3558,12 @@ async function snapPage(req, env, u) {
 export default {
   async fetch(req, env, ctx) {
     budget(env); wreqOne(); env = tallied(env, ctx); // wreqOne: this invocation is one Worker request in the daily budget
+    // /admin*, /rt/admin/* and the review photo: the login gate first (admGate), and the operator headers (ADM_HEAD) on every answer.
+    const adm = admArea(new URL(req.url));
     // A throw anywhere below (a DO fetch that throws reaches here too) is kept as an error group of kind 'server' and answers 500.
-    try { return await (async () => {
+    try { const res = await (async () => {
     const u = new URL(req.url);
+    if (adm) { const g = await admGate(req, env, ctx, u); if (g.res) return g.res; req = g.req; }
     if (u.pathname === '/rt/snap' && req.method === 'POST') {
       if (await lvlNow(env) >= 2) return wishNo('busy', 503);
       const actor = await resolveActor(env, tokenOf(req)); if (!actor) return J({ err: 'auth' }, 401);
@@ -3576,7 +3681,7 @@ export default {
       return J(await env.ROOM.get(env.ROOM.idFromName(t)).stats()); }
     if (u.pathname === '/.env.local' || u.pathname === '/.git/config' || u.pathname.startsWith('/.env') || u.pathname.startsWith('/.git/')) return new Response(null, { status: 404 });
     return env.ASSETS.fetch(req);
-    })(); } catch (e) { return ops.opsCrash(req, env, ctx, e, { lvl: () => lvlNow(env) }); }
+    })(); return adm ? admHeaders(res) : res; } catch (e) { const res = await ops.opsCrash(req, env, ctx, e, { lvl: () => lvlNow(env) }); return adm ? admHeaders(res) : res; }
   },
   // Paid plan only. Free returns before any push work. Dark boards and unread taken/cheer, at most PUSH_N.
 // 50 11 * * * is 20:50 KST (ball inbox). 0 12 * * * is 21:00 KST (Sunday roof). 5 * * * * stays the hourly pass.
