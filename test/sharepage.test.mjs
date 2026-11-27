@@ -27,6 +27,10 @@ describe('share page', () => {
     assert.match(html, /친구 3명이 응원했어요/);
     assert.equal(sharePage({ ...base, fr: '' }).includes('응원했어요'), false, 'no line without friends');
   });
+  it('나도 만들기 keeps what the link carried (make), /gift without it', () => {
+    assert.match(sharePage({ ...base, make: '/gift?inv=ab12cd34&pref=zz99yy88' }), /<a class="btn" href="\/gift\?inv=ab12cd34&amp;pref=zz99yy88">나도 만들기<\/a>/);
+    assert.match(sharePage({ ...base, make: 'https://evil.example/' }), /<a class="btn" href="\/gift">나도 만들기<\/a>/, 'only a /gift address');
+  });
   it('a long card grows instead of clipping (16:9 is the least it is), and the chip has a row of its own', () => {
     const css = /<style>([\s\S]*?)<\/style>/.exec(sharePage(base))[1], rule = (sel) => new RegExp('(^|\\})' + sel.replace(/[.*]/g, '\\$&') + '\\{([^}]*)\\}').exec(css)?.[2] || '';
     assert.match(rule('.card'), /aspect-ratio:16\/9/); assert.doesNotMatch(rule('.card'), /overflow:hidden/);

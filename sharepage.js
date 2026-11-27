@@ -4,6 +4,7 @@
 // is one. Nothing moves by itself (2026-11-27: the page used to refresh straight into the plaza). Everything people wrote is escaped; the one
 // inline script reads the share words from the button's data attributes, never from the markup around it.
 // Server and browser safe (no I/O); worker.js imports it with no query.
+const MAKE = /^\/gift(\?[\w=&-]*)?$/; // 나도 만들기: the maker, with the link's own query (inv, pref) and nothing else
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 const CSS = ':root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(900px 520px at 85% -10%,#3a1150 0%,transparent 60%),radial-gradient(800px 600px at -10% 10%,#14205a 0%,transparent 55%),#07061a;color:#f3f1ff;font:15px/1.55 "Pretendard Variable",Pretendard,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",system-ui,sans-serif;word-break:keep-all;overflow-wrap:break-word}'
@@ -24,7 +25,8 @@ const SCRIPT = '<script>(function(){var b=document.getElementById("share"),n=doc
 
 /**
  * o: { title, desc, image, url (og:url), dest (the 3D plaza's address for it), kind ('card' | 'wish'), chip, big, line, by, fr (the friends
- * line or ''), shot (a snapshot image URL or ''), share: { title, text } (the share sheet's words) }. -> the whole HTML document.
+ * line or ''), shot (a snapshot image URL or ''), share: { title, text } (the share sheet's words), make (나도 만들기: '/gift' with the
+ * link's inv / pref kept; only a /gift address is taken) }. -> the whole HTML document.
  */
 export function sharePage(o = {}) {
   const share = o.share || { title: o.title, text: o.desc };
@@ -45,7 +47,7 @@ export function sharePage(o = {}) {
     + (o.fr ? '<p class="fr">' + esc(o.fr) + '</p>' : '')
     + '<div class="acts"><a class="btn gold" href="' + esc(o.dest) + '">3D 광장에서 보기</a>'
     + '<button class="btn" type="button" id="share" data-title="' + esc(share.title) + '" data-text="' + esc(share.text) + '">공유하기</button>'
-    + '<a class="btn" href="/gift">나도 만들기</a></div><p class="note" id="note" role="status"></p>'
+    + '<a class="btn" href="' + esc(MAKE.test(String(o.make || '')) ? o.make : '/gift') + '">나도 만들기</a></div><p class="note" id="note" role="status"></p>'
     + '<p class="foot">뉴욕 타임스퀘어를 본뜬 가상 광장의 전광판이에요. 실제 타임스퀘어와는 관계가 없어요.<br><a href="/discover">다른 전광판 구경하기</a></p>'
     + '</main>' + SCRIPT + '</body></html>';
 }

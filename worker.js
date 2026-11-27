@@ -2422,7 +2422,7 @@ async function wishPage(req, env, u, ctx) {
   // Its own page (sharepage.js, 2026-11-27) with 3D 광장에서 보기 (dest, where it used to jump at once), 공유하기 and 나도 만들기.
   const image = new URL(shot ? '/rt/snap/' + shot : '/og.jpg', req.url).href;
   const html = sharePage({ kind: 'wish', title: s.title, desc, image, url: new URL('/rt/w/' + id, req.url).href, dest, chip: '오늘의 소원', big: clip(w.txt, WISH.maxLen),
-    by: w.nick ? clip(w.nick, 16) + '님의 소원' : '', fr: sl.fr, shot: shot ? image : '', share: { title: s.title, text: w.txt + ' · 가상 타임스퀘어의 소원' } });
+    by: w.nick ? clip(w.nick, 16) + '님의 소원' : '', fr: sl.fr, shot: shot ? image : '', share: { title: s.title, text: w.txt + ' · 가상 타임스퀘어의 소원' }, make: '/gift' + invTail(u, true) });
   // A page that sets kts_via is this person's: never kept by a shared cache. The preview fetchers' copy stays public for 30 s.
   return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', ...(sl.cookie ? { 'cache-control': 'private, no-store', 'set-cookie': sl.cookie } : { 'cache-control': 'public, max-age=30' }) } });
 }
@@ -3559,6 +3559,13 @@ function cardTarget(slot, search, holderRef) {
   const inv = invCode(search.get('inv')); if (inv) q.set('inv', inv);
   return '/?' + q.toString();
 }
+// 나도 만들기 on a board's share page: /gift with the link's invite (inv) and the holder's plaza referral code as pref. The gift maker reads
+// neither yet (its own ?ref= is a gift board id), so they only ride along in the address for a later attribution; nothing is lost.
+function makeOf(dest) {
+  const d = new URLSearchParams(String(dest || '').replace(/^\/\?/, '')), q = new URLSearchParams();
+  if (d.get('inv')) q.set('inv', d.get('inv')); if (d.get('ref')) q.set('pref', d.get('ref'));
+  const s = q.toString(); return '/gift' + (s ? '?' + s : '');
+}
 // The live billboard row is the previous screen. A pending S-tier review stays in billboard_reviews and is not drawn here.
 async function loadCard(env, slot) {
   const empty = { ref: '', holder_name: '', line1: '', line2: '', line3: '', tier: '', updated_at: '' };
@@ -3610,7 +3617,7 @@ async function cardPage(req, env, u, ctx) {
   // 공유하기 and 나도 만들기. The preview tags carry the same words as before; sharePage escapes them and the card's text.
   const lines = [card.line1, card.line2, card.line3].map((s) => clip(s, 24)).filter(Boolean);
   const html = sharePage({ kind: 'card', title, desc, image, url: page, dest, chip: '가상 타임스퀘어 전광판', big: lines[0] || clip(card.holder_name, 16) || '빈 전광판', line: lines.slice(1).join(' · '),
-    by: card.holder_name ? 'by ' + clip(card.holder_name, 16) : '', fr: sl.fr, shot: shot ? image : '', share: { title, text: (lines.join(' ') || title) + ' · 가상 타임스퀘어 전광판' } });
+    by: card.holder_name ? 'by ' + clip(card.holder_name, 16) : '', fr: sl.fr, shot: shot ? image : '', share: { title, text: (lines.join(' ') || title) + ' · 가상 타임스퀘어 전광판' }, make: makeOf(dest) });
   // Not for search results (a player's name and line); link-preview crawlers still read the Open Graph tags (robots.txt allows /rt/card/).
   return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex', ...(sl.cookie ? { 'set-cookie': sl.cookie } : {}) } });
 }

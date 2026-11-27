@@ -384,6 +384,7 @@ describe('share pages keep ?inv= through their redirect', () => {
       // its own page since 2026-11-27 (sharepage.js): the 3D plaza is the 3D 광장에서 보기 link, ?inv= kept on it
       assert.match(html, new RegExp('href="/\\?wish=' + w.id + '&amp;inv=ab12cd34">3D 광장에서 보기'));
       assert.doesNotMatch(html, /http-equiv="refresh"|location\.replace/);
+      assert.match(html, /href="\/gift\?inv=ab12cd34">나도 만들기/);
       html = await (await h.get('/rt/w/' + w.id + '?inv=%22%3E%3Cscript%3E')).text();
       assert.doesNotMatch(html, /inv=|<script>alert|%3Cscript/);
       let r = await h.get('/rt/w/zzzzzzzzzz?inv=ab12cd34'); assert.equal(r.status, 302); assert.equal(r.headers.get('location'), 'https://sq.example/?inv=ab12cd34');
@@ -398,6 +399,7 @@ describe('share pages keep ?inv= through their redirect', () => {
       assert.match(html, /location\.replace\("\/\?inv=ab12cd34"\)/);
       html = await (await h.get('/rt/card/STREET_8?gift=1&inv=ab12cd34')).text();
       assert.match(html, /href="\/\?focus=STREET_8&amp;gift=1&amp;inv=ab12cd34">3D 광장에서 보기/);
+      assert.match(html, /href="\/gift\?inv=ab12cd34">나도 만들기/, '나도 만들기 keeps the invite (the gift maker does not read it yet)');
       html = await (await h.get('/rt/card/STREET_8?inv=x%22y')).text();
       assert.doesNotMatch(html, /inv=/);
     } finally { done(); }
