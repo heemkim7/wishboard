@@ -1262,3 +1262,21 @@ node tools/prod-e2e.mjs https://studio.wishboard.workers.dev
 ### 테스트
 
 `test/reinforce-*.test.mjs`(문구, 이름, 퍼널, 집계, 공유, 새로 걸린, 지표 화면)와 `test/gift.test.mjs`·`test/gift-worker.test.mjs`의 새 묶음. 소스 글을 읽는 테스트는 줄 끝을 LF로 접어 읽는다(이 PC의 작업 폴더는 CRLF다).
+
+## 운영 화면 로그인 (2026-11-27)
+
+운영 화면(`/admin`)은 로그인해야 열린다. 그 전에는 화면과 그 파일(`admin.html`, `admin-*.js`)이 누구에게나 나갔고, 관리자 API(`/rt/admin/*`)만 `x-admin-key`로 막혀 있었다. 운영 DB 변경은 없다.
+
+- 문: `wrangler.jsonc`의 `run_worker_first`에 `/admin*`이 있어 `/admin`, `/admin.html`, `/admin/`, `/admin-*.js`가 Worker를 먼저 거친다(`worker.js` `admGate`). 로그인하지 않으면 화면 주소는 로그인 화면(비밀번호 칸 하나, 스크립트 없음)을, 운영 화면 파일은 404를 준다. 헤더 키로는 화면이 열리지 않는다.
+- 로그인: `POST /rt/admin/login`에 키(`ADMIN_KEY`)를 보내면 12시간짜리 쿠키를 주고 `/admin`으로 보낸다. 쿠키는 HttpOnly·Secure·SameSite=Strict·Path=/이고 이름은 https에서 `__Host-kts_adm`, http(로컬)에서 `kts_adm`이다. 값은 만료 시각과 난수에 `ADMIN_KEY`에서 끌어낸 키로 서명한 것이고 서버에 세션을 저장하지 않는다. `ADMIN_KEY`를 바꾸면 모두 로그아웃된다. 로그아웃(`POST /rt/admin/logout`)은 브라우저의 쿠키만 지우므로, 복사해 둔 쿠키 값은 12시간까지 유효하다(끊으려면 `ADMIN_KEY`를 바꾼다).
+- 키를 틀리면 `키가 맞지 않아요.`가 나온다. 같은 인터넷 연결(IPv6는 /64)에서 1분에 5번이 넘으면 429와 `잠시 뒤에 다시 시도해 주세요.`다(`ADMIN_RL`. 로그인 시도와 틀린 `x-admin-key`를 함께 센다. 맞는 헤더 키는 막히지 않는다. 바인딩이 없으면 막지 않고, `/rt/health`의 `hasAdminRl`이 false가 된다).
+- 쿠키가 있는 `/rt/admin/*` 요청은 Worker가 안에서 헤더를 붙인 사본으로 넘기므로 기존의 `adminOk`가 그대로 본다. 진짜 키는 브라우저로 나가지 않는다. 헤더가 함께 오면 헤더만 본다(틀린 헤더 + 맞는 쿠키는 401). 도구(`tools/prod-e2e.mjs` 등)가 쓰는 `x-admin-key`는 예전 그대로다.
+- 쿠키로 하는 GET·HEAD 밖의 요청은 Origin이 이 사이트와 같아야 한다(없거나 다르면 403 `origin`). 로그인과 로그아웃은 다른 Origin을 거절하고, 브라우저가 다른 사이트에서 온 것으로 표시한 요청(`Sec-Fetch-Site`가 same-origin·none이 아님)은 Origin이 null이어도 받지 않으며 시도 횟수에도 넣지 않는다.
+- 운영 화면은 키를 묻지도, 저장하지도, 보내지도 않는다. 어떤 운영 요청이 401이면 로그인 화면으로 간다. 위쪽에 `로그아웃`이 있다.
+- `/admin*`과 `/rt/admin/*`의 모든 응답은 `Cache-Control: no-store`, `X-Robots-Tag: noindex, nofollow`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`를 단다. 운영 화면에는 Content-Security-Policy도 붙는다(스크립트는 이 사이트 파일과, 내려보내는 HTML에서 그때 계산한 인라인 스크립트 해시만. 글꼴은 cdn.jsdelivr.net).
+- 로그인 기록: 운영 탭의 `🔑 로그인 기록`에 성공 최근 20번과 실패 최근 50번이 따로 남는다(시각, 연결을 알아볼 수 없게 바꾼 값의 앞 6자리. 키와 주소는 남기지 않는다). Meter `'ops'`의 `olog` 표이고, 제한을 통과한 시도마다 DO 호출 하나, 예산 hard에서는 남기지 않는다.
+- `/?maint=skip`은 운영자로 로그인한 브라우저에서만 점검 안내를 건너뛴다(쿠키로 `GET /rt/admin/maint`).
+- `tools/prod-check.mjs`는 운영 화면과 그 파일을 공개 파일 비교에서 빼고, 로그인 없이 `/admin`이 로그인 화면인지, 운영 화면 파일이 404인지, `/rt/admin/*`이 401인지, `hasAdminRl`이 true인지 본다(키를 보내지 않는다).
+- 예전 버전으로 되돌리면(`wrangler rollback`) 에셋도 그 버전으로 함께 돌아가므로, 운영 화면은 예전처럼 누구에게나 나가고 키 칸으로 동작한다. 쿠키는 무시되고 API는 여전히 키가 필요하다.
+- 로컬에서 볼 때는 미리보기 `plaza-admin`(포트 8796, 시험용 키 `local-admin-test-only`)을 쓴다. 진짜 키를 브라우저에 넣지 않는다.
+- 테스트: `test/admin-login.test.mjs`.

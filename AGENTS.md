@@ -30,6 +30,7 @@
 - 내 캐릭터 위치는 로컬 입력만 쓴다. 서버 좌표를 내 플레이어에 덮어쓰지 마라.
 - 좌표 변환은 `toNetUnits` / `fromNetUnits`만 쓴다. 바닥은 `floor = 0`.
 - 자유 텍스트 채팅은 없다. 리액션은 `{t:'E', k, e: 1~4}`.
+- 운영 화면(`/admin`, `admin.html`, `admin-*.js`)은 로그인한 세션에만 내려간다. `wrangler.jsonc`의 `run_worker_first`에서 `/admin*`을 빼지 말고, 운영 화면 파일을 Worker의 문(`admGate`)을 거치지 않는 주소로 내보내지 마라. 진짜 `ADMIN_KEY`를 브라우저 화면에 넣지 마라(로컬 확인은 미리보기 `plaza-admin`의 시험용 키).
 
 ## 클라이언트
 

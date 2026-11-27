@@ -12,6 +12,12 @@
       "runtimeExecutable": "npx",
       "runtimeArgs": ["--yes", "wrangler@4", "dev", "--port", "8794", "--persist-to", ".wrangler/claude-ads-state", "--var", "ADS_ON:1", "--var", "ADS_PRICES:{\"screen\":30000,\"cheer\":50000,\"note\":\"예시 가격\"}"],
       "port": 8794
+    },
+    {
+      "name": "plaza-admin",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["--yes", "wrangler@4", "dev", "--port", "8796", "--persist-to", ".wrangler/claude-admin-state", "--var", "ADMIN_KEY:local-admin-test-only"],
+      "port": 8796
     }
   ]
 }
