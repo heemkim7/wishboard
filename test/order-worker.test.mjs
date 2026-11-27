@@ -379,7 +379,7 @@ describe('operator and test traffic leave the daily stats', () => {
     assert.equal(testTraffic(r({})), false); assert.equal(testTraffic(r({ 'x-kts-test': '1' })), true); assert.equal(testTraffic(r({ 'x-kts-test': '0' })), false);
     assert.equal(testTraffic(r({ cookie: 'a=1; kts_staff=1' })), true); assert.equal(testTraffic(r({ cookie: 'kts_staff=10' })), false); assert.equal(testTraffic(r({ cookie: 'xkts_staff=1' })), false);
   });
-  it('/rt/event and the gift seen beacon drop them; the /admin page marks the device', async () => {
+  it('/rt/event and the gift seen beacon drop them; a successful admin login marks the device, its logout clears it', async () => {
     const { clock, state, done } = setup();
     try {
       const env = makeEnv(), H = harness(env), G = await H.guest();
@@ -394,12 +394,17 @@ describe('operator and test traffic leave the daily stats', () => {
       assert.equal(views(), 0, 'test traffic is not a visitor');
       await H.post('/rt/gift/' + bid + '/seen', { v: 'b'.repeat(16), e: 'open' }); await giftSeenFlush(env, H.ctx);
       assert.equal(views(), 1);
-      // the operator's device
+      // the operator's device: opening /admin (the login form) or a wrong key marks nothing; the right key does; logout clears it
+      const form = await H.call('/admin'); assert.equal(form.status, 200); assert.equal(form.headers.get('set-cookie'), null, 'the login form marks nothing');
+      const wrong = await H.call('/rt/admin/login', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', origin: PROD }, body: 'key=wrong-key-000000' });
+      assert.equal(wrong.status, 401); assert.equal(wrong.headers.get('set-cookie'), null);
       const login = await H.call('/rt/admin/login', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', origin: PROD }, body: 'key=' + env.ADMIN_KEY });
-      const c = (login.headers.get('set-cookie') || '').split(';')[0];
+      const set = login.headers.getSetCookie(), c = set[0].split(';')[0];
+      assert.match(c, /kts_adm=/); assert.ok(set.includes('kts_staff=1; Max-Age=31536000; Path=/; HttpOnly; Secure; SameSite=Lax'), 'marked at login');
       const page = await H.call('/admin', { headers: { cookie: c } });
-      assert.equal(page.status, 200); assert.match(page.headers.get('set-cookie') || '', /^kts_staff=1; Max-Age=31536000; Path=\/; HttpOnly; Secure; SameSite=Lax/);
-      const again = await H.call('/admin', { headers: { cookie: c + '; kts_staff=1' } }); assert.equal(again.headers.get('set-cookie'), null, 'already marked');
+      assert.equal(page.status, 200); assert.equal(page.headers.get('set-cookie'), null, 'the page itself sets nothing');
+      const out = await H.call('/rt/admin/logout', { method: 'POST', headers: { origin: PROD, cookie: c + '; kts_staff=1' } });
+      assert.equal(out.status, 303); assert.ok(out.headers.getSetCookie().includes('kts_staff=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax'), 'cleared at logout');
     } finally { done(); }
   });
   it('WAU: distinct accounts over the last 7 KST days, guests folded into their user', async () => {

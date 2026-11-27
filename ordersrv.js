@@ -38,9 +38,11 @@ export const PORTONE_SDK = 'https://cdn.portone.io/v2/browser-sdk.js';
 export const MOCK_HOOK_SECRET = 'whsec_' + btoa('kts-mock-webhook-secret-not-for-production');
 
 // ---- operator / test traffic ------------------------------------------------------------------------------------------------------------
-// A request from the operator's device (kts_staff=1, set with the /admin page, HttpOnly) or from tools/prod-e2e.mjs (x-kts-test: 1). The
+// A request from the operator's device (kts_staff=1, HttpOnly, set by a successful /admin login and cleared by its logout) or from
+// tools/prod-e2e.mjs (x-kts-test: 1). The
 // main daily stats leave these out (/rt/event, the gift seen beacons). Anyone can send the header: it only removes their own counts.
 export const STAFF_COOKIE = 'kts_staff=1; Max-Age=31536000; Path=/; HttpOnly; Secure; SameSite=Lax';
+export const STAFF_CLEAR = 'kts_staff=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax';
 export const testTraffic = (req) => { try { return req.headers.get('x-kts-test') === '1' || /(?:^|;\s*)kts_staff=1(?:\s*;|\s*$)/.test(req.headers.get('cookie') || ''); } catch { return false; } };
 
 // ---- the store ---------------------------------------------------------------------------------------------------------------------

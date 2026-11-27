@@ -27,7 +27,7 @@ import { teamApi, teamDb, teamPath, teamWorld, teamMove, teamForget } from './te
 import { isPrime, BOARD_ERR, PLOT_HOLD_MS } from './primerules.js';
 // 주문·결제 (ordersrv.js, payrules.js; docs/payments-setup.md): sandbox first, invisible until PAY_ON=1. Its routes, its Meter instance 'order',
 // the pay switch in /rt/config, and the operator/test-traffic flag (testTraffic, STAFF_COOKIE) the daily stats leave out.
-import { orderApi, orderPath, orderDb, testTraffic, STAFF_COOKIE } from './ordersrv.js';
+import { orderApi, orderPath, orderDb, testTraffic, STAFF_COOKIE, STAFF_CLEAR } from './ordersrv.js';
 import { payPublic } from './payrules.js';
 // v16 cost pass: ping 25s (client) / STALE 75s, idle scan alarm 60s, meter report 60s, compact pos ('p'/'P'), nearby fanout, event ring + world cache, HMAC guest tokens.
 const CAP = 50, MEM = 0.125, LEAN = 0.8, HARD = 0.95, STALE = 75000, SCAN = 5000, IDLE_SCAN = 60000, REP = 60000;
@@ -2972,9 +2972,7 @@ async function admServe(env, req) {
   let csp = tag && ADM_CSP.get(tag);
   if (!csp) { csp = await admCsp(html); if (tag) { if (ADM_CSP.size >= 20) ADM_CSP.clear(); ADM_CSP.set(tag, csp); } }
   const out = new Response(html, res); out.headers.set('content-security-policy', csp); out.headers.delete('content-length');
-  // The operator's device: kts_staff=1 (a year, HttpOnly) so its own visits stay out of the daily stats (ordersrv.js testTraffic). Set once.
-  if (!testTraffic(req)) out.headers.append('set-cookie', STAFF_COOKIE);
-  return out;
+  return out; // the operator's device mark (kts_staff) is set by a successful login only (admLoginPost), not by opening a page
 }
 function admLogin(note = '', status = 200, head = {}) {
   const html = '<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -2988,7 +2986,8 @@ function admLogin(note = '', status = 200, head = {}) {
     + '<input type="password" name="key" autocomplete="off" required aria-label="운영자 키" placeholder="운영자 키"><button type="submit">들어가기</button></form></body></html>';
   return new Response(html, { status, headers: { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'", ...head } });
 }
-const admBack = (cookie) => new Response(null, { status: 303, headers: { location: '/admin', ...(cookie ? { 'set-cookie': cookie } : {}) } });
+// cookie: one Set-Cookie value or several (a login sets the session and the operator's device mark; a logout clears both).
+const admBack = (cookie) => { const h = new Headers({ location: '/admin' }); for (const c of [].concat(cookie || [])) h.append('set-cookie', c); return new Response(null, { status: 303, headers: h }); };
 // The trail: never the key, never an address; the first 6 characters of the salted network hash (wishIp). Skipped at budget hard.
 function admTrail(env, ctx, req, ok) {
   const job = (async () => { if ((await lvlNow(env)) >= 2) return; const net = String(await wishIp(env, req)).slice(0, 6); await ops.opsLoginNote(env, { at: Date.now(), ok, net }); })().catch(() => { });
@@ -3003,7 +3002,9 @@ async function admLoginPost(req, env, ctx, u) {
   const ok = keyEq(env.ADMIN_KEY, key), v = ok ? await admMint(env) : '';
   admTrail(env, ctx, req, !!v);
   if (!v) return admLogin(ADM_ERR.key, 401);
-  return admBack(admCookie(u, v, ADM.ttl));
+  // The operator's device: kts_staff=1 (a year, HttpOnly) so its own visits stay out of the daily stats (ordersrv.js testTraffic). Only after
+  // the right key: opening /admin (the login form) marks nothing.
+  return admBack([admCookie(u, v, ADM.ttl), STAFF_COOKIE]);
 }
 // Before the router: { res } answers here, { req } goes on (a copy with the internal header when the cookie opened an admin call).
 async function admGate(req, env, ctx, u) {
@@ -3014,7 +3015,7 @@ async function admGate(req, env, ctx, u) {
     return { res: new Response('not found', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' } }) };
   }
   if (p === '/rt/admin/login') return { res: await admLoginPost(req, env, ctx, u) };
-  if (p === '/rt/admin/logout') return { res: req.method !== 'POST' ? admBack() : admForeign(req, u) ? J({ err: 'origin' }, 403) : admBack(admCookie(u, '', 0)) };
+  if (p === '/rt/admin/logout') return { res: req.method !== 'POST' ? admBack() : admForeign(req, u) ? J({ err: 'origin' }, 403) : admBack([admCookie(u, '', 0), STAFF_CLEAR]) }; // the device mark goes with the session
   if (req.headers.has('x-admin-key')) { // the tools' path, as it was; a wrong key counts as a guess
     if (!adminOk(env, req) && !(await admRate(env, req))) return { res: J({ err: 'rate', error: ADM_ERR.rate }, 429, { 'retry-after': '60' }) };
     return { req };

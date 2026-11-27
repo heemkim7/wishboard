@@ -120,7 +120,7 @@ describe('admin login (worker.js admGate)', { concurrency: false }, () => {
     const { env, assets } = makeEnv();
     const r = await login(env, KEY);
     assert.equal(r.status, 303); assert.equal(r.headers.get('location'), '/admin'); secured(r, 'login');
-    const sc = r.headers.get('set-cookie');
+    const sc = r.headers.getSetCookie().find((x) => /kts_adm=/.test(x));
     assert.match(sc, /^__Host-kts_adm=1\.\d{10}\.[\w-]{22}\.[\w-]{43}; /);
     for (const a of ['HttpOnly', 'Secure', 'SameSite=Strict', 'Path=/', 'Max-Age=43200']) assert.ok(sc.split('; ').includes(a), a);
     const exp = Number(cookieOf(r).split('.')[1]); assert.ok(Math.abs(exp - (Math.floor(Date.now() / 1000) + 43200)) <= 2, 'expiry 12 h out');
@@ -195,7 +195,7 @@ describe('admin login (worker.js admGate)', { concurrency: false }, () => {
     const { env } = makeEnv(); await session(env);
     const r = await call(env, '/rt/admin/logout', { method: 'POST', headers: { origin: 'null' } }); // a form POST from a no-referrer page sends Origin: null
     assert.equal(r.status, 303); assert.equal(r.headers.get('location'), '/admin'); secured(r, 'logout');
-    const sc = r.headers.get('set-cookie');
+    const sc = r.headers.getSetCookie().find((x) => /kts_adm=/.test(x));
     assert.match(sc, /^__Host-kts_adm=; /);
     for (const a of ['Max-Age=0', 'Path=/', 'HttpOnly', 'Secure', 'SameSite=Strict']) assert.ok(sc.split('; ').includes(a), a);
     assert.equal((await call(env, '/rt/admin/logout', { method: 'POST', headers: { origin: 'https://evil.example' } })).status, 403);
@@ -294,7 +294,7 @@ describe('admin login (worker.js admGate)', { concurrency: false }, () => {
     assert.match(sec, /^__Host-kts_adm=/);
     const r = await call(env, LOCAL + '/rt/admin/login', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', origin: LOCAL }, body: 'key=' + encodeURIComponent(KEY) });
     assert.equal(r.status, 303); const plain = cookieOf(r), pv = plain.split('=')[1];
-    assert.match(plain, /^kts_adm=1\./); assert.ok(r.headers.get('set-cookie').split('; ').includes('Secure'));
+    assert.match(plain, /^kts_adm=1\./); assert.ok(r.headers.getSetCookie()[0].split('; ').includes('Secure'));
     assert.equal((await call(env, LOCAL + '/rt/admin/errors', { headers: { cookie: plain } })).status, 200, 'http, plain name');
     assert.equal((await call(env, LOCAL + '/rt/admin/errors', { headers: { cookie: '__Host-kts_adm=' + pv } })).status, 401, 'http, prefixed name');
     assert.equal((await call(env, '/rt/admin/errors', { headers: { cookie: 'kts_adm=' + sv } })).status, 401, 'https, plain name');
