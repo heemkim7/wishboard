@@ -20,13 +20,20 @@ describe('claim_start: the wizard reports its opening once per open', () => {
     assert.deepEqual(start({ slot: 'MAIN_TOP', free: false }), { tier: 'S', kind: 'claim' });
     assert.equal(start(null), null);
   });
-  it('is wired at step 1 of openClaimStep only, and every fresh open says where it came from', () => {
-    const ui = readFileSync(new URL('../ui.js', import.meta.url), 'utf8');
+  it('is wired at step 1 of the wizard and at every opening of the claim form, each saying where it came from', () => {
+    const ui = readFileSync(new URL('../ui.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
     assert.match(ui, /function openClaimStep\(n, model, from = ''\) \{\n\s*if \(!model\) return;\n\s*if \(n === 1\) \{ const start = claimStart\(model, from\); if \(start\) trackEvent\('claim_start', start\); \}/);
-    assert.equal((ui.match(/trackEvent\('claim_start'/g) || []).length, 1);
+    // The other surface a board_claim can come from: the 전광판 걸기 sheet (paid slots, a second board, edits), a fresh object per opening.
+    assert.match(ui, /function openBillboard\(slotId = '', zone = '', from = 'sheet'\) \{\n\s*if \(isPrimeSlot\(slotId\)\) \{[^\n]*\n\s*hooks\.refreshWorld\?\.\(\);\n\s*let slot = slotId \|\| 'STREET_1';\n\s*\{ const start = claimStart\(\{ slot, free: false \}, from\); if \(start\) trackEvent\('claim_start', start\); \}/);
+    assert.equal((ui.match(/trackEvent\('claim_start'/g) || []).length, 2);
     const opens = [...ui.matchAll(/openClaimStep\(1, claimWizard\([^)]*\)(, '(\w+)')?\)/g)];
     assert.equal(opens.length, 3);
     assert.deepEqual(opens.map((m) => m[2]), ['tool', 'goal', 'toast']);
+    assert.match(ui, /else openBillboard\(slot \|\| '', '', 'sheet_tool'\);/); // the tool while already holding a board
+    // Each opening of the form is a new object: one claim_start per opening.
+    const start = claimStarter(slotTier);
+    assert.deepEqual(start({ slot: 'PLOT_4', free: false }, 'sheet'), { tier: 'C', kind: 'claim', from: 'sheet' });
+    assert.deepEqual(start({ slot: 'PLOT_4', free: false }, 'sheet_tool'), { tier: 'C', kind: 'claim', from: 'sheet_tool' });
   });
   it('reaches the same pipelines as board_claim: the first-party event list and GA', () => {
     assert.ok(EVENT_NAMES.includes('claim_start') && EVENT_NAMES.includes('board_claim'));

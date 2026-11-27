@@ -35,7 +35,7 @@ it('lays out today first, the percentage against its base row only from MIN_BASE
 });
 
 it('admin.html adds the rows to the funnel table with textContent only', () => {
-  const html = readFileSync(new URL('../admin.html', import.meta.url), 'utf8');
+  const html = readFileSync(new URL('../admin.html', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   assert.match(html, /import \{ GROW_STEPS, growDays, growSum, stepPct, dayTable \} from '\.\/growth\.js\?v=\d+';/);
   const fn = html.slice(html.indexOf('function renderGrow'), html.indexOf("$('statsLoad').onclick"));
   assert.match(fn, /dayTable\(d\.days, d\.today, shown\.length\)/);

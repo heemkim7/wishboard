@@ -2,11 +2,11 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { it } from 'node:test';
-import { otherShare, SITE } from '../plaza-account.js';
+import { otherShare, adActions, SITE } from '../plaza-account.js';
 
 const NOW = Date.parse('2027-08-01T03:00:00Z');
 const board = (o = {}) => ({ slot_id: 'PLOT_9', holder_id: 'guest:holder', holder_name: '지민', lit_until: new Date(NOW + 3600e3).toISOString(), ...o });
-const ui = readFileSync(new URL('../ui.js', import.meta.url), 'utf8');
+const ui = readFileSync(new URL('../ui.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const between = (a, b) => ui.slice(ui.indexOf(a), ui.indexOf(b, ui.indexOf(a)));
 
 it('gives a visitor the board card page with the holder named, and nothing to the owner or on a dark board', () => {
@@ -29,20 +29,35 @@ it("gives other people's wishes their /rt/w/<id> page, and nothing for my own", 
   assert.equal(otherShare({}), null);
 });
 
-it('openAd: a visitor gets 공유 next to the visitor buttons; the owner keeps 문구 수정 and 초대 링크 복사 and gets no 공유', () => {
+it('the board sheet row: a visitor gets 공유 after 빈 전광판 찾기 when there is a link to share; the owner keeps its own buttons and gets no 공유', () => {
+  // The row as openAd builds it (plaza-account.js adActions), with the share decided by otherShare for that viewer.
+  const row = (me, extra = {}) => { const b = board(); const mine = b.holder_id === me, share = !!(!mine && otherShare({ board: b, me, now: NOW }));
+    return adActions({ mine, share, ...extra }); };
+  assert.deepEqual(row('guest:visitor'), ['find', 'share', 'report']);
+  assert.deepEqual(row('guest:visitor', { link: true, view: true }), ['link', 'view', 'find', 'share', 'report']);
+  assert.deepEqual(row('guest:holder'), ['edit', 'invite']);
+  assert.deepEqual(row('guest:holder', { link: true, view: true }), ['link', 'view', 'edit', 'invite']);
+  assert.deepEqual(adActions({ mine: true, share: true }), ['edit', 'invite'], 'never a 공유 on my own board');
+  assert.deepEqual(adActions({ mine: false, share: false }), ['find', 'report']);
+  // openAd draws exactly these keys, and 공유 sends the card page through shareOther with the sheet's own copy box.
   const ad = between('function openAd(slotId) {', 'const photoTold');
   assert.match(ad, /const other = mine \? null : otherShare\(\{ board: b, me: hooks\.actorId\?\.\(\) \|\| '' \}\);/);
-  assert.match(ad, /other \? h\('button', \{ type: 'button', class: 'btn ghost', text: '공유', 'aria-label': .*onclick: \(\) => shareOther\(other, inviteBox\) \}\) : null,/);
-  assert.match(ad, /mine \? h\('button', \{ type: 'button', class: 'btn primary', text: '문구 수정', onclick: \(\) => openBillboard\(slotId\) \}\)/);
-  assert.match(ad, /mine \? h\('button', \{ type: 'button', class: 'btn ghost', text: '초대 링크 복사', onclick: \(\) => copyInvite\(slotId, '', inviteBox\) \}\) : h\('button', \{ type: 'button', class: 'btn ghost', text: '신고'/);
+  assert.match(ad, /\.\.\.adActions\(\{ mine, link: !!url, view: !!card, share: !!other \}\)\.map\(\(k\) => \(\{/);
+  assert.match(ad, /share: \(\) => h\('button', \{ type: 'button', class: 'btn ghost', text: '공유', .*onclick: \(\) => shareOther\(other, inviteBox\) \}\),/);
   assert.match(ad, /if \(!boardActive\(b\)\) \{ openBillboard\(slotId\); return; \}/); // only a lit board reaches this sheet
 });
 
-it('the wish list: a small 공유 on rows that are not mine, 44px tall, the action row --tap-gap apart', () => {
+it('the wish list: 공유 on rows that are not mine, its copy box inside the wish sheet (outside the list that repaints), even buttons', () => {
+  const sheet = between('function openWish(opts = {}) {', 'function paintYesterday()');
+  assert.match(sheet, /const otherBox = h\('div', \{ class: 'manual-copy', hidden: true \}\);/);
+  assert.match(sheet, /leftEl, otherBox, listBox, yBox/);
   const row = between('function wishRowEl(w, i) {', 'function paintList()');
   assert.match(row, /const other = own \? null : otherShare\(\{ wish: w, own, origin: location\.origin \}\);/);
-  assert.match(row, /text: '공유', .*style: \{ minHeight: '44px' \}, onclick: \(\) => shareOther\(other\) \}\) : null;/);
+  assert.match(row, /class: 'wish-report', type: 'button', text: '공유', [^\n]*onclick: \(\) => shareOther\(other, otherBox\) \}\) : null;/);
+  assert.equal(/minHeight/.test(row), false, 'the height comes from index.html, the same for every button in the row');
   assert.match(row, /h\('div', \{ class: 'wa', style: \{ gap: 'var\(--tap-gap\)' \} \}, heart, shareBtn, rep\)/);
+  const css = readFileSync(new URL('../index.html', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  assert.match(css, /\.wish-heart, \.wish-report \{ min-height: 44px; min-width: 44px;/);
 });
 
 it('the shares go through sendLink without my invite code and call no reward: no shot bonus, no +300, no link-visit pay', () => {

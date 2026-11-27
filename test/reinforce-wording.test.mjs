@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { it } from 'node:test';
 import { CHEER_PHRASES } from '../plaza-account.js';
 
-const read = (f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
+const read = (f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 
 it('no old wording is left in the visitor-facing code', () => {
   const files = ['ui.js', 'main.js', 'plaza-account.js', 'ts3d/screens.js', 'index.html'];

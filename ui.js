@@ -5,7 +5,7 @@ import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, LANDMARKS } from './
 import { BALANCE, PAY, chainBoost, floorOf, slotName, josa, STREET_N, SLOT_SOON, slotOpen, SHOP_KINDS, shopTiles, shopItem, isPrimeSlot } from './balance.js';
 import { createTeamUI } from './teamui.js?v=202611250713';
 import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611250713';
-import { WISH, WISH_ERR, cleanWish, wishRejected, wishShareText, staffNick } from './wish.js';
+import { WISH, WISH_ERR, cleanWish, wishRejected, wishShareText, nickRefused, NICK_FIX } from './wish.js';
 import { botNick } from './league.js';
 import { backFields, returnGap, claimStarter } from './growth.js?v=202611250713';
 import { A2HS_KEY, VISITS_KEY, bumpVisits, isStandalone, isIosSafari, installMode, installDue, INSTALL_COPY, INSTALL_CRAMPED_Q } from './install.js?v=202611250713';
@@ -16,7 +16,7 @@ import { inviteView } from './invite.js';
 import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611250713';
 import { EMOTES, REACTIONS, AVATAR_COLORS, AVATAR_COLOR_NAMES, SPECIES } from './ts3d/avatars.js?v=202611250713';
 import { trackEvent, statsOff, statsGpc, setStatsOff } from './analytics.js?v=202611250713';
-import { CHEER_PHRASES, SITE, accountLabel, allowedLink, blockedText, linkedActor, slotTier, freshBoards, otherShare } from './plaza-account.js';
+import { CHEER_PHRASES, SITE, accountLabel, allowedLink, blockedText, linkedActor, slotTier, freshBoards, otherShare, adActions } from './plaza-account.js';
 import { codeStart, codeStep, codeView, otpField } from './mailcode.js?v=202611250713';
 import { policyDoc } from './legal.js?v=202611250713';
 import { setOperator, operatorInfo } from './legal.js?v=202611250713';
@@ -439,7 +439,7 @@ export function createUI(root, hooks) {
         h('button', { class: 'btn icon tool-board', type: 'button', 'aria-label': '전광판 걸기', title: '전광판 걸기', onclick: () => {
           const slot = firstOpenStarter();
           if (slot && !myBoards().length) openClaimStep(1, claimWizard(slot), 'tool');
-          else openBillboard(slot || '');
+          else openBillboard(slot || '', '', 'sheet_tool');
         } }, icon('board')),
         wishBtn,
         h('button', { class: 'btn icon tool-rank', type: 'button', 'aria-label': '응원 순위', title: '응원 순위', onclick: () => openRanks() }, icon('trophy')),
@@ -2442,10 +2442,11 @@ export function createUI(root, hooks) {
       const tabNew = h('button', { type: 'button', class: 'wish-tab', text: '최신', onclick: () => { tab = 'recent'; paintList(); } });
       const leftEl = h('p', { class: 'note wish-left' });
       const listBox = h('div', { class: 'wish-list' });
+      const otherBox = h('div', { class: 'manual-copy', hidden: true }); // the copy box for 공유 on someone else's wish, in this sheet (the list repaints)
       const yBox = h('div', { class: 'wish-y', hidden: true });
       const invBox = h('p', { class: 'note wish-inv-n', hidden: true }); // 초대한 친구 n명 · 받은 포인트 m, only once n > 0
       const seasonEl = h('p', { class: 'wish-season', hidden: true });
-      host.append(seasonEl, focusBox, mineBox, invBox, h('div', { class: 'wish-tabs', role: 'group', 'aria-label': '소원 목록' }, tabTop, tabNew), leftEl, listBox, yBox, h('p', { class: 'note wish-foot', text: WISH_FOOT }));
+      host.append(seasonEl, focusBox, mineBox, invBox, h('div', { class: 'wish-tabs', role: 'group', 'aria-label': '소원 목록' }, tabTop, tabNew), leftEl, otherBox, listBox, yBox, h('p', { class: 'note wish-foot', text: WISH_FOOT }));
 
       const isOwn = (w) => !!(w?.mine || (wishView.mine && w?.id === wishView.mine.id));
       // The view = the last server state plus the hearts still in flight (never written into wishView, so a failed one
@@ -2661,9 +2662,9 @@ export function createUI(root, hooks) {
         const heart = h('button', { class: 'wish-heart', type: 'button', disabled: !st.ok || busy, title: st.why || '하트 보내기', 'aria-label': st.ok ? `${who}님의 소원에 하트 보내기` : `${who}님의 소원 · ${st.why || st.short}`, onclick: () => sendHeart(w.id) },
           ...(short.startsWith('♥ ') ? withIcon('heart', short.slice(2)) : [short]));
         const rep = own ? null : h('button', { class: 'wish-report' + (armed === w.id ? ' arm' : ''), type: 'button', text: armed === w.id ? '한 번 더 누르면 신고' : '신고', onclick: () => armReport(w.id) });
-        // 공유 on other people's wishes: their /rt/w/<id> page, paying nothing (shareOther). 44px tall and --tap-gap apart, like the sheet's other buttons.
+        // 공유 on other people's wishes: their /rt/w/<id> page, paying nothing (shareOther). The action row is --tap-gap apart (index.html makes these buttons 44px tall).
         const other = own ? null : otherShare({ wish: w, own, origin: location.origin });
-        const shareBtn = other ? h('button', { class: 'wish-report', type: 'button', text: '공유', 'aria-label': `${who}님의 소원 링크 공유하기`, style: { minHeight: '44px' }, onclick: () => shareOther(other) }) : null;
+        const shareBtn = other ? h('button', { class: 'wish-report', type: 'button', text: '공유', 'aria-label': `${who}님의 소원 링크 공유하기`, onclick: () => shareOther(other, otherBox) }) : null;
         return h('div', { class: 'wish-row' + (own ? ' mine' : '') },
           tab === 'top' ? h('span', { class: 'n tnum', text: String(Math.floor(Number(w.rank)) || i + 1) }) : null,
           h('div', { class: 'wt' }, h('b', { text: quote(w.txt) }), h('small', { text: who + (own ? ' · 나' : '') })),
@@ -2786,13 +2787,16 @@ export function createUI(root, hooks) {
           text,
           onclick: () => hooks.cheer?.(slotId, i + 1),
         }))),
-        h('div', { class: 'row' },
-          url ? h('button', { type: 'button', class: 'btn ghost', text: '링크 열기', onclick: () => hooks.adClick?.(slotId, url) }) : null,
-          card ? h('button', { type: 'button', class: 'btn ghost', text: '이 전광판 보기', onclick: () => { closeSheet(); hooks.focusShot?.(slotId); } }) : null,
-          mine ? h('button', { type: 'button', class: 'btn primary', text: '문구 수정', onclick: () => openBillboard(slotId) }) : h('button', { type: 'button', class: 'btn primary', text: '빈 전광판 찾기', onclick: () => openBillboard('') }),
-          other ? h('button', { type: 'button', class: 'btn ghost', text: '공유', 'aria-label': `${b.holder_name || '익명'}님의 전광판 링크 공유하기`, onclick: () => shareOther(other, inviteBox) }) : null,
-          mine ? h('button', { type: 'button', class: 'btn ghost', text: '초대 링크 복사', onclick: () => copyInvite(slotId, '', inviteBox) }) : h('button', { type: 'button', class: 'btn ghost', text: '신고', onclick: () => openReport(slotId) }),
-        ),
+        // The buttons (plaza-account.js adActions decides which, in this order).
+        h('div', { class: 'row' }, ...adActions({ mine, link: !!url, view: !!card, share: !!other }).map((k) => ({
+          link: () => h('button', { type: 'button', class: 'btn ghost', text: '링크 열기', onclick: () => hooks.adClick?.(slotId, url) }),
+          view: () => h('button', { type: 'button', class: 'btn ghost', text: '이 전광판 보기', onclick: () => { closeSheet(); hooks.focusShot?.(slotId); } }),
+          edit: () => h('button', { type: 'button', class: 'btn primary', text: '문구 수정', onclick: () => openBillboard(slotId) }),
+          find: () => h('button', { type: 'button', class: 'btn primary', text: '빈 전광판 찾기', onclick: () => openBillboard('') }),
+          share: () => h('button', { type: 'button', class: 'btn ghost', text: '공유', 'aria-label': `${b.holder_name || '익명'}님의 전광판 링크 공유하기`, onclick: () => shareOther(other, inviteBox) }),
+          invite: () => h('button', { type: 'button', class: 'btn ghost', text: '초대 링크 복사', onclick: () => copyInvite(slotId, '', inviteBox) }),
+          report: () => h('button', { type: 'button', class: 'btn ghost', text: '신고', onclick: () => openReport(slotId) }),
+        })[k]())),
         inviteBox,
         stickerBox(() => slotId),
       );
@@ -2807,10 +2811,13 @@ export function createUI(root, hooks) {
     if (!slot || !text) return;
     photoTold.set(String(slot), { kind: String(kind || ''), text: String(text) });
   }
-  function openBillboard(slotId = '', zone = '') {
+  // from: claim_start's origin for this claim form ('sheet', or 'sheet_tool' from the tool while already holding a board). Every opening sends one
+  // (the wizard sends its own), so 전광판 걸기 시작 covers every surface a board_claim can come from.
+  function openBillboard(slotId = '', zone = '', from = 'sheet') {
     if (isPrimeSlot(slotId)) { teamUi().openPrime(slotId); return; } // 명당: never a claim form
     hooks.refreshWorld?.();
     let slot = slotId || 'STREET_1';
+    { const start = claimStart({ slot, free: false }, from); if (start) trackEvent('claim_start', start); }
     openSheet(['board', '전광판 걸기'], '72시간', (host) => {
       const meSheet = sheet; // a late answer must not close a sheet opened after this one
       const badgeEl = host.parentElement?.querySelector('.badge');
@@ -3722,7 +3729,7 @@ export function createUI(root, hooks) {
           h('button', { type: 'button', class: 'mini', text: '열기', onclick: () => openAd(b.slot_id) }),
           h('button', { type: 'button', class: 'mini', text: '보러가기', onclick: () => go(b.slot_id) }),
           linkBtn(b))) : [h('p', { class: 'note', text: '아직 켜진 전광판이 없어요.' })]));
-        note.textContent = fresh ? '가장 최근에 켜진 전광판부터 보여요.' : '응원 수와 택시가 선 횟수를 더합니다. 1위 전광판 위로 황금 빛기둥이 섭니다.';
+        note.textContent = fresh ? '가장 최근에 새로 걸린 전광판부터 보여요. 매일 다시 켜도 순서는 그대로예요.' : '응원 수와 택시가 선 횟수를 더합니다. 1위 전광판 위로 황금 빛기둥이 섭니다.';
       };
       const tabBtn = (id, text) => h('button', { type: 'button', class: id === tab ? 'on' : '', 'aria-pressed': String(id === tab), text, onclick: (e) => { tab = id; for (const c of e.currentTarget.parentElement.children) { c.classList.toggle('on', c === e.currentTarget); c.setAttribute('aria-pressed', String(c === e.currentTarget)); } paint(); } });
       rankRefresh = () => { if (tab === 'hot' || tab === 'new' || tab === 'team') paint(); }; // the world's 1 s refresh repaints only the board lists
@@ -3809,7 +3816,7 @@ export function createUI(root, hooks) {
       const save = h('button', { class: 'btn gold cta', type: 'button', text: '저장하기', onclick: async () => {
         if (save.disabled) return;
         const name = chars(input.value, 16).trim() || hooks.nick();
-        if (blockedText(name) || botNick(name) || staffNick(name)) { note('그 이름은 쓸 수 없어요', 'err'); return; }
+        if (blockedText(name) || nickRefused(name)) { note(NICK_FIX, 'err'); input.focus?.(); return; } // also when only the colour or species changed: the stored name is the one refused
         save.disabled = true;
         save.textContent = '저장 중…';
         try {
@@ -4062,6 +4069,7 @@ export function createUI(root, hooks) {
           host.append(h('button', { class: 'btn gold', type: 'button', text: '전광판 고르기', onclick: () => openBillboard('PLOT_1') }));
           return;
         }
+        if (nickRefused(hooks.nick?.())) host.append(h('p', { class: 'note err', role: 'alert', text: NICK_FIX }), h('button', { class: 'btn ghost', type: 'button', text: '프로필에서 닉네임 바꾸기', onclick: () => openProfile() })); // the claim would be refused at the end
         host.append(h('p', { class: 'note', text: '이름을 걸 칸을 고르세요' }));
         // A pick toggles the rows in place (no new sheet): the chosen one tinted with a check, aria-pressed on every row.
         const rows = ids.map((id) => {
@@ -4530,7 +4538,7 @@ export function createUI(root, hooks) {
       if (entered) return;
       // 네온봇N is the seeded bots' name: a typed one is refused here, a stored one is dropped for the default.
       const name = chars(known ? hooks.nick() : nick.value, 16).trim() || hooks.nick();
-      if ((botNick(name) || staffNick(name)) && !known) { nickErr.textContent = '그 이름은 쓸 수 없어요'; nickErr.hidden = false; nick.focus?.(); return; }
+      if (nickRefused(name) && !known) { nickErr.textContent = '그 이름은 쓸 수 없어요'; nickErr.hidden = false; nick.focus?.(); return; }
       entered = true;
       trackEvent('enter_square', { load_ms: Math.round(performance.now()) });
       ac();
