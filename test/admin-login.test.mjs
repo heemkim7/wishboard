@@ -46,7 +46,7 @@ function makeEnv(extra = {}) {
   const env = { GUEST_KEY: 'guest-test-key', FLUSH_KEY: 'flush-test-key', ADMIN_KEY: KEY, ...extra };
   // What the static assets would answer (wrangler html_handling auto-trailing-slash): /admin is admin.html, /admin.html and /admin/ redirect to /admin.
   env.ASSETS = { fetch: async (req) => { const p = new URL(req.url).pathname; assets.push(p);
-    if (p === '/admin') return new Response(ADMIN_HTML, { headers: { 'content-type': 'text/html; charset=utf-8' } });
+    if (p === '/admin') return new Response(env.page ?? ADMIN_HTML, { headers: { 'content-type': 'text/html; charset=utf-8', ...(env.etag ? { etag: env.etag } : {}) } });
     if (p === '/admin.html' || p === '/admin/') return new Response(null, { status: 307, headers: { location: '/admin' } });
     const f = p.slice(1); if (MODULES.includes(f)) return new Response(read(f), { headers: { 'content-type': 'text/javascript' } });
     return new Response('asset ' + p, { status: 200 }); } };
@@ -60,7 +60,7 @@ const waits = [];
 const ctx = { waitUntil(p) { waits.push(Promise.resolve(p).catch(() => {})); } };
 const settle = async () => { while (waits.length) await waits.shift(); };
 async function call(env, path, init = {}) {
-  const res = await worker.fetch(new Request(ORIGIN + path, { redirect: 'manual', ...init, headers: { 'cf-connecting-ip': '203.0.113.7', ...(init.headers || {}) } }), env, ctx);
+  const res = await worker.fetch(new Request(/^https?:/.test(path) ? path : ORIGIN + path, { redirect: 'manual', ...init, headers: { 'cf-connecting-ip': '203.0.113.7', ...(init.headers || {}) } }), env, ctx);
   const text = await res.clone().text();
   seen.push({ path, text, headers: [...res.headers].map(([k, v]) => k + ': ' + v).join('\n') });
   return Object.assign(res, { text });
@@ -121,12 +121,13 @@ describe('admin login (worker.js admGate)', { concurrency: false }, () => {
     const r = await login(env, KEY);
     assert.equal(r.status, 303); assert.equal(r.headers.get('location'), '/admin'); secured(r, 'login');
     const sc = r.headers.get('set-cookie');
-    assert.match(sc, /^kts_adm=1\.\d{10}\.[\w-]{22}\.[\w-]{43}; /);
+    assert.match(sc, /^__Host-kts_adm=1\.\d{10}\.[\w-]{22}\.[\w-]{43}; /);
     for (const a of ['HttpOnly', 'Secure', 'SameSite=Strict', 'Path=/', 'Max-Age=43200']) assert.ok(sc.split('; ').includes(a), a);
     const exp = Number(cookieOf(r).split('.')[1]); assert.ok(Math.abs(exp - (Math.floor(Date.now() / 1000) + 43200)) <= 2, 'expiry 12 h out');
     const c = cookieOf(r);
     const page = await call(env, '/admin', { headers: { cookie: 'other=1; ' + c } });
     assert.equal(page.status, 200); assert.equal(page.text, ADMIN_HTML); secured(page, 'operator page');
+    assert.match(page.headers.get('content-security-policy'), /^default-src 'none'; script-src 'self' 'sha256-/);
     const mod = await call(env, '/admin-ops.js?v=1', { headers: { cookie: c } });
     assert.equal(mod.status, 200); assert.equal(mod.text, read('admin-ops.js')); secured(mod, 'module');
     const red = await call(env, '/admin.html', { headers: { cookie: c } });
@@ -195,7 +196,7 @@ describe('admin login (worker.js admGate)', { concurrency: false }, () => {
     const r = await call(env, '/rt/admin/logout', { method: 'POST', headers: { origin: 'null' } }); // a form POST from a no-referrer page sends Origin: null
     assert.equal(r.status, 303); assert.equal(r.headers.get('location'), '/admin'); secured(r, 'logout');
     const sc = r.headers.get('set-cookie');
-    assert.match(sc, /^kts_adm=; /);
+    assert.match(sc, /^__Host-kts_adm=; /);
     for (const a of ['Max-Age=0', 'Path=/', 'HttpOnly', 'Secure', 'SameSite=Strict']) assert.ok(sc.split('; ').includes(a), a);
     assert.equal((await call(env, '/rt/admin/logout', { method: 'POST', headers: { origin: 'https://evil.example' } })).status, 403);
   });
@@ -233,10 +234,17 @@ describe('admin login (worker.js admGate)', { concurrency: false }, () => {
     assert.equal(d.ok, true); assert.deepEqual(d.items.map((x) => x.ok), [true, false]);
     for (const x of d.items) { assert.deepEqual(Object.keys(x).sort(), ['at', 'net', 'ok']); assert.match(x.net, /^[0-9a-f]{6}$/); assert.ok(Math.abs(x.at - Date.now()) < 5000); }
     assert.equal(r.text.includes('203.0.113'), false, 'no address');
+    // fifty-five failures do not push out the real login: failures keep their newest 50, successes their newest 20, apart
     for (let i = 0; i < 55; i++) { await login(env, 'wrong-' + i + '-wrong-wrong'); await settle(); }
-    const all = JSON.parse((await call(env, '/rt/admin/logins', { headers: { 'x-admin-key': KEY } })).text).items;
-    assert.equal(all.length, 50); assert.equal(all.every((x) => x.ok === false), true);
-    assert.equal(env.meter('ops').sql.db.prepare('select count(*) as c from olog').get().c, 50);
+    const logins = async () => JSON.parse((await call(env, '/rt/admin/logins', { headers: { 'x-admin-key': KEY } })).text).items;
+    let all = await logins();
+    assert.equal(all.filter((x) => !x.ok).length, 50); assert.equal(all.filter((x) => x.ok).length, 1, 'the success survives the flood');
+    assert.equal(env.meter('ops').sql.db.prepare('select count(*) as c from olog').get().c, 51);
+    for (let i = 0; i < 25; i++) { offset += 1; await login(env, KEY); await settle(); }
+    all = await logins();
+    assert.equal(all.filter((x) => x.ok).length, 20); assert.equal(all.filter((x) => !x.ok).length, 50, 'successes do not push out failures either');
+    assert.equal(all.length, 70);
+    for (let i = 1; i < all.length; i++) assert.ok(all[i - 1].at >= all[i].at, 'newest first');
     assert.equal((await call(env, '/rt/admin/logins')).status, 401);
     assert.match(read('admin-ops.js'), /\/rt\/admin\/logins/);
   });
@@ -253,6 +261,93 @@ describe('admin login (worker.js admGate)', { concurrency: false }, () => {
       const now = env.meter('ops').sql.db.prepare('select count(*) as c from olog').get().c;
       assert.equal(now, before, 'no login row at hard');
     } finally { offset += 61000; await call(makeEnv().env, '/rt/gate'); await settle(); }
+  });
+
+  it('refuses a login or logout the browser marks as from elsewhere, before it counts as an attempt; null Origin from our own page still works', async () => {
+    const rl = fakeRl(5), { env } = makeEnv({ ADMIN_RL: rl });
+    for (const s of ['cross-site', 'same-site']) {
+      const r = await login(env, KEY, { origin: 'null', 'sec-fetch-site': s });
+      assert.equal(r.status, 403, s); assert.equal(r.headers.get('set-cookie'), null); secured(r, s);
+      const out = await call(env, '/rt/admin/logout', { method: 'POST', headers: { origin: 'null', 'sec-fetch-site': s } });
+      assert.equal(out.status, 403, 'logout ' + s); assert.equal(out.headers.get('set-cookie'), null);
+    }
+    assert.equal(rl.seen.size, 0, 'no attempt counted'); await settle();
+    assert.equal(JSON.parse((await call(env, '/rt/admin/logins', { headers: { 'x-admin-key': KEY } })).text).items.length, 0, 'no trail row');
+    for (const s of ['same-origin', 'none']) assert.equal((await login(env, KEY, { origin: 'null', 'sec-fetch-site': s })).status, 303, s);
+    assert.equal((await login(env, KEY, { origin: 'null' })).status, 303, 'no Sec-Fetch-Site: as before');
+    assert.equal((await call(env, '/rt/admin/logout', { method: 'POST', headers: { origin: 'null', 'sec-fetch-site': 'same-origin' } })).status, 303);
+    assert.equal((await login(env, KEY, { origin: 'https://evil.example', 'sec-fetch-site': 'same-origin' })).status, 403, 'a foreign Origin is still refused');
+  });
+
+  it('a wrong x-admin-key stays 401 even with a valid cookie', async () => {
+    const { env } = makeEnv(); const c = await session(env);
+    for (const [m, p] of [['GET', '/rt/admin/errors'], ['GET', '/rt/admin/logins'], ['POST', '/rt/admin/errors/clear']]) {
+      const r = await call(env, p, { method: m, headers: { cookie: c, origin: ORIGIN, 'x-admin-key': 'wrong-key-wrong-key', ...(m === 'POST' ? { 'content-type': 'application/json' } : {}) }, ...(m === 'POST' ? { body: '{}' } : {}) });
+      assert.equal(r.status, 401, p);
+    }
+  });
+
+  it('names the cookie __Host-kts_adm on https and kts_adm on http, and takes only the name of the request\'s scheme', async () => {
+    const { env } = makeEnv();
+    const LOCAL = 'http://localhost:8787';
+    const sec = await session(env), sv = sec.split('=')[1];
+    assert.match(sec, /^__Host-kts_adm=/);
+    const r = await call(env, LOCAL + '/rt/admin/login', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', origin: LOCAL }, body: 'key=' + encodeURIComponent(KEY) });
+    assert.equal(r.status, 303); const plain = cookieOf(r), pv = plain.split('=')[1];
+    assert.match(plain, /^kts_adm=1\./); assert.ok(r.headers.get('set-cookie').split('; ').includes('Secure'));
+    assert.equal((await call(env, LOCAL + '/rt/admin/errors', { headers: { cookie: plain } })).status, 200, 'http, plain name');
+    assert.equal((await call(env, LOCAL + '/rt/admin/errors', { headers: { cookie: '__Host-kts_adm=' + pv } })).status, 401, 'http, prefixed name');
+    assert.equal((await call(env, '/rt/admin/errors', { headers: { cookie: 'kts_adm=' + sv } })).status, 401, 'https, plain name');
+    assert.equal((await call(env, '/rt/admin/errors', { headers: { cookie: sec } })).status, 200, 'https, prefixed name');
+    // junk under the plain name cannot starve the prefixed one on https
+    assert.equal((await call(env, '/rt/admin/errors', { headers: { cookie: 'kts_adm=x; kts_adm=y; kts_adm=z; ' + sec } })).status, 200);
+    const out = await call(env, LOCAL + '/rt/admin/logout', { method: 'POST', headers: { origin: LOCAL } });
+    assert.match(out.headers.get('set-cookie'), /^kts_adm=; Max-Age=0; /);
+    assert.match((await call(env, LOCAL + '/admin', { headers: { cookie: plain } })).text, /opsRoot/, 'the page opens on http with the plain name');
+  });
+
+  it('refuses a login body over 4 KB, by content-length before reading and while reading without one', async () => {
+    const rl = fakeRl(100), { env } = makeEnv({ ADMIN_RL: rl });
+    const big = 'key=' + encodeURIComponent(KEY) + '&pad=' + 'x'.repeat(4200);
+    let r = await login(env, KEY, { 'content-length': '5000' });
+    assert.equal(r.status, 413); assert.equal(r.headers.get('set-cookie'), null);
+    const stream = (s) => new ReadableStream({ start(c) { const b = new TextEncoder().encode(s); for (let i = 0; i < b.length; i += 1000) c.enqueue(b.slice(i, i + 1000)); c.close(); } });
+    r = await call(env, '/rt/admin/login', { method: 'POST', duplex: 'half', headers: { 'content-type': 'application/x-www-form-urlencoded', origin: ORIGIN }, body: stream(big) });
+    assert.equal(r.status, 413, 'no content-length, too long'); assert.equal(r.headers.get('set-cookie'), null);
+    r = await call(env, '/rt/admin/login', { method: 'POST', duplex: 'half', headers: { 'content-type': 'application/x-www-form-urlencoded', origin: ORIGIN }, body: stream('key=' + encodeURIComponent(KEY) + '&pad=' + 'x'.repeat(3000)) });
+    assert.equal(r.status, 303, 'no content-length, short enough');
+  });
+
+  it('sends a Content-Security-Policy with the hash of the page\'s inline script, the same for CRLF and LF copies, cached by etag', async () => {
+    const { createHash } = await import('node:crypto');
+    const inline = ADMIN_HTML.match(/<script type="module">([\s\S]*?)<\/script>/)[1];
+    const want = "'sha256-" + createHash('sha256').update(inline).digest('base64') + "'";
+    for (const page of [ADMIN_HTML, ADMIN_HTML.replace(/\n/g, '\r\n')]) {
+      const { env } = makeEnv(); env.page = page; const c = await session(env);
+      const r = await call(env, '/admin', { headers: { cookie: c } });
+      assert.equal(r.text, page, 'the page itself unchanged');
+      const csp = r.headers.get('content-security-policy');
+      assert.equal(csp, `default-src 'none'; script-src 'self' ${want}; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'`);
+    }
+    // the etag keys the cache: a new page under a new etag gets its own hash
+    const { env } = makeEnv(); const c = await session(env);
+    env.etag = '"a1"'; const h1 = (await call(env, '/admin', { headers: { cookie: c } })).headers.get('content-security-policy');
+    env.page = ADMIN_HTML.replaceAll('?v=202611270945', '?v=209912312359'); env.etag = '"a2"';
+    const h2 = (await call(env, '/admin', { headers: { cookie: c } })).headers.get('content-security-policy');
+    assert.notEqual(h1, h2);
+    // what the policy leaves out: the page must not need it
+    assert.equal(/\son[a-z]+\s*=/i.test(ADMIN_HTML), false, 'no inline on…= handler attributes');
+    assert.deepEqual([...new Set(ADMIN_HTML.match(/https?:\/\/[^\s"')]+/g))], ['https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css']);
+    assert.equal((ADMIN_HTML.match(/<script\b(?![^>]*\bsrc=)[^>]*>/g) || []).length, 1, 'one inline script');
+    for (const f of MODULES) { const s = read(f); assert.equal(/https?:\/\/[^\s'"]|\bon[a-z]+\s*=\s*["']|eval\(|new Function|import\(/.test(s.replace(/^\s*\/\/.*$/gm, '')), false, f); }
+  });
+
+  it('GET /rt/health says whether ADMIN_RL is bound', async () => {
+    const real = globalThis.fetch; globalThis.fetch = async () => new Response('[]', { headers: { 'content-type': 'application/json' } }); // the database probe stays off the network
+    try {
+    assert.equal(JSON.parse((await call(makeEnv({ ADMIN_RL: fakeRl() }).env, '/rt/health')).text).hasAdminRl, true);
+    assert.equal(JSON.parse((await call(makeEnv().env, '/rt/health')).text).hasAdminRl, false);
+    } finally { globalThis.fetch = real; }
   });
 
   it('never sends the key to the browser', () => {
@@ -279,6 +374,12 @@ describe('admin page and modules no longer hold the key', () => {
     assert.ok(m, 'ADMIN_RL');
     const ids = [...cfg.matchAll(/"namespace_id": "(\d+)"/g)].map((x) => x[1]);
     assert.equal(new Set(ids).size, ids.length, 'namespace ids are unique');
+  });
+  it('main.js: ?maint=skip asks GET /rt/admin/maint with the session cookie, never a stored key', () => {
+    const m = read('main.js'), fn = m.slice(m.indexOf('const MAINT_SKIP'), m.indexOf('let maintSkipTold'));
+    assert.ok(fn.includes("fetch('/rt/admin/maint', { cache: 'no-store', credentials: 'same-origin' })"), fn);
+    assert.equal(/sessionStorage|kts-admin|x-admin-key/.test(fn), false);
+    assert.equal(/kts-admin/.test(m), false);
   });
   it('the service worker never answers /admin from a cache', () => {
     const sw = read('sw.js');

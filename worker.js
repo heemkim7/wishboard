@@ -2799,7 +2799,11 @@ function keyEq(want, got) {
 // key itself never leaves the Worker. A cookie POST must carry the request's own Origin. The x-admin-key header path is unchanged (tools).
 // ADMIN_RL (5 a minute per network, IPv6 by /64) counts login attempts and wrong x-admin-key headers; no Durable Object call on that path.
 // The trail: the last 50 login attempts in the operator store (Meter 'ops', ops.js loginPut), one DO call per attempt, none at budget hard.
-const ADM = { cookie: 'kts_adm', ttl: 12 * 3600 };
+// The cookie is __Host-kts_adm on https (Secure, Path=/, no Domain: a sibling *.workers.dev Worker cannot plant one with a narrower Path or a
+// Domain), plain kts_adm on http (local wrangler dev, where a browser may refuse the prefix). Only the name of the request's own scheme counts.
+// A copied cookie value stays good until its expiry even after 로그아웃 (no session store): rotating ADMIN_KEY is the only revocation.
+const ADM = { ttl: 12 * 3600, body: 4096 };
+const admName = u => (u.protocol === 'https:' ? '__Host-kts_adm' : 'kts_adm');
 const ADM_ERR = { key: '키가 맞지 않아요.', rate: '잠시 뒤에 다시 시도해 주세요.' };
 const ADM_HEAD = { 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', 'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff' };
 const ADM_RE = /^1\.(\d{10})\.([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{43})$/;
@@ -2825,7 +2829,8 @@ async function admMint(env) {
   return body + '.' + b64e(new Uint8Array(await crypto.subtle.sign('HMAC', k, new TextEncoder().encode(body))));
 }
 async function admSession(env, req) {
-  const vals = String(req.headers.get('cookie') || '').split(';').map(x => x.trim()).filter(x => x.startsWith(ADM.cookie + '=')).map(x => x.slice(ADM.cookie.length + 1)).slice(0, 3);
+  const name = admName(new URL(req.url)) + '=';
+  const vals = String(req.headers.get('cookie') || '').split(';').map(x => x.trim()).filter(x => x.startsWith(name)).map(x => x.slice(name.length)).slice(0, 3);
   if (!vals.length) return false;
   const k = await admKey(env); if (!k) return false;
   const now = Math.floor(Date.now() / 1000);
@@ -2837,10 +2842,44 @@ async function admSession(env, req) {
   }
   return false;
 }
-const admCookie = (v, age) => `${ADM.cookie}=${v}; Max-Age=${age}; Path=/; HttpOnly; Secure; SameSite=Strict`;
+const admCookie = (u, v, age) => `${admName(u)}=${v}; Max-Age=${age}; Path=/; HttpOnly; Secure; SameSite=Strict`;
 const admRate = (env, req) => rateKey(env.ADMIN_RL, 'admin:' + (ipNet(req.headers.get('cf-connecting-ip') || '') || 'x'));
-// A form POST from a page sent with Referrer-Policy: no-referrer carries Origin: null; only another real origin is refused here.
-const admForeign = (req, u) => { const o = req.headers.get('origin'); return !!o && o !== 'null' && o !== u.origin; };
+// Login and logout: a form POST from a page sent with Referrer-Policy: no-referrer carries Origin: null, so null passes, but another real origin
+// does not, and neither does a browser that says the request came from elsewhere (Sec-Fetch-Site other than same-origin or none: a sandboxed
+// iframe on another site also sends Origin: null). Without Sec-Fetch-Site (older browsers, tools) only the Origin decides.
+const admForeign = (req, u) => { const o = req.headers.get('origin'), s = req.headers.get('sec-fetch-site');
+  return (!!o && o !== 'null' && o !== u.origin) || (s != null && s !== 'same-origin' && s !== 'none'); };
+// The login body, at most ADM.body bytes: refused by content-length before reading, and cut off while reading when there is none. null: too big.
+async function admBody(req) {
+  const n = req.headers.get('content-length'); if (n != null && !(Number(n) <= ADM.body)) return null;
+  if (!req.body) return '';
+  const rd = req.body.getReader(), parts = []; let got = 0;
+  try { for (;;) { const { done, value } = await rd.read(); if (done) break; got += value.byteLength; if (got > ADM.body) { try { await rd.cancel(); } catch { } return null; } parts.push(value); } } catch { return ''; }
+  const all = new Uint8Array(got); let at = 0; for (const p of parts) { all.set(p, at); at += p.byteLength; }
+  return new TextDecoder().decode(all);
+}
+// The operator page's Content-Security-Policy: its inline scripts by hash (worked out from the HTML being served, kept per isolate by the asset's
+// etag, since the inline module's text changes with every build stamp), modules from this origin, the Pretendard stylesheet and fonts from
+// cdn.jsdelivr.net (admin.html's one external URL), review photos as blob: URLs. The page has no on…= attributes (its handlers are set from script).
+const ADM_CSP = new Map(); // etag -> policy
+async function admCsp(html) {
+  const hashes = [];
+  for (const m of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
+    if (/\bsrc\s*=/i.test(m[1])) continue;
+    const text = m[2].replace(/\r\n?/g, '\n'); // the HTML parser turns CRLF and lone CR into LF before the browser hashes the script text
+    hashes.push("'sha256-" + b64of(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))) + "'");
+  }
+  return ["default-src 'none'", "script-src 'self' " + hashes.join(' '), "connect-src 'self'", "img-src 'self' data: blob:", "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+    'font-src https://cdn.jsdelivr.net', "frame-ancestors 'none'", "base-uri 'none'", "form-action 'self'", "object-src 'none'"].join('; ');
+}
+async function admServe(env, req) {
+  const res = await env.ASSETS.fetch(req);
+  if (res.status !== 200 || !/text\/html/i.test(res.headers.get('content-type') || '') || req.method !== 'GET') return res;
+  const html = await res.text(), tag = res.headers.get('etag') || '';
+  let csp = tag && ADM_CSP.get(tag);
+  if (!csp) { csp = await admCsp(html); if (tag) { if (ADM_CSP.size >= 20) ADM_CSP.clear(); ADM_CSP.set(tag, csp); } }
+  const out = new Response(html, res); out.headers.set('content-security-policy', csp); out.headers.delete('content-length'); return out;
+}
 function admLogin(note = '', status = 200, head = {}) {
   const html = '<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
     + '<meta name="robots" content="noindex, nofollow"><title>운영자 로그인 · WISH BOARD</title><style>'
@@ -2863,23 +2902,23 @@ async function admLoginPost(req, env, ctx, u) {
   if (req.method !== 'POST') return admBack();
   if (admForeign(req, u)) return admLogin('', 403);
   if (!(await admRate(env, req))) return admLogin(ADM_ERR.rate, 429, { 'retry-after': '60' });
-  let key = '';
-  if (Number(req.headers.get('content-length') || 0) <= 2000) { let t = ''; try { t = await req.text(); } catch { t = ''; } if (t.length <= 2000) key = new URLSearchParams(t).get('key') || ''; }
+  const t = await admBody(req); if (t === null) return admLogin(ADM_ERR.key, 413);
+  const key = new URLSearchParams(t).get('key') || '';
   const ok = keyEq(env.ADMIN_KEY, key), v = ok ? await admMint(env) : '';
   admTrail(env, ctx, req, !!v);
   if (!v) return admLogin(ADM_ERR.key, 401);
-  return admBack(admCookie(v, ADM.ttl));
+  return admBack(admCookie(u, v, ADM.ttl));
 }
 // Before the router: { res } answers here, { req } goes on (a copy with the internal header when the cookie opened an admin call).
 async function admGate(req, env, ctx, u) {
   const p = u.pathname;
   if (p.startsWith('/admin')) { // the operator screen: the session cookie only (a header key does not open it)
-    if (await admSession(env, req)) return { res: await env.ASSETS.fetch(req) };
+    if (await admSession(env, req)) return { res: await admServe(env, req) };
     if (admPage(p)) return { res: req.method === 'GET' || req.method === 'HEAD' ? admLogin() : new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } }) };
     return { res: new Response('not found', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' } }) };
   }
   if (p === '/rt/admin/login') return { res: await admLoginPost(req, env, ctx, u) };
-  if (p === '/rt/admin/logout') return { res: req.method !== 'POST' ? admBack() : admForeign(req, u) ? J({ err: 'origin' }, 403) : admBack(admCookie('', 0)) };
+  if (p === '/rt/admin/logout') return { res: req.method !== 'POST' ? admBack() : admForeign(req, u) ? J({ err: 'origin' }, 403) : admBack(admCookie(u, '', 0)) };
   if (req.headers.has('x-admin-key')) { // the tools' path, as it was; a wrong key counts as a guess
     if (!adminOk(env, req) && !(await admRate(env, req))) return { res: J({ err: 'rate', error: ADM_ERR.rate }, 429, { 'retry-after': '60' }) };
     return { req };
@@ -3593,7 +3632,7 @@ export default {
     }
     if (u.pathname === '/rt/health') {
       if (req.method !== 'GET' && req.method !== 'HEAD') return J({ err: 'get' }, 405);
-      return ops.opsHealth(req, env, ctx, { hasFlushKey: typeof env.FLUSH_KEY === 'string' && env.FLUSH_KEY.length > 0, hasGuestKey: typeof env.GUEST_KEY === 'string' && env.GUEST_KEY.length > 0, mode: 'DO' }, { lvl: () => lvlNow(env), lvlCopy: () => LVL.l }); // + db, budget, maint, build
+      return ops.opsHealth(req, env, ctx, { hasFlushKey: typeof env.FLUSH_KEY === 'string' && env.FLUSH_KEY.length > 0, hasGuestKey: typeof env.GUEST_KEY === 'string' && env.GUEST_KEY.length > 0, hasAdminRl: typeof env.ADMIN_RL?.limit === 'function', mode: 'DO' }, { lvl: () => lvlNow(env), lvlCopy: () => LVL.l }); // + db, budget, maint, build
     }
     if (ops.OPS_PATHS.has(u.pathname)) return ops.opsApi(req, env, ctx, u, { lvl: () => lvlNow(env), lvlCopy: () => LVL.l, admin: () => adminOk(env, req), actor: () => resolveActor(env, tokenOf(req)), ipHash: () => wishIp(env, req) }); // /rt/err, /rt/support, their admin routes (networks: IPv6 by /64)
     if (u.pathname === '/rt/ws') {

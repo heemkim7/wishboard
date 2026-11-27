@@ -19,7 +19,7 @@ export const OPS = {
   sameMs: 30000, // one isolate sends one group at most once per 30 s; repeats ride along as a count
   maintTtl: 300000, maintHardTtl: 900000, maintWait: 800, // one DO read per isolate per 5 min (15 at hard): a maintenance notice may lag that long
   dbTtl: 30000, dbSlow: 1000, dbTimeout: 2000,
-  loginKeep: 50, // 운영자 로그인 attempts kept (worker.js admTrail): time, success or not, 6 characters of the network hash
+  loginFail: 50, loginOk: 20, // 운영자 로그인 attempts kept (worker.js admTrail), failures and successes apart so a flood of failures never pushes out a real login
 };
 export const OPS_PATHS = new Set(['/rt/err', '/rt/support', '/rt/admin/errors', '/rt/admin/errors/clear', '/rt/admin/support', '/rt/admin/maint', '/rt/admin/logins']);
 const SUPA = 'https://yxddhpacuyaffaoutxjn.supabase.co', ANON = 'sb_publishable_Vd-7c6e2f2s3G1d5Jbx9vw_0UCuHm-B'; // public (worker.js has the same pair)
@@ -96,17 +96,18 @@ export function supMark(q, id, status, now = Date.now()) {
   const w = q.exec('update osup set status = ?, done_at = ? where id = ?', status, status === 'done' ? now : null, String(id || '')).rowsWritten;
   return { ok: w > 0 };
 }
-// Read by every isolate about once every 5 minutes (maintFor), so it also does the store's upkeep: rate rows older than an hour and inquiries
-// handled more than a year ago go here even when nobody writes an inquiry (the privacy policy's retention holds without a cron or alarm).
-// 운영자 로그인 trail: one row per attempt, the newest OPS.loginKeep kept. Never the key, never an address.
+// 운영자 로그인 trail: one row per attempt; the newest OPS.loginFail failures and, apart from them, the newest OPS.loginOk successes. Never the key, never an address.
 export function loginPut(q, e) {
   q.exec('insert into olog(at, ok, net) values(?, ?, ?)', Math.floor(Number(e?.at) || Date.now()), e?.ok === true ? 1 : 0, String(e?.net || '').replace(/[^0-9a-f]/g, '').slice(0, 6));
-  q.exec('delete from olog where rowid not in (select rowid from olog order by at desc, rowid desc limit ?)', OPS.loginKeep);
+  const ok = e?.ok === true ? 1 : 0;
+  q.exec('delete from olog where ok = ? and rowid not in (select rowid from olog where ok = ? order by at desc, rowid desc limit ?)', ok, ok, ok ? OPS.loginOk : OPS.loginFail);
   return { ok: true };
 }
-export function loginList(q) { return q.exec('select at, ok, net from olog order by at desc, rowid desc limit ?', OPS.loginKeep).toArray().map((r) => ({ at: Number(r.at), ok: Number(r.ok) === 1, net: String(r.net) })); }
+export function loginList(q) { return q.exec('select at, ok, net from olog order by at desc, rowid desc limit ?', OPS.loginFail + OPS.loginOk).toArray().map((r) => ({ at: Number(r.at), ok: Number(r.ok) === 1, net: String(r.net) })); }
 // worker.js admTrail: one DO call (the env it passes is the tallied one; it skips this at budget hard).
 export const opsLoginNote = (env, e) => opsM(env).opsLoginPut(e);
+// Read by every isolate about once every 5 minutes (maintFor), so it also does the store's upkeep: rate rows older than an hour and inquiries
+// handled more than a year ago go here even when nobody writes an inquiry (the privacy policy's retention holds without a cron or alarm).
 export function maintGet(q) { supPrune(q, Date.now()); const r = q.exec("select v from okv where k = 'maint'").toArray()[0]; if (!r) return null; try { return JSON.parse(r.v); } catch { return null; } }
 export function maintPut(q, m) { const v = maintOf(m) ? { on: true, ...maintOf(m), at: Date.now() } : { on: false, at: Date.now() }; q.exec("insert into okv(k, v) values('maint', ?) on conflict(k) do update set v = excluded.v", JSON.stringify(v)); return v; }
 

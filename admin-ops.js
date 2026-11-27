@@ -99,14 +99,17 @@ async function loadMaint() {
   );
 }
 
-// The last 50 login attempts (GET /rt/admin/logins, the 'ops' store): time, success or not, 6 characters of the network hash. No key, no address.
+// Login attempts (GET /rt/admin/logins, the 'ops' store): the newest 20 successes and, apart from them, the newest 50 failures, so a flood of
+// failures never pushes out a real login. Time, success or not, 6 characters of the network hash. No key, no address.
 async function loadLogins() {
   const d = await api('/rt/admin/logins');
-  const items = Array.isArray(d.items) ? d.items : [];
-  say(items.length ? `최근 ${items.length}번 · 실패 ${items.filter((x) => !x.ok).length}번` : '기록된 로그인이 없어요.');
+  const items = Array.isArray(d.items) ? d.items : [], oks = items.filter((x) => x.ok), fails = items.filter((x) => !x.ok);
+  say(items.length ? `성공 ${oks.length}번 · 실패 ${fails.length}번` : '기록된 로그인이 없어요.');
+  const row = (x) => el('div', { class: 'hit' }, el('b', { text: x.ok ? '성공' : '실패' }), el('span', { text: when(x.at) }), el('span', { text: '망 ' + x.net }));
   body.replaceChildren(el('div', { class: 'bar' }, el('button', { type: 'button', text: '새로고침', onclick: () => load() })),
-    el('p', { class: 'sub', text: '최근 50번의 로그인 시도입니다. 망은 접속한 인터넷 연결을 알아볼 수 없게 바꾼 값의 앞 6자리라, 같은 값이면 같은 연결입니다. 키와 주소는 남기지 않습니다. 하루 서버 사용량이 한도에 닿으면 기록하지 않고, 1분에 5번이 넘으면 잠시 막힙니다.' }),
-    ...items.map((x) => el('div', { class: 'hit' }, el('b', { text: x.ok ? '성공' : '실패' }), el('span', { text: when(x.at) }), el('span', { text: '망 ' + x.net }))));
+    el('p', { class: 'sub', text: '성공한 로그인은 최근 20번, 실패는 따로 최근 50번을 남깁니다. 실패가 많이 쌓여도 성공 기록은 밀려나지 않습니다. 망은 접속한 인터넷 연결을 알아볼 수 없게 바꾼 값의 앞 6자리라, 같은 값이면 같은 연결입니다. 키와 주소는 남기지 않습니다. 하루 서버 사용량이 한도에 닿으면 기록하지 않고, 1분에 5번이 넘으면 잠시 막힙니다.' }),
+    el('h3', { text: '성공' }), ...(oks.length ? oks.map(row) : [el('div', { class: 'empty', text: '성공한 로그인이 없어요' })]),
+    el('h3', { text: '실패' }), ...(fails.length ? fails.map(row) : [el('div', { class: 'empty', text: '실패한 로그인이 없어요' })]));
 }
 
 async function load() {

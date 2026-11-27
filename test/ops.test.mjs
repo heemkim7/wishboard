@@ -460,7 +460,7 @@ describe('/rt/health', { concurrency: false }, () => {
       const env = makeEnv({ ASSETS: { fetch: (r) => new Response(new URL(r.url).pathname === '/' ? html : 'x') } }), { get } = harness(env);
       const r = await get('/rt/health');
       assert.equal(r.headers.get('cache-control'), 'no-store');
-      assert.deepEqual(await r.json(), { hasFlushKey: true, hasGuestKey: true, mode: 'DO', db: 'ok', budget: 0, maint: false, build: '202611221134' });
+      assert.deepEqual(await r.json(), { hasFlushKey: true, hasGuestKey: true, hasAdminRl: false, mode: 'DO', db: 'ok', budget: 0, maint: false, build: '202611221134' });
       const probes = () => state.calls.filter((u) => u.includes('/rest/v1/billboards')).length;
       assert.equal(probes(), 1);
       state.db = 'down'; clock.add(10000); assert.equal((await (await get('/rt/health')).json()).db, 'ok', 'cached'); assert.equal(probes(), 1);
