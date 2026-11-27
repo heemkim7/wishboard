@@ -93,6 +93,17 @@ export function claimStarter(tierOf = () => '') {
   };
 }
 
+// The 전광판 걸기 sheet (ui.js openBillboard) counts as a start only when it opens to light a board the visitor does not hold: no slot given (the
+// picker, to find one), a vacant board, or one whose light is out and that is not mine. Not to edit or relight my own board, not on someone
+// else's lit board (a notice about a taken board), and not from the wizard's 전광판 고르기 (that flow already sent its claim_start).
+export function sheetStarts({ slot = '', board = null, me = '', now = Date.now(), from = 'sheet' } = {}) {
+  if (from === 'wizard') return false;
+  if (!slot || !board) return true;
+  const holder = String(board.holder_id || '');
+  if (holder && me && holder === me) return false;
+  return !(holder && Date.parse(String(board.lit_until || board.expires_at || '')) > now);
+}
+
 // ---- return_visit: decided from the day record the browser keeps in kts_daily ({ day, last, back, backSent, ... }).
 export const daysBetween = (a, b) => { const n = Math.round((Date.parse(b) - Date.parse(a)) / 864e5); return n > 0 ? Math.min(n, 365) : 0; };
 // back/backSent for the day record of `day`, from the stored record `prev`. On a later day than the stored one, back = days since its `last`

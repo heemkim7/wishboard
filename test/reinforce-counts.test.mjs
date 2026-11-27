@@ -116,4 +116,20 @@ describe('landed cheers, paid and free', { concurrency: false }, () => {
       } finally { restore(); }
     });
   });
+  it('sends at most 40 waiting days a batch, oldest first, and keeps the 41st for the next batch', async () => {
+    await withClock(Date.parse('2027-06-20T03:00:00Z'), async () => {
+      const env = makeEnv(), R = env.room('chapel:square'), A = env.meter('ad').do;
+      R.do.tapDb();
+      const days = Array.from({ length: 41 }, (_, i) => new Date(Date.parse('2027-05-01') + i * 864e5).toISOString().slice(0, 10)); // 05-01 .. 06-10
+      for (const d of days) R.sql.db.prepare('insert into chd(d, paid, free) values(?, 1, 2)').run(d);
+      await R.do.flushAds();
+      assert.deepEqual(R.sql.db.prepare('select d from chd').all().map((r) => r.d), ['2027-06-10'], 'the newest day waits');
+      assert.equal(R.sql.db.prepare('select count(*) n from chp').get().n, 0);
+      assert.equal(Object.keys(A.chDays('2027-06-20', 60)).length, 40);
+      await R.do.flushAds();
+      const got = A.chDays('2027-06-20', 60);
+      assert.equal(Object.keys(got).length, 41, 'no day lost');
+      assert.ok(Object.values(got).every((v) => v.paid === 1 && v.free === 2), 'none counted twice');
+    });
+  });
 });

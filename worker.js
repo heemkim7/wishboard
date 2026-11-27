@@ -1350,7 +1350,9 @@ export class Room extends DurableObject {
     // Cheer counts go out as one keyed batch (chp): taken out of chd once, then re-sent with the same key and rows until the Meter answers, so a
     // throw or a lost reply never counts them twice (Meter.chAdd applies a key once). Cheers landing meanwhile wait in chd for the next batch.
     if (!q.exec('select 1 from chp limit 1').toArray().length && q.exec('select 1 from chd limit 1').toArray().length) {
-      const k = crypto.randomUUID(); q.exec('insert into chp(k, d, paid, free) select ?, d, paid, free from chd', k); q.exec('delete from chd'); }
+      // At most 40 days a batch (what Meter.chAdd takes), the oldest first; the rest stay in chd for the next one.
+      const k = crypto.randomUUID(), take = q.exec('select d, paid, free from chd order by d limit 40').toArray();
+      for (const r of take) { q.exec('insert into chp(k, d, paid, free) values(?, ?, ?, ?)', k, r.d, r.paid, r.free); q.exec('delete from chd where d = ?', r.d); } }
     const rows = q.exec('select slot, b, v, c, h from adq limit 200').toArray(), ppl = q.exec('select slot, d, uid, b from adw limit 400').toArray(), chs = q.exec('select k, d, paid, free from chp limit 40').toArray();
     if (rows.length || ppl.length || chs.length) { this.conns++; // one DO call, counted toward the daily budget like the seat calls
       try { await this.env.METER.get(this.env.METER.idFromName('ad')).adAdd(rows.map(r => ({ s: String(r.slot), b: Number(r.b), v: Number(r.v) || 0, c: Number(r.c) || 0, h: Number(r.h) || 0 })), ppl.map(r => ({ s: String(r.slot), d: String(r.d), u: String(r.uid), b: Number(r.b) })),
@@ -1591,8 +1593,11 @@ export class Room extends DurableObject {
     else if (m.t === 'tr' && m.m && typeof m.m === 'object' && JSON.stringify(m.m).length < 1500 && burst(a, 'xr', TR_N)) { const M = m.m, keep = ['name', 'outfit', 'av', 'equip', 'rank', 'fl', 'x', 'y', 'face', 'anim', 'st', 'seat', 'g', 'hair', 'dong', 'shard', 'act', 'at', 'seat_id', 'look', 'state', 'step', 'mode', 'joined_at'];
       a.m = { id: a.k }; for (const f of keep) if (M[f] !== undefined) a.m[f] = M[f]; if (a.prof) { if (M.equip === 'taxi') a.m.seat = 'taxi'; a.m.av = a.prof.av; a.m.equip = a.prof.equip; } else if (M.equip !== undefined) a.m.equip = peerEquip(M.equip);
       // A name that reads as staff or as the seeded bots (the profile's own rule, wish.js staffNick / league.js botNick) is shown as the default guest name.
-      if (typeof a.m.name === 'string' && (staffNick(a.m.name) || botNick(a.m.name))) a.m.name = GUEST_NAME;
-      if (!a.welcomed && typeof a.m.name === 'string' && a.m.name.trim()) { a.welcomed = true; this.bc({ t: 'WELCOME', name: a.m.name.trim().slice(0, 16) }); } if (typeof a.m.name === 'string') a.m.name = a.m.name.slice(0, 12); a.m.fl = 0; a.fl = 0; this.save(w, a); if (a.q) this.bc({ t: 'pj', k: a.k, m: a.m }); }
+      // Checked as it is shown, after the cut: the presence name at 12 characters, WELCOME's at 16 ('The Officially' cut to 'The Official').
+      let hi = '';
+      if (typeof a.m.name === 'string') { hi = a.m.name.trim().slice(0, 16); a.m.name = a.m.name.slice(0, 12);
+        if ([a.m.name, hi].some((n) => staffNick(n) || botNick(n))) { a.m.name = GUEST_NAME; hi = GUEST_NAME; } }
+      if (!a.welcomed && hi) { a.welcomed = true; this.bc({ t: 'WELCOME', name: hi }); } a.m.fl = 0; a.fl = 0; this.save(w, a); if (a.q) this.bc({ t: 'pj', k: a.k, m: a.m }); }
     else if (m.t === 'ut') { a.m = null; this.save(w, a); if (a.q) this.leaveK(a.k, w); }
     this.scan(); this.meter(); }
   noteGhost(w) {

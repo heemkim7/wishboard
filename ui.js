@@ -7,7 +7,7 @@ import { createTeamUI } from './teamui.js?v=202611250713';
 import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611250713';
 import { WISH, WISH_ERR, cleanWish, wishRejected, wishShareText, nickRefused, NICK_FIX } from './wish.js';
 import { botNick } from './league.js';
-import { backFields, returnGap, claimStarter } from './growth.js?v=202611250713';
+import { backFields, returnGap, claimStarter, sheetStarts } from './growth.js?v=202611250713';
 import { A2HS_KEY, VISITS_KEY, bumpVisits, isStandalone, isIosSafari, installMode, installDue, INSTALL_COPY, INSTALL_CRAMPED_Q } from './install.js?v=202611250713';
 import { RECAP_KEY, RECAP_SHOWN_KEY, noteDay, noteHeld, noteHearts, noteClaim as recapClaim, recapDue, recapLines, recapShareText, weekOf } from './recap.js?v=202611250713';
 import { nowMs } from './live.js';
@@ -2811,13 +2811,15 @@ export function createUI(root, hooks) {
     if (!slot || !text) return;
     photoTold.set(String(slot), { kind: String(kind || ''), text: String(text) });
   }
-  // from: claim_start's origin for this claim form ('sheet', or 'sheet_tool' from the tool while already holding a board). Every opening sends one
-  // (the wizard sends its own), so 전광판 걸기 시작 covers every surface a board_claim can come from.
+  // from: claim_start's origin for this claim form ('sheet', 'sheet_tool' from the tool while already holding a board, 'wizard' from the wizard's
+  // 전광판 고르기). It goes out only when the sheet opens to light a board this visitor does not hold (growth.js sheetStarts): not to edit or
+  // relight my own, not on someone else's lit board, not inside a wizard flow that already sent one.
   function openBillboard(slotId = '', zone = '', from = 'sheet') {
     if (isPrimeSlot(slotId)) { teamUi().openPrime(slotId); return; } // 명당: never a claim form
     hooks.refreshWorld?.();
     let slot = slotId || 'STREET_1';
-    { const start = claimStart({ slot, free: false }, from); if (start) trackEvent('claim_start', start); }
+    if (sheetStarts({ slot: slotId, board: slotId ? boardById(slotId) : null, me: hooks.actorId?.() || '', now: Date.now(), from })) {
+      const start = claimStart({ slot, free: false }, from); if (start) trackEvent('claim_start', start); }
     openSheet(['board', '전광판 걸기'], '72시간', (host) => {
       const meSheet = sheet; // a late answer must not close a sheet opened after this one
       const badgeEl = host.parentElement?.querySelector('.badge');
@@ -3729,7 +3731,7 @@ export function createUI(root, hooks) {
           h('button', { type: 'button', class: 'mini', text: '열기', onclick: () => openAd(b.slot_id) }),
           h('button', { type: 'button', class: 'mini', text: '보러가기', onclick: () => go(b.slot_id) }),
           linkBtn(b))) : [h('p', { class: 'note', text: '아직 켜진 전광판이 없어요.' })]));
-        note.textContent = fresh ? '가장 최근에 새로 걸린 전광판부터 보여요. 매일 다시 켜도 순서는 그대로예요.' : '응원 수와 택시가 선 횟수를 더합니다. 1위 전광판 위로 황금 빛기둥이 섭니다.';
+        note.textContent = fresh ? '가장 최근에 새로 걸린 전광판부터 보여요.' : '응원 수와 택시가 선 횟수를 더합니다. 1위 전광판 위로 황금 빛기둥이 섭니다.';
       };
       const tabBtn = (id, text) => h('button', { type: 'button', class: id === tab ? 'on' : '', 'aria-pressed': String(id === tab), text, onclick: (e) => { tab = id; for (const c of e.currentTarget.parentElement.children) { c.classList.toggle('on', c === e.currentTarget); c.setAttribute('aria-pressed', String(c === e.currentTarget)); } paint(); } });
       rankRefresh = () => { if (tab === 'hot' || tab === 'new' || tab === 'team') paint(); }; // the world's 1 s refresh repaints only the board lists
@@ -4066,7 +4068,7 @@ export function createUI(root, hooks) {
         if (ids.length && !ids.includes(model.slot)) model.choose(ids[0]);
         if (!ids.length) {
           host.append(h('p', { class: 'note', text: '지금 비어 있는 무료 칸이 없어요. 응원 포인트로 걸 수 있는 칸을 골라 보세요.' }));
-          host.append(h('button', { class: 'btn gold', type: 'button', text: '전광판 고르기', onclick: () => openBillboard('PLOT_1') }));
+          host.append(h('button', { class: 'btn gold', type: 'button', text: '전광판 고르기', onclick: () => openBillboard('PLOT_1', '', 'wizard') }));
           return;
         }
         if (nickRefused(hooks.nick?.())) host.append(h('p', { class: 'note err', role: 'alert', text: NICK_FIX }), h('button', { class: 'btn ghost', type: 'button', text: '프로필에서 닉네임 바꾸기', onclick: () => openProfile() })); // the claim would be refused at the end

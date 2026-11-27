@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 import { makeEnv, harness, withClock, DAY } from './reinforce-harness.mjs';
 import { EVENT_NAMES, slotTier } from '../plaza-account.js';
 import { gaName, gaParams } from '../analytics.js';
-import { claimStarter } from '../growth.js';
+import { claimStarter, sheetStarts } from '../growth.js';
 
 const NOON = Date.parse('2027-05-03T03:00:00Z'); // 12:00 KST
 
@@ -23,8 +23,9 @@ describe('claim_start: the wizard reports its opening once per open', () => {
   it('is wired at step 1 of the wizard and at every opening of the claim form, each saying where it came from', () => {
     const ui = readFileSync(new URL('../ui.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
     assert.match(ui, /function openClaimStep\(n, model, from = ''\) \{\n\s*if \(!model\) return;\n\s*if \(n === 1\) \{ const start = claimStart\(model, from\); if \(start\) trackEvent\('claim_start', start\); \}/);
-    // The other surface a board_claim can come from: the 전광판 걸기 sheet (paid slots, a second board, edits), a fresh object per opening.
-    assert.match(ui, /function openBillboard\(slotId = '', zone = '', from = 'sheet'\) \{\n\s*if \(isPrimeSlot\(slotId\)\) \{[^\n]*\n\s*hooks\.refreshWorld\?\.\(\);\n\s*let slot = slotId \|\| 'STREET_1';\n\s*\{ const start = claimStart\(\{ slot, free: false \}, from\); if \(start\) trackEvent\('claim_start', start\); \}/);
+    // The other surface: the 전광판 걸기 sheet, a start only when it opens to light a board this visitor does not hold (growth.js sheetStarts).
+    assert.match(ui, /function openBillboard\(slotId = '', zone = '', from = 'sheet'\) \{\n\s*if \(isPrimeSlot\(slotId\)\) \{[^\n]*\n\s*hooks\.refreshWorld\?\.\(\);\n\s*let slot = slotId \|\| 'STREET_1';\n\s*if \(sheetStarts\(\{ slot: slotId, board: slotId \? boardById\(slotId\) : null, me: hooks\.actorId\?\.\(\) \|\| '', now: Date\.now\(\), from \}\)\) \{\n\s*const start = claimStart\(\{ slot, free: false \}, from\); if \(start\) trackEvent\('claim_start', start\); \}/);
+    assert.match(ui, /text: '전광판 고르기', onclick: \(\) => openBillboard\('PLOT_1', '', 'wizard'\) \}/); // inside the wizard's flow
     assert.equal((ui.match(/trackEvent\('claim_start'/g) || []).length, 2);
     const opens = [...ui.matchAll(/openClaimStep\(1, claimWizard\([^)]*\)(, '(\w+)')?\)/g)];
     assert.equal(opens.length, 3);
@@ -34,6 +35,21 @@ describe('claim_start: the wizard reports its opening once per open', () => {
     const start = claimStarter(slotTier);
     assert.deepEqual(start({ slot: 'PLOT_4', free: false }, 'sheet'), { tier: 'C', kind: 'claim', from: 'sheet' });
     assert.deepEqual(start({ slot: 'PLOT_4', free: false }, 'sheet_tool'), { tier: 'C', kind: 'claim', from: 'sheet_tool' });
+  });
+  it('the sheet is a start only to light a board the visitor does not hold, and not inside the wizard', () => {
+    const NOW = Date.parse('2027-05-03T03:00:00Z'), lit = (holder) => ({ slot_id: 'PLOT_4', holder_id: holder, lit_until: new Date(NOW + 3600e3).toISOString() });
+    const dark = (holder) => ({ slot_id: 'PLOT_4', holder_id: holder, lit_until: new Date(NOW - 1).toISOString() });
+    const s = (o) => sheetStarts({ me: 'guest:me', now: NOW, from: 'sheet', ...o });
+    assert.equal(s({ slot: '' }), true, 'the picker, to find a board');
+    assert.equal(s({ slot: 'PLOT_4', board: { slot_id: 'PLOT_4', holder_id: null } }), true, 'a vacant board');
+    assert.equal(s({ slot: 'PLOT_4', board: dark('guest:other') }), true, "someone else's board whose light is out");
+    assert.equal(s({ slot: 'PLOT_4', board: lit('guest:me') }), false, '문구 수정 on my own lit board');
+    assert.equal(s({ slot: 'PLOT_4', board: dark('guest:me') }), false, 'my own dark board: a relight, not a start');
+    assert.equal(s({ slot: 'PLOT_4', board: lit('guest:other') }), false, "someone else's lit board (a notice about a taken board)");
+    assert.equal(s({ slot: 'PLOT_1', board: { slot_id: 'PLOT_1', holder_id: null }, from: 'wizard' }), false, "the wizard's 전광판 고르기: that flow already sent one");
+    assert.equal(s({ slot: '', from: 'sheet_tool' }), true);
+    const html = readFileSync(new URL('../admin.html', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+    assert.match(html, /내 전광판 문구 수정·불 켜기, 남의 켜진 전광판, 안내 창 안의 전광판 고르기는 시작으로 세지 않습니다\./);
   });
   it('reaches the same pipelines as board_claim: the first-party event list and GA', () => {
     assert.ok(EVENT_NAMES.includes('claim_start') && EVENT_NAMES.includes('board_claim'));

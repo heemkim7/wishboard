@@ -268,11 +268,12 @@ export function slotTier(slotId) {
   return 'C';
 }
 
-// 응원 순위 › 새로 걸린 (ui.js): boards lit now by a person (a guest or user holder, not a team), newest first by the day the current streak began.
-// /rt/world rows carry lit_on (the KST day it was last lit) and lit_days (the streak, "연속 N일"): a claim sets 1 and today, each day's first
-// relight adds one, so the streak began on lit_on minus lit_days - 1 days; a relight does not move a board up. A row without them falls back to
-// the KST day of lit_until minus 72 hours (a light-up sets lit_until to now + 72 h). Ties: the later lit_until, the later updated_at, the slot id.
-// Vacant, dark and expired boards are left out.
+// 응원 순위 › 새로 걸린 (ui.js): boards lit now by a person (a guest or user holder, not a team), newest first by streakStart.
+// /rt/world rows carry lit_on (the KST day it was last lit) and lit_days ("연속 N일"): a claim sets 1 and today, and relight_billboard adds 1 on
+// each day's first relight, also after days the board was dark. streakStart is lit_on minus lit_days - 1 days: the claim day for a holder who
+// relit every day, a later day when there were dark days in between (lit_days counts the days lit, not a calendar run). It keeps a relit board
+// from jumping to the top; it is an estimate, not a stored claim time. A row without them falls back to the KST day of lit_until minus 72
+// hours (a light-up sets lit_until to now + 72 h). Ties: the later lit_until, the later updated_at, the slot id. Vacant, dark, expired left out.
 export function streakStart(b) {
   const day = /^\d{4}-\d{2}-\d{2}/.exec(String(b?.lit_on || ''))?.[0], n = Math.floor(Number(b?.lit_days));
   if (day && n >= 1) return Date.parse(day) - (n - 1) * 864e5;

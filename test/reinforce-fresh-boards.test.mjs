@@ -50,7 +50,7 @@ it('adds the tab right after 전광판 with the same row, its note and empty lin
   assert.match(sheet, /tabBtn\('hot', '전광판'\), tabBtn\('new', '새로 걸린'\), tabBtn\('team', '태그'\)/);
   assert.match(sheet, /\['today', 'rate', 'week', 'hot', 'new', 'team'\]\.includes\(start\)/);
   assert.match(sheet, /rows = fresh \? freshBoards\(world\.billboards, Date\.now\(\), 10\) : hotBoards\(\)\.slice\(0, 10\)/);
-  assert.match(sheet, /'가장 최근에 새로 걸린 전광판부터 보여요\. 매일 다시 켜도 순서는 그대로예요\.'/);
+  assert.match(sheet, /'가장 최근에 새로 걸린 전광판부터 보여요\.'/);
   assert.match(sheet, /'아직 켜진 전광판이 없어요\.'/);
   assert.match(sheet, /text: '열기', onclick: \(\) => openAd\(b\.slot_id\)[\s\S]*text: '보러가기', onclick: \(\) => go\(b\.slot_id\)[\s\S]*linkBtn\(b\)/);
   // One tab handler for all: the pressed one gets on + aria-pressed true, every other one false.
