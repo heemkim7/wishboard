@@ -780,13 +780,15 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   /* The boot card's two makers (static, before the 3D city): the gift first in the accent, 내 전광판 beside it outlined, the DISCOVER link
      small under them. On a phone they stack. The 3D plaza's own button stays under the live lines. */
   #boot .bootcta { margin-top: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  #boot .bootbtn { display: flex; align-items: center; justify-content: center; min-height: 52px; padding: 8px 12px; border-radius: 10px; font: 800 16px/1.25 var(--font); text-decoration: none; -webkit-tap-highlight-color: transparent; }
+  #boot .bootbtn { display: flex; align-items: center; justify-content: center; min-height: 48px; padding: 6px 8px; border-radius: 10px; font: 800 15px/1.25 var(--font); text-align: center; word-break: keep-all; text-decoration: none; -webkit-tap-highlight-color: transparent; }
   #boot .bootbtn.gift { color: var(--on-accent); background: var(--accent); border: 1px solid transparent; }
   #boot .bootbtn.gift:active { background: var(--accent-press); }
   #boot .bootbtn.me { color: var(--text); background: var(--surface-2); border: 1px solid var(--line); }
   #boot .bootbtn.me:active { background: var(--surface); }
   #boot .bootdisc { grid-column: 1 / -1; display: inline-flex; align-items: center; justify-content: center; min-height: 40px; font-size: 13px; font-weight: 600; color: var(--text-2); text-decoration: underline; }
-  @media (max-width: 420px) { #boot .bootcta { grid-template-columns: 1fr; } }
+  /* One row even at 320px (a long label wraps inside its button), and on a short screen no mark and a smaller title: the 3D entry and the
+     nickname stay on the first screen of a 375x812 phone. */
+  @media (max-height: 760px) { #boot .bootmark { display: none; } #boot h1 { font-size: 30px; margin: 4px 0; } #boot .bootcta { margin-top: 10px; } }
   /* With the makers above it, 3D 광장 둘러보기 is the quieter third choice (the accent stays the gift's). */
   #boot .bootcta ~ .enter .enter-go { color: var(--text); background: var(--surface-2); border: 1px solid var(--line); }
   #boot .bootcta ~ .enter .enter-go:active { background: var(--surface); }

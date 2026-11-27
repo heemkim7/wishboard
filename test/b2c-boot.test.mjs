@@ -25,8 +25,11 @@ describe('the boot card', () => {
     assert.match(ui, /const BOOT_GO = '3D 광장 둘러보기';/);
     assert.equal(/bootLabel \|\| '입장하기'/.test(ui), false);
   });
-  it('the makers stack on a phone and keep 44px or more to press', () => {
-    assert.match(html, /@media \(max-width: 420px\) \{ #boot \.bootcta \{ grid-template-columns: 1fr; \} \}/);
-    assert.match(html, /#boot \.bootbtn \{[^}]*min-height: 52px/);
+  it('the makers stay side by side on a phone (one row, 44px or more to press), so the 3D entry stays on the first screen', () => {
+    assert.equal(/#boot \.bootcta \{ grid-template-columns: 1fr; \}/.test(html), false, 'never stacked');
+    assert.match(html, /#boot \.bootbtn \{[^}]*min-height: 48px/);
+  });
+  it('a short screen drops the mark and tightens the title so 3D 광장 둘러보기 is not pushed below the fold', () => {
+    assert.match(html, /@media \(max-height: 760px\) \{ #boot \.bootmark \{ display: none; \} #boot h1 \{ font-size: 30px; margin: 4px 0; \} #boot \.bootcta \{ margin-top: 10px; \} \}/);
   });
 });
