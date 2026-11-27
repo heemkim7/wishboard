@@ -10,7 +10,7 @@ import { OCC_KEYS, OCCASIONS } from '../giftrules.js';
 import {
   REAL, SCENES, plateUrls, musicUrl, homography, invert3, applyH, frameOf, timeOf, quadAt, plateFault, layoutFor, fitLines, headOf,
   cardWords, ambGain, ambCurve, ambBaseDb, realFileName, ledMean, ledCols, screenStats, texSize, keepsUp, realReason, popAt, REAL_BEACONS,
-  REAL_TYPES, pickRealType, REAL_DIR, finishReason, lowFor, LOW_MS, inAppBrowser, scenesToDrop,
+  REAL_TYPES, pickRealType, REAL_DIR, finishReason, lowFor, LOW_MS, inAppBrowser, scenesToDrop, MUSIC_BACKUP,
 } from '../realrules.js';
 import { fragmentSource, MAX_SCREENS } from '../realvideo.js';
 
@@ -241,10 +241,13 @@ describe('the real plates in assets/plates/', { skip: HAVE ? false : 'assets/pla
       assert.equal(plateFault(j), '', id + ': ' + plateFault(j));
     }
   });
-  it('a music file for every OCCASIONS key', () => {
-    for (const k of OCC_KEYS) assert.ok(fs.existsSync(new URL('..' + musicUrl(k), import.meta.url)), musicUrl(k));
+  it('a music file for every OCCASIONS key (a key in MUSIC_BACKUP may wait for its own: its stand-in is there)', () => {
+    const has = (k) => fs.existsSync(new URL('..' + musicUrl(k), import.meta.url));
+    for (const k of OCC_KEYS) assert.ok(has(k) || (Object.hasOwn(MUSIC_BACKUP, k) && has(MUSIC_BACKUP[k])), musicUrl(k));
     const m = idx && !Array.isArray(idx) ? idx.music : null;
-    if (m) assert.deepEqual((Array.isArray(m) ? m.map((x) => (typeof x === 'string' ? x : x.occ)) : Object.keys(m)).sort(), [...OCC_KEYS].sort());
+    const named = m ? (Array.isArray(m) ? m.map((x) => (typeof x === 'string' ? x : x.occ)) : Object.keys(m)) : [];
+    if (m) for (const k of OCC_KEYS) assert.ok(named.includes(k) || Object.hasOwn(MUSIC_BACKUP, k), 'index.json names ' + k);
+    if (m) for (const k of named) assert.ok(OCC_KEYS.includes(k), 'index.json names no unknown day: ' + k);
     if (Array.isArray(m)) for (const x of m) if (x && x.file) assert.equal(REAL_DIR + x.file, musicUrl(x.occ), 'the page asks for the file index.json names');
   });
 });

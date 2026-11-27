@@ -8,7 +8,7 @@ import { nowMs, kingCovers } from '../live.js';
 import { isPrime, primeAt, primeCard, primeKey, primeNotice } from '../primerules.js';
 import { ADS, adView, adWorld, linkHost } from '../adsale.js';
 import { SEASONS } from '../seasons.js';
-import { GIFT_ID, GIFT_SCREENS, OCCASIONS, GIFT_THEMES, placeGifts, turnOf, giftScreen, cerTeaser, cerClock } from '../giftrules.js';
+import { GIFT_ID, GIFT_SCREENS, OCCASIONS, GIFT_THEMES, placeGifts, turnOf, giftScreen, cerTeaser, cerClock, toLine, isMe } from '../giftrules.js';
 import { paintGift, paintWelcome, paintTeaser } from '../giftart.js?v=202611272230';
 import { WELCOME } from '../ftue.js?v=202611272230';
 import { TOWER, towerAt, towerKey, towerWire } from '../towerrules.js';
@@ -703,7 +703,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     const cheers = Math.max(0, Math.floor(Number(b.data?.cheers) || 0));
     const clicks = Math.max(0, Math.floor(Number(b.data?.clicks) || 0));
     const notes = Array.isArray(b.data?.notes) ? b.data.notes.map((t) => chars(String(t || ''), 16)).filter(Boolean).slice(-5) : [];
-    const msg = towerE ? `메인 타워 축하 1분   ·   To. ${towerE.to}   ·   ${(OCCASIONS[towerE.occ] || OCCASIONS.bday).head}   ·   ${TOWER_TAIL}` : team != null ? `응원 팀 명당   ·   ${team ? chars(team, 16) + '   ·   ' : ''}서로 다른 사람의 응원으로 정해요   ·   ${liveHead}` : gift?.welcome ? (gift.card?.strip ? `${gift.card.strip}   ·   ${liveHead}` : `${gift.to}님, 가상 타임스퀘어에 오신 걸 환영해요   ·   ${liveHead}`) : cerOn ? `점등식   ·   To. ${gift.to}   ·   ${giftPin?.when || ''}에 켜져요   ·   ${liveHead}` : gift ? `선물 전광판   ·   To. ${gift.to}   ·   ${(OCCASIONS[gift.occ] || OCCASIONS.bday).head}${gift.from ? '   ·   From. ' + gift.from : ''}${gift.n ? '   ·   💌 친구 메시지 ' + gift.n + '개' : ''}   ·   ${liveHead}` : kingOn ? `어제의 소원왕   ·   ${chars(b.kingNick || '', 16)}   ·   ${liveHead}` : wishOn ? `오늘의 소원   ·   ${b.wishMsg}   ·   ${liveHead}` : `택시 정차 ${views}회   ·   응원 ${cheers}회   ·   링크 클릭 ${clicks}회   ·   ${notes.length ? notes.join('   ·   ') + '   ·   ' : ''}${liveHead}`;
+    const msg = towerE ? `메인 타워 축하 1분   ·   ${toLine(towerE)}   ·   ${(OCCASIONS[towerE.occ] || OCCASIONS.bday).head}   ·   ${TOWER_TAIL}` : team != null ? `응원 팀 명당   ·   ${team ? chars(team, 16) + '   ·   ' : ''}서로 다른 사람의 응원으로 정해요   ·   ${liveHead}` : gift?.welcome ? (gift.card?.strip ? `${gift.card.strip}   ·   ${liveHead}` : `${gift.to}님, 가상 타임스퀘어에 오신 걸 환영해요   ·   ${liveHead}`) : cerOn ? `점등식   ·   To. ${gift.to}   ·   ${giftPin?.when || ''}에 켜져요   ·   ${liveHead}` : gift ? `${isMe(gift) ? '내 전광판' : '선물 전광판'}   ·   ${toLine(gift)}   ·   ${(OCCASIONS[gift.occ] || OCCASIONS.bday).head}${gift.from && !isMe(gift) ? '   ·   From. ' + gift.from : ''}${gift.n ? '   ·   💌 친구 메시지 ' + gift.n + '개' : ''}   ·   ${liveHead}` : kingOn ? `어제의 소원왕   ·   ${chars(b.kingNick || '', 16)}   ·   ${liveHead}` : wishOn ? `오늘의 소원   ·   ${b.wishMsg}   ·   ${liveHead}` : `택시 정차 ${views}회   ·   응원 ${cheers}회   ·   링크 클릭 ${clicks}회   ·   ${notes.length ? notes.join('   ·   ') + '   ·   ' : ''}${liveHead}`;
     const tw = Math.max(8, g.measureText(msg).width);
     const x0 = sx + 6 * k - ((t * 90) % tw);
     g.fillText(msg, x0, body + th / 2 + 1);

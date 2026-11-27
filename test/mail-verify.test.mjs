@@ -395,7 +395,9 @@ describe('main.js sign-in paths (stubbed)', () => {
 function boot({ search = '', hash = '', session = null } = {}) {
   const src = between(read('main.js'), 'async function bootAccount() {', '\n// ---- Google sign-in in a second window');
   const calls = { notes: [], finishLink: [], opened: 0, account: [] };
+  const q = new URLSearchParams(search);
   const ctx = {
+    SIGN_BACK: { ask: q.get('login') === '1', to: '', went: false }, // main.js's ?login=1 (a board page's 계정에 남겨 두기)
     URLSearchParams, mailArrival, cleanAddress, oauthErrorText: () => 'OAUTH-ERR',
     ARRIVED: oauthReturn(search, hash), MAIL_BACK: mailBack(search),
     location: { search, hash, href: ORIGIN + '/' + search + hash, pathname: '/' },
@@ -426,6 +428,14 @@ describe('main.js bootAccount: back from a confirmation link of an older mail', 
     const b = boot({ search: '?mail=1&error=access_denied&error_code=otp_expired', hash: '#error=access_denied&error_code=otp_expired' });
     await b.run();
     assert.deepEqual(b.calls.notes, [['메일 링크가 만료됐거나 이미 쓰였어요. 이메일로 로그인하면 새 코드를 받을 수 있어요.', 'err', 'function']]);
+  });
+  it('?login=1 (계정에 남겨 두기 on a board page) opens the sheet for a browser with no session, never for a signed-in one', async () => {
+    const b = boot({ search: '?login=1&back=%2Fg%2Fabcd1234' });
+    await b.run(); assert.equal(b.calls.opened, 1);
+    const s = boot({ search: '?login=1', session: { user: { id: 'u-1' } } });
+    await s.run(); assert.equal(s.calls.opened, 0);
+    const n = boot({ search: '' });
+    await n.run(); assert.equal(n.calls.opened, 0);
   });
   it('a Google return keeps its old lines', async () => {
     const b = boot({ search: '?code=' + CODE });

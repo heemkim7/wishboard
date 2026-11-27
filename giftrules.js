@@ -45,8 +45,28 @@ export const OCCASIONS = Object.freeze({
   cheer: Object.freeze({ name: '응원', head: '언제나 응원해요', emoji: '📣', th: 'sky', hint: '넌 할 수 있어!' }),
   just: Object.freeze({ name: '그냥', head: '그냥 생각나서', emoji: '💌', th: 'mint', hint: '오늘도 좋은 하루 보내' }),
   thanks: Object.freeze({ name: '고마움', head: '정말 고마워요', emoji: '🙏', th: 'rose', hint: REPLY_MSG }),
+  // 2026-11-27 (B2C free season): two more days, and `me`, a board of one's own (PERSONAL, /gift?me=1): the same engine, the name shown
+  // with "by" in place of "To.", no sender. Old boards keep their keys; these come after them.
+  love: Object.freeze({ name: '사랑', head: '많이 사랑해요', emoji: '💗', th: 'rose', hint: '항상 고마워, 사랑해' }),
+  grad: Object.freeze({ name: '졸업·승진', head: '졸업·승진 축하해요', emoji: '🎊', th: 'gold', hint: '새 출발을 응원해!' }),
+  me: Object.freeze({ name: '내 전광판', head: '오늘의 주인공', emoji: '✨', th: 'night', hint: '오늘의 나를 응원해요' }),
 });
 export const OCC_KEYS = Object.freeze(Object.keys(OCCASIONS));
+// The days the gift maker offers, in the order it shows them (내 전광판 is its own mode, never a day there).
+export const GIFT_PICK = Object.freeze(['bday', 'anniv', 'love', 'pass', 'grad', 'cheer', 'just', 'thanks']);
+// 내 전광판's kinds: a chip only seeds the line with its example (the board stores occ 'me' and the line, never the kind).
+export const ME_KINDS = Object.freeze([
+  Object.freeze({ k: 'name', name: '이름 걸기', msg: '여기, 내 이름이 걸렸어요' }),
+  Object.freeze({ k: 'goal', name: '다짐', msg: '올해는 꼭 해낸다!' }),
+  Object.freeze({ k: 'work', name: '작품·채널', msg: '새 작품을 세상에 내놓았어요' }),
+  Object.freeze({ k: 'moment', name: '특별한 순간', msg: '오늘을 오래 기억할게요' }),
+]);
+export const isMe = (g) => String(g?.occ || '') === 'me';
+// The name line on a card: 'by 민지' on a board of one's own, 'To. 민지' on a gift.
+export const toLine = (g) => (isMe(g) ? 'by ' + (String(g?.to || '').trim() || '나') : 'To. ' + (String(g?.to || '').trim() || '당신'));
+const kindWord = (g) => (isMe(g) ? '전광판' : '선물 전광판');
+// A page's title for a board: '민지님의 전광판' / '민지님을 위한 선물 전광판'.
+export const boardTitle = (g) => { const to = String(g?.to || '').trim() || '당신'; return isMe(g) ? `${to}님의 전광판` : `${to}님을 위한 선물 전광판`; };
 
 // a, b: the gradient; ink: the text; hi: the accent (To. line, chips); deep: the frame.
 export const GIFT_THEMES = Object.freeze({
@@ -59,14 +79,38 @@ export const GIFT_THEMES = Object.freeze({
 });
 export const THEME_KEYS = Object.freeze(Object.keys(GIFT_THEMES));
 
-// E1 (유료 관심): the real planned price ladder, shown on the sender's preview. No payment exists; a paid tier only asks
-// "열리면 알려 드릴까요?". Prices include VAT. Tier 3's 9시 parade is its own screen at 21:05, never the main tower's 9 pm show.
+// E1 (유료 관심): the planned price ladder, shown on the owner's page (gift and 내 전광판 alike). No payment exists; a paid tier only asks
+// "열리면 알려 드릴까요?". Prices include VAT. Every line is what the code does now (the free tier) or, under the label '결제가 열리면', a
+// perk the same code can give once payment opens: more hours (GIFT.hours), the films without the watermark (giftfilm.js, realvideo.js;
+// the real video's 'AI 합성' mark stays), the main tower minute at a time the owner picks without the friends (towerrules.js). Nothing
+// about a bigger screen, longer pages, a parade or photo downloads (2026-11-27: the code had none of them).
 export const TIERS = Object.freeze([
-  Object.freeze({ t: 0, name: '무료 걸기', price: 0, best: false, tag: '지금 걸린 것', items: Object.freeze(['작은 화면에 6시간', '휴대폰으로 만드는 15초 영상(워터마크)', '받는 사람 페이지 7일', '롤링페이퍼 (무료 시즌 동안)', '결제가 열린 뒤에는 받는 사람 페이지에 작은 광고']) }),
-  Object.freeze({ t: 1, name: '크게 걸기', price: 3900, best: false, tag: '커피 한 잔 값', items: Object.freeze(['큰 화면에 24시간', '받는 사람 페이지 30일', '광고 없음']) }),
-  Object.freeze({ t: 2, name: '축하 영상 세트', price: 7900, best: true, tag: '추천', items: Object.freeze(['크게 걸기 전부', '고화질 15초 축하 영상 저장(워터마크 없음)', '롤링페이퍼 (친구 메시지 30개, 그날까지 잠금)', '받는 사람 페이지 1년', '영상·사진 내려받기']) }),
-  Object.freeze({ t: 3, name: '9시 주인공', price: 14900, best: false, tag: '', items: Object.freeze(['축하 영상 세트 전부', "밤 9시 5분부터 '개인 축하 퍼레이드' 1분 (하루 30자리, 메인 타워와 따로)", '퍼레이드 장면이 담긴 두 번째 영상']) }),
+  Object.freeze({ t: 0, name: '무료 걸기', price: 0, best: false, tag: '지금 걸린 것', label: '', items: Object.freeze(['광장 화면에 6시간 (메인거리·건물 앞 화면)', '15초 축하 영상(워터마크)과 10초 실사 축하 영상(‘AI 합성’ 표시)', '받는 사람 페이지 7일과 롤링페이퍼', '친구 응원 10명이 모이면 메인 타워 축하 1분', '결제가 열리면 받는 사람 페이지에 작은 광고가 붙어요']) }),
+  Object.freeze({ t: 1, name: '오래 걸기', price: 3900, best: false, tag: '커피 한 잔 값', label: '결제가 열리면', items: Object.freeze(['광장 화면에 12시간 (무료의 두 배)', '받는 사람 페이지에 광고 없음']) }),
+  Object.freeze({ t: 2, name: '축하 영상 세트', price: 7900, best: true, tag: '추천', label: '결제가 열리면', items: Object.freeze(['오래 걸기 전부', '워터마크 없는 15초 축하 영상', '워터마크 없는 실사 축하 영상 (‘AI 합성’ 표시는 남아요)']) }),
+  Object.freeze({ t: 3, name: '메인 타워 주인공', price: 14900, best: false, tag: '', label: '결제가 열리면', items: Object.freeze(['축하 영상 세트 전부', '메인 타워 축하 1분을 원하는 시각에 바로 지정 (친구 응원 없이, 그날 30자리 안에서)']) }),
 ]);
+// The experiment arms of the ladder: A is the prices above. GIFT_ARMS (a Worker variable, e.g. 'A:3900/7900/14900;B:2900/5900/11900')
+// defines more; a board gets one arm by its id (the same arm on every read), and the Worker counts views, picks and opt-ins per arm with
+// the price that arm showed (giftsrv.js interest). Without the variable, or with one that does not read, there is only A.
+export const LADDER_ARMS = Object.freeze({ A: Object.freeze(TIERS.map((t) => t.price)) });
+export function armsFrom(spec) {
+  const out = {};
+  for (const part of String(spec || '').split(';').map((s) => s.trim()).filter(Boolean)) {
+    const m = /^([A-Z]):(\d{3,6})\/(\d{3,6})\/(\d{3,6})$/.exec(part);
+    if (!m) return { A: [...LADDER_ARMS.A] };
+    const p = [0, Number(m[2]), Number(m[3]), Number(m[4])];
+    if (!(p[1] >= 500 && p[1] < p[2] && p[2] < p[3] && p[3] <= 100000)) return { A: [...LADDER_ARMS.A] };
+    out[m[1]] = p;
+  }
+  return Object.keys(out).length ? out : { A: [...LADDER_ARMS.A] };
+}
+export function ladderArm(id, spec = '') {
+  const arms = armsFrom(spec), keys = Object.keys(arms).sort();
+  let h = 0; for (const c of String(id || '')) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  const a = keys[h % keys.length];
+  return { a, p: arms[a] };
+}
 export const TIER_NOTE = '가격은 부가세 포함이에요. 지금은 무료 시즌이라 결제가 없어요. 결제가 열리면 환불 규정과 함께 먼저 알려 드려요.';
 export const TIER_ASK = '결제는 준비 중이에요 · 열리면 알려 드릴까요?';
 export const won = (n) => (Number(n) || 0) === 0 ? '0원' : Math.round(Number(n)).toLocaleString('ko-KR') + '원';
@@ -90,6 +134,7 @@ export const cpLen = (s) => Array.from(String(s ?? '')).length;
 
 export const GIFT_ERR = Object.freeze({
   to: '받는 사람 이름을 적어 주세요.',
+  me: '전광판에 보일 이름을 적어 주세요.',
   name: '그 이름은 쓸 수 없어요.',
   long: '조금 짧게 적어 주세요.',
   blocked: '그 문구는 걸 수 없어요.',
@@ -180,10 +225,10 @@ export function windowText(a, b) {
 export function giftFault(b, now = Date.now()) {
   const no = (field, code) => ({ ok: false, field, code, error: GIFT_ERR[code] || GIFT_ERR.down });
   if (!b || typeof b !== 'object') return no('to', 'to');
-  let k = nameFault(b.to, GIFT.toMax, true); if (k) return no('to', k);
-  k = nameFault(b.from, GIFT.fromMax, false); if (k) return no('from', k);
-  const occ = String(b.occ || 'bday');
-  if (!OCCASIONS[occ]) return no('occ', 'occ');
+  const occ = String(b.occ || 'bday'), me = occ === 'me';
+  let k = nameFault(b.to, GIFT.toMax, true); if (k) return no('to', k === 'to' && me ? 'me' : k);
+  if (!me) { k = nameFault(b.from, GIFT.fromMax, false); if (k) return no('from', k); } // a board of one's own has no sender
+  if (!Object.hasOwn(OCCASIONS, occ)) return no('occ', 'occ');
   k = lineFault(b.msg, GIFT.msgMax); if (k) return no('msg', k);
   const th = THEME_KEYS.includes(String(b.th || '')) ? String(b.th) : OCCASIONS[occ].th;
   const today = kstDay(now), day = String(b.day || today);
@@ -192,7 +237,7 @@ export function giftFault(b, now = Date.now()) {
   if (at === 'now' ? day !== today : !GIFT.starts.includes(at)) return no('at', 'at');
   const w = windowFor(day, at, now);
   if (at !== 'now' && w.a <= now) return no('at', 'past');
-  return { ok: true, v: { to: cut(b.to, GIFT.toMax), from: cut(b.from, GIFT.fromMax), occ, msg: cut(b.msg, GIFT.msgMax), th, day, a: w.a, b: w.b } };
+  return { ok: true, v: { to: cut(b.to, GIFT.toMax), from: me ? '' : cut(b.from, GIFT.fromMax), occ, msg: cut(b.msg, GIFT.msgMax), th, day, a: w.a, b: w.b } };
 }
 // A 롤링페이퍼 line: { nick (optional, default 친구), txt }. -> { ok, v: { nick, txt } } or { ok: false, field, code, error }.
 export function paperFault(b) {
@@ -285,7 +330,7 @@ export function hiddenWords(g, now = Date.now(), start = 0) {
 export const PLAZA_BTN = Object.freeze({ day: '🗽 광장에서 미리 보기', live: '🗽 직접 가서 보기', after: '🗽 광장에서 다시 보기' });
 // The plaza's toast once the board is on a screen: look 'live', or 'replay' (on its day before the window: when it hangs; after: only here).
 export function plazaNote(g, look, now = Date.now()) {
-  const head = `🎁 ${String(g?.to || '') || '당신'}님을 위한 선물 전광판이에요`;
+  const who = String(g?.to || '') || '당신', head = isMe(g) ? `✨ ${who}님의 전광판이에요` : `🎁 ${who}님을 위한 선물 전광판이에요`;
   if (look !== 'replay') return head + '!';
   return head + ' · ' + (now < Number(g?.a) ? `광장에는 ${clockText(Number(g.a))}에 걸려요` : '이 기기에서만 다시 보여 드려요');
 }
@@ -339,9 +384,10 @@ export function keptRef(raw, now = Date.now()) {
 }
 // 답장 전광판: the maker's values for a reply to board g (its public view): to and from swapped and cut to their limits, 고마움, the
 // thanks line. Everything can still be edited and goes through giftFault like any board; a board without a sender leaves `to` empty.
-export function replyDraft(g) { return { to: cut(g?.from, GIFT.toMax), from: cut(g?.to, GIFT.fromMax), occ: 'thanks', msg: REPLY_MSG, th: '' }; }
+// A board of one's own (내 전광판) has nobody to answer: its visitors hang a cheer for that person (응원, the name filled in).
+export function replyDraft(g) { if (isMe(g)) return { to: cut(g?.to, GIFT.toMax), from: '', occ: 'cheer', msg: '', th: '' }; return { to: cut(g?.from, GIFT.toMax), from: cut(g?.to, GIFT.fromMax), occ: 'thanks', msg: REPLY_MSG, th: '' }; }
 // The recipient page's reply button: by the sender's name when the board has one.
-export function replyLabel(g) { const from = cut(g?.from, GIFT.fromMax); return from ? `💌 ${from}님에게 답장 전광판 걸기` : '💌 고마워 전광판 걸기'; }
+export function replyLabel(g) { if (isMe(g)) return `📣 ${cut(g?.to, GIFT.toMax) || '이분'}님에게 응원 전광판 걸기`; const from = cut(g?.from, GIFT.fromMax); return from ? `💌 ${from}님에게 답장 전광판 걸기` : '💌 고마워 전광판 걸기'; }
 
 // ---- what a page shows ---------------------------------------------------------------------------------------------------
 // The public view of a stored board (the Worker strips the owner, network and visitor fields before this).
@@ -372,9 +418,9 @@ export function heartsOpen(g, now = Date.now()) { return !!g && giftPhase(g, now
 export function heartTakes(g, now = Date.now()) { return !!g && giftPhase(g, now) !== 'gone'; }
 // The recipient page's 🔗 공유하기: a visitor passing the page on (the owner's own words are in giftpage.js share). look: pageLook's.
 export function visitorShareText(g, look = 'live') {
-  const o = OCCASIONS[g?.occ] || OCCASIONS.bday, to = String(g?.to || '') || '당신';
+  const o = OCCASIONS[g?.occ] || OCCASIONS.bday, title = boardTitle(g);
   const hang = look === 'after' ? '걸렸어요' : look === 'live' ? '걸려 있어요' : '걸려요';
-  return { title: `${to}님을 위한 선물 전광판`, text: `${o.emoji} ${to}님을 위한 선물 전광판이 뉴욕 타임스퀘어 가상 광장에 ${hang}! ` + (g?.takes ? '같이 축하 메시지 남겨 주세요 👉' : '같이 봐 주세요 👉') };
+  return { title, text: `${o.emoji} ${title}이 뉴욕 타임스퀘어 가상 광장에 ${hang}! ` + (g?.takes ? (isMe(g) ? '같이 응원 메시지 남겨 주세요 👉' : '같이 축하 메시지 남겨 주세요 👉') : '같이 봐 주세요 👉') };
 }
 // A GET of /g/<id> by a link-preview fetcher or a crawler (or with no User-Agent at all): counted apart from people (hitbot). The same
 // list as worker.js LINK_BOT (linkWho, the plaza's links): keep the two identical. daumoa is Daum's crawler; DaumApps (its app) is people.
@@ -383,6 +429,7 @@ export function botAgent(ua) { const s = String(ua ?? '').trim(); return !s || B
 // The link preview words.
 export function giftShareText(g) {
   const o = OCCASIONS[g?.occ] || OCCASIONS.bday, to = String(g?.to || '') || '당신';
+  if (isMe(g)) return { title: `${o.emoji} ${to}님의 전광판`, text: `뉴욕 타임스퀘어 가상 광장에 ${to}님의 전광판이 걸려요. ${o.head}!` };
   return {
     title: `${o.emoji} ${to}님을 위한 선물 전광판`,
     text: `뉴욕 타임스퀘어 가상 광장에 ${to}님을 위한 전광판이 걸려요. ${o.head}!`,
@@ -441,6 +488,10 @@ export const CER = Object.freeze({
 export const CER_BEACONS = Object.freeze(['cer', 'cershot']);
 // 실사 축하 영상 (realvideo.js, the owner page): a scene picked, a video made, saved, shared, or the device could not make it.
 export const REAL_BEACONS = Object.freeze(['real_pick', 'real_made', 'real_save', 'real_share', 'real_fail']);
+// The recipient page's account nudge (계정에 남겨 두기 tapped; the sign-in came back to the page) and the card image saved.
+export const MORE_BEACONS = Object.freeze(['signup_nudge', 'signup_from_gift', 'card_save']);
+// The plaza's ?back= after a sign-in from that nudge (main.js): only a board page of this site. -> the path or ''.
+export const giftBack = (v) => (/^\/g\/[0-9a-z]{8}$/.test(String(v ?? '')) ? String(v) : '');
 export const CER_TEXT = Object.freeze({
   early: '10분 전부터 들어올 수 있어요',
   busy: '지금은 광장이 붐벼서 점등식에 들어갈 수 없어요. 잠시 뒤에 다시 해 주세요',
@@ -501,7 +552,7 @@ export function cerButton(g, now = Date.now(), { hard = false, start = 0 } = {})
 export function cerInvite(g, url, start = 0) {
   const when = cerWhen(start || g); if (!when) return null;
   const to = cerTo(g);
-  return { title: `🎆 ${to}님 선물 전광판 점등식`, text: `${when}, 뉴욕 타임스퀘어 가상 광장에서 ${to}님의 전광판이 켜져요. 같이 보러 와요! ${CER_TEXT.early} 👉`, url: String(url || '') };
+  return { title: `🎆 ${to}님 ${kindWord(g)} 점등식`, text: `${when}, 뉴욕 타임스퀘어 가상 광장에서 ${to}님의 전광판이 켜져요. 같이 보러 와요! ${CER_TEXT.early} 👉`, url: String(url || '') };
 }
 /** Added to the owner's share text while the start is ahead (leading space), else ''. */
 export function cerShareLine(g, now = Date.now()) { const p = cerPhase(g, now); return p === 'early' || p === 'wait' || p === 'count' ? ` 🎆 점등식 ${cerWhen(g)}에 같이 봐요!` : ''; }
@@ -521,21 +572,21 @@ export function cerArrive(g, now = Date.now(), { hard = false, start = 0 } = {})
 }
 export function cerArriveNote(g, now = Date.now(), start = 0) {
   const s = start || cerStart(g), to = cerTo(g);
-  return now < s ? `🎆 ${to}님 선물 전광판 점등식 · ${cerHM(s)}에 켜져요` : `🎆 ${to}님 선물 전광판이 방금 켜졌어요!`;
+  return now < s ? `🎆 ${to}님 ${kindWord(g)} 점등식 · ${cerHM(s)}에 켜져요` : `🎆 ${to}님 ${kindWord(g)}이 방금 켜졌어요!`;
 }
 /** The teaser card's fields (giftart.js paintTeaser draws only these): never the message, never the sender. */
 export function cerTeaser(g, now = Date.now(), start = 0) {
   const s = start || cerStart(g), o = OCCASIONS[g?.occ] || OCCASIONS.bday;
-  return { to: cerTo(g), chip: CER_TEXT.soon, left: cerClock(s ? s - now : 0), when: s ? cerHM(s) : '', emoji: o.emoji, th: THEME_KEYS.includes(String(g?.th || '')) ? String(g.th) : o.th };
+  return { to: cerTo(g), chip: CER_TEXT.soon, left: cerClock(s ? s - now : 0), when: s ? cerHM(s) : '', emoji: o.emoji, th: THEME_KEYS.includes(String(g?.th || '')) ? String(g.th) : o.th, ...(isMe(g) ? { by: 1 } : {}) };
 }
 /** How long the one pin lasts from now: past the late window by CER.hold, at least CER.hold. */
 export const cerPinMs = (x, now = Date.now()) => { const s = startOf(x); return Math.max(CER.hold, s ? s + CER.late + CER.hold - now : 0); };
 /** The photo's bottom band: 'To. 민지 · 2026.12.25 · WISH BOARD 가상 광장'. */
 export function cerBand(g, start = 0) {
   const s = start || cerStart(g), day = s ? kstDay(s) : String(g?.day || '');
-  return `To. ${cerTo(g)} · ${day.replace(/-/g, '.')} · ${CER_BAND}`;
+  return `${isMe(g) ? 'by' : 'To.'} ${cerTo(g)} · ${day.replace(/-/g, '.')} · ${CER_BAND}`;
 }
-export const cerPhotoText = (g) => `🎆 ${cerTo(g)}님 선물 전광판 점등식에서 · ${CER_BAND}`;
+export const cerPhotoText = (g) => `🎆 ${cerTo(g)}님 ${kindWord(g)} 점등식에서 · ${CER_BAND}`;
 /**
  * The steps due on this device now, each once. done: what this device already did ({ before, teaser, count, light, cheer, rounds, pose,
  * shot, offer, end }); the caller sets done.before = true whenever the phase was 'wait' or 'count', done[step] = true after each step, and

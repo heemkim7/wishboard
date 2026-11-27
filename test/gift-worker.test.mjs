@@ -953,3 +953,95 @@ describe('the gift loop: reshare, hearts, starts, link hits and makers on the Wo
     } finally { done(); }
   });
 });
+
+// B2C free season (2026-11-27): 내 전광판 and the new days through the Worker, the owner's DISCOVER switch (off by default, only the
+// owner, only then in /rt/world), the ladder's arm-tagged counts with the price shown, and the account nudge's beacons.
+describe('B2C: 내 전광판, DISCOVER opt-in, ladder arms', () => {
+  it('a board of one\'s own is made like a gift, keeps no sender, and the new days are taken; old days unchanged', async () => {
+    const { done } = setup();
+    try {
+      const env = makeEnv(), H = harness(env), A = await H.guest();
+      const me = await (await H.post('/rt/gift', FORM({ occ: 'me', to: '민지', from: '누군가', msg: '올해는 꼭 해낸다!' }), A.token)).json();
+      assert.equal(me.ok, true, JSON.stringify(me)); assert.equal(me.gift.occ, 'me'); assert.equal(me.gift.from, ''); assert.equal(me.gift.th, 'night');
+      for (const occ of ['love', 'grad']) assert.equal((await (await H.post('/rt/gift', FORM({ occ, to: occ }), A.token)).json()).ok, true, occ);
+      const bad = await (await H.post('/rt/gift', FORM({ occ: 'me', to: '' }), A.token)).json();
+      assert.equal(bad.code, 'me'); assert.equal(bad.field, 'to');
+      assert.equal((await (await H.post('/rt/gift', FORM({ occ: 'constructor' }), A.token)).json()).code, 'occ');
+      const page = await (await H.get('/g/' + me.id)).text();
+      assert.match(page, /민지님의 전광판/); assert.equal(page.includes('민지님을 위한'), false);
+    } finally { done(); }
+  });
+
+  it('DISCOVER: off until the owner turns it on, only the owner, shown in the world entry only while on', async () => {
+    const { clock, done } = setup();
+    try {
+      const env = makeEnv(), H = harness(env), A = await H.guest(), B = await H.guest('4.4.4.4');
+      const r = await (await H.post('/rt/gift', FORM(), A.token)).json(), p = '/rt/gift/' + r.id + '/discover';
+      assert.equal(r.mine.dc, 0, 'off by default');
+      clock.add(61000);
+      let w = await (await H.get('/rt/world')).json();
+      assert.equal('dc' in w.gifts[0], false);
+      assert.equal((await H.post(p, { on: true }, B.token, '4.4.4.4')).status, 403, 'not the owner');
+      assert.equal((await H.post(p, { on: true })).status, 401);
+      assert.equal((await H.post(p, { on: 'yes' }, A.token)).status, 400);
+      const on = await H.post(p, { on: true }, A.token); assert.equal(on.status, 200); assert.deepEqual(await on.json(), { ok: true, dc: 1 });
+      assert.equal((await (await H.get('/rt/gift/' + r.id, A.token)).json()).mine.dc, 1);
+      assert.equal('dc' in (await (await H.get('/rt/gift/' + r.id)).json()).gift, false, 'the public read does not carry the switch');
+      clock.add(61000);
+      w = await (await H.get('/rt/world')).json();
+      assert.equal(w.gifts.find((g) => g.id === r.id).dc, 1);
+      assert.equal(dayCounts(env).discover_on, 1);
+      assert.deepEqual(await (await H.post(p, { on: false }, A.token)).json(), { ok: true, dc: 0 });
+      clock.add(61000);
+      w = await (await H.get('/rt/world')).json();
+      assert.equal('dc' in w.gifts.find((g) => g.id === r.id), false);
+      env.BUDGET_REQ_DAY = '1'; clock.add(61000); await H.get('/rt/world'); clock.add(61000);
+      const calls = spyGift(env), busy = await H.post(p, { on: true }, A.token);
+      assert.equal(busy.status, 503); assert.equal(calls.includes('giftDiscover'), false, 'no DO call at hard');
+    } finally { done(); }
+  });
+
+  it('the ladder counts per arm and kind with the price that arm showed; the old keys stay', async () => {
+    const { done } = setup();
+    try {
+      const env = makeEnv(), H = harness(env), A = await H.guest();
+      const g = await (await H.post('/rt/gift', FORM(), A.token)).json(), m = await (await H.post('/rt/gift', FORM({ occ: 'me' }), A.token)).json();
+      assert.deepEqual(g.mine.ladder, { a: 'A', p: [0, 3900, 7900, 14900] });
+      for (const [id, body] of [[g.id, { act: 'view' }], [g.id, { act: 'pick', t: 2 }], [m.id, { act: 'view' }], [m.id, { act: 'pick', t: 3 }], [g.id, { act: 'notify', t: 2, consent: true }]]) assert.equal((await H.post('/rt/gift/' + id + '/interest', body, A.token)).status, 200, JSON.stringify(body));
+      const d = dayCounts(env);
+      assert.equal(d.ladder, 2); assert.equal(d['pick:2'], 1); assert.equal(d['pick:3'], 1); assert.equal(d['notify:2'], 1);
+      assert.equal(d['ladder:A:g'], 1); assert.equal(d['ladder:A:me'], 1);
+      assert.equal(d['pick:2:A:g:7900'], 1); assert.equal(d['pick:3:A:me:14900'], 1); assert.equal(d['notify:2:A:g:7900'], 1);
+    } finally { done(); }
+  });
+
+  it('GIFT_ARMS splits boards between arms by id; the owner\'s read names the board\'s arm and the counts carry its price', async () => {
+    const { done } = setup();
+    try {
+      const env = makeEnv({ GIFT_ARMS: 'A:3900/7900/14900;B:2900/5900/11900' }), H = harness(env);
+      let hit = null;
+      for (let i = 0; i < 24 && !hit; i++) { // three boards a guest and day: a new guest every three (1 in 2^24 to see no B)
+        const ip = '9.9.' + Math.floor(i / 3) + '.1', G = i % 3 === 0 ? (H.cur = await H.guest(ip)) : H.cur;
+        const r = await (await H.post('/rt/gift', FORM({ to: '친구' + i }), G.token, ip)).json();
+        assert.equal(r.ok, true, JSON.stringify(r));
+        if (r.mine.ladder.a === 'B') hit = { r, G, ip };
+      }
+      assert.ok(hit, 'some board lands in B');
+      assert.deepEqual(hit.r.mine.ladder.p, [0, 2900, 5900, 11900]);
+      assert.equal((await H.post('/rt/gift/' + hit.r.id + '/interest', { act: 'pick', t: 2 }, hit.G.token, hit.ip)).status, 200);
+      assert.equal(dayCounts(env)['pick:2:B:g:5900'], 1);
+    } finally { done(); }
+  });
+
+  it('the account nudge and the card save are counted page beacons', async () => {
+    const { done } = setup();
+    try {
+      const env = makeEnv(), H = harness(env), A = await H.guest();
+      const r = await (await H.post('/rt/gift', FORM(), A.token)).json();
+      for (const e of ['signup_nudge', 'signup_from_gift', 'card_save']) await H.post('/rt/gift/' + r.id + '/seen', { v: VIS(3), e });
+      await giftSeenFlush(env, H.ctx);
+      const d = dayCounts(env);
+      assert.deepEqual([d['ev:signup_nudge'], d['ev:signup_from_gift'], d['ev:card_save']], [1, 1, 1]);
+    } finally { done(); }
+  });
+});

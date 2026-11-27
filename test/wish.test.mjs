@@ -470,7 +470,9 @@ describe('wish routes', { concurrency: false }, () => {
       assert.equal(hasActor(html), false);
       assert.match(html, /<meta property="og:image" content="https:\/\/sq\.example\/og\.jpg">/);
       assert.match(html, /twitter:card/); assert.match(html, /og:title/);
-      assert.ok(html.includes('/?wish=' + w.id)); assert.match(html, /location\.replace/); assert.match(html, /http-equiv="refresh"/);
+      // its own page (sharepage.js, 2026-11-27): no jump; the 3D plaza is a link, beside 공유하기 and 나도 만들기
+      assert.ok(html.includes('href="/?wish=' + w.id + '">3D 광장에서 보기')); assert.doesNotMatch(html, /location\.replace|http-equiv="refresh"/);
+      assert.match(html, /공유하기/); assert.match(html, /href="\/gift">나도 만들기/); assert.match(html, /<meta name="robots" content="noindex">/);
       const n = ones; await call('/rt/w/' + w.id); await get('/rt/wishes?id=' + w.id); assert.equal(ones, n); // one lookup per 10 s per isolate
       await call('/rt/w/zzzzzzzzzz', { redirect: 'manual' }); await call('/rt/w/zzzzzzzzzz', { redirect: 'manual' }); assert.equal(ones, n + 1); // misses are cached too
       const none = await call('/rt/w/zzzzzzzzzz', { redirect: 'manual' });

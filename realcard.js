@@ -47,15 +47,20 @@ function textSprite(text, size, o = {}) {
   return { c, body, w: W, h: H };
 }
 
-// The occasion's icon (no emoji font needed): a cake for a birthday, a star for a pass or a cheer, a heart for the rest.
+// The occasion's icon (no emoji font needed): a cake for a birthday, a star for a pass, a cheer or 졸업·승진, a four-point sparkle for a
+// board of one's own (내 전광판), a heart for the rest (사랑 among them).
 function icon(g, key, x, y, s, col) {
   g.save(); g.fillStyle = col; g.strokeStyle = col; g.translate(x, y);
-  if (key === 'bday') {
+  if (key === 'me') {
+    g.beginPath();
+    for (let i = 0; i < 8; i++) { const r = i % 2 ? s * 0.14 : s * 0.55, a = -Math.PI / 2 + (i * Math.PI) / 4; g.lineTo(Math.cos(a) * r, Math.sin(a) * r); }
+    g.closePath(); g.fill();
+  } else if (key === 'bday') {
     rrect(g, -s * 0.5, -s * 0.05, s, s * 0.45, s * 0.08); g.fill();
     rrect(g, -s * 0.36, -s * 0.3, s * 0.72, s * 0.3, s * 0.06); g.fill();
     g.fillRect(-s * 0.04, -s * 0.52, s * 0.08, s * 0.22);
     g.beginPath(); g.ellipse(0, -s * 0.6, s * 0.07, s * 0.1, 0, 0, Math.PI * 2); g.fill();
-  } else if (key === 'pass' || key === 'cheer') {
+  } else if (key === 'pass' || key === 'cheer' || key === 'grad') {
     g.beginPath();
     for (let i = 0; i < 10; i++) { const r = i % 2 ? s * 0.22 : s * 0.52, a = -Math.PI / 2 + (i * Math.PI) / 5; g.lineTo(Math.cos(a) * r, Math.sin(a) * r); }
     g.closePath(); g.fill();

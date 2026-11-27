@@ -6,7 +6,7 @@
 // 1080x1920 24 fps mp4 of 241 frames, a small preview jpg and a JSON with each screen's four corners per frame (TL, TR, BR, BL in
 // output pixels), its kind (led: a big LED board; phone: a phone held up, glass, no dots; small: a far phone, dim) and its card
 // layout (card, banner, wide, corner: a board wrapped round a building corner, two faces split at `split`).
-import { OCCASIONS, REAL_BEACONS } from './giftrules.js';
+import { OCCASIONS, REAL_BEACONS, toLine, isMe } from './giftrules.js';
 
 export { REAL_BEACONS };
 export const REAL = Object.freeze({
@@ -27,6 +27,10 @@ export function plateUrls(id, e = null) {
 }
 const occOf = (occ) => (typeof occ === 'string' && Object.hasOwn(OCCASIONS, occ) ? occ : 'bday'); // own keys only: not 'constructor'
 export const musicUrl = (occ) => REAL_DIR + 'music-' + occOf(occ) + '.m4a';
+// The days added 2026-11-27 (사랑, 졸업·승진, 내 전광판) get their own tracks from tools/plates/music.py; until a track is in assets/plates/,
+// the page plays this stand-in (a day with a track of its own). The page asks musicUrls in order and keeps the first that answers.
+export const MUSIC_BACKUP = Object.freeze({ love: 'anniv', grad: 'pass', me: 'cheer' });
+export const musicUrls = (occ) => { const k = occOf(occ), b = Object.hasOwn(MUSIC_BACKUP, k) ? MUSIC_BACKUP[k] : ''; return b ? [musicUrl(k), musicUrl(b)] : [musicUrl(k)]; };
 
 // ---- geometry ------------------------------------------------------------------------------------------------------------
 // The 3x3 homography (row-major, h8 = 1) taking the four src points onto the four dst points; null when the quad is degenerate.
@@ -196,7 +200,8 @@ export function headOf(occ) {
 export function cardWords(g) {
   const key = occOf(g?.occ), O = OCCASIONS[key];
   const to = String(g?.to ?? '').trim(), from = String(g?.from ?? '').trim(), msg = String(g?.msg ?? '').trim();
-  return { key, to: 'To. ' + (to || '당신'), occ: O.name, head: headOf(key), line: msg || O.hint, from: from ? 'From. ' + from : '', brand: 'WISH BOARD' };
+  // 내 전광판: the name with "by" and no sender (toLine)
+  return { key, to: toLine({ occ: key, to }), occ: O.name, head: headOf(key), line: msg || O.hint, from: from && !isMe({ occ: key }) ? 'From. ' + from : '', brand: 'WISH BOARD' };
 }
 
 // ---- the corner's gift box (corner.py GiftPop.state) -------------------------------------------------------------------------

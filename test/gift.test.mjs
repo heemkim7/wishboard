@@ -241,7 +241,7 @@ describe('phases, keeping and the 롤링페이퍼 lock (E3)', () => {
 
 describe('the reply board (답장 전광판) and the plaza replay', () => {
   it('고마움 is an occasion of its own: the same table for the server, the pages and the art', () => {
-    assert.deepEqual(OCC_KEYS, ['bday', 'anniv', 'pass', 'cheer', 'just', 'thanks'], 'the five days people pick first, then 고마움');
+    assert.deepEqual(OCC_KEYS, ['bday', 'anniv', 'pass', 'cheer', 'just', 'thanks', 'love', 'grad', 'me'], 'the five days people pick first, then 고마움; 사랑, 졸업·승진 and 내 전광판 (2026-11-27) after them');
     assert.equal(OCCASIONS.thanks.name, '고마움'); assert.equal(OCCASIONS.thanks.hint, REPLY_MSG);
     const r = giftFault({ to: '지수', occ: 'thanks', day: '2026-11-23', at: 'now' }, NOW);
     assert.equal(r.ok, true); assert.equal(r.v.occ, 'thanks'); assert.equal(r.v.th, 'rose');
@@ -339,7 +339,7 @@ describe('the reply board (답장 전광판) and the plaza replay', () => {
       assert.equal(P.heads()[0], '💌 답장이 도착했어요');
       const see = P.btn(/답장 보기/);
       assert.equal(see.tag, 'a'); assert.equal(see.href, '/g/rrrrrrrr');
-      assert.deepEqual(P.heads().slice(1, 4), ['🔗 링크 보내기', '✨ 더 크게, 더 오래 걸고 싶다면', '🎬 15초 축하 영상'], 'the rest as it was');
+      assert.deepEqual(P.heads().slice(1, 4), ['🔗 링크 보내기', '✨ 더 오래, 더 깔끔하게 걸고 싶다면', '🎬 15초 축하 영상'], 'the rest as it was');
       await P.press(P.btn(/받는 사람에게 보이는 화면/));
       assert.equal(P.btn(/답장|고마워 전광판/), null, 'the preview is the owner looking: nothing to answer');
       assert.ok(P.btn(/영상 저장/), 'the preview shows the buttons at once');
@@ -492,7 +492,7 @@ describe('the owner page leads with the real video only when the Worker stores v
     let P = own({ media: true });
     try {
       await P.load('giftpage.js');
-      assert.deepEqual(P.heads(), ['🎬 15초 축하 영상', '🔗 링크 보내기', '🎬 실사 축하 영상', '✨ 더 크게, 더 오래 걸고 싶다면', '📊 지금까지']);
+      assert.deepEqual(P.heads(), ['🎬 15초 축하 영상', '🔗 링크 보내기', '🎬 실사 축하 영상', '✨ 더 오래, 더 깔끔하게 걸고 싶다면', '📊 지금까지']);
       const rec = P.btn(/진짜 15초 영상 만들기/);
       assert.equal(rec.textContent, '🎬 광장에서 진짜 15초 영상 만들기 · 약 25초'); assert.equal(rec.className, 'btn gold'); assert.equal(rec.href, REC);
       assert.equal(P.btn(/^공유하기$/).className, 'btn', 'one gold button');
@@ -524,7 +524,7 @@ describe('the owner page leads with the real video only when the Worker stores v
     const same = async (P, recText) => {
       try {
         await P.load('giftpage.js');
-        assert.deepEqual(P.heads(), ['🔗 링크 보내기', '✨ 더 크게, 더 오래 걸고 싶다면', '🎬 15초 축하 영상', '🎬 실사 축하 영상', '📊 지금까지']);
+        assert.deepEqual(P.heads(), ['🔗 링크 보내기', '✨ 더 오래, 더 깔끔하게 걸고 싶다면', '🎬 15초 축하 영상', '🎬 실사 축하 영상', '📊 지금까지']);
         const rec = P.btn(/진짜 15초 영상 만들기/);
         if (recText) { assert.equal(rec.textContent, recText); assert.equal(rec.className, 'btn pink'); } else assert.equal(rec, null);
         assert.equal(P.btn(/^공유하기$/).className, 'btn gold');
@@ -619,7 +619,7 @@ describe('attribution (E2), the price ladder (E1), quiet hours', () => {
     assert.equal(TIERS.filter((t) => t.best).map((t) => t.t).join(), '2');
     assert.equal(TIERS.filter((t) => /커피 한 잔/.test(t.tag)).map((t) => t.t).join(), '1', 'the coffee words only on the 3,900 tier');
     assert.match(TIER_NOTE, /부가세 포함/); assert.match(TIER_ASK, /결제는 준비 중이에요 · 열리면 알려 드릴까요\?/);
-    assert.match(TIERS[3].items.join(), /메인 타워와 따로/, 'the parade is not the fans\' 9 pm main tower');
+    assert.equal(/퍼레이드|24시간/.test(JSON.stringify(TIERS)), false, 'no parade and no 24-hour big screen: the code has neither (b2c-rules.test.mjs)');
     assert.equal(/남은|마감|한정/.test(JSON.stringify(TIERS)), false);
     assert.equal(won(7900), '7,900원'); assert.equal(won(0), '0원');
     const page = fs.readFileSync(new URL('../giftpage.js', import.meta.url), 'utf8');
@@ -1035,6 +1035,7 @@ describe('gift.html on a phone: pressed states, places to press, text size and c
       '.stage .play': [lay(colours(S.get('.stage .play span', 'background'))[0], WHITE)], '.stage .rec': [WHITE, BLACK].map((u) => lay(colours(S.get('.stage .rec', 'background'))[0], u)),
       '.tag': [tag], '.tag.live': [tagLive], '.tier': [tier, tierOn], '.tier .price': [tier, tierOn], '.tier ul': [tier, tierOn], '.tier .best': best, '.tier .hint': [tier, tierOn],
       '.note': notes, '.note b': notes, '.note .rp': notes, '.lock': [lock], '.lock b': [lock], '.link': [link], '.stats span': [stat], '.boot': [page], '.foot': [page],
+      '.linkbtn.toplink': [page], '.nudge .linkbtn': [page, card], '.tier .soon': [tier, tierOn], // 2026-11-27: 둘러보기, 계정에 남겨 두기, 결제가 열리면
       '.linkbtn': [page, card, ask], '.linkbtn:active': [pressed, lay(rgb(S.vars['--press']), ask)], '.note .rp:active': notes.map((n) => lay(colours(S.get('.note .rp:active', 'background'))[0], n)),
     };
     const coloured = S.rules.filter((r) => 'color' in r.decl).map((r) => r.sels.join(', '));
@@ -1078,7 +1079,7 @@ describe('the gift pages on a phone: what the page script builds (giftpage.js)',
   const flat = (P) => { const out = []; const walk = (n) => { out.push(n); for (const k of n.kids || []) walk(k); }; walk(P.app); return out; };
   const cardOf = (P, head) => P.all('section').find((c) => c.kids[0]?.tag === 'h2' && c.kids[0].textContent === head);
   // The first control under the page's top line, in reading order (the film's own play button is hidden while the film plays).
-  const firstControl = (P) => P.controls().filter((n) => n.className !== 'brand')[0];
+  const firstControl = (P) => P.controls().filter((n) => n.className !== 'brand' && !/\btoplink\b/.test(n.className))[0]; // the header's links (brand, 둘러보기) are not the page's first thing to press
 
   it('nothing takes the cursor when the maker opens on a phone (no keyboard over the preview); with a mouse it waits in the name, the page still at its top', async () => {
     let P = maker({ touch: true });
@@ -1160,8 +1161,8 @@ describe('the gift pages on a phone: what the page script builds (giftpage.js)',
       const words = share.kids.filter((n) => n.tag === 'p' && n.className === 'fine').map((n) => n.textContent);
       assert.deepEqual(words, ['친구들에게 먼저 보내 메시지를 모으고, 그날 ' + (title === '🎉 걸었어요!' ? '수아' : '민지') + '님에게 보내세요. 메시지는 그날(11월 25일 (수)) 0시에 함께 열려요.'], 'how to use the link: kept, small, under the buttons');
       assert.ok(share.kids.indexOf(share.kids.find((n) => n.className === 'link')) > 1, 'the address under the buttons');
-      assert.deepEqual(P.heads(), ['🔗 링크 보내기', '✨ 더 크게, 더 오래 걸고 싶다면', '🎬 15초 축하 영상', '🎬 실사 축하 영상', '📊 지금까지']);
-      assert.equal(P.says(/^미리보기 영상은 무료 버전이라 워터마크가 있어요\.$/), true); assert.equal(P.says(/^아래는 준비 중인 상품이에요\. 지금은 결제가 없고, 고르면 "열리면 알림"을 받을 수 있어요\.$/), true, 'no payment: still said');
+      assert.deepEqual(P.heads(), ['🔗 링크 보내기', '✨ 더 오래, 더 깔끔하게 걸고 싶다면', '🎬 15초 축하 영상', '🎬 실사 축하 영상', '📊 지금까지']);
+      assert.equal(P.says(/^미리보기 영상은 무료 버전이라 워터마크가 있어요\.$/), true); assert.equal(P.says(/결제가 열리면 생기는 상품이에요\. 지금은 결제가 없고, 고르면 "열리면 알림"을 받을 수 있어요\.$/), true, 'no payment: still said');
     };
     let P = own();
     try { await P.load('giftpage.js'); check(P, '🎂 민지님을 위한 선물 전광판'); } finally { P.done(); }
@@ -1178,7 +1179,7 @@ describe('the gift pages on a phone: what the page script builds (giftpage.js)',
     let P = own({ media: true });
     try {
       await P.load('giftpage.js');
-      assert.deepEqual(P.heads(), ['🎬 15초 축하 영상', '🔗 링크 보내기', '🎬 실사 축하 영상', '✨ 더 크게, 더 오래 걸고 싶다면', '📊 지금까지']);
+      assert.deepEqual(P.heads(), ['🎬 15초 축하 영상', '🔗 링크 보내기', '🎬 실사 축하 영상', '✨ 더 오래, 더 깔끔하게 걸고 싶다면', '📊 지금까지']);
       const vid = cardOf(P, '🎬 15초 축하 영상');
       assert.deepEqual([vid.kids[1].tag, vid.kids[1].className, vid.kids[1].textContent], ['a', 'btn gold', '🎬 광장에서 진짜 15초 영상 만들기 · 약 25초']);
       assert.equal(firstControl(P), vid.kids[1], 'the first thing to press on the page');
@@ -1685,5 +1686,97 @@ describe('메인 타워 축하 1분 on the gift pages', () => {
   it('gift.html preloads towerrules.js with no query; giftpage.js imports it so', () => {
     assert.match(src('gift.html'), /<link rel="modulepreload" href="\/giftrules\.js" \/>\n<link rel="modulepreload" href="\/towerrules\.js" \/>/);
     assert.match(src('giftpage.js'), /from '\.\/towerrules\.js';/);
+  });
+});
+
+// B2C free season (2026-11-27): /gift?me=1 (내 전광판), the new days in the gift maker, the owner's DISCOVER switch and card image, the
+// ladder at the board's arm, and the account nudge after a reaction on the recipient page.
+describe('B2C: 내 전광판, DISCOVER, the nudge', () => {
+  const meView = (o = {}) => view({ occ: 'me', from: '', msg: '올해는 꼭 해낸다!', th: 'night', ...o });
+  const AT = KST('2026-11-25T19:00:00');
+  it('/gift?me=1: its own title, the name prefilled from the plaza nickname, four kinds that seed the line, no sender; it sends occ me', async () => {
+    const P = fakeDom({ path: '/gift', search: '?me=1', at: AT, store: { masil_gt: GUEST(), kts_nick: '하늘' }, respond: (u, o) => (u === '/rt/gift' && o.method === 'POST' ? { ok: true, id: 'mmmmmmmm', gift: meView({ id: 'mmmmmmmm', to: '하늘' }), mine: { kids: 0, vd: 0, at: 1, lk: 1 }, media: false } : null) });
+    try {
+      await P.load('giftpage.js');
+      assert.match(P.heads('h1')[0], /내 이름/);
+      assert.equal(P.input('to').value, '하늘');
+      assert.equal(P.input('from'), null, 'no sender on a board of one\'s own');
+      assert.match(P.all('label').map((n) => n.textContent).join(' '), /전광판에 보일 이름/);
+      for (const k of ['이름 걸기', '다짐', '작품·채널', '특별한 순간']) assert.ok(P.btn(new RegExp(k)), k);
+      assert.equal(P.btn(/생일/), null, 'the gift days are not offered here');
+      await P.press(P.btn(/다짐/));
+      assert.equal(P.input('msg').value, '올해는 꼭 해낸다!');
+      await P.press(P.btn(/특별한 순간/));
+      assert.equal(P.input('msg').value, '오늘을 오래 기억할게요', 'a seeded line follows the next kind');
+      assert.ok(P.btn(/누군가에게 선물하기/), 'the way to the gift maker');
+      await P.submit();
+      const post = P.sent.find((s) => s.url === '/rt/gift' && s.method === 'POST');
+      assert.equal(post.body.occ, 'me'); assert.equal(post.body.to, '하늘'); assert.equal(post.body.from, ''); assert.equal(post.body.msg, '오늘을 오래 기억할게요');
+    } finally { P.done(); }
+  });
+  it('/gift: the days with 사랑 and 졸업·승진, never 내 전광판; links to the personal maker and to /discover', async () => {
+    const P = fakeDom({ path: '/gift', at: AT, store: { masil_gt: GUEST() } });
+    try {
+      await P.load('giftpage.js');
+      assert.ok(P.btn(/💗 사랑/)); assert.ok(P.btn(/🎊 졸업·승진/)); assert.equal(P.btn(/✨ 내 전광판$/), null);
+      assert.equal(P.btn(/내 전광판 만들기/).href, '/gift?me=1');
+      assert.ok(P.controls().some((n) => n.href === '/discover'), 'DISCOVER from the header');
+    } finally { P.done(); }
+  });
+  it('the owner of a board of one\'s own: its title, the ladder at its arm\'s prices, DISCOVER off until pressed, the card image', async () => {
+    const g = meView();
+    const P = pageOf(g, AT, { store: { masil_gt: GUEST(), kts_gmine: JSON.stringify([g.id]) }, respond: (u) => (u === '/rt/gift/' + g.id ? { ok: true, gift: g, own: true, mine: { kids: 0, vd: 0, at: 1, lk: 1, dc: 0, ladder: { a: 'B', p: [0, 2900, 5900, 11900] } }, media: false } : u.endsWith('/discover') ? { ok: true, dc: 1 } : u.endsWith('/interest') ? { ok: true } : null) });
+    try {
+      await P.load('giftpage.js');
+      assert.deepEqual(P.heads('h1'), ['✨ 민지님의 전광판']);
+      assert.equal(P.says(/^2,900원$/), true); assert.equal(P.says(/^3,900원$/), false, 'the arm\'s prices');
+      const dc = P.btn(/DISCOVER에 보이기/);
+      assert.equal(dc.attrs['aria-pressed'], 'false', 'off by default');
+      await P.press(dc);
+      const sent = P.sent.find((s) => s.url.endsWith('/discover'));
+      assert.deepEqual(sent.body, { on: true }); assert.equal(P.btn(/DISCOVER에 보이기/).attrs['aria-pressed'], 'true');
+      assert.ok(P.btn(/카드 이미지 저장/));
+      assert.equal(P.says(/이름과 문구를 누구나 볼 수 있어요/), true, 'says what turning it on exposes');
+    } finally { P.done(); }
+  });
+  it('the recipient page of a board of one\'s own says by, calls the paper 응원 메시지, and its button cheers that person', async () => {
+    const g = meView();
+    const P = pageOf(g, AT);
+    try {
+      await P.load('giftpage.js');
+      assert.deepEqual(P.heads('h1'), ['✨ 민지님의 전광판']);
+      assert.ok(P.heads().includes('💌 응원 메시지')); assert.equal(P.heads().includes('💌 롤링페이퍼'), false);
+      assert.equal(P.says(/^by 민지$/), true); assert.equal(P.says(/^To\. /), false);
+      await P.press(P.btn(/영상 건너뛰기/));
+      assert.equal(P.btn(/응원 전광판 걸기/).textContent, '📣 민지님에게 응원 전광판 걸기');
+      assert.ok(P.btn(/카드 이미지 저장/));
+    } finally { P.done(); }
+  });
+  it('after a heart, a guest is offered 계정에 남겨 두기 (the plaza\'s sign-in, back here after); a sign-in that comes back is counted once', async () => {
+    const g = view();
+    let P = pageOf(g, AT, { respond: (u) => (u.endsWith('/heart') ? { ok: true } : null) });
+    try {
+      await P.load('giftpage.js');
+      await P.press(P.btn(/영상 건너뛰기/));
+      assert.equal(P.btn(/계정에 남겨 두기/), null, 'not before a reaction');
+      await P.press(P.btn(/하트/));
+      const link = P.btn(/계정에 남겨 두기/);
+      assert.equal(link.href, '/?login=1&back=%2Fg%2F' + g.id);
+      await P.press(link);
+      assert.equal(P.seen(g.id, 'signup_nudge'), true);
+      assert.equal(JSON.parse(P.store.kts_gsign).id, g.id);
+    } finally { P.done(); }
+    const session = JSON.stringify({ access_token: 'user.jwt.x', expires_at: Math.floor(AT / 1000) + 3600 });
+    P = pageOf(g, AT, { store: { masil_gt: GUEST(), maeul_auth: session, kts_gsign: JSON.stringify({ id: g.id, at: AT - 60000 }) } });
+    try {
+      await P.load('giftpage.js');
+      assert.equal(P.seen(g.id, 'signup_from_gift'), true);
+      assert.equal(P.store.kts_gsign, '', 'counted once');
+      await P.press(P.btn(/영상 건너뛰기/));
+      assert.equal(P.btn(/계정에 남겨 두기/), null, 'a signed-in visitor is never nudged');
+    } finally { P.done(); }
+  });
+  it('the real video asks the day\'s own track first, then its stand-in', () => {
+    assert.match(src('giftpage.js'), /musicUrls\(occ\)/);
   });
 });

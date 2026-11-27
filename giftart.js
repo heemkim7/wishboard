@@ -1,7 +1,7 @@
 // 선물 전광판 artwork on a 2D canvas: the plaza screen (ts3d/screens.js), the light pages' live preview and film (giftpage.js,
 // giftfilm.js) and the link-preview card (1200 x 630). Browser only (no three.js, no fonts of its own: the system stack is enough on a
 // phone and the plaza's Pretendard is used when it is there). Text is only ever drawn with fillText.
-import { OCCASIONS, GIFT_THEMES, CER_TEXT } from './giftrules.js';
+import { OCCASIONS, GIFT_THEMES, CER_TEXT, toLine, isMe } from './giftrules.js';
 
 export const GIFT_SANS = '"Pretendard Variable", Pretendard, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif';
 const arr = (s) => Array.from(String(s ?? ''));
@@ -84,10 +84,10 @@ export function paintGift(canvas, g = {}, opts = {}) {
   const T = themeOf(g), O = OCCASIONS[g.occ] || OCCASIONS.bday;
   const { c, W, H, k, pad } = paintGround(canvas, T, g.id || g.to || 'gift', opts.glow || 0);
   // Chips: "🎁 선물 전광판" left, the day's words right.
-  if (opts.chip !== false) paintChip(c, k, '🎁 선물 전광판', pad * 1.3, pad * 1.25, false, 'rgba(8,6,28,0.55)', '#ffffff');
+  if (opts.chip !== false) paintChip(c, k, isMe(g) ? '✨ 내 전광판' : '🎁 선물 전광판', pad * 1.3, pad * 1.25, false, 'rgba(8,6,28,0.55)', '#ffffff');
   paintChip(c, k, O.emoji + ' ' + O.head, W - pad * 1.3, pad * 1.25, true, T.hi, T.deep);
-  // To. name: the biggest line. Then the message (two lines at most), then From.
-  const to = 'To. ' + (String(g.to || '').trim() || '당신');
+  // To. name (by name on a board of one's own, giftrules.js toLine): the biggest line. Then the message (two lines at most), then From.
+  const to = toLine(g);
   c.textAlign = 'center';
   const ts = fitSize(c, to, W - pad * 4, 118 * k, 46 * k, 900);
   c.font = `900 ${ts}px ${GIFT_SANS}`;
@@ -101,13 +101,13 @@ export function paintGift(canvas, g = {}, opts = {}) {
   const y0 = H * 0.62 - ((lines.length - 1) * ms * 1.18) / 2;
   lines.forEach((l, i) => c.fillText(l, W / 2, y0 + i * ms * 1.18));
   c.font = `700 ${Math.round(32 * k)}px ${GIFT_SANS}`; c.globalAlpha = 0.92;
-  const from = String(g.from || '').trim();
+  const from = isMe(g) ? '' : String(g.from || '').trim();
   const bottom = opts.brand ? H * 0.9 - pad * 1.1 : H - pad * 1.55;
   if (opts.strip) { c.textAlign = 'center'; c.fillText(opts.strip, W / 2, bottom); }
   else {
     if (from) { c.textAlign = 'left'; c.fillText('From. ' + from, pad * 1.4, bottom); }
     const n = Math.max(0, Math.floor(Number(g.n) || 0));
-    if (n) { c.textAlign = from ? 'right' : 'center'; c.fillText('💌 친구 메시지 ' + n + '개', from ? W - pad * 1.4 : W / 2, bottom); }
+    if (n) { c.textAlign = from ? 'right' : 'center'; c.fillText((isMe(g) ? '💌 응원 메시지 ' : '💌 친구 메시지 ') + n + '개', from ? W - pad * 1.4 : W / 2, bottom); }
   }
   c.globalAlpha = 1;
   if (opts.brand) {
@@ -146,7 +146,7 @@ export function paintTeaser(canvas, t = {}) {
   const { c, W, H, k, pad } = paintGround(canvas, T, 'cer' + to);
   paintChip(c, k, String(t?.chip || CER_TEXT.soon), pad * 1.3, pad * 1.25, false, 'rgba(8,6,28,0.55)', '#ffffff');
   paintChip(c, k, 'WISH BOARD', W - pad * 1.3, pad * 1.25, true, T.hi, T.deep);
-  const big = 'To. ' + to;
+  const big = (t?.by ? 'by ' : 'To. ') + to; // by: a board of one's own (cerTeaser)
   c.textAlign = 'center';
   const ts = fitSize(c, big, W - pad * 4, 112 * k, 46 * k, 900);
   c.font = `900 ${ts}px ${GIFT_SANS}`;

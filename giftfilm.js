@@ -4,7 +4,7 @@
 // "영상 저장" records on a phone that has no stored video. Every frame is a pure function of time (draw(t)), so it can be replayed,
 // sought and recorded the same way each time; the scene is seeded by the board id.
 // recordCanvas is shared with the plaza's 3D recording (gift.js): MP4 where MediaRecorder makes it, WebM otherwise.
-import { OCCASIONS, pickRecordType } from './giftrules.js';
+import { OCCASIONS, pickRecordType, isMe, toLine } from './giftrules.js';
 import { paintGift, themeOf, seeded, GIFT_SANS, fitSize } from './giftart.js?v=202611272230';
 
 export const FILM_MS = 15000;
@@ -135,17 +135,17 @@ export function createFilm(canvas, gift, opts = {}) {
     if (title > 0) {
       g.globalAlpha = title; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#ffe7a8';
       g.font = `700 ${Math.round(W * 0.042)}px ${GIFT_SANS}`; g.fillText('오늘 밤, 뉴욕 타임스퀘어', W / 2, H * 0.12);
-      const line = (String(gift?.to || '').trim() || '당신') + '님을 위한 전광판이 켜졌어요';
+      const line = (String(gift?.to || '').trim() || '당신') + (isMe(gift) ? '님의 전광판이 켜졌어요' : '님을 위한 전광판이 켜졌어요'); // 내 전광판: no "for"
       g.fillStyle = '#ffffff'; g.font = `800 ${fitSize(g, line, W * 0.86, W * 0.062, W * 0.04, 800)}px ${GIFT_SANS}`; g.fillText(line, W / 2, H * 0.17);
       g.globalAlpha = 1;
     }
     const outro = clamp01((t - 10.2) / 0.8);
     if (outro > 0) {
       g.globalAlpha = outro; g.textAlign = 'center'; g.textBaseline = 'middle';
-      const big = O.emoji + ' ' + (String(gift?.to || '').trim() || '당신') + '님, ' + O.head + '!';
+      const big = isMe(gift) ? O.emoji + ' ' + toLine(gift) : O.emoji + ' ' + (String(gift?.to || '').trim() || '당신') + '님, ' + O.head + '!';
       g.font = `900 ${fitSize(g, big, W * 0.9, W * 0.075, W * 0.045, 900)}px ${GIFT_SANS}`;
       g.lineWidth = W * 0.012; g.strokeStyle = 'rgba(10,4,30,0.7)'; g.strokeText(big, W / 2, H * 0.62); g.fillStyle = T.hi; g.fillText(big, W / 2, H * 0.62);
-      const from = String(gift?.from || '').trim();
+      const from = isMe(gift) ? '' : String(gift?.from || '').trim();
       if (from) { g.font = `700 ${Math.round(W * 0.042)}px ${GIFT_SANS}`; g.fillStyle = '#ffffff'; g.fillText('From. ' + from, W / 2, H * 0.67); }
       g.globalAlpha = 1;
     }

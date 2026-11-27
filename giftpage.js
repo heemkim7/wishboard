@@ -1,11 +1,11 @@
 // 선물 전광판 light pages (gift.html): the maker at /gift and the board page at /g/<id> (owner preview with the price ladder, the
 // recipient page, the 롤링페이퍼). No three.js, no realtime room, no Supabase client: what the page needs from the Worker comes inline in
 // #gift-data (the Worker renders /g/<id>), the rest is a few small JSON calls. Text people wrote is only set with textContent.
-import { GIFT, GIFT_ID, OCCASIONS, OCC_KEYS, GIFT_THEMES, THEME_KEYS, TIERS, TIER_NOTE, TIER_ASK, won, giftFault, paperFault, startChoices, windowText, dayText, hourText, kstDay, addDays, countdown, dDay, refOf, keptRef, cpLen, norm, windowFor, replyDraft, replyLabel, PLAZA_BTN, videoFirst, CER_TEXT, cerStart, cerButton, cerInvite, cerShareLine, cerBackWhy, cerDebugStart, pageLook, hiddenWords, visitorShareText } from './giftrules.js';
+import { GIFT, GIFT_ID, OCCASIONS, OCC_KEYS, GIFT_THEMES, THEME_KEYS, TIERS, TIER_NOTE, TIER_ASK, won, giftFault, paperFault, startChoices, windowText, dayText, hourText, kstDay, addDays, countdown, dDay, refOf, keptRef, cpLen, norm, windowFor, replyDraft, replyLabel, PLAZA_BTN, videoFirst, CER_TEXT, cerStart, cerButton, cerInvite, cerShareLine, cerBackWhy, cerDebugStart, pageLook, hiddenWords, visitorShareText, GIFT_PICK, ME_KINDS, isMe, toLine, boardTitle, cut } from './giftrules.js';
 import { TOWER, TOWER_ERR, towerCard as towerState, towerClock, towerLook, friendsText } from './towerrules.js';
 import { paintGift, giftCardJpeg } from './giftart.js?v=202611272230';
 import { createFilm, FILM_MS, recordCanvas, canRecord, saveBlob, fileName } from './giftfilm.js?v=202611272230';
-import { SCENES, REAL_DIR, plateUrls, musicUrl, plateFault, realFileName, realReason, inAppBrowser, lowFor, scenesToDrop } from './realrules.js?v=202611272230';
+import { SCENES, REAL_DIR, plateUrls, musicUrls, plateFault, realFileName, realReason, inAppBrowser, lowFor, scenesToDrop } from './realrules.js?v=202611272230';
 
 const $app = document.getElementById('app');
 // Opened over the plaza (gift.js, ?in=1 in a frame): links into the plaza tell the plaza instead of loading a second one in the frame.
@@ -46,7 +46,9 @@ function h(tag, props, ...kids) {
 }
 const put = (...nodes) => $app.append(...nodes.filter(Boolean)); // h() skips null children; append() would print them
 const card = (...kids) => h('section', { class: 'card' }, ...kids);
-const top = () => h('div', { class: 'top' }, h('a', { class: 'brand', href: '/', onclick: (e) => toPlaza(e, 'close', '') }, 'WISH BOARD', h('small', { text: '모두의 전광판' })), h('span', { class: 'tag', text: '🎁 선물 전광판' }));
+// me: a page of 내 전광판 (the maker at /gift?me=1, a board with occ me). 둘러보기 is /discover (not over the plaza: the plaza has its own lists).
+const top = (me = false) => h('div', { class: 'top' }, h('a', { class: 'brand', href: '/', onclick: (e) => toPlaza(e, 'close', '') }, 'WISH BOARD', h('small', { text: '모두의 전광판' })),
+  h('span', { class: 'toplinks' }, EMBED ? null : h('a', { class: 'linkbtn toplink', href: '/discover', text: '둘러보기' }), h('span', { class: 'tag', text: me ? '✨ 내 전광판' : '🎁 선물 전광판' })));
 // The page's last lines: what a page has to say but nobody needs before acting (more: lines of that page, above the two every page has).
 const foot = (...more) => h('footer', { class: 'foot' }, ...more.map((t) => h('p', { text: t })),
   h('p', {}, '뉴욕 타임스퀘어를 본뜬 가상 광장이에요. 실제 타임스퀘어와는 관계가 없어요.', h('br'), '약관과 개인정보처리방침은 광장의 설정 › 정보에 있어요.'),
@@ -180,9 +182,39 @@ async function saveVideo(g, st, btn, note) {
 }
 // made: the board's making time (only the owner's read has it): a "지금" board made in the first minutes after a start hour is no ceremony.
 async function share(g, url, note, made) {
-  const o = OCCASIONS[g.occ] || OCCASIONS.bday, text = `${o.emoji} ${g.to}님을 위한 선물 전광판이 뉴욕 타임스퀘어 가상 광장에 걸려요! 친구들 메시지도 남겨 주세요 👉`
+  const o = OCCASIONS[g.occ] || OCCASIONS.bday, text = `${o.emoji} ${boardTitle(g)}이 뉴욕 타임스퀘어 가상 광장에 걸려요! ${isMe(g) ? '응원 메시지 남겨 주세요' : '친구들 메시지도 남겨 주세요'} 👉`
     + cerShareLine(made ? { ...g, at: made } : g, now()); // 점등식: ' 🎆 점등식 12월 25일 18:00에 같이 봐요!' until the start
-  return sendLink(g.id, { title: `${g.to}님을 위한 선물 전광판`, text, url }, note, 'share');
+  return sendLink(g.id, { title: boardTitle(g), text, url }, note, 'share');
+}
+// 🖼 카드 이미지 저장: the link card (giftart.js giftCardJpeg, 1200 x 630) as a file, the share sheet's 'save image' on a phone.
+async function saveCard(g, btn, note) {
+  btn.disabled = true;
+  try {
+    const b = await giftCardJpeg(g);
+    if (!b) { say(note, '카드 이미지를 만들지 못했어요. 다시 해 주세요.'); return; }
+    const how = await saveBlob(b, 'wishboard-' + (cut(g.to, GIFT.toMax).replace(/[\\/:*?"<>|\s]+/g, '') || 'card') + '.jpg');
+    if (how !== 'cancel') { beacon(g.id, 'card_save'); say(note, '카드 이미지를 저장했어요.', true); }
+  } catch { say(note, '카드 이미지를 저장하지 못했어요.'); } finally { btn.disabled = false; }
+}
+const cardBtn = (g, note) => { const b = h('button', { class: 'btn', type: 'button', onclick: () => saveCard(g, b, note) }, '🖼 카드 이미지 저장'); return b; };
+// 계정에 남겨 두기: after a reaction on a board page (a 💖, a message, a reply hung), a guest on this browser (no signed-in session) may sign in on
+// the plaza's own sheet (/?login=1 opens it over the boot card; back= brings the signed-in browser to this page, main.js). The press is
+// counted (signup_nudge) and kept (kts_gsign); a page that opens signed in within a day of it counts signup_from_gift once (board()).
+// Never over the plaza (it has its own account prompts).
+let NUDGE = null;
+function nudgeLine(g) {
+  if (EMBED || sessionToken()) return (NUDGE = null);
+  const back = '/g/' + g.id;
+  NUDGE = h('p', { class: 'fine nudge', hidden: true }, h('a', { class: 'linkbtn', href: '/?login=1&back=' + encodeURIComponent(back), onclick: () => { beacon(g.id, 'signup_nudge'); ls.set('kts_gsign', JSON.stringify({ id: g.id, at: Date.now() })); } }, '계정에 남겨 두기'),
+    ' · 로그인하면 남긴 하트와 메시지, 만든 전광판이 이 기기 밖에서도 남아요.');
+  return NUDGE;
+}
+const showNudge = () => { if (NUDGE) NUDGE.hidden = false; };
+const SIGN_MS = 864e5;
+function signedBack(g) {
+  if (!sessionToken()) return;
+  const k = json('kts_gsign', null);
+  if (k && k.id === g.id && Date.now() - Number(k.at) < SIGN_MS && Date.now() >= Number(k.at)) { beacon(g.id, 'signup_from_gift'); ls.set('kts_gsign', ''); }
 }
 // The system share sheet, else the clipboard, else the address shown to copy by hand (box: the copy box, a read-only field shown only then
 // when it is hidden, focused and selected so a keyboard can copy it too). ev: the beacon once something was handed over ('share' the
@@ -214,7 +246,8 @@ const heartToken = () => {
 };
 // quiet: before the reveal the count is not shown (giftrules.js heartsOpen), so the button says only whether this device sent one (a 0
 // would read as "nobody pressed it").
-function heartBtn(g, note, { off = false, quiet = false } = {}) {
+// sent: called once the heart went (the account nudge, nudgeLine).
+function heartBtn(g, note, { off = false, quiet = false, sent = null } = {}) {
   const mark = hearted(), base = Number(g.hearts) || 0;
   let on = !!mark[g.id], n = on ? Math.max(base, Number(mark[g.id]) || 0) : base;
   const btn = h('button', { class: 'btn', type: 'button', disabled: off });
@@ -234,7 +267,7 @@ function heartBtn(g, note, { off = false, quiet = false } = {}) {
     try { req = fetch('/rt/gift/' + g.id + '/heart', { method: 'POST', keepalive: true, headers: hd, body: JSON.stringify(ts ? { v: visitor(), ts } : { v: visitor() }) }); } catch { req = null; }
     if (req) { const keep = hearted(); keep[g.id] = n; const ks = Object.keys(keep); if (ks.length > 300) for (const k of ks.slice(0, 150)) delete keep[k]; ls.set('kts_ghearts', JSON.stringify(keep)); }
     try { ok = !!(req && (await req).ok); } catch { ok = false; }
-    if (ok) return;
+    if (ok) { try { sent?.(); } catch { /* the heart went */ } return; }
     on = false; n -= 1; paint();
     const back = hearted(); delete back[g.id]; ls.set('kts_ghearts', JSON.stringify(back));
     say(note, '잠시 뒤에 다시 눌러 주세요.', true);
@@ -255,14 +288,20 @@ function twoTap(btn, label, run) {
 // ---- the maker (/gift) ------------------------------------------------------------------------------------------------------
 // prefill: values to start from. prefill.re (a board id): this is a 답장 전광판 for that board (the recipient page's reply button): the
 // form comes filled in (giftrules.js replyDraft), says so, and the board is sent with ref: that board and re: 1. Everything can be edited.
+// 내 전광판 (PERSONAL, /gift?me=1): the same maker for a board of one's own: occ 'me', the name is the shown name (prefilled with the plaza
+// nickname, kts_nick, when this browser has one), four kinds that only seed the line (ME_KINDS), no sender. Everything after making is the
+// gift path.
 function maker({ re: answers = '', ...prefill } = {}) {
   clear();
-  try { document.title = (answers ? '답장 전광판' : '선물 전광판') + ' · WISH BOARD'; } catch { /* the tab keeps its name */ } // a reply opens here from a board page: not that board's title
   const q = new URLSearchParams(location.search), ref = refOf(q.get('ref')), re = refOf(answers);
-  if (ref) { ls.set('kts_gref', JSON.stringify({ id: ref, at: Date.now() })); history.replaceState(null, '', '/gift'); }
+  const ME = !re && (prefill.occ === 'me' || q.get('me') === '1');
+  try { document.title = (answers ? '답장 전광판' : ME ? '내 전광판' : '선물 전광판') + ' · WISH BOARD'; } catch { /* the tab keeps its name */ } // a reply opens here from a board page: not that board's title
+  if (ref) { ls.set('kts_gref', JSON.stringify({ id: ref, at: Date.now() })); history.replaceState(null, '', ME ? '/gift?me=1' : '/gift'); }
   started(re || keptRef(ls.get('kts_gref'), Date.now()) ? 1 : 0);
   const today = kstDay(now()), sendLabel = re ? '💌 답장 걸기' : '🎁 무료로 걸기';
-  const f = { to: '', from: '', occ: 'bday', msg: '', th: '', day: today, at: 'now', ...prefill };
+  const nick = ME ? cut(ls.get('kts_nick') || '', GIFT.toMax) : '';
+  const f = { to: nick, from: '', occ: ME ? 'me' : 'bday', msg: '', th: '', day: today, at: 'now', ...prefill };
+  let kind = ''; // 내 전광판: the kind chip last pressed (only seeds the line)
   const cv = h('canvas', { class: 'preview', width: 1024, height: 576, 'aria-label': '광장 화면 미리보기' });
   let raf = 0; const repaint = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => paintGift(cv, { id: 'preview', ...f, th: f.th || OCCASIONS[f.occ].th })); };
   // A refused field: its line is read out (role alert), the field says it is wrong and points at the line, until it is typed in again.
@@ -270,11 +309,18 @@ function maker({ re: answers = '', ...prefill } = {}) {
   const count = (el, max) => { const c = h('small'); const up = () => { c.textContent = cpLen(norm(el.value)) + '/' + max; }; el.addEventListener('input', up); up(); return c; };
   const typed = (k, el) => { f[k] = el.value; flag(el, false); if (errs[k]) errs[k].textContent = ''; repaint(); };
   const toIn = h('input', { type: 'text', id: 'to', maxlength: 24, autocomplete: 'off', placeholder: '예: 민지', 'aria-describedby': 'err-to', value: f.to, oninput: () => typed('to', toIn) });
-  const msgIn = h('input', { type: 'text', id: 'msg', maxlength: 80, autocomplete: 'off', placeholder: OCCASIONS[f.occ].hint, 'aria-describedby': 'err-msg', value: f.msg, oninput: () => typed('msg', msgIn) });
+  const msgIn = h('input', { type: 'text', id: 'msg', maxlength: 80, autocomplete: 'off', placeholder: (OCCASIONS[f.occ] || OCCASIONS.bday).hint, 'aria-describedby': 'err-msg', value: f.msg, oninput: () => typed('msg', msgIn) });
   const fromIn = h('input', { type: 'text', id: 'from', maxlength: 24, autocomplete: 'off', placeholder: '예: 동아리 친구들', 'aria-describedby': 'err-from', value: f.from, oninput: () => typed('from', fromIn) });
-  const fields = { to: toIn, msg: msgIn, from: fromIn };
-  const occRow = h('div', { class: 'chips', role: 'group', 'aria-label': '무슨 날' });
-  const paintOcc = () => { occRow.replaceChildren(...OCC_KEYS.map((k) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(f.occ === k), onclick: () => { f.occ = k; f.th = ''; msgIn.placeholder = OCCASIONS[k].hint; paintOcc(); paintTh(); repaint(); } }, OCCASIONS[k].emoji + ' ' + OCCASIONS[k].name))); };
+  const fields = ME ? { to: toIn, msg: msgIn } : { to: toIn, msg: msgIn, from: fromIn };
+  const occRow = h('div', { class: 'chips', role: 'group', 'aria-label': ME ? '무엇을 걸까요' : '무슨 날' });
+  // 내 전광판's kinds: a press puts the kind's example in the line when the line is empty or still another kind's example.
+  const seeds = new Set(ME_KINDS.map((x) => x.msg));
+  const paintKind = () => occRow.replaceChildren(...ME_KINDS.map((x) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(kind === x.k), onclick: () => {
+    kind = x.k; msgIn.placeholder = x.msg;
+    if (!norm(msgIn.value) || seeds.has(norm(msgIn.value))) { msgIn.value = x.msg; f.msg = x.msg; flag(msgIn, false); if (errs.msg) errs.msg.textContent = ''; msgIn.dispatchEvent?.(new Event('input')); }
+    paintKind(); repaint();
+  } }, x.name)));
+  const paintOcc = () => { if (ME) { paintKind(); return; } occRow.replaceChildren(...GIFT_PICK.filter((k) => OCC_KEYS.includes(k)).map((k) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(f.occ === k), onclick: () => { f.occ = k; f.th = ''; msgIn.placeholder = OCCASIONS[k].hint; paintOcc(); paintTh(); repaint(); } }, OCCASIONS[k].emoji + ' ' + OCCASIONS[k].name))); };
   const thRow = h('div', { class: 'chips sws', role: 'group', 'aria-label': '색' });
   const paintTh = () => { const cur = f.th || OCCASIONS[f.occ].th; thRow.replaceChildren(...THEME_KEYS.map((k) => h('button', { type: 'button', class: 'sw', title: GIFT_THEMES[k].name, 'aria-label': GIFT_THEMES[k].name, 'aria-pressed': String(cur === k), style: `background:linear-gradient(135deg,${GIFT_THEMES[k].a},${GIFT_THEMES[k].b})`, onclick: () => { f.th = k; paintTh(); repaint(); } }))); };
   const dayRow = h('div', { class: 'chips', role: 'group', 'aria-label': '날짜' }), atRow = h('div', { class: 'chips', role: 'group', 'aria-label': '시간' }), whenLine = h('p', { class: 'when' });
@@ -302,7 +348,7 @@ function maker({ re: answers = '', ...prefill } = {}) {
     if (!v.ok) { (errs[v.field] || sendErr).textContent = v.error; flag(fields[v.field], true); fields[v.field]?.focus?.(); return; }
     send.disabled = true; send.textContent = '거는 중…';
     const kept = keptRef(ls.get('kts_gref'), Date.now()), ref = re || kept; // a reply names the board it answers, whatever ref was kept
-    const r = await post('/rt/gift', { to: f.to, from: f.from, occ: f.occ, msg: f.msg, th: f.th || OCCASIONS[f.occ].th, day: f.day, at: f.at, ...(ref ? { ref } : {}), ...(re ? { re: 1 } : {}) }, { mint: true, action: 'gift' });
+    const r = await post('/rt/gift', { to: f.to, from: ME ? '' : f.from, occ: f.occ, msg: f.msg, th: f.th || OCCASIONS[f.occ].th, day: f.day, at: f.at, ...(ref ? { ref } : {}), ...(re ? { re: 1 } : {}) }, { mint: true, action: 'gift' });
     send.disabled = false; send.textContent = sendLabel;
     if (!r.ok) {
       if (r.field && errs[r.field]) { errs[r.field].textContent = r.error; flag(fields[r.field], true); } else say(sendErr, r.error || '걸지 못했어요. 다시 해 주세요.');
@@ -313,23 +359,25 @@ function maker({ re: answers = '', ...prefill } = {}) {
     if (kept && kept === ref) ls.set('kts_gref', '');
     if (re) history.replaceState(null, '', '/gift'); // the reply is hung: going back to this maker starts an ordinary board
     history.pushState(null, '', '/g/' + r.id);
-    owner(r.gift, { fresh: true, mine: r.mine, media: !!r.media });
+    owner(r.gift, { fresh: true, mine: r.mine, media: !!r.media, signNudge: !!re }); // a reply hung by a guest: 계정에 남겨 두기 on its page
     giftCardJpeg(r.gift).then(async (jpg) => { const tok = await token(false); if (jpg && tok) fetch('/rt/gift/' + r.id + '/card', { method: 'POST', headers: { authorization: 'Bearer ' + tok, 'content-type': 'image/jpeg' }, body: jpg }).catch(() => { }); });
   } },
-  h('div', { class: 'field' }, h('label', { for: 'to' }, '누구에게 걸까요?', count(toIn, GIFT.toMax)), toIn, err('to')),
-  h('div', { class: 'field' }, h('div', { class: 'label' }, '무슨 날이에요?'), occRow, err('occ')),
+  h('div', { class: 'field' }, h('label', { for: 'to' }, ME ? h('span', {}, '이름 ', h('small', { text: '(전광판에 보일 이름)' })) : '누구에게 걸까요?', count(toIn, GIFT.toMax)), toIn, err('to')),
+  h('div', { class: 'field' }, h('div', { class: 'label' }, ME ? '무엇을 걸까요?' : '무슨 날이에요?', ME ? h('small', { text: '예시 문구만 채워요' }) : null), occRow, err('occ')),
   h('div', { class: 'field' }, h('label', { for: 'msg' }, '한마디', count(msgIn, GIFT.msgMax)), msgIn, err('msg')),
   h('div', { class: 'field' }, h('div', { class: 'label' }, '언제 걸까요?', h('small', { text: '한국 시간' })), dayRow, dateIn, h('div', { style: 'height:8px' }), atRow, whenLine, err('day'), err('at')),
-  h('div', { class: 'field' }, h('label', { for: 'from' }, '보내는 사람', h('small', { text: '선택' })), fromIn, err('from')),
+  ME ? null : h('div', { class: 'field' }, h('label', { for: 'from' }, '보내는 사람', h('small', { text: '선택' })), fromIn, err('from')),
   h('div', { class: 'field' }, h('div', { class: 'label' }, '색', h('small', { text: '선택' })), thRow),
   send, sendErr, nextBtn,
   h('p', { class: 'fine', text: '결제는 없어요. 문구는 광장에서 누구나 볼 수 있어요.' })); // what is needed before pressing; the other rules are the page's last lines (MAKER_RULES)
   paintOcc(); paintTh(); paintDay(); repaint();
-  const lead = h('div', {}, h('h1', { text: re ? '💌 답장 전광판을 걸어요' : '친구를 위해 뉴욕 타임스퀘어에 전광판을 걸어요' }),
+  const lead = h('div', {}, h('h1', { text: re ? '💌 답장 전광판을 걸어요' : ME ? '✨ 내 이름을 뉴욕 타임스퀘어 가상 전광판에 걸어요' : '친구를 위해 뉴욕 타임스퀘어에 전광판을 걸어요' }),
     h('p', { class: 'sub', text: re ? (f.to ? '받는 사람과 한마디를 채워 두었어요. 고쳐 써도 되고, 그대로 걸어도 돼요.' : '한마디를 채워 두었어요. 받는 사람 이름만 적으면 돼요.') + ` 가상 광장의 화면에 ${GIFT.hours}시간 무료로 걸려요.`
-      : `가상 광장의 화면에 ${GIFT.hours}시간 무료로 걸리고, 15초 축하 영상과 친구들의 롤링페이퍼가 함께 가요. 30초면 끝나요.` }),
-    cv, h('p', { class: 'fine', text: '광장 화면에는 이렇게 보여요' }));
-  put(top(), h('div', { class: 'cols' }, h('div', { class: 'sticky' }, lead), card(form)), foot(MAKER_RULES));
+      : ME ? `이름, 다짐, 작품, 특별한 순간을 가상 광장의 화면에 ${GIFT.hours}시간 무료로 걸어요. 15초 영상과 친구들의 응원 메시지가 함께 가요.`
+        : `가상 광장의 화면에 ${GIFT.hours}시간 무료로 걸리고, 15초 축하 영상과 친구들의 롤링페이퍼가 함께 가요. 30초면 끝나요.` }),
+    cv, h('p', { class: 'fine', text: '광장 화면에는 이렇게 보여요' }),
+    re ? null : h('a', { class: 'btn sm', href: ME ? '/gift' : '/gift?me=1', style: 'margin-top:10px' }, ME ? '🎁 누군가에게 선물하기' : '✨ 내 전광판 만들기'));
+  put(top(ME), h('div', { class: 'cols' }, h('div', { class: 'sticky' }, lead), card(form)), foot(MAKER_RULES));
   // The cursor in the name, where a mouse is the pointer (FINE). A filled reply is one tap away: no cursor there either; a board
   // without a sender leaves the name to write. The page stays at its top (preventScroll): the title and the preview are read first.
   if (FINE && (!re || !f.to)) setTimeout(() => { try { toIn.focus({ preventScroll: true }); } catch { toIn.focus(); } }, 50);
@@ -353,6 +401,7 @@ async function board() {
   // (the page of the answered board, then the maker, then the reply's own page) and the visitor goes back.
   const at = location.pathname.slice(3, 11), g = [CUR, DATA?.gift].find((x) => x && x.id === at) || CUR || DATA?.gift;
   if (!g) return gone();
+  signedBack(g); // a sign-in from this page's 계정에 남겨 두기 came back
   // The owner's view: on the device that made the board (kts_gmine), or when the address asks for it (?o=1, the reply notice's link: the
   // notice can arrive on another device of the same account). The Worker decides who the owner is; anyone else gets the public page.
   const asked = (() => { try { return new URLSearchParams(location.search).get('o') === '1'; } catch { return false; } })();
@@ -378,8 +427,10 @@ function gone() {
 // The owner: what is up and when, the free preview, the price ladder (E1), sharing, the real video, the 롤링페이퍼 count.
 // On a phone the first screen holds the title, a small preview and the first thing to press: 공유하기 and 링크 복사 (or, video first,
 // the gold video button). So each card starts with its buttons and says the rest in small print under them.
-function owner(g, { fresh = false, mine: extra = null, media = false } = {}) {
+function owner(g, { fresh = false, mine: extra = null, media = false, signNudge = false } = {}) {
   clear(); CUR = g;
+  const ME = isMe(g), nudged = signNudge ? nudgeLine(g) : (NUDGE = null);
+  if (nudged) nudged.hidden = false;
   const url = location.origin + '/g/' + g.id, note = h('p', { class: 'okmsg', role: 'status' }), O = OCCASIONS[g.occ] || OCCASIONS.bday;
   const phaseTag = h('span', { class: 'tag' + (g.phase === 'live' ? ' live' : '') });
   live(phaseTag, () => { const t = now(); const d = dDay(g.day, t); return t >= g.b ? '광장에서 내려왔어요' : t >= g.a ? '● 지금 광장에 걸려 있어요' : d >= 1 ? 'D-' + d : '걸리기까지 ' + countdown(g.a - t); });
@@ -412,27 +463,32 @@ function owner(g, { fresh = false, mine: extra = null, media = false } = {}) {
     h('div', { class: 'row' }, h('button', { class: vfirst ? 'btn' : 'btn gold', type: 'button', onclick: () => sendOr(() => share(g, url, note, extra?.at)) }, '공유하기'),
       h('button', { class: 'btn', type: 'button', onclick: () => sendOr(async () => { try { await navigator.clipboard.writeText(url); say(note, '링크를 복사했어요.', true); } catch { say(note, '아래 주소를 길게 눌러 복사해 주세요.'); } }) }, '링크 복사')),
     vfirst ? nudge : null, linkBox, note,
-    h('p', { class: 'fine', text: '친구들에게 먼저 보내 메시지를 모으고, 그날 ' + g.to + '님에게 보내세요. ' + (g.lk ? '메시지는 그날(' + dayText(g.day) + ') 0시에 함께 열려요.' : '메시지는 남기는 대로 바로 보여요.') }));
-  const stats = h('div', { class: 'stats' }, h('div', {}, h('b', { text: String(g.v || 0) }), h('span', { text: '열어 본 사람' })), h('div', {}, h('b', { text: String(g.n || 0) }), h('span', { text: '친구 메시지' })), h('div', {}, h('b', { text: String(g.hearts || 0) }), h('span', { text: '💖 하트' })), h('div', {}, h('b', { text: String(extra?.kids || 0) }), h('span', { text: '이어서 걸린 전광판' })));
+    h('p', { class: 'fine', text: (ME ? '친구들에게 보내 응원 메시지를 모아 보세요. ' : '친구들에게 먼저 보내 메시지를 모으고, 그날 ' + g.to + '님에게 보내세요. ') + (g.lk ? '메시지는 그날(' + dayText(g.day) + ') 0시에 함께 열려요.' : '메시지는 남기는 대로 바로 보여요.') }),
+    h('div', { style: 'height:10px' }), discoverBtn(g, extra?.dc, note, ME), cardBtn(g, note));
+  const stats = h('div', { class: 'stats' }, h('div', {}, h('b', { text: String(g.v || 0) }), h('span', { text: '열어 본 사람' })), h('div', {}, h('b', { text: String(g.n || 0) }), h('span', { text: ME ? '응원 메시지' : '친구 메시지' })), h('div', {}, h('b', { text: String(g.hearts || 0) }), h('span', { text: '💖 하트' })), h('div', {}, h('b', { text: String(extra?.kids || 0) }), h('span', { text: '이어서 걸린 전광판' })));
   const del = twoTap(h('button', { class: 'linkbtn', type: 'button' }, '이 선물 전광판 지우기'), '한 번 더 누르면 지워요(되돌릴 수 없어요)', async () => {
     const r = await post('/rt/gift/' + g.id + '/delete', {});
     if (r.ok) { dropMine(g.id); history.replaceState(null, '', '/gift'); maker(); } else say(note, r.error || '지우지 못했어요.');
   });
-  const head = h('div', {}, h('h1', { text: fresh ? '🎉 걸었어요!' : O.emoji + ' ' + g.to + '님을 위한 선물 전광판' }),
+  const head = h('div', {}, h('h1', { text: fresh ? '🎉 걸었어요!' : O.emoji + ' ' + boardTitle(g) }),
     h('p', { class: 'sub' }, windowText(g.a, g.b) + ' · ' + screenName(g.scr) + ' ', phaseTag),
-    st.box);
+    nudged, st.box);
   // 답장 전광판: the first board hung in answer to this one (only the owner's read carries it, while that board can be opened).
   const replyCard = extra?.re && GIFT_ID.test(String(extra.re)) ? card(h('h2', { text: '💌 답장이 도착했어요' }),
     h('p', { class: 'sub', text: '이 전광판의 링크를 연 사람이 답장 전광판을 걸었어요.' }),
     h('a', { class: 'btn pink', href: '/g/' + extra.re + (EMBED ? '?in=1' : '') }, '답장 보기')) : null;
-  put(top(), h('div', { class: 'cols' }, h('div', { class: 'sticky' }, head),
-    h('div', {}, replyCard, ...(vfirst ? [vidCard, shareCard, realCard(g), towerCard(g), ladder(g)] : [shareCard, towerCard(g), ladder(g), vidCard, realCard(g)]), card(h('h2', { text: '📊 지금까지' }), stats, friendsLine(extra?.friends), h('p', { class: 'fine', text: '같은 기기는 한 번으로 세요.' })),
+  put(top(ME), h('div', { class: 'cols' }, h('div', { class: 'sticky' }, head),
+    h('div', {}, replyCard, ...(vfirst ? [vidCard, shareCard, realCard(g), towerCard(g), ladder(g, extra?.ladder)] : [shareCard, towerCard(g), ladder(g, extra?.ladder), vidCard, realCard(g)]), card(h('h2', { text: '📊 지금까지' }), stats, friendsLine(extra?.friends), h('p', { class: 'fine', text: '같은 기기는 한 번으로 세요.' })),
       card(h('button', { class: 'btn', type: 'button', onclick: () => visit(g, { preview: true }) }, '👀 받는 사람에게 보이는 화면'), h('div', { style: 'text-align:center;margin-top:8px' }, del)))), foot());
 }
 
 // E1: the planned price ladder. Free is chosen and stays the default; a paid tier only says payment is not open and offers a notice
 // (advertising: its own consent box, web push only, no email). Views and picks are anonymous daily totals, once per board on this device.
-function ladder(g) {
+// arm: the board's arm from the owner's read ({ a, p }, giftrules.js ladderArm): its prices are shown (the Worker counts the pick at the same
+// price); an older Worker sends none, and the planned prices show. The paid tiers carry their label (결제가 열리면).
+const armPrices = (arm) => (Array.isArray(arm?.p) && arm.p.length === TIERS.length && arm.p.every((x, i) => Number.isFinite(Number(x)) && (i === 0 ? Number(x) === 0 : Number(x) > 0)) ? arm.p.map(Number) : TIERS.map((t) => t.price));
+function ladder(g, arm = null) {
+  const price = armPrices(arm);
   const flags = json('kts_gint', {}), mark = (k) => { flags[g.id + ':' + k] = 1; const ks = Object.keys(flags); if (ks.length > 300) for (const x of ks.slice(0, 150)) delete flags[x]; ls.set('kts_gint', JSON.stringify(flags)); };
   const once = (k, body) => { if (flags[g.id + ':' + k]) return; mark(k); post('/rt/gift/' + g.id + '/interest', body).catch(() => { }); };
   once('view', { act: 'view' });
@@ -441,7 +497,8 @@ function ladder(g) {
   const list = h('div', { class: 'tiers', role: 'radiogroup', 'aria-label': '상품' });
   const paint = () => list.replaceChildren(...TIERS.map((t) => h('button', { type: 'button', class: 'tier', role: 'radio', 'aria-checked': String(pick === t.t), onclick: () => choose(t.t) },
     t.best ? h('span', { class: 'best', text: '추천' }) : null,
-    h('div', { class: 'name' }, h('span', {}, t.name, t.tag && !t.best ? h('span', { class: 'hint', text: ' · ' + t.tag }) : null), h('span', { class: 'price', text: t.t ? won(t.price) : '무료' })),
+    h('div', { class: 'name' }, h('span', {}, t.name, t.tag && !t.best ? h('span', { class: 'hint', text: ' · ' + t.tag }) : null), h('span', { class: 'price', text: t.t ? won(price[t.t]) : '무료' })),
+    t.label ? h('span', { class: 'soon', text: t.label }) : null,
     h('ul', {}, ...t.items.map((x) => h('li', { text: x }))))));
   function choose(t) {
     pick = t; paint();
@@ -457,16 +514,32 @@ function ladder(g) {
     } }, '🔔 열리면 알림 받기');
     box.addEventListener('change', () => { go.disabled = !box.checked; });
     ask.hidden = false;
-    ask.replaceChildren(h('b', { text: `${T.name} ${won(T.price)}` }), h('p', { class: 'sub', style: 'margin:4px 0 10px', text: TIER_ASK }),
+    ask.replaceChildren(h('b', { text: `${T.name} ${won(price[t])}` }), h('p', { class: 'sub', style: 'margin:4px 0 10px', text: TIER_ASK }),
       h('label', { for: 'adok', style: 'display:flex;gap:8px;align-items:flex-start;font-size:13px;color:var(--muted);margin-bottom:10px' }, box,
         h('span', { text: '(선택) 광고성 정보 수신에 동의해요: 유료 상품이 열리면 이 기기로 (광고) 알림을 보내 드려요. 밤 9시부터 아침 8시까지는 보내지 않아요. 브라우저 알림을 끄면 언제든 그만 받아요. 이메일은 받지 않아요.' })),
       flags[g.id + ':notify:' + t] ? h('p', { class: 'okmsg', text: '이미 알림을 신청했어요.' }) : go, msg,
       h('button', { class: 'linkbtn', type: 'button', onclick: () => choose(0) }, '무료로 둘게요'));
   }
   paint();
-  return card(h('h2', { text: '✨ 더 크게, 더 오래 걸고 싶다면' }),
-    h('p', { class: 'sub', text: '아래는 준비 중인 상품이에요. 지금은 결제가 없고, 고르면 "열리면 알림"을 받을 수 있어요.' }),
+  return card(h('h2', { text: '✨ 더 오래, 더 깔끔하게 걸고 싶다면' }),
+    h('p', { class: 'sub', text: '무료 걸기는 지금 그대로 쓸 수 있어요. 그 아래는 결제가 열리면 생기는 상품이에요. 지금은 결제가 없고, 고르면 "열리면 알림"을 받을 수 있어요.' }),
     list, ask, h('p', { class: 'fine', text: TIER_NOTE }));
+}
+// 🌐 DISCOVER에 보이기 (the owner's share card): off by default. On, the board is listed on /discover while it hangs, with its name, line
+// and sender for anyone to read; the Worker keeps the switch (POST /rt/gift/<id>/discover). on: the owner's read (mine.dc).
+function discoverBtn(g, on0, note, me) {
+  let on = !!Number(on0), busy = false;
+  const btn = h('button', { class: 'btn', type: 'button' });
+  const paint = () => { btn.textContent = (on ? '🌐 DISCOVER에 보이기 · 켜짐' : '🌐 DISCOVER에 보이기 · 꺼짐'); btn.setAttribute('aria-pressed', String(on)); };
+  btn.addEventListener('click', async () => {
+    if (busy) return; busy = true; btn.disabled = true;
+    const r = await post('/rt/gift/' + g.id + '/discover', { on: !on });
+    busy = false; btn.disabled = false;
+    if (r.ok) { on = Number(r.dc) === 1; paint(); say(note, on ? '둘러보기에 보여요. 이 전광판이 걸려 있는 동안 몇 분 안에 목록에 나와요.' : '둘러보기에서 뺐어요.', true); }
+    else say(note, r.error || '바꾸지 못했어요. 잠시 뒤 다시 해 주세요.');
+  });
+  paint();
+  return h('div', {}, btn, h('p', { class: 'fine', text: (me ? '켜면 이 전광판이 걸려 있는 동안 둘러보기(DISCOVER)에서 이름과 문구를 누구나 볼 수 있어요.' : '켜면 이 전광판이 걸려 있는 동안 둘러보기(DISCOVER)에서 받는 사람 이름과 문구, 보내는 사람을 누구나 볼 수 있어요. 받는 사람에게 먼저 물어봐 주세요.') + ' 기본은 꺼져 있고, 언제든 끌 수 있어요.' }));
 }
 // Web push for the "열리면 알림" (the plaza's service worker and the same /rt/push the plaza posts to).
 async function pushOn(tok) {
@@ -500,7 +573,8 @@ function visit(g, { preview = false, swap = null } = {}) {
   const phase = () => pageLook(g, now(), CER_DEBUG);
   const back = preview && !swap ? h('button', { class: 'btn sm', type: 'button', onclick: () => board() }, '← 내 관리 화면으로') : null;
   const cer = cerCard(g, preview || swap ? '' : cerBackOnce()); // 점등식: under the countdown before the day, under the where line from the day
-  const paper = swap?.paper || paperCard(g);
+  const ME = isMe(g), nudge = preview ? (NUDGE = null) : nudgeLine(g); // shown after this visitor's 💖, message or reply (showNudge)
+  const paper = swap?.paper || paperCard(g, preview ? null : showNudge);
   if (phase() === 'before') {
     const words = () => hiddenWords(g, now(), CER_DEBUG), w0 = words(); // a 점등식 board on its day counts to the lighting
     const cd = live(h('div', { class: 'big count' }), () => words().count);
@@ -508,11 +582,11 @@ function visit(g, { preview = false, swap = null } = {}) {
     const prev = h('canvas', { class: 'preview', width: 1024, height: 576, 'aria-label': '전광판 미리보기' }); paintGift(prev, { ...g, msg: w0.hush, n: g.n });
     // 💖 before the day (giftrules.js heartTakes): taken now, its count shown only from the reveal; not pressable in the owner's preview.
     const beforeNote = h('p', { class: 'okmsg', role: 'status' });
-    const left = h('div', { class: 'sticky' }, h('h1', { text: O.emoji + ' ' + g.to + '님을 위한 선물 전광판' }), h('p', { class: 'sub', text: '뉴욕 타임스퀘어 가상 광장에 ' + windowText(g.a, g.b) + ' 걸려요.' }),
-      card(label, cd, fine), towerLine(g), cer, prev, h('div', { class: 'row' }, heartBtn(g, beforeNote, { off: preview, quiet: true })), beforeNote);
+    const left = h('div', { class: 'sticky' }, h('h1', { text: O.emoji + ' ' + boardTitle(g) }), h('p', { class: 'sub', text: '뉴욕 타임스퀘어 가상 광장에 ' + windowText(g.a, g.b) + ' 걸려요.' }),
+      card(label, cd, fine), towerLine(g), cer, prev, h('div', { class: 'row' }, heartBtn(g, beforeNote, { off: preview, quiet: true, sent: showNudge })), beforeNote, nudge);
     const right = swap?.right || h('div', {}, paper, cta(g));
     if (swap) swapLeft(swap, left, null);
-    else put(top(), back, h('div', { class: 'cols' }, left, right), foot());
+    else put(top(ME), back, h('div', { class: 'cols' }, left, right), foot());
     // A 점등식 board: at its start the page becomes the board (the reveal), and at midnight of its day the hidden preview says the time.
     // Any other board stays as it always was (the page built before 00:00 of its day stays until it is opened again).
     if (CER_DEBUG || cerStart(g)) {
@@ -533,6 +607,8 @@ function visit(g, { preview = false, swap = null } = {}) {
   // 답장 전광판: the first button (not in the owner's own preview). It opens the maker here, filled in from this board.
   const reply = preview ? null : h('button', { class: 'btn pink', type: 'button', onclick: () => {
     beacon(g.id, 'reply'); ls.set('kts_gref', JSON.stringify({ id: g.id, at: Date.now() })); // kept like ?ref=: a board made later still counts as led here
+    // 내 전광판: a cheer for that person (replyDraft: 응원, the name), an ordinary board led from here, not a reply
+    if (ME) { history.pushState(null, '', '/gift?ref=' + g.id); maker(replyDraft(g)); return; }
     history.pushState({ re: g.id }, '', '/gift'); maker({ ...replyDraft(g), re: g.id }); // the state: back and forward come to the reply again (route)
   } }, replyLabel(g));
   // 🔗 공유하기 (a visitor passing the page on: its own words and its own count, ev:reshare) and 💖, side by side under the reply: the
@@ -540,15 +616,17 @@ function visit(g, { preview = false, swap = null } = {}) {
   // The owner's preview shows the heart as it stands (not pressable) and no share (the owner has its own).
   const url = location.origin + '/g/' + g.id, shareNote = h('p', { class: 'okmsg', role: 'status' }), copyBox = h('input', { type: 'text', class: 'link', readonly: true, value: url, hidden: true, 'aria-label': '이 전광판 주소', onfocus: () => { try { copyBox.select(); } catch { /* the field still shows the address */ } } });
   const reshare = preview ? null : h('button', { class: 'btn', type: 'button', onclick: () => sendLink(g.id, { ...visitorShareText(g, phase()), url }, shareNote, 'reshare', copyBox) }, '🔗 공유하기');
-  const pass = h('div', { class: 'row' }, reshare, heartBtn(g, shareNote, { off: preview }));
-  const acts = h('div', { class: 'stack', hidden: !preview && !st.ended }, reply, pass, copyBox, shareNote, saveBtn, go, h('a', { class: 'btn', href: '/gift?ref=' + g.id, onclick: () => beacon(g.id, 'cta') }, '🎁 나도 누군가에게 걸어 주기'), saveNote);
+  const pass = h('div', { class: 'row' }, reshare, heartBtn(g, shareNote, { off: preview, sent: showNudge }));
+  const acts = h('div', { class: 'stack', hidden: !preview && !st.ended }, reply, pass, nudge, copyBox, shareNote, saveBtn, go, h('a', { class: 'btn', href: '/gift?ref=' + g.id, onclick: () => beacon(g.id, 'cta') }, '🎁 나도 누군가에게 걸어 주기'), saveNote);
   const skip = h('button', { class: 'linkbtn', type: 'button', onclick: () => { acts.hidden = false; skip.remove(); } }, '영상 건너뛰기');
   st.ends.add(() => { acts.hidden = false; skip.remove(); });
   const rp = twoTap(h('button', { class: 'linkbtn', type: 'button' }, '이 전광판 신고'), '한 번 더 누르면 신고해요', async () => { const r = await fetch('/rt/gift/' + g.id + '/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then((x) => x.json()).catch(() => null); rp.textContent = r?.ok ? '신고했어요' : '신고하지 못했어요'; rp.disabled = true; });
-  const left = h('div', { class: 'sticky' }, h('h1', { text: O.emoji + ' ' + g.to + '님, ' + O.head + '!' }), where, friendsLine(g.friends), towerLine(g), cer, st.box, acts.hidden ? skip : null, h('div', { style: 'height:10px' }), acts);
-  const posted = card(h('h2', { text: '📺 광장에 걸린 글' }), h('p', { class: 'big', style: 'font-size:22px', text: 'To. ' + g.to }), h('p', { style: 'font-weight:800;margin:4px 0', text: g.msg || O.hint }), g.from ? h('p', { class: 'sub', text: 'From. ' + g.from }) : null, rp);
+  const left = h('div', { class: 'sticky' }, h('h1', { text: ME ? O.emoji + ' ' + boardTitle(g) : O.emoji + ' ' + g.to + '님, ' + O.head + '!' }), where, friendsLine(g.friends), towerLine(g), cer, st.box, acts.hidden ? skip : null, h('div', { style: 'height:10px' }), acts);
+  const cardNote = h('p', { class: 'okmsg', role: 'status' });
+  const posted = card(h('h2', { text: '📺 광장에 걸린 글' }), h('p', { class: 'big', style: 'font-size:22px', text: toLine(g) }), h('p', { style: 'font-weight:800;margin:4px 0', text: g.msg || O.hint }), g.from && !ME ? h('p', { class: 'sub', text: 'From. ' + g.from }) : null,
+    h('div', { style: 'height:8px' }), cardBtn(g, cardNote), cardNote, rp);
   if (swap) swapLeft(swap, left, posted);
-  else put(top(), back, h('div', { class: 'cols' }, left, h('div', {}, posted, paper, cta(g))), foot());
+  else put(top(ME), back, h('div', { class: 'cols' }, left, h('div', {}, posted, paper, cta(g))), foot());
 }
 // The page turning by itself (visit swap): the new left column in place of the old one, the 📺 card (or nothing) at the top of the right
 // column. The 롤링페이퍼 card is never taken out of the page. When the person is in it (a field focused or holding text) it is kept where
@@ -591,8 +669,12 @@ async function realBlob(url, type, onPct) {
   for (;;) { const { done, value } = await rd.read(); if (done) break; parts.push(value); got += value.length; onPct(Math.min(99, Math.floor((got / n) * 100))); }
   onPct(100); return new Blob(parts, type ? { type } : {});
 }
+// The day's own track, else its stand-in (realrules.js MUSIC_BACKUP: a day whose track is not in assets/plates/ yet).
 const realMusic = (occ) => {
-  if (!REAL_MUSIC.has(occ)) REAL_MUSIC.set(occ, realBlob(musicUrl(occ), '', () => { }).then((b) => b.arrayBuffer()).catch(() => { REAL_MUSIC.delete(occ); return null; }));
+  if (!REAL_MUSIC.has(occ)) REAL_MUSIC.set(occ, (async () => {
+    for (const u of musicUrls(occ)) { try { return await (await realBlob(u, '', () => { })).arrayBuffer(); } catch { /* the next one */ } }
+    REAL_MUSIC.delete(occ); return null;
+  })());
   return REAL_MUSIC.get(occ);
 };
 // 저장: the file itself (a download), never the share sheet; 공유 is its own button.
@@ -855,11 +937,14 @@ function towerCard(g) {
   return box;
 }
 function cta(g) {
-  return card(h('h2', { text: '🎁 나도 누군가에게' }), h('p', { class: 'sub', text: '친구의 생일, 합격, 기념일에 뉴욕 타임스퀘어 가상 광장의 전광판을 6시간 무료로 걸어 줄 수 있어요.' }),
-    h('a', { class: 'btn', href: '/gift?ref=' + g.id, onclick: () => beacon(g.id, 'cta') }, '나도 걸어 주기'));
+  return card(h('h2', { text: '🎁 나도 누군가에게' }), h('p', { class: 'sub', text: '친구의 생일, 합격, 기념일에 뉴욕 타임스퀘어 가상 광장의 전광판을 6시간 무료로 걸어 줄 수 있어요. 내 이름이나 다짐을 걸 수도 있어요.' }),
+    h('a', { class: 'btn', href: '/gift?ref=' + g.id, onclick: () => beacon(g.id, 'cta') }, '나도 걸어 주기'),
+    h('a', { class: 'linkbtn', href: '/gift?me=1&ref=' + g.id, style: 'display:block;text-align:center;margin-top:8px', onclick: () => beacon(g.id, 'cta') }, '✨ 내 전광판 만들기'));
 }
 // 롤링페이퍼: the lines (once open) or the lock, and the form while the board takes lines. A new guest is minted only on sending.
-function paperCard(g) {
+// 내 전광판: the same 롤링페이퍼 under the name 응원 메시지. sent: called after a line was left (the account nudge).
+function paperCard(g, sent = null) {
+  const title = isMe(g) ? '💌 응원 메시지' : '💌 롤링페이퍼', word = isMe(g) ? '응원 메시지 ' : '친구 메시지 ';
   const list = h('div', { class: 'paper' });
   const paint = () => {
     if (g.open && Array.isArray(g.paper)) {
@@ -867,10 +952,10 @@ function paperCard(g) {
         const rp = twoTap(h('button', { class: 'rp', type: 'button' }, '신고'), '한 번 더', async () => { await fetch('/rt/gift/' + g.id + '/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ m: p.id }) }).catch(() => null); rp.textContent = '신고함'; rp.disabled = true; });
         return h('div', { class: 'note' }, rp, h('b', { text: p.nick }), h('p', { text: p.txt }));
       }) : [h('p', { class: 'sub', text: '아직 메시지가 없어요. 첫 메시지를 남겨 주세요!' })]));
-    } else list.replaceChildren(h('div', { class: 'lock' }, h('span', { text: '🔒' }), h('span', {}, '친구 메시지 ', h('b', { text: (g.n || 0) + '개' }), ' · ' + dayText(g.day) + '에 열려요')));
+    } else list.replaceChildren(h('div', { class: 'lock' }, h('span', { text: '🔒' }), h('span', {}, word, h('b', { text: (g.n || 0) + '개' }), ' · ' + dayText(g.day) + '에 열려요')));
   };
   paint();
-  if (!g.takes) return card(h('h2', { text: '💌 롤링페이퍼' }), list, h('p', { class: 'fine', text: '메시지를 받는 시간이 끝났어요.' }));
+  if (!g.takes) return card(h('h2', { text: title }), list, h('p', { class: 'fine', text: '메시지를 받는 시간이 끝났어요.' }));
   const nick = h('input', { type: 'text', maxlength: 20, autocomplete: 'nickname', placeholder: '닉네임 (선택)', 'aria-label': '닉네임', 'aria-describedby': 'paper-msg', oninput: () => flag(nick, false) });
   const txt = h('textarea', { maxlength: 120, placeholder: g.to + '님에게 한마디', 'aria-label': '메시지', 'aria-describedby': 'paper-msg' });
   const cnt = h('small', { text: '0/' + GIFT.paper.txtMax }); txt.addEventListener('input', () => { flag(txt, false); cnt.textContent = cpLen(norm(txt.value)) + '/' + GIFT.paper.txtMax; });
@@ -885,9 +970,10 @@ function paperCard(g) {
     g.n = r.n; if (g.open) g.paper = [...(g.paper || []), { id: r.id, nick: v.v.nick, txt: v.v.txt }];
     txt.value = ''; cnt.textContent = '0/' + GIFT.paper.txtMax; paint();
     say(msg, g.open ? '남겼어요!' : '남겼어요! ' + dayText(g.day) + '에 다른 친구들의 메시지와 함께 열려요.', true);
+    try { sent?.(); } catch { /* the line went */ }
   } }, h('div', { class: 'field' }, nick), h('div', { class: 'field' }, h('div', { class: 'label' }, '메시지', cnt), txt), btn, msg,
   h('p', { class: 'fine', text: '닉네임과 메시지는 링크를 받은 사람 누구나 볼 수 있어요. 계정 번호는 다른 사람에게 보이지 않아요. 한 사람이 3개까지 남길 수 있고, 그날이 지나고 7일 뒤에 지워져요.' }));
-  return card(h('h2', { text: '💌 롤링페이퍼' }), list, h('div', { style: 'height:12px' }), form);
+  return card(h('h2', { text: title }), list, h('div', { style: 'height:12px' }), form);
 }
 
 // ---- start ----------------------------------------------------------------------------------------------------------------------

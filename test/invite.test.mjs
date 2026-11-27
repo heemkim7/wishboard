@@ -381,8 +381,9 @@ describe('share pages keep ?inv= through their redirect', () => {
       const env = makeEnv(), h = harness(env), [a] = await people(h, state, 1);
       const w = (await h.wish(a, '공유할 소원', '', '1.1.1.1')).wish;
       let html = await (await h.get('/rt/w/' + w.id + '?inv=ab12cd34')).text();
-      assert.match(html, new RegExp('content="0;url=/\\?wish=' + w.id + '&amp;inv=ab12cd34"'));
-      assert.match(html, new RegExp('location\\.replace\\("/\\?wish=' + w.id + '&inv=ab12cd34"\\)'));
+      // its own page since 2026-11-27 (sharepage.js): the 3D plaza is the 3D 광장에서 보기 link, ?inv= kept on it
+      assert.match(html, new RegExp('href="/\\?wish=' + w.id + '&amp;inv=ab12cd34">3D 광장에서 보기'));
+      assert.doesNotMatch(html, /http-equiv="refresh"|location\.replace/);
       html = await (await h.get('/rt/w/' + w.id + '?inv=%22%3E%3Cscript%3E')).text();
       assert.doesNotMatch(html, /inv=|<script>alert|%3Cscript/);
       let r = await h.get('/rt/w/zzzzzzzzzz?inv=ab12cd34'); assert.equal(r.status, 302); assert.equal(r.headers.get('location'), 'https://sq.example/?inv=ab12cd34');
@@ -396,7 +397,7 @@ describe('share pages keep ?inv= through their redirect', () => {
       html = await (await h.get(new URL(plain).pathname + '?inv=ab12cd34')).text();
       assert.match(html, /location\.replace\("\/\?inv=ab12cd34"\)/);
       html = await (await h.get('/rt/card/STREET_8?gift=1&inv=ab12cd34')).text();
-      assert.match(html, /url=\/\?focus=STREET_8&amp;gift=1&amp;inv=ab12cd34"/);
+      assert.match(html, /href="\/\?focus=STREET_8&amp;gift=1&amp;inv=ab12cd34">3D 광장에서 보기/);
       html = await (await h.get('/rt/card/STREET_8?inv=x%22y')).text();
       assert.doesNotMatch(html, /inv=/);
     } finally { done(); }
@@ -677,7 +678,7 @@ describe('invite budget per invocation and the master switch', () => {
       const w = await h.wish(b, '꺼진 동안', 'ab12cd34', '2.2.2.2'); assert.equal(w.ok, true);
       await h.get('/rt/wishes'); await h.get('/rt/wishes', a.token);
       assert.equal(log.inv, 0); assert.equal(log.ev, 0); assert.deepEqual(state.paid, []);
-      const html = await (await h.get('/rt/w/' + w.wish.id + '?inv=ab12cd34')).text(); assert.match(html, /&inv=ab12cd34/);
+      const html = await (await h.get('/rt/w/' + w.wish.id + '?inv=ab12cd34')).text(); assert.match(html, /&amp;inv=ab12cd34/);
       env.INVITE_ON = '1'; assert.equal((await (await h.get('/rt/config')).json()).invite, true);
     } finally { done(); }
   });

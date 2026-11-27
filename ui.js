@@ -4509,10 +4509,12 @@ export function createUI(root, hooks) {
   const tipTimer = setInterval(() => { if (bootMsg) bootMsg.textContent = tips[++tipI % tips.length]; }, 1600);
   let entered = false;
   // main.js paintBootLive relabels the enter button for a shared wish link ('' = the normal label).
+  // The 3D plaza is the boot card's third choice (2026-11-27): the gift and 내 전광판 links come first in index.html (#boot .bootcta).
+  const BOOT_GO = '3D 광장 둘러보기';
   let bootLabel = '', bootGo = null;
   function bootLabelSet(text) {
     bootLabel = String(text || '');
-    if (bootGo) bootGo.textContent = bootLabel || '입장하기';
+    if (bootGo) bootGo.textContent = bootLabel || BOOT_GO;
   }
   // The enter button comes when the world says the city is built (onReady); after BOOT_FALLBACK_MS it comes anyway, with
   // "도시를 불러오는 중…" kept on the card, and a player who enters before the city's collision is in waits with input
@@ -4540,7 +4542,7 @@ export function createUI(root, hooks) {
     let species = hooks.species();
     const known = hooks.hasSession?.();
     const nick = h('input', { class: 'input', maxLength: 16, value: hooks.nick(), placeholder: '닉네임', 'aria-label': '닉네임', autocomplete: 'off', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'done' });
-    const go = h('button', { class: 'btn enter-go pulse', type: 'button', text: bootLabel || '입장하기' });
+    const go = h('button', { class: 'btn enter-go pulse', type: 'button', text: bootLabel || BOOT_GO });
     const nickErr = h('p', { class: 'note', role: 'alert', hidden: true }); // on the boot card: a toast would sit under it
     bootGo = go;
     const enter = () => {
