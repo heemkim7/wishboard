@@ -181,12 +181,20 @@ async function share(g, url, note, made) {
     + cerShareLine(made ? { ...g, at: made } : g, now()); // 점등식: ' 🎆 점등식 12월 25일 18:00에 같이 봐요!' until the start
   return sendLink(g.id, { title: `${g.to}님을 위한 선물 전광판`, text, url }, note, 'share');
 }
-// The system share sheet, else the clipboard, else the address shown to copy by hand (box: the copy box, shown only then when it is hidden).
-// ev: the beacon once something was handed over ('share' the owner, 'reshare' a visitor).
+// The system share sheet, else the clipboard, else the address shown to copy by hand (box: the copy box, a read-only field shown only then
+// when it is hidden, focused and selected so a keyboard can copy it too). ev: the beacon once something was handed over ('share' the
+// owner, 'reshare' a visitor). One at a time: a second tap while the sheet is open does nothing (the sheet would refuse it, and the
+// clipboard after it would count twice and say it copied).
+let SENDING = false;
 async function sendLink(id, { title, text, url }, note, ev, box = null) {
-  try { if (navigator.share) { await navigator.share({ title, text, url }); beacon(id, ev); return; } } catch (e) { if (e?.name === 'AbortError') return; }
-  try { await navigator.clipboard.writeText(text + ' ' + url); beacon(id, ev); say(note, '링크를 복사했어요. 카카오톡에 붙여 넣어 보내세요.', true); } catch { if (box) box.hidden = false; say(note, '아래 주소를 길게 눌러 복사해 주세요.'); }
+  if (SENDING) return; SENDING = true;
+  try {
+    try { if (navigator.share) { await navigator.share({ title, text, url }); beacon(id, ev); return; } } catch (e) { if (e?.name === 'AbortError') return; }
+    try { await navigator.clipboard.writeText(text + ' ' + url); beacon(id, ev); say(note, '링크를 복사했어요. 카카오톡에 붙여 넣어 보내세요.', true); }
+    catch { if (box) { box.hidden = false; pickAll(box); } say(note, '아래 주소를 길게 눌러 복사해 주세요.'); }
+  } finally { SENDING = false; }
 }
+const pickAll = (el) => { try { el.focus(); el.select?.(); el.setSelectionRange?.(0, String(el.value || '').length); } catch { /* the field still shows the address */ } };
 // 💖 on the recipient page: one per device and board (the Worker keeps it so). kts_ghearts: { id: the count shown after this device's press },
 // so the press stays shown while the board's copies catch up. Nothing at all is said about a refusal (budget hard, the minute): the
 // button simply goes back, with one calm line.
@@ -503,7 +511,7 @@ function visit(g, { preview = false, swap = null } = {}) {
   // 🔗 공유하기 (a visitor passing the page on: its own words and its own count, ev:reshare) and 💖, side by side under the reply: the
   // reply stays the first button, and the row is one button tall, so the film and that first button keep the first screen of a phone.
   // The owner's preview shows the heart as it stands (not pressable) and no share (the owner has its own).
-  const url = location.origin + '/g/' + g.id, shareNote = h('p', { class: 'okmsg', role: 'status' }), copyBox = h('div', { class: 'link', text: url, hidden: true });
+  const url = location.origin + '/g/' + g.id, shareNote = h('p', { class: 'okmsg', role: 'status' }), copyBox = h('input', { type: 'text', class: 'link', readonly: true, value: url, hidden: true, 'aria-label': '이 전광판 주소', onfocus: () => { try { copyBox.select(); } catch { /* the field still shows the address */ } } });
   const reshare = preview ? null : h('button', { class: 'btn', type: 'button', onclick: () => sendLink(g.id, { ...visitorShareText(g, phase()), url }, shareNote, 'reshare', copyBox) }, '🔗 공유하기');
   const pass = h('div', { class: 'row' }, reshare, heartBtn(g, shareNote, { off: preview }));
   const acts = h('div', { class: 'stack', hidden: !preview && !st.ended }, reply, pass, copyBox, shareNote, saveBtn, go, h('a', { class: 'btn', href: '/gift?ref=' + g.id, onclick: () => beacon(g.id, 'cta') }, '🎁 나도 누군가에게 걸어 주기'), saveNote);

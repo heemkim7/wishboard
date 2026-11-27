@@ -43,18 +43,22 @@ async function api(path, body) {
 const COLS = [['start', '만들기 시작'], ['start_ref', '다른 보드에서 와서 시작'], ['made', '만든 보드'], ['made_ref', '페이지에서 와서 만든'], ['reply', '답장'], ['made_again', '두 번째부터'],
   ['hit', '링크 열림(사람)'], ['hitbot', '링크 열림(미리보기·봇)'], ['view', '새 방문자'], ['view_day', '그날 방문자'], ['return_day', '그날 다시 온'], ['msg', '메시지'], ['video', '영상'], ['ev:film', '그린 영상 재생'], ['ev:play', '저장 영상 재생'], ['ev:done', '끝까지 봄'], ['ev:save', '영상 저장'], ['ev:go', '직접 가서 봄'], ['ev:cer', '점등식 온 기기'], ['ev:cershot', '단체 사진 저장·공유'], ['ev:share', '공유(주인)'], ['ev:reshare', '공유(받는 사람)'], ['heart', '💖 하트'], ['ev:cta', '나도 걸기 누름'], ['ladder', '가격표 본 보드'], ['pick:1', '3,900 고름'], ['pick:2', '7,900 고름'], ['pick:3', '14,900 고름'], ['notify:1', '알림 1'], ['notify:2', '알림 2'], ['notify:3', '알림 3'], ['report', '신고']];
 const RATIOS = [['K', 'made_ref', 'made'], ['시작→만듦', 'made', 'start'], ['링크(사람)→방문', 'view', 'hit']];
+// A key a day does not have is '—' (the store keeps only keys that were counted, and days before a key existed have none). A ratio's
+// 30-day sum takes only the days that have its denominator: a month of made over one day of starts would mean nothing.
 const ratioOf = (x, [, a, b]) => (x[b] ? ((x[a] || 0) / x[b]).toFixed(2) : '—');
+const cell = (x, k) => (k in x ? String(x[k]) : '—');
 async function load() {
   say('불러오는 중…');
   try {
     const d1 = kstDay(), st = await api('/rt/admin/gift/stats?d0=' + addDays(d1, -29) + '&d1=' + d1);
     const t = $('giftStats'); t.replaceChildren(h('tr', {}, h('th', { text: '날짜' }), ...COLS.map(([, n]) => h('th', { text: n })), ...RATIOS.map(([n]) => h('th', { text: n }))));
-    const sum = {};
+    const sum = {}, rsum = RATIOS.map(() => ({}));
     for (const day of [...st.days].reverse()) {
-      for (const [k] of COLS) sum[k] = (sum[k] || 0) + (day[k] || 0);
-      t.append(h('tr', {}, h('td', { text: day.d }), ...COLS.map(([k]) => h('td', { text: String(day[k] || 0) })), ...RATIOS.map((r) => h('td', { text: ratioOf(day, r) }))));
+      for (const [k] of COLS) if (k in day) sum[k] = (sum[k] || 0) + day[k];
+      RATIOS.forEach(([, a, b], i) => { if (b in day) { rsum[i][a] = (rsum[i][a] || 0) + (day[a] || 0); rsum[i][b] = (rsum[i][b] || 0) + day[b]; } });
+      t.append(h('tr', {}, h('td', { text: day.d }), ...COLS.map(([k]) => h('td', { text: cell(day, k) })), ...RATIOS.map((r) => h('td', { text: ratioOf(day, r) }))));
     }
-    t.append(h('tr', {}, h('td', {}, h('b', { text: '30일' })), ...COLS.map(([k]) => h('td', {}, h('b', { text: String(sum[k] || 0) }))), ...RATIOS.map((r) => h('td', {}, h('b', { text: ratioOf(sum, r) })))));
+    t.append(h('tr', {}, h('td', {}, h('b', { text: '30일' })), ...COLS.map(([k]) => h('td', {}, h('b', { text: cell(sum, k) }))), ...RATIOS.map((r, i) => h('td', {}, h('b', { text: ratioOf(rsum[i], r) })))));
     // Makers by the board's account or guest id, from the boards still kept (a guest is one browser; linking an account joins them).
     const mk = st.makers, makers = mk ? h('div', { class: 'hit' }, h('b', { text: '만든 사람' }),
       h('span', { text: `이번 주(${mk.week.from} 월요일부터) ${mk.week.n}명 · 30일 안: 1개 ${mk.d30.one}명, 2개 이상 ${mk.d30.more}명 (남아 있는 보드 기준. 보드는 그날 7일 뒤 지워져요. 손님은 브라우저마다 따로 세요)` })) : null;

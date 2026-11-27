@@ -1282,12 +1282,29 @@ describe('the recipient page passes itself on and takes a heart; the maker count
     P = pageOf(g, AT);
     try {
       await open(P);
-      const box = P.all('div').find((n) => n.className === 'link');
+      const box = P.all('input').find((n) => n.className === 'link');
       assert.equal(P.shown(box), false, 'the copy box waits');
+      assert.deepEqual([box.attrs.type, 'readonly' in box.attrs, box.value, box.attrs['aria-label']], ['text', true, URL_, '이 전광판 주소'], 'a read-only field with the address');
+      let picked = 0; box.select = () => { picked++; };
       globalThis.navigator.clipboard.writeText = async () => { throw new Error('no'); };
       await P.press(P.btn(/^🔗 공유하기$/));
-      assert.equal(P.shown(box), true); assert.equal(box.textContent, URL_); assert.equal(P.says(/아래 주소를 길게 눌러 복사해 주세요/), true);
+      assert.equal(P.shown(box), true); assert.equal(P.doc.activeElement, box, 'focused'); assert.equal(picked, 1, 'and selected');
+      assert.equal(P.says(/아래 주소를 길게 눌러 복사해 주세요/), true);
       assert.equal(P.seen(g.id, 'reshare'), false, 'nothing was handed over');
+    } finally { P.done(); }
+    // A second tap while the share sheet is still open: nothing (no second sheet, no clipboard, one count).
+    P = pageOf(g, AT);
+    try {
+      let close; const opened = [];
+      globalThis.navigator.share = (o) => { opened.push(o); if (opened.length > 1) return Promise.reject(Object.assign(new Error('busy'), { name: 'InvalidStateError' })); return new Promise((ok) => { close = ok; }); };
+      await open(P);
+      const btn = P.btn(/^🔗 공유하기$/);
+      for (const f of btn.on.click) f({ preventDefault() {}, target: btn }); await P.settle();
+      await P.press(btn);
+      assert.equal(opened.length, 1, 'one sheet'); assert.deepEqual(P.copied, [], 'no copy behind it'); assert.equal(P.says(/링크를 복사했어요/), false);
+      close(); await P.settle();
+      assert.equal(P.seen(g.id, 'reshare'), true);
+      delete P.store.kts_gseen; await P.press(btn); assert.equal(opened.length, 2, 'a tap after it closed opens it again');
     } finally { P.done(); }
   });
 
@@ -1349,7 +1366,7 @@ describe('the recipient page passes itself on and takes a heart; the maker count
   });
 
   it('admin: the new counters and the two ratios in the table, and the makers line', async () => {
-    const days = [{ d: '2026-11-25', start: 10, made: 4, made_ref: 1, hit: 20, hitbot: 7, view: 15, heart: 3, 'ev:reshare': 2, 'ev:share': 5, start_ref: 2, made_again: 1 }, { d: '2026-11-24', start: 0, made: 0, hit: 0 }];
+    const days = [{ d: '2026-11-25', start: 10, made: 4, made_ref: 1, hit: 20, hitbot: 7, view: 15, heart: 3, 'ev:reshare': 2, 'ev:share': 5, start_ref: 2, made_again: 1 }, { d: '2026-11-24', start: 0, made: 0, hit: 0 }, { d: '2026-11-23', made: 6, made_ref: 0, view: 30 }]; // the 23rd: before start and hit existed
     const P = fakeDom({ path: '/admin.html', at: AT, respond: (u) => (u.startsWith('/rt/admin/gift/stats') ? { ok: true, days, arms: [], optins: [], makers: { week: { from: '2026-11-23', n: 3 }, d30: { one: 2, more: 1 }, keptFrom: 1 } } : u.startsWith('/rt/admin/gift?') ? { ok: true, boards: [], media: false, e3: false } : null) });
     const nodes = () => { const out = []; const walk = (n) => { if (n.nodeType === 1) { out.push(n); for (const k of n.kids) walk(k); } }; walk(P.app); return out; };
     P.doc.getElementById = (id) => nodes().find((n) => n.attrs.id === id) || null; P.doc.querySelector = () => P.app;
@@ -1362,7 +1379,10 @@ describe('the recipient page passes itself on and takes a heart; the maker count
       assert.deepEqual([day[col('만들기 시작')], day[col('공유(받는 사람)')], day[col('공유(주인)')], day[col('💖 하트')], day[col('링크 열림(미리보기·봇)')]], ['10', '2', '5', '3', '7']);
       assert.deepEqual([day[col('시작→만듦')], day[col('링크(사람)→방문')], day[col('K')]], ['0.40', '0.75', '0.25']);
       assert.deepEqual(rows.find((r) => r[0] === '2026-11-24').slice(-2), ['—', '—'], 'nothing to divide by');
-      assert.deepEqual([sum[0], sum[col('시작→만듦')], sum[col('링크(사람)→방문')]], ['30일', '0.40', '0.75']);
+      assert.deepEqual([sum[0], sum[col('시작→만듦')], sum[col('링크(사람)→방문')], sum[col('K')]], ['30일', '0.40', '0.75', '0.10'], 'a ratio sums only the days that have its denominator');
+      const old = rows.find((r) => r[0] === '2026-11-23');
+      assert.deepEqual([old[col('만들기 시작')], old[col('링크 열림(사람)')], old[col('만든 보드')], old[col('시작→만듦')], old[col('링크(사람)→방문')]], ['—', '—', '6', '—', '—'], 'a key the day does not have');
+      assert.deepEqual([sum[col('만든 보드')], sum[col('만들기 시작')], sum[col('신고')]], ['10', '10', '—']);
       assert.equal(P.says(/^이번 주\(2026-11-23 월요일부터\) 3명 · 30일 안: 1개 2명, 2개 이상 1명/), true);
     } finally { P.done(); delete globalThis.sessionStorage; }
     assert.match(src('admin-gift.js'), /\['ev:go', '직접 가서 봄'\], \['ev:cer', '점등식 온 기기'\], \['ev:cershot', '단체 사진 저장·공유'\], /);
