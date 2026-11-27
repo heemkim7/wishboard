@@ -332,6 +332,7 @@ export async function orderApi(req, env, ctx, u, k) {
   const m = /^\/rt\/order\/(o_[A-Za-z0-9]{20})(?:\/(pay|confirm|fail|cancel|mock))?$/.exec(p);
   if (!m) return J({ err: 'not found' }, 404);
   const id = m[1], sub = m[2] || '';
+  if (sub === 'mock' && mode !== 'mock') return J({ err: 'not found' }, 404); // the fake payment window exists only in mock (local hosts)
   if (!sub) { // GET /rt/order/<id>: the owner's read; a publish still pending gets its next try here
     if (await hardOf(k, env)) return no('busy', 503);
     let r; try { r = await orderM(env).ordOp('get', { id, uid: actor.id }); } catch { return no('down', 503); }
@@ -362,7 +363,6 @@ export async function orderApi(req, env, ctx, u, k) {
   let g; try { g = await orderM(env).ordOp('get', { id, uid: actor.id }); } catch { return no('down', 503); }
   if (!g?.ok) return no('nf', 404);
   if (sub === 'mock') { // the simulated payment window (mock only): the payment, then PortOne's webhook, signed and verified like the real one
-    if (mode !== 'mock') return J({ err: 'not found' }, 404);
     const result = ['paid', 'failed', 'amount'].includes(b.result) ? b.result : 'paid', o = g.order;
     const payment = { id: o.id, status: result === 'failed' ? 'FAILED' : 'PAID', transactionId: 'mock-' + o.id.slice(2, 12), amount: { total: result === 'amount' ? o.price - 100 : o.price }, currency: 'KRW', channel: { type: 'TEST' }, storeId: 'store-mock' };
     await orderM(env).ordOp('mockSet', { pid: o.id, j: payment }, Date.now());

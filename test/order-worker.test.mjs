@@ -139,6 +139,7 @@ describe('switches: off means invisible', () => {
       assert.equal(ok.ok, true); assert.equal(ok.test, true); assert.equal(ok.badge, '테스트 결제'); assert.match(ok.refund.before, /전액/);
       assert.ok(ok.products.every((p) => p.kind && p.price > 0 && p.perks.length)); assert.ok(!ok.products.some((p) => p.id === 'personal_big'), 'inactive products are not listed');
       assert.equal(ok.sdk, 'https://cdn.portone.io/v2/browser-sdk.js');
+      assert.equal((await H.post('/rt/order/o_' + 'a'.repeat(20) + '/mock', { result: 'paid' }, A.token)).status, 404, 'no fake payment window outside mock');
     } finally { done(); }
   });
   it('at the hard budget level a new order answers 503 before any order-store call', async () => {
