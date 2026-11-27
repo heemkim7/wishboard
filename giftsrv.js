@@ -52,6 +52,7 @@
 import { GIFT, GIFT_ID, PAPER_ID, VISITOR_ID, GIFT_ERR, giftFault, paperFault, pickScreen, screenLoad, nextFree, PERK, perksOf, longEnd, giftPhase, paperTakes, lockArm, giftView, giftShareText, refOf, kstDay, addDays, pruneDay, quietNow, AD_LABEL, videoKind, VIDEO_TYPE, rangeOf, windowText, OCCASIONS, TIERS, CER_BEACONS, REAL_BEACONS, MORE_BEACONS, ladderArm, heartsOpen, heartTakes, dayStart, botAgent, revealAt } from './giftrules.js';
 import { TOWER, SHARE, shareAmount, linkFault, TOWER_HOW, SPEND_OLD, TOWER_ERR, reactCounts, towerFault, towerDays, towerEntry, towerMinutes } from './towerrules.js'; // 메인 타워 축하 1분 and the share reward
 import { orderPerks } from './ordersrv.js'; // 메인 타워 주인공: the order ledger says whether a board's paid booking stands
+import { payOn } from './payrules.js';
 import { opsRate } from './ops.js';
 
 const J = (o, s = 200, h = {}) => new Response(JSON.stringify(o), { status: s, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...h } });
@@ -1174,7 +1175,7 @@ async function tower(req, env, ctx, id, k) {
   const how = String(got.b.how || ''), m = Math.floor(Number(got.b.m)), uid = String(actor.id), guest = !!(actor.guest || actor.anon);
   if (!TOWER_HOW.includes(how) || !Number.isSafeInteger(m) || !(m > 0) || Math.abs(m - Date.now()) > 400 * 864e5) return no('minute', 400); // a year either way: never a date the store cannot read
   if (how === 'points' && guest) return no('account', 403);
-  if (how === 'paid' && guest) return no('paid', 403);
+  if (how === 'paid' && (guest || !payOn(env))) return no('paid', 403); // payments off: no paid order can stand, and no order DO call
   if (await hard(k, env)) return no('busy', 503);
   const M = giftM(env), o = { m, how, guest };
   // 메인 타워 주인공: the order ledger (one order DO call) must hold a PUBLISHED order of this board with the tower perk, bought by this

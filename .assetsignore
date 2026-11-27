@@ -13,6 +13,8 @@ ops.js
 adsrv.js
 giftsrv.js
 teamsrv.js
+ordersrv.js
+sharepage.js
 wrangler.jsonc
 cf_release.py
 schema.sql
