@@ -1853,7 +1853,8 @@ async function bootAccount() {
     if (next !== location.pathname + location.search + location.hash) history.replaceState(history.state, '', next);
   } catch { /* the address just stays */ }
   if (resume) ui.openLogin?.({ resume: true });
-  else if (SIGN_BACK.ask && !session?.user) ui.openLogin?.();
+  // The sheet closed without a sign-in (finishLink sets went first): a later sign-in in this window stays in the plaza.
+  else if (SIGN_BACK.ask && !session?.user) ui.openLogin?.({ onClose: () => { if (!SIGN_BACK.went) SIGN_BACK.to = ''; } });
 }
 
 // ---- Google sign-in in a second window -------------------------------------------------------

@@ -4486,7 +4486,8 @@ export function createUI(root, hooks) {
       // Is the confirmation on? One public read per page (net.js mailConfirm), asked as the sheet opens so the sign-up form is right.
       const asked = hooks.mailConfirm?.();
       if (asked?.then) asked.then((s) => { mailOnly = s === 'on'; if (sheet === me && !inCode) sync(); }, () => { /* unknown: the id stays allowed */ });
-      return () => { if (loginPaint === paint) loginPaint = null; clearInterval(tick); tick = 0; };
+      // opts.onClose: main.js's ?login=1&back= forgets where to go once this sheet closes without a sign-in
+      return () => { if (loginPaint === paint) loginPaint = null; clearInterval(tick); tick = 0; try { opts?.onClose?.(); } catch { /* the sheet is closed */ } };
     }, true);
   }
   // In-app browser, back from the system browser: the guest here was linked there and its coins and boards moved (main.js handoverBack).

@@ -397,17 +397,17 @@ function boot({ search = '', hash = '', session = null } = {}) {
   const calls = { notes: [], finishLink: [], opened: 0, account: [] };
   const q = new URLSearchParams(search);
   const ctx = {
-    SIGN_BACK: { ask: q.get('login') === '1', to: '', went: false }, // main.js's ?login=1 (a board page's 계정에 남겨 두기)
+    SIGN_BACK: { ask: q.get('login') === '1', to: q.get('back') || '', went: false }, // main.js's ?login=1 (a board page's 계정에 남겨 두기)
     URLSearchParams, mailArrival, cleanAddress, oauthErrorText: () => 'OAUTH-ERR',
     ARRIVED: oauthReturn(search, hash), MAIL_BACK: mailBack(search),
     location: { search, hash, href: ORIGIN + '/' + search + hash, pathname: '/' },
     history: { state: null, replaceState() {} },
     net: { currentSession: async () => session },
     finishLink: async (s, fresh) => { calls.finishLink.push([s.user.id, fresh]); },
-    ui: { setAccount: (v) => calls.account.push(v), note: (text, kind, tap) => calls.notes.push([text, kind, typeof tap]), openLogin: () => { calls.opened += 1; } },
+    ui: { setAccount: (v) => calls.account.push(v), note: (text, kind, tap) => calls.notes.push([text, kind, typeof tap]), openLogin: (o) => { calls.opened += 1; calls.loginOpts = o; } },
   };
   runInNewContext(src + '\nthis.bootAccount = bootAccount;', ctx);
-  return { run: () => ctx.bootAccount(), calls };
+  return { run: () => ctx.bootAccount(), calls, ctx };
 }
 
 describe('main.js bootAccount: back from a confirmation link of an older mail', () => {
@@ -432,6 +432,9 @@ describe('main.js bootAccount: back from a confirmation link of an older mail', 
   it('?login=1 (계정에 남겨 두기 on a board page) opens the sheet for a browser with no session, never for a signed-in one', async () => {
     const b = boot({ search: '?login=1&back=%2Fg%2Fabcd1234' });
     await b.run(); assert.equal(b.calls.opened, 1);
+    assert.equal(b.ctx.SIGN_BACK.to, '/g/abcd1234');
+    b.calls.loginOpts.onClose(); assert.equal(b.ctx.SIGN_BACK.to, '', 'the sheet closed without a sign-in: a later sign-in stays in the plaza');
+    assert.match(read('ui.js'), /try \{ opts\?\.onClose\?\.\(\); \} catch/, 'the sheet calls it when it closes');
     const s = boot({ search: '?login=1', session: { user: { id: 'u-1' } } });
     await s.run(); assert.equal(s.calls.opened, 0);
     const n = boot({ search: '' });
@@ -455,7 +458,7 @@ describe('the login sheet and the page (source checks)', () => {
     assert.match(login, /codeMail\.replaceChildren\(cv\.mailLabel \+ ' ', h\('b', \{ text: cv\.email \}\)\);/);
     assert.match(login, /codeAgain\.disabled = cv\.resendOff;/);
     assert.match(login, /tick = setInterval\(paintCode, 1000\)/);
-    assert.match(login, /return \(\) => \{ if \(loginPaint === paint\) loginPaint = null; clearInterval\(tick\); tick = 0; \};/);
+    assert.match(login, /return \(\) => \{ if \(loginPaint === paint\) loginPaint = null; clearInterval\(tick\); tick = 0; try \{ opts\?\.onClose\?\.\(\); \}/); // onClose: ?login=1&back= (2026-11-28)
     assert.match(login, /await hooks\.mailCode\?\.\(k\.v\.email, codeIn\.value, k\.pw, k\.v\.via\);/);
     assert.match(login, /await hooks\.mailResend\?\.\(email\);/);
     assert.match(login, /text: '다른 주소로 하기'/);
