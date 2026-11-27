@@ -1,33 +1,33 @@
 // Times Square K-점령전 — app wiring: realtime net (DO), 3D world, UI, wallet, world state, star shower.
-import { errlogCtx } from './errlog.js?v=202611270945'; // first: its error listeners are on before any other module runs
-import { Net, CDN, guestToken } from './net.js?v=202611270945';
-import { humanCall } from './net.js?v=202611270945'; // the coin rewards' human check while Turnstile is on (docs/bot-protection.md)
-import { createTimesSquare, STARTER_COLORS } from './timesSquare3d.js?v=202611270945';
-import { speciesId } from './ts3d/avatars.js?v=202611270945';
-import { equip, unequip, loadShop, loadProfile, profileSpecies, saveColor, saveNick, saveSpecies, setSpecies } from './profile.js?v=202611270945';
-import { starSpot, insideLoop } from './ts3d/layout.js?v=202611270945';
-import { createUI } from './ui.js?v=202611270945';
-import { haptic, startMusic } from './audio.js?v=202611270945';
-import { isTouchUI } from './interact.js?v=202611270945';
+import { errlogCtx } from './errlog.js?v=202611271045'; // first: its error listeners are on before any other module runs
+import { Net, CDN, guestToken } from './net.js?v=202611271045';
+import { humanCall } from './net.js?v=202611271045'; // the coin rewards' human check while Turnstile is on (docs/bot-protection.md)
+import { createTimesSquare, STARTER_COLORS } from './timesSquare3d.js?v=202611271045';
+import { speciesId } from './ts3d/avatars.js?v=202611271045';
+import { equip, unequip, loadShop, loadProfile, profileSpecies, saveColor, saveNick, saveSpecies, setSpecies } from './profile.js?v=202611271045';
+import { starSpot, insideLoop } from './ts3d/layout.js?v=202611271045';
+import { createUI } from './ui.js?v=202611271045';
+import { haptic, startMusic } from './audio.js?v=202611271045';
+import { isTouchUI } from './interact.js?v=202611271045';
 import { BALANCE, PAY, chainsOf, live, slotName, slotOf, takeGrants, cheerCount, countsAsActivity, josa, slotOpen, SLOT_SOON } from './balance.js';
 import { auctionClosed, EQUIP_MAX, OWNED_MAX, STARTER_DEFAULT, starterFromDb } from './balance.js';
 import { primeAt, WHY_CHIP } from './primerules.js';
-import { trackEvent } from './analytics.js?v=202611270945';
+import { trackEvent } from './analytics.js?v=202611271045';
 import { adoptHandover, allowedLink, blockedText, handoverHref, isAndroid, isInAppWebView, loginEmail, CHEER_PHRASES, GT_LS, SESSION_LS, slotTier } from './plaza-account.js';
 import { authErrorText, cleanAddress, externalRoutes, oauthErrorText, oauthMessage, oauthReturn, sessionDrift, OAUTH_ACK, OAUTH_CHANNEL } from './plaza-account.js';
 import { invCode, inviteFrom, inviteView } from './invite.js';
-import { saveClip, dropParams } from './share.js?v=202611270945';
-import { mountGift } from './gift.js?v=202611270945';
+import { saveClip, dropParams } from './share.js?v=202611271045';
+import { mountGift } from './gift.js?v=202611271045';
 import { GIFT_ID } from './giftrules.js';
-import { welcomeDue, WELCOME, crowdFacts, kstDay, lockCelebration, wishAutoOpen, wishBootLine, awayRows, inboxUnread, seenAdd, liveKey, liveSeenAdd } from './ftue.js?v=202611270945';
-import { photoVerdicts } from './ftue.js?v=202611270945';
+import { welcomeDue, WELCOME, crowdFacts, kstDay, lockCelebration, wishAutoOpen, wishBootLine, awayRows, inboxUnread, seenAdd, liveKey, liveSeenAdd } from './ftue.js?v=202611271045';
+import { photoVerdicts } from './ftue.js?v=202611271045';
 import { WISH, cleanWish } from './wish.js';
 import { seasonFor, seasonPreview } from './seasons.js';
-import { applyInboxPush, loadInbox, readInbox, liveOnly, handledRead, liveSeeable } from './inbox.js?v=202611270945';
-import { sendCheer } from './tribe.js?v=202611270945';
+import { applyInboxPush, loadInbox, readInbox, liveOnly, handledRead, liveSeeable } from './inbox.js?v=202611271045';
+import { sendCheer } from './tribe.js?v=202611271045';
 import { applyOps, ballNotice, nineBanner, kingMinute, clockSkew, clock, nowMs } from './live.js';
-import { pushRoute, awayRead } from './overlay.js?v=202611270945';
-import { isMailbox, mailArrival, mailBack, mailErrorText, retryAfterS, MAIL_ERR } from './mailcode.js?v=202611270945';
+import { pushRoute, awayRead } from './overlay.js?v=202611271045';
+import { isMailbox, mailArrival, mailBack, mailErrorText, retryAfterS, MAIL_ERR } from './mailcode.js?v=202611271045';
 
 adoptHandover(location.search, localStorage);
 // Back from a full-page sign-in (the fallback when the Google window could not open): read once here, because supabase-js takes
