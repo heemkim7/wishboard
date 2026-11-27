@@ -58,7 +58,7 @@ function dropBoards(q, ids) {
   for (const id of ids) for (const t of ['gm', 'gv', 'grp', 'gc']) q.exec(`delete from ${t} where g = ?`, id);
   for (const id of ids) {
     q.exec('delete from gr where k = ?', 'vb:' + id); q.exec('delete from gr where k = ?', 'rn:' + id);
-    q.exec('delete from gr where k like ?', 'h:' + id + ':%'); // today's 💖 per network (ids are [0-9a-z]: no LIKE wildcards)
+    q.exec('delete from gr where k >= ? and k < ?', 'h:' + id + ':', 'h:' + id + ';'); // today's 💖 per network: a range on gr's key, not a scan
     q.exec("update gb set re = '' where id = (select ref from gb where id = ?) and re = ?", id, id);
     q.exec('delete from gb where id = ?', id);
   }
@@ -69,8 +69,10 @@ function visitAdd(q, g, v, onDay, d, now) {
   if (fresh) { q.exec('update gb set v = v + 1' + (onDay ? ', vd = vd + 1' : '') + ' where id = ?', g); bump(q, d, 'view'); if (onDay) bump(q, d, 'view_day'); return; }
   if (onDay && q.exec('update gv set dd = 1 where g = ? and v = ? and dd = 0', g, v).rowsWritten > 0) { q.exec('update gb set vd = vd + 1 where id = ?', g); bump(q, d, 'view_day'); bump(q, d, 'return_day'); }
 }
-// 💖 from a device: kept on its visitor row (gv.h, the same hash a view keeps: nothing new about the person). A device that hearts before
-// its 'open' beacon arrived is seen here first (its later open then changes nothing). -> true when it was counted.
+// 💖 from a device: kept on its visitor row (gv.h, on the device hash a view already keeps). For the cap a heart also keeps the network
+// hash against the board for that KST day (gr 'h:<board>:<net>'): that one is new for someone who only looked and pressed, so it goes the
+// next day (heartPrune on the first beacon batch of the day, or the make/admin prune) or with the board, whichever is first. A device that
+// hearts before its 'open' beacon arrived is seen here first (its later open then changes nothing). -> true when it was counted.
 function heartAdd(q, g, v, net, d, now) {
   if (!g || !heartsOpen(g, now)) return false;
   const nk = 'h:' + g.id + ':' + net;
@@ -79,6 +81,15 @@ function heartAdd(q, g, v, net, d, now) {
   if (q.exec('update gv set h = 1 where g = ? and v = ? and h = 0', g.id, v).rowsWritten < 1) return false;
   q.exec('update gb set hr = hr + 1 where id = ?', g.id); limAdd(q, nk, d); bump(q, d, 'heart');
   return true;
+}
+// Yesterday's (and older) 💖 network marks, on the beacon path: once a KST day (the mark 'hprune' for today, itself pruned tomorrow),
+// HEART_PRUNE rows at a time; the day's mark is set only once none are left, so a large backlog goes over the next batches.
+const HEART_PRUNE = 500;
+function heartPrune(q, d) {
+  if (lim(q, 'hprune', d) > 0) return 0;
+  const n = q.exec("delete from gr where rowid in (select rowid from gr where k >= 'h:' and k < 'h;' and d < ? limit ?)", d, HEART_PRUNE).rowsWritten;
+  if (n < HEART_PRUNE) limAdd(q, 'hprune', d);
+  return n;
 }
 // A board's line count, from what is left (after lines of one writer went).
 const recount = (q, g) => q.exec('update gb set n = (select count(*) from gm where gm.g = gb.id) where id = ?', g);
@@ -180,7 +191,8 @@ export const giftDb = {
   // is 💖: once per device and board for good (gv.h), only while heartsOpen, at most GIFT.heartNet per board, network and day.
   seen(q, items, now = Date.now()) {
     const d = kstDay(now); let n = 0;
-    for (const it of (Array.isArray(items) ? items : []).slice(0, 200)) {
+    heartPrune(q, d);
+    for (const it of (Array.isArray(items) ? items : []).slice(0, SEEN_MAX)) { // the isolate sends at most SEEN_MAX a call
       const g = String(it?.g || ''), v = String(it?.v || ''), e = String(it?.e || '');
       if (e === 'hit' || e === 'hitbot') { const day = String(it?.d || ''), k = Math.floor(Number(it?.n)); if (/^\d{4}-\d{2}-\d{2}$/.test(day) && k > 0 && k <= 1e6) { bump(q, day, e, k); n++; } continue; }
       if (e === 'start') { bump(q, d, 'start'); if (Number(it?.r) === 1) bump(q, d, 'start_ref'); n++; continue; }
@@ -369,13 +381,18 @@ export async function giftWorld(env, k) {
 }
 // Page beacons: kept here, one DO call per GIFT.seenBatch or once the oldest is GIFT.seenMs old (the next beacon's waitUntil sends it).
 // An isolate that dies loses what it held (like the request tally).
-// Link hits (GETs of /g/<id>) are only sums here, per KST day: { hit, hitbot }. They never start a DO call of their own: they ride on the
-// next beacon batch (or a forced flush), first in its list.
-const SEEN = { list: [], at: 0, p: null }, HITS = new Map();
-const seenAdd = (it) => { if (!SEEN.list.length) SEEN.at = Date.now(); if (SEEN.list.length < 1000) SEEN.list.push(it); };
+// At most SEEN_MAX items go in one call (the DO takes no more); the rest stay for the next one. A call that fails puts its items back
+// once (marked re: a second failure drops them), in front, within SEEN_CAP, so a 💖 shown as pressed is not lost to one slow or failed call.
+// Link hits (GETs of /g/<id>) are only sums here, per KST day: { hit, hitbot }. They ride on the next beacon batch, first in its list; when
+// they have waited GIFT.seenMs and no beacon took them, the next gift request in this isolate sends them by themselves (hitsFlush): at
+// most one such DO call per GIFT.seenMs per isolate, never at budget hard (fetchers send no beacons, so this is what brings theirs in).
+export const SEEN_MAX = 200;
+const SEEN_CAP = 1000;
+const SEEN = { list: [], at: 0, p: null }, HITS = new Map(), HIT = { at: 0, last: 0 };
+const seenAdd = (it) => { if (!SEEN.list.length) SEEN.at = Date.now(); if (SEEN.list.length < SEEN_CAP) SEEN.list.push(it); };
 function hitAdd(bot, now = Date.now()) {
   const d = kstDay(now), x = HITS.get(d) || { hit: 0, hitbot: 0 };
-  x[bot ? 'hitbot' : 'hit']++; HITS.set(d, x);
+  x[bot ? 'hitbot' : 'hit']++; HITS.set(d, x); if (!HIT.at) HIT.at = now;
   if (HITS.size > 3) HITS.delete(HITS.keys().next().value); // an isolate that saw no beacon for days keeps three days at most
 }
 function seenFlush(env, ctx, force = false) {
@@ -383,13 +400,27 @@ function seenFlush(env, ctx, force = false) {
   if (SEEN.p || (!SEEN.list.length && !(force && HITS.size)) || (!force && SEEN.list.length < GIFT.seenBatch && now - SEEN.at < GIFT.seenMs)) return SEEN.p;
   const items = [];
   for (const [d, x] of HITS) for (const e of ['hit', 'hitbot']) if (x[e]) items.push({ e, d, n: x[e] });
-  HITS.clear();
-  items.push(...SEEN.list.splice(0)); SEEN.at = 0;
-  SEEN.p = Promise.resolve().then(() => giftM(env).giftSeen(items, now)).catch(() => { }).finally(() => { SEEN.p = null; });
+  HITS.clear(); HIT.at = 0;
+  items.push(...SEEN.list.splice(0, Math.max(0, SEEN_MAX - items.length)));
+  if (!SEEN.list.length) SEEN.at = 0; // what is left keeps its age: the next request sends it
+  SEEN.p = Promise.resolve().then(() => giftM(env).giftSeen(items, now))
+    .catch(() => { const back = items.filter((it) => !it.re).map((it) => ({ ...it, re: 1 })); if (back.length) { SEEN.list = [...back, ...SEEN.list].slice(0, SEEN_CAP); SEEN.at = SEEN.at || now; } })
+    .finally(() => { SEEN.p = null; });
   try { ctx?.waitUntil?.(SEEN.p); } catch { /* tests */ }
   return SEEN.p;
 }
+// Hits waiting longer than GIFT.seenMs with no beacon to carry them. h: the budget level this request already knows (giftPage), else asked
+// here, and only when they are due (so an ordinary request asks nothing more).
+async function hitsFlush(env, ctx, k, h) {
+  const now = Date.now();
+  if (SEEN.p || !HITS.size || !HIT.at || now - HIT.at < GIFT.seenMs || (now - HIT.last < GIFT.seenMs && now >= HIT.last)) return null;
+  if (h ?? (await hard(k, env))) return null;
+  HIT.last = now;
+  seenFlush(env, ctx, true); // in waitUntil: the request does not wait for it
+  return true;
+}
 export const giftSeenFlush = (env, ctx) => seenFlush(env, ctx, true); // tests
+export const giftSeenState = () => ({ list: SEEN.list.length, hits: HITS.size, busy: !!SEEN.p }); // tests
 
 // ---- helpers -------------------------------------------------------------------------------------------------------------
 async function readSmall(req, max) {
@@ -415,6 +446,7 @@ export const giftPath = (p) => p === '/rt/gift' || p.startsWith('/rt/gift/') || 
 export async function giftApi(req, env, ctx, u, k) {
   const p = u.pathname;
   seenFlush(env, ctx); // beacons kept here go out with any gift request once they are due (no-op otherwise)
+  await hitsFlush(env, ctx, k); // link hits no beacon took, once they are due (no-op otherwise; the answer does not wait for the call)
   if (p === '/rt/admin/gift' || p.startsWith('/rt/admin/gift/')) return adminApi(req, env, ctx, u, k);
   if (p === '/rt/gift') return make(req, env, ctx, k);
   if (p === '/rt/gift/start') return startSeen(req, env, ctx, k);
@@ -711,11 +743,13 @@ export async function giftPage(req, env, ctx, u, k) {
   if (!GIFT_ID.test(id)) return Response.redirect(new URL('/gift', req.url).href, 302);
   if (!(await opsRate(env, req, 'gpage', 120, env.EVENT_RL))) return Response.redirect(new URL('/gift', req.url).href, 302);
   let g = null, down = false, h = false; try { ({ v: g, h } = await loadGiftH(env, k, id)); } catch { down = true; }
-  // A link hit: a GET of this HTML, summed in the isolate as people or automated fetchers (botAgent: link previews, crawlers, no
-  // User-Agent). Nothing about the request is kept, the answer does not wait, and no DO call is added: the sums ride on the next beacon
-  // batch. Not at budget hard (the level the read above asked anyway), nor while the store is down.
-  if (req.method === 'GET' && !h && !down) hitAdd(botAgent(req.headers.get('user-agent')));
   const now = Date.now(), live = !!g && giftPhase(g, now) !== 'gone', origin = new URL(req.url).origin;
+  // A link hit: a GET of this HTML for a board that is there, summed in the isolate as people or automated fetchers (botAgent: link
+  // previews, crawlers, no User-Agent). Nothing about the request is kept and the answer does not wait. The sums ride on the next beacon
+  // batch, or go by themselves once they have waited (hitsFlush: at most one DO call per GIFT.seenMs per isolate). Not at budget hard
+  // (the level the read above asked anyway), nor while the store is down.
+  if (req.method === 'GET' && !h && !down && live) hitAdd(botAgent(req.headers.get('user-agent')), now);
+  if (!down) await hitsFlush(env, ctx, k, h);
   const view = live ? giftView(g, now) : null;
   const words = live ? giftShareText(view) : { title: down ? '잠시 뒤에 다시 열어 주세요 · WISH BOARD' : '선물 전광판 · WISH BOARD', text: down ? '지금은 광장이 붐벼요.' : '뉴욕 타임스퀘어를 본뜬 가상 광장에 친구를 위한 전광판을 6시간 무료로 걸어 보세요.' };
   const desc = live ? words.text + ' (' + windowText(view.a, view.b) + ')' : words.text;

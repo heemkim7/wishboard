@@ -17,7 +17,7 @@ globalThis.WebSocketRequestResponsePair = class { constructor(req, res) { this.r
 const { Meter, Room } = await import('../worker.js');
 const worker = (await import('../worker.js')).default;
 const { GIFT, REPLY_MSG, kstDay, addDays, botAgent } = await import('../giftrules.js');
-const { giftSeenFlush, vidKey } = await import('../giftsrv.js');
+const { giftSeenFlush, giftSeenState, vidKey } = await import('../giftsrv.js');
 
 function sqliteStorage(db = new DatabaseSync(':memory:')) {
   return {
@@ -690,7 +690,7 @@ describe('the gift loop: reshare, hearts, starts, link hits and makers on the Wo
       await H.post('/rt/gift/' + r.id + '/seen', { v: VIS(1), e: 'open' }); await giftSeenFlush(env, H.ctx);
       assert.equal(db(env).prepare('select v from gb where id = ?').get(r.id).v, 2, 'and its open later adds nothing');
       const cols = db(env).prepare('pragma table_info(gv)').all().map((c) => c.name);
-      assert.deepEqual(cols, ['g', 'v', 'at', 'dd', 'h'], 'kept on the visitor row: nothing new about the person');
+      assert.deepEqual(cols, ['g', 'v', 'at', 'dd', 'h'], 'the heart is a flag on the visitor row (the device hash a view keeps); the network mark for the cap is in gr, for the day');
       clock.add(25000); // past the isolate's 20 s copy
       assert.equal((await (await H.get('/rt/gift/' + r.id)).json()).gift.hearts, 2);
       assert.equal(dataOf(await (await H.get('/g/' + r.id)).text()).gift.hearts, 2, 'in the page data');
@@ -795,9 +795,105 @@ describe('the gift loop: reshare, hearts, starts, link hits and makers on the Wo
 
   it('botAgent: link previews, crawlers and no User-Agent are automated; phones and in-app browsers are people', () => {
     for (const ua of ['kakaotalk-scrap/1.0; +https://devtalk.kakao.com/', 'facebookexternalhit/1.1', 'Twitterbot/1.0', 'Slackbot-LinkExpanding 1.0', 'Mozilla/5.0 (compatible; Discordbot/2.0)', 'TelegramBot (like TwitterBot)',
-      'WhatsApp/2.23.20.0', 'Mozilla/5.0 (compatible; Googlebot/2.1)', 'Mozilla/5.0 (compatible; bingbot/2.0)', 'Mozilla/5.0 (compatible; Yeti/1.1)', 'Daum/4.1', 'LinkedInBot/1.0', 'SomeCrawler/1', 'my-spider', 'Link Preview', '', '   ', null, undefined]) assert.equal(botAgent(ua), true, String(ua));
+      'WhatsApp/2.23.20.0', 'Mozilla/5.0 (compatible; Googlebot/2.1)', 'Mozilla/5.0 (compatible; bingbot/2.0)', 'Mozilla/5.0 (compatible; Yeti/1.1)', 'Mozilla/5.0 (compatible; Daumoa/4.0)', 'Daumoa', 'kakaotalk-scrap/1.0', 'LinkedInBot/1.0', 'SomeCrawler/1', 'my-spider', 'Link Preview', '', '   ', null, undefined]) assert.equal(botAgent(ua), true, String(ua));
     for (const ua of ['Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 KAKAOTALK 10.8.0', 'Mozilla/5.0 (Linux; Android 14; SM-S921N) AppleWebKit/537.36 Chrome/131.0 Mobile Safari/537.36 NAVER(inapp; search; 2000; 12.10.4)',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36']) assert.equal(botAgent(ua), false, ua);
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36',
+      'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/131.0 Mobile Safari/537.36 DaumApps/5.8.1 DaumDevice/mobile', 'DaumApps/5.8.1', 'KAKAOTALK 10.4.5']) assert.equal(botAgent(ua), false, ua);
+    // The plaza's link counts (worker.js LINK_BOT, linkWho) split the same way: the two lists are one list.
+    const re = (f, name) => { const m = new RegExp('const ' + name + ' = (/[^\\n]*?/i);').exec(fs.readFileSync(new URL('../' + f, import.meta.url), 'utf8').replace(/\r\n/g, '\n')); assert.ok(m, f); return m[1]; };
+    assert.equal(re('giftrules.js', 'BOT_UA'), re('worker.js', 'LINK_BOT'));
+  });
+
+  // The gift DO's giftSeen held until released, or made to fail: what the isolate does with its batch then.
+  const gate = (env) => {
+    const real = env.METER.get, ctl = { fail: 0, hold: null, sizes: [] };
+    env.METER.get = (n) => { const m = real(n); return n !== 'gift' ? m : new Proxy(m, { get: (t, k) => (k !== 'giftSeen' ? t[k] : async (items, now) => {
+      ctl.sizes.push(items.length); if (ctl.hold) await ctl.hold; if (ctl.fail > 0) { ctl.fail--; throw new Error('slow'); } return t.giftSeen(items, now);
+    }) }); };
+    return ctl;
+  };
+  const raw = (env, p, body, ip) => worker.fetch(new Request('https://sq.example' + p, { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip }, body: JSON.stringify(body) }), env, { waitUntil() {} });
+
+  it('the batch: at most 200 items a call, the rest wait for the next; nothing past the cap is lost to a slow call', async () => {
+    const { done } = setup();
+    try {
+      await drain();
+      const env = makeEnv(), H = harness(env), A = await H.guest();
+      const r = await (await H.post('/rt/gift', FORM(), A.token)).json();
+      const ctl = gate(env); let open; ctl.hold = new Promise((ok) => { open = ok; });
+      for (let i = 1; i <= 25; i++) await raw(env, '/rt/gift/' + r.id + '/seen', { v: VIS(i), e: 'open' }, '10.0.0.1'); // the 25th starts a call that hangs
+      assert.equal(giftSeenState().busy, true);
+      for (let i = 26; i <= 275; i++) await raw(env, '/rt/gift/' + r.id + '/seen', { v: VIS(i), e: 'open' }, '10.0.' + Math.ceil(i / 100) + '.2');
+      await raw(env, '/rt/gift/' + r.id + '/heart', { v: VIS(500) }, '10.9.9.9');
+      assert.equal(giftSeenState().list, 251, 'kept while the call is out');
+      open(); ctl.hold = null; await giftSeenFlush(env, H.ctx); // waits for the call that was out
+      assert.equal(giftSeenState().list, 251);
+      await giftSeenFlush(env, H.ctx); assert.equal(giftSeenState().list, 51, '200 went, the rest wait');
+      await giftSeenFlush(env, H.ctx); assert.equal(giftSeenState().list, 0);
+      assert.deepEqual(ctl.sizes, [25, 200, 51]);
+      const row = db(env).prepare('select v, hr from gb where id = ?').get(r.id);
+      assert.deepEqual({ ...row }, { v: 276, hr: 1 }, 'every device and the heart counted');
+    } finally { done(); }
+  });
+
+  it('a failed call puts its items back once: the heart counts on the next call; a second failure drops them', async () => {
+    const { done } = setup();
+    try {
+      await drain();
+      const env = makeEnv(), H = harness(env), A = await H.guest();
+      const r = await (await H.post('/rt/gift', FORM(), A.token)).json();
+      const ctl = gate(env);
+      await heart(H, r.id, 1, '11.1.1.1'); await H.post('/rt/gift/' + r.id + '/seen', { v: VIS(2), e: 'open' }, null, '11.1.1.1');
+      ctl.fail = 1; await giftSeenFlush(env, H.ctx);
+      assert.equal(giftSeenState().list, 2, 'back in the isolate');
+      await giftSeenFlush(env, H.ctx);
+      assert.deepEqual({ ...db(env).prepare('select v, hr from gb where id = ?').get(r.id) }, { v: 2, hr: 1 });
+      await heart(H, r.id, 3, '11.1.1.1');
+      ctl.fail = 2; await giftSeenFlush(env, H.ctx); assert.equal(giftSeenState().list, 1); await giftSeenFlush(env, H.ctx);
+      assert.equal(giftSeenState().list, 0, 'put back once only');
+      assert.equal(db(env).prepare('select hr from gb where id = ?').get(r.id).hr, 1);
+    } finally { done(); }
+  });
+
+  it('link hits that no beacon took go by themselves once they waited: one DO call per interval per isolate, not at hard; only for a board that is there', async () => {
+    const { clock, done } = setup();
+    try {
+      await drain();
+      const env = makeEnv(), H = harness(env), A = await H.guest();
+      const r = await (await H.post('/rt/gift', FORM(), A.token)).json();
+      const page = (id = r.id) => H.call('/g/' + id, { headers: { 'cf-connecting-ip': '12.1.1.1', 'user-agent': 'facebookexternalhit/1.1' } });
+      await page(); const calls = spyGift(env), seenOf = () => calls.filter((c) => c === 'giftSeen');
+      await page(); assert.deepEqual(seenOf(), [], 'not due yet');
+      clock.add(GIFT.seenMs);
+      await page(); assert.deepEqual(seenOf(), ['giftSeen'], 'due: one call, the next request in this isolate');
+      assert.equal(dayCounts(env).hitbot, 3);
+      clock.add(1000); await page(); clock.add(GIFT.seenMs - 2000); await H.get('/rt/gift/' + r.id);
+      assert.deepEqual(seenOf(), ['giftSeen'], 'not again within the interval');
+      clock.add(2000); await H.get('/rt/gift/' + r.id);
+      assert.deepEqual(seenOf(), ['giftSeen', 'giftSeen'], 'giftApi sends them too'); assert.equal(dayCounts(env).hitbot, 4);
+      assert.equal((await page('zzzzzzzz')).status, 404);
+      clock.add(GIFT.seenMs + 1000); await page(); calls.length = 0; await giftSeenFlush(env, H.ctx);
+      assert.equal(dayCounts(env).hitbot, 5, 'a board that is not there is no hit');
+      await page(); env.BUDGET_REQ_DAY = '1'; clock.add(61000); calls.length = 0;
+      await H.get('/rt/gift/' + r.id); await page();
+      assert.deepEqual(calls, [], 'not at hard'); assert.equal(giftSeenState().hits, 1, 'kept for later');
+    } finally { done(); }
+  });
+
+  it('the hearts\' network marks go the next day on the beacon path (once a day), not only on a make or an admin call', async () => {
+    const { clock, done } = setup();
+    try {
+      await drain();
+      const env = makeEnv(), H = harness(env), A = await H.guest();
+      const r = await (await H.post('/rt/gift', FORM(), A.token)).json();
+      await heart(H, r.id, 1, '13.1.1.1'); await giftSeenFlush(env, H.ctx);
+      const marks = () => db(env).prepare("select count(*) n from gr where k >= 'h:' and k < 'h;'").get().n;
+      assert.equal(marks(), 1, 'today: kept for the cap');
+      clock.add(864e5);
+      await H.post('/rt/gift/' + r.id + '/seen', { v: VIS(2), e: 'open' }, null, '13.1.1.1'); await giftSeenFlush(env, H.ctx);
+      assert.equal(marks(), 0, 'the next day: gone');
+      assert.equal(db(env).prepare("select n from gr where k = 'hprune' and d = ?").get(today()).n, 1, 'once a day');
+    } finally { done(); }
   });
 
   it('makers in the admin statistics: distinct this KST week (from Monday), one board or two and more over 30 days; made_again', async () => {

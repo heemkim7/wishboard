@@ -368,8 +368,9 @@ export function visitorShareText(g, look = 'live') {
   const hang = look === 'after' ? '걸렸어요' : look === 'live' ? '걸려 있어요' : '걸려요';
   return { title: `${to}님을 위한 선물 전광판`, text: `${o.emoji} ${to}님을 위한 선물 전광판이 뉴욕 타임스퀘어 가상 광장에 ${hang}! ` + (g?.takes ? '같이 축하 메시지 남겨 주세요 👉' : '같이 봐 주세요 👉') };
 }
-// A GET of /g/<id> by a link-preview fetcher or a crawler (or with no User-Agent at all): counted apart from people (hitbot).
-const BOT_UA = /kakaotalk-scrap|facebookexternalhit|twitterbot|slackbot|discordbot|telegrambot|whatsapp|googlebot|bingbot|yeti|daum|linkedinbot|bot|crawler|spider|preview/i;
+// A GET of /g/<id> by a link-preview fetcher or a crawler (or with no User-Agent at all): counted apart from people (hitbot). The same
+// list as worker.js LINK_BOT (linkWho, the plaza's links): keep the two identical. daumoa is Daum's crawler; DaumApps (its app) is people.
+const BOT_UA = /kakaotalk-scrap|facebookexternalhit|twitterbot|slackbot|discordbot|telegrambot|whatsapp|googlebot|bingbot|yeti|daumoa|linkedinbot|bot|crawler|spider|preview/i;
 export function botAgent(ua) { const s = String(ua ?? '').trim(); return !s || BOT_UA.test(s); }
 // The link preview words.
 export function giftShareText(g) {
