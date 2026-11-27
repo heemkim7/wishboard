@@ -126,6 +126,7 @@
 <script type="module" src="./admin-ads.js?v=202611272230"></script>
 <script type="module" src="./admin-gift.js?v=202611272230"></script>
 <script type="module" src="./admin-team.js?v=202611272230"></script>
+<script type="module" src="./admin-order.js?v=202611272230"></script>
 <script type="module">
 import { GROW_STEPS, growDays, growSum, stepPct, dayTable } from './growth.js?v=202611272230';
 import { kstDay } from './adsale.js'; // admin-ads.js loads the same module
@@ -221,7 +222,8 @@ async function loadStats() {
       return tr;
     });
     $('stats').replaceChildren(row('th', STAT_COLS), ...rows);
-    $('statsMsg').textContent = rows.length ? '' : '아직 기록된 이벤트가 없어요.';
+    // WAU (worker.js evWau): distinct accounts over each 7-day window; the operator's device and the e2e tool are not counted (ordersrv.js testTraffic).
+    $('statsMsg').textContent = rows.length ? (Array.isArray(d.wau) && d.wau.length ? 'WAU(최근 7일 동안 온 서로 다른 계정, 운영자·테스트 접속 제외): ' + d.wau.map((w) => w.day.slice(5) + ' ' + w.n).join(' · ') : '') : '아직 기록된 이벤트가 없어요.';
     renderGrow(d);
   } catch (e) { $('statsMsg').textContent = e.message; $('statsMsg').className = 'msg err'; }
 }
