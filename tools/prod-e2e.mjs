@@ -149,7 +149,7 @@ function loadState(file, origin) {
 }
 function makeApi(c) {
   return async function api(guest, method, p, body, o = {}) {
-    const headers = { ...(o.headers || {}) };
+    const headers = { 'x-kts-test': '1', ...(o.headers || {}) }; // test traffic: left out of the daily stats (ordersrv.js testTraffic)
     if (guest?.token) headers.authorization = 'Bearer ' + guest.token;
     if (o.admin) headers['x-admin-key'] = c.adminKey;
     let payload;
