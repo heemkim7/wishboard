@@ -24,6 +24,10 @@ import { GIFT_ID } from './giftrules.js';
 import { towerWire } from './towerrules.js'; // 메인 타워 축하 1분: the rooms' TOWER push
 import { teamApi, teamDb, teamPath, teamWorld, teamMove, teamForget } from './teamsrv.js'; // 응원 팀과 명당 (docs/prime-screens.md)
 import { isPrime, BOARD_ERR, PLOT_HOLD_MS } from './primerules.js';
+// 주문·결제 (ordersrv.js, payrules.js; docs/payments-setup.md): sandbox first, invisible until PAY_ON=1. Its routes, its Meter instance 'order',
+// the pay switch in /rt/config, and the operator/test-traffic flag (testTraffic, STAFF_COOKIE) the daily stats leave out.
+import { orderApi, orderPath, orderDb, testTraffic, STAFF_COOKIE } from './ordersrv.js';
+import { payPublic } from './payrules.js';
 // v16 cost pass: ping 25s (client) / STALE 75s, idle scan alarm 60s, meter report 60s, compact pos ('p'/'P'), nearby fanout, event ring + world cache, HMAC guest tokens.
 const CAP = 50, MEM = 0.125, LEAN = 0.8, HARD = 0.95, STALE = 75000, SCAN = 5000, IDLE_SCAN = 60000, REP = 60000;
 const NEAR_R = 1600, FAR_MS = 3000, HIST_N = 10, PRAY_TTL = 15;
@@ -422,6 +426,8 @@ export class Meter extends DurableObject {
   // so the account's last such choice is kept here (durable, `held`) and a database answer of 1 reads through it. `chose`: the species the
   // account has just saved (POST /rt/profile): kept when the database clamped it to 1, dropped when the database kept what was saved.
   // 광고 판매 (adsrv.js): instance 'ads' keeps the /ads requests, the bookings and their counts; adsTal reads the plaza's daily visitors on 'acct'.
+  // 주문·결제 (ordersrv.js): instance 'order', one call per operation (orderDb.run: create, pay, apply, published, refunded, list, range, ...).
+  ordOp(op, arg, now) { if (!this.ordOk) { this.ordOk = 1; orderDb.tables(this.ctx.storage.sql); } return orderDb.run(this.ctx.storage.sql, String(op || ''), arg || {}, Number(now) || Date.now()); }
   adsI() { if (!this.adsOk) { this.adsOk = 1; adsDb.tables(this.ctx.storage.sql); } }
   adsAsk(ip, v, now) { this.adsI(); return adsDb.ask(this.ctx.storage.sql, ip, v, now); }
   adsAdmin(op, arg, now) { this.adsI(); return adsDb.admin(this.ctx.storage.sql, op, arg, now); }
@@ -528,6 +534,16 @@ export class Meter extends DurableObject {
     const m = q.exec('select id0 from mark where day = ?', today).toArray()[0]; if (m) out.push({ day: today, ...this.evSum(today, m.id0, Number.MAX_SAFE_INTEGER).sum });
     for (const r of q.exec('select day, j from daily where day >= ? and day < ? order by day desc', dayShift(today, 1 - n), today).toArray()) out.push({ day: String(r.day), ...JSON.parse(r.j) });
     for (const d of out) { d.ret = {}; for (const off of EV_RET) d.ret[off] = dayShift(d.day, off) < today ? Number(q.exec('select n from ret where d0 = ? and off = ?', d.day, off).toArray()[0]?.n) || 0 : null; }
+    return out; }
+  // WAU: distinct accounts (a linked guest counted as its user) with any event in the 7 KST days ending on each of the last n days. Read from
+  // the raw rows, which are kept EV_KEEP (14) days, so n is at most EV_KEEP - 6 = 8; nothing new is stored. -> [{ day, n }] newest first.
+  evWau(today, n) { this.evInit(); const q = this.ctx.storage.sql, out = [], al = new Map(), k = Math.max(1, Math.min(EV_KEEP - 6, Math.floor(Number(n)) || 1));
+    const idOf = (u) => { if (!u.startsWith('guest:')) return u; if (!al.has(u)) al.set(u, String(q.exec('select user from alias where guest = ?', u).toArray()[0]?.user || u)); return al.get(u); };
+    const marks = q.exec('select day, id0 from mark where day >= ? and day <= ? order by day', dayShift(today, -(k + 5)), today).toArray(), byDay = new Map();
+    for (let i = 0; i < marks.length; i++) { const hi = i + 1 < marks.length ? marks[i + 1].id0 : Number.MAX_SAFE_INTEGER, ids = new Set();
+      for (const r of q.exec("select distinct uid from evt where id >= ? and id < ? and uid <> ''", marks[i].id0, hi).toArray()) ids.add(idOf(String(r.uid)));
+      byDay.set(String(marks[i].day), ids); }
+    for (let i = 0; i < k; i++) { const d = dayShift(today, -i), all = new Set(); for (let j = 0; j < 7; j++) for (const id of byDay.get(dayShift(d, -j)) || []) all.add(id); out.push({ day: d, n: all.size }); }
     return out; }
   touch(week, uid) {
     this.ctx.storage.sql.exec('create table if not exists touch(week text, uid text, primary key(week, uid))');
@@ -2085,7 +2101,7 @@ const HUMAN_BAD = new Set(['missing-input-response', 'invalid-input-response', '
 // What giftsrv.js gets from here (the env it is handed is the tallied one, so its DO calls count in the daily budget).
 // humanSite: the public Turnstile key for the gift page's data (a 💖 asks its 'theart' token itself); rpc: grant_coins for the share reward
 // and refunds, spend_plaza for the main tower minute; towerTell: the rooms' TOWER push; towerLater: the same at a board's reveal.
-const giftKit = () => ({ adminOk, lvlNow, resolveActor, tokenOf, ipHash: wishIp, humanGate, humanSite, actOk, pushNow, rpc: supabaseRpc, towerTell, towerLater, guestLike });
+const giftKit = () => ({ adminOk, lvlNow, resolveActor, tokenOf, ipHash: wishIp, humanGate, humanSite, actOk, pushNow, rpc: supabaseRpc, towerTell, towerLater, guestLike, testTraffic }); // testTraffic: the operator's device and tools/prod-e2e.mjs are not visitors
 // 메인 타워 축하 1분 (giftsrv.js): a booking, or its release ({ id, m, off: 1 }), to the plaza rooms someone sits in (wishRooms of both
 // bases) as WORLD_UPDATE kind TOWER. env is the tallied one giftsrv.js was handed, so these DO calls count. Nothing at budget hard.
 // giftsrv.js sends only entries whose board is revealed (towerOn, towerOff); one revealed later goes from the 'dark' alarm (towerLater).
@@ -2952,7 +2968,10 @@ async function admServe(env, req) {
   const html = await res.text(), tag = res.headers.get('etag') || '';
   let csp = tag && ADM_CSP.get(tag);
   if (!csp) { csp = await admCsp(html); if (tag) { if (ADM_CSP.size >= 20) ADM_CSP.clear(); ADM_CSP.set(tag, csp); } }
-  const out = new Response(html, res); out.headers.set('content-security-policy', csp); out.headers.delete('content-length'); return out;
+  const out = new Response(html, res); out.headers.set('content-security-policy', csp); out.headers.delete('content-length');
+  // The operator's device: kts_staff=1 (a year, HttpOnly) so its own visits stay out of the daily stats (ordersrv.js testTraffic). Set once.
+  if (!testTraffic(req)) out.headers.append('set-cookie', STAFF_COOKIE);
+  return out;
 }
 function admLogin(note = '', status = 200, head = {}) {
   const html = '<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -3159,12 +3178,13 @@ async function photos(req, env, ctx, u) {
     const today = kstDay(), n = Math.min(90, Math.max(1, Math.floor(Number(u.searchParams.get('days'))) || 14));
     try {
       const days = await env.METER.get(env.METER.idFromName('ev')).evStats(today, n);
+      const wau = await env.METER.get(env.METER.idFromName('ev')).evWau(today, Math.min(n, 8)).catch(() => null); // distinct accounts over 7 days (null: unknown)
       // Two more calls on this admin-only read: share-page hits (Meter 'day', lhDays) and landed cheers (Meter 'ad', chDays). A failed one leaves
       // its field out (unknown), never zeros. A day with events gets links { card | wish | shot: { people, auto } } and cheers { paid, free }.
       const [links, cheers] = await Promise.all([env.METER.get(env.METER.idFromName('day')).lhDays(today, n).catch(() => null), env.METER.get(env.METER.idFromName('ad')).chDays(today, n).catch(() => null)]);
       const zeroLinks = () => Object.fromEntries(LINK_KINDS.map((k) => [k, { people: 0, auto: 0 }]));
       for (const d of days) { if (links) d.links = links[d.day] || zeroLinks(); if (cheers) d.cheers = cheers[d.day] || { paid: 0, free: 0 }; }
-      return J({ ok: true, today, days: days.map(d => ({ ...d, ...statsFromCounts(d.events) })), tally: { pending: TALLY.n, wreq: TALLY.q, rows: TALLY.w, flushAgeMs: TALLY.at ? Date.now() - TALLY.at : -1, lvl: LVL.l } }); // this isolate's budget tally, numbers only
+      return J({ ok: true, today, ...(wau ? { wau } : {}), days: days.map(d => ({ ...d, ...statsFromCounts(d.events) })), tally: { pending: TALLY.n, wreq: TALLY.q, rows: TALLY.w, flushAgeMs: TALLY.at ? Date.now() - TALLY.at : -1, lvl: LVL.l } }); // this isolate's budget tally, numbers only
     } catch { return J({ err: 'meter' }, 503); }
   }
   if (u.pathname === '/rt/admin/reports' && req.method === 'GET') {
@@ -3364,7 +3384,7 @@ async function accountApi(req, env, ctx, u) {
     const maint = await ops.maintFor(env, ctx, () => LVL.l), operator = ops.operatorFor(env); // maint: the isolate's copy (one DO call a minute at most); operator: OPERATOR_INFO
     // starter_fallback: this isolate has no list from the database (not asked yet, a failure, or no starter_slot_list): the page keeps
     // a list it already got from the database instead (balance.js setStarterSlots). A good list adds nothing.
-    return J({ ...(/^[\w-]{16,80}$/.test(kakao) ? { url: SUPA, key: ANON, kakao, starter: STARTER_C.list } : { url: SUPA, key: ANON, starter: STARTER_C.list }), ...(STARTER_C.good ? {} : { starter_fallback: true }), ...(inviteOn(env) ? { invite: true } : {}), ...(FORGET_C.yes ? { forget: true } : {}), ...(maint ? { maint } : {}), ...(operator ? { operator } : {}), ...(humanSite(env) ? { turnstile: humanSite(env) } : {}) }); // invite: the master switch INVITE_ON; turnstile: the public site key, only with both Turnstile switches set
+    return J({ ...(/^[\w-]{16,80}$/.test(kakao) ? { url: SUPA, key: ANON, kakao, starter: STARTER_C.list } : { url: SUPA, key: ANON, starter: STARTER_C.list }), ...(STARTER_C.good ? {} : { starter_fallback: true }), ...(inviteOn(env) ? { invite: true } : {}), ...(FORGET_C.yes ? { forget: true } : {}), ...(maint ? { maint } : {}), ...(operator ? { operator } : {}), ...(humanSite(env) ? { turnstile: humanSite(env) } : {}), ...(payPublic(env, u.hostname) ? { pay: payPublic(env, u.hostname) } : {}) }); // invite: the master switch INVITE_ON; turnstile: the public site key, only with both Turnstile switches set
   }
   if (u.pathname === '/rt/event') {
     if (req.method !== 'POST') return J({ err: 'post' }, 405);
@@ -3372,6 +3392,7 @@ async function accountApi(req, env, ctx, u) {
     const name = String(b?.name || '');
     if (!EVENT_NAMES.includes(name)) return J({ err: 'event' }, 400);
     if (!(await rateOk(env.EVENT_RL, req))) return J({ err: 'rate' }, 429);
+    if (testTraffic(req)) return J({ ok: true, kept: false }); // the operator's device (kts_staff) or tools/prod-e2e.mjs (x-kts-test): not in the daily stats, no DO call
     if (await budgetHard(env)) return J({ ok: true, kept: false }); // budget hard: the funnel count is dropped, no DO call
     // The account is whoever the bearer token proves (guest or user), never a client-sent id. page_landing may arrive without one; its session ties it in.
     const actor = await resolveActor(env, tokenOf(req)), sid = /^[\w-]{8,40}$/.test(String(b.sid || '')) ? String(b.sid) : '';
@@ -3743,6 +3764,7 @@ export default {
     if (u.pathname === '/rt/sponsor' && req.method === 'GET') return J({ url: extUrl(env.SPONSOR_INQUIRY_URL) || '' });
     if (u.pathname.startsWith('/rt/ads/') || u.pathname === '/rt/admin/ads' || u.pathname.startsWith('/rt/admin/ads/')) return adsApi(req, env, ctx, u, { adminOk, lvlNow, resolveActor, tokenOf, ipHash: wishIp, // 광고 판매 (adsrv.js; networks: IPv6 by /64)
       dropWorld: async () => { PC.delete('world'); try { await caches.default.delete(new Request(WORLD_CACHE)); } catch { } } });
+    if (orderPath(u.pathname)) return orderApi(req, env, ctx, u, { adminOk, lvlNow, resolveActor, tokenOf, actOk }); // 주문·결제 (ordersrv.js): off = 404 for buyers; /rt/admin/order* behind admGate
     if (giftPath(u.pathname)) return giftApi(req, env, ctx, u, giftKit(env, req)); // 선물 전광판 (giftsrv.js; networks: IPv6 by /64)
     if (teamPath(u.pathname)) return teamApi(req, env, ctx, u, teamKit()); // 응원 팀과 명당 (teamsrv.js; networks: IPv6 by /64)
     if (u.pathname.startsWith('/g/')) return giftPage(req, env, ctx, u, giftKit(env, req)); // its recipient page: no room, no 3D
