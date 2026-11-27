@@ -48,7 +48,7 @@
 //                                              TOWER.payMax (no place). The operator's list (/rt/admin/gift/share) reads it; kept SHARE.dayKeep days
 //   sfr(uid, d, who)                           who already counted for that maker that day, on any network: 'a:<account or guest id>' or, for a
 //                                              gift page 💖 sent without a token, 'v:<device hash>'; kept SHARE.dayKeep days
-import { GIFT, GIFT_ID, PAPER_ID, VISITOR_ID, GIFT_ERR, giftFault, paperFault, pickScreen, nextFree, giftPhase, paperTakes, lockArm, giftView, giftShareText, refOf, kstDay, addDays, pruneDay, quietNow, AD_LABEL, videoKind, VIDEO_TYPE, rangeOf, windowText, OCCASIONS, TIERS, CER_BEACONS, REAL_BEACONS, heartsOpen, heartTakes, dayStart, botAgent, revealAt } from './giftrules.js';
+import { GIFT, GIFT_ID, PAPER_ID, VISITOR_ID, GIFT_ERR, giftFault, paperFault, pickScreen, nextFree, giftPhase, paperTakes, lockArm, giftView, giftShareText, refOf, kstDay, addDays, pruneDay, quietNow, AD_LABEL, videoKind, VIDEO_TYPE, rangeOf, windowText, OCCASIONS, TIERS, CER_BEACONS, REAL_BEACONS, MORE_BEACONS, ladderArm, heartsOpen, heartTakes, dayStart, botAgent, revealAt } from './giftrules.js';
 import { TOWER, SHARE, shareAmount, linkFault, TOWER_HOW, SPEND_OLD, TOWER_ERR, reactCounts, towerFault, towerDays, towerEntry } from './towerrules.js'; // 메인 타워 축하 1분 and the share reward
 import { opsRate } from './ops.js';
 
@@ -70,7 +70,7 @@ const rowOf = (r) => {
   if (!r) return null;
   const j = parse(r.j), v = r.vid ? parse(r.vid) : null;
   return { id: String(r.id), at: Number(r.at), uid: String(r.uid), ip: String(r.ip), day: String(r.day), a: Number(r.a), b: Number(r.b), scr: String(r.scr), st: String(r.st), lk: Number(r.lk) || 0,
-    ref: String(r.ref || ''), re: String(r.re || ''), hr: Number(r.hr) || 0, n: Number(r.n) || 0, v: Number(r.v) || 0, vd: Number(r.vd) || 0, kids: Number(r.kids) || 0, rp: Number(r.rp) || 0,
+    ref: String(r.ref || ''), re: String(r.re || ''), hr: Number(r.hr) || 0, dc: Number(r.dc) ? 1 : 0, n: Number(r.n) || 0, v: Number(r.v) || 0, vd: Number(r.vd) || 0, kids: Number(r.kids) || 0, rp: Number(r.rp) || 0,
     vid: v && v.t ? { t: String(v.t), n: Number(v.n) || 0, at: Number(v.at) || 0 } : null,
     to: String(j.to || ''), from: String(j.from || ''), occ: String(j.occ || 'bday'), msg: String(j.msg || ''), th: String(j.th || '') };
 };
@@ -181,6 +181,7 @@ export const giftDb = {
     // (a second try fails on the duplicate name and changes nothing). No Supabase migration.
     try { q.exec("alter table gb add column re text not null default ''"); } catch { /* column already exists */ }
     try { q.exec('alter table gb add column hr integer not null default 0'); } catch { /* column already exists */ } // 💖 (2026-11-27), the same way
+    try { q.exec('alter table gb add column dc integer not null default 0'); } catch { /* column already exists */ } // DISCOVER opt-in (2026-11-27), off
     q.exec("create table if not exists gm(g text not null, id text not null, at integer not null, uid text not null, nick text not null, txt text not null, ip text not null, st text not null default 'live', rp integer not null default 0, primary key(g, id))");
     q.exec('create index if not exists gm_uid on gm(uid)');
     q.exec('create table if not exists gv(g text not null, v text not null, at integer not null, dd integer not null default 0, primary key(g, v))');
@@ -393,19 +394,23 @@ export const giftDb = {
   // E1 on the owner's preview: act 'view' (the ladder was shown), 'pick' (tier t chosen) are daily totals only, never kept against the
   // account or the board (the page asks once per board). 'notify' (tier t, with the advertising consent) keeps the account against the
   // tier so the opening notice can reach its web push; asking again renews it. -> { ok }.
-  interest(q, id, uid, act, t, consent, now = Date.now()) {
+  // arm: { a, p } (giftrules.js ladderArm, the Worker's GIFT_ARMS): besides the old keys, 'ladder:<arm>:<kind>', 'pick:<t>:<arm>:<kind>:<price>'
+  // and 'notify:<t>:<arm>:<kind>:<price>', kind 'me' (내 전광판) or 'g' (a gift), price the one that arm showed. An older Worker sends none: A.
+  interest(q, id, uid, act, t, consent, now = Date.now(), arm = null) {
     const g = this.get(q, id, now, false);
     if (!g || giftPhase(g, now) === 'gone') return { ok: false, code: 'gone' };
     if (g.uid !== uid) return { ok: false, code: 'owner' };
-    const d = kstDay(now), tier = Math.floor(Number(t));
-    if (act === 'view') { bump(q, d, 'ladder'); return { ok: true }; }
+    const d = kstDay(now), tier = Math.floor(Number(t)), kind = g.occ === 'me' ? 'me' : 'g';
+    const A = /^[A-Z]$/.test(String(arm?.a || '')) && Array.isArray(arm?.p) && arm.p.length === 4 ? arm : { a: 'A', p: TIERS.map((x) => x.price) };
+    const tag = (k) => k + ':' + tier + ':' + A.a + ':' + kind + ':' + (Math.floor(Number(A.p[tier])) || 0);
+    if (act === 'view') { bump(q, d, 'ladder'); bump(q, d, 'ladder:' + A.a + ':' + kind); return { ok: true }; }
     if (!(tier >= 1 && tier <= 3)) return { ok: false, code: 'down' };
-    if (act === 'pick') { bump(q, d, 'pick:' + tier); return { ok: true }; }
+    if (act === 'pick') { bump(q, d, 'pick:' + tier); bump(q, d, tag('pick')); return { ok: true }; }
     if (act === 'notify') {
       if (consent !== true) return { ok: false, code: 'consent' };
       const had = q.exec('select 1 from gi where uid = ? and t = ?', uid, tier).toArray().length > 0;
       q.exec('insert into gi(uid, t, at, sent) values(?, ?, ?, 0) on conflict(uid, t) do update set at = excluded.at', uid, tier, now);
-      if (!had) bump(q, d, 'notify:' + tier);
+      if (!had) { bump(q, d, 'notify:' + tier); bump(q, d, tag('notify')); }
       return { ok: true };
     }
     return { ok: false, code: 'down' };
@@ -459,10 +464,20 @@ export const giftDb = {
     dropBoards(q, [g.id], now);
     return { ok: true, vid: !!g.vid, up: g.ref, ...(off ? { off } : {}) };
   },
-  // Boards on the plaza now (the public copy /rt/world carries), at most GIFT.liveMax, earliest first.
+  // Boards on the plaza now (the public copy /rt/world carries), at most GIFT.liveMax, earliest first. dc: 1 only on a board whose owner
+  // turned DISCOVER on (/discover lists only those; the plaza shows every board up now, as before).
   live(q, now = Date.now()) {
     return q.exec("select * from gb where st = 'live' and a <= ? and b > ? order by a asc, id asc limit ?", now, now, GIFT.liveMax).toArray().map(rowOf)
-      .map((g) => ({ id: g.id, to: g.to, from: g.from, occ: g.occ, msg: g.msg, th: g.th, scr: g.scr, a: g.a, b: g.b, n: g.n }));
+      .map((g) => ({ id: g.id, to: g.to, from: g.from, occ: g.occ, msg: g.msg, th: g.th, scr: g.scr, a: g.a, b: g.b, n: g.n, ...(g.dc ? { dc: 1 } : {}) }));
+  },
+  // The owner's DISCOVER switch (default off): the board's name, line and sender may then be listed on /discover while it is up. -> { ok, dc }.
+  discover(q, id, uid, on, now = Date.now()) {
+    const g = this.get(q, id, now, false);
+    if (!g || giftPhase(g, now) === 'gone') return { ok: false, code: 'gone' };
+    if (g.uid !== uid) return { ok: false, code: 'owner' };
+    const dc = on ? 1 : 0;
+    if (q.exec('update gb set dc = ? where id = ? and dc <> ?', dc, g.id, dc).rowsWritten > 0) bump(q, kstDay(now), dc ? 'discover_on' : 'discover_off');
+    return { ok: true, dc };
   },
   // Account link: the guest's boards, the lines it wrote and its opt-ins move to the account (running it again changes nothing).
   move(q, from, to) {
@@ -658,7 +673,8 @@ export const giftDb = {
 };
 // reply: the recipient page's 답장 button; cer, cershot (점등식): a device came to a ceremony, it saved or shared the group photo.
 // share: the owner's 공유하기; reshare: a visitor's 🔗 공유하기 on the recipient page (its own key, ev:reshare). real_*: 실사 축하 영상.
-const SEEN_EV = new Set(['open', 'film', 'play', 'done', 'save', 'go', 'share', 'reshare', 'cta', 'reply', 'paper_open', ...CER_BEACONS, ...REAL_BEACONS]);
+// signup_nudge, signup_from_gift, card_save (MORE_BEACONS): the account nudge tapped, a sign-in that came back to the page, the card saved.
+const SEEN_EV = new Set(['open', 'film', 'play', 'done', 'save', 'go', 'share', 'reshare', 'cta', 'reply', 'paper_open', ...CER_BEACONS, ...REAL_BEACONS, ...MORE_BEACONS]);
 
 // ---- isolate caches ------------------------------------------------------------------------------------------------------
 const ONE = new Map(); // id -> { at, v: stored board | null }
@@ -825,7 +841,8 @@ const visitorHash = (env, v) => hex('gv|' + String(v) + '|' + String(env.GUEST_K
 const actorOf = async (req, k, env) => { try { return await k.resolveActor(env, k.tokenOf(req)); } catch { return null; } };
 const isOwner = (g, actor) => !!(g && actor && g.uid === String(actor.id));
 // What only the owner's read carries. re: the first reply board's id while it can be opened (giftDb.get decides); never in the public view.
-const ownerExtras = (g) => ({ kids: g.kids, vd: g.vd, at: g.at, lk: g.lk, friends: Number(g.fr) || 0, ...(g.re ? { re: g.re } : {}), ...(g.tw ? { tw: g.tw } : {}) }); // tw: { m, how }, the main tower minute; friends: before the reveal too
+// dc: the DISCOVER switch; ladder: the board's price arm ({ a, p }, giftrules.js ladderArm over GIFT_ARMS).
+const ownerExtras = (g, env) => ({ kids: g.kids, vd: g.vd, at: g.at, lk: g.lk, friends: Number(g.fr) || 0, dc: Number(g.dc) ? 1 : 0, ladder: ladderArm(g.id, env?.GIFT_ARMS), ...(g.re ? { re: g.re } : {}), ...(g.tw ? { tw: g.tw } : {}) }); // tw: { m, how }, the main tower minute; friends: before the reveal too
 const actNo = async (k, env, id) => !!(k.actOk && !(await k.actOk(env, 'misc', id)));
 
 // ---- routes --------------------------------------------------------------------------------------------------------------
@@ -837,7 +854,7 @@ export async function giftApi(req, env, ctx, u, k) {
   if (p === '/rt/admin/gift' || p.startsWith('/rt/admin/gift/')) return adminApi(req, env, ctx, u, k);
   if (p === '/rt/gift') return make(req, env, ctx, k);
   if (p === '/rt/gift/start') return startSeen(req, env, ctx, k);
-  const m = /^\/rt\/gift\/([0-9a-z]{8})(?:\/(paper|seen|heart|interest|video|card\.jpg|card|report|delete|tower))?$/.exec(p);
+  const m = /^\/rt\/gift\/([0-9a-z]{8})(?:\/(paper|seen|heart|interest|video|card\.jpg|card|report|delete|tower|discover))?$/.exec(p);
   if (!m) return J({ err: 'not found' }, 404);
   const id = m[1], sub = m[2] || '';
   if (sub === 'seen') return seen(req, env, ctx, id, k);
@@ -847,6 +864,7 @@ export async function giftApi(req, env, ctx, u, k) {
   if (sub === 'card') return cardUp(req, env, id, k);
   if (sub === 'paper') return paper(req, env, ctx, id, k);
   if (sub === 'interest') return interest(req, env, id, k);
+  if (sub === 'discover') return discover(req, env, id, k);
   if (sub === 'report') return report(req, env, ctx, id, k);
   if (sub === 'delete') return remove(req, env, ctx, id, k);
   if (sub === 'tower') return tower(req, env, ctx, id, k);
@@ -857,7 +875,7 @@ export async function giftApi(req, env, ctx, u, k) {
   if (!g || giftPhase(g, now) === 'gone') return no('gone', 404);
   const actor = k.tokenOf(req) ? await actorOf(req, k, env) : null, own = isOwner(g, actor);
   // hard: budget hard (점등식: the page's button and the plaza's arrival stay out of the room). Only at level 2; an old page ignores it.
-  return J({ ok: true, gift: giftView(g, now), own, ...(own ? { mine: ownerExtras(g), media: mediaOn(env) } : {}), ...(h ? { hard: true } : {}) });
+  return J({ ok: true, gift: giftView(g, now), own, ...(own ? { mine: ownerExtras(g, env), media: mediaOn(env) } : {}), ...(h ? { hard: true } : {}) });
 }
 
 // POST /rt/gift { to, from, occ, msg, th, day, at, ref, re, ts }: a guest token is enough. Checks, cheapest first: token, the account's
@@ -886,7 +904,7 @@ async function make(req, env, ctx, k) {
     ONE.delete(r.reply.gid); // the answered board's copy here has no re yet
     if (r.reply.to && !quietNow(now) && k.pushNow) k.pushNow(env, ctx, r.reply.to, { kind: 'giftreply', from_name: f.v.from, gid: r.reply.gid }); // to: only the board's first reply ever
   }
-  return J({ ok: true, id: r.row.id, url: new URL('/g/' + r.row.id, req.url).href, gift: giftView(r.row, now), mine: ownerExtras(r.row), media: mediaOn(env) });
+  return J({ ok: true, id: r.row.id, url: new URL('/g/' + r.row.id, req.url).href, gift: giftView(r.row, now), mine: ownerExtras(r.row, env), media: mediaOn(env) });
 }
 function mediaDrop(env, ctx, ids) {
   if (!mediaOn(env) || !ids?.length) return null;
@@ -973,10 +991,25 @@ async function interest(req, env, id, k) {
   const got = await readSmall(req, 300); if (!got.b) return no('down', 400);
   const act = String(got.b.act || ''); if (!['view', 'pick', 'notify'].includes(act)) return no('down', 400);
   if (await hard(k, env)) return no('busy', 503);
-  let r = null; try { r = await giftM(env).giftInterest(id, String(actor.id), act, Number(got.b.t), got.b.consent === true, Date.now()); } catch { r = null; }
+  let r = null; try { r = await giftM(env).giftInterest(id, String(actor.id), act, Number(got.b.t), got.b.consent === true, Date.now(), ladderArm(id, env.GIFT_ARMS)); } catch { r = null; }
   if (!r) return no('down', 503);
   if (!r.ok) return no(r.code, r.code === 'owner' ? 403 : r.code === 'gone' ? 404 : 400);
   return J({ ok: true });
+}
+// POST /rt/gift/<id>/discover { on: true | false }: the owner's DISCOVER switch (default off). On, the board's name, line and sender may be
+// listed on /discover while it hangs (the world entry carries dc: 1); /discover reads only the cached /rt/world, so it shows within the
+// world's next refill. The account's minute, budget hard (503, no DO call), then one DO call.
+async function discover(req, env, id, k) {
+  if (req.method !== 'POST') return J({ err: 'post' }, 405);
+  const actor = await actorOf(req, k, env); if (!actor) return no('auth', 401);
+  if (await actNo(k, env, actor.id)) return no('rate', 429);
+  const got = await readSmall(req, 200); if (!got.b || typeof got.b.on !== 'boolean') return no('down', 400);
+  if (await hard(k, env)) return no('busy', 503);
+  let r = null; try { r = await giftM(env).giftDiscover(id, String(actor.id), got.b.on, Date.now()); } catch { r = null; }
+  if (!r) return no('down', 503);
+  if (!r.ok) return no(r.code, r.code === 'owner' ? 403 : 404);
+  ONE.delete(id); NOW.at = 0;
+  return J({ ok: true, dc: r.dc });
 }
 
 // ---- 메인 타워 축하 1분 (towerrules.js) -----------------------------------------------------------------------------------

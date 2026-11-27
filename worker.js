@@ -273,7 +273,8 @@ export class Meter extends DurableObject {
   giftGet(id, now) { return giftDb.get(this.giftI(), id, now); }
   giftPaper(id, o, now) { return giftDb.paper(this.giftI(), id, o, now); }
   giftSeen(items, now) { return giftDb.seen(this.giftI(), items, now); }
-  giftInterest(id, uid, act, t, consent, now) { return giftDb.interest(this.giftI(), id, uid, act, t, consent, now); }
+  giftInterest(id, uid, act, t, consent, now, arm) { return giftDb.interest(this.giftI(), id, uid, act, t, consent, now, arm); }
+  giftDiscover(id, uid, on, now) { return giftDb.discover(this.giftI(), id, uid, on, now); } // the owner's DISCOVER switch
   giftVidAsk(id, uid, ip, now) { return giftDb.vidAsk(this.giftI(), id, uid, ip, now); }
   giftVidSet(id, uid, meta, now) { return giftDb.vidSet(this.giftI(), id, uid, meta, now); }
   giftCardPut(id, uid, bytes, now) { return giftDb.cardPut(this.giftI(), id, uid, bytes, now); }
