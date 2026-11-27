@@ -417,6 +417,18 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown, netDown
     if (c.posed && !c.done.shot) c.posed = !!world.cerPose?.(slot);
     note(CER_MOVED, 'ok', null, { key: 'cer-move' });
   }
+  // The gate read the board before its reveal, so it came without its line and sender (giftrules.js publicView, hide: 1). At the lighting
+  // the board is read again (two tries 3 s apart) and pinned again with them: the lit card shows the real line.
+  function litCard(c, tries = 0) {
+    if (c.lit) return; c.lit = true;
+    fetch('/rt/gift/' + c.id, { cache: 'no-store' }).then((r) => r.json()).then((d) => {
+      const g = d?.ok && d.gift && d.gift.id === c.id && !d.gift.hide ? d.gift : null;
+      if (!g) throw new Error('hidden');
+      if (cer !== c) return;
+      c.g = { ...c.g, ...g }; delete c.g.hide;
+      world?.pinGift?.(c.g, cerPinMs(c.start, nowMs()), { cer: c.start });
+    }).catch(() => { c.lit = false; if (tries < 1 && cer === c) setTimeout(() => litCard(c, tries + 1), 3000); else c.g.hide = 0; });
+  }
   function tick() {
     const c = cer;
     if (!c) return;
@@ -446,7 +458,7 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown, netDown
         if (!world.isDriving?.() && !world.walking?.()) world.focusSlot?.(c.slot, { hold: Math.max(1000, c.start + CER.pose - now), celebrate: false });
       }
       digit(s.phase === 'count' ? cerDigit(c.start, now) : 0);
-      if (s.light) c.done.light = true; // the same screen shows the card from the start (ts3d/screens.js)
+      if (s.light) { c.done.light = true; if (c.g?.hide) litCard(c); } // the same screen shows the card from the start (ts3d/screens.js)
       if (s.cheer && world.playEmote?.(3)) c.done.cheer = true; // refused by the cooldown: the next tick tries again (until +5 s)
       if (s.round >= 0) { c.done.rounds = s.round + 1; world.cheerAt?.(c.slot); }
       if (s.pose) { c.done.pose = true; c.posed = !!world.cerPose?.(c.slot); }

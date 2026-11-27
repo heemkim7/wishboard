@@ -1038,6 +1038,40 @@ describe('B2C: 내 전광판, DISCOVER opt-in, ladder arms', () => {
     } finally { done(); }
   });
 
+  it('before the reveal nobody but the owner reads the line or the sender: page data, the public read, the link card; after it, all of it', async () => {
+    const { clock, done } = setup();
+    try {
+      const env = makeEnv(), H = harness(env), A = await H.guest(), B = await H.guest('4.4.4.4');
+      const r = await (await H.post('/rt/gift', FORM({ day: addDays(today(), 1), at: 18, msg: '비밀 메시지', from: '지수' }), A.token)).json();
+      assert.equal(r.gift.msg, '비밀 메시지', 'the maker\'s own answer is whole');
+      const html = await (await H.get('/g/' + r.id)).text();
+      const data = JSON.parse(/<script id="gift-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html)[1]);
+      assert.equal(data.gift.msg, ''); assert.equal(data.gift.from, ''); assert.equal(data.gift.hide, 1); assert.equal(data.gift.to, '민지');
+      assert.equal(html.includes('비밀 메시지') || html.includes('지수'), false, 'nowhere in the page');
+      assert.match(html, new RegExp('og:image" content="https://sq\\.example/rt/gift/' + r.id + '/card\\.jpg\\?t=1"'), 'the teaser card before the reveal');
+      const pub = await (await H.get('/rt/gift/' + r.id, B.token)).json();
+      assert.equal(pub.own, false); assert.equal(pub.gift.msg, ''); assert.equal(pub.gift.from, ''); assert.equal(pub.gift.hide, 1);
+      assert.equal((await (await H.get('/rt/gift/' + r.id)).json()).gift.msg, '', 'no token: the same');
+      const mine = await (await H.get('/rt/gift/' + r.id, A.token)).json();
+      assert.equal(mine.own, true); assert.equal(mine.gift.msg, '비밀 메시지'); assert.equal(mine.gift.from, '지수'); assert.equal('hide' in mine.gift, false);
+      // The cards: the full one waits for the reveal; the teaser is its own upload.
+      const card = (q = '') => H.get('/rt/gift/' + r.id + '/card.jpg' + q);
+      const put = (q, body) => H.call('/rt/gift/' + r.id + '/card' + q, { method: 'POST', headers: { authorization: 'Bearer ' + A.token, 'content-type': 'image/jpeg' }, body });
+      const full = JPEG(), teaser = JPEG(); teaser[100] = 7;
+      assert.equal((await put('', full)).status, 200); assert.equal((await put('?t=1', teaser)).status, 200);
+      const early = await card();
+      assert.equal(early.status, 302); assert.match(early.headers.get('location'), new RegExp('/rt/gift/' + r.id + '/card\\.jpg\\?t=1$')); assert.equal(early.headers.get('cache-control'), 'no-store');
+      const t = await card('?t=1'); assert.equal(t.status, 200); assert.equal(new Uint8Array(await t.arrayBuffer())[100], 7, 'the teaser');
+      clock.add(30 * 36e5); // past 18:00 tomorrow: revealed
+      const html2 = await (await H.get('/g/' + r.id)).text();
+      const data2 = JSON.parse(/<script id="gift-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html2)[1]);
+      assert.equal(data2.gift.msg, '비밀 메시지'); assert.equal(data2.gift.from, '지수'); assert.equal('hide' in data2.gift, false);
+      assert.match(html2, new RegExp('og:image" content="https://sq\\.example/rt/gift/' + r.id + '/card\\.jpg"'));
+      assert.equal((await (await H.get('/rt/gift/' + r.id, B.token)).json()).gift.msg, '비밀 메시지');
+      const late = await card(); assert.equal(late.status, 200); assert.equal(new Uint8Array(await late.arrayBuffer())[100], 0, 'the full card');
+    } finally { done(); }
+  });
+
   it('the account nudge and the card save are counted page beacons', async () => {
     const { done } = setup();
     try {

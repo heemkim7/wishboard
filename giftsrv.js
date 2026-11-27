@@ -49,7 +49,7 @@
 //                                              TOWER.payMax (no place). The operator's list (/rt/admin/gift/share) reads it; kept SHARE.dayKeep days
 //   sfr(uid, d, who)                           who already counted for that maker that day, on any network: 'a:<account or guest id>' or, for a
 //                                              gift page 💖 sent without a token, 'v:<device hash>'; kept SHARE.dayKeep days
-import { GIFT, GIFT_ID, PAPER_ID, VISITOR_ID, GIFT_ERR, giftFault, paperFault, pickScreen, screenLoad, nextFree, PERK, perksOf, longEnd, giftPhase, paperTakes, lockArm, giftView, giftShareText, refOf, kstDay, addDays, pruneDay, quietNow, AD_LABEL, videoKind, VIDEO_TYPE, rangeOf, windowText, OCCASIONS, TIERS, CER_BEACONS, REAL_BEACONS, MORE_BEACONS, ladderArm, heartsOpen, heartTakes, dayStart, botAgent, revealAt } from './giftrules.js';
+import { GIFT, GIFT_ID, PAPER_ID, VISITOR_ID, GIFT_ERR, giftFault, paperFault, pickScreen, screenLoad, nextFree, PERK, perksOf, longEnd, giftPhase, paperTakes, lockArm, giftView, giftShareText, refOf, kstDay, addDays, pruneDay, quietNow, AD_LABEL, videoKind, VIDEO_TYPE, rangeOf, windowText, OCCASIONS, TIERS, CER_BEACONS, REAL_BEACONS, MORE_BEACONS, ladderArm, heartsOpen, heartTakes, dayStart, botAgent, revealAt, publicView } from './giftrules.js';
 import { TOWER, SHARE, shareAmount, linkFault, TOWER_HOW, SPEND_OLD, TOWER_ERR, reactCounts, towerFault, towerDays, towerEntry, towerMinutes } from './towerrules.js'; // 메인 타워 축하 1분 and the share reward
 import { orderPerks } from './ordersrv.js'; // 메인 타워 주인공: the order ledger says whether a board's paid booking stands
 import { payOn } from './payrules.js';
@@ -96,7 +96,7 @@ function gapOf(q, uid, now) {
 // A board that goes takes its reply mark off the board it answered (a reply's ref is that board, so this is a key lookup, not a scan).
 // Its main tower minute goes only if it has not started: one that aired still counts in its day's 30 (prune drops it once the day is over).
 function dropBoards(q, ids, now = Date.now()) {
-  for (const id of ids) for (const t of ['gm', 'gv', 'grp', 'gc', 'gn']) q.exec(`delete from ${t} where g = ?`, id);
+  for (const id of ids) for (const t of ['gm', 'gv', 'grp', 'gc', 'gct', 'gn']) q.exec(`delete from ${t} where g = ?`, id);
   for (const id of ids) {
     q.exec('delete from gr where k = ?', 'vb:' + id); q.exec('delete from gr where k = ?', 'rn:' + id);
     q.exec('delete from gr where k = ?', 'to:' + id); // the friends' push went for this board
@@ -204,6 +204,7 @@ export const giftDb = {
     q.exec('create table if not exists gi(uid text not null, t integer not null, at integer not null, sent integer not null default 0, primary key(uid, t))');
     q.exec('create table if not exists grp(g text not null, m text not null, ip text not null, primary key(g, m, ip))');
     q.exec('create table if not exists gc(g text primary key, jpg blob not null, at integer not null)');
+    q.exec('create table if not exists gct(g text primary key, jpg blob not null, at integer not null)'); // the teaser card before the reveal (2026-11-28)
     q.exec('create table if not exists gn(g text not null, net text not null, at integer not null, paid integer not null default 0, primary key(g, net))');
     q.exec('create table if not exists gt(m integer primary key, day text not null, g text not null unique, how text not null, uid text not null, at integer not null, hold integer not null default 0)');
     q.exec('create index if not exists gt_day on gt(day)');
@@ -446,13 +447,14 @@ export const giftDb = {
     if (!g.vid) bump(q, kstDay(now), 'video');
     return { ok: true };
   },
-  cardPut(q, id, uid, bytes, now = Date.now()) {
+  // teaser: the card without the line (giftrules.js teaserCard), served before the reveal (gct); else the full card (gc).
+  cardPut(q, id, uid, bytes, now = Date.now(), teaser = false) {
     const g = this.get(q, id, now, false);
     if (!g || g.uid !== uid) return { ok: false, code: 'owner' };
-    q.exec('insert into gc(g, jpg, at) values(?, ?, ?) on conflict(g) do update set jpg = excluded.jpg, at = excluded.at', g.id, bytes, now);
+    q.exec('insert into ' + (teaser ? 'gct' : 'gc') + '(g, jpg, at) values(?, ?, ?) on conflict(g) do update set jpg = excluded.jpg, at = excluded.at', g.id, bytes, now);
     return { ok: true };
   },
-  cardGet(q, id) { const r = q.exec("select c.jpg from gc c join gb b on b.id = c.g where c.g = ? and b.st = 'live'", String(id || '')).toArray()[0]; return r?.jpg || null; },
+  cardGet(q, id, teaser = false) { const r = q.exec('select c.jpg from ' + (teaser ? 'gct' : 'gc') + " c join gb b on b.id = c.g where c.g = ? and b.st = 'live'", String(id || '')).toArray()[0]; return r?.jpg || null; },
   // A report from one network on the board (m '') or one of its lines. GIFT.report networks hide it. -> { ok, hidden, off? } (off: its main
   // tower minute was let go, towerFree).
   report(q, id, m, ip, now = Date.now()) {
@@ -752,7 +754,7 @@ const SEEN_EV = new Set(['open', 'film', 'play', 'done', 'save', 'go', 'share', 
 const ONE = new Map(); // id -> { at, v: stored board | null }
 const oneTtl = (h) => (h ? 600000 : 20000);
 const oneKeep = (id, v) => { ONE.delete(id); if (ONE.size >= 500) ONE.delete(ONE.keys().next().value); ONE.set(id, { at: Date.now(), v }); return v; };
-export const giftDrop = (id) => { ONE.delete(id); NOW.at = 0; CARD.delete(id); };
+export const giftDrop = (id) => { ONE.delete(id); NOW.at = 0; CARD.delete(id); CARD.delete(id + ':t'); };
 // -> { v: the stored board | null, h: the budget hard level this read asked anyway (the two reads pass it out as `hard`: no second ask) }.
 async function loadGiftH(env, k, id) {
   const hit = ONE.get(id), now = Date.now(), h = await hard(k, env);
@@ -947,7 +949,8 @@ export async function giftApi(req, env, ctx, u, k) {
   if (!g || giftPhase(g, now) === 'gone') return no('gone', 404);
   const actor = k.tokenOf(req) ? await actorOf(req, k, env) : null, own = isOwner(g, actor);
   // hard: budget hard (점등식: the page's button and the plaza's arrival stay out of the room). Only at level 2; an old page ignores it.
-  return J({ ok: true, gift: giftView(g, now), own, ...(own ? { mine: ownerExtras(g, env), media: mediaOn(env) } : {}), ...(h ? { hard: true } : {}) });
+  // Anyone but the owner: no line and no sender before the reveal (giftrules.js publicView, 점등까지 숨기기).
+  return J({ ok: true, gift: own ? giftView(g, now) : publicView(giftView(g, now), now), own, ...(own ? { mine: ownerExtras(g, env), media: mediaOn(env) } : {}), ...(h ? { hard: true } : {}) });
 }
 
 // POST /rt/gift { to, from, occ, msg, th, day, at, ref, re, ts }: a guest token is enough. Checks, cheapest first: token, the account's
@@ -1318,27 +1321,36 @@ async function cardUp(req, env, id, k) {
   if (await hard(k, env)) return no('busy', 503);
   const got = await readBytes(req, CARD_MAX);
   if (got.big || !got.u8 || got.u8.length < CARD_MIN || got.u8[0] !== 0xff || got.u8[1] !== 0xd8) return no('vtype', 400);
-  let r = null; try { r = await giftM(env).giftCardPut(id, String(actor.id), got.u8, Date.now()); } catch { r = null; }
+  const teaser = new URL(req.url).searchParams.get('t') === '1'; // ?t=1: the teaser card (no line), served before the reveal
+  let r = null; try { r = await giftM(env).giftCardPut(id, String(actor.id), got.u8, Date.now(), teaser); } catch { r = null; }
   if (!r) return no('down', 503);
   if (!r.ok) return no(r.code, 403);
-  CARD.delete(id);
+  CARD.delete(id); CARD.delete(id + ':t');
   return J({ ok: true });
 }
-const CARD = new Map(); // id -> { at, v: bytes | null }, 10 minutes per isolate, at most 60
+const CARD = new Map(); // id (or id:t, the teaser) -> { at, v: bytes | null }, 10 minutes per isolate, at most 60
+// GET card.jpg: the full card only from the board's reveal (giftrules.js revealAt); before it a redirect to card.jpg?t=1, the teaser card (or
+// og.jpg when none was uploaded), so a link preview fetched early never carries the line. The board is the isolate's copy (loadGiftH); at
+// budget hard with no copy here, og.jpg with no DO call, as before.
 async function cardGet(req, env, id, k) {
   if (req.method !== 'GET' && req.method !== 'HEAD') return new Response('method', { status: 405 });
   const og = () => Response.redirect(new URL('/og.jpg', req.url).href, 302);
   if (!(await opsRate(env, req, 'gcard', 240, env.EVENT_RL))) return og();
-  const hit = CARD.get(id), now = Date.now();
+  const now = Date.now(), want = new URL(req.url).searchParams.get('t') === '1', h = await hard(k, env);
+  if (h && !ONE.has(id)) return og();
+  let g = null; try { ({ v: g } = await loadGiftH(env, k, id)); } catch { return og(); }
+  if (!g || giftPhase(g, now) === 'gone') return og();
+  if (!want && now < revealAt(g)) return new Response(null, { status: 302, headers: { location: new URL('/rt/gift/' + id + '/card.jpg?t=1', req.url).href, 'cache-control': 'no-store' } });
+  const key = want ? id + ':t' : id, hit = CARD.get(key);
   let v = hit && now - hit.at < 600000 ? hit.v : undefined;
   if (v === undefined) {
-    if (await hard(k, env)) return og();
-    try { v = await giftM(env).giftCardGet(id); } catch { v = null; }
-    if (CARD.size >= 60) CARD.clear(); CARD.set(id, { at: now, v: v || null });
+    if (h) return og();
+    try { v = await giftM(env).giftCardGet(id, want); } catch { v = null; }
+    if (CARD.size >= 60) CARD.clear(); CARD.set(key, { at: now, v: v || null });
   }
   if (!v) return og();
   const bytes = v instanceof ArrayBuffer ? v : v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength);
-  return new Response(req.method === 'HEAD' ? null : bytes, { headers: { 'content-type': 'image/jpeg', 'cache-control': 'public, max-age=3600', 'x-robots-tag': 'noindex' } });
+  return new Response(req.method === 'HEAD' ? null : bytes, { headers: { 'content-type': 'image/jpeg', 'cache-control': want ? 'public, max-age=300' : 'public, max-age=3600', 'x-robots-tag': 'noindex' } });
 }
 
 // The admin view (ADMIN_KEY). POST /rt/admin/gift/notify { text }: the "결제가 열렸어요" notice to the consented accounts, NOTIFY_N per call
@@ -1416,10 +1428,10 @@ export async function giftPage(req, env, ctx, u, k) {
   // (the level the read above asked anyway), nor while the store is down.
   if (req.method === 'GET' && !h && !down && live) hitAdd(botAgent(req.headers.get('user-agent')), now);
   if (!down) hitsFlush(env, ctx, k, h); // in waitUntil
-  const view = live ? giftView(g, now) : null;
+  const view = live ? publicView(giftView(g, now), now) : null; // before the reveal: no line, no sender (the page is public and cached)
   const words = live ? giftShareText(view) : { title: down ? '잠시 뒤에 다시 열어 주세요 · WISH BOARD' : '선물 전광판 · WISH BOARD', text: down ? '지금은 광장이 붐벼요.' : '뉴욕 타임스퀘어를 본뜬 가상 광장에 친구를 위한 전광판을 6시간 무료로 걸어 보세요.' };
   const desc = live ? words.text + ' (' + windowText(view.a, view.b) + ')' : words.text;
-  const img = live ? origin + '/rt/gift/' + id + '/card.jpg' : origin + '/og.jpg';
+  const img = live ? origin + '/rt/gift/' + id + '/card.jpg' + (view.hide ? '?t=1' : '') : origin + '/og.jpg'; // ?t=1: the teaser card (a preview fetched now keeps no line)
   const meta = '<title>' + esc(words.title) + '</title><meta name="robots" content="noindex, nofollow"><meta name="description" content="' + esc(desc) + '">'
     + '<meta property="og:type" content="website"><meta property="og:site_name" content="WISH BOARD"><meta property="og:title" content="' + esc(words.title) + '"><meta property="og:description" content="' + esc(desc) + '">'
     + '<meta property="og:url" content="' + esc(origin + '/g/' + id) + '"><meta property="og:image" content="' + esc(img) + '"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">'

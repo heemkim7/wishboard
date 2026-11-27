@@ -438,6 +438,15 @@ export function heartsOpen(g, now = Date.now()) { return !!g && giftPhase(g, now
 // 💖 is taken from the making on (the friends' threshold of the main tower minute counts before the day: towerrules.js); the count is
 // still shown only once heartsOpen.
 export function heartTakes(g, now = Date.now()) { return !!g && giftPhase(g, now) !== 'gone'; }
+// 점등까지 숨기기 (the owner's rule, 2026-11-24, now on the server too, 2026-11-28): what anyone but the owner reads of a board before revealAt
+// carries no line and no sender (the name, the day and the window stay: the page's countdown needs them). hide: 1 tells the page to read
+// the board again at the reveal (giftpage.js). From revealAt on: the view itself. The owner's reads never go through this.
+export function publicView(v, now = Date.now()) {
+  if (!v || !(Number(now) < revealAt(v))) return v;
+  return { ...v, msg: '', from: '', hide: 1 };
+}
+// The link-preview teaser before the reveal (giftart.js paintGift over it, uploaded as card.jpg?t=1): the name and when, never the line.
+export function teaserCard(g, now = Date.now()) { return { ...g, from: '', msg: hiddenWords(g, now).hush }; }
 // The recipient page's 🔗 공유하기: a visitor passing the page on (the owner's own words are in giftpage.js share). look: pageLook's.
 export function visitorShareText(g, look = 'live') {
   const o = OCCASIONS[g?.occ] || OCCASIONS.bday, title = boardTitle(g);

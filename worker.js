@@ -282,8 +282,8 @@ export class Meter extends DurableObject {
   giftDiscover(id, uid, on, now) { return giftDb.discover(this.giftI(), id, uid, on, now); } // the owner's DISCOVER switch
   giftVidAsk(id, uid, ip, now) { return giftDb.vidAsk(this.giftI(), id, uid, ip, now); }
   giftVidSet(id, uid, meta, now) { return giftDb.vidSet(this.giftI(), id, uid, meta, now); }
-  giftCardPut(id, uid, bytes, now) { return giftDb.cardPut(this.giftI(), id, uid, bytes, now); }
-  giftCardGet(id) { return giftDb.cardGet(this.giftI(), id); }
+  giftCardPut(id, uid, bytes, now, teaser) { return giftDb.cardPut(this.giftI(), id, uid, bytes, now, !!teaser); } // teaser: the card before the reveal
+  giftCardGet(id, teaser) { return giftDb.cardGet(this.giftI(), id, !!teaser); }
   giftReport(id, m, ip, now) { return giftDb.report(this.giftI(), id, m, ip, now); }
   giftDel(id, uid) { return giftDb.del(this.giftI(), id, uid); }
   giftLive(now) { return giftDb.live(this.giftI(), now); } // pruning runs on giftMake and the admin list, which hand the gone ids to R2

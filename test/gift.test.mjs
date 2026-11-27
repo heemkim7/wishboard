@@ -1779,6 +1779,22 @@ describe('B2C: 내 전광판, DISCOVER, the nudge', () => {
       assert.equal(P.btn(/계정에 남겨 두기/), null, 'a signed-in visitor is never nudged');
     } finally { P.done(); }
   });
+  it('a page opened before the reveal has no line; at the reveal it reads the board again and shows it (점등까지 숨기기)', async () => {
+    const hidden = view({ msg: '', from: '', hide: 1, phase: 'before' }), full = view();
+    const P = pageOf(hidden, KST('2026-11-25T17:59:59.500'), { respond: (u) => (u === '/rt/gift/' + full.id ? { ok: true, gift: full, own: false } : null) });
+    try {
+      await P.load('giftpage.js');
+      assert.equal(P.says(/생일 축하해!/), false);
+      P.skew += 1000; P.tick(); await P.settle();
+      const reads = P.sent.filter((s) => s.url === '/rt/gift/' + full.id && s.method === 'GET');
+      assert.equal(reads.length, 1, 'one read at the reveal');
+      assert.ok(P.heads().includes('📺 광장에 걸린 글'));
+      assert.equal(P.says(/^생일 축하해!$/), true); assert.equal(P.says(/^From\. 지수$/), true);
+    } finally { P.done(); }
+  });
+  it('the maker sends the teaser card (no line) beside the full one', () => {
+    assert.match(src('giftpage.js'), /'\/card\?t=1'/); assert.match(src('giftpage.js'), /giftCardJpeg\(teaserCard\(/);
+  });
   it('the header fits a 320-375px phone: the brand\'s small words go under 400px', () => {
     assert.match(src('gift.html'), /@media \(max-width: 400px\) \{ \.brand small \{ display: none; \} \}/);
   });

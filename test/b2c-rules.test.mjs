@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
   GIFT, OCCASIONS, OCC_KEYS, GIFT_PICK, ME_KINDS, TIERS, TIER_NOTE, giftFault, isMe, toLine, boardTitle, giftShareText, visitorShareText, plazaNote,
-  replyDraft, replyLabel, cerBand, cerTeaser, ladderArm, armsFrom, LADDER_ARMS, giftBack, MORE_BEACONS, cpLen, kstDay,
+  replyDraft, replyLabel, cerBand, cerTeaser, publicView, teaserCard, ladderArm, armsFrom, LADDER_ARMS, giftBack, MORE_BEACONS, cpLen, kstDay,
 } from '../giftrules.js';
 import { wishFault } from '../wish.js';
 import { cardWords, musicUrl, musicUrls, MUSIC_BACKUP } from '../realrules.js';
@@ -104,6 +104,30 @@ describe('the plaza says by on a board of one\'s own', () => {
     assert.match(s, /점등식   ·   \$\{toLine\(gift\)\}/);
     assert.match(s, /isMe\(gift\) \? '💌 응원 메시지 ' : '💌 친구 메시지 '/);
     assert.match(src('gift.js'), /img\.alt = toLine\(g\) \+ ' 단체 사진'/);
+  });
+});
+
+describe('before the reveal the public sees no message (점등까지 숨기기)', () => {
+  const day = '2026-11-25', a = Date.parse('2026-11-25T09:00:00Z'); // 18:00 KST, a scheduled board: revealed at its lighting
+  const v = { id: 'abcd1234', to: '민지', from: '지수', occ: 'bday', msg: '비밀 메시지', th: 'party', day, a, b: a + 6 * 36e5, fx: 1, phase: 'before', paper: null };
+  it('strips the line and the sender and marks the view hidden until revealAt, then is the view itself', () => {
+    const before = publicView(v, a - 1000);
+    assert.equal(before.msg, ''); assert.equal(before.from, ''); assert.equal(before.hide, 1); assert.equal(before.to, '민지');
+    assert.equal(v.msg, '비밀 메시지', 'the stored view is not touched');
+    assert.equal(publicView(v, a), v);
+    const plain = { ...v, fx: 0, a: Date.parse('2026-11-25T01:00:00Z') }; // a "지금" board: revealed at 00:00 of its day
+    assert.equal(publicView(plain, Date.parse('2026-11-24T14:59:59Z')).hide, 1);
+    assert.equal(publicView(plain, Date.parse('2026-11-24T15:00:00Z')), plain);
+    assert.equal(publicView(null), null);
+  });
+  it('the plaza\'s ceremony reads the board again at the lighting when its first read came hidden', () => {
+    const g = fs.readFileSync(new URL('../gift.js', import.meta.url), 'utf8');
+    assert.match(g, /if \(s\.light\) \{ c\.done\.light = true; if \(c\.g\?\.hide\) litCard\(c\); \}/);
+    assert.match(g, /world\?\.pinGift\?\.\(c\.g, cerPinMs\(c\.start, nowMs\(\)\), \{ cer: c\.start \}\)/);
+  });
+  it('the teaser card says when, never the line', () => {
+    const t = teaserCard(v, a - 864e5);
+    assert.equal(t.from, ''); assert.notEqual(t.msg, '비밀 메시지'); assert.match(t.msg, /공개돼요/);
   });
 });
 

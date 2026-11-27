@@ -1,7 +1,7 @@
 // 선물 전광판 light pages (gift.html): the maker at /gift and the board page at /g/<id> (owner preview with the price ladder, the
 // recipient page, the 롤링페이퍼). No three.js, no realtime room, no Supabase client: what the page needs from the Worker comes inline in
 // #gift-data (the Worker renders /g/<id>), the rest is a few small JSON calls. Text people wrote is only set with textContent.
-import { GIFT, GIFT_ID, OCCASIONS, OCC_KEYS, GIFT_THEMES, THEME_KEYS, TIERS, TIER_NOTE, TIER_ASK, won, giftFault, paperFault, startChoices, windowText, dayText, hourText, kstDay, addDays, countdown, dDay, refOf, keptRef, cpLen, norm, windowFor, replyDraft, replyLabel, PLAZA_BTN, videoFirst, CER_TEXT, cerStart, cerButton, cerInvite, cerShareLine, cerBackWhy, cerDebugStart, pageLook, hiddenWords, visitorShareText, GIFT_PICK, ME_KINDS, isMe, toLine, boardTitle, cut, filmMark } from './giftrules.js';
+import { GIFT, GIFT_ID, OCCASIONS, OCC_KEYS, GIFT_THEMES, THEME_KEYS, TIERS, TIER_NOTE, TIER_ASK, won, giftFault, paperFault, startChoices, windowText, dayText, hourText, kstDay, addDays, countdown, dDay, refOf, keptRef, cpLen, norm, windowFor, replyDraft, replyLabel, PLAZA_BTN, videoFirst, CER_TEXT, cerStart, cerButton, cerInvite, cerShareLine, cerBackWhy, cerDebugStart, pageLook, hiddenWords, visitorShareText, GIFT_PICK, ME_KINDS, isMe, toLine, boardTitle, cut, filmMark, teaserCard } from './giftrules.js';
 import { TOWER, TOWER_ERR, towerCard as towerState, towerClock, towerLook, friendsText } from './towerrules.js';
 import { paintGift, giftCardJpeg } from './giftart.js?v=202611272230';
 import { createFilm, FILM_MS, recordCanvas, canRecord, saveBlob, fileName } from './giftfilm.js?v=202611272230';
@@ -361,6 +361,8 @@ function maker({ re: answers = '', ...prefill } = {}) {
     history.pushState(null, '', '/g/' + r.id);
     owner(r.gift, { fresh: true, mine: r.mine, media: !!r.media, signNudge: !!re }); // a reply hung by a guest: 계정에 남겨 두기 on its page
     giftCardJpeg(r.gift).then(async (jpg) => { const tok = await token(false); if (jpg && tok) fetch('/rt/gift/' + r.id + '/card', { method: 'POST', headers: { authorization: 'Bearer ' + tok, 'content-type': 'image/jpeg' }, body: jpg }).catch(() => { }); });
+    // The teaser card (the name and when, never the line): what a link preview shows until the reveal (giftsrv.js cardGet).
+    giftCardJpeg(teaserCard(r.gift, now())).then(async (jpg) => { const tok = await token(false); if (jpg && tok) fetch('/rt/gift/' + r.id + '/card?t=1', { method: 'POST', headers: { authorization: 'Bearer ' + tok, 'content-type': 'image/jpeg' }, body: jpg }).catch(() => { }); });
   } },
   h('div', { class: 'field' }, h('label', { for: 'to' }, ME ? h('span', {}, '이름 ', h('small', { text: '(전광판에 보일 이름)' })) : '누구에게 걸까요?', count(toIn, GIFT.toMax)), toIn, err('to')),
   h('div', { class: 'field' }, h('div', { class: 'label' }, ME ? '무엇을 걸까요?' : '무슨 날이에요?', ME ? h('small', { text: '예시 문구만 채워요' }) : null), occRow, err('occ')),
@@ -649,9 +651,23 @@ function visit(g, { preview = false, swap = null } = {}) {
     if (swap) swapLeft(swap, left, null);
     else put(top(ME), back, h('div', { class: 'cols' }, left, right), foot());
     // A 점등식 board: at its start the page becomes the board (the reveal), and at midnight of its day the hidden preview says the time.
-    // Any other board stays as it always was (the page built before 00:00 of its day stays until it is opened again).
-    if (CER_DEBUG || cerStart(g)) {
-      const turn = () => { if (!prev.isConnected) { TICK.delete(turn); return; } if (phase() !== 'before' || words().hush !== w0.hush) { TICK.delete(turn); visit(g, { preview, swap: { left, right, paper } }); } };
+    // Any other board turns at 00:00 of its day too when the page came without its line (g.hide: the Worker keeps the line and the sender
+    // from anyone but the owner until the reveal, giftrules.js publicView): at the reveal the page reads the board again (one GET; a few
+    // tries 3 s apart) and shows the board with them. Without a fresh copy it shows what it has (the occasion's hint in place of the line).
+    if (CER_DEBUG || cerStart(g) || g.hide) {
+      const turn = () => {
+        if (!prev.isConnected) { TICK.delete(turn); return; }
+        if (phase() !== 'before' || words().hush !== w0.hush) { TICK.delete(turn); reveal(); }
+      };
+      const reveal = async (tries = 0) => {
+        let next = g;
+        if (g.hide && phase() !== 'before') {
+          try { const r = await fetch('/rt/gift/' + g.id, { cache: 'no-store' }).then((x) => x.json()); if (r?.gift && r.gift.id === g.id && !r.gift.hide) next = { ...g, ...r.gift }; } catch { /* tried again below */ }
+          if (next === g && tries < 3) { setTimeout(() => { if (prev.isConnected) reveal(tries + 1); }, 3000); return; }
+          delete next.hide;
+        }
+        if (prev.isConnected) visit(next, { preview, swap: { left, right, paper } });
+      };
       TICK.add(turn);
     }
     return;
