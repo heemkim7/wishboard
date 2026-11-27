@@ -1,7 +1,8 @@
 // 🧾 주문·매출 in admin.html (one <script> line there), behind the same login cookie as the rest (a 401 goes back to the login page).
 // The pay switches as the Worker sees them, the orders list with filters (state, product, mode), one order's history with the operator's
 // actions (refund through the PG, manual paid / refunded for bank transfers, publish again; each needs a reason and is kept in the history),
-// the products editor (price, on/off, perks, a B price for the price experiment; every edit logged), revenue for a date range (real orders
+// the products (from the gift price ladder, giftrules.js TIERS: names, lines and prices are read only here, the switch on/off is the edit;
+// every edit logged; the price experiment is the Worker's GIFT_ARMS, by board), revenue for a date range (real orders
 // only: test and mock are counted apart), the daily funnel counters, and the CSV export. Routes: ordersrv.js /rt/admin/order*.
 // payrules.js is shared with the Worker: imported with no query (tools/stamp.mjs).
 import { ST, ST_NAME, PRODUCTS, PAY_EVENTS, COST } from './payrules.js';
@@ -22,12 +23,13 @@ const pct = (r) => (r == null ? '—' : Math.round(r * 1000) / 10 + '%');
 const kst = (ms) => (ms ? new Date(Number(ms) + 9 * 3600e3).toISOString().replace('T', ' ').slice(0, 16) : '—');
 const kstDay = (ms = Date.now()) => new Date(ms + 9 * 3600e3).toISOString().slice(0, 10);
 const shift = (d, n) => new Date(Date.parse(d + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10);
-const NAME = Object.fromEntries(PRODUCTS.map((p) => [p.id, p.name]));
+const KIND = { gift: '선물', personal: '내 전광판' };
+const NAME = Object.fromEntries(PRODUCTS.map((p) => [p.id, p.name + ' (' + KIND[p.kind] + ')']));
 const EV_NAME = { checkout_start: '주문 시작', pay_success: '결제 성공', pay_fail: '결제 실패', publish_ok: '공개 성공', publish_fail: '공개 실패', refund: '환불' };
 
 const sel = (id, opts) => h('select', { id }, opts.map(([v, t]) => h('option', { value: v, text: t })));
 const fSt = sel('ordSt', [['', '모든 상태'], ...Object.keys(ST).map((s) => [s, ST_NAME[s] + ' (' + s + ')'])]);
-const fProd = sel('ordProd', [['', '모든 상품'], ...PRODUCTS.map((p) => [p.id, p.name])]);
+const fProd = sel('ordProd', [['', '모든 상품'], ...PRODUCTS.map((p) => [p.id, NAME[p.id]])]);
 const fMode = sel('ordMode', [['', '실결제·테스트 모두'], ['real', '실결제만'], ['test', '테스트·mock만']]);
 const d1In = h('input', { type: 'date', id: 'ordD1', value: kstDay() }), d0In = h('input', { type: 'date', id: 'ordD0', value: shift(kstDay(), -29) });
 const csv = h('a', { id: 'ordCsv', class: 'btn', href: '#', download: '', text: 'CSV 내려받기' });
@@ -47,7 +49,7 @@ const box = h('section', { id: 'orderAdmin' },
   h('div', { class: 'scroll' }, h('table', { id: 'ordList' })),
   h('div', { class: 'hits', id: 'ordOne' }),
   h('h2', { text: '상품' }),
-  h('p', { class: 'sub', text: '가격은 부가세 포함 원 단위입니다. B안 가격을 넣으면 구매자마다 A(기본 가격)나 B 가격이 정해져 보이고(같은 사람은 늘 같은 쪽), 주문에 본 가격과 안이 남습니다. 비우면 실험을 끕니다. 바꾼 내용은 아래 기록에 남습니다.' }),
+  h('p', { class: 'sub', text: '상품은 선물 전광판 주인 화면의 가격표(giftrules.js TIERS)와 같아요. 이름·혜택·가격은 코드에서만 바꾸고, 여기서는 판매를 켜고 끄기만 해요. 가격 실험은 Worker 변수 GIFT_ARMS(예: A:3900/7900/14900;B:2900/5900/11900)로 전광판마다 A나 B가 정해지고, 주문에 본 가격과 안이 남아요. 가격은 부가세 포함이에요. 바꾼 내용은 아래 기록에 남아요.' }),
   h('div', { class: 'hits', id: 'ordProducts' }),
   h('div', { class: 'hits', id: 'ordLog' }));
 (document.querySelector('main') || document.body).append(box);
@@ -120,12 +122,10 @@ async function loadProducts() {
   try {
     const r = await api('/rt/admin/order-products'); showSwitch(r.sw);
     $('ordProducts').replaceChildren(...r.products.map((p) => {
-      const name = h('input', { type: 'text', value: p.name, maxlength: 30, 'aria-label': p.id + ' 이름' }), price = h('input', { type: 'number', min: 100, step: 100, value: p.price, 'aria-label': p.id + ' 가격' });
-      const on = h('input', { type: 'checkbox', checked: p.active, 'aria-label': p.id + ' 판매' }), armB = h('input', { type: 'number', min: 100, step: 100, value: p.arms?.[0]?.price ?? '', placeholder: 'B안 가격(비우면 실험 없음)', 'aria-label': p.id + ' B안 가격' });
-      const perks = h('textarea', { rows: 3, 'aria-label': p.id + ' 혜택', style: 'width:100%;border-radius:12px;background:rgba(0,0,0,.3);color:inherit;border:1px solid var(--stroke);padding:8px;font:inherit' }); perks.value = p.perks.join('\n');
-      return h('div', { class: 'hit' }, h('b', { text: p.id + ' (' + (p.kind === 'gift' ? '선물' : '개인') + ')' }), name, price, h('label', {}, on, ' 판매'), armB, perks,
+      const on = h('input', { type: 'checkbox', checked: p.active, 'aria-label': p.id + ' 판매' });
+      return h('div', { class: 'hit' }, h('b', { text: NAME[p.id] || p.name }), h('span', { text: p.id + ' · A안 ' + won(p.price) }), h('span', { text: p.perks.join(' · ') }), h('label', {}, on, ' 판매'),
         h('button', { type: 'button', class: 'gold', text: '저장', onclick: async () => {
-          try { await api('/rt/admin/order-products', { id: p.id, name: name.value, price: price.value, active: on.checked, perks: perks.value, armB: armB.value }); say('저장했어요: ' + p.id); loadProducts(); } catch (e) { say(e.message, true); }
+          try { await api('/rt/admin/order-products', { id: p.id, active: on.checked }); say('저장했어요: ' + p.id); loadProducts(); } catch (e) { say(e.message, true); }
         } }));
     }));
     $('ordLog').replaceChildren(...(r.log || []).map((l) => h('div', { class: 'hit' }, h('b', { text: kst(l.at) }), h('span', { text: l.id + ' · ' + l.by }), h('span', { text: JSON.stringify(l.before) + ' → ' + JSON.stringify(l.after) }))));

@@ -7,7 +7,7 @@ import { sheetModel, payLabel, resultLine, runCheckout, resumeCheckout, payAvail
 import { REFUND_RULES } from '../payrules.js';
 
 const read = (f) => readFileSync(new URL('../' + f, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-const PRODUCTS = { ok: true, mode: 'test', test: true, products: [{ id: 'gift_big', name: '크게 걸기', price: 3900, perks: ['큰 화면에 24시간'] }, { id: 'gift_video', name: '축하 영상 세트', price: 7900, perks: ['영상'] }] };
+const PRODUCTS = { ok: true, mode: 'test', test: true, products: [{ id: 'gift_long', name: '크게 걸기', price: 3900, perks: ['큰 화면에 24시간'] }, { id: 'gift_video', name: '축하 영상 세트', price: 7900, perks: ['영상'] }] };
 const ID = 'o_' + 'A'.repeat(20);
 function fakeApi(over = {}) {
   const calls = [];
@@ -51,27 +51,27 @@ describe('what the sheet shows before paying', () => {
 describe('the flow', () => {
   it('mock: create with the shown price, pay, the fake window, confirm', async () => {
     const { api, calls } = fakeApi(), ui = fakeUi('paid');
-    const r = await runCheckout({ api, ui, mode: 'mock', boardId: 'abcdefgh', kind: 'gift', ref: '', product: 'gift_big', shown: 3900 });
+    const r = await runCheckout({ api, ui, mode: 'mock', boardId: 'abcdefgh', kind: 'gift', ref: '', product: 'gift_long', shown: 3900 });
     assert.equal(r.ok, true);
     assert.deepEqual(calls.map((c) => c[0]), ['create', 'pay', 'mock', 'confirm']);
-    assert.deepEqual(calls[0][1], { product: 'gift_big', kind: 'gift', boardId: 'abcdefgh', ref: '', shown: 3900 });
+    assert.deepEqual(calls[0][1], { product: 'gift_long', kind: 'gift', boardId: 'abcdefgh', ref: '', shown: 3900 });
   });
   it('mock window closed: reported as a failure, nothing confirmed', async () => {
     const { api, calls } = fakeApi(), ui = fakeUi(null);
-    assert.equal((await runCheckout({ api, ui, mode: 'mock', product: 'gift_big', shown: 3900 })).code, 'closed');
+    assert.equal((await runCheckout({ api, ui, mode: 'mock', product: 'gift_long', shown: 3900 })).code, 'closed');
     assert.deepEqual(calls.map((c) => c[0]), ['create', 'pay', 'fail']);
   });
   it('PortOne: the SDK gets what /pay returned plus the return address; an SDK error is reported and not confirmed', async () => {
     const { api, calls } = fakeApi(), ui = fakeUi(); let got = null;
-    const r = await runCheckout({ api, ui, mode: 'test', product: 'gift_big', shown: 3900, redirectUrl: 'https://x.example/g?kts_pay=1', requestPayment: async (sdk) => { got = sdk; return { paymentId: sdk.paymentId }; } });
+    const r = await runCheckout({ api, ui, mode: 'test', product: 'gift_long', shown: 3900, redirectUrl: 'https://x.example/g?kts_pay=1', requestPayment: async (sdk) => { got = sdk; return { paymentId: sdk.paymentId }; } });
     assert.equal(r.ok, true); assert.equal(got.storeId, 's'); assert.equal(got.redirectUrl, 'https://x.example/g?kts_pay=1'); assert.equal(got.totalAmount, 3900);
     const b = fakeApi(), ui2 = fakeUi();
-    const bad = await runCheckout({ api: b.api, ui: ui2, mode: 'test', product: 'gift_big', shown: 3900, requestPayment: async () => ({ code: 'FAILURE_TYPE_PG', message: '카드 거절' }) });
+    const bad = await runCheckout({ api: b.api, ui: ui2, mode: 'test', product: 'gift_long', shown: 3900, requestPayment: async () => ({ code: 'FAILURE_TYPE_PG', message: '카드 거절' }) });
     assert.equal(bad.ok, false); assert.deepEqual(b.calls.map((c) => c[0]), ['create', 'pay', 'fail']); assert.deepEqual(ui2.seen.at(-1), ['error', '카드 거절']);
   });
   it('a price that moved: the new price is shown and nothing is paid', async () => {
     const { api, calls } = fakeApi({ create: async () => ({ ok: false, status: 409, code: 'price', price: 4900, error: '가격이 바뀌었어요.' }) }), ui = fakeUi();
-    const r = await runCheckout({ api, ui, mode: 'test', product: 'gift_big', shown: 3900 });
+    const r = await runCheckout({ api, ui, mode: 'test', product: 'gift_long', shown: 3900 });
     assert.equal(r.code, 'price'); assert.deepEqual(ui.seen.filter((x) => x[0] === 'price'), [['price', 4900]]); assert.equal(calls.length, 0);
   });
   it('the mobile return: paymentId confirms, a code is a failure, other pages do nothing', async () => {

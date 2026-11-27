@@ -13,6 +13,7 @@ import { wishFault, wishNickFault } from './wish.js';
 
 export const GIFT = Object.freeze({
   hours: 6, // the free tier's 6 hours
+  paidHours: 12, // 오래 걸기 (TIERS 1..3, perk 'long'): the window from its start once the order is published
   aheadDays: 30, // the day: today or up to 30 days ahead (KST)
   starts: Object.freeze([9, 12, 15, 18]), // the KST hours a later window may start at (18: until midnight)
   nowStep: 600000, // a "지금" window starts at now, rounded down to 10 minutes
@@ -84,12 +85,26 @@ export const THEME_KEYS = Object.freeze(Object.keys(GIFT_THEMES));
 // perk the same code can give once payment opens: more hours (GIFT.hours), the films without the watermark (giftfilm.js, realvideo.js;
 // the real video's 'AI 합성' mark stays), the main tower minute at a time the owner picks without the friends (towerrules.js). Nothing
 // about a bigger screen, longer pages, a parade or photo downloads (2026-11-27: the code had none of them).
+// key: the product id's tail (payrules.js PRODUCTS: '<kind>_<key>', kind gift or personal); gives: the perks a published order of that
+// tier puts on its board (PERK; ordersrv.js publishes, giftsrv.js perkOn keeps them on the board), each tier everything of the one below.
+export const PERK = Object.freeze({ long: 'long', clean: 'clean', tower: 'tower' });
 export const TIERS = Object.freeze([
-  Object.freeze({ t: 0, name: '무료 걸기', price: 0, best: false, tag: '지금 걸린 것', label: '', items: Object.freeze(['광장 화면에 6시간 (메인거리·건물 앞 화면)', '15초 축하 영상(워터마크)과 10초 실사 축하 영상(‘AI 합성’ 표시)', '받는 사람 페이지 7일과 롤링페이퍼', '친구 응원 10명이 모이면 메인 타워 축하 1분', '결제가 열리면 받는 사람 페이지에 작은 광고가 붙어요']) }),
-  Object.freeze({ t: 1, name: '오래 걸기', price: 3900, best: false, tag: '커피 한 잔 값', label: '결제가 열리면', items: Object.freeze(['광장 화면에 12시간 (무료의 두 배)', '받는 사람 페이지에 광고 없음']) }),
-  Object.freeze({ t: 2, name: '축하 영상 세트', price: 7900, best: true, tag: '추천', label: '결제가 열리면', items: Object.freeze(['오래 걸기 전부', '워터마크 없는 15초 축하 영상', '워터마크 없는 실사 축하 영상 (‘AI 합성’ 표시는 남아요)']) }),
-  Object.freeze({ t: 3, name: '메인 타워 주인공', price: 14900, best: false, tag: '', label: '결제가 열리면', items: Object.freeze(['축하 영상 세트 전부', '메인 타워 축하 1분을 원하는 시각에 바로 지정 (친구 응원 없이, 그날 30자리 안에서)']) }),
+  Object.freeze({ t: 0, key: 'free', name: '무료 걸기', price: 0, best: false, tag: '지금 걸린 것', label: '', gives: Object.freeze([]), items: Object.freeze(['광장 화면에 6시간 (메인거리·건물 앞 화면)', '15초 축하 영상과 10초 실사 축하 영상(워터마크, 실사에는 ‘AI 합성’ 표시)', '받는 사람 페이지 7일과 롤링페이퍼', '친구 응원 10명이 모이면 메인 타워 축하 1분', '결제가 열리면 받는 사람 페이지에 작은 광고가 붙어요']) }),
+  Object.freeze({ t: 1, key: 'long', name: '오래 걸기', price: 3900, best: false, tag: '커피 한 잔 값', label: '결제가 열리면', gives: Object.freeze(['long']), items: Object.freeze(['광장 화면에 12시간 (무료의 두 배)', '받는 사람 페이지에 광고 없음']) }),
+  Object.freeze({ t: 2, key: 'video', name: '축하 영상 세트', price: 7900, best: true, tag: '추천', label: '결제가 열리면', gives: Object.freeze(['long', 'clean']), items: Object.freeze(['오래 걸기 전부', '워터마크 없는 15초 축하 영상', '워터마크 없는 실사 축하 영상 (‘AI 합성’ 표시는 남아요)']) }),
+  Object.freeze({ t: 3, key: 'tower', name: '메인 타워 주인공', price: 14900, best: false, tag: '', label: '결제가 열리면', gives: Object.freeze(['long', 'clean', 'tower']), items: Object.freeze(['축하 영상 세트 전부', '메인 타워 축하 1분을 원하는 시각에 바로 지정 (친구 응원 없이, 그날 30자리 안에서)']) }),
 ]);
+export const tierGives = (t) => [...(TIERS.find((x) => x.t === Number(t))?.gives || [])];
+// A board's perks as the gift store keeps them (gb.pk: JSON { o: { <order id>: [perk keys] } }, one entry per published order), in PERK
+// order, or [] for none or a value that does not read.
+export function perksOf(pk) {
+  let j = pk; if (typeof pk === 'string') { if (!pk) return []; try { j = JSON.parse(pk); } catch { return []; } }
+  const by = j && typeof j === 'object' && !Array.isArray(j) && j.o && typeof j.o === 'object' && !Array.isArray(j.o) ? j.o : {};
+  const have = new Set(Object.values(by).flatMap((x) => (Array.isArray(x) ? x.map(String) : [])));
+  return Object.keys(PERK).filter((k) => have.has(k));
+}
+// The window a board gets with 오래 걸기: GIFT.paidHours from its start (the free window is GIFT.hours).
+export const longEnd = (g) => Number(g?.a) + GIFT.paidHours * 36e5;
 // The experiment arms of the ladder: A is the prices above. GIFT_ARMS (a Worker variable, e.g. 'A:3900/7900/14900;B:2900/5900/11900')
 // defines more; a board gets one arm by its id (the same arm on every read), and the Worker counts views, picks and opt-ins per arm with
 // the price that arm showed (giftsrv.js interest). Without the variable, or with one that does not read, there is only A.
@@ -409,6 +424,9 @@ export function giftView(g, now = Date.now()) {
     ...(heartsOpen(g, now) ? { friends: Number(g.fr) || 0 } : {}),
     // tw: the booked main tower minute (towerrules.js), never how it was won (the owner's read carries mine.tw for that).
     ...(g.tw && Number(g.tw.m) > 0 ? { tw: Number(g.tw.m) } : {}),
+    // clean: a published 축하 영상 세트 or 메인 타워 주인공 order (perk 'clean'): the films are drawn without the 'WISH BOARD · 무료'
+    // watermark (giftfilm.js, gift.js, realvideo.js; the real video keeps its 'AI 합성' mark). Nothing else of the order is in the view.
+    ...(perksOf(g.pk).includes(PERK.clean) ? { clean: 1 } : {}),
   };
 }
 // 💖 is taken and shown once the recipient page shows the board itself (pageLook past 'before'), and while the board's page lives.

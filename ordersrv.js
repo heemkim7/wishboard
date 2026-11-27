@@ -1,6 +1,7 @@
 // 주문·결제 on the Worker: the /rt/order* routes, the PortOne webhook /rt/pay/hook, the operator routes /rt/admin/order*, and the Meter
 // instance 'order' that keeps orders, their history, webhook ids, product edits and the funnel counters. worker.js imports this with no
-// query, sends those paths here and hands over what it owns (k): adminOk, lvlNow, resolveActor, tokenOf, actOk. Rules and data are in
+// query, sends those paths here and hands over what it owns (k): adminOk, lvlNow, resolveActor, tokenOf, actOk, and the gift side's perk
+// hooks perkFit, perkOn, perkOff (giftsrv.js: whether a board can take an order's perks, putting them on it, taking them off). Rules and data are in
 // payrules.js. Sandbox first: every buyer route answers 404 { code: 'off' } until PAY_ON is exactly '1', and real money needs PAY_MODE=live
 // with a live channel (docs/payments-setup.md). PAY_MODE=mock (local hosts only) simulates PortOne with no network: its payments live in
 // table mock_pay and its webhooks are signed with MOCK_HOOK_SECRET and go through the same verification as PortOne's.
@@ -25,8 +26,8 @@
 //   products(id, json, updated_at, by) + product_log(at, id, by, before, after)   the operator's edits over payrules.js PRODUCTS
 //   order_days(d, k, n)                                          funnel counters '<mode>:<event>' per KST day
 //   mock_pay(pid, j, at)                                         PAY_MODE=mock only: the simulated PortOne payments
-import { ST, canMove, MONEY_STATES, PAY, PAY_EVENTS, PAY_ERR, ORDER_ID, newOrderId, armOf, productList, productFault, payOn, payMode, payAllowed, pgVerdict, revenueOf, ordersCsv, kstOf, REFUND_RULES, TEST_BADGE, TEST_NOTE, ST_NAME, costOf } from './payrules.js';
-import { GIFT_ID } from './giftrules.js';
+import { ST, canMove, MONEY_STATES, PAY, PAY_EVENTS, PAY_ERR, ORDER_ID, newOrderId, armOf, productList, productFault, givesOf, payOn, payMode, payAllowed, pgVerdict, revenueOf, ordersCsv, kstOf, REFUND_RULES, TEST_BADGE, TEST_NOTE, ST_NAME, OWNER_ST, costOf } from './payrules.js';
+import { GIFT_ID, ladderArm } from './giftrules.js';
 
 const J = (o, s = 200, h = {}) => new Response(JSON.stringify(o), { status: s, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...h } });
 const orderM = (env) => env.METER.get(env.METER.idFromName('order'));
@@ -83,7 +84,9 @@ export const orderDb = {
     if (op === 'create') {
       const p = this.products(q).find((x) => x.id === a.product);
       if (!p || !p.active || (a.kind && p.kind !== a.kind)) return { ok: false, code: 'product' };
-      const { arm, price } = armOf(p, a.uid);
+      // One paid order per board: another that took money (and was not given back) keeps a second one out.
+      if (a.board && q.exec("select 1 from orders where ref_board = ? and (st in ('PAID', 'PUBLISH_PENDING', 'PUBLISHED') or (st = 'FAILED' and paid_at is not null)) limit 1", String(a.board)).toArray()[0]) return { ok: false, code: 'have' };
+      const { arm, price } = armOf(p, a.ladder);
       if (a.shown != null && Number(a.shown) !== price) return { ok: false, code: 'price', price };
       const id = newOrderId(), how = a.mode === 'live' ? 'pg' : 'test';
       q.exec("insert into orders(id, uid, kind, product, price, arm, st, ref_board, created_at, pg, how, mode, ref, name, perks) values(?, ?, ?, ?, ?, ?, 'CREATED', ?, ?, 'portone', ?, ?, ?, ?, ?)",
@@ -129,7 +132,7 @@ export const orderDb = {
         return { ok: true, order: this.one(q, o.id), publish: pub };
       }
       if (v.to === 'FAILED') { this.move(q, o.id, o.st, 'FAILED', by, { why: v.why, paid: v.paid, currency: v.currency }, now, v.tx ? { pg_tx: v.tx } : {}); return { ok: true, order: this.one(q, o.id), why: v.why }; }
-      if (v.to === 'REFUNDED') { this.move(q, o.id, o.st, 'REFUNDED', by, { why: v.why }, now, { refunded_at: now }); return { ok: true, order: this.one(q, o.id), why: v.why }; }
+      if (v.to === 'REFUNDED') { const moved = this.move(q, o.id, o.st, 'REFUNDED', by, { why: v.why }, now, { refunded_at: now }); return { ok: true, order: this.one(q, o.id), why: v.why, revoke: moved }; }
       return { ok: true, order: o };
     }
     // The publisher's answer for the current try.
@@ -152,7 +155,7 @@ export const orderDb = {
       if (!o) return { ok: false, code: 'nf' };
       if (o.st === 'REFUNDED') return { ok: true, order: o, already: true };
       if (!(MONEY_STATES.includes(o.st) || (o.st === 'FAILED' && (o.pg_tx || o.paid_at != null)))) return { ok: false, code: 'state', order: o };
-      return this.move(q, o.id, o.st, 'REFUNDED', String(a.by || 'admin'), { note: String(a.note || '').slice(0, PAY.noteMax), via: a.via || 'pg', key: a.key || null }, now, { refunded_at: now, note: String(a.note || '').slice(0, PAY.noteMax) }) ? { ok: true, order: this.one(q, o.id) } : { ok: false, code: 'state', order: this.one(q, o.id) };
+      return this.move(q, o.id, o.st, 'REFUNDED', String(a.by || 'admin'), { note: String(a.note || '').slice(0, PAY.noteMax), via: a.via || 'pg', key: a.key || null }, now, { refunded_at: now, note: String(a.note || '').slice(0, PAY.noteMax) }) ? { ok: true, order: this.one(q, o.id), revoke: true } : { ok: false, code: 'state', order: this.one(q, o.id) };
     }
     if (op === 'mark') { if (!o) return { ok: false, code: 'nf' }; this.note(q, o.id, o.st, o.st, String(a.by || 'admin'), a.detail || null, now); return { ok: true, order: o }; }
     // A bank transfer or a payment the operator confirmed by hand: CREATED / PAYMENT_PENDING / FAILED / CANCELLED -> PAID (how manual in
@@ -194,9 +197,13 @@ export const orderDb = {
       q.exec('insert into product_log(at, id, by, before, after) values(?, ?, ?, ?, ?)', now, v.id, String(a.by || 'admin'), JSON.stringify(old), JSON.stringify(next));
       return { ok: true, products: this.products(q) };
     }
-    if (op === 'perks') { // what the product side asks: the perks of a board's published orders
-      const rows = q.exec("select perks, product from orders where ref_board = ? and st = 'PUBLISHED'", String(a.board || '')).toArray();
-      return { ok: true, products: [...new Set(rows.map((r) => String(r.product)))], perks: [...new Set(rows.flatMap((r) => js(r.perks) || []))] };
+    if (op === 'perks') { // what the product side asks: a board's published orders, their perks text and perk keys (gives), and who bought them
+      const rows = q.exec("select perks, product, uid from orders where ref_board = ? and st = 'PUBLISHED'", String(a.board || '')).toArray();
+      const products = [...new Set(rows.map((r) => String(r.product)))];
+      return { ok: true, products, perks: [...new Set(rows.flatMap((r) => js(r.perks) || []))], gives: givesOf(products), uids: [...new Set(rows.map((r) => String(r.uid)))] };
+    }
+    if (op === 'board') { // the owner page: this buyer's orders for one board, newest first
+      return { ok: true, orders: q.exec('select * from orders where ref_board = ? and uid = ? order by created_at desc limit 10', String(a.board || ''), String(a.uid || '')).toArray().map(orderOf) };
     }
     if (op === 'mockSet') { q.exec('insert into mock_pay(pid, j, at) values(?, ?, ?) on conflict(pid) do update set j = excluded.j, at = excluded.at', String(a.pid), JSON.stringify(a.j || {}), now); return { ok: true }; }
     if (op === 'mockGet') return { ok: true, payment: js(q.exec('select j from mock_pay where pid = ?', String(a.pid || '')).toArray()[0]?.j) };
@@ -256,24 +263,34 @@ export async function hookVerify(secret, headers, body, nowS = Math.floor(Date.n
 }
 
 // ---- publishing --------------------------------------------------------------------------------------------------------------------
-// What "published" means per kind. The product side may replace these later (the perks are on the order; GET perks answers per board).
-// gift: the order is attached to its gift board (ref_board), which must still exist and be the buyer's. personal: nothing else to check.
-export const PUBLISHERS = {
-  async gift(env, o) {
-    if (!GIFT_ID.test(o.ref_board)) return { ok: false, why: 'board' };
-    const g = await giftM(env).giftGet(o.ref_board, Date.now());
-    if (!g) return { ok: false, why: 'gone' };
-    return String(g.uid) === o.uid ? { ok: true, perks: o.perks } : { ok: false, why: 'owner' };
-  },
-  async personal(env, o) { return { ok: true, perks: o.perks }; },
-};
-async function publish(env, o) {
-  let r; try { r = await (PUBLISHERS[o.kind] || (async () => ({ ok: false, why: 'kind' })))(env, o); } catch { r = { ok: false, why: 'error' }; }
+// What "published" means: the order's perks are put on its board (ref_board, a gift board or a 내 전광판, still there and the buyer's) by
+// the gift side (k.perkOn, giftsrv.js giftPerkOn: 오래 걸기 makes the window GIFT.paidHours, the films lose the watermark, the main tower
+// minute can be booked with how 'paid'), and only then is the order PUBLISHED. A board that cannot take them (gone, someone else's, no
+// screen for 12 hours) is a failed try (PAY.publishTries, then FAILED for the operator: 다시 공개 or a refund). KIT: the kit of the request
+// that came last (the Worker's perk hooks); without one (this file alone) only the board's owner is checked.
+let KIT = null;
+async function boardPublisher(env, o, ctx) {
+  if (!GIFT_ID.test(o.ref_board)) return { ok: false, why: 'board' };
+  if (KIT?.perkOn) { const r = await KIT.perkOn(env, ctx, { board: o.ref_board, uid: o.uid, order: o.id, gives: givesOf([o.product]) }); return r?.ok ? { ok: true, perks: o.perks } : { ok: false, why: String(r?.why || 'perk') }; }
+  const g = await giftM(env).giftGet(o.ref_board, Date.now());
+  if (!g) return { ok: false, why: 'gone' };
+  return String(g.uid) === o.uid ? { ok: true, perks: o.perks } : { ok: false, why: 'owner' };
+}
+export const PUBLISHERS = { gift: boardPublisher, personal: boardPublisher };
+async function publish(env, o, ctx = null) {
+  let r; try { r = await (PUBLISHERS[o.kind] || (async () => ({ ok: false, why: 'kind' })))(env, o, ctx); } catch { r = { ok: false, why: 'error' }; }
   const x = await orderM(env).ordOp('published', { id: o.id, ok: !!r?.ok, perks: r?.perks, why: r?.why }, Date.now());
   return x?.order || o;
 }
-// The perks a board's published orders carry (for the product side; one DO call).
-export async function orderPerks(env, board) { try { return await orderM(env).ordOp('perks', { board }); } catch { return { ok: false, products: [], perks: [] }; } }
+// A refund takes the order's perks off its board again (k.perkOff, giftsrv.js giftPerkOff: the window back to GIFT.hours, or to now when
+// that is already past; the films carry the watermark again; a paid main tower minute that has not started is let go, never as points).
+// Never throws: the order is REFUNDED whatever the board says.
+async function revoke(env, o, ctx = null) {
+  if (!o || o.st !== 'REFUNDED' || !GIFT_ID.test(o.ref_board) || !KIT?.perkOff) return;
+  try { await KIT.perkOff(env, ctx, { board: o.ref_board, order: o.id }); } catch { /* the board keeps them until the operator looks */ }
+}
+// The perks a board's published orders carry (for the product side; one DO call): { ok, products, perks (text), gives (perk keys), uids }.
+export async function orderPerks(env, board) { try { return await orderM(env).ordOp('perks', { board }); } catch { return { ok: false, products: [], perks: [], gives: [], uids: [] }; } }
 
 // ---- the routes --------------------------------------------------------------------------------------------------------------------
 export const orderPath = (p) => p === '/rt/order' || p.startsWith('/rt/order/') || p === '/rt/pay/hook' || p === '/rt/admin/orders' || p === '/rt/admin/orders.csv' || p.startsWith('/rt/admin/order/') || p === '/rt/admin/order-products' || p === '/rt/admin/order-revenue';
@@ -287,8 +304,8 @@ async function body(req, max = 4000) {
 const hardOf = async (k, env) => { try { return (await k.lvlNow(env)) >= 2; } catch { return false; } };
 // The buyer's view of an order: no account ids of others, perks marked active only once PUBLISHED.
 export function orderView(o) {
-  return { id: o.id, kind: o.kind, product: o.product, name: o.name, price: o.price, st: o.st, stName: ST_NAME[o.st] || o.st, board: o.ref_board || null,
-    created_at: o.created_at, paid_at: o.paid_at, published_at: o.published_at, refunded_at: o.refunded_at, perks: o.perks, perksActive: o.st === 'PUBLISHED', test: o.how === 'test' };
+  return { id: o.id, kind: o.kind, product: o.product, name: o.name, price: o.price, st: o.st, stName: ST_NAME[o.st] || o.st, ownerSt: OWNER_ST[o.st] || o.st, board: o.ref_board || null,
+    created_at: o.created_at, paid_at: o.paid_at, published_at: o.published_at, refunded_at: o.refunded_at, perks: o.perks, perksActive: o.st === 'PUBLISHED', gives: o.st === 'PUBLISHED' ? givesOf([o.product]) : [], test: o.how === 'test' };
 }
 let PCACHE = { at: 0, list: null };
 async function productsCached(env, now = Date.now()) {
@@ -296,9 +313,16 @@ async function productsCached(env, now = Date.now()) {
   const r = await orderM(env).ordOp('products', {}); PCACHE = { at: now, list: r.products }; return r.products;
 }
 export const orderCacheDrop = () => { PCACHE = { at: 0, list: null }; }; // tests and admin edits
+// The products by id with their defaults (kind, tier, gives); whether one is on sale is the store's (create).
+let PBY = null; const productsBy = () => (PBY ||= new Map(productList().map((x) => [x.id, x])));
+// Without the gift side's hook (this file alone): the board must be the buyer's; its kind from its occasion.
+async function ownBoard(env, board, uid) {
+  const g = await giftM(env).giftGet(board, Date.now());
+  return g && String(g.uid) === uid ? { ok: true, kind: String(g.occ) === 'me' ? 'personal' : 'gift', ref: String(g.ref || '') } : { ok: false, code: 'board' };
+}
 
 export async function orderApi(req, env, ctx, u, k) {
-  const p = u.pathname;
+  const p = u.pathname; KIT = k;
   if (p.startsWith('/rt/admin/')) return adminApi(req, env, ctx, u, k);
   const mode = payMode(env, u.hostname);
   if (!payOn(env) || !mode) return OFF();
@@ -310,23 +334,41 @@ export async function orderApi(req, env, ctx, u, k) {
     if (req.method !== 'GET') return J({ err: 'get' }, 405);
     if (!(PCACHE.list && Date.now() - PCACHE.at < PAY.productCacheMs) && (await hardOf(k, env))) return no('busy', 503);
     let list; try { list = await productsCached(env); } catch { return no('down', 503); }
-    const kind = u.searchParams.get('kind') || '';
-    const products = list.filter((x) => x.active && (!kind || x.kind === kind)).map((x) => { const a = armOf(x, actor.id); return { id: x.id, kind: x.kind, tier: x.tier, name: x.name, price: a.price, arm: a.arm, perks: x.perks }; });
+    // board: the board the page is for; its arm sets the prices (the ones its owner page showed). Without one, arm A.
+    const kind = u.searchParams.get('kind') || '', bd = u.searchParams.get('board') || '', ladder = GIFT_ID.test(bd) ? ladderArm(bd, env.GIFT_ARMS) : null;
+    const products = list.filter((x) => x.active && (!kind || x.kind === kind)).map((x) => { const a = armOf(x, ladder); return { id: x.id, kind: x.kind, tier: x.tier, name: x.name, price: a.price, arm: a.arm, perks: x.perks, gives: x.gives }; });
     return J({ ok: true, mode, test: mode !== 'live', badge: mode !== 'live' ? TEST_BADGE : '', testNote: mode !== 'live' ? TEST_NOTE : '', refund: REFUND_RULES, products, sdk: mode === 'mock' ? null : PORTONE_SDK });
+  }
+  const bm = /^\/rt\/order\/board\/([0-9a-z]{8})$/.exec(p);
+  if (bm) { // GET /rt/order/board/<board id>: the owner page's order states for that board (this buyer's only); a publish still pending gets its next try
+    if (req.method !== 'GET') return J({ err: 'get' }, 405);
+    if (await hardOf(k, env)) return no('busy', 503);
+    let r; try { r = await orderM(env).ordOp('board', { board: bm[1], uid: actor.id }); } catch { return no('down', 503); }
+    const orders = [];
+    for (let o of r?.orders || []) {
+      if (o.st === 'PUBLISH_PENDING') { try { const a = await orderM(env).ordOp('publishAgain', { id: o.id, by: 'buyer' }, Date.now()); if (a?.publish) o = await publish(env, a.order, ctx); } catch { /* the next read tries again */ } }
+      orders.push(orderView(o));
+    }
+    return J({ ok: true, orders, refund: REFUND_RULES });
   }
   if (req.method !== 'POST' && !(req.method === 'GET' && ORDER_ID.test(p.slice('/rt/order/'.length)))) return J({ err: 'method' }, 405);
   if (p === '/rt/order') {
     if (await hardOf(k, env)) return no('busy', 503); // before any DO call
     if (!(await k.actOk(env, 'misc', actor.id))) return no('rate', 429, {});
     const b = await body(req); if (!b) return no('down', 400);
-    const product = String(b.product || ''), kind = b.kind === 'personal' ? 'personal' : 'gift', board = String(b.boardId || ''), ref = GIFT_ID.test(String(b.ref || '')) ? String(b.ref) : '';
-    if (kind === 'gift') {
-      if (!GIFT_ID.test(board)) return no('board', 400);
-      let g = null; try { g = await giftM(env).giftGet(board, Date.now()); } catch { return no('down', 503); }
-      if (!g || String(g.uid) !== actor.id) return no('board', 403);
-    }
-    let r; try { r = await orderM(env).ordOp('create', { uid: actor.id, product, kind, board: kind === 'gift' ? board : '', ref, mode, shown: b.shown == null ? null : Number(b.shown) }, Date.now()); } catch { return no('down', 503); }
-    if (!r?.ok) return r?.code === 'price' ? no('price', 409, { price: r.price }) : no(r?.code === 'product' ? 'product' : 'down', r?.code === 'product' ? 400 : 503);
+    // Every product is for a board: a gift board (kind gift) or a 내 전광판 (kind personal), the buyer's own. The board decides the kind,
+    // its arm the price (the one its page showed), and the gift side whether its perks can be delivered (the window not over, a screen
+    // for 12 hours, a main tower place left): one gift DO call (k.perkFit), so nobody pays for a perk the board cannot get.
+    const product = String(b.product || ''), board = String(b.boardId || ''), ref0 = GIFT_ID.test(String(b.ref || '')) ? String(b.ref) : '';
+    if (!GIFT_ID.test(board)) return no('board', 400);
+    const want = productsBy().get(product); if (!want || (b.kind && b.kind !== want.kind)) return no('product', 400);
+    let fit = null;
+    try { fit = k.perkFit ? await k.perkFit(env, { board, uid: actor.id, gives: want.gives }) : await ownBoard(env, board, actor.id); } catch { return no('down', 503); }
+    if (!fit?.ok) return !fit || fit.code === 'board' ? no('board', 403) : no(fit.code, 409);
+    if (fit.kind !== want.kind) return no('product', 400);
+    const ref = ref0 && ref0 !== board ? ref0 : GIFT_ID.test(String(fit.ref || '')) ? String(fit.ref) : ''; // the board this one was made from (받는 사람 페이지에서 온 주문)
+    let r; try { r = await orderM(env).ordOp('create', { uid: actor.id, product, kind: want.kind, board, ref, mode, ladder: ladderArm(board, env.GIFT_ARMS), shown: b.shown == null ? null : Number(b.shown) }, Date.now()); } catch { return no('down', 503); }
+    if (!r?.ok) return r?.code === 'price' ? no('price', 409, { price: r.price }) : r?.code === 'have' ? no('have', 409) : no(r?.code === 'product' ? 'product' : 'down', r?.code === 'product' ? 400 : 503);
     return J({ ok: true, order: orderView(r.order) });
   }
   const m = /^\/rt\/order\/(o_[A-Za-z0-9]{20})(?:\/(pay|confirm|fail|cancel|mock))?$/.exec(p);
@@ -338,7 +380,7 @@ export async function orderApi(req, env, ctx, u, k) {
     let r; try { r = await orderM(env).ordOp('get', { id, uid: actor.id }); } catch { return no('down', 503); }
     if (!r?.ok) return no('nf', 404);
     let o = r.order;
-    if (o.st === 'PUBLISH_PENDING') { try { const a = await orderM(env).ordOp('publishAgain', { id, by: 'buyer' }, Date.now()); if (a?.publish) o = await publish(env, a.order); } catch { /* the next read tries again */ } }
+    if (o.st === 'PUBLISH_PENDING') { try { const a = await orderM(env).ordOp('publishAgain', { id, by: 'buyer' }, Date.now()); if (a?.publish) o = await publish(env, a.order, ctx); } catch { /* the next read tries again */ } }
     return J({ ok: true, order: orderView(o), refund: REFUND_RULES });
   }
   if (sub !== 'confirm' && sub !== 'mock' && (await hardOf(k, env))) return no('busy', 503);
@@ -369,15 +411,15 @@ export async function orderApi(req, env, ctx, u, k) {
     const hook = await mockHook(env, ctx, u, 'Transaction.' + (result === 'failed' ? 'Failed' : 'Paid'), o.id);
     return J({ ok: true, hook: hook.status });
   }
-  return confirm(env, mode, g.order, 'pg:confirm');
+  return confirm(env, ctx, mode, g.order, 'pg:confirm');
 }
 
-async function confirm(env, mode, o, by) {
+async function confirm(env, ctx, mode, o, by) {
   const got = await provider(env, mode).get(o.id);
   if (!got.ok) return got.code === 'keys' ? no('keys', 503) : got.code === 'nf' ? J({ ok: true, order: orderView(o), pending: true }) : no('pg', 502);
   let r; try { r = await orderM(env).ordOp('apply', { id: o.id, payment: got.payment, by }, Date.now()); } catch { return no('down', 503); }
   if (!r?.ok) return no('nf', 404);
-  let x = r.order; if (r.publish) x = await publish(env, x);
+  let x = r.order; if (r.publish) x = await publish(env, x, ctx); if (r.revoke) await revoke(env, x, ctx);
   if (r.why === 'amount') return J({ ok: false, code: 'amount', error: PAY_ERR.amount, order: orderView(x) }, 409);
   return J({ ok: true, order: orderView(x) });
 }
@@ -402,7 +444,8 @@ async function hookApi(req, env, ctx, mode, raw = null) {
   let r; try { r = await orderM(env).ordOp('apply', { id: pid, payment: got.payment, by: 'pg:hook', hook: v.id }, Date.now()); } catch { return J({ ok: false }, 503); }
   if (r?.dup) return J({ ok: true, dup: true });
   if (!r?.ok) return J({ ok: true, ignored: 'order' });
-  if (r.publish) await publish(env, r.order);
+  if (r.publish) await publish(env, r.order, ctx);
+  if (r.revoke) await revoke(env, r.order, ctx);
   return J({ ok: true });
 }
 // The mock's webhook: a signed Standard Webhooks delivery handed to the same handler.
@@ -455,11 +498,11 @@ async function adminApi(req, env, ctx, u, k) {
     const b = (await body(req)) || {}, note = String(b.note || '').trim().slice(0, PAY.noteMax);
     const g = await M.ordOp('get', { id }); if (!g.ok) return no('nf', 404);
     const o = g.order;
-    if (sub === 'publish') { const a = await M.ordOp('publishAgain', { id, admin: true, by: 'admin' }, now); if (!a.ok) return no('state', 409); const x = a.publish ? await publish(env, a.order) : a.order; return J({ ok: true, order: x }); }
+    if (sub === 'publish') { const a = await M.ordOp('publishAgain', { id, admin: true, by: 'admin' }, now); if (!a.ok) return no('state', 409); const x = a.publish ? await publish(env, a.order, ctx) : a.order; return J({ ok: true, order: x }); }
     if (note.length < 2) return no('note', 400);
     if (sub === 'manual') {
-      if (b.op === 'paid') { const r = await M.ordOp('manualPaid', { id, note }, now); if (!r.ok) return no('state', 409, { order: r.order }); const x = r.publish ? await publish(env, r.order) : r.order; return J({ ok: true, order: x }); }
-      if (b.op === 'refunded') { const r = await M.ordOp('refunded', { id, note, by: 'admin', via: 'manual' }, now); return r.ok ? J({ ok: true, order: r.order }) : no('state', 409, { order: r.order }); }
+      if (b.op === 'paid') { const r = await M.ordOp('manualPaid', { id, note }, now); if (!r.ok) return no('state', 409, { order: r.order }); const x = r.publish ? await publish(env, r.order, ctx) : r.order; return J({ ok: true, order: x }); }
+      if (b.op === 'refunded') { const r = await M.ordOp('refunded', { id, note, by: 'admin', via: 'manual' }, now); if (r.revoke) await revoke(env, r.order, ctx); return r.ok ? J({ ok: true, order: r.order }) : no('state', 409, { order: r.order }); }
       return J({ ok: false, error: 'op' }, 400);
     }
     // refund through the PG: only an order the PG took money for; the state is checked first (our idempotency guard), then cancel, then
@@ -471,7 +514,7 @@ async function adminApi(req, env, ctx, u, k) {
     const c = await pv.cancel(o.id, { reason: note, key });
     if (!c.ok) { await M.ordOp('mark', { id, by: 'admin', detail: { refund_fail: c.code, status: c.status || null, type: c.type || null } }, now); return c.code === 'keys' ? no('keys', 503) : no('pg', 502); }
     const after = await pv.get(o.id);
-    if (after.ok && after.payment?.status === 'CANCELLED') { const r = await M.ordOp('refunded', { id, note, by: 'admin', via: 'pg', key }, now); return J({ ok: !!r.ok, order: r.order }); }
+    if (after.ok && after.payment?.status === 'CANCELLED') { const r = await M.ordOp('refunded', { id, note, by: 'admin', via: 'pg', key }, now); if (r.revoke) await revoke(env, r.order, ctx); return J({ ok: !!r.ok, order: r.order }); }
     await M.ordOp('mark', { id, by: 'admin', detail: { refund: c.how, key, note } }, now);
     return J({ ok: true, order: (await M.ordOp('get', { id })).order, requested: true }, 202);
   } catch { return J({ ok: false, error: '처리하지 못했어요.' }, 503); }

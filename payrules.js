@@ -6,6 +6,7 @@
 //   https://developers.portone.io/opi/ko/integration/ready/readme
 //   https://developers.portone.io/opi/ko/integration/start/v2/checkout   (browser SDK, server re-query of GET /payments/{paymentId})
 //   https://developers.portone.io/opi/ko/integration/webhook/readme-v2    (Standard Webhooks signatures, retries)
+import { TIERS } from './giftrules.js';
 
 export const PAY = Object.freeze({
   publishTries: 3, // a paid order's publishing is tried this many times (on requests: confirm, webhook, the owner's GET, the admin) before FAILED
@@ -35,53 +36,45 @@ export const MOVES = Object.freeze({
 export const canMove = (from, to) => Object.prototype.hasOwnProperty.call(MOVES, from) && MOVES[from].includes(to);
 export const MONEY_STATES = Object.freeze(['PAID', 'PUBLISH_PENDING', 'PUBLISHED']); // money received and not returned (FAILED with a pg_tx too)
 export const ST_NAME = Object.freeze({ CREATED: '주문 만듦', PAYMENT_PENDING: '결제 중', PAID: '결제 완료', PUBLISH_PENDING: '공개 준비', PUBLISHED: '공개됨', FAILED: '실패', CANCELLED: '취소', REFUNDED: '환불됨' });
+// What the board owner's page calls an order's state. A perk is shown as active only at PUBLISHED (게시됨).
+export const OWNER_ST = Object.freeze({ CREATED: '결제 대기', PAYMENT_PENDING: '결제 대기', PAID: '결제 완료', PUBLISH_PENDING: '게시 중', PUBLISHED: '게시됨', FAILED: '실패', CANCELLED: '취소', REFUNDED: '환불' });
 
 // Funnel counters kept per KST day in the order store, as '<mode>:<event>' (live, test or mock apart).
 export const PAY_EVENTS = Object.freeze(['checkout_start', 'pay_success', 'pay_fail', 'publish_ok', 'publish_fail', 'refund']);
 
 // ---- products ------------------------------------------------------------------------------------------------------------------------
-// Prices in KRW, VAT included. The gift tiers are the price ladder the gift owner page already shows (giftrules.js TIERS; a test keeps
-// them equal). The personal product is a placeholder the owner decides on: off until switched on in the admin products editor.
-export const PRODUCTS = Object.freeze([
-  Object.freeze({ id: 'gift_big', kind: 'gift', tier: 1, name: '크게 걸기', price: 3900, perks: Object.freeze(['큰 화면에 24시간', '받는 사람 페이지 30일', '광고 없음']), active: true }),
-  Object.freeze({ id: 'gift_video', kind: 'gift', tier: 2, name: '축하 영상 세트', price: 7900, perks: Object.freeze(['크게 걸기 전부', '고화질 15초 축하 영상 저장(워터마크 없음)', '롤링페이퍼 (친구 메시지 30개, 그날까지 잠금)', '받는 사람 페이지 1년', '영상·사진 내려받기']), active: true }),
-  Object.freeze({ id: 'gift_nine', kind: 'gift', tier: 3, name: '9시 주인공', price: 14900, perks: Object.freeze(['축하 영상 세트 전부', "밤 9시 5분부터 '개인 축하 퍼레이드' 1분 (하루 30자리, 메인 타워와 따로)", '퍼레이드 장면이 담긴 두 번째 영상']), active: true }),
-  Object.freeze({ id: 'personal_big', kind: 'personal', tier: 0, name: '내 전광판 크게 걸기', price: 2900, perks: Object.freeze(['내 응원·소원 전광판을 큰 화면에 24시간']), active: false }),
-]);
-const PRICE_MIN = 100, PRICE_MAX = 10_000_000, PERK_MAX = 80, PERKS_MAX = 8, NAME_MAX = 30;
+// One source of truth: the price ladder the owner page shows (giftrules.js TIERS). Each paid tier is a product for a gift board (kind
+// 'gift') and for a 내 전광판 (kind 'personal', a board with occ 'me'): id '<kind>_<tier key>', the tier's name, its lines as the perks text
+// and its perk keys (gives: what publishing puts on the board). Prices in KRW, VAT included: the tier's price in arm A, or the price the
+// board's arm shows (giftrules.js ladderArm over the Worker's GIFT_ARMS; armOf), so the order is charged what the page showed. The operator
+// can only switch a product on or off (productFault); names, lines and prices change in giftrules.js TIERS and GIFT_ARMS.
+export const PRODUCT_KINDS = Object.freeze(['gift', 'personal']);
+export const productId = (kind, tier) => { const t = TIERS.find((x) => x.t === Number(tier) && x.t > 0); return t && PRODUCT_KINDS.includes(kind) ? kind + '_' + t.key : ''; };
+export const PRODUCTS = Object.freeze(PRODUCT_KINDS.flatMap((kind) => TIERS.filter((t) => t.t > 0).map((t) => Object.freeze({
+  id: productId(kind, t.t), kind, tier: t.t, name: t.name, price: t.price, perks: Object.freeze([...t.items]), gives: Object.freeze([...t.gives]), active: true }))));
 const pick = (o, k) => (o && Object.prototype.hasOwnProperty.call(o, k) ? o[k] : undefined);
-// The stored edits (one JSON per product id) over the defaults. kind and tier are not editable.
+// The kind of a board's product: a 내 전광판 is 'personal', any other board 'gift'.
+export const kindOfBoard = (g) => (String(g?.occ || '') === 'me' ? 'personal' : 'gift');
+// The stored switches (one JSON per product id) over the defaults: only active is read (an older store's price, name, perks or B price
+// edits are left where they are and never used).
 export function productList(stored = []) {
   const by = new Map((Array.isArray(stored) ? stored : []).filter((x) => x && typeof x.id === 'string').map((x) => [x.id, x]));
   return PRODUCTS.map((d) => {
-    const s = by.get(d.id) || {}, out = { ...d, perks: [...d.perks], arms: [] };
-    if (Number.isInteger(s.price) && s.price >= PRICE_MIN && s.price <= PRICE_MAX) out.price = s.price;
+    const s = by.get(d.id) || {}, out = { ...d, perks: [...d.perks], gives: [...d.gives] };
     if (typeof s.active === 'boolean') out.active = s.active;
-    if (Array.isArray(s.perks) && s.perks.length) out.perks = s.perks.map(String).slice(0, PERKS_MAX);
-    if (typeof s.name === 'string' && s.name.trim()) out.name = s.name.trim().slice(0, NAME_MAX);
-    if (Array.isArray(s.arms)) out.arms = s.arms.filter((a) => a && a.arm === 'B' && Number.isInteger(a.price) && a.price >= PRICE_MIN && a.price <= PRICE_MAX).slice(0, 1);
     return out;
   });
 }
-const intOf = (v) => (typeof v === 'number' ? v : typeof v === 'string' && /^\s*\d+\s*$/.test(v) ? Number(v) : NaN);
-// An admin edit { id, price?, active?, perks?, name?, armB? } -> { ok, v } (v: the fields to store) | { ok: false, error }.
+// The perk keys of a set of product ids (unknown ids give nothing).
+export function givesOf(ids) { const out = new Set(); for (const id of Array.isArray(ids) ? ids : []) for (const g of PRODUCTS.find((p) => p.id === id)?.gives || []) out.add(g); return [...out]; }
+export const PRODUCT_FIXED = '이름·혜택·가격은 가격표(giftrules.js TIERS)와 가격 실험(GIFT_ARMS)에서 정해요. 여기서는 판매를 켜고 끄기만 해요.';
+// An admin edit { id, active } -> { ok, v } (v: the fields to store) | { ok: false, error }. Any other field is refused (PRODUCT_FIXED).
 export function productFault(b) {
   const id = String(pick(b, 'id') ?? '');
   if (!PRODUCTS.some((p) => p.id === id)) return { ok: false, error: '그 상품이 없어요.' };
-  const v = { id };
-  if (pick(b, 'price') !== undefined) { const n = intOf(b.price); if (!Number.isInteger(n) || n < PRICE_MIN || n > PRICE_MAX) return { ok: false, error: '가격은 100원에서 1,000만 원 사이 정수로 적어 주세요.' }; v.price = n; }
-  if (pick(b, 'active') !== undefined) v.active = b.active === true || b.active === 'true' || b.active === 1 || b.active === '1';
-  if (pick(b, 'perks') !== undefined) {
-    const list = (Array.isArray(b.perks) ? b.perks : String(b.perks).split('\n')).map((x) => String(x).trim()).filter(Boolean);
-    if (!list.length || list.length > PERKS_MAX || list.some((x) => x.length > PERK_MAX)) return { ok: false, error: '혜택은 1~8줄, 줄마다 80자까지예요.' };
-    v.perks = list;
-  }
-  if (pick(b, 'name') !== undefined) { const n = String(b.name).trim(); if (!n || n.length > NAME_MAX) return { ok: false, error: '이름은 1~30자예요.' }; v.name = n; }
-  if (pick(b, 'armB') !== undefined) {
-    if (b.armB === '' || b.armB === null) v.arms = [];
-    else { const n = intOf(b.armB); if (!Number.isInteger(n) || n < PRICE_MIN || n > PRICE_MAX) return { ok: false, error: 'B안 가격은 100원에서 1,000만 원 사이 정수예요. 비우면 실험을 끕니다.' }; v.arms = [{ arm: 'B', price: n }]; }
-  }
-  return { ok: true, v };
+  if (['price', 'perks', 'name', 'armB', 'arms'].some((k) => pick(b, k) !== undefined)) return { ok: false, error: PRODUCT_FIXED };
+  if (pick(b, 'active') === undefined) return { ok: false, error: '판매를 켤지 끌지 골라 주세요.' };
+  return { ok: true, v: { id, active: b.active === true || b.active === 'true' || b.active === 1 || b.active === '1' } };
 }
 
 // ---- ids and price arms --------------------------------------------------------------------------------------------------------------
@@ -93,13 +86,12 @@ export function newOrderId(fill = (u8) => crypto.getRandomValues(u8)) {
   while (s.length < 22) { const b = fill(new Uint8Array(32)); for (const x of b) { if (x < 248 && s.length < 22) s += ALNUM[x % 62]; } }
   return s;
 }
-// FNV-1a 32-bit: a fixed, synchronous hash so the same buyer always sees the same arm (no storage needed to keep it).
-function fnv(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h >>> 0; }
-// A product with arms [{ arm: 'B', price }] splits buyers between A (the base price) and B by a hash of buyer and product. The order keeps
-// the arm and the price that was shown, so the experiment is read from orders alone.
-export function armOf(product, uid) {
-  const arms = [{ arm: 'A', price: product.price }, ...(Array.isArray(product.arms) ? product.arms : [])];
-  return { ...arms[fnv(String(uid) + ':' + product.id) % arms.length] };
+// The price a board's arm shows for a product: ladder is giftrules.js ladderArm(boardId, GIFT_ARMS) ({ a, p: [0, t1, t2, t3] }), the same
+// arm the owner page painted, so the order keeps the arm and the price that was shown and the experiment is read from orders alone. A
+// ladder that does not read is arm A at the tier's price.
+export function armOf(product, ladder = null) {
+  const p = Array.isArray(ladder?.p) ? Number(ladder.p[product.tier]) : NaN;
+  return /^[A-Z]$/.test(String(ladder?.a || '')) && Number.isInteger(p) && p >= 100 ? { arm: String(ladder.a), price: p } : { arm: 'A', price: product.price };
 }
 
 // ---- refund rules shown before payment (a summary of the terms' 유료 상품의 취소와 환불, legal.js) -------------------------------------
@@ -185,11 +177,14 @@ export function revenueOf(rows, { firstPaid = {}, picks = {}, funnel = {}, d0 = 
   }
   let fresh = 0;
   for (const uid of buyers.keys()) { const f = firstPaid[uid]; const from = d0 || [...days.keys()].sort()[0] || ''; if (f == null || kstOf(f) >= from) fresh++; }
-  const tierOf = new Map(PRODUCTS.map((x) => [x.id, x.tier]));
+  // picks (the ladder's 'pick:<t>' counters) are per tier over gift boards and 내 전광판 alike: shown on the gift product of the tier, and
+  // the conversion takes every paid order of a tier (both kinds) against them.
+  const tierOf = new Map(PRODUCTS.map((x) => [x.id, x.tier])), pickRow = new Map(PRODUCTS.filter((x) => x.kind === 'gift').map((x) => [x.id, x.tier]));
   const products = [...new Set([...PRODUCTS.map((x) => x.id), ...prods.keys()])].map((id) => {
-    const p = prods.get(id) || { id, paid: 0, gross: 0, refunds: 0, arms: {} }, t = tierOf.get(id);
+    const p = prods.get(id) || { id, paid: 0, gross: 0, refunds: 0, arms: {} }, t = pickRow.get(id);
     return { ...p, picks: t ? Number(picks[t]) || 0 : null };
   });
+  const tierPaid = products.reduce((s, p) => s + (tierOf.get(p.id) ? p.paid : 0), 0), allPicks = products.reduce((s, p) => s + (p.picks || 0), 0);
   const rate = (a, b) => (b ? Math.round((a / b) * 1000) / 1000 : null);
   return {
     paid: real.length, gross, net: gross - ramt, aov: real.length ? Math.round(gross / real.length) : 0,
@@ -197,7 +192,7 @@ export function revenueOf(rows, { firstPaid = {}, picks = {}, funnel = {}, d0 = 
     buyers: { total: buyers.size, new: fresh, repeat: buyers.size - fresh },
     ref: { n: refN, gross: refG },
     days: [...days.values()].sort((a, b) => (a.day < b.day ? -1 : 1)), products,
-    conversion: { checkout: rate(Number(funnel.pay_success) || 0, Number(funnel.checkout_start) || 0), picks: rate(products.reduce((s, p) => s + (p.picks != null ? p.paid : 0), 0), products.reduce((s, p) => s + (p.picks || 0), 0)) },
+    conversion: { checkout: rate(Number(funnel.pay_success) || 0, Number(funnel.checkout_start) || 0), picks: rate(tierPaid, allPicks) },
     cost: { ...costOf(gross), perOrder: real.length ? costOf(gross / real.length) : null },
     funnel, excluded: rows.filter((o) => !isReal(o) && o.paid_at != null).length,
   };
@@ -218,8 +213,10 @@ export function ordersCsv(rows) {
 export const PAY_ERR = Object.freeze({
   off: '지금은 결제를 받지 않아요.', login: '결제하려면 로그인해 주세요.', allow: '지금은 결제를 열어 둔 계정만 쓸 수 있어요.',
   busy: '지금은 사람이 많아서 결제를 잠시 멈췄어요. 잠시 뒤에 다시 해 주세요.', rate: '너무 빨리 누르고 있어요. 1분 뒤에 다시 해 주세요.',
-  product: '그 상품은 지금 살 수 없어요.', price: '가격이 바뀌었어요. 바뀐 가격을 확인하고 다시 눌러 주세요.', board: '내 선물 전광판에만 결제할 수 있어요.',
+  product: '그 상품은 지금 살 수 없어요.', price: '가격이 바뀌었어요. 바뀐 가격을 확인하고 다시 눌러 주세요.', board: '내 전광판(내가 만든 선물 전광판이나 내 전광판)에만 결제할 수 있어요.',
   nf: '주문을 찾지 못했어요.', state: '이 주문은 지금 그 단계로 갈 수 없어요.', pg: '결제사에 확인하지 못했어요. 잠시 뒤에 다시 확인해 주세요.',
   amount: '결제 금액이 주문과 달라서 결제를 확정하지 않았어요. 운영자가 확인 후 환불해 드려요.', down: '처리하지 못했어요. 잠시 뒤에 다시 해 주세요.',
   note: '이유를 적어 주세요.', keys: '결제 설정이 아직 없어요(운영자).',
+  have: '이 전광판은 이미 결제한 상품이 있어요. 바꾸려면 설정의 문의하기로 알려 주세요.', late: '광장에서 내려온 전광판에는 결제할 수 없어요.',
+  full: '그 시간에는 광장 화면이 가득 차서 12시간으로 늘릴 수 없어요. 다른 날이나 시간의 전광판에서 해 주세요.', tower: '이 전광판이 걸리는 시간에 메인 타워 자리가 남아 있지 않아서 메인 타워 주인공은 살 수 없어요.',
 });

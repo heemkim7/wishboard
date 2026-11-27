@@ -18,7 +18,7 @@ import { adTables, adIngest, adTenure, adRename, adForget, adReport } from './ad
 import { OPS_THEME_KEYS } from './seasons.js';
 import * as ops from './ops.js'; // 운영 장치: error reports, 문의하기, operator details, maintenance, /rt/health extras
 import { adsApi, adsDb, adsWorld } from './adsrv.js';
-import { giftApi, giftDb, giftPath, giftPage, giftWorld, giftMove, giftForget, shareOpen, shareReact, shareMaker, shareCount } from './giftsrv.js'; // 선물 전광판 (docs/gift-board.md); 공유 보상 on wish and board links
+import { giftApi, giftDb, giftPath, giftPage, giftWorld, giftMove, giftForget, shareOpen, shareReact, shareMaker, shareCount, giftPerkFit, giftPerkOn, giftPerkOff } from './giftsrv.js'; // 선물 전광판 (docs/gift-board.md); 공유 보상 on wish and board links
 import { sharePage } from './sharepage.js'; // /rt/card/<slot> and /rt/w/<id>: their own pages, no jump into the 3D plaza
 import { friendsText } from './towerrules.js';
 import { GIFT_ID } from './giftrules.js';
@@ -303,6 +303,9 @@ export class Meter extends DurableObject {
   giftTowerEntryAt(id, m, now) { return giftDb.towerEntryAt(this.giftI(), id, m, now); } // the 'dark' alarm at a board's reveal
   giftWorldRead(now) { return giftDb.worldRead(this.giftI(), now); } // /rt/world's gifts and main tower bookings
   giftRefundFail(o) { return giftDb.refundFail(this.giftI(), o); } // a row the operator pays by hand (the admin gift view)
+  giftPerkFit(id, uid, gives, now) { return giftDb.perkFit(this.giftI(), id, uid, gives, now); } // 주문·결제: can the board take these perks
+  giftPerkOn(id, uid, order, gives, now) { return giftDb.perkOn(this.giftI(), id, uid, order, gives, now); } // a paid order published: its perks on
+  giftPerkOff(id, order, now) { return giftDb.perkOff(this.giftI(), id, order, now); } // that order refunded: its perks off
   // 응원 팀과 명당 (teamsrv.js): instance 'team' keeps the teams, their members, one support per account and day, the day counters,
   // anniversaries, achievements and each day's frozen plan for the prime screens.
   teamI() { if (!this.teamOk) { this.teamOk = 1; teamDb.tables(this.ctx.storage.sql); } return this.ctx.storage.sql; }
@@ -2103,6 +2106,9 @@ const HUMAN_BAD = new Set(['missing-input-response', 'invalid-input-response', '
 // What giftsrv.js gets from here (the env it is handed is the tallied one, so its DO calls count in the daily budget).
 // humanSite: the public Turnstile key for the gift page's data (a 💖 asks its 'theart' token itself); rpc: grant_coins for the share reward
 // and refunds, spend_plaza for the main tower minute; towerTell: the rooms' TOWER push; towerLater: the same at a board's reveal.
+// What ordersrv.js gets: the account and budget checks, and the gift side's perk hooks (giftsrv.js: perkFit before an order, perkOn when
+// one is published, perkOff when one is refunded), which take the same kit giftsrv.js gets (a main tower minute let go is told to the rooms).
+const orderKit = () => ({ adminOk, lvlNow, resolveActor, tokenOf, actOk, perkFit: (env, o) => giftPerkFit(env, o), perkOn: (env, ctx, o) => giftPerkOn(env, ctx, giftKit(), o), perkOff: (env, ctx, o) => giftPerkOff(env, ctx, giftKit(), o) });
 const giftKit = () => ({ adminOk, lvlNow, resolveActor, tokenOf, ipHash: wishIp, humanGate, humanSite, actOk, pushNow, rpc: supabaseRpc, towerTell, towerLater, guestLike, testTraffic }); // testTraffic: the operator's device and tools/prod-e2e.mjs are not visitors
 // 메인 타워 축하 1분 (giftsrv.js): a booking, or its release ({ id, m, off: 1 }), to the plaza rooms someone sits in (wishRooms of both
 // bases) as WORLD_UPDATE kind TOWER. env is the tallied one giftsrv.js was handed, so these DO calls count. Nothing at budget hard.
@@ -3759,7 +3765,7 @@ export default {
     if (u.pathname === '/rt/sponsor' && req.method === 'GET') return J({ url: extUrl(env.SPONSOR_INQUIRY_URL) || '' });
     if (u.pathname.startsWith('/rt/ads/') || u.pathname === '/rt/admin/ads' || u.pathname.startsWith('/rt/admin/ads/')) return adsApi(req, env, ctx, u, { adminOk, lvlNow, resolveActor, tokenOf, ipHash: wishIp, // 광고 판매 (adsrv.js; networks: IPv6 by /64)
       dropWorld: async () => { PC.delete('world'); try { await caches.default.delete(new Request(WORLD_CACHE)); } catch { } } });
-    if (orderPath(u.pathname)) return orderApi(req, env, ctx, u, { adminOk, lvlNow, resolveActor, tokenOf, actOk }); // 주문·결제 (ordersrv.js): off = 404 for buyers; /rt/admin/order* behind admGate
+    if (orderPath(u.pathname)) return orderApi(req, env, ctx, u, orderKit()); // 주문·결제 (ordersrv.js): off = 404 for buyers; /rt/admin/order* behind admGate
     if (giftPath(u.pathname)) return giftApi(req, env, ctx, u, giftKit(env, req)); // 선물 전광판 (giftsrv.js; networks: IPv6 by /64)
     if (teamPath(u.pathname)) return teamApi(req, env, ctx, u, teamKit()); // 응원 팀과 명당 (teamsrv.js; networks: IPv6 by /64)
     if (u.pathname.startsWith('/g/')) return giftPage(req, env, ctx, u, giftKit(env, req)); // its recipient page: no room, no 3D

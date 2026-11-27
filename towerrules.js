@@ -59,7 +59,8 @@ export function linkFault(open, o = {}) {
 }
 /** The only public word of it: how many friends (uncapped), '' at 0. */
 export function friendsText(n) { const k = Math.floor(Number(n)); return k > 0 ? `친구 ${k}명이 응원했어요` : ''; }
-export const TOWER_HOW = Object.freeze(['friends', 'points']);
+// paid: 메인 타워 주인공 (giftrules.js TIERS 3), a board whose paid order is published (no friends, no points, no 30 days between).
+export const TOWER_HOW = Object.freeze(['friends', 'points', 'paid']);
 // spend_plaza's answer to an amount it does not take (schema.sql). Before migrations/2026-11-27-tower-minute.sql 2,000 is one of them.
 export const SPEND_OLD = '그 금액은 쓸 수 없어요.';
 export const TOWER_ERR = Object.freeze({
@@ -73,6 +74,7 @@ export const TOWER_ERR = Object.freeze({
   account: '계정을 연결하면 포인트로 올릴 수 있어요.',
   poor: '포인트가 부족해요. 광장에서 방금 받은 포인트는 1분쯤 뒤에 반영돼요.',
   prep: '포인트로 올리기는 준비 중이에요.',
+  paid: '메인 타워 주인공 결제가 게시된 전광판만 바로 고를 수 있어요.',
 });
 export const TOWER_WORD = Object.freeze({ bday: '생일', anniv: '기념일', pass: '합격', cheer: '응원', just: '특별한 날', thanks: '고마운 날' });
 
@@ -103,7 +105,8 @@ export function towerDays(g) { const a = kstDay(Number(g.a)), b = kstDay(Number(
 /**
  * Why a booking is refused, or ''. o: { g (the stored board), uid (the asker), how, m, now, guest (a guest or an anonymous login),
  * boardHas (this board already has one), taken (minute m has a board), dayN (bookings on m's KST day), mine (this maker has one that day),
- * gap (a points booking of this account in the last TOWER.gapDays), friends (reacting networks) }.
+ * gap (a points booking of this account in the last TOWER.gapDays), friends (reacting networks), paid (the board's 메인 타워 주인공 order is
+ * published, for how 'paid': it skips the friends, the points and the one-a-day-per-maker rule, never the minute rules or the 30 a day) }.
  */
 export function towerFault(o = {}) {
   const g = o.g;
@@ -114,6 +117,7 @@ export function towerFault(o = {}) {
   if (minuteFault(g, o.m, o.now)) return 'minute';
   if (o.taken) return 'taken';
   if ((Number(o.dayN) || 0) >= TOWER.perDay) return 'sold';
+  if (o.how === 'paid') return o.paid ? '' : 'paid';
   if (o.mine) return 'day';
   if (o.how === 'friends' && (Number(o.friends) || 0) < TOWER.friends) return 'friends';
   if (o.how === 'points' && o.guest) return 'account';
@@ -145,7 +149,8 @@ export function towerClock(m) { const { h, mi } = kstHM(m); return two(h) + ':' 
 export function towerLook(m, now) { const t = Number(m); if (!(t > 0)) return 'none'; return now < t ? 'soon' : now < t + TOWER.minMs ? 'live' : 'done'; }
 /**
  * The owner's card. s: { g (the owner's view: phase, a, b), tw ({ m, how } | null), now, days ({ day: { left, mine } }), taken, friends, guest,
- * prep, gap }. -> { state, … }: 'booked' | 'live' | 'done' (tw set: m), 'closed' (the window is over or no minute is left ahead), 'sold'
+ * prep, gap, paid (the board has the 메인 타워 주인공 perk: how 'paid', and one booking a day per maker does not hold it back) }.
+ * -> { state, … }: 'booked' | 'live' | 'done' (tw set: m), 'closed' (the window is over or no minute is left ahead), 'sold'
  * (every day of the window is full), 'mine' (this maker already has one on every day still open), 'open' ({ left, friends, need, canFriends,
  * points: 'ok' | 'account' | 'prep' | 'gap', minutes }).
  */
@@ -158,10 +163,10 @@ export function towerCard(s = {}) {
   if (!ahead.some((x) => x.why === '')) return { state: 'closed' };
   const open = ahead.filter((x) => x.why === '' && day(x.m).left > 0);
   if (!open.length) return { state: 'sold' };
-  const free = open.filter((x) => !day(x.m).mine);
+  const paid = !!s.paid, free = open.filter((x) => paid || !day(x.m).mine);
   if (!free.length) return { state: 'mine' };
-  const minutes = towerMinutes(g, now, s.taken).map((x) => ({ m: x.m, why: x.why || (day(x.m).left <= 0 ? 'sold' : day(x.m).mine ? 'day' : '') }));
+  const minutes = towerMinutes(g, now, s.taken).map((x) => ({ m: x.m, why: x.why || (day(x.m).left <= 0 ? 'sold' : !paid && day(x.m).mine ? 'day' : '') }));
   const friends = Math.max(0, Math.floor(Number(s.friends) || 0));
   return { state: 'open', left: Math.min(...towerDays(g).map((d) => (days[d] ? days[d].left : TOWER.perDay))), friends, need: TOWER.friends, canFriends: friends >= TOWER.friends,
-    points: s.guest ? 'account' : s.prep ? 'prep' : s.gap ? 'gap' : 'ok', minutes };
+    points: s.guest ? 'account' : s.prep ? 'prep' : s.gap ? 'gap' : 'ok', paid, minutes };
 }

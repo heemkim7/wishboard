@@ -3,10 +3,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ST, MOVES, canMove, PRODUCTS, productList, productFault, newOrderId, ORDER_ID, armOf, REFUND_RULES, COST, costOf,
+  ST, MOVES, canMove, PRODUCTS, PRODUCT_KINDS, PRODUCT_FIXED, productId, givesOf, kindOfBoard, productList, productFault, newOrderId, ORDER_ID, armOf, REFUND_RULES, COST, costOf,
   payOn, payMode, payAllowed, payPublic, pgVerdict, revenueOf, ordersCsv, PAY_EVENTS, PAY, isReal, kstOf,
 } from '../payrules.js';
-import { TIERS } from '../giftrules.js';
+import { TIERS, ladderArm } from '../giftrules.js';
 
 describe('the order state machine', () => {
   it('has the eight states and an explicit transition table', () => {
@@ -39,6 +39,19 @@ describe('products', () => {
       assert.equal(p.price, t.price, p.id); assert.equal(p.name, t.name, p.id);
     }
   });
+  it('derived from TIERS: one product per paid tier and kind (gift, personal for 내 전광판), the tier lines as perks, its perk keys', () => {
+    const paid = TIERS.filter((t) => t.t > 0);
+    assert.equal(PRODUCTS.length, paid.length * 2);
+    for (const kind of PRODUCT_KINDS) for (const t of paid) {
+      const p = PRODUCTS.find((x) => x.kind === kind && x.tier === t.t); assert.ok(p, kind + t.t);
+      assert.equal(p.id, kind + '_' + t.key); assert.equal(productId(kind, t.t), p.id);
+      assert.deepEqual([...p.perks], [...t.items]); assert.deepEqual([...p.gives], [...t.gives]); assert.equal(p.price, t.price); assert.equal(p.active, true);
+    }
+    assert.deepEqual(PRODUCTS.filter((p) => p.kind === 'gift').map((p) => p.id), ['gift_long', 'gift_video', 'gift_tower']);
+    assert.equal(productId('gift', 0), '', 'the free tier is no product'); assert.equal(productId('nope', 1), '');
+    assert.deepEqual(givesOf(['gift_long']), ['long']); assert.deepEqual(givesOf(['personal_tower']).sort(), ['clean', 'long', 'tower']); assert.deepEqual(givesOf(['zzz']), []);
+    assert.equal(kindOfBoard({ occ: 'me' }), 'personal'); assert.equal(kindOfBoard({ occ: 'bday' }), 'gift');
+  });
   it('every product has an id, a kind, a price in KRW with VAT, perks and an active flag', () => {
     const ids = new Set();
     for (const p of PRODUCTS) {
@@ -47,23 +60,18 @@ describe('products', () => {
       assert.ok(Array.isArray(p.perks) && p.perks.length); assert.equal(typeof p.active, 'boolean');
     }
   });
-  it('stored edits override the defaults by id; unknown stored ids are dropped', () => {
-    const list = productList([{ id: 'gift_big', price: 4900, active: false, perks: ['큰 화면'], name: '크게!' }, { id: 'zzz', price: 1 }]);
-    const big = list.find((p) => p.id === 'gift_big');
-    assert.equal(big.price, 4900); assert.equal(big.active, false); assert.deepEqual(big.perks, ['큰 화면']); assert.equal(big.kind, 'gift', 'kind is not editable');
-    assert.equal(list.length, PRODUCTS.length); assert.ok(!list.find((p) => p.id === 'zzz'));
+  it('stored switches: only active is read; an older store\'s price, name or perks edits are never used; unknown ids are dropped', () => {
+    const list = productList([{ id: 'gift_long', price: 4900, active: false, perks: ['큰 화면'], name: '크게!', arms: [{ arm: 'B', price: 5900 }] }, { id: 'zzz', price: 1 }]);
+    const p = list.find((x) => x.id === 'gift_long');
+    assert.equal(p.active, false); assert.equal(p.price, 3900); assert.equal(p.name, '오래 걸기'); assert.deepEqual(p.perks, [...TIERS[1].items]); assert.equal(p.kind, 'gift');
+    assert.equal(list.length, PRODUCTS.length); assert.ok(!list.find((x) => x.id === 'zzz'));
   });
-  it('an admin edit is checked', () => {
-    assert.equal(productFault({ id: 'gift_big', price: 3900 }).ok, true);
-    assert.equal(productFault({ id: 'nope', price: 3900 }).ok, false);
-    assert.equal(productFault({ id: 'gift_big', price: 50 }).ok, false);
-    assert.equal(productFault({ id: 'gift_big', price: 3900.5 }).ok, false);
-    assert.equal(productFault({ id: 'gift_big', price: 10_000_001 }).ok, false);
-    assert.equal(productFault({ id: 'gift_big', perks: [] }).ok, false);
-    assert.equal(productFault({ id: 'gift_big', perks: ['x'.repeat(81)] }).ok, false);
-    const ok = productFault({ id: 'gift_big', price: '4900', active: 'false', perks: [' a ', 'b'], armB: '5900' });
-    assert.equal(ok.ok, true); assert.deepEqual(ok.v, { id: 'gift_big', price: 4900, active: false, perks: ['a', 'b'], arms: [{ arm: 'B', price: 5900 }] });
-    assert.deepEqual(productFault({ id: 'gift_big', armB: '' }).v.arms, [], 'an empty B price ends the experiment');
+  it('an admin edit can only switch a product on or off', () => {
+    assert.deepEqual(productFault({ id: 'gift_long', active: 'false' }), { ok: true, v: { id: 'gift_long', active: false } });
+    assert.deepEqual(productFault({ id: 'gift_long', active: true }).v, { id: 'gift_long', active: true });
+    assert.equal(productFault({ id: 'nope', active: true }).ok, false);
+    assert.equal(productFault({ id: 'gift_long' }).ok, false, 'nothing to change');
+    for (const k of ['price', 'perks', 'name', 'armB']) { const r = productFault({ id: 'gift_long', active: true, [k]: '4900' }); assert.equal(r.ok, false, k); assert.equal(r.error, PRODUCT_FIXED); }
   });
 });
 
@@ -74,13 +82,14 @@ describe('ids and price arms', () => {
     assert.equal(seen.size, 200);
     assert.match(newOrderId(), /^o_[A-Za-z0-9]{20}$/);
   });
-  it('without an experiment the arm is A at the base price', () => {
-    const p = PRODUCTS[0]; assert.deepEqual(armOf(p, 'user:abc'), { arm: 'A', price: p.price });
-  });
-  it('with a B price the arm is fixed per buyer and both arms get buyers', () => {
-    const p = { ...PRODUCTS[0], arms: [{ arm: 'B', price: 4900 }] }, n = { A: 0, B: 0 };
-    for (let i = 0; i < 400; i++) { const uid = 'user:' + i, a = armOf(p, uid); assert.deepEqual(armOf(p, uid), a, 'same buyer, same arm'); n[a.arm]++; assert.equal(a.price, a.arm === 'A' ? p.price : 4900); }
-    assert.ok(n.A > 120 && n.B > 120, JSON.stringify(n));
+  it('the price is the board arm\'s (giftrules.js ladderArm over GIFT_ARMS), the same the owner page shows', () => {
+    const p = PRODUCTS.find((x) => x.id === 'gift_video');
+    assert.deepEqual(armOf(p, null), { arm: 'A', price: 7900 }, 'no ladder: arm A at the tier price');
+    assert.deepEqual(armOf(p, ladderArm('abcdefgh')), { arm: 'A', price: 7900 });
+    const spec = 'A:3900/7900/14900;B:2900/5900/11900', n = { A: 0, B: 0 };
+    for (let i = 0; i < 300; i++) { const id = 'b' + String(i).padStart(7, '0'), l = ladderArm(id, spec), a = armOf(p, l); assert.deepEqual(armOf(p, ladderArm(id, spec)), a, 'same board, same arm'); n[a.arm]++; assert.equal(a.price, l.p[2]); assert.equal(a.price, a.arm === 'A' ? 7900 : 5900); }
+    assert.ok(n.A > 90 && n.B > 90, JSON.stringify(n));
+    assert.deepEqual(armOf(p, { a: 'B', p: [0, 1, 2] }), { arm: 'A', price: 7900 }, 'a ladder that does not read');
   });
 });
 
@@ -156,14 +165,15 @@ describe('revenue', () => {
   const T0 = Date.parse('2027-01-10T03:00:00Z'); // 12:00 KST
   const ord = (i, x = {}) => ({ id: 'o_' + String(i).padStart(20, '0'), uid: 'user:' + (x.u ?? i), kind: 'gift', product: 'gift_video', price: 7900, arm: 'A', st: 'PUBLISHED', created_at: T0, paid_at: T0, refunded_at: null, how: 'pg', mode: 'live', ref: '', ...x });
   it('test and mock orders are left out; refunds, AOV, buyers, ref, PG cost', () => {
-    const rows = [ord(1), ord(2, { u: 1, paid_at: T0 + 864e5 }), ord(3, { st: 'REFUNDED', refunded_at: T0 + 3600e3 }), ord(4, { how: 'test', mode: 'test' }), ord(5, { how: 'manual', product: 'gift_big', price: 3900, ref: 'abcdefgh' }), ord(6, { st: 'PAYMENT_PENDING', paid_at: null })];
+    const rows = [ord(1), ord(2, { u: 1, paid_at: T0 + 864e5 }), ord(3, { st: 'REFUNDED', refunded_at: T0 + 3600e3 }), ord(4, { how: 'test', mode: 'test' }), ord(5, { how: 'manual', product: 'gift_long', price: 3900, ref: 'abcdefgh' }), ord(6, { st: 'PAYMENT_PENDING', paid_at: null })];
     const r = revenueOf(rows, { firstPaid: { 'user:1': T0, 'user:3': T0, 'user:5': T0 - 30 * 864e5 }, picks: { 1: 10, 2: 20, 3: 0 }, funnel: { checkout_start: 8, pay_success: 4 } });
     assert.equal(r.paid, 4); assert.equal(r.gross, 7900 * 3 + 3900); assert.equal(r.refunds.n, 1); assert.equal(r.refunds.amount, 7900); assert.equal(r.net, r.gross - 7900);
     assert.equal(r.aov, Math.round(r.gross / 4));
     assert.deepEqual(r.buyers, { total: 3, new: 2, repeat: 1 }, 'user:1 twice, user:3 new, user:5 bought before the range');
     assert.deepEqual(r.ref, { n: 1, gross: 3900 });
     assert.equal(r.days.find((d) => d.day === '2027-01-10').paid, 3); assert.equal(r.days.find((d) => d.day === '2027-01-11').paid, 1);
-    const v = r.products.find((p) => p.id === 'gift_video'); assert.equal(v.paid, 3); assert.equal(v.picks, 20); assert.equal(r.products.find((p) => p.id === 'gift_big').picks, 10);
+    const v = r.products.find((p) => p.id === 'gift_video'); assert.equal(v.paid, 3); assert.equal(v.picks, 20); assert.equal(r.products.find((p) => p.id === 'gift_long').picks, 10); assert.equal(r.products.find((p) => p.id === 'personal_long').picks, null, 'picks shown once per tier');
+    assert.equal(r.conversion.picks, Math.round((4 / 30) * 1000) / 1000, 'every paid order of a tier (both kinds) against the picks');
     assert.equal(r.conversion.checkout, 0.5);
     assert.equal(r.cost.pg.lo, Math.round(r.gross * 0.032 * 1.1)); assert.equal(r.cost.fixed, null);
     assert.equal(r.excluded, 1, 'the test order is counted apart');
@@ -176,7 +186,7 @@ describe('revenue', () => {
 
 describe('CSV', () => {
   it('quotes, escapes and defuses formulas', () => {
-    const csv = ordersCsv([{ id: 'o_1', uid: 'user:x', product: 'gift_big', price: 3900, st: 'PAID', how: 'pg', mode: 'live', created_at: 0, paid_at: 0, note: '=HYPERLINK("x"), "hi"\nthere', ref: '', ref_board: '', pg_tx: '', arm: 'A', kind: 'gift', refunded_at: null }]);
+    const csv = ordersCsv([{ id: 'o_1', uid: 'user:x', product: 'gift_long', price: 3900, st: 'PAID', how: 'pg', mode: 'live', created_at: 0, paid_at: 0, note: '=HYPERLINK("x"), "hi"\nthere', ref: '', ref_board: '', pg_tx: '', arm: 'A', kind: 'gift', refunded_at: null }]);
     const [head, line] = csv.split('\r\n');
     assert.match(head, /^id,created_kst,paid_kst,/);
     assert.ok(line.includes('"\'=HYPERLINK(""x""), ""hi""\nthere"'), line);

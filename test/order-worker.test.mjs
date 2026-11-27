@@ -16,7 +16,7 @@ registerHooks({
 globalThis.WebSocketRequestResponsePair = class { constructor(req, res) { this.req = req; this.res = res; } };
 const { Meter, Room } = await import('../worker.js');
 const worker = (await import('../worker.js')).default;
-const { kstDay } = await import('../giftrules.js');
+const { kstDay, ladderArm } = await import('../giftrules.js');
 const { giftSeenFlush } = await import('../giftsrv.js');
 const { hookSign, hookVerify, MOCK_HOOK_SECRET, orderCacheDrop, testTraffic } = await import('../ordersrv.js');
 
@@ -137,7 +137,8 @@ describe('switches: off means invisible', () => {
       env.PAY_ALLOW = 'user:x, ' + A.id;
       const ok = await (await H.get('/rt/order/products', A.token)).json();
       assert.equal(ok.ok, true); assert.equal(ok.test, true); assert.equal(ok.badge, '테스트 결제'); assert.match(ok.refund.before, /전액/);
-      assert.ok(ok.products.every((p) => p.kind && p.price > 0 && p.perks.length)); assert.ok(!ok.products.some((p) => p.id === 'personal_big'), 'inactive products are not listed');
+      assert.ok(ok.products.every((p) => p.kind && p.price > 0 && p.perks.length)); assert.equal(ok.products.length, 6, 'three tiers for gift boards and three for 내 전광판');
+      assert.deepEqual((await (await H.get('/rt/order/products?kind=personal', A.token)).json()).products.map((p) => p.id), ['personal_long', 'personal_video', 'personal_tower']);
       assert.equal(ok.sdk, 'https://cdn.portone.io/v2/browser-sdk.js');
       assert.equal((await H.post('/rt/order/o_' + 'a'.repeat(20) + '/mock', { result: 'paid' }, A.token)).status, 404, 'no fake payment window outside mock');
     } finally { done(); }
@@ -147,7 +148,7 @@ describe('switches: off means invisible', () => {
     try {
       const env = makeEnv({ PAY_ON: '1', PAY_MODE: 'mock' }), H = harness(env, LOCAL), A = await userToken(state, clock, U1);
       env.BUDGET_REQ_DAY = '1'; clock.add(61000);
-      const r = await H.post('/rt/order', { product: 'gift_big', boardId: 'abcdefgh' }, A.token);
+      const r = await H.post('/rt/order', { product: 'gift_long', boardId: 'abcdefgh' }, A.token);
       assert.equal(r.status, 503); assert.equal((await r.json()).code, 'busy');
       assert.equal(env.meters.has('order'), false);
       assert.equal(env.meters.has('gift'), false, 'nor the gift store');
@@ -166,7 +167,8 @@ describe('mock: the whole flow without keys', () => {
       assert.equal((await H.post('/rt/order', { product: 'gift_video', boardId: other, shown: 7900 }, A.token)).status, 403, "someone else's board");
       const moved = await H.post('/rt/order', { product: 'gift_video', boardId: bid, shown: 6900 }, A.token);
       assert.equal(moved.status, 409); assert.deepEqual(await moved.json(), { ok: false, code: 'price', error: '가격이 바뀌었어요. 바뀐 가격을 확인하고 다시 눌러 주세요.', price: 7900 });
-      assert.equal((await H.post('/rt/order', { product: 'personal_big', kind: 'personal' }, A.token)).status, 400, 'inactive product');
+      assert.equal((await H.post('/rt/order', { product: 'personal_long', kind: 'personal' }, A.token)).status, 400, 'every product is for a board');
+      assert.equal((await H.post('/rt/order', { product: 'personal_long', boardId: bid }, A.token)).status, 400, 'a 내 전광판 product on a gift board');
       const c = await (await H.post('/rt/order', { product: 'gift_video', boardId: bid, shown: 7900, ref: other }, A.token)).json();
       assert.equal(c.ok, true); assert.match(c.order.id, /^o_[A-Za-z0-9]{20}$/); assert.equal(c.order.st, 'CREATED'); assert.equal(c.order.perksActive, false); assert.equal(c.order.test, true);
       const id = c.order.id;
@@ -200,7 +202,7 @@ describe('mock: the whole flow without keys', () => {
     const { clock, state, done } = setup();
     try {
       const env = makeEnv({ PAY_ON: '1', PAY_MODE: 'mock' }), H = harness(env, LOCAL), A = await userToken(state, clock, U1), bid = await board(H, A.token);
-      const mk = async () => (await (await H.post('/rt/order', { product: 'gift_big', boardId: bid, shown: 3900 }, A.token)).json()).order.id;
+      const mk = async () => (await (await H.post('/rt/order', { product: 'gift_long', boardId: bid, shown: 3900 }, A.token)).json()).order.id;
       const f = await mk(); await H.post('/rt/order/' + f + '/pay', {}, A.token);
       await H.post('/rt/order/' + f + '/fail', { code: 'USER_CANCEL' }, A.token);
       await H.post('/rt/order/' + f + '/mock', { result: 'failed' }, A.token);
@@ -218,7 +220,7 @@ describe('mock: the whole flow without keys', () => {
     const { clock, state, done } = setup();
     try {
       const env = makeEnv({ PAY_ON: '1', PAY_MODE: 'mock' }), H = harness(env, LOCAL), A = await userToken(state, clock, U1), bid = await board(H, A.token);
-      const id = (await (await H.post('/rt/order', { product: 'gift_big', boardId: bid }, A.token)).json()).order.id;
+      const id = (await (await H.post('/rt/order', { product: 'gift_long', boardId: bid }, A.token)).json()).order.id;
       await H.post('/rt/order/' + id + '/pay', {}, A.token);
       assert.equal((await (await H.post('/rt/order/' + id + '/cancel', {}, A.token)).json()).order.st, 'CANCELLED');
       await H.post('/rt/order/' + id + '/mock', { result: 'paid' }, A.token);
@@ -252,7 +254,7 @@ describe('webhook signatures (Standard Webhooks)', () => {
       const env = makeEnv({ PAY_ON: '1', PORTONE_STORE_ID: 'store-1', PORTONE_CHANNEL_KEY: 'channel-key-test', PORTONE_API_SECRET: 'api-secret-test' }), H = harness(env), A = await userToken(state, clock, U1);
       assert.equal((await signed(H, SEC, hookBody('o_' + 'a'.repeat(20)))).status, 503, 'no PORTONE_WEBHOOK_SECRET yet');
       env.PORTONE_WEBHOOK_SECRET = SEC; env.PAY_ALLOW = A.id;
-      const bid = await board(H, A.token), id = (await (await H.post('/rt/order', { product: 'gift_big', boardId: bid }, A.token)).json()).order.id;
+      const bid = await board(H, A.token), id = (await (await H.post('/rt/order', { product: 'gift_long', boardId: bid }, A.token)).json()).order.id;
       await H.post('/rt/order/' + id + '/pay', {}, A.token);
       state.pg.set(id, { id, status: 'PAID', transactionId: 'tx-1', amount: { total: 3900 }, currency: 'KRW', channel: { type: 'TEST' }, storeId: 'store-1' });
       assert.equal((await signed(H, SEC, hookBody(id), { sig: 'v1,' + Buffer.from('nope').toString('base64') })).status, 400);
@@ -277,11 +279,11 @@ describe('PortOne test and live modes (fake api.portone.io)', () => {
     try {
       const env = makeEnv({ PAY_ON: '1' }), H = harness(env), A = await userToken(state, clock, U1); env.PAY_ALLOW = A.id;
       const bid = await board(H, A.token);
-      const id = (await (await H.post('/rt/order', { product: 'gift_nine', boardId: bid, shown: 14900 }, A.token)).json()).order.id;
+      const id = (await (await H.post('/rt/order', { product: 'gift_tower', boardId: bid, shown: 14900 }, A.token)).json()).order.id;
       const nokeys = await H.post('/rt/order/' + id + '/pay', {}, A.token); assert.equal(nokeys.status, 503); assert.equal((await nokeys.json()).code, 'keys');
       Object.assign(env, { PORTONE_STORE_ID: 'store-1', PORTONE_CHANNEL_KEY: 'channel-key-test' });
       const pay = await (await H.post('/rt/order/' + id + '/pay', {}, A.token)).json();
-      assert.deepEqual(pay.sdk, { storeId: 'store-1', channelKey: 'channel-key-test', paymentId: id, orderName: '9시 주인공', totalAmount: 14900, currency: 'CURRENCY_KRW', payMethod: 'CARD' });
+      assert.deepEqual(pay.sdk, { storeId: 'store-1', channelKey: 'channel-key-test', paymentId: id, orderName: '메인 타워 주인공', totalAmount: 14900, currency: 'CURRENCY_KRW', payMethod: 'CARD' });
       assert.equal((await H.post('/rt/order/' + id + '/confirm', {}, A.token)).status, 503, 'no API secret');
       env.PORTONE_API_SECRET = 'api-secret-test';
       const early = await (await H.post('/rt/order/' + id + '/confirm', {}, A.token)).json(); assert.equal(early.pending, true, 'PortOne does not know it yet');
@@ -291,12 +293,12 @@ describe('PortOne test and live modes (fake api.portone.io)', () => {
       assert.deepEqual(state.cancels, [{ pid: id, body: { storeId: 'store-1', reason: '테스트 환불' }, key: 'refund-' + id }]);
       // live
       env.PAY_MODE = 'live'; delete env.PAY_ALLOW;
-      const L = (await (await H.post('/rt/order', { product: 'gift_big', boardId: bid, shown: 3900 }, A.token)).json()).order.id; await H.post('/rt/order/' + L + '/pay', {}, A.token);
+      const L = (await (await H.post('/rt/order', { product: 'gift_long', boardId: bid, shown: 3900 }, A.token)).json()).order.id; await H.post('/rt/order/' + L + '/pay', {}, A.token);
       state.pg.set(L, { id: L, status: 'PAID', transactionId: 'tx-L', amount: { total: 3900 }, currency: 'KRW', channel: { type: 'LIVE' } });
       assert.equal((await (await H.post('/rt/order/' + L + '/confirm', {}, A.token)).json()).order.test, false);
       const rev = (await (await H.admin('/rt/admin/order-revenue')).json()).revenue;
       assert.equal(rev.paid, 1); assert.equal(rev.gross, 3900); assert.equal(rev.excluded, 1, 'the test-channel order'); assert.deepEqual(rev.buyers, { total: 1, new: 1, repeat: 0 });
-      assert.equal(rev.products.find((p) => p.id === 'gift_big').picks, 0, 'picks read from the gift counters');
+      assert.equal(rev.products.find((p) => p.id === 'gift_long').picks, 0, 'picks read from the gift counters');
       assert.equal(rev.cost.pg.lo, Math.round(3900 * 0.032 * 1.1)); assert.equal(rev.cost.fixed, null);
       // a cancel made in the PortOne console reaches the order through its webhook
       env.PORTONE_WEBHOOK_SECRET = 'whsec_' + Buffer.from('k').toString('base64'); state.pg.get(L).status = 'CANCELLED';
@@ -311,7 +313,7 @@ describe('publishing', () => {
     const { clock, state, done } = setup();
     try {
       const env = makeEnv({ PAY_ON: '1', PAY_MODE: 'mock' }), H = harness(env, LOCAL), A = await userToken(state, clock, U1), bid = await board(H, A.token);
-      const id = (await (await H.post('/rt/order', { product: 'gift_big', boardId: bid }, A.token)).json()).order.id;
+      const id = (await (await H.post('/rt/order', { product: 'gift_long', boardId: bid }, A.token)).json()).order.id;
       await H.post('/rt/order/' + id + '/pay', {}, A.token);
       env.meter('gift').sql.db.prepare('update gb set uid = ? where id = ?').run('user:someone-else', bid);
       await H.post('/rt/order/' + id + '/mock', { result: 'paid' }, A.token);
@@ -333,11 +335,11 @@ describe('the operator routes', () => {
     try {
       const env = makeEnv({ PAY_ON: '1', PAY_MODE: 'mock' }), H = harness(env, LOCAL), A = await userToken(state, clock, U1), bid = await board(H, A.token);
       for (const p of ['/rt/admin/orders', '/rt/admin/order-products', '/rt/admin/order-revenue', '/rt/admin/orders.csv', '/rt/admin/order/o_' + 'a'.repeat(20)]) assert.equal((await H.get(p)).status, 401, p);
-      const a = (await (await H.post('/rt/order', { product: 'gift_big', boardId: bid }, A.token)).json()).order.id;
+      const a = (await (await H.post('/rt/order', { product: 'gift_long', boardId: bid }, A.token)).json()).order.id;
       clock.add(1000);
       const b = (await (await H.post('/rt/order', { product: 'gift_video', boardId: bid }, A.token)).json()).order.id;
       const all = await (await H.admin('/rt/admin/orders')).json(); assert.deepEqual(all.orders.map((o) => o.id), [b, a]); assert.equal(all.sw.on, true); assert.equal(all.sw.mode, 'mock');
-      assert.deepEqual((await (await H.admin('/rt/admin/orders?product=gift_big')).json()).orders.map((o) => o.id), [a]);
+      assert.deepEqual((await (await H.admin('/rt/admin/orders?product=gift_long')).json()).orders.map((o) => o.id), [a]);
       assert.deepEqual((await (await H.admin('/rt/admin/orders?st=PAID')).json()).orders, []);
       assert.equal((await (await H.admin('/rt/admin/orders?mode=test')).json()).orders.length, 2);
       assert.equal((await H.admin('/rt/admin/order/' + a + '/manual', { op: 'paid' })).status, 400, 'no reason');
@@ -346,14 +348,20 @@ describe('the operator routes', () => {
       const mr = await (await H.admin('/rt/admin/order/' + a + '/refund', { note: 'x2' })).json(); assert.equal(mr.code, 'manual', 'a hand-paid order is not refunded through the PG');
       assert.equal((await (await H.admin('/rt/admin/order/' + a + '/manual', { op: 'refunded', note: '계좌로 돌려줌' })).json()).order.st, 'REFUNDED');
       // products
-      const bad = await H.admin('/rt/admin/order-products', { id: 'gift_big', price: 10 }); assert.equal(bad.status, 400);
-      const ed = await (await H.admin('/rt/admin/order-products', { id: 'gift_big', price: 4900, perks: '큰 화면에 24시간\n광고 없음', armB: '5900' })).json(); assert.equal(ed.ok, true);
-      const big = ed.products.find((p) => p.id === 'gift_big'); assert.equal(big.price, 4900); assert.deepEqual(big.perks, ['큰 화면에 24시간', '광고 없음']); assert.deepEqual(big.arms, [{ arm: 'B', price: 5900 }]);
-      const log = (await (await H.admin('/rt/admin/order-products')).json()).log; assert.equal(log.length, 1); assert.equal(log[0].after.price, 4900);
-      const shown = (await (await H.get('/rt/order/products', A.token)).json()).products.find((p) => p.id === 'gift_big');
-      assert.ok([4900, 5900].includes(shown.price)); assert.equal(shown.price, shown.arm === 'A' ? 4900 : 5900);
-      const c = await (await H.post('/rt/order', { product: 'gift_big', boardId: bid, shown: shown.price }, A.token)).json(); assert.equal(c.order.price, shown.price, 'the order keeps the shown arm price');
-      assert.equal(odb(env).prepare('select arm from orders where id = ?').get(c.order.id).arm, shown.arm);
+      // products: names, lines and prices come from giftrules.js TIERS (and GIFT_ARMS); the operator only switches one on or off
+      const bad = await H.admin('/rt/admin/order-products', { id: 'gift_long', price: 4900 }); assert.equal(bad.status, 400); assert.match((await bad.json()).error, /TIERS/);
+      const ed = await (await H.admin('/rt/admin/order-products', { id: 'gift_long', active: false })).json(); assert.equal(ed.ok, true);
+      assert.equal(ed.products.find((p) => p.id === 'gift_long').active, false); assert.equal(ed.products.find((p) => p.id === 'gift_long').price, 3900);
+      assert.ok(!(await (await H.get('/rt/order/products', A.token)).json()).products.some((p) => p.id === 'gift_long'), 'switched off: not listed');
+      assert.equal((await H.post('/rt/order', { product: 'gift_long', boardId: bid }, A.token)).status, 400, 'nor sold');
+      await H.admin('/rt/admin/order-products', { id: 'gift_long', active: true });
+      const log = (await (await H.admin('/rt/admin/order-products')).json()).log; assert.equal(log.length, 2); assert.deepEqual(log.map((l) => l.after.active).sort(), [false, true]);
+      // the price arm is the board's (GIFT_ARMS, the arm its owner page showed)
+      env.GIFT_ARMS = 'A:3900/7900/14900;B:2900/5900/11900';
+      const arm = ladderArm(bid, env.GIFT_ARMS), shown = (await (await H.get('/rt/order/products?board=' + bid, A.token)).json()).products.find((p) => p.id === 'gift_long');
+      assert.equal(shown.arm, arm.a); assert.equal(shown.price, arm.p[1]);
+      const c = await (await H.post('/rt/order', { product: 'gift_long', boardId: bid, shown: shown.price }, A.token)).json(); assert.equal(c.order.price, shown.price, 'the order keeps the shown arm price');
+      assert.equal(odb(env).prepare('select arm from orders where id = ?').get(c.order.id).arm, arm.a);
       // CSV
       const csv = await H.admin('/rt/admin/orders.csv');
       assert.match(csv.headers.get('content-type'), /^text\/csv; charset=utf-8/); assert.match(csv.headers.get('content-disposition'), /attachment; filename="orders-/);

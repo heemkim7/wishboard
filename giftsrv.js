@@ -16,9 +16,10 @@
 // an account link moves a guest's boards and lines to the account.
 //
 // Tables in instance 'gift' (made on first use):
-//   gb(id, at, uid, ip, day, a, b, scr, st, lk, ref, n, v, vd, kids, rp, vid, j, re, hr)  boards; j: { to, from, occ, msg, th }; re: the first
-//                                              답장 전광판 (a board made with re: 1 whose ref is this one), '' when none; hr: 💖 count. re and
-//                                              hr are added to older stores
+//   gb(id, at, uid, ip, day, a, b, scr, st, lk, ref, n, v, vd, kids, rp, vid, j, re, hr, dc, pk)  boards; j: { to, from, occ, msg, th }; re:
+//                                              the first 답장 전광판 (a board made with re: 1 whose ref is this one), '' when none; hr: 💖 count;
+//                                              pk: the paid perks of its published orders (giftrules.js perksOf, '' when none; perkOn / perkOff).
+//                                              re, hr, dc and pk are added to older stores
 //   gm(g, id, at, uid, nick, txt, ip, st, rp)  롤링페이퍼 lines; uid: the writer (guest or account), ip: network hash (both only for caps and reports)
 //   gv(g, v, at, dd, h)                        distinct visitors per board (v: a hash of the device's random id), dd: seen on the day, h: gave 💖
 //   gd(d, k, n)                                daily counters (KST): made, made_ref, made_again, start, start_ref, view, view_day, return_day,
@@ -48,8 +49,9 @@
 //                                              TOWER.payMax (no place). The operator's list (/rt/admin/gift/share) reads it; kept SHARE.dayKeep days
 //   sfr(uid, d, who)                           who already counted for that maker that day, on any network: 'a:<account or guest id>' or, for a
 //                                              gift page 💖 sent without a token, 'v:<device hash>'; kept SHARE.dayKeep days
-import { GIFT, GIFT_ID, PAPER_ID, VISITOR_ID, GIFT_ERR, giftFault, paperFault, pickScreen, nextFree, giftPhase, paperTakes, lockArm, giftView, giftShareText, refOf, kstDay, addDays, pruneDay, quietNow, AD_LABEL, videoKind, VIDEO_TYPE, rangeOf, windowText, OCCASIONS, TIERS, CER_BEACONS, REAL_BEACONS, MORE_BEACONS, ladderArm, heartsOpen, heartTakes, dayStart, botAgent, revealAt } from './giftrules.js';
-import { TOWER, SHARE, shareAmount, linkFault, TOWER_HOW, SPEND_OLD, TOWER_ERR, reactCounts, towerFault, towerDays, towerEntry } from './towerrules.js'; // 메인 타워 축하 1분 and the share reward
+import { GIFT, GIFT_ID, PAPER_ID, VISITOR_ID, GIFT_ERR, giftFault, paperFault, pickScreen, screenLoad, nextFree, PERK, perksOf, longEnd, giftPhase, paperTakes, lockArm, giftView, giftShareText, refOf, kstDay, addDays, pruneDay, quietNow, AD_LABEL, videoKind, VIDEO_TYPE, rangeOf, windowText, OCCASIONS, TIERS, CER_BEACONS, REAL_BEACONS, MORE_BEACONS, ladderArm, heartsOpen, heartTakes, dayStart, botAgent, revealAt } from './giftrules.js';
+import { TOWER, SHARE, shareAmount, linkFault, TOWER_HOW, SPEND_OLD, TOWER_ERR, reactCounts, towerFault, towerDays, towerEntry, towerMinutes } from './towerrules.js'; // 메인 타워 축하 1분 and the share reward
+import { orderPerks } from './ordersrv.js'; // 메인 타워 주인공: the order ledger says whether a board's paid booking stands
 import { opsRate } from './ops.js';
 
 const J = (o, s = 200, h = {}) => new Response(JSON.stringify(o), { status: s, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...h } });
@@ -71,7 +73,7 @@ const rowOf = (r) => {
   const j = parse(r.j), v = r.vid ? parse(r.vid) : null;
   return { id: String(r.id), at: Number(r.at), uid: String(r.uid), ip: String(r.ip), day: String(r.day), a: Number(r.a), b: Number(r.b), scr: String(r.scr), st: String(r.st), lk: Number(r.lk) || 0,
     ref: String(r.ref || ''), re: String(r.re || ''), hr: Number(r.hr) || 0, dc: Number(r.dc) ? 1 : 0, n: Number(r.n) || 0, v: Number(r.v) || 0, vd: Number(r.vd) || 0, kids: Number(r.kids) || 0, rp: Number(r.rp) || 0,
-    vid: v && v.t ? { t: String(v.t), n: Number(v.n) || 0, at: Number(v.at) || 0 } : null,
+    vid: v && v.t ? { t: String(v.t), n: Number(v.n) || 0, at: Number(v.at) || 0 } : null, pk: String(r.pk || ''),
     to: String(j.to || ''), from: String(j.from || ''), occ: String(j.occ || 'bday'), msg: String(j.msg || ''), th: String(j.th || '') };
 };
 const bump = (q, d, k, n = 1) => q.exec('insert into gd(d, k, n) values(?, ?, ?) on conflict(d, k) do update set n = n + excluded.n', d, k, n);
@@ -171,6 +173,15 @@ function heartPrune(q, d) {
 }
 // A board's line count, from what is left (after lines of one writer went).
 const recount = (q, g) => q.exec('update gb set n = (select count(*) from gm where gm.g = gb.id) where id = ?', g);
+// 오래 걸기: the screen board g can hang on until nb, from now on (or its start): its own while the other boards there leave room
+// (GIFT.perScreen at once), else the least-loaded other one (giftrules.js pickScreen); '' when none.
+function roomFor(q, g, nb, now) {
+  const a = Math.max(Number(g.a), Math.min(Number(now), Number(g.b)));
+  const rows = q.exec("select scr, a, b from gb where st = 'live' and id <> ? and b > ? and a < ?", g.id, a, nb).toArray().map((r) => ({ scr: String(r.scr), a: Number(r.a), b: Number(r.b) }));
+  return screenLoad(rows, g.scr, a, nb) < GIFT.perScreen ? g.scr : pickScreen(rows, a, nb);
+}
+// gb.pk as an object { o: { <order id>: [perk keys] } } (an empty one for '' or a value that does not read).
+const pkOf = (s) => { try { const j = JSON.parse(String(s || '')); if (j && j.o && typeof j.o === 'object' && !Array.isArray(j.o)) return { o: { ...j.o } }; } catch { /* none */ } return { o: {} }; };
 export const giftDb = {
   tables(q) {
     q.exec("create table if not exists gb(id text primary key, at integer not null, uid text not null, ip text not null, day text not null, a integer not null, b integer not null, scr text not null, st text not null, lk integer not null default 1, ref text not null default '', n integer not null default 0, v integer not null default 0, vd integer not null default 0, kids integer not null default 0, rp integer not null default 0, vid text not null default '', j text not null)");
@@ -182,6 +193,7 @@ export const giftDb = {
     try { q.exec("alter table gb add column re text not null default ''"); } catch { /* column already exists */ }
     try { q.exec('alter table gb add column hr integer not null default 0'); } catch { /* column already exists */ } // 💖 (2026-11-27), the same way
     try { q.exec('alter table gb add column dc integer not null default 0'); } catch { /* column already exists */ } // DISCOVER opt-in (2026-11-27), off
+    try { q.exec("alter table gb add column pk text not null default ''"); } catch { /* column already exists */ } // paid perks (2026-11-28)
     q.exec("create table if not exists gm(g text not null, id text not null, at integer not null, uid text not null, nick text not null, txt text not null, ip text not null, st text not null default 'live', rp integer not null default 0, primary key(g, id))");
     q.exec('create index if not exists gm_uid on gm(uid)');
     q.exec('create table if not exists gv(g text not null, v text not null, at integer not null, dd integer not null default 0, primary key(g, v))');
@@ -514,6 +526,64 @@ export const giftDb = {
     q.exec('delete from sfr where who = ?', 'a:' + uid); // and of this account as someone's friend
     return { ok: true, ids, lines: touched.length, offs };
   },
+  // ---- paid perks (ordersrv.js: an order of payrules.js PRODUCTS for this board; giftrules.js PERK) ----
+  // Before an order is made: can board id (the buyer uid's, still up) take these perks? long: a screen for GIFT.paidHours from its start;
+  // tower: a main tower minute still open in that window with a place left that day. -> { ok, kind, ref } (kind: the product kind, personal
+  // for a 내 전광판; ref: the board it was made from) | { ok: false, code: 'board' | 'late' | 'full' | 'tower' }.
+  perkFit(q, id, uid, gives = [], now = Date.now()) {
+    const g = this.get(q, id, now, false), want = (Array.isArray(gives) ? gives : []).map(String);
+    if (!g || giftPhase(g, now) === 'gone' || g.uid !== String(uid)) return { ok: false, code: 'board' };
+    const has = perksOf(g.pk), nb = want.includes(PERK.long) && !has.includes(PERK.long) ? Math.max(g.b, longEnd(g)) : g.b;
+    if (now >= nb) return { ok: false, code: 'late' };
+    if (nb > g.b && !roomFor(q, g, nb, now)) return { ok: false, code: 'full' };
+    if (want.includes(PERK.tower) && !q.exec('select 1 from gt where g = ? and hold = 0', g.id).toArray().length) {
+      lapse(q, now);
+      const w = { ...g, b: nb }, taken = q.exec('select m from gt where m >= ? and m < ?', w.a, w.b).toArray().map((r) => Number(r.m)), left = {};
+      for (const day of towerDays(w)) left[day] = TOWER.perDay - (Number(q.exec('select count(*) n from gt where day = ?', day).one().n) || 0);
+      if (!towerMinutes(w, now, taken).some((x) => x.why === '' && (left[kstDay(x.m)] ?? 0) > 0)) return { ok: false, code: 'tower' };
+    }
+    return { ok: true, kind: g.occ === 'me' ? 'personal' : 'gift', ref: g.ref };
+  },
+  // Publishing order `order` (paid): its perks go on the board, once (a second call for the same order changes nothing). long: the window
+  // ends GIFT.paidHours after its start, on its own screen or, when that one is full then, on the least-loaded free one (the plaza follows
+  // the board's scr); clean: the films without the watermark (giftView clean); tower: the main tower minute by how 'paid' (towerBook asks the
+  // order ledger too). -> { ok, b, scr, moved } | { ok: false, why: 'gone' | 'owner' | 'late' | 'full' }.
+  perkOn(q, id, uid, order, gives = [], now = Date.now()) {
+    const g = this.get(q, id, now, false);
+    if (!g || giftPhase(g, now) === 'gone') return { ok: false, why: 'gone' };
+    if (g.uid !== String(uid)) return { ok: false, why: 'owner' };
+    const pk = pkOf(g.pk), key = String(order || '');
+    if (!key) return { ok: false, why: 'order' };
+    if (pk.o[key]) return { ok: true, again: true, b: g.b, scr: g.scr, moved: false };
+    const want = (Array.isArray(gives) ? gives : []).map(String).filter((x) => Object.hasOwn(PERK, x));
+    let b = g.b, scr = g.scr;
+    if (want.includes(PERK.long) && longEnd(g) > g.b) {
+      if (now >= longEnd(g)) return { ok: false, why: 'late' };
+      scr = roomFor(q, g, longEnd(g), now); if (!scr) return { ok: false, why: 'full' };
+      b = longEnd(g);
+    }
+    pk.o[key] = want;
+    q.exec('update gb set b = ?, scr = ?, pk = ? where id = ?', b, scr, JSON.stringify(pk), g.id);
+    bump(q, kstDay(now), 'perk_on');
+    return { ok: true, b, scr, moved: scr !== g.scr };
+  },
+  // A refund of order `order`: its perks come off. Without long any more the window is GIFT.hours again (a board already past that comes
+  // down now); a booked main tower minute that has not started goes when it was paid ('paid', no points: it was money) and the tower perk is
+  // gone, or when the shorter window no longer holds it (towerFree: points back for a points booking). -> { ok, b, off? } (off: towerFree's).
+  perkOff(q, id, order, now = Date.now()) {
+    const g = rowOf(q.exec('select * from gb where id = ?', String(id || '')).toArray()[0]), key = String(order || '');
+    if (!g) return { ok: true, none: true };
+    const pk = pkOf(g.pk); if (!pk.o[key]) return { ok: true, none: true };
+    delete pk.o[key];
+    const left = perksOf(pk), base = g.a + GIFT.hours * 36e5;
+    const b = !left.includes(PERK.long) && g.b > base ? Math.max(base, Math.min(g.b, now)) : g.b;
+    const t = q.exec('select m, how from gt where g = ? and hold = 0', g.id).toArray()[0];
+    const drop = t && Number(t.m) > now && ((String(t.how) === 'paid' && !left.includes(PERK.tower)) || Number(t.m) + TOWER.minMs > b);
+    const off = drop ? this.towerFree(q, g.id, now) : null;
+    q.exec('update gb set b = ?, pk = ? where id = ?', b, Object.keys(pk.o).length ? JSON.stringify(pk) : '', g.id);
+    bump(q, kstDay(now), 'perk_off');
+    return { ok: true, b, ...(off ? { off } : {}) };
+  },
   // ---- 메인 타워 축하 1분 (towerrules.js) ----
   // The owner's card: the booking, each window day's places left (holds count) and whether this maker has one that day, the taken minutes of
   // the window (holds too), the friends so far, and whether a points booking of this account is under TOWER.gapDays old (or held now).
@@ -526,7 +596,7 @@ export const giftDb = {
     }
     const taken = q.exec('select m from gt where m >= ? and m < ? order by m', g.a, g.b).toArray().map((r) => Number(r.m));
     const friends = Number(q.exec('select count(*) n from gn where g = ?', g.id).one().n) || 0;
-    return { tw: t ? { m: Number(t.m), how: String(t.how) } : null, days, taken, friends, need: TOWER.friends, gap: gapOf(q, uid, now) };
+    return { tw: t ? { m: Number(t.m), how: String(t.how) } : null, days, taken, friends, need: TOWER.friends, gap: gapOf(q, uid, now), paid: perksOf(g.pk).includes(PERK.tower) };
   },
   // The owner's read. With a booking it also carries entry and rev (what the plaza gets, and when it may: the Worker's own use after a
   // write it could not hear back from; towerRead never passes them on).
@@ -537,7 +607,8 @@ export const giftDb = {
     const s = this.towerState(q, g, uid, now);
     return { ok: true, ...s, ...(s.tw ? { entry: towerEntry(g, s.tw.m), rev: revOf(g) } : {}) };
   },
-  // A booking of minute o.m by o.how ('friends' | 'points'); o.guest: the asker is a guest or an anonymous login. One synchronous method, so
+  // A booking of minute o.m by o.how ('friends' | 'points' | 'paid'); o.guest: the asker is a guest or an anonymous login; o.paid: the Worker
+  // found a published 메인 타워 주인공 order of this board bought by this account (ordersrv.js orderPerks). One synchronous method, so
   // two asks for one minute never both pass. dry (the points path, before it spends): the same checks, then the minute is held for this
   // account for HOLD_MS (it counts in the day's 30 and nobody else can take it; towerConfirm books it, towerUnhold or the time lets it go).
   // A retry replaces this account's own hold on the board. -> { ok, tw, entry, rev } | { ok, hold } (dry) | { ok: false, code, taken, days }.
@@ -549,7 +620,7 @@ export const giftDb = {
     const s = g && g.uid === uid ? this.towerState(q, g, uid, now) : null;
     const dayN = day ? Number(q.exec('select count(*) n from gt where day = ?', day).one().n) || 0 : 0;
     const code = towerFault({ g, uid, how, m, now, guest: !!o.guest, boardHas: !!s?.tw, taken: day ? q.exec('select 1 from gt where m = ?', m).toArray().length > 0 : false,
-      dayN, mine: day ? mineOn(q, uid, day) : false, gap: !!s?.gap, friends: s?.friends || 0 });
+      dayN, mine: day ? mineOn(q, uid, day) : false, gap: !!s?.gap, friends: s?.friends || 0, paid: !!o.paid && !!s?.paid });
     if (code) return { ok: false, code, ...(s ? { taken: s.taken, days: s.days } : {}) };
     try { q.exec('insert into gt(m, day, g, how, uid, at, hold) values(?, ?, ?, ?, ?, ?, ?)', m, day, g.id, how, uid, now, dry ? now + HOLD_MS : 0); }
     catch { return { ok: false, code: 'taken', taken: s.taken, days: s.days }; }
@@ -842,7 +913,7 @@ const actorOf = async (req, k, env) => { try { return await k.resolveActor(env, 
 const isOwner = (g, actor) => !!(g && actor && g.uid === String(actor.id));
 // What only the owner's read carries. re: the first reply board's id while it can be opened (giftDb.get decides); never in the public view.
 // dc: the DISCOVER switch; ladder: the board's price arm ({ a, p }, giftrules.js ladderArm over GIFT_ARMS).
-const ownerExtras = (g, env) => ({ kids: g.kids, vd: g.vd, at: g.at, lk: g.lk, friends: Number(g.fr) || 0, dc: Number(g.dc) ? 1 : 0, ladder: ladderArm(g.id, env?.GIFT_ARMS), ...(g.re ? { re: g.re } : {}), ...(g.tw ? { tw: g.tw } : {}) }); // tw: { m, how }, the main tower minute; friends: before the reveal too
+const ownerExtras = (g, env) => ({ kids: g.kids, vd: g.vd, at: g.at, lk: g.lk, friends: Number(g.fr) || 0, dc: Number(g.dc) ? 1 : 0, ladder: ladderArm(g.id, env?.GIFT_ARMS), perks: perksOf(g.pk), ...(g.re ? { re: g.re } : {}), ...(g.tw ? { tw: g.tw } : {}) }); // tw: { m, how }, the main tower minute; friends: before the reveal too; perks: the paid perks on the board (giftrules.js PERK)
 const actNo = async (k, env, id) => !!(k.actOk && !(await k.actOk(env, 'misc', id)));
 
 // ---- routes --------------------------------------------------------------------------------------------------------------
@@ -1065,6 +1136,21 @@ function towerOff(env, ctx, k, id, off) {
   if (off.tell && k.towerTell) k.towerTell(env, ctx, { id, m: off.m, off: 1 });
   NOW.at = 0;
 }
+// ---- paid perks: the hooks ordersrv.js calls (worker.js hands them over in its kit; env is the tallied one) ---------------------------
+// o: { board, uid, gives } -> giftDb.perkFit's answer.
+export async function giftPerkFit(env, o) { return giftM(env).giftPerkFit(String(o?.board || ''), String(o?.uid || ''), o?.gives || [], Date.now()); }
+// o: { board, uid, order, gives }: the perks on, this isolate's copies of the board and of /rt/world dropped. -> giftDb.perkOn's answer.
+export async function giftPerkOn(env, ctx, k, o) {
+  const r = await giftM(env).giftPerkOn(String(o?.board || ''), String(o?.uid || ''), String(o?.order || ''), o?.gives || [], Date.now());
+  if (r?.ok) giftDrop(String(o.board));
+  return r;
+}
+// o: { board, order }: the order's perks off; a main tower minute let go is told to the rooms (and points paid back for a points booking).
+export async function giftPerkOff(env, ctx, k, o) {
+  const r = await giftM(env).giftPerkOff(String(o?.board || ''), String(o?.order || ''), Date.now());
+  if (r?.ok && !r.none) { giftDrop(String(o.board)); if (r.off) towerOff(env, ctx, k, String(o.board), r.off); }
+  return r;
+}
 const TOWER_409 = new Set(['taken', 'sold', 'board', 'day', 'gap', 'friends']);
 const towerNo = (r) => no(r.code, r.code === 'owner' || r.code === 'account' ? 403 : r.code === 'gone' ? 404 : TOWER_409.has(r.code) ? 409 : 400, { ...(r.taken ? { taken: r.taken } : {}), ...(r.days ? { days: r.days } : {}) });
 // 429 with Retry-After as a header (and in the body, as the other refusals carry it).
@@ -1088,8 +1174,17 @@ async function tower(req, env, ctx, id, k) {
   const how = String(got.b.how || ''), m = Math.floor(Number(got.b.m)), uid = String(actor.id), guest = !!(actor.guest || actor.anon);
   if (!TOWER_HOW.includes(how) || !Number.isSafeInteger(m) || !(m > 0) || Math.abs(m - Date.now()) > 400 * 864e5) return no('minute', 400); // a year either way: never a date the store cannot read
   if (how === 'points' && guest) return no('account', 403);
+  if (how === 'paid' && guest) return no('paid', 403);
   if (await hard(k, env)) return no('busy', 503);
   const M = giftM(env), o = { m, how, guest };
+  // 메인 타워 주인공: the order ledger (one order DO call) must hold a PUBLISHED order of this board with the tower perk, bought by this
+  // account; then the gift store books it like any minute (the 30 a day, the minute rules, one a board), with no friends and no points.
+  if (how === 'paid') {
+    const op = await orderPerks(env, id);
+    if (!op?.ok) return no('down', 503);
+    if (!(op.gives || []).includes(PERK.tower) || !(op.uids || []).includes(uid)) return no('paid', 403);
+    o.paid = true;
+  }
   let spent = null;
   if (how === 'points') {
     const gate = k.humanGate ? await k.humanGate(env, req, got.b, 'tower') : null; if (gate) return gate;
@@ -1122,7 +1217,8 @@ async function tower(req, env, ctx, id, k) {
   return J({ ok: true, tw: r.tw, ...(spent?.ok ? { coins: spent.coins } : {}) });
 }
 // GET /rt/gift/<id>/tower: the owner's card (towerrules.js towerCard). guest: a guest or an anonymous login (no points path); prep: the
-// database does not take 2,000 yet (accounts only, towerPrep). At budget hard: this isolate's copy of the board (ONE), no DO call.
+// database does not take 2,000 yet (accounts only, towerPrep); paid: the board has the tower perk (메인 타워 주인공, published). At budget
+// hard: this isolate's copy of the board (ONE), no DO call.
 async function towerRead(req, env, id, k) {
   const actor = k.tokenOf(req) ? await actorOf(req, k, env) : null; if (!actor) return no('auth', 401);
   if (!(await opsRate(env, req, 'gtowerget', 30))) return noRate(); // its own count: a page reading its card never blocks the press
@@ -1134,7 +1230,7 @@ async function towerRead(req, env, id, k) {
   let r = null; try { r = await giftM(env).giftTowerGet(id, uid, Date.now()); } catch { r = null; }
   if (!r) return no('down', 503);
   if (!r.ok) return no(r.code, r.code === 'owner' ? 403 : 404);
-  return J({ ok: true, tw: r.tw, days: r.days, taken: r.taken, friends: r.friends, need: r.need, gap: r.gap, guest, prep });
+  return J({ ok: true, tw: r.tw, days: r.days, taken: r.taken, friends: r.friends, need: r.need, gap: r.gap, guest, prep, ...(r.paid ? { paid: true } : {}) });
 }
 
 // POST /rt/gift/<id>/report { m }: one per network per board or line. Three networks hide it (the admin can bring it back). A board hidden
