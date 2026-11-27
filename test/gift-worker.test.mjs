@@ -17,7 +17,7 @@ globalThis.WebSocketRequestResponsePair = class { constructor(req, res) { this.r
 const { Meter, Room } = await import('../worker.js');
 const worker = (await import('../worker.js')).default;
 const { GIFT, REPLY_MSG, kstDay, addDays, botAgent } = await import('../giftrules.js');
-const { giftSeenFlush, giftSeenState, vidKey } = await import('../giftsrv.js');
+const { giftSeenFlush, giftSeenState, giftApi, vidKey } = await import('../giftsrv.js');
 
 function sqliteStorage(db = new DatabaseSync(':memory:')) {
   return {
@@ -852,6 +852,27 @@ describe('the gift loop: reshare, hearts, starts, link hits and makers on the Wo
       ctl.fail = 2; await giftSeenFlush(env, H.ctx); assert.equal(giftSeenState().list, 1); await giftSeenFlush(env, H.ctx);
       assert.equal(giftSeenState().list, 0, 'put back once only');
       assert.equal(db(env).prepare('select hr from gb where id = ?').get(r.id).hr, 1);
+    } finally { done(); }
+  });
+
+  it('the hits\' budget check and call run after the answer: a request does not wait for a slow budget level', async () => {
+    const { clock, done } = setup();
+    try {
+      await drain();
+      const env = makeEnv(), H = harness(env), A = await H.guest();
+      const r = await (await H.post('/rt/gift', FORM(), A.token)).json();
+      await H.call('/g/' + r.id, { headers: { 'cf-connecting-ip': '14.1.1.1', 'user-agent': 'Twitterbot/1.0' } });
+      clock.add(GIFT.seenMs);
+      let release, asked = 0; const late = new Promise((ok) => { release = ok; });
+      const k = { lvlNow: () => (++asked === 1 ? late.then(() => 0) : Promise.resolve(0)), tokenOf: () => '', resolveActor: async () => null, ipHash: async () => 'n', adminOk: () => false };
+      const waits = [], ctx = { waitUntil(p) { waits.push(p); } };
+      const req = new Request('https://sq.example/rt/gift/' + r.id, { headers: { 'cf-connecting-ip': '14.1.1.1' } });
+      const res = await Promise.race([giftApi(req, env, ctx, new URL(req.url), k), new Promise((ok) => setTimeout(() => ok('waited'), 300))]);
+      assert.notEqual(res, 'waited', 'the answer came while the budget level was still out');
+      assert.equal(res.status, 200); assert.equal(asked >= 1, true, 'the check was asked, in waitUntil');
+      assert.equal(dayCounts(env).hitbot, undefined, 'nothing sent yet');
+      release(); await Promise.all(waits); await Promise.all(waits);
+      assert.equal(dayCounts(env).hitbot, 1, 'sent once the level came back');
     } finally { done(); }
   });
 

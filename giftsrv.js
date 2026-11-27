@@ -410,14 +410,16 @@ function seenFlush(env, ctx, force = false) {
   return SEEN.p;
 }
 // Hits waiting longer than GIFT.seenMs with no beacon to carry them. h: the budget level this request already knows (giftPage), else asked
-// here, and only when they are due (so an ordinary request asks nothing more).
-async function hitsFlush(env, ctx, k, h) {
+// here, and only when they are due (so an ordinary request asks nothing more). Synchronous for the caller: the budget check and the call
+// run in ctx.waitUntil, so the answer is never built after them. The interval is taken before the check (one try per GIFT.seenMs per
+// isolate, sent or not). -> the job (tests), or null when nothing was due.
+function hitsFlush(env, ctx, k, h) {
   const now = Date.now();
   if (SEEN.p || !HITS.size || !HIT.at || now - HIT.at < GIFT.seenMs || (now - HIT.last < GIFT.seenMs && now >= HIT.last)) return null;
-  if (h ?? (await hard(k, env))) return null;
   HIT.last = now;
-  seenFlush(env, ctx, true); // in waitUntil: the request does not wait for it
-  return true;
+  const job = Promise.resolve().then(async () => { if (h ?? (await hard(k, env))) return; await seenFlush(env, ctx, true); }).catch(() => { });
+  try { ctx?.waitUntil?.(job); } catch { /* tests */ }
+  return job;
 }
 export const giftSeenFlush = (env, ctx) => seenFlush(env, ctx, true); // tests
 export const giftSeenState = () => ({ list: SEEN.list.length, hits: HITS.size, busy: !!SEEN.p }); // tests
@@ -446,7 +448,7 @@ export const giftPath = (p) => p === '/rt/gift' || p.startsWith('/rt/gift/') || 
 export async function giftApi(req, env, ctx, u, k) {
   const p = u.pathname;
   seenFlush(env, ctx); // beacons kept here go out with any gift request once they are due (no-op otherwise)
-  await hitsFlush(env, ctx, k); // link hits no beacon took, once they are due (no-op otherwise; the answer does not wait for the call)
+  hitsFlush(env, ctx, k); // link hits no beacon took, once they are due (no-op otherwise; in waitUntil, the answer does not wait)
   if (p === '/rt/admin/gift' || p.startsWith('/rt/admin/gift/')) return adminApi(req, env, ctx, u, k);
   if (p === '/rt/gift') return make(req, env, ctx, k);
   if (p === '/rt/gift/start') return startSeen(req, env, ctx, k);
@@ -749,7 +751,7 @@ export async function giftPage(req, env, ctx, u, k) {
   // batch, or go by themselves once they have waited (hitsFlush: at most one DO call per GIFT.seenMs per isolate). Not at budget hard
   // (the level the read above asked anyway), nor while the store is down.
   if (req.method === 'GET' && !h && !down && live) hitAdd(botAgent(req.headers.get('user-agent')), now);
-  if (!down) await hitsFlush(env, ctx, k, h);
+  if (!down) hitsFlush(env, ctx, k, h); // in waitUntil
   const view = live ? giftView(g, now) : null;
   const words = live ? giftShareText(view) : { title: down ? '잠시 뒤에 다시 열어 주세요 · WISH BOARD' : '선물 전광판 · WISH BOARD', text: down ? '지금은 광장이 붐벼요.' : '뉴욕 타임스퀘어를 본뜬 가상 광장에 친구를 위한 전광판을 6시간 무료로 걸어 보세요.' };
   const desc = live ? words.text + ' (' + windowText(view.a, view.b) + ')' : words.text;
