@@ -596,7 +596,7 @@ function discoverBtn(g, on0, note, me) {
     if (busy) return; busy = true; btn.disabled = true;
     const r = await post('/rt/gift/' + g.id + '/discover', { on: !on });
     busy = false; btn.disabled = false;
-    if (r.ok) { on = Number(r.dc) === 1; paint(); say(note, on ? '둘러보기에 보여요. 이 전광판이 걸려 있는 동안 몇 분 안에 목록에 나와요.' : '둘러보기에서 뺐어요.', true); }
+    if (r.ok) { on = Number(r.dc) === 1; paint(); say(note, on ? '둘러보기에 보여요. 이 전광판이 걸려 있는 동안 몇 분 안에 목록에 나와요.' : '몇 분 안에 둘러보기에서 빠져요. 이미 열어 둔 화면도 곧 새로 읽어요.', true); }
     else say(note, r.error || '바꾸지 못했어요. 잠시 뒤 다시 해 주세요.');
   });
   paint();

@@ -9,10 +9,10 @@
 // Browser only (the page imports it as ./discoverrules.js?v=BUILD); giftrules.js is the Worker's too, imported with no query.
 import { GIFT_ID, OCCASIONS, toLine, isMe } from './giftrules.js';
 
-export const DISCOVER = Object.freeze({ min: 5, max: 30 });
+export const DISCOVER = Object.freeze({ min: 5, max: 30, refreshMs: 120000 }); // refreshMs: an open page reads the world again (a board taken off DISCOVER leaves)
 export const TABS = Object.freeze([
   Object.freeze({ k: 'hot', name: '지금 인기' }), Object.freeze({ k: 'new', name: '새로 걸린' }), Object.freeze({ k: 'bday', name: '생일' }),
-  Object.freeze({ k: 'cheer', name: '응원' }), Object.freeze({ k: 'me', name: '내 전광판' }), Object.freeze({ k: 'wish', name: '소원' }),
+  Object.freeze({ k: 'cheer', name: '응원' }), Object.freeze({ k: 'me', name: '개인 전광판' }), Object.freeze({ k: 'wish', name: '소원' }),
 ]);
 export const SAMPLE_LABEL = '예시 · WISH BOARD';
 const WISH_ID = /^[0-9a-z]{10}$/, SLOT = /^[A-Z]+_[A-Z0-9_]+$/;
@@ -73,3 +73,5 @@ export function samplesFor(now = Date.now()) {
   return set.list.map((s, i) => ({ kind: 'sample', sample: true, id: 'sample' + i, occ: s.occ, th: OCCASIONS[s.occ].th, chip: OCCASIONS[s.occ].emoji + ' ' + OCCASIONS[s.occ].name, big: toLine(s), line: s.msg, by: '',
     heat: 0, at: 0, view: '', page: '', heart: '', make: s.occ === 'me' ? '/gift?me=1' : '/gift', art: { id: 'sample' + i, to: s.to, from: '', occ: s.occ, msg: s.msg, th: OCCASIONS[s.occ].th } }));
 }
+/** Whether an open page should read the world again: on screen and DISCOVER.refreshMs since the last read (or a clock that went back). */
+export const refreshDue = (last, now = Date.now(), hidden = false) => !hidden && (now - Number(last) >= DISCOVER.refreshMs || now < Number(last));

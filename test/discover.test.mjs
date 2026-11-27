@@ -4,7 +4,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { DISCOVER, TABS, discoverItems, discoverTab, samplesFor, SAMPLE_LABEL } from '../discoverrules.js';
+import { DISCOVER, TABS, discoverItems, discoverTab, samplesFor, SAMPLE_LABEL, refreshDue } from '../discoverrules.js';
 import { PUBLIC_MIN } from '../ftue.js';
 
 const NOW = Date.parse('2026-12-20T03:00:00Z'); // 12:00 KST
@@ -39,7 +39,7 @@ describe('what /discover lists', () => {
 
 describe('the tabs', () => {
   const items = discoverItems({ now: NOW, world: { gifts: [gift({ id: 'gift000a', n: 9, a: NOW - 7e6 }), gift({ id: 'gift000b', occ: 'cheer', n: 0, a: NOW - 1e5 }), gift({ id: 'gift000c', occ: 'me', from: '', n: 1, a: NOW - 2e5 })], billboards: [board()] }, wishes: { top: [wish()] } });
-  it('are the six, in order', () => { assert.deepEqual(TABS.map((t) => t.name), ['지금 인기', '새로 걸린', '생일', '응원', '내 전광판', '소원']); });
+  it('are the six, in order', () => { assert.deepEqual(TABS.map((t) => t.name), ['지금 인기', '새로 걸린', '생일', '응원', '개인 전광판', '소원']); });
   it('지금 인기 orders by reactions, 새로 걸린 by when it went up; the others by kind', () => {
     assert.deepEqual(discoverTab(items, 'hot').map((x) => x.id), ['gift000a', 'STREET_9', 'wish000001', 'gift000c', 'gift000b']);
     assert.deepEqual(discoverTab(items, 'new').map((x) => x.id), ['gift000b', 'gift000c', 'STREET_9', 'wish000001', 'gift000a']);
@@ -51,6 +51,19 @@ describe('the tabs', () => {
   });
   it('carry no rank and no count to show', () => {
     for (const x of discoverTab(items, 'hot')) { assert.equal('rank' in x, false); assert.equal('n' in x, false); }
+  });
+});
+
+describe('an open page reads the world again', () => {
+  it('every two minutes while it is on screen, never while hidden', () => {
+    assert.equal(DISCOVER.refreshMs, 120000);
+    assert.equal(refreshDue(0, 119999, false), false); assert.equal(refreshDue(0, 120000, false), true);
+    assert.equal(refreshDue(0, 999999, true), false, 'a hidden tab waits until it is seen again');
+    assert.equal(refreshDue(500, 100, false), true, 'a clock that went back reads again');
+  });
+  it('checks on a timer and when the tab comes back', () => {
+    const page = fs.readFileSync(new URL('../discoverpage.js', import.meta.url), 'utf8');
+    assert.match(page, /refreshDue\(/); assert.match(page, /visibilitychange/);
   });
 });
 

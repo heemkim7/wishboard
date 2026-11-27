@@ -992,12 +992,17 @@ describe('B2C: 내 전광판, DISCOVER opt-in, ladder arms', () => {
       assert.equal(w.gifts.find((g) => g.id === r.id).dc, 1);
       assert.equal(dayCounts(env).discover_on, 1);
       assert.deepEqual(await (await H.post(p, { on: false }, A.token)).json(), { ok: true, dc: 0 });
-      clock.add(61000);
-      w = await (await H.get('/rt/world')).json();
+      w = await (await H.get('/rt/world')).json(); // no wait: turning it off drops this isolate's world copies at once (a privacy action)
       assert.equal('dc' in w.gifts.find((g) => g.id === r.id), false);
+      assert.equal((await H.post(p, { on: true }, A.token)).status, 200);
       env.BUDGET_REQ_DAY = '1'; clock.add(61000); await H.get('/rt/world'); clock.add(61000);
-      const calls = spyGift(env), busy = await H.post(p, { on: true }, A.token);
-      assert.equal(busy.status, 503); assert.equal(calls.includes('giftDiscover'), false, 'no DO call at hard');
+      let calls = spyGift(env);
+      const busy = await H.post(p, { on: true }, A.token);
+      assert.equal(busy.status, 503); assert.equal(calls.includes('giftDiscover'), false, 'turning it on: no DO call at hard');
+      const off = await H.post(p, { on: false }, A.token);
+      assert.equal(off.status, 200, 'turning it off goes through at hard'); assert.deepEqual(await off.json(), { ok: true, dc: 0 });
+      assert.deepEqual(calls.filter((c) => c === 'giftDiscover'), ['giftDiscover'], 'one DO call');
+      calls = null;
     } finally { done(); }
   });
 

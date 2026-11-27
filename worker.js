@@ -1992,6 +1992,8 @@ let GATE = { at: 0, r: null }; // per-isolate meter cache: /rt/gate no longer co
 const GATE_TTL = 15000, PC = new Map(); // PC: per-isolate world cache (Cache API is a no-op on *.workers.dev)
 const HERE = new Map(); // GET /rt/here: { at, v } per topic, 5 s per isolate
 const WORLD_CACHE = 'https://cache.masil/rt/world';
+// This isolate's /rt/world copies go (the gift store's DISCOVER off, giftsrv.js discover; the ads kit does the same inline).
+async function worldDrop() { PC.delete('world'); try { await caches.default.delete(new Request(WORLD_CACHE)); } catch { } }
 import { SLOT_RE, soonError } from './balance.js'; // the claimable ids (81), kept with the slot table
 const AD_SLOT = SLOT_RE;
 const REPORT_REASONS = ['abuse', 'ad', 'impersonation', 'other'];
@@ -2109,7 +2111,7 @@ const HUMAN_BAD = new Set(['missing-input-response', 'invalid-input-response', '
 // What ordersrv.js gets: the account and budget checks, and the gift side's perk hooks (giftsrv.js: perkFit before an order, perkOn when
 // one is published, perkOff when one is refunded), which take the same kit giftsrv.js gets (a main tower minute let go is told to the rooms).
 const orderKit = () => ({ adminOk, lvlNow, resolveActor, tokenOf, actOk, perkFit: (env, o) => giftPerkFit(env, o), perkOn: (env, ctx, o) => giftPerkOn(env, ctx, giftKit(), o), perkOff: (env, ctx, o) => giftPerkOff(env, ctx, giftKit(), o) });
-const giftKit = () => ({ adminOk, lvlNow, resolveActor, tokenOf, ipHash: wishIp, humanGate, humanSite, actOk, pushNow, rpc: supabaseRpc, towerTell, towerLater, guestLike, testTraffic }); // testTraffic: the operator's device and tools/prod-e2e.mjs are not visitors
+const giftKit = () => ({ adminOk, lvlNow, resolveActor, tokenOf, ipHash: wishIp, humanGate, humanSite, actOk, pushNow, rpc: supabaseRpc, towerTell, towerLater, guestLike, testTraffic, dropWorld: worldDrop }); // testTraffic: the operator's device and tools/prod-e2e.mjs are not visitors
 // 메인 타워 축하 1분 (giftsrv.js): a booking, or its release ({ id, m, off: 1 }), to the plaza rooms someone sits in (wishRooms of both
 // bases) as WORLD_UPDATE kind TOWER. env is the tallied one giftsrv.js was handed, so these DO calls count. Nothing at budget hard.
 // giftsrv.js sends only entries whose board is revealed (towerOn, towerOff); one revealed later goes from the 'dark' alarm (towerLater).

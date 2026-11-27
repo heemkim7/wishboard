@@ -1725,7 +1725,7 @@ describe('B2C: 내 전광판, DISCOVER, the nudge', () => {
   });
   it('the owner of a board of one\'s own: its title, the ladder at its arm\'s prices, DISCOVER off until pressed, the card image', async () => {
     const g = meView();
-    const P = pageOf(g, AT, { store: { masil_gt: GUEST(), kts_gmine: JSON.stringify([g.id]) }, respond: (u) => (u === '/rt/gift/' + g.id ? { ok: true, gift: g, own: true, mine: { kids: 0, vd: 0, at: 1, lk: 1, dc: 0, ladder: { a: 'B', p: [0, 2900, 5900, 11900] } }, media: false } : u.endsWith('/discover') ? { ok: true, dc: 1 } : u.endsWith('/interest') ? { ok: true } : null) });
+    const P = pageOf(g, AT, { store: { masil_gt: GUEST(), kts_gmine: JSON.stringify([g.id]) }, respond: (u, o) => (u === '/rt/gift/' + g.id ? { ok: true, gift: g, own: true, mine: { kids: 0, vd: 0, at: 1, lk: 1, dc: 0, ladder: { a: 'B', p: [0, 2900, 5900, 11900] } }, media: false } : u.endsWith('/discover') ? { ok: true, dc: JSON.parse(o.body).on ? 1 : 0 } : u.endsWith('/interest') ? { ok: true } : null) });
     try {
       await P.load('giftpage.js');
       assert.deepEqual(P.heads('h1'), ['✨ 민지님의 전광판']);
@@ -1735,6 +1735,9 @@ describe('B2C: 내 전광판, DISCOVER, the nudge', () => {
       await P.press(dc);
       const sent = P.sent.find((s) => s.url.endsWith('/discover'));
       assert.deepEqual(sent.body, { on: true }); assert.equal(P.btn(/DISCOVER에 보이기/).attrs['aria-pressed'], 'true');
+      await P.press(P.btn(/DISCOVER에 보이기/));
+      assert.equal(P.btn(/DISCOVER에 보이기/).attrs['aria-pressed'], 'false');
+      assert.equal(P.says(/^몇 분 안에 둘러보기에서 빠져요/), true, 'off: when it leaves the list');
       assert.ok(P.btn(/카드 이미지 저장/));
       assert.equal(P.says(/이름과 문구를 누구나 볼 수 있어요/), true, 'says what turning it on exposes');
     } finally { P.done(); }

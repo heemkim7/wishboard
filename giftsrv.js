@@ -1078,11 +1078,15 @@ async function discover(req, env, id, k) {
   const actor = await actorOf(req, k, env); if (!actor) return no('auth', 401);
   if (await actNo(k, env, actor.id)) return no('rate', 429);
   const got = await readSmall(req, 200); if (!got.b || typeof got.b.on !== 'boolean') return no('down', 400);
-  if (await hard(k, env)) return no('busy', 503);
+  // Turning it off is a privacy action: it goes through at budget hard too (one DO call); turning it on waits.
+  if (got.b.on && (await hard(k, env))) return no('busy', 503);
   let r = null; try { r = await giftM(env).giftDiscover(id, String(actor.id), got.b.on, Date.now()); } catch { r = null; }
   if (!r) return no('down', 503);
   if (!r.ok) return no(r.code, r.code === 'owner' ? 403 : 404);
   ONE.delete(id); NOW.at = 0;
+  // Off: this isolate's world copies go now (k.dropWorld, as adsApi does), so its next /rt/world has no dc for the board; other isolates
+  // and an open /discover catch up within their own refills (a few minutes).
+  if (!r.dc && k.dropWorld) { try { await k.dropWorld(); } catch { /* the copy runs out by itself */ } }
   return J({ ok: true, dc: r.dc });
 }
 

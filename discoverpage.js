@@ -4,7 +4,7 @@
 // account), 공유하기 (its own share page), 3D에서 보기 (?gb= / ?focus= / ?wish=) and 나도 만들기. Popularity orders the lists; no rank, no count.
 // A tab with fewer real items than DISCOVER.min also shows seasonal samples in their own section (SAMPLE_LABEL), never counted or mixed in.
 // Text people wrote is only ever set with textContent.
-import { TABS, DISCOVER, discoverItems, discoverTab, samplesFor, SAMPLE_LABEL } from './discoverrules.js?v=202611272230';
+import { TABS, DISCOVER, discoverItems, discoverTab, samplesFor, SAMPLE_LABEL, refreshDue } from './discoverrules.js?v=202611272230';
 import { paintGift } from './giftart.js?v=202611272230';
 
 const $app = document.getElementById('app');
@@ -122,13 +122,21 @@ function paint() {
     tabs, body, samples,
     h('p', { class: 'foot' }, '뉴욕 타임스퀘어를 본뜬 가상 광장이에요. 실제 타임스퀘어와는 관계가 없어요. 많이 반응한 순서로 보여 줄 뿐, 순위를 매기지 않아요.', h('br'), h('a', { href: '/' }, '3D 광장 둘러보기')));
 }
+let LAST = 0, LOADING = false;
 async function load() {
+  if (LOADING) return; LOADING = true; LAST = Date.now();
   // No token on either read: both are the isolate's cached copies (an anonymous /rt/wishes is the 10-second copy, /rt/world the plaza's).
   const body = (r) => (r.ok ? r.json() : null);
   const [world, wishes] = await Promise.all([fetch('/rt/world').then(body).catch(() => null), fetch('/rt/wishes').then(body).catch(() => null)]);
   DOWN = !world && !wishes;
   ITEMS = discoverItems({ world, wishes, now: Date.now() });
-  paint();
+  LOADING = false;
+  // A refill keeps the reader where they are: only the list changes, never while a share sheet or a heart is out (paint is synchronous).
+  const y = window.scrollY; paint(); try { window.scrollTo(0, y); } catch { /* stays */ }
 }
+// An open page reads the world again every DISCOVER.refreshMs while it is on screen (a board whose owner turned DISCOVER off leaves within
+// minutes), and when the tab comes back after that long. The reads are the cached ones above.
+setInterval(() => { if (refreshDue(LAST, Date.now(), document.hidden)) load(); }, 15000);
+document.addEventListener('visibilitychange', () => { if (refreshDue(LAST, Date.now(), document.hidden)) load(); });
 paint();
 load();
