@@ -5,7 +5,7 @@
 // cheering crew (timesSquare3d.js giftShow), drawn into a 9:16 frame with the words and the free watermark, recorded with
 // MediaRecorder (MP4 where it can, WebM otherwise) and uploaded to the board when the Worker has the R2 store (else kept on the device).
 // main.js calls mountGift once and gift.apply(remote.gifts) with every world; ui.js is not touched (the button is put next to 🌠); the frame asks it for ui.layer.
-import { GIFT_ID, OCCASIONS, windowText, plazaLook, plazaNote, CER, CER_TEXT, cerStart, cerArrive, cerBack, cerDebugStart, cerSteps, cerDigit, cerPinMs, cerArriveNote, cerBand, cerPhotoText, beaconOnce, kstDay, revealAt } from './giftrules.js';
+import { GIFT_ID, OCCASIONS, windowText, plazaLook, plazaNote, CER, CER_TEXT, cerStart, cerArrive, cerBack, cerDebugStart, cerSteps, cerDigit, cerPinMs, cerArriveNote, cerBand, cerPhotoText, beaconOnce, kstDay, revealAt, isMe } from './giftrules.js';
 import { towerLook } from './towerrules.js';
 import { nowMs, clock, skewOf } from './live.js';
 import { GIFT_SANS, fitSize } from './giftart.js?v=202611272230';
@@ -289,7 +289,7 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown, netDown
     if (a1 > 0) {
       c.globalAlpha = a1; c.fillStyle = 'rgba(6,4,20,0.45)'; c.fillRect(0, H * 0.08, W, H * 0.13);
       c.fillStyle = '#ffe7a8'; c.font = `700 ${Math.round(W * 0.042)}px ${GIFT_SANS}`; c.fillText('오늘 밤, 뉴욕 타임스퀘어', W / 2, H * 0.115);
-      const line = (g.to || '당신') + '님을 위한 전광판이 켜졌어요';
+      const line = (g.to || '당신') + (isMe(g) ? '님의 전광판이 켜졌어요' : '님을 위한 전광판이 켜졌어요'); // 내 전광판: no "for"
       c.fillStyle = '#fff'; c.font = `800 ${fitSize(c, line, W * 0.88, W * 0.062, W * 0.04)}px ${GIFT_SANS}`; c.fillText(line, W / 2, H * 0.17);
     }
     const a2 = Math.max(0, Math.min(1, (t - 13.2) / 0.8));
