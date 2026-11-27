@@ -158,7 +158,7 @@ describe('3. sheets: tappable neighbours 8px apart with a mouse and 12px on touc
   });
   it('the held board\'s sheet: its link buttons and the four 네온 스티커 are .row groups', () => {
     const ad = ui.slice(ui.indexOf('  function openAd('), ui.indexOf('  function photoNews('));
-    assert.match(ad, /h\('div', \{ class: 'row' \},\n\s+url \? h\('button', \{ type: 'button', class: 'btn ghost', text: '링크 열기'/);
+    assert.match(ad, /h\('div', \{ class: 'row' \}, \.\.\.adActions\(\{ mine, link: !!url, view: !!card, share: !!other \}\)\.map\(\(k\) => \(\{\n\s+link: \(\) => h\('button', \{ type: 'button', class: 'btn ghost', text: '링크 열기'/); // the buttons, in plaza-account.js adActions order
     const st = ui.slice(ui.indexOf('  function stickerBox('), ui.indexOf('  function openReport('));
     assert.match(st, /h\('div', \{ class: 'row' \}, \.\.\.STICKER_GLYPHS\.map/);
   });

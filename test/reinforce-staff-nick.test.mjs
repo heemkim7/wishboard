@@ -11,7 +11,7 @@ const read = (f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8').re
 
 it('refuses staff-like names in every spelling the rule covers, the same on wishes', () => {
   const refused = ['admin', 'Admin', 'ADMIN', '공식', '공 식', '공식계정', 'official', 'Official팀', '운영자', '운 영 자', '관리자', '관리자님', 'administrator',
-    'ａｄｍｉｎ', '운‍영자', 'ad­min', '공​식', 'OFFICIAL 계정'];
+    'ａｄｍｉｎ', '운‍영자', 'ad­min', '공​식', 'OFFICIAL 계정', 'a d m i n', 'the Official'];
   for (const n of refused) { assert.equal(staffNick(n), true, n); assert.equal(wishNickFault(n), 'nick', n); assert.equal(nickRefused(n), true, n); }
   for (const n of ['badminton', 'unofficial', 'officially', '비공식', '참새', '네온후드', '공원산책', '', null]) assert.equal(staffNick(n), false, String(n));
   for (const n of ['badminton', 'unofficial', 'officially', '비공식', '참새']) assert.equal(wishNickFault(n), '', n);

@@ -66,13 +66,13 @@ export function wishRejected(text) { const k = wishFault(text); return k ? WISH_
 // Names that read as staff are not allowed on a wish, nor banned words, links or phone numbers (the same rules as the text): '' or 'nick'.
 // The staff check reads the name NFKC-folded (full-width ａｄｍｉｎ), without format characters (zero-width joiner, soft hyphen) or spaces
 // ("운 영 자"). Words that only contain one are let through: badminton, unofficial, officially, 비공식. Nor the seeded bots' 네온봇N.
-// The Korean words are read with the spaces taken out ("운 영 자"); the English ones with the spaces kept, so "the Official" is refused and
-// "badminton" (admin inside a word) is not.
+// The Korean words are read with the spaces taken out ("운 영 자"); the English ones both ways, so "a d m i n" and "the Official" are refused
+// and "badminton" (admin inside a word) is not.
 const STAFF_KO = /운영자|관리자|(?<!비)공식/, STAFF_EN = /(?<![a-z])admin|(?<![a-z])official(?!ly)/i;
 const staffForm = (nick) => norm(String(nick ?? '').normalize('NFKC').replace(/\p{Cf}/gu, ''));
 // The same staff rule for plaza nicknames (worker.js /rt/profile, claims, plots, the guest merge, the room's presence name, photo submissions;
 // ui.js profile, entry and wizard): true when refused.
-export function staffNick(nick) { const s = staffForm(nick); return STAFF_EN.test(s) || STAFF_KO.test(s.replace(/\s+/g, '')); }
+export function staffNick(nick) { const s = staffForm(nick), t = s.replace(/\s+/g, ''); return STAFF_EN.test(s) || STAFF_EN.test(t) || STAFF_KO.test(t); }
 // A plaza nickname the server refuses (staff-like or 네온봇N), and what the browser says about it (ui.js: the profile sheet, wizard step 1).
 export function nickRefused(nick) { return staffNick(nick) || botNick(norm(nick).replace(/\s+/g, '')); }
 export const NICK_FIX = '그 닉네임은 쓸 수 없어요. 닉네임을 바꿔 주세요';
