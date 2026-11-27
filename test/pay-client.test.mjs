@@ -97,3 +97,28 @@ describe('source checks', () => {
     assert.match(src, /from '\.\/payrules\.js';/); assert.match(src, /from '\.\/plaza-account\.js';/);
   });
 });
+
+describe('the operator section (admin-order.js)', () => {
+  const src = read('admin-order.js'), html = read('admin.html');
+  it('is one module line in admin.html, served behind the login like the other admin-*.js', () => {
+    assert.match(html, /<script type="module" src="\.\/admin-order\.js\?v=\d+"><\/script>/);
+  });
+  it('talks only to the operator routes, writes text only, and needs a reason for refunds and manual marks', () => {
+    for (const m of src.matchAll(/api\('([^']+)'/g)) assert.match(m[1], /^\/rt\/admin\/(order|orders)/, m[1]);
+    assert.doesNotMatch(src, /innerHTML|outerHTML|insertAdjacentHTML|document\.write/);
+    assert.match(src, /이유를 적어 주세요/); assert.match(src, /from '\.\/payrules\.js';/);
+  });
+  it('shows WAU in the 지표 section', () => { assert.match(html, /d\.wau\.map/); });
+});
+
+describe('terms and privacy: prepared payment clauses that do not claim payments exist', () => {
+  it('terms: 결제 방법(준비 중) right after the refund section', async () => {
+    const { policyDoc } = await import('../legal.js');
+    const t = policyDoc('terms').sections, i = t.findIndex((s) => s.h === '결제 방법(준비 중)');
+    assert.equal(t[i - 1].h, '유료 상품의 취소와 환불');
+    for (const w of ['지금은 결제를 받지 않습니다', '결제대행사', '다시 확인', '테스트 결제', '5년']) assert.ok(t[i].p.includes(w), w);
+    const p = policyDoc('privacy').sections, j = p.findIndex((s) => s.h === '결제(준비 중)');
+    assert.equal(p[j + 1].h, '처리 위탁과 국외 이전');
+    for (const w of ['지금은 결제를 받지 않아', '카드 번호나 계좌 번호', '5년', '3년', '포트원(PortOne)', '결제를 열 때 확정']) assert.ok(p[j].p.includes(w), w);
+  });
+});
