@@ -480,7 +480,7 @@ export const giftDb = {
   // turned DISCOVER on (/discover lists only those; the plaza shows every board up now, as before).
   live(q, now = Date.now()) {
     return q.exec("select * from gb where st = 'live' and a <= ? and b > ? order by a asc, id asc limit ?", now, now, GIFT.liveMax).toArray().map(rowOf)
-      .map((g) => ({ id: g.id, to: g.to, from: g.from, occ: g.occ, msg: g.msg, th: g.th, scr: g.scr, a: g.a, b: g.b, n: g.n, ...(g.dc ? { dc: 1 } : {}) }));
+      .map((g) => ({ id: g.id, to: g.to, from: g.from, occ: g.occ, msg: g.msg, th: g.th, scr: g.scr, a: g.a, b: g.b, n: g.n, ...(g.dc ? { dc: 1 } : {}), ...(perksOf(g.pk).includes(PERK.clean) ? { clean: 1 } : {}) })); // clean: the plaza's 15 s video without the watermark (giftrules.js filmMark)
   },
   // The owner's DISCOVER switch (default off): the board's name, line and sender may then be listed on /discover while it is up. -> { ok, dc }.
   discover(q, id, uid, on, now = Date.now()) {

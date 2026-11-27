@@ -14,7 +14,8 @@
 //                  (three half-plane blurs of the edge colour) onto the building; a phone: no dots, brighter, a glass reflection
 //   corner         one card split at `split` over two faces (the fold edge is not an edge); the gift box (corner.py GiftPop) is
 //                  drawn with the plate's camera into the output view and laid on the board before the dots (anamorphic)
-//   caption        "AI 합성" bottom right (about 24 px cap height at 1080 wide, white 70 %, a soft shadow)
+//   caption        "AI 합성" bottom right (about 24 px cap height at 1080 wide, white 70 %, a soft shadow), and on the free video the
+//                  'WISH BOARD · 무료' watermark left of it (giftrules.js filmMark: none on a board whose paid order is published)
 //
 // Recording: the WebGL canvas (captureStream) and a WebAudio mix (the plate's own street sound through a high-pass and a gain that
 // sits about -34 LUFS and swells around the flash, plus the occasion's music started at the video's own current time) go to one
@@ -22,6 +23,7 @@
 import { REAL, homography, invert3, quadAt, frameOf, timeOf, screenStats, texSize, ledCols, ledMean, ambBaseDb, ambCurve, keepsUp, popAt, pickRealType, realReason, finishReason } from './realrules.js?v=202611272230';
 import { createRealCard } from './realcard.js?v=202611272230';
 import { GIFT_SANS } from './giftart.js?v=202611272230';
+import { filmMark } from './giftrules.js';
 
 const MAX = 10; // screen entries the shader takes at most (a corner screen is two)
 export const MAX_SCREENS = MAX;
@@ -188,11 +190,14 @@ function texture(gl, unit) {
 function upload(gl, unit, t, src) { gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src); }
 
 // "AI 합성" bottom right: composite.py caption_layer pos 'br' (33 px bold, right 36 px, ink bottom 48 px at 1080 wide, white 70 %, shadow).
-function captionCanvas(scale) {
-  const k = scale, w = Math.ceil(240 * k), h = Math.ceil(90 * k), c = document.createElement('canvas'); c.width = w; c.height = h;
+// mark: the free video's 'WISH BOARD · 무료' too, on the same line left of it (the strip is wider then; the shader places it by its size).
+function captionCanvas(scale, mark = true) {
+  const k = scale, w = Math.ceil((mark ? 620 : 240) * k), h = Math.ceil(90 * k), c = document.createElement('canvas'); c.width = w; c.height = h;
   const g = c.getContext('2d'); g.font = `800 ${Math.round(33 * k)}px ${GIFT_SANS}`; g.textAlign = 'right'; g.textBaseline = 'alphabetic';
   const x = w - 36 * k, y = h - 48 * k;
-  g.save(); g.shadowColor = 'rgba(0,0,0,0.67)'; g.shadowBlur = 5 * k; g.shadowOffsetY = 2 * k; g.fillStyle = 'rgba(255,255,255,0.7)'; g.fillText('AI 합성', x, y); g.restore();
+  g.save(); g.shadowColor = 'rgba(0,0,0,0.67)'; g.shadowBlur = 5 * k; g.shadowOffsetY = 2 * k; g.fillStyle = 'rgba(255,255,255,0.7)'; g.fillText('AI 합성', x, y);
+  if (mark) g.fillText('WISH BOARD · 무료', x - g.measureText('AI 합성').width - 28 * k, y);
+  g.restore();
   return c;
 }
 
@@ -335,7 +340,7 @@ export function createCompositor(canvas, plate, gift, { scale = 1, onLost = null
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
   const pop = popScreen ? popper(plate, popScreen.s, popScreen.theme) : null;
   const level = entries.map(() => 0.7);
-  const cap = captionCanvas(W / plate.w); upload(gl, 4, tex.cap, cap);
+  const cap = captionCanvas(W / plate.w, filmMark(gift)); upload(gl, 4, tex.cap, cap);
   const capRect = [W - cap.width, H - cap.height, W, H];
   gl.uniform2f(U('uOut'), W, H); gl.uniform2f(U('uSize'), plate.w, plate.h); gl.uniform1f(U('uScale'), W / plate.w);
   gl.uniform1i(U('uN'), entries.length); gl.uniform1f(U('uLedC'), REAL.ledContrast);

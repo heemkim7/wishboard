@@ -121,6 +121,9 @@
   .tier ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
   .tier .best { position: absolute; right: 12px; top: -10px; padding: 1px 9px; border-radius: 999px; background: var(--pink); color: #1c1300; font-size: 12px; font-weight: 900; }
   .tier .hint { color: var(--muted); font-size: 12px; font-weight: 700; }
+  .tier.pay { cursor: default; } .tier.pay:active { transform: none; background: rgba(255,255,255,.04); border-color: var(--stroke); }
+  .tier.pay[aria-current=true] { border-color: rgba(255,207,90,.9); background: rgba(255,207,90,.1); }
+  .tier.pay .btn { margin-top: 10px; min-height: 48px; } .tier.pay .okmsg, .tier.pay .fine { margin-top: 8px; }
   .ask { margin-top: 10px; padding: 14px; border-radius: 14px; background: rgba(255,79,163,.1); border: 1px solid rgba(255,79,163,.35); }
   .paper { display: grid; gap: 8px; }
   .note { padding: 12px 14px; border-radius: 14px; background: #fff8e7; color: #2b1d0e; box-shadow: 0 4px 16px rgba(0,0,0,.25); }

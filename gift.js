@@ -5,7 +5,7 @@
 // cheering crew (timesSquare3d.js giftShow), drawn into a 9:16 frame with the words and the free watermark, recorded with
 // MediaRecorder (MP4 where it can, WebM otherwise) and uploaded to the board when the Worker has the R2 store (else kept on the device).
 // main.js calls mountGift once and gift.apply(remote.gifts) with every world; ui.js is not touched (the button is put next to 🌠); the frame asks it for ui.layer.
-import { GIFT_ID, OCCASIONS, windowText, plazaLook, plazaNote, CER, CER_TEXT, cerStart, cerArrive, cerBack, cerDebugStart, cerSteps, cerDigit, cerPinMs, cerArriveNote, cerBand, cerPhotoText, beaconOnce, kstDay, revealAt, isMe } from './giftrules.js';
+import { GIFT_ID, OCCASIONS, windowText, plazaLook, plazaNote, CER, CER_TEXT, cerStart, cerArrive, cerBack, cerDebugStart, cerSteps, cerDigit, cerPinMs, cerArriveNote, cerBand, cerPhotoText, beaconOnce, kstDay, revealAt, isMe, filmMark } from './giftrules.js';
 import { towerLook } from './towerrules.js';
 import { nowMs, clock, skewOf } from './live.js';
 import { GIFT_SANS, fitSize } from './giftart.js?v=202611272230';
@@ -282,7 +282,7 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown, netDown
     if (!blob) { note('영상을 만들지 못했어요. 다시 해 주세요', 'err'); return; }
     done(g, blob, d);
   }
-  // The opening line, the closing words and the watermark: the same as the drawn film's.
+  // The opening line, the closing words and the watermark: the same as the drawn film's (none on a clean board: giftrules.js filmMark).
   function words(c, W, H, t, g, O) {
     const a1 = Math.max(0, Math.min(1, (t - 2.6) / 0.6)) * (1 - Math.max(0, Math.min(1, (t - 5.8) / 0.6)));
     c.textAlign = 'center'; c.textBaseline = 'middle';
@@ -300,8 +300,8 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown, netDown
       c.lineWidth = W * 0.012; c.strokeStyle = 'rgba(10,4,30,0.75)'; c.strokeText(big, W / 2, H * 0.8); c.fillStyle = '#ffe08a'; c.fillText(big, W / 2, H * 0.8);
       if (g.from) { c.font = `700 ${Math.round(W * 0.042)}px ${GIFT_SANS}`; c.fillStyle = '#fff'; c.fillText('From. ' + g.from, W / 2, H * 0.85); }
     }
-    c.globalAlpha = 1; c.textAlign = 'right'; c.textBaseline = 'alphabetic'; c.font = `800 ${Math.round(W * 0.03)}px ${GIFT_SANS}`;
-    c.fillStyle = 'rgba(255,255,255,0.75)'; c.fillText('WISH BOARD · 무료', W - W * 0.04, H - H * 0.022);
+    c.globalAlpha = 1; c.textBaseline = 'alphabetic';
+    if (filmMark(g)) { c.textAlign = 'right'; c.font = `800 ${Math.round(W * 0.03)}px ${GIFT_SANS}`; c.fillStyle = 'rgba(255,255,255,0.75)'; c.fillText('WISH BOARD · 무료', W - W * 0.04, H - H * 0.022); }
     c.textAlign = 'left'; c.font = `600 ${Math.round(W * 0.022)}px ${GIFT_SANS}`; c.fillStyle = 'rgba(255,255,255,0.55)'; c.fillText('가상 광장 · 실제 타임스퀘어와 무관', W * 0.04, H - H * 0.022);
   }
   // The result: play it back, save it, and put it on the recipient page when the Worker keeps videos.

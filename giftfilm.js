@@ -4,7 +4,7 @@
 // "영상 저장" records on a phone that has no stored video. Every frame is a pure function of time (draw(t)), so it can be replayed,
 // sought and recorded the same way each time; the scene is seeded by the board id.
 // recordCanvas is shared with the plaza's 3D recording (gift.js): MP4 where MediaRecorder makes it, WebM otherwise.
-import { OCCASIONS, pickRecordType, isMe, toLine } from './giftrules.js';
+import { OCCASIONS, pickRecordType, isMe, toLine, filmMark } from './giftrules.js';
 import { paintGift, themeOf, seeded, GIFT_SANS, fitSize } from './giftart.js?v=202611272230';
 
 export const FILM_MS = 15000;
@@ -130,7 +130,8 @@ export function createFilm(canvas, gift, opts = {}) {
       g.save(); g.translate(x, y); g.rotate(age * p.rs); g.fillStyle = p.c; g.fillRect(-6 * p.w, -3, 12 * p.w, 6); g.restore();
     }
     drawCrowd(g, scene.crowd, t, W, H);
-    // Words: the opening line, then the day's words; the watermark on the free film.
+    // Words: the opening line, then the day's words; the watermark on the free film (giftrules.js filmMark: not on a board whose
+    // 축하 영상 세트 or 메인 타워 주인공 order is published, its view's clean).
     const title = clamp01((t - 0.3) / 0.6) * (1 - clamp01((t - 3.6) / 0.6));
     if (title > 0) {
       g.globalAlpha = title; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#ffe7a8';
@@ -149,9 +150,9 @@ export function createFilm(canvas, gift, opts = {}) {
       if (from) { g.font = `700 ${Math.round(W * 0.042)}px ${GIFT_SANS}`; g.fillStyle = '#ffffff'; g.fillText('From. ' + from, W / 2, H * 0.67); }
       g.globalAlpha = 1;
     }
-    if (opts.watermark !== false) {
-      g.textAlign = 'right'; g.textBaseline = 'alphabetic'; g.font = `800 ${Math.round(W * 0.03)}px ${GIFT_SANS}`;
-      g.fillStyle = 'rgba(255,255,255,0.72)'; g.fillText('WISH BOARD · 무료', W - W * 0.04, H - H * 0.022);
+    if (opts.watermark !== false) { // the line that it is a virtual plaza stays on a clean film; only the free mark goes
+      g.textBaseline = 'alphabetic';
+      if (filmMark(gift)) { g.textAlign = 'right'; g.font = `800 ${Math.round(W * 0.03)}px ${GIFT_SANS}`; g.fillStyle = 'rgba(255,255,255,0.72)'; g.fillText('WISH BOARD · 무료', W - W * 0.04, H - H * 0.022); }
       g.textAlign = 'left'; g.font = `600 ${Math.round(W * 0.022)}px ${GIFT_SANS}`; g.fillStyle = 'rgba(255,255,255,0.5)'; g.fillText('가상 광장 · 실제 타임스퀘어와 무관', W * 0.04, H - H * 0.022);
     }
     // Fade in and the last half second's fade to black, so a loop or the end card does not jump.

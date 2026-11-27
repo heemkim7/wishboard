@@ -1,7 +1,7 @@
 // 선물 전광판 light pages (gift.html): the maker at /gift and the board page at /g/<id> (owner preview with the price ladder, the
 // recipient page, the 롤링페이퍼). No three.js, no realtime room, no Supabase client: what the page needs from the Worker comes inline in
 // #gift-data (the Worker renders /g/<id>), the rest is a few small JSON calls. Text people wrote is only set with textContent.
-import { GIFT, GIFT_ID, OCCASIONS, OCC_KEYS, GIFT_THEMES, THEME_KEYS, TIERS, TIER_NOTE, TIER_ASK, won, giftFault, paperFault, startChoices, windowText, dayText, hourText, kstDay, addDays, countdown, dDay, refOf, keptRef, cpLen, norm, windowFor, replyDraft, replyLabel, PLAZA_BTN, videoFirst, CER_TEXT, cerStart, cerButton, cerInvite, cerShareLine, cerBackWhy, cerDebugStart, pageLook, hiddenWords, visitorShareText, GIFT_PICK, ME_KINDS, isMe, toLine, boardTitle, cut } from './giftrules.js';
+import { GIFT, GIFT_ID, OCCASIONS, OCC_KEYS, GIFT_THEMES, THEME_KEYS, TIERS, TIER_NOTE, TIER_ASK, won, giftFault, paperFault, startChoices, windowText, dayText, hourText, kstDay, addDays, countdown, dDay, refOf, keptRef, cpLen, norm, windowFor, replyDraft, replyLabel, PLAZA_BTN, videoFirst, CER_TEXT, cerStart, cerButton, cerInvite, cerShareLine, cerBackWhy, cerDebugStart, pageLook, hiddenWords, visitorShareText, GIFT_PICK, ME_KINDS, isMe, toLine, boardTitle, cut, filmMark } from './giftrules.js';
 import { TOWER, TOWER_ERR, towerCard as towerState, towerClock, towerLook, friendsText } from './towerrules.js';
 import { paintGift, giftCardJpeg } from './giftart.js?v=202611272230';
 import { createFilm, FILM_MS, recordCanvas, canRecord, saveBlob, fileName } from './giftfilm.js?v=202611272230';
@@ -457,7 +457,7 @@ function owner(g, { fresh = false, mine: extra = null, media = false, signNudge 
     g.phase === 'after' ? h('p', { class: 'fine', text: '광장에서 내려온 전광판은 새 영상을 찍을 수 없어요.' }) : rec,
     g.phase === 'after' ? null : h('p', { class: 'fine', text: '광장에서 이 전광판 앞의 폭죽과 환호를 세로 영상으로 찍어요. 이 기기에서 만들고, 1~2분 걸릴 수 있어요.' }),
     h('p', { class: 'fine', text: media ? (g.vid ? '찍은 영상이 받는 사람 페이지에 올라가 있어요. 다시 찍으면 바뀌어요(3번까지).' : '찍은 영상은 받는 사람 페이지에 올라가요. 그날이 지나고 7일 뒤에 지워져요.') : '지금은 영상 저장소가 없어서, 찍은 영상은 이 기기에만 저장돼요. 받는 사람 페이지에서는 그려진 축하 영상이 나와요.' }),
-    h('div', { style: 'height:8px' }), saveBtn, saveNote, h('p', { class: 'fine', text: '미리보기 영상은 무료 버전이라 워터마크가 있어요.' }));
+    h('div', { style: 'height:8px' }), saveBtn, saveNote, h('p', { class: 'fine', text: filmMark(g) ? '미리보기 영상은 무료 버전이라 워터마크가 있어요.' : '결제한 상품이라 영상에 워터마크가 없어요.' }));
   const linkBox = h('div', { class: 'link', text: url });
   const shareCard = card(h('h2', { text: '🔗 링크 보내기' }),
     h('div', { class: 'row' }, h('button', { class: vfirst ? 'btn' : 'btn gold', type: 'button', onclick: () => sendOr(() => share(g, url, note, extra?.at)) }, '공유하기'),
@@ -521,9 +521,70 @@ function ladder(g, arm = null) {
       h('button', { class: 'linkbtn', type: 'button', onclick: () => choose(0) }, '무료로 둘게요'));
   }
   paint();
-  return card(h('h2', { text: '✨ 더 오래, 더 깔끔하게 걸고 싶다면' }),
+  const box = card(h('h2', { text: '✨ 더 오래, 더 깔끔하게 걸고 싶다면' }),
     h('p', { class: 'sub', text: '무료 걸기는 지금 그대로 쓸 수 있어요. 그 아래는 결제가 열리면 생기는 상품이에요. 지금은 결제가 없고, 고르면 "열리면 알림"을 받을 수 있어요.' }),
     list, ask, h('p', { class: 'fine', text: TIER_NOTE }));
+  payLadder(g, box).catch(() => { }); // checkout open for this account (PAY_ON=1): the same card turns into 결제하기; else it stays as it is
+  return box;
+}
+// 결제 (payclient.js, only while the Worker has PAY_ON=1 and this account may pay): loaded on the owner page only, when its card is built.
+// The mobile return from PortOne (?kts_pay=1&paymentId=<order>) is confirmed once on load (resumeCheckout) and the address cleaned.
+let PAYMOD = null;
+const payMod = () => (PAYMOD ||= import('./payclient.js?v=202611272230').catch(() => null));
+const payApiOf = (m) => m.payApi(undefined, sessionToken); // orders are an account's: the signed-in session only
+const PAY_BACK = ['kts_pay', 'paymentId', 'code', 'message', 'pgCode', 'pgMessage', 'transactionType', 'txId'];
+const RESUMED = /[?&]kts_pay=1(?:&|$)/.test(location.search) ? payMod().then(async (m) => {
+  if (!m) return null;
+  let r = null; try { r = await m.resumeCheckout(payApiOf(m)); } catch { r = null; }
+  try { const u = new URL(location.href); for (const k of PAY_BACK) u.searchParams.delete(k); history.replaceState(history.state, '', u.pathname + u.search + u.hash); } catch { /* the address keeps them */ }
+  return r ? { st: r.order?.st || '', line: r.order ? m.resultLine(r.order) : { tone: 'err', text: r.message || '결제가 완료되지 않았어요.' } } : null;
+}) : Promise.resolve(null);
+let RESUME_SHOWN = false, RESUME_RELOADED = false;
+// The owner's card in checkout mode: each paid tier with its price (this board's arm), its lines, the test badge in test mode and a
+// 결제하기 that opens the sheet (refund rules there and here before paying); the board's order state (결제 대기 / 결제 완료 / 게시 중 /
+// 게시됨 / 실패 / 환불); a perk is called applied only at 게시됨. One paid order per board: once one took money the buttons go.
+async function payLadder(g, box) {
+  const m = await payMod(); if (!m || !box.isConnected) return;
+  const api = payApiOf(m), kind = isMe(g) ? 'personal' : 'gift';
+  let avail = null; try { avail = await m.payAvailable({ kind, boardId: g.id }, api); } catch { avail = null; }
+  const back = await RESUMED;
+  if (!avail || !box.isConnected) return;
+  // back from the payment page with a paid order: read the board again once (its 12 hours, its clean films), then the line below says it
+  if (back && ['PAID', 'PUBLISH_PENDING', 'PUBLISHED'].includes(back.st) && !RESUME_RELOADED) { RESUME_RELOADED = true; board(); return; }
+  const byTier = new Map(avail.products.map((p) => [p.tier, p]));
+  const draw = async (msg = null) => {
+    let orders = []; try { const r = await api.boardOrders(g.id); orders = r.ok ? r.orders || [] : []; } catch { orders = []; }
+    if (!box.isConnected) return;
+    const line = m.ownerOrderLine(orders), note = h('p', { class: 'okmsg', role: 'status' });
+    const tiers = h('div', { class: 'tiers' }, ...TIERS.map((t) => {
+      const p = t.t ? byTier.get(t.t) : null; if (t.t && !p) return null;
+      const bought = !!(line && t.t && line.name === t.name && line.st !== 'REFUNDED');
+      const foot = !t.t ? null : bought ? h('p', { class: line.active ? 'okmsg' : 'fine', text: line.active ? '✓ 이 전광판에 적용됐어요' : '이 상품을 주문했어요 · ' + line.label })
+        : line?.locked ? h('p', { class: 'fine', text: '이 전광판은 이미 결제한 상품이 있어요.' })
+          : h('button', { class: t.best ? 'btn gold' : 'btn', type: 'button', onclick: () => go(p) }, `결제하기 · ${won(p.price)}`);
+      return h('div', { class: 'tier pay', 'aria-current': bought ? 'true' : null },
+        t.best ? h('span', { class: 'best', text: '추천' }) : null,
+        h('div', { class: 'name' }, h('span', {}, t.name, t.tag && !t.best ? h('span', { class: 'hint', text: ' · ' + t.tag }) : null), h('span', { class: 'price', text: t.t ? won(p.price) : '무료' })),
+        t.t && avail.badge ? h('span', { class: 'soon', text: avail.badge }) : null,
+        h('ul', {}, ...(t.t ? p.perks : t.items).map((x) => h('li', { text: x }))), foot);
+    }));
+    const status = line ? h('p', { class: line.active ? 'okmsg' : line.st === 'FAILED' || line.st === 'REFUNDED' ? 'err' : 'sub', role: 'status', text: line.text }) : null;
+    const refund = avail.refund || {};
+    box.replaceChildren(h('h2', { text: '✨ 더 오래, 더 깔끔하게 걸고 싶다면' }),
+      avail.testNote ? h('p', { class: 'sub' }, h('b', { text: avail.badge + ' · ' }), avail.testNote) : null,
+      h('p', { class: 'sub', text: '무료 걸기는 지금 그대로 쓸 수 있어요. 결제하면 아래 혜택이 이 전광판에 붙어요. 혜택은 결제가 확인되고 전광판에 게시된 뒤에 적용돼요.' }),
+      status, tiers, note,
+      h('details', {}, h('summary', { text: '취소와 환불' }), h('ul', { class: 'fine' }, ...[refund.before, refund.after, ...(refund.lines || [])].filter(Boolean).map((x) => h('li', { text: x })))),
+      h('p', { class: 'fine', text: '가격은 부가세 포함이에요. 한 전광판에 한 번 결제할 수 있어요.' }));
+    if (msg) say(note, msg.text, msg.tone === 'ok');
+  };
+  const go = async (p) => {
+    const r = await m.openCheckout({ boardId: g.id, kind, product: p.id }, api);
+    if (r?.ok) { board(); return; } // paid: the board is read again (its window, its films) and the card shows the order
+    draw();
+  };
+  const first = back && !RESUME_SHOWN ? back.line : null; RESUME_SHOWN = true;
+  await draw(first);
 }
 // 🌐 DISCOVER에 보이기 (the owner's share card): off by default. On, the board is listed on /discover while it hangs, with its name, line
 // and sender for anyone to read; the Worker keeps the switch (POST /rt/gift/<id>/discover). on: the owner's read (mine.dc).
@@ -877,7 +938,7 @@ function towerCard(g) {
   const box = card(head(), h('p', { class: 'fine', text: '불러오는 중…' }));
   let last = null; // the last answer: a refusal redraws from it with the fresh taken minutes and days
   let busy = false; // a booking is out: nothing redraws the card or opens another picker until it answers (no second points booking)
-  const stateOf = (r) => towerState({ g, tw: r.tw, now: now(), days: r.days || {}, taken: r.taken || [], friends: r.friends, guest: r.guest, prep: r.prep, gap: r.gap });
+  const stateOf = (r) => towerState({ g, tw: r.tw, now: now(), days: r.days || {}, taken: r.taken || [], friends: r.friends, guest: r.guest, prep: r.prep, gap: r.gap, paid: !!r.paid });
   const draw = (r, msg = '') => {
     if (busy) return;
     const s = stateOf(r), note = h('p', { class: 'okmsg', role: 'status' });
@@ -888,6 +949,14 @@ function towerCard(g) {
     if (s.state === 'sold' || s.state === 'mine') {
       box.replaceChildren(head(), h('p', { class: 'sub', text: s.state === 'sold' ? TOWER_ERR.sold : '그날은 이미 다른 선물 전광판으로 메인 타워 1분을 골랐어요.' }), note);
       if (msg && msg !== TOWER_ERR.sold) say(note, msg);
+      return;
+    }
+    // 메인 타워 주인공 (a published paid order of this board): the minute picked directly, no friends and no points
+    if (s.paid) {
+      box.replaceChildren(head(), h('p', { class: 'sub', text: `그날 남은 자리 ${s.left}/${TOWER.perDay} · 모든 사람이 같은 1분에 메인 타워 다섯 면에서 봐요.` }),
+        h('button', { class: 'btn gold', type: 'button', onclick: () => pick(s, 'paid') }, '👑 메인 타워 주인공 · 시간 바로 고르기'), note,
+        h('p', { class: 'fine', text: '결제한 메인 타워 주인공이라 친구 응원이나 포인트 없이 고를 수 있어요.' }));
+      if (msg) say(note, msg);
       return;
     }
     const friendsBtn = h('button', { class: s.canFriends ? 'btn gold' : 'btn', type: 'button' }, s.canFriends ? '🎉 메인 타워가 열렸어요! 시간 고르기' : `👥 친구 응원 모으기 · ${s.friends}/${s.need}`);
@@ -925,6 +994,7 @@ function towerCard(g) {
     });
     box.replaceChildren(...[h('h2', { text: '🗽 메인 타워에 올릴 1분' }), h('p', { class: 'fine', text: '이 전광판이 걸리는 시간 안에서 골라요. 정각과 밤 9시대는 응원 팀의 자리예요.' }),
       how === 'points' ? h('p', { class: 'sub', text: `누르면 응원 포인트 ${TOWER.price.toLocaleString('en-US')}이 바로 빠져요. 그 1분 전에 전광판이 가려지거나 지워지면 돌려드려요.` }) : null,
+      how === 'paid' ? h('p', { class: 'sub', text: '결제한 메인 타워 주인공으로 올려요. 그 1분 전에 전광판이 가려지거나 지워지면 1분은 풀리고 포인트로 돌려드리지 않아요. 환불은 결제의 취소와 환불 규정을 따라요.' }) : null,
       sel, h('div', { style: 'height:8px' }), go, note, h('div', { style: 'text-align:center;margin-top:8px' }, back)].filter(Boolean)); // a null would print as "null"
     if (msg) say(note, msg);
   };

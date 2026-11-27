@@ -1,11 +1,12 @@
-// 결제 sheet for the gift owner page (and later the personal board): one exported entry, openCheckout({ boardId, kind, ref }), that the
-// product page calls from its own button. Nothing shows unless /rt/config carries pay (PAY_ON=1) and /rt/order/products answers for this
+// 결제 sheet for the board owner page (a gift board, kind gift, or a 내 전광판, kind personal): one exported entry,
+// openCheckout({ boardId, kind, ref, product }), that the owner page (giftpage.js) calls from a paid tier's 결제하기 (product: that tier's
+// product, chosen in the sheet). ownerOrderLine says what the page shows of the board's orders (GET /rt/order/board/<id>). Nothing shows unless /rt/config carries pay (PAY_ON=1) and /rt/order/products answers for this
 // account (signed in, and on PAY_ALLOW while testing): payAvailable() is the check a page makes before it shows a button at all.
 // The PortOne browser SDK is loaded from its official CDN only when the buyer presses pay (no CSP on the plaza pages to widen; the operator
 // page's CSP is separate and never loads it). In PAY_MODE=mock (local hosts only) a fake payment window stands in for PortOne.
 // Paid perks are never shown as active before the server says PUBLISHED. Text goes in with textContent only.
 // payrules.js and plaza-account.js are shared with the Worker: imported with no query (tools/stamp.mjs).
-import { REFUND_RULES, TEST_BADGE, TEST_NOTE, ST_NAME, ORDER_ID } from './payrules.js';
+import { REFUND_RULES, TEST_BADGE, TEST_NOTE, ST_NAME, OWNER_ST, ORDER_ID } from './payrules.js';
 import { GT_LS, SESSION_LS } from './plaza-account.js';
 
 export const PORTONE_SDK = 'https://cdn.portone.io/v2/browser-sdk.js';
@@ -27,7 +28,8 @@ export function payApi(fetchFn = (...a) => fetch(...a), token = tokenNow) {
   };
   return {
     config: async () => { const r = await call('/rt/config'); return r.pay?.on ? r.pay : null; },
-    products: (kind) => call('/rt/order/products' + (kind ? '?kind=' + encodeURIComponent(kind) : '')),
+    products: (kind, board) => { const q = new URLSearchParams(); if (kind) q.set('kind', kind); if (board) q.set('board', board); const s = q.toString(); return call('/rt/order/products' + (s ? '?' + s : '')); },
+    boardOrders: (board) => call('/rt/order/board/' + encodeURIComponent(board)),
     create: (b) => call('/rt/order', b),
     pay: (id) => call('/rt/order/' + id + '/pay', {}),
     confirm: (id) => call('/rt/order/' + id + '/confirm', {}),
@@ -38,19 +40,36 @@ export function payApi(fetchFn = (...a) => fetch(...a), token = tokenNow) {
   };
 }
 
-// Is checkout open for this account and kind? -> the /rt/order/products answer, or null (off, not signed in, not allowed, nothing on sale).
-export async function payAvailable({ kind = 'gift' } = {}, api = payApi()) {
+// Is checkout open for this account and kind? boardId: the prices are that board's arm (the ones its page shows). -> the
+// /rt/order/products answer, or null (off, not signed in, not allowed, nothing on sale).
+export async function payAvailable({ kind = 'gift', boardId = '' } = {}, api = payApi()) {
   const cfg = await api.config().catch(() => null); if (!cfg) return null;
-  const r = await api.products(kind); return r.ok && Array.isArray(r.products) && r.products.length ? r : null;
+  const r = await api.products(kind, boardId); return r.ok && Array.isArray(r.products) && r.products.length ? r : null;
+}
+// The owner page's line for a board's orders (newest first; a cancelled one is left out): { st, label (결제 대기 / 결제 완료 / 게시 중 /
+// 게시됨 / 실패 / 환불), text, active (the perks are on: PUBLISHED only), locked (money taken and kept: no second order), name, gives }, or
+// null when there is none.
+export function ownerOrderLine(orders) {
+  const o = (Array.isArray(orders) ? orders : []).find((x) => x && x.st && x.st !== 'CANCELLED');
+  if (!o) return null;
+  const paidFail = o.st === 'FAILED' && o.paid_at != null;
+  const why = { CREATED: '결제를 마치지 않았다면 결제하기를 다시 눌러 주세요.', PAYMENT_PENDING: '결제를 확인하고 있어요. 결제를 마치지 않았다면 결제하기를 다시 눌러 주세요.',
+    PAID: '결제가 확인됐어요. 곧 전광판에 게시돼요.', PUBLISH_PENDING: '전광판에 혜택을 넣고 있어요. 잠시 뒤에 다시 열어 주세요.', PUBLISHED: '혜택이 이 전광판에 적용됐어요.',
+    FAILED: paidFail ? '결제는 됐지만 게시하지 못했어요. 운영자가 확인해 다시 게시하거나 환불해 드려요.' : '결제가 완료되지 않았어요. 돈이 나갔다면 문의하기로 알려 주세요.',
+    REFUNDED: '환불된 주문이에요. 이 전광판은 무료 걸기로 돌아갔어요.' }[o.st] || '';
+  const label = OWNER_ST[o.st] || o.st;
+  return { st: o.st, label, name: String(o.name || ''), text: `${o.name || '주문'} · ${label}${o.test ? ' (' + TEST_BADGE + ')' : ''} · ${why}`, active: o.st === 'PUBLISHED',
+    locked: ['PAID', 'PUBLISH_PENDING', 'PUBLISHED'].includes(o.st) || paidFail, gives: o.st === 'PUBLISHED' && Array.isArray(o.gives) ? [...o.gives] : [] };
 }
 
 // ---- what the sheet shows ----------------------------------------------------------------------------------------------------------
 // From the products answer: rows, the test badge, the refund rules (shown before paying), and the line that says perks start after payment.
-export function sheetModel(r) {
-  const test = !!r.test;
+// pick: the product the page's button was for (checked first); without one, or one not on sale, the first row.
+export function sheetModel(r, pick = '') {
+  const test = !!r.test, at = Math.max(0, r.products.findIndex((p) => p.id === pick));
   return {
     title: '결제하기', badge: test ? TEST_BADGE : '', testNote: test ? TEST_NOTE : '',
-    rows: r.products.map((p, i) => ({ id: p.id, name: p.name, price: p.price, priceText: won(p.price), perks: [...p.perks], active: false, checked: i === 0 })),
+    rows: r.products.map((p, i) => ({ id: p.id, name: p.name, price: p.price, priceText: won(p.price), perks: [...p.perks], active: false, checked: i === at })),
     refund: [REFUND_RULES.before, REFUND_RULES.after, ...REFUND_RULES.lines], afterPay: '혜택은 결제가 확인되고 전광판에 공개된 뒤에 적용돼요.',
     vat: '가격은 부가세 포함이에요.',
   };
@@ -129,9 +148,9 @@ function el(doc, tag, props = {}, ...kids) {
 }
 
 // The one entry the product pages use. -> a Promise of the runCheckout result ({ ok: false, code: 'off' } when checkout is not open here).
-export async function openCheckout({ boardId = '', kind = 'gift', ref = '' } = {}, api = payApi(), doc = document) {
-  const avail = await payAvailable({ kind }, api); if (!avail) return { ok: false, code: 'off' };
-  const m = sheetModel(avail), mode = avail.mode;
+export async function openCheckout({ boardId = '', kind = 'gift', ref = '', product = '' } = {}, api = payApi(), doc = document) {
+  const avail = await payAvailable({ kind, boardId }, api); if (!avail) return { ok: false, code: 'off' };
+  const m = sheetModel(avail, product), mode = avail.mode;
   if (!doc.getElementById('kpay-css')) doc.head.append(el(doc, 'style', { id: 'kpay-css', text: CSS }));
   const before = doc.activeElement;
   let finish; const out = new Promise((res) => { finish = res; });

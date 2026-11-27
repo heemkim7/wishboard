@@ -103,6 +103,10 @@ export function perksOf(pk) {
   const have = new Set(Object.values(by).flatMap((x) => (Array.isArray(x) ? x.map(String) : [])));
   return Object.keys(PERK).filter((k) => have.has(k));
 }
+// Whether a board's films carry the free 'WISH BOARD · 무료' watermark: yes unless its view says clean (a published 축하 영상 세트 or
+// 메인 타워 주인공 order). The drawn 15 s film (giftfilm.js), the plaza's 15 s video (gift.js) and the real video (realvideo.js; its
+// 'AI 합성' mark stays either way) all ask this.
+export const filmMark = (g) => Number(g?.clean) !== 1;
 // The window a board gets with 오래 걸기: GIFT.paidHours from its start (the free window is GIFT.hours).
 export const longEnd = (g) => Number(g?.a) + GIFT.paidHours * 36e5;
 // The experiment arms of the ladder: A is the prices above. GIFT_ARMS (a Worker variable, e.g. 'A:3900/7900/14900;B:2900/5900/11900')
