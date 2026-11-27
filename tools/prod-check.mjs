@@ -50,6 +50,8 @@ const ADMIN_HEAD = { 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofo
 // What someone without a session must get: kind 'page' (/admin, /admin.html, /admin/) the login page and nothing of the operator page, 'module'
 // (admin-*.js) a 404, 'api' (/rt/admin/*) a 401; all with the operator headers. head: the response headers as a plain object (lower-case names).
 // '' when the answer is fine, else what is wrong.
+// GET /rt/health's hasAdminRl: without the ADMIN_RL binding the login limit lets every guess through (it fails open), so that is a problem.
+export function healthFault(body) { return body?.hasAdminRl === true ? '' : 'ADMIN_RL is not bound: login guesses are not slowed'; }
 export function adminFault(kind, status, type, body, head = {}) {
   const b = String(body || ''), h = (k) => String(head[k] ?? '');
   const miss = Object.entries(ADMIN_HEAD).filter(([k, v]) => h(k) !== v).map(([k]) => k);
@@ -163,6 +165,7 @@ async function main() {
     if (r.status !== 200) bad++;
     console.log(`[api] GET ${p.padEnd(12)} -> ${r.status} ${shape(body)}`);
     if (p === '/rt/wishes' && body) for (const k of Object.keys(body)) console.log(`        ${k}: ${shape(body[k])}`);
+    if (p === '/rt/health') { const fault = healthFault(body); if (fault) bad++; console.log(`        ADMIN_RL bound: ${body?.hasAdminRl === true}${fault ? '  <-- ' + fault : ''}`); }
   }
   for (const p of ['/rt/wishes?id=nope', '/rt/w/nope', '/rt/s/' + '0'.repeat(32)]) {
     const r = await get(p);

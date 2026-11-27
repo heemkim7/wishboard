@@ -141,6 +141,10 @@ describe('prod-check knows what the operator screen looks like without a session
     assert.match(C.adminFault('api', 401, 'application/json', '{}', {}), /missing headers: cache-control, x-robots-tag, x-frame-options, referrer-policy, x-content-type-options/);
     assert.match(C.adminFault('x', 200, '', '', head), /unknown/);
   });
+  it('counts a missing ADMIN_RL binding in /rt/health as a problem', () => {
+    assert.equal(C.healthFault({ hasFlushKey: true, hasGuestKey: true, hasAdminRl: true, mode: 'DO' }), '');
+    for (const b of [{ hasAdminRl: false }, {}, null]) assert.match(C.healthFault(b), /ADMIN_RL is not bound/);
+  });
   it('never sends a key: the [admin] checks use plain GETs', () => {
     const src = readFileSync(new URL('../tools/prod-check.mjs', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
     assert.equal(/x-admin-key|ADMIN_KEY|adminKey|['"]cookie['"]/i.test(src), false);
