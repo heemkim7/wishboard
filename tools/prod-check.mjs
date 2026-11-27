@@ -41,6 +41,28 @@ export function ignoredBy(rules, rel, dir = false) {
 }
 // wrangler never uploads its own ignore file
 export const ALWAYS_SKIP = new Set(['.assetsignore']);
+// Uploaded but not public: the operator page and its modules reach a browser only with the login cookie (worker.js admGate). The file
+// comparison skips them; the [admin] checks below say what someone without a session gets.
+export const PRIVATE = /^admin(?:\.html|-[^/]*\.js)$/;
+// Markup and names only the operator page has. The login page must carry none of it.
+export const OPERATOR_MARKS = ['opsRoot', '사진 전광판 검수', 'admin-ops', 'admin-ads', 'admin-gift', 'admin-team', '/rt/admin/photos', '/rt/admin/stats', 'sessionStorage'];
+const ADMIN_HEAD = { 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', 'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff' };
+// What someone without a session must get: kind 'page' (/admin, /admin.html, /admin/) the login page and nothing of the operator page, 'module'
+// (admin-*.js) a 404, 'api' (/rt/admin/*) a 401; all with the operator headers. head: the response headers as a plain object (lower-case names).
+// '' when the answer is fine, else what is wrong.
+export function adminFault(kind, status, type, body, head = {}) {
+  const b = String(body || ''), h = (k) => String(head[k] ?? '');
+  const miss = Object.entries(ADMIN_HEAD).filter(([k, v]) => h(k) !== v).map(([k]) => k);
+  if (kind === 'page') {
+    if (status !== 200 || !/text\/html/i.test(String(type || ''))) return `status ${status} ${type}`;
+    const marks = OPERATOR_MARKS.filter((m) => b.includes(m));
+    if (marks.length) return 'operator markup served: ' + marks.join(', ');
+    if (!/<input type="password"/.test(b) || !/action="\/rt\/admin\/login"/.test(b)) return 'not the login page';
+  } else if (kind === 'module') { if (status !== 404) return `status ${status}`; }
+  else if (kind === 'api') { if (status !== 401) return `status ${status}`; }
+  else return 'unknown check';
+  return miss.length ? 'missing headers: ' + miss.join(', ') : '';
+}
 
 // The search and install files the site must serve: robots.txt (the API and admin closed, the sitemap named), sitemap.xml (the home page), the web
 // app manifest (a 192 and a 512 icon, one maskable). '' when the answer is fine, else what is wrong. type: the content-type header, body: text.
@@ -70,7 +92,7 @@ async function main() {
   const get = async (p, init) => {
     const r = await fetch(ORIGIN + p, { redirect: 'manual', ...init });
     const buf = Buffer.from(await r.arrayBuffer());
-    return { status: r.status, type: r.headers.get('content-type') || '', cc: r.headers.get('cache-control') || '', buf, loc: r.headers.get('location') || '' };
+    return { status: r.status, type: r.headers.get('content-type') || '', cc: r.headers.get('cache-control') || '', buf, loc: r.headers.get('location') || '', head: Object.fromEntries(r.headers) };
   };
 
   // 1. every served file is byte-identical to the working tree; what .assetsignore drops is not compared
@@ -79,7 +101,7 @@ async function main() {
   (function walk(d) {
     for (const e of fs.readdirSync(d || '.', { withFileTypes: true })) {
       const p = d ? d + '/' + e.name : e.name;
-      if (ALWAYS_SKIP.has(p) || ignoredBy(rules, p, e.isDirectory())) continue;
+      if (ALWAYS_SKIP.has(p) || PRIVATE.test(p) || ignoredBy(rules, p, e.isDirectory())) continue;
       if (e.isDirectory()) { walk(p); continue; }
       files.push(p);
     }
@@ -104,6 +126,14 @@ async function main() {
     const r = await get(p);
     if (r.status === 200) bad++;
     console.log(`[hidden] ${p.padEnd(24)} -> ${r.status} (${r.buf.length}B)${r.status === 200 ? '  <-- SERVED' : ''}`);
+  }
+
+  // 2b. the operator screen without a session (no cookie, no key, no wrong key is ever sent): the login page, the modules 404, the API 401
+  const privates = fs.readdirSync('.').filter((f) => PRIVATE.test(f) && f.endsWith('.js'));
+  for (const [kind, p] of [['page', '/admin'], ['page', '/admin.html'], ['page', '/admin/'], ...privates.map((f) => ['module', '/' + f]), ['api', '/rt/admin/wishes'], ['api', '/rt/admin/errors'], ['api', '/rt/admin/logins']]) {
+    const r = await get(p), fault = adminFault(kind, r.status, r.type, r.buf.toString('utf8'), r.head);
+    if (fault) bad++;
+    console.log(`[admin] ${p.padEnd(24)} -> ${r.status} ${r.type.split(';')[0]}${fault ? '  <-- ' + fault : ''}`);
   }
 
   // 3. module graph from index.html: every import resolves, one URL per module
@@ -134,7 +164,7 @@ async function main() {
     console.log(`[api] GET ${p.padEnd(12)} -> ${r.status} ${shape(body)}`);
     if (p === '/rt/wishes' && body) for (const k of Object.keys(body)) console.log(`        ${k}: ${shape(body[k])}`);
   }
-  for (const p of ['/rt/wishes?id=nope', '/rt/w/nope', '/rt/s/' + '0'.repeat(32), '/rt/admin/wishes']) {
+  for (const p of ['/rt/wishes?id=nope', '/rt/w/nope', '/rt/s/' + '0'.repeat(32)]) {
     const r = await get(p);
     console.log(`[api] GET ${p.padEnd(40)} -> ${r.status} ${r.type.split(';')[0]} ${r.loc ? '-> ' + r.loc : ''}`);
   }

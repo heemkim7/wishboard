@@ -115,6 +115,36 @@ describe('prod-check ignore list comes from .assetsignore', () => {
     assert.equal(C.ignoredBy(C.parseIgnore('out/\n!keep.md\n*.md'), 'out', false), false); // dir-only rule, a file named out
     assert.equal(C.ignoredBy(C.parseIgnore('*.md\n!keep.md'), 'keep.md'), false);
   });
+  it('leaves the operator page and its modules out of the public comparison (uploaded, but behind the login)', () => {
+    for (const p of ['admin.html', 'admin-ops.js', 'admin-ads.js', 'admin-gift.js', 'admin-team.js']) { assert.equal(C.PRIVATE.test(p), true, p); assert.equal(C.ignoredBy(rules, p), false, p); }
+    for (const p of ['ads.html', 'adsale.js', 'adspage.js', 'growth.js', 'opsrules.js', 'index.html', 'ts3d/admin-x.js']) assert.equal(C.PRIVATE.test(p), false, p);
+  });
+});
+
+describe('prod-check knows what the operator screen looks like without a session', () => {
+  const env = { ADMIN_KEY: 'admin-test-key-123', GUEST_KEY: 'guest-test-key', ASSETS: { fetch: () => new Response(readFileSync(new URL('../admin.html', import.meta.url))) } };
+  env.METER = { idFromName: (n) => n, get: () => new Proxy({}, { get: () => async () => ({}) }) };
+  const ask = async (p) => { const r = await worker.fetch(new Request('https://prodcheck.test' + p), env, { waitUntil() {} }); return [r.status, r.headers.get('content-type') || '', await r.text(), Object.fromEntries(r.headers)]; };
+  it('passes what the Worker answers: the login page, 404 modules, 401 API', async () => {
+    for (const p of ['/admin', '/admin.html', '/admin/']) assert.equal(C.adminFault('page', ...(await ask(p))), '', p);
+    for (const f of ['admin-ops.js', 'admin-ads.js', 'admin-gift.js', 'admin-team.js']) assert.equal(C.adminFault('module', ...(await ask('/' + f))), '', f);
+    for (const p of ['/rt/admin/wishes', '/rt/admin/errors', '/rt/admin/logins']) assert.equal(C.adminFault('api', ...(await ask(p))), '', p);
+  });
+  it('fails the operator page, a served module, an open API and missing headers', async () => {
+    const head = (await ask('/admin'))[3];
+    const page = readFileSync(new URL('../admin.html', import.meta.url), 'utf8');
+    assert.match(C.adminFault('page', 200, 'text/html', page, head), /operator markup served: opsRoot/);
+    assert.match(C.adminFault('page', 200, 'text/html', '<p>hi</p>', head), /not the login page/);
+    assert.match(C.adminFault('page', 307, '', '', head), /status 307/);
+    assert.match(C.adminFault('module', 200, 'text/javascript', 'x', head), /status 200/);
+    assert.match(C.adminFault('api', 200, 'application/json', '{}', head), /status 200/);
+    assert.match(C.adminFault('api', 401, 'application/json', '{}', {}), /missing headers: cache-control, x-robots-tag, x-frame-options, referrer-policy, x-content-type-options/);
+    assert.match(C.adminFault('x', 200, '', '', head), /unknown/);
+  });
+  it('never sends a key: the [admin] checks use plain GETs', () => {
+    const src = readFileSync(new URL('../tools/prod-check.mjs', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+    assert.equal(/x-admin-key|ADMIN_KEY|adminKey|['"]cookie['"]/i.test(src), false);
+  });
 });
 
 // ---------- a dry run of the whole script against the real Worker, Meter and Room in memory ----------
