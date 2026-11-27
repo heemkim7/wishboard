@@ -15,7 +15,7 @@
   h1 { margin: 0; font-size: 24px; font-weight: 900; letter-spacing: -.02em; }
   .sub { margin: 6px 0 0; font-size: 13px; color: var(--muted); font-weight: 600; line-height: 1.6; }
   .bar { margin-top: 20px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-  input[type=password], input[type=text], input[type=date], select, #downSlot, #actor, #opsId, #opsTitle, #opsCopy { flex: 1; min-width: 160px; height: 42px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--stroke); background: rgba(0,0,0,.3); color: var(--text); font: inherit; font-weight: 700; }
+  input[type=text], input[type=date], select, #downSlot, #actor, #opsId, #opsTitle, #opsCopy { flex: 1; min-width: 160px; height: 42px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--stroke); background: rgba(0,0,0,.3); color: var(--text); font: inherit; font-weight: 700; }
   select { min-width: 120px; }
   button { height: 42px; padding: 0 16px; border-radius: 12px; border: 1px solid var(--stroke); background: var(--glass); color: var(--text); font: inherit; font-weight: 800; cursor: pointer; }
   button:hover { border-color: rgba(255,255,255,.3); }
@@ -62,10 +62,7 @@
       <li>연예인 사진·로고 등 저작권/초상권이 의심되는 사진, QR 코드</li>
     </ul>
   </div>
-  <div class="bar">
-    <input id="key" type="password" autocomplete="off" placeholder="ADMIN_KEY (Worker 시크릿)" />
-    <button id="save" class="gold" type="button">열기</button>
-  </div>
+  <form class="bar" method="post" action="/rt/admin/logout"><button type="submit">로그아웃</button></form>
   <section id="opsRoot" aria-label="오류 · 문의함 · 점검"></section><script type="module" src="./admin-ops.js?v=202611270945"></script>
   <div class="bar">
     <input id="actor" type="text" placeholder="설정에 있는 계정 번호" />
@@ -135,13 +132,13 @@ import { kstDay } from './adsale.js'; // admin-ads.js loads the same module
 const $ = (id) => document.getElementById(id);
 const TABS = [['pending', '⏳ 검수 대기'], ['approved', '✅ 송출 중'], ['rejected', '거절함'], ['removed', '내림']];
 const SLOT = (s) => s === 'MAIN_TOP' ? '메인 타워 정상' : s === 'MAIN_MID' ? '메인 타워 중앙' : s === 'MAIN_BOT' ? '메인 타워 하단' : s.startsWith('SUB_') ? `코너 ${s.slice(4)}` : `거리 ${s.replace('PLOT_', '')}번`;
-let key = sessionStorage.getItem('kts-admin') || '', tab = 'pending', urls = [];
-$('key').value = key;
+let tab = 'pending', urls = [];
 
 function msg(text, err) { $('msg').textContent = text || ''; $('msg').className = err ? 'msg err' : 'msg'; }
+// Every call rides the login cookie (same origin; worker.js admGate). A 401 means the session ended: back to the login page.
 async function api(path, init = {}) {
-  const r = await fetch(path, { ...init, headers: { ...(init.headers || {}), 'x-admin-key': key } });
-  if (r.status === 401) throw new Error('ADMIN_KEY가 맞지 않아요. (Worker에 ADMIN_KEY 시크릿이 설정돼 있는지 확인)');
+  const r = await fetch(path, { ...init, cache: 'no-store', credentials: 'same-origin' });
+  if (r.status === 401) { location.replace('/admin'); throw new Error('로그인이 끝났어요. 다시 로그인해 주세요.'); }
   return r;
 }
 function renderTabs() {
@@ -164,7 +161,6 @@ async function review(id, approve, btns) {
   } catch (e) { msg(e.message, true); for (const b of btns) b.disabled = false; }
 }
 async function load() {
-  if (!key) { msg('ADMIN_KEY를 입력하세요.'); $('grid').replaceChildren(); return; }
   msg('불러오는 중…');
   try {
     const r = await api('/rt/admin/photos?status=' + tab);
@@ -205,12 +201,11 @@ async function load() {
     }));
   } catch (e) { msg(e.message, true); }
 }
-// Daily metrics from GET /rt/admin/stats (x-admin-key). Only on open and on the button: the readout reads the day's raw events.
+// Daily metrics from GET /rt/admin/stats. Only on open and on the button: the readout reads the day's raw events.
 const STAT_COLS = ['날짜', '방문자', '신규', '재방문', 'D1', 'D7', 'D30', '세션', '체류(중앙)', '신규 깔때기: 첫 화면 → 입장 → 첫 포인트 → 첫 전광판', '전광판', '택시', '링크', '로그인'];
 const pct = (n, of) => of ? Math.round(n / of * 100) + '%' : '–';
 const span = (s) => s >= 60 ? Math.floor(s / 60) + '분 ' + (s % 60) + '초' : s + '초';
 async function loadStats() {
-  if (!key) { $('statsMsg').textContent = ''; $('stats').replaceChildren(); return; }
   $('statsMsg').textContent = '불러오는 중…'; $('statsMsg').className = 'msg';
   try {
     const r = await api('/rt/admin/stats?days=30');
@@ -265,7 +260,6 @@ async function reviewSlot(id, approve, btns) {
   } catch (e) { modNote(e.message, true); for (const b of btns) b.disabled = false; }
 }
 async function loadModeration() {
-  if (!key) { modNote(''); $('reports').replaceChildren(); $('reviews').replaceChildren(); return; }
   modNote('불러오는 중…');
   try {
     const r = await api('/rt/admin/reports');
@@ -299,10 +293,7 @@ async function loadModeration() {
 }
 $('modLoad').onclick = loadModeration;
 $('down').onclick = async () => {
-  key = $('key').value.trim();
-  sessionStorage.setItem('kts-admin', key);
   const slot = $('downSlot').value.trim();
-  if (!key) { modNote('ADMIN_KEY를 입력하세요.', true); return; }
   if (!slot) { modNote('슬롯 id를 입력하세요.', true); return; }
   if (!confirm(`${slot} 문구를 내릴까요? 코인은 되돌리지 않습니다.`)) return;
   $('down').disabled = true;
@@ -329,7 +320,6 @@ async function hideWish(id, hide, btn) {
   } catch (e) { wishNote(e.message, true); btn.disabled = false; }
 }
 async function loadWishes() {
-  if (!key) { wishNote(''); $('wishes').replaceChildren(); return; }
   const day = $('wishDay').value || kstToday();
   wishNote('불러오는 중…');
   try {
@@ -355,12 +345,8 @@ async function loadWishes() {
 }
 $('wishLoad').onclick = loadWishes;
 $('wishDay').onchange = loadWishes;
-$('save').onclick = () => { key = $('key').value.trim(); sessionStorage.setItem('kts-admin', key); load(); loadStats(); loadModeration(); loadWishes(); };
 function opsNote(text, err) { $('opsMsg').textContent = text || ''; $('opsMsg').className = err ? 'msg err' : 'msg'; }
 $('opsSave').onclick = async () => {
-  key = $('key').value.trim();
-  sessionStorage.setItem('kts-admin', key);
-  if (!key) { opsNote('ADMIN_KEY를 입력하세요.', true); return; }
   const body = {
     id: $('opsId').value.trim(),
     starts_on: $('opsStart').value,
@@ -380,11 +366,8 @@ $('opsSave').onclick = async () => {
   $('opsSave').disabled = false;
 };
 $('grant').onclick = async () => {
-  key = $('key').value.trim();
-  sessionStorage.setItem('kts-admin', key);
   const actorId = $('actor').value.trim();
   const amount = Math.floor(Number($('amt').value));
-  if (!key) { msg('ADMIN_KEY를 입력하세요.', true); return; }
   if (!actorId) { msg('계정 번호를 입력하세요.', true); return; }
   $('grant').disabled = true;
   try {
@@ -395,13 +378,12 @@ $('grant').onclick = async () => {
   } catch (e) { msg(e.message, true); }
   $('grant').disabled = false;
 };
-$('key').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('save').click(); });
 renderTabs();
 load();
 loadStats();
 loadModeration();
 loadWishes();
-setInterval(() => { if (key && tab === 'pending' && !document.hidden) load(); }, 30000);
+setInterval(() => { if (tab === 'pending' && !document.hidden) load(); }, 30000);
 </script>
 </body>
 </html>

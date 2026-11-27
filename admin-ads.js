@@ -1,10 +1,9 @@
 // 광고 판매 in admin.html (one <script> line there): the /ads requests (new → quoted → paid → scheduled → done, or
 // rejected), the creative check, a price note, the schedule per ad screen (no two bookings meet on one screen; the Worker
-// checks) and each booking's read-only report link for the advertiser. Same x-admin-key as the rest of the page.
+// checks) and each booking's read-only report link for the advertiser. Same login cookie as the rest (a 401 goes back to the login page) of the page.
 import { AD_SCREENS, AD_PRODUCTS, AD_STATUS, AD_STATUS_NAME, AD_THEMES, AD_EMOJI, ADS, adScreenName, priceText, addDays, kstDay } from './adsale.js';
 
 const $ = (id) => document.getElementById(id);
-const keyOf = () => (($('key')?.value || '').trim() || sessionStorage.getItem('kts-admin') || '');
 function h(tag, props, ...kids) {
   const n = document.createElement(tag);
   for (const [k, v] of Object.entries(props || {})) {
@@ -29,10 +28,8 @@ const box = h('section', { id: 'adsAdmin' },
 
 function say(text, err) { const m = $('adsMsg'); m.textContent = text || ''; m.className = err ? 'msg err' : 'msg'; }
 async function api(path, body) {
-  const key = keyOf();
-  if (!key) throw new Error('ADMIN_KEY를 입력하세요.');
-  const r = await fetch(path, body ? { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-key': key }, body: JSON.stringify(body) } : { headers: { 'x-admin-key': key } });
-  if (r.status === 401) throw new Error('ADMIN_KEY가 맞지 않아요.');
+  const r = await fetch(path, body ? { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : { credentials: 'same-origin' });
+  if (r.status === 401) { location.replace('/admin'); throw new Error('로그인이 끝났어요. 다시 로그인해 주세요.'); }
   const d = await r.json().catch(() => ({}));
   if (!r.ok || d.ok === false) throw new Error(d.error || '처리하지 못했어요.');
   return d;
@@ -88,7 +85,6 @@ function request(r, prices) {
 }
 
 async function load() {
-  if (!keyOf()) { say('ADMIN_KEY를 입력하세요.'); return; }
   say('불러오는 중…');
   try {
     const d = await api('/rt/admin/ads');

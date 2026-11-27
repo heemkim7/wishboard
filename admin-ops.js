@@ -1,10 +1,9 @@
-// admin.html: 오류 · 문의함 · 점검 (launch plan 상1, 상2, 상4). Rendered into #opsRoot; every request carries the ADMIN_KEY admin.html keeps in
-// sessionStorage ('kts-admin'). Everything from the server is set as text, never as HTML.
+// admin.html: 오류 · 문의함 · 점검 · 로그인 기록 (launch plan 상1, 상2, 상4). Rendered into #opsRoot; every request rides the operator's login
+// cookie (same origin, worker.js admGate), and a 401 sends the tab back to the login page. Everything from the server is set as text, never as HTML.
 import { SUPPORT_KINDS, kstWhen, MAINT_DEFAULT } from './opsrules.js';
 
 const root = document.getElementById('opsRoot');
 const KIND = Object.fromEntries(SUPPORT_KINDS);
-const key = () => { try { return sessionStorage.getItem('kts-admin') || ''; } catch { return ''; } };
 function el(tag, props = {}, ...kids) {
   const n = document.createElement(tag);
   for (const [k, v] of Object.entries(props || {})) {
@@ -15,17 +14,15 @@ function el(tag, props = {}, ...kids) {
   return n;
 }
 async function api(path, init = {}) {
-  const k = key();
-  if (!k) throw new Error('ADMIN_KEY를 입력하고 열기를 누르세요.');
-  const r = await fetch(path, { ...init, cache: 'no-store', headers: { ...(init.headers || {}), 'x-admin-key': k, ...(init.body ? { 'content-type': 'application/json' } : {}) } });
-  if (r.status === 401) throw new Error('ADMIN_KEY가 맞지 않아요.');
+  const r = await fetch(path, { ...init, cache: 'no-store', credentials: 'same-origin', headers: { ...(init.headers || {}), ...(init.body ? { 'content-type': 'application/json' } : {}) } });
+  if (r.status === 401) { location.replace('/admin'); throw new Error('로그인이 끝났어요. 다시 로그인해 주세요.'); }
   const d = await r.json().catch(() => ({}));
   if (!r.ok || d.ok === false) throw new Error(d.error || d.err || '처리하지 못했어요');
   return d;
 }
 const when = (ms) => (ms ? kstWhen(ms) : '—');
 
-const TABS = [['errors', '🧯 오류'], ['support', '📮 문의함'], ['maint', '🚧 점검']];
+const TABS = [['errors', '🧯 오류'], ['support', '📮 문의함'], ['maint', '🚧 점검'], ['logins', '🔑 로그인 기록']];
 let tab = 'errors', supStatus = 'open';
 const tabs = el('div', { class: 'tabs' }), msg = el('div', { class: 'msg' }), body = el('div', { class: 'hits' });
 const say = (t, err) => { msg.textContent = t || ''; msg.className = err ? 'msg err' : 'msg'; };
@@ -98,15 +95,23 @@ async function loadMaint() {
     el('div', { class: 'bar' }, el('label', { for: 'opsMaintOn', style: { display: 'flex', gap: '8px', alignItems: 'center', fontWeight: '800' } }, on, '점검 켜기'), text),
     el('div', { class: 'bar' }, el('span', { class: 'sub', style: { margin: '0' }, text: '끝나는 시각(한국 시간, 선택)' }), until, save),
     el('p', { class: 'sub', text: '켜져 있는 동안: 입장 화면은 이 문구와 끝나는 시각을 보이고 1분마다 다시 확인합니다. 이미 들어온 사람은 5분 안에 안내 한 번을 받고 그대로 놉니다. 서버 경로는 막지 않습니다.' }),
-    el('p', { class: 'sub' }, '점검 중에 직접 들어가 보기: ', el('a', { href: '/?maint=skip', style: { color: 'var(--gold-2)' }, text: '/?maint=skip' }), ' (이 탭에서 열어야 합니다. 이 탭의 ADMIN_KEY를 서버가 확인한 뒤에만 열립니다.)'),
+    el('p', { class: 'sub' }, '점검 중에 직접 들어가 보기: ', el('a', { href: '/?maint=skip', style: { color: 'var(--gold-2)' }, text: '/?maint=skip' }), ' (운영자로 로그인한 이 브라우저에서 열어야 합니다. 서버가 로그인을 확인한 뒤에만 열립니다.)'),
   );
 }
 
+// The last 50 login attempts (GET /rt/admin/logins, the 'ops' store): time, success or not, 6 characters of the network hash. No key, no address.
+async function loadLogins() {
+  const d = await api('/rt/admin/logins');
+  const items = Array.isArray(d.items) ? d.items : [];
+  say(items.length ? `최근 ${items.length}번 · 실패 ${items.filter((x) => !x.ok).length}번` : '기록된 로그인이 없어요.');
+  body.replaceChildren(el('div', { class: 'bar' }, el('button', { type: 'button', text: '새로고침', onclick: () => load() })),
+    el('p', { class: 'sub', text: '최근 50번의 로그인 시도입니다. 망은 접속한 인터넷 연결을 알아볼 수 없게 바꾼 값의 앞 6자리라, 같은 값이면 같은 연결입니다. 키와 주소는 남기지 않습니다. 하루 서버 사용량이 한도에 닿으면 기록하지 않고, 1분에 5번이 넘으면 잠시 막힙니다.' }),
+    ...items.map((x) => el('div', { class: 'hit' }, el('b', { text: x.ok ? '성공' : '실패' }), el('span', { text: when(x.at) }), el('span', { text: '망 ' + x.net }))));
+}
+
 async function load() {
-  if (!key()) { say('ADMIN_KEY를 입력하고 열기를 누르세요.'); body.replaceChildren(); return; }
   say('불러오는 중…');
-  try { await (tab === 'errors' ? loadErrors() : tab === 'support' ? loadSupport() : loadMaint()); } catch (e) { say(e.message, true); }
+  try { await (tab === 'errors' ? loadErrors() : tab === 'support' ? loadSupport() : tab === 'logins' ? loadLogins() : loadMaint()); } catch (e) { say(e.message, true); }
 }
 renderTabs();
-document.getElementById('save')?.addEventListener('click', () => setTimeout(load, 0)); // admin.html's own handler stores the key first
 load();

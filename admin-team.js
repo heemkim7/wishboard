@@ -1,10 +1,9 @@
 // 응원 팀과 명당 in admin.html (one <script> line there): the weekly numbers of the report (활성 팀, daily distinct supporters per team, goals
 // reached, D7 / D30 of team members), why supports were not counted today, the anniversaries waiting for approval, and hiding a team whose
-// name breaks the posting rules. One GET /rt/admin/teams a load (two Meter calls in one instance, teamsrv.js admin). Same x-admin-key as the rest.
+// name breaks the posting rules. One GET /rt/admin/teams a load (two Meter calls in one instance, teamsrv.js admin). Same login cookie as the rest (a 401 goes back to the login page).
 import { PRIME, mdText, pct } from './primerules.js';
 
 const $ = (id) => document.getElementById(id);
-const keyOf = () => (($('key')?.value || '').trim() || sessionStorage.getItem('kts-admin') || '');
 function h(tag, props, ...kids) {
   const n = document.createElement(tag);
   for (const [k, v] of Object.entries(props || {})) {
@@ -30,9 +29,8 @@ const box = h('section', { id: 'teamAdmin' },
 
 function say(t, err) { const m = $('teamMsg'); m.textContent = t || ''; m.className = err ? 'msg err' : 'msg'; }
 async function api(path, body) {
-  const key = keyOf(); if (!key) throw new Error('ADMIN_KEY를 입력하세요.');
-  const r = await fetch(path, body ? { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-key': key }, body: JSON.stringify(body) } : { headers: { 'x-admin-key': key } });
-  if (r.status === 401) throw new Error('ADMIN_KEY가 맞지 않아요.');
+  const r = await fetch(path, body ? { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : { credentials: 'same-origin' });
+  if (r.status === 401) { location.replace('/admin'); throw new Error('로그인이 끝났어요. 다시 로그인해 주세요.'); }
   const d = await r.json().catch(() => ({})); if (!r.ok || d.ok === false) throw new Error(d.error || '처리하지 못했어요.');
   return d;
 }
@@ -63,4 +61,4 @@ async function load() {
   } catch (e) { say(e.message, true); }
 }
 async function act(body) { try { await api('/rt/admin/team', body); await load(); } catch (e) { say(e.message, true); } }
-if (keyOf()) load();
+load();
