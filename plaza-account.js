@@ -279,6 +279,26 @@ export function freshBoards(rows, now = Date.now(), n = 10) {
     .slice(0, n);
 }
 
+// 공유 for someone else's lit board (ui.js openAd) or wish (오늘의 소원 list): what to send, or null (my own, dark, or a bad id). The board link is
+// its card page (/rt/card/<slot>, on SITE like share.js cardUrl), the wish link its page (/rt/w/<id>). kind goes out with the share_link event
+// (board_other | wish_other). These shares pay nothing: ui.js sends them with sendLink({ invite: false }) and calls no bonus.
+export function otherShare({ board = null, wish = null, me = '', own = false, now = Date.now(), origin = SITE } = {}) {
+  const base = String(origin || SITE).replace(/\/+$/, '');
+  if (board) {
+    const slot = String(board.slot_id || ''), holder = String(board.holder_id || '');
+    if (!/^[A-Z]+_[A-Z0-9_]+$/.test(slot) || !holder || (me && holder === me) || !(Date.parse(String(board.lit_until || board.expires_at || '')) > now)) return null;
+    const who = String(board.holder_name || '').trim() || '누군가';
+    return { kind: 'board_other', title: 'WISH BOARD : 모두의 전광판', text: `${who}님의 전광판이 가상 타임스퀘어에 걸려 있어요`, url: String(SITE).replace(/\/+$/, '') + '/rt/card/' + slot };
+  }
+  if (wish) {
+    const id = String(wish.id || '');
+    if (!/^[0-9a-z]{10}$/.test(id) || own || wish.mine === true) return null;
+    const who = String(wish.nick || '').trim() || '누군가';
+    return { kind: 'wish_other', title: `${who}님의 소원`, text: `"${String(wish.txt || '')}" — 가상 타임스퀘어에 걸린 소원이에요`, url: base + '/rt/w/' + id };
+  }
+  return null;
+}
+
 export function linkedActor(id, flag) {
   return flag === true || String(id || '').startsWith('user:');
 }

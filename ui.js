@@ -16,7 +16,7 @@ import { inviteView } from './invite.js';
 import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611250713';
 import { EMOTES, REACTIONS, AVATAR_COLORS, AVATAR_COLOR_NAMES, SPECIES } from './ts3d/avatars.js?v=202611250713';
 import { trackEvent, statsOff, statsGpc, setStatsOff } from './analytics.js?v=202611250713';
-import { CHEER_PHRASES, SITE, accountLabel, allowedLink, blockedText, linkedActor, slotTier, freshBoards } from './plaza-account.js';
+import { CHEER_PHRASES, SITE, accountLabel, allowedLink, blockedText, linkedActor, slotTier, freshBoards, otherShare } from './plaza-account.js';
 import { codeStart, codeStep, codeView, otpField } from './mailcode.js?v=202611250713';
 import { policyDoc } from './legal.js?v=202611250713';
 import { setOperator, operatorInfo } from './legal.js?v=202611250713';
@@ -1714,10 +1714,11 @@ export function createUI(root, hooks) {
   // Returns shareWish's answer: 'shared' | 'copied' | 'manual' | 'cancel', or 'busy' while another share is still open
   // (a second tap during an open share sheet must not fall through to the clipboard or pay twice).
   let shareBusy = false;
-  async function sendLink({ kind, text = '', url = '', title = 'WISH BOARD : 모두의 전광판', native = false, into = null }) {
+  // invite: false keeps my invite code off the link (shares of someone else's board or wish, which pay nothing).
+  async function sendLink({ kind, text = '', url = '', title = 'WISH BOARD : 모두의 전광판', native = false, into = null, invite = true }) {
     if (shareBusy) return 'busy';
     shareBusy = true;
-    url = invited(url, hooks.inviteCode?.()); // every link is also my invite
+    if (invite) url = invited(url, hooks.inviteCode?.()); // every link of my own is also my invite
     let how;
     try { how = await shareWish({ nav: native ? navigator : null, clip: writeClip, data: { title, text, url } }); }
     finally { shareBusy = false; }
@@ -1736,6 +1737,14 @@ export function createUI(root, hooks) {
     finally { shareBusy = false; }
     if (ok) trackEvent('share_link', { kind, how: 'kakao' });
     return ok ? 'kakao' : '';
+  }
+  // 공유 of someone else's board or wish (plaza-account.js otherShare): the share sheet, then the clipboard, then the copy box. No bonus, no
+  // invite code, no reward call of any kind; share_link records it with kind board_other | wish_other.
+  async function shareOther(o, into = null) {
+    if (!o) return '';
+    const how = await sendLink({ kind: o.kind, native: true, title: o.title, text: o.text, url: o.url, into, invite: false });
+    if (how === 'copied') note('링크를 복사했어요', 'ok', null, { key: 'copied' });
+    return how;
   }
   const kakaoKey = () => Promise.resolve(hooks.kakaoKey?.() || '').catch(() => ''); // the key net.js kept from /rt/config: no request of its own
   function kakaoButton(onTap, { disabled = false } = {}) {
@@ -2652,11 +2661,14 @@ export function createUI(root, hooks) {
         const heart = h('button', { class: 'wish-heart', type: 'button', disabled: !st.ok || busy, title: st.why || '하트 보내기', 'aria-label': st.ok ? `${who}님의 소원에 하트 보내기` : `${who}님의 소원 · ${st.why || st.short}`, onclick: () => sendHeart(w.id) },
           ...(short.startsWith('♥ ') ? withIcon('heart', short.slice(2)) : [short]));
         const rep = own ? null : h('button', { class: 'wish-report' + (armed === w.id ? ' arm' : ''), type: 'button', text: armed === w.id ? '한 번 더 누르면 신고' : '신고', onclick: () => armReport(w.id) });
+        // 공유 on other people's wishes: their /rt/w/<id> page, paying nothing (shareOther). 44px tall and --tap-gap apart, like the sheet's other buttons.
+        const other = own ? null : otherShare({ wish: w, own, origin: location.origin });
+        const shareBtn = other ? h('button', { class: 'wish-report', type: 'button', text: '공유', 'aria-label': `${who}님의 소원 링크 공유하기`, style: { minHeight: '44px' }, onclick: () => shareOther(other) }) : null;
         return h('div', { class: 'wish-row' + (own ? ' mine' : '') },
           tab === 'top' ? h('span', { class: 'n tnum', text: String(Math.floor(Number(w.rank)) || i + 1) }) : null,
           h('div', { class: 'wt' }, h('b', { text: quote(w.txt) }), h('small', { text: who + (own ? ' · 나' : '') })),
           h('span', { class: 'wh tnum' }, ...withIcon('heart', String(heartsOf(w)))),
-          h('div', { class: 'wa' }, heart, rep));
+          h('div', { class: 'wa', style: { gap: 'var(--tap-gap)' } }, heart, shareBtn, rep));
       }
       function paintList() {
         for (const [b, on] of [[tabTop, tab === 'top'], [tabNew, tab === 'recent']]) { b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
@@ -2724,6 +2736,7 @@ export function createUI(root, hooks) {
     const b = boardById(slotId);
     if (!boardActive(b)) { openBillboard(slotId); return; }
     const mine = b.holder_id === hooks.actorId();
+    const other = mine ? null : otherShare({ board: b, me: hooks.actorId?.() || '' }); // 공유 for a visitor: this board's card page
     const url = /^https:\/\//.test(String(b.external_url || '')) ? b.external_url : '';
     const canvas = makeCanvas(1024, 576);
     paintBillboard(canvas, b);
@@ -2777,6 +2790,7 @@ export function createUI(root, hooks) {
           url ? h('button', { type: 'button', class: 'btn ghost', text: '링크 열기', onclick: () => hooks.adClick?.(slotId, url) }) : null,
           card ? h('button', { type: 'button', class: 'btn ghost', text: '이 전광판 보기', onclick: () => { closeSheet(); hooks.focusShot?.(slotId); } }) : null,
           mine ? h('button', { type: 'button', class: 'btn primary', text: '문구 수정', onclick: () => openBillboard(slotId) }) : h('button', { type: 'button', class: 'btn primary', text: '빈 전광판 찾기', onclick: () => openBillboard('') }),
+          other ? h('button', { type: 'button', class: 'btn ghost', text: '공유', 'aria-label': `${b.holder_name || '익명'}님의 전광판 링크 공유하기`, onclick: () => shareOther(other, inviteBox) }) : null,
           mine ? h('button', { type: 'button', class: 'btn ghost', text: '초대 링크 복사', onclick: () => copyInvite(slotId, '', inviteBox) }) : h('button', { type: 'button', class: 'btn ghost', text: '신고', onclick: () => openReport(slotId) }),
         ),
         inviteBox,
