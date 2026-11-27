@@ -1,6 +1,6 @@
 # 결제 설정 안내 (주문·결제, 샌드박스 먼저)
 
-작성: 2026-11-27. 코드: `payrules.js`(규칙), `ordersrv.js`(서버), `payclient.js`(결제 시트), `admin-order.js`(운영 화면 🧾 주문·매출).
+작성: 2026-11-27, 고침: 2026-11-28(상품을 가격표에서 만들고 혜택을 실제로 붙임). 코드: `payrules.js`(규칙), `ordersrv.js`(서버), `payclient.js`(결제 시트), `giftpage.js`(주인 화면의 결제하기), `giftsrv.js`(혜택을 전광판에 붙이고 떼기), `admin-order.js`(운영 화면 🧾 주문·매출).
 이 문서는 주인이 결제를 켜기까지 할 일을 순서대로 적은 것이다. **지금은 꺼져 있고, 켜기 전에는 손님에게 아무것도 보이지 않는다.**
 
 ## 지금 상태
@@ -10,18 +10,42 @@
 | 결제 스위치 `PAY_ON` | 없음(꺼짐). 정확히 `1`일 때만 켜진다. 꺼져 있으면 `/rt/order*`, `/rt/pay/hook`이 모두 404 `off`이고 `/rt/config`에 `pay`가 없다 |
 | 모드 `PAY_MODE` | 없음 = `test`(테스트 채널, 돈이 나가지 않음). `live`일 때만 실결제 |
 | 결제사 | 포트원(PortOne) V2. 키가 아직 없다 |
-| 운영 화면 | `/admin`의 🧾 주문·매출은 켜기 전에도 보인다(상품 가격·혜택을 미리 고칠 수 있다) |
+| 운영 화면 | `/admin`의 🧾 주문·매출은 켜기 전에도 보인다. 상품은 판매 켜기/끄기만 바꾼다(이름·혜택·가격은 가격표에서 온다, 아래 '상품') |
 | 약관·방침 | '결제 방법(준비 중)', '결제(준비 중)' 조항을 넣었다. "지금은 결제를 받지 않는다"고 적혀 있어 켜기 전에도 사실이다. 켤 때 결제대행사 이름을 확정해 고친다 |
+
+## 상품 (가격표 하나에서)
+
+상품은 선물 전광판 주인 화면의 가격표 `giftrules.js` `TIERS`에서 만든다(`payrules.js` `PRODUCTS`). 유료 단계마다 선물 전광판용(`gift_…`)과 내 전광판용(`personal_…`, `occ: 'me'`) 두 개다. 이름·혜택 문구·A안 가격은 `TIERS` 그대로이고, 운영 화면에서는 판매를 켜고 끄기만 한다.
+
+| 단계 | 상품 id | A안 가격 | 혜택 키(`gives`) |
+| --- | --- | --- | --- |
+| 오래 걸기 | `gift_long`, `personal_long` | 3,900원 | `long` |
+| 축하 영상 세트 | `gift_video`, `personal_video` | 7,900원 | `long`, `clean` |
+| 메인 타워 주인공 | `gift_tower`, `personal_tower` | 14,900원 | `long`, `clean`, `tower` |
+
+- 가격 실험: Worker 변수 `GIFT_ARMS`(예: `A:3900/7900/14900;B:2900/5900/11900`). 전광판 id로 A나 B가 정해지고(`ladderArm`), 주인 화면과 결제 시트와 주문이 같은 가격을 쓴다. 주문에 본 가격과 안이 남는다.
+- 주문은 늘 내 전광판(내가 만든 선물 전광판이나 내 전광판)에 한다. 전광판이 상품 종류를 정한다(내 전광판이면 `personal`). 한 전광판에 돈을 받은 주문은 하나뿐이다(`have`).
+- 결제 전에 서버가 혜택을 줄 수 있는지 본다(`perkFit`): 전광판이 끝났으면 `late`, 12시간 동안 걸 화면이 없으면 `full`, 그 시간에 메인 타워 자리가 없으면 `tower`. 돈을 받기 전에 거절한다.
+
+## 혜택이 붙는 법
+
+주문이 `PUBLISHED`가 될 때만 붙는다. 공개 단계(`ordersrv.js` `publish`)가 `giftsrv.js` `giftPerkOn`을 불러 전광판(`gb.pk`, 주문별 혜택 키)에 적고, 그게 되어야 주문이 `PUBLISHED`가 된다. 못 붙이면(전광판이 없어짐, 남의 것, 화면이 가득) 실패한 시도로 세고 3번이면 `FAILED`(운영자가 '다시 공개'나 환불).
+
+- **오래 걸기(`long`)**: 전광판이 걸리는 시간이 시작부터 12시간(`GIFT.paidHours`, 무료는 6시간)이 된다. 같은 화면에 자리가 없으면(한 화면에 동시에 4개) 그 시간에 덜 붐비는 화면으로 옮긴다. 화면 배정, `/rt/world`, 다음 사람의 화면 자리 계산 모두 늘어난 시간을 쓴다.
+- **축하 영상 세트(`clean`)**: 공개 보기와 `/rt/world`에 `clean: 1`이 붙고, 그려진 15초 영상(`giftfilm.js`), 광장에서 찍는 15초 영상(`gift.js`), 실사 축하 영상(`realvideo.js`)에서 'WISH BOARD · 무료' 워터마크가 빠진다(`giftrules.js` `filmMark`). 실사 영상의 'AI 합성' 표시와 '가상 광장 · 실제 타임스퀘어와 무관' 줄은 남는다.
+- **메인 타워 주인공(`tower`)**: 주인 화면의 메인 타워 카드에 '시간 바로 고르기'가 나오고, `POST /rt/gift/<id>/tower { m, how: 'paid' }`로 예약한다. Worker가 주문 장부(`orderPerks`)에서 이 전광판의 `PUBLISHED` 주문(이 계정이 산 것, `tower` 포함)을 확인한다. 친구 응원·포인트·30일 간격·하루 한 번 규칙은 없고, 하루 30자리와 1분 규칙(정각·밤 9시대·5분 전)과 전광판당 1분은 그대로다. 유료 예약은 포인트로 돌려주지 않는다.
+- **환불**: `REFUNDED`가 되면(운영 화면 환불, 손으로 환불, 포트원 취소 웹훅) `giftPerkOff`가 그 주문의 혜택을 뗀다. 시간은 6시간으로 돌아가고(이미 6시간이 지났으면 지금 내려간다), 워터마크가 다시 붙고, 아직 시작하지 않은 유료 메인 타워 1분은 풀린다(포인트로 돌려주지 않는다). 전광판이 가려지거나 지워질 때의 메인 타워 1분은 다른 예약처럼 풀리고, 돈의 환불은 아래 환불 규정을 따른다(운영자가 처리).
+- 주인 화면: `GET /rt/order/board/<id>`로 그 전광판의 내 주문 상태를 보여 준다(결제 대기 / 결제 완료 / 게시 중 / 게시됨 / 실패 / 환불). 혜택은 '게시됨'일 때만 적용됐다고 말한다.
 
 ## 흐름
 
-1. 손님이 결제 시트를 연다(`openCheckout({ boardId, kind })`). 시트는 가격(부가세 포함), 혜택, 취소·환불 규정, 테스트 모드면 '테스트 결제' 표시를 먼저 보여 준다.
-2. `POST /rt/order`: 서버가 가격을 정한다(가격 실험 A/B안은 구매자마다 고정). 화면에 보인 가격과 다르면 409 `price`로 다시 확인받는다.
+1. 주인이 자기 전광판 화면(`/g/<id>`)의 가격표에서 단계의 '결제하기'를 누른다(`openCheckout({ boardId, kind, product })`). 결제가 꺼져 있거나 이 계정이 결제할 수 없으면 가격표는 지금처럼 '열리면 알림'이다. 시트는 가격(부가세 포함), 혜택, 취소·환불 규정, 테스트 모드면 '테스트 결제' 표시를 먼저 보여 준다.
+2. `POST /rt/order`: 서버가 가격을 정한다(그 전광판의 가격 실험 안). 화면에 보인 가격과 다르면 409 `price`로 다시 확인받는다.
 3. `POST /rt/order/<id>/pay`: 포트원 브라우저 SDK(`https://cdn.portone.io/v2/browser-sdk.js`, 결제 버튼을 누를 때만 불러온다)에 넘길 `storeId`, `channelKey`, `paymentId`(= 주문 번호), 금액, 주문 이름을 준다.
 4. 결제창이 끝나면 `POST /rt/order/<id>/confirm`: 서버가 포트원에 `GET https://api.portone.io/payments/<paymentId>`로 다시 묻고, 상태 `PAID`, 금액이 주문과 같고, 통화 `KRW`일 때만 결제 완료로 바꾼다. 금액이 다르면 `FAILED`(운영자가 환불).
 5. 포트원 웹훅 `POST /rt/pay/hook`: Standard Webhooks 서명(`webhook-id`, `webhook-timestamp` ±5분, `webhook-signature` v1 HMAC-SHA256)을 확인하고, 같은 `webhook-id`는 한 번만 처리하고, 본문은 믿지 않고 다시 묻는다. 휴대폰에서 결제창이 앱으로 넘어가 돌아오지 않아도 웹훅이 결제를 마무리한다.
-6. 결제 완료 → 공개: 선물 전광판이면 주문을 그 전광판에 붙이고 혜택을 켠다(`PUBLISHED`). 실패하면 손님이 주문을 다시 열 때, 또는 운영자가 '다시 공개'를 누를 때 다시 해 보고, 3번 실패하면 `FAILED`(환불 대상).
-7. 환불: 운영 화면에서 이유를 적고 '결제사로 환불' → 포트원 결제 취소(`POST /payments/<id>/cancel`) → 다시 물어 `CANCELLED`일 때만 `REFUNDED`. 포트원 콘솔에서 직접 취소해도 웹훅으로 `REFUNDED`가 된다. 계좌이체처럼 결제사를 거치지 않은 것은 '입금 확인(수동 결제)', '손으로 환불했음'으로 표시한다(이유 필수, 기록에 남음).
+6. 결제 완료 → 공개: 혜택을 전광판에 붙이고(위 '혜택이 붙는 법') `PUBLISHED`. 실패하면 손님이 주문이나 주인 화면을 다시 열 때, 또는 운영자가 '다시 공개'를 누를 때 다시 해 보고, 3번 실패하면 `FAILED`(환불 대상). 휴대폰에서 결제창이 주인 화면으로 돌려보내면(`?kts_pay=1&paymentId=…`) 그 화면이 열릴 때 한 번 확인하고 주소를 지운다(`resumeCheckout`).
+7. 환불: 운영 화면에서 이유를 적고 '결제사로 환불' → 포트원 결제 취소(`POST /payments/<id>/cancel`) → 다시 물어 `CANCELLED`일 때만 `REFUNDED`(혜택을 뗀다). 포트원 콘솔에서 직접 취소해도 웹훅으로 `REFUNDED`가 된다. 계좌이체처럼 결제사를 거치지 않은 것은 '입금 확인(수동 결제)', '손으로 환불했음'으로 표시한다(이유 필수, 기록에 남음).
 
 주문 상태: `CREATED → PAYMENT_PENDING → PAID → PUBLISH_PENDING → PUBLISHED`, 그리고 `FAILED`, `CANCELLED`, `REFUNDED`. 허용되는 이동은 `payrules.js`의 `MOVES` 표뿐이고, 모든 변경은 "지금 상태가 이것일 때만" 바꾸는 한 함수(`move`)로 하며 주문 기록(`order_events`)에 남는다.
 
@@ -50,7 +74,7 @@
 3. 결제 연동 → 연동 정보 → V2 API 시크릿 발급 → `npx wrangler secret put PORTONE_API_SECRET`.
 4. 결제 연동 → 웹훅 → V2, 테스트 환경, 주소 `https://studio.wishboard.workers.dev/rt/pay/hook` → 웹훅 시크릿 복사 → `npx wrangler secret put PORTONE_WEBHOOK_SECRET`. 안내: https://developers.portone.io/opi/ko/integration/webhook/readme-v2
 5. `npx wrangler secret put PORTONE_STORE_ID`, `npx wrangler secret put PORTONE_CHANNEL_KEY`, `npx wrangler secret put PAY_ALLOW`(내 계정 번호, 설정 화면에 보임), 마지막으로 `npx wrangler secret put PAY_ON`(값 `1`). `PAY_MODE`는 넣지 않는다(= 테스트).
-6. 내 계정으로 로그인해 내 선물 전광판에서 결제 시트를 열고 테스트 결제 → `/admin` 🧾 주문·매출에서 상태가 '공개됨'인지, 웹훅이 왔는지(주문 기록의 `pg:hook`) 본다 → '결제사로 환불'로 환불까지 해 본다. 테스트 결제는 매출에 들어가지 않는다.
+6. 내 계정으로 로그인해 내 선물 전광판 화면의 가격표에서 '결제하기'로 테스트 결제(전광판이 12시간이 되는지, 영상 워터마크가 빠지는지, 메인 타워 주인공이면 시간을 바로 고를 수 있는지 본다) → `/admin` 🧾 주문·매출에서 상태가 '공개됨'인지, 웹훅이 왔는지(주문 기록의 `pg:hook`) 본다 → '결제사로 환불'로 환불까지 해 본다. 테스트 결제는 매출에 들어가지 않는다.
 7. 사업자등록(간이/일반, 업종: 전자상거래 소매 등) → 통신판매업 신고(구청, 사업자등록증·구매안전서비스 확인증 필요: 결제대행사 이용 확인서로 대신하는 경우가 많다) → `OPERATOR_INFO`에 사업자 정보 넣기(약관·방침에 자동으로 나온다).
 8. 포트원 콘솔에서 실연동 신청(KCP·카카오페이 심사, 정산 계좌) → 실연동 채널 키를 받는다. 실연동 웹훅도 같은 주소로 만든다(시크릿이 다르면 `PORTONE_WEBHOOK_SECRET`을 바꾼다).
 9. 약관·방침의 '결제 방법(준비 중)', '결제(준비 중)'에서 "준비 중"을 빼고, 맡기는 회사의 정확한 이름·연락처를 넣고, 시행일을 바꾼다(변경 7일 전 공지). 환불 규정 초안(아래)을 법무 검토한다.
@@ -85,17 +109,19 @@
 
 - 퍼널(주문 저장소의 하루 카운터, 모드별): `checkout_start`(주문 만듦), `pay_success`, `pay_fail`(주문마다 한 번), `publish_ok`, `publish_fail`(시도마다), `refund`.
 - 운영 화면 매출: 날짜별·상품별, 실결제 건수와 가격표에서 고른 수(선물 전광판 E1 `pick:<t>`) 비교, 전환, 객단가, 환불, 처음 산 사람과 다시 산 사람, 받는 사람 페이지에서 온 주문(`ref`), 주문당 결제 수수료, CSV.
-- 운영자·테스트 접속은 일일 지표에서 뺀다: `/admin`을 연 기기에 `kts_staff=1` 쿠키(1년, HttpOnly), `tools/prod-e2e.mjs`는 `x-kts-test: 1` 헤더. `/rt/event`와 선물 전광판 방문 신호(`seen`, `start`)가 이것을 세지 않는다.
+- 운영자·테스트 접속은 일일 지표에서 뺀다: `/admin`에 맞는 키로 로그인한 기기에 `kts_staff=1` 쿠키(1년, HttpOnly, 로그인 성공 때만 붙고 로그아웃하면 지운다. 로그인 화면을 열기만 해서는 붙지 않는다), `tools/prod-e2e.mjs`는 `x-kts-test: 1` 헤더. `/rt/event`와 선물 전광판 방문 신호(`seen`, `start`)가 이것을 세지 않는다.
 - WAU: 지표 화면에 최근 7일 동안 온 서로 다른 계정 수(게스트는 연결된 계정으로 합침). 원본 이벤트를 14일 보관하므로 최근 8일치만 계산된다. 새 저장소는 만들지 않았다.
 
-## 다른 화면에 붙이는 법 (상품 쪽 작업)
+## 다른 화면에 붙이는 법
+
+주인 화면(`giftpage.js` `payLadder`)이 쓰는 방식이다.
 
 ```js
-import { payAvailable, openCheckout, resumeCheckout } from './payclient.js?v=BUILD';
-const open = await payAvailable({ kind: 'gift' }); // null이면 버튼을 보이지 않는다(꺼짐, 로그인 안 함, 허용 목록 밖)
-if (open) button.hidden = false;
-button.onclick = () => openCheckout({ boardId, kind: 'gift', ref }); // ref: 받는 사람 페이지에서 온 경우 그 전광판 id
-resumeCheckout(); // 휴대폰에서 결제창이 이 페이지로 돌려보냈을 때(?kts_pay=1&paymentId=…) 결제 확인
+const m = await import('./payclient.js?v=BUILD'), api = m.payApi(undefined, sessionToken); // 주문은 계정의 것: 로그인 세션만
+const open = await m.payAvailable({ kind, boardId }, api); // null이면 결제 버튼 없이 지금 화면 그대로(꺼짐, 로그인 안 함, 허용 목록 밖)
+button.onclick = () => m.openCheckout({ boardId, kind, product }, api); // kind: 'gift' | 'personal'(내 전광판), product: 누른 단계
+const line = m.ownerOrderLine((await api.boardOrders(boardId)).orders); // 결제 대기 / 결제 완료 / 게시 중 / 게시됨 / 실패 / 환불
+m.resumeCheckout(api); // 휴대폰에서 결제창이 이 페이지로 돌려보냈을 때(?kts_pay=1&paymentId=…) 결제 확인
 ```
 
-전광판의 유료 혜택이 켜졌는지는 서버에서 `orderPerks(env, boardId)`(`ordersrv.js`)로 본다: 그 전광판의 '공개됨' 주문의 혜택만 돌려준다.
+서버에서 전광판의 유료 혜택은 두 곳에 있다: 전광판(`gb.pk`, 공개 때 적고 환불 때 지움, 매 읽기에 주문 저장소를 부르지 않으려고)과 주문 장부(`orderPerks(env, boardId)`, `ordersrv.js`: 그 전광판의 '공개됨' 주문의 상품·혜택 문구·혜택 키·산 계정). 메인 타워 유료 예약은 장부로 다시 확인한다.

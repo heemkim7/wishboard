@@ -1382,3 +1382,13 @@ node tools/prod-e2e.mjs https://studio.wishboard.workers.dev
 - 운영자·테스트 접속: `/admin` 화면을 연 기기에 `kts_staff=1`(1년, HttpOnly, Secure, SameSite=Lax), `tools/prod-e2e.mjs`는 모든 요청에 `x-kts-test: 1`. `/rt/event`와 선물 전광판 `seen`·`start` 신호가 이 둘을 세지 않는다. 지표 화면에 WAU(최근 7일의 서로 다른 계정, 게스트는 연결된 계정으로 합침, 원본 14일 보관이라 최근 8일만; `Meter.evWau`, `/rt/admin/stats`의 `wau`).
 - 약관 '결제 방법(준비 중)', 방침 '결제(준비 중)'(지금은 결제를 받지 않는다고 적은 준비 조항; 결제대행 위탁, 5년·3년 보관). 시행일 개정 문구에 함께 적었다.
 - 테스트: `test/pay-rules.test.mjs`, `test/order-worker.test.mjs`(꺼짐=안 보임, 계정·허용 목록, 예산 hard, mock 끝까지, 서명 좋음·나쁨·재전송·오래됨, 금액 불일치, 포트원 테스트·실결제 가짜 서버, 공개 재시도, 운영 경로, CSV, 운영자·테스트 접속, WAU), `test/pay-client.test.mjs`. 실제 포트원 키로는 아직 해 보지 못했다.
+
+## 유료 혜택: 가격표에서 만든 상품, 주인 화면의 결제하기 (2026-11-28, 결제는 여전히 꺼져 있음)
+
+- 상품은 `giftrules.js` `TIERS` 하나에서 만든다(`payrules.js` `PRODUCTS`): 유료 단마다 `gift_<key>`(선물)와 `personal_<key>`(내 전광판), 이름·혜택 줄·가격이 가격표와 같다. 키는 `long`·`video`·`tower`. 가격은 그 보드의 가격 실험 칸(`ladderArm`, `GIFT_ARMS`)에서 가져와 주인 화면·결제 시트·주문이 같은 값을 쓴다. 운영 화면 상품 편집은 판매 켜기/끄기만 남았다(이름·혜택·가격·B안 가격 칸은 없앴다).
+- 주문은 늘 산 사람의 보드에 한다. 보드가 종류를 정하고(내 전광판이면 `personal`), 돈을 받은 주문은 한 보드에 하나(`have`). 결제 전에 혜택을 줄 수 있는지 본다(`giftsrv.js perkFit`: 끝난 보드 `late`, 12시간 화면 없음 `full`, 메인 타워 자리 없음 `tower`).
+- 혜택은 `PUBLISHED`가 될 때 보드에 붙는다(`perkOn`, `gb.pk` 열 추가): 오래 걸기 = 창이 12시간(`GIFT.paidHours`, 자리가 없으면 다른 화면으로), 축하 영상 세트 = 공개 보기와 `/rt/world`의 `clean: 1`로 세 영상에서 'WISH BOARD · 무료' 워터마크가 빠짐(`filmMark`, 'AI 합성'과 가상 광장 줄은 남음), 메인 타워 주인공 = `how: 'paid'`로 1분 바로 예약(주문 장부 `orderPerks`로 확인, 하루 30자리·1분 규칙·보드당 1분은 그대로, 포인트로 돌려주지 않음). 환불되면 `perkOff`가 떼어 낸다(6시간으로, 이미 지났으면 지금 내려옴, 시작 전 유료 1분은 풀림).
+- 무료 실사 축하 영상에도 'WISH BOARD · 무료'를 'AI 합성' 왼쪽에 넣었다(유료 단의 "워터마크 없는 실사 영상"이 사실이 되도록). 무료 단 줄을 그에 맞게 고쳤다.
+- 주인 화면(`giftpage.js payLadder`): 결제가 열려 있고 이 계정이 결제할 수 있을 때만 가격표가 단마다 가격·혜택·'테스트 결제'·'결제하기'와 취소·환불 규정으로 바뀐다. 주문 상태 결제 대기 / 결제 완료 / 게시 중 / 게시됨 / 실패 / 환불(`GET /rt/order/board/<id>`, `payclient.js ownerOrderLine`), '적용됐어요'는 게시됨일 때만. 휴대폰 결제창에서 돌아오면 한 번 확인하고 주소를 지운다(`resumeCheckout`). 그 밖에는 '열리면 알림' 그대로. 메인 타워 카드는 혜택이 있으면 '👑 시간 바로 고르기'.
+- `kts_staff`(운영자 기기 표시)는 `/admin`을 열 때가 아니라 맞는 키로 로그인했을 때 붙고, 로그아웃하면 지운다.
+- 테스트: `test/order-perks.test.mjs`(mock 결제사로 주문 → 결제 → 확인 → 게시 → 혜택, 세 혜택과 환불, 화면 자리, 거절들), `test/pay-owner.test.mjs`(주문 줄, 시트, 주인 화면·영상 소스 검사, 메인 타워 규칙), 고친 `test/pay-rules.test.mjs`·`test/order-worker.test.mjs`·`test/admin-login.test.mjs`. 실제 브라우저에서 주인 화면의 결제하기는 열어 보지 못했다(로컬 `wrangler dev`가 실서비스 DB를 써서 돌리지 않았다).
