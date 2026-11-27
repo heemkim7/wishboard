@@ -4,7 +4,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ST, MOVES, canMove, PRODUCTS, PRODUCT_KINDS, PRODUCT_FIXED, productId, givesOf, kindOfBoard, productList, productFault, newOrderId, ORDER_ID, armOf, REFUND_RULES, COST, costOf,
-  payOn, payMode, payAllowed, payPublic, pgVerdict, revenueOf, ordersCsv, PAY_EVENTS, PAY, isReal, kstOf,
+  payOn, payMode, payAllowed, payPublic, pgVerdict, channelFault, revenueOf, ordersCsv, PAY_EVENTS, PAY, isReal, kstOf,
 } from '../payrules.js';
 import { TIERS, ladderArm } from '../giftrules.js';
 
@@ -137,18 +137,34 @@ describe('switches', () => {
 
 describe("what PortOne's answer means (pgVerdict)", () => {
   const o = (st, x = {}) => ({ id: 'o_' + 'a'.repeat(20), st, price: 7900, mode: 'test', pg_tx: '', ...x });
-  const paid = (x = {}) => ({ status: 'PAID', id: 'o_' + 'a'.repeat(20), transactionId: 'tx1', amount: { total: 7900 }, currency: 'KRW', channel: { type: 'TEST' }, ...x });
+  const K = 'channel-key-test', C = { chan: K };
+  const paid = (x = {}) => ({ status: 'PAID', id: 'o_' + 'a'.repeat(20), transactionId: 'tx1', amount: { total: 7900 }, currency: 'KRW', channel: { type: 'TEST', key: K }, ...x });
   it('PAID with the right amount and KRW: PAID; how follows the channel type', () => {
-    assert.deepEqual(pgVerdict(o('PAYMENT_PENDING'), paid()), { to: 'PAID', how: 'test', tx: 'tx1', why: 'paid' });
-    assert.equal(pgVerdict(o('PAYMENT_PENDING', { mode: 'live' }), paid({ channel: { type: 'LIVE' } })).how, 'pg');
+    assert.deepEqual(pgVerdict(o('PAYMENT_PENDING'), paid(), C), { to: 'PAID', how: 'test', tx: 'tx1', why: 'paid' });
+    assert.equal(pgVerdict(o('PAYMENT_PENDING', { mode: 'live' }), paid({ channel: { type: 'LIVE', key: K } }), C).how, 'pg');
+  });
+  it('the channel: a live order only on a LIVE channel with our key; a test order only on our key; mock has none', () => {
+    const live = o('PAYMENT_PENDING', { mode: 'live' });
+    const v = pgVerdict(live, paid(), C); assert.equal(v.to, 'FAILED'); assert.equal(v.why, 'channel', 'a live order paid on a TEST channel gets nothing');
+    assert.deepEqual(v.channel, { type: 'TEST', key: K }); assert.equal(v.tx, 'tx1');
+    assert.equal(pgVerdict(live, paid({ channel: { type: 'LIVE', key: 'channel-key-other' } }), C).why, 'channel', 'another LIVE channel');
+    assert.equal(pgVerdict(live, paid({ channel: { type: 'LIVE', key: K } }), { chan: '' }).why, 'channel', 'no key configured: nothing is trusted');
+    assert.equal(pgVerdict(o('PAYMENT_PENDING'), paid({ channel: { type: 'TEST', key: 'channel-key-other' } }), C).why, 'channel', 'a test order on another channel');
+    assert.equal(pgVerdict(o('PAYMENT_PENDING'), paid(), {}).why, 'channel');
+    assert.equal(pgVerdict(o('PAYMENT_PENDING', { mode: 'mock' }), paid({ channel: { type: 'TEST' } })).to, 'PAID', 'mock: no channel to check');
+    assert.equal(channelFault(o('X', { mode: 'live' }), paid({ channel: { type: 'LIVE', key: K } }), K), '');
+    for (const st of ['CREATED', 'CANCELLED']) assert.equal(pgVerdict(o(st, { mode: 'live' }), paid(), C).to, 'FAILED', st);
   });
   it('a wrong amount or currency is never PAID', () => {
-    assert.deepEqual(pgVerdict(o('PAYMENT_PENDING'), paid({ amount: { total: 100 } })), { to: 'FAILED', tx: 'tx1', why: 'amount', paid: 100, currency: 'KRW' });
-    assert.equal(pgVerdict(o('PAYMENT_PENDING'), paid({ currency: 'USD' })).why, 'amount');
-    assert.equal(pgVerdict(o('PAYMENT_PENDING'), paid({ amount: { total: '7900' } })).why, 'amount', 'a string is not the number');
+    assert.deepEqual(pgVerdict(o('PAYMENT_PENDING'), paid({ amount: { total: 100 } }), C), { to: 'FAILED', tx: 'tx1', why: 'amount', paid: 100, currency: 'KRW' });
+    assert.equal(pgVerdict(o('PAYMENT_PENDING'), paid({ currency: 'USD' }), C).why, 'amount');
+    assert.equal(pgVerdict(o('PAYMENT_PENDING'), paid({ amount: { total: '7900' } }), C).why, 'amount', 'a string is not the number');
+    assert.ok(canMove('CANCELLED', 'FAILED'), 'a wrong payment after the sheet was closed is kept as FAILED');
   });
-  it('an order already past PAID stays where it is (idempotent)', () => {
-    for (const s of ['PAID', 'PUBLISH_PENDING', 'PUBLISHED']) assert.equal(pgVerdict(o(s), paid()).to, null, s);
+  it('an order already past PAID stays where it is (idempotent); a paid order that failed later is never re-opened', () => {
+    for (const s of ['PAID', 'PUBLISH_PENDING', 'PUBLISHED']) assert.equal(pgVerdict(o(s), paid(), C).to, null, s);
+    assert.deepEqual(pgVerdict(o('FAILED', { paid_at: 1 }), paid(), C), { to: null, why: 'already' });
+    assert.equal(pgVerdict(o('FAILED', { paid_at: null }), paid(), C).to, 'PAID', 'a failed attempt retried with the same paymentId');
   });
   it('FAILED from the PG fails a pending order; CANCELLED refunds a paid one', () => {
     assert.equal(pgVerdict(o('PAYMENT_PENDING'), { status: 'FAILED' }).to, 'FAILED');

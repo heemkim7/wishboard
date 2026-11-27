@@ -30,6 +30,12 @@ describe('the order line on the owner page', () => {
     assert.equal(ownerOrderLine([O('CANCELLED'), O('PUBLISHED')]).st, 'PUBLISHED');
     assert.equal(ownerOrderLine([]), null); assert.equal(ownerOrderLine([O('CANCELLED')]), null);
   });
+  it('an order the operator must refund says so, never applied, never holding the board; the order that holds it is shown first', () => {
+    const due = ownerOrderLine([O('PAID', { refundDue: true })]);
+    assert.match(due.text, /운영자가 확인해 환불해 드려요/); assert.equal(due.active, false); assert.equal(due.locked, false);
+    assert.equal(ownerOrderLine([O('FAILED', { refundDue: true })]).locked, false);
+    const two = ownerOrderLine([O('PAID', { refundDue: true, name: '오래 걸기' }), O('PUBLISHED')]); assert.equal(two.st, 'PUBLISHED'); assert.equal(two.active, true);
+  });
 });
 
 describe('the sheet and the prices', () => {

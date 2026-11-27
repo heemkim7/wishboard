@@ -30,7 +30,7 @@ export const MOVES = Object.freeze({
   PUBLISH_PENDING: Object.freeze(['PUBLISHED', 'FAILED', 'REFUNDED']),
   PUBLISHED: Object.freeze(['REFUNDED']),
   FAILED: Object.freeze(['PAID', 'PUBLISH_PENDING', 'REFUNDED']),
-  CANCELLED: Object.freeze(['PAID']),
+  CANCELLED: Object.freeze(['PAID', 'FAILED']), // FAILED: the PG took a payment we cannot accept (amount, channel) after the buyer closed the sheet
   REFUNDED: Object.freeze([]),
 });
 export const canMove = (from, to) => Object.prototype.hasOwnProperty.call(MOVES, from) && MOVES[from].includes(to);
@@ -141,15 +141,28 @@ export function payAllowed(env, mode, uid) {
 export function payPublic(env, host) { if (!payOn(env)) return null; const mode = payMode(env, host); return mode ? { on: true, mode } : null; }
 
 // ---- what PortOne's payment means for an order -------------------------------------------------------------------------------------------
-// payment: the body of GET /payments/{paymentId} (status, id, transactionId, amount.total, currency, channel.type). -> { to, why, ... }:
-// to is the state to move to, or null (nothing to do: still pending, already there, or not ours to decide).
-export function pgVerdict(order, payment) {
+// payment: the body of GET /payments/{paymentId} (status, id, transactionId, amount.total, currency, channel.type, channel.key). chan: the
+// channel key this Worker is configured with (PORTONE_CHANNEL_KEY). -> { to, why, ... }: to is the state to move to, or null (nothing to
+// do: still pending, already there, or not ours to decide).
+// The channel: an order made in live mode is PAID only when PortOne paid it on a LIVE channel with our configured key; a test-mode order
+// only on our configured key (a payment on another channel, or a test channel for a live order, is FAILED 'channel': money may have moved,
+// so it is kept for the operator to refund). mock orders (local hosts only) have no channel to check.
+export function channelFault(order, payment, chan) {
+  if (order?.mode === 'mock') return '';
+  const c = payment?.channel || {}, key = String(chan || '');
+  if (!key || String(c.key || '') !== key) return 'channel';
+  if (order?.mode === 'live' && c.type !== 'LIVE') return 'channel';
+  return '';
+}
+export function pgVerdict(order, payment, { chan = '' } = {}) {
   if (!order || !payment || typeof payment !== 'object') return { to: null, why: 'nopay' };
   if (payment.id != null && String(payment.id) !== order.id) return { to: null, why: 'id' };
   const s = String(payment.status || ''), tx = String(payment.transactionId || order.pg_tx || '');
   if (s === 'PAID') {
-    if (MONEY_STATES.includes(order.st) || order.st === 'REFUNDED') return { to: null, why: 'already' };
+    // a paid order that failed later (publishing, or a refund pending) is never re-opened by a replayed webhook or another confirm
+    if (MONEY_STATES.includes(order.st) || order.st === 'REFUNDED' || (order.st === 'FAILED' && order.paid_at != null)) return { to: null, why: 'already' };
     const total = payment.amount?.total, cur = String(payment.currency || '');
+    if (channelFault(order, payment, chan)) return { to: 'FAILED', tx, why: 'channel', channel: { type: String(payment.channel?.type || ''), key: String(payment.channel?.key || '').slice(0, 80) } };
     if (typeof total !== 'number' || total !== order.price || cur !== 'KRW') return { to: 'FAILED', tx, why: 'amount', paid: total, currency: cur };
     return { to: 'PAID', how: payment.channel?.type === 'LIVE' ? 'pg' : 'test', tx, why: 'paid' };
   }
@@ -216,6 +229,9 @@ export const PAY_ERR = Object.freeze({
   product: '그 상품은 지금 살 수 없어요.', price: '가격이 바뀌었어요. 바뀐 가격을 확인하고 다시 눌러 주세요.', board: '내 전광판(내가 만든 선물 전광판이나 내 전광판)에만 결제할 수 있어요.',
   nf: '주문을 찾지 못했어요.', state: '이 주문은 지금 그 단계로 갈 수 없어요.', pg: '결제사에 확인하지 못했어요. 잠시 뒤에 다시 확인해 주세요.',
   amount: '결제 금액이 주문과 달라서 결제를 확정하지 않았어요. 운영자가 확인 후 환불해 드려요.', down: '처리하지 못했어요. 잠시 뒤에 다시 해 주세요.',
+  channel: '결제가 이 서비스의 결제 채널로 오지 않아서 확정하지 않았어요. 운영자가 확인 후 환불해 드려요.',
+  twice: '이 전광판에는 이미 결제한 주문이 있어서 이 결제는 게시하지 않았어요. 운영자가 확인해 환불해 드려요.',
+  pgref: '결제사를 거친 주문은 "결제사로 환불"로 돌려주세요. "손으로 환불했음"은 계좌이체처럼 결제사를 거치지 않은 주문에만 써요.',
   note: '이유를 적어 주세요.', keys: '결제 설정이 아직 없어요(운영자).',
   have: '이 전광판은 이미 결제한 상품이 있어요. 바꾸려면 설정의 문의하기로 알려 주세요.', late: '광장에서 내려온 전광판에는 결제할 수 없어요.',
   full: '그 시간에는 광장 화면이 가득 차서 12시간으로 늘릴 수 없어요. 다른 날이나 시간의 전광판에서 해 주세요.', tower: '이 전광판이 걸리는 시간에 메인 타워 자리가 남아 있지 않아서 메인 타워 주인공은 살 수 없어요.',

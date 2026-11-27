@@ -48,18 +48,21 @@ export async function payAvailable({ kind = 'gift', boardId = '' } = {}, api = p
 }
 // The owner page's line for a board's orders (newest first; a cancelled one is left out): { st, label (결제 대기 / 결제 완료 / 게시 중 /
 // 게시됨 / 실패 / 환불), text, active (the perks are on: PUBLISHED only), locked (money taken and kept: no second order), name, gives }, or
-// null when there is none.
+// null when there is none. The order that holds the board (money kept, not flagged for refund) is the one shown; else the newest. An order
+// the operator must refund (refundDue: a wrong amount or channel, a second paid order on the board) says so.
 export function ownerOrderLine(orders) {
-  const o = (Array.isArray(orders) ? orders : []).find((x) => x && x.st && x.st !== 'CANCELLED');
+  const list = (Array.isArray(orders) ? orders : []).filter((x) => x && x.st && x.st !== 'CANCELLED');
+  const o = list.find((x) => !x.refundDue && (['PAID', 'PUBLISH_PENDING', 'PUBLISHED'].includes(x.st) || (x.st === 'FAILED' && x.paid_at != null))) || list[0];
   if (!o) return null;
-  const paidFail = o.st === 'FAILED' && o.paid_at != null;
+  const paidFail = o.st === 'FAILED' && o.paid_at != null && !o.refundDue;
   const why = { CREATED: '결제를 마치지 않았다면 결제하기를 다시 눌러 주세요.', PAYMENT_PENDING: '결제를 확인하고 있어요. 결제를 마치지 않았다면 결제하기를 다시 눌러 주세요.',
     PAID: '결제가 확인됐어요. 곧 전광판에 게시돼요.', PUBLISH_PENDING: '전광판에 혜택을 넣고 있어요. 잠시 뒤에 다시 열어 주세요.', PUBLISHED: '혜택이 이 전광판에 적용됐어요.',
     FAILED: paidFail ? '결제는 됐지만 게시하지 못했어요. 운영자가 확인해 다시 게시하거나 환불해 드려요.' : '결제가 완료되지 않았어요. 돈이 나갔다면 문의하기로 알려 주세요.',
     REFUNDED: '환불된 주문이에요. 이 전광판은 무료 걸기로 돌아갔어요.' }[o.st] || '';
+  const why2 = o.refundDue ? '이 결제는 확정하지 않았어요. 운영자가 확인해 환불해 드려요.' : why;
   const label = OWNER_ST[o.st] || o.st;
-  return { st: o.st, label, name: String(o.name || ''), text: `${o.name || '주문'} · ${label}${o.test ? ' (' + TEST_BADGE + ')' : ''} · ${why}`, active: o.st === 'PUBLISHED',
-    locked: ['PAID', 'PUBLISH_PENDING', 'PUBLISHED'].includes(o.st) || paidFail, gives: o.st === 'PUBLISHED' && Array.isArray(o.gives) ? [...o.gives] : [] };
+  return { st: o.st, label, name: String(o.name || ''), text: `${o.name || '주문'} · ${label}${o.test ? ' (' + TEST_BADGE + ')' : ''} · ${why2}`, active: o.st === 'PUBLISHED' && !o.refundDue,
+    locked: (['PAID', 'PUBLISH_PENDING', 'PUBLISHED'].includes(o.st) && !o.refundDue) || paidFail, gives: o.st === 'PUBLISHED' && Array.isArray(o.gives) ? [...o.gives] : [] };
 }
 
 // ---- what the sheet shows ----------------------------------------------------------------------------------------------------------

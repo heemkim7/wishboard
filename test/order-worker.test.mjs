@@ -161,7 +161,7 @@ describe('mock: the whole flow without keys', () => {
     const { clock, state, done } = setup();
     try {
       const env = makeEnv({ PAY_ON: '1', PAY_MODE: 'mock' }), H = harness(env, LOCAL), A = await userToken(state, clock, U1), B = await userToken(state, clock, U2);
-      const bid = await board(H, A.token), other = await board(H, B.token);
+      const other = await board(H, B.token), bid = (await (await H.post('/rt/gift', FORM({ ref: other }), A.token)).json()).id; // A's board made from B's page
       const list = await (await H.get('/rt/order/products?kind=gift', A.token)).json();
       const video = list.products.find((p) => p.id === 'gift_video'); assert.equal(video.price, 7900); assert.equal(list.sdk, null, 'no SDK in mock');
       assert.equal((await H.post('/rt/order', { product: 'gift_video', boardId: other, shown: 7900 }, A.token)).status, 403, "someone else's board");
@@ -169,7 +169,7 @@ describe('mock: the whole flow without keys', () => {
       assert.equal(moved.status, 409); assert.deepEqual(await moved.json(), { ok: false, code: 'price', error: '가격이 바뀌었어요. 바뀐 가격을 확인하고 다시 눌러 주세요.', price: 7900 });
       assert.equal((await H.post('/rt/order', { product: 'personal_long', kind: 'personal' }, A.token)).status, 400, 'every product is for a board');
       assert.equal((await H.post('/rt/order', { product: 'personal_long', boardId: bid }, A.token)).status, 400, 'a 내 전광판 product on a gift board');
-      const c = await (await H.post('/rt/order', { product: 'gift_video', boardId: bid, shown: 7900, ref: other }, A.token)).json();
+      const c = await (await H.post('/rt/order', { product: 'gift_video', boardId: bid, shown: 7900, ref: 'zzzzzzzz' }, A.token)).json(); // the page's own ref is not taken
       assert.equal(c.ok, true); assert.match(c.order.id, /^o_[A-Za-z0-9]{20}$/); assert.equal(c.order.st, 'CREATED'); assert.equal(c.order.perksActive, false); assert.equal(c.order.test, true);
       const id = c.order.id;
       assert.equal((await H.get('/rt/order/' + id, B.token)).status, 404, 'only the owner reads it');
@@ -191,7 +191,7 @@ describe('mock: the whole flow without keys', () => {
       assert.equal((await H.admin('/rt/admin/order/' + id + '/refund', { note: '' })).status, 400, 'a reason is required');
       const rf = await (await H.admin('/rt/admin/order/' + id + '/refund', { note: '고객 요청' })).json(); assert.equal(rf.order.st, 'REFUNDED');
       const again = await (await H.admin('/rt/admin/order/' + id + '/refund', { note: '고객 요청' })).json(); assert.equal(again.already, true);
-      const det = await (await H.admin('/rt/admin/order/' + id)).json(); assert.equal(det.order.st, 'REFUNDED'); assert.equal(det.events.at(-1).to, 'REFUNDED'); assert.equal(det.order.ref, other);
+      const det = await (await H.admin('/rt/admin/order/' + id)).json(); assert.equal(det.order.st, 'REFUNDED'); assert.equal(det.events.at(-1).to, 'REFUNDED'); assert.equal(det.order.ref, other, 'attribution from the gift store: the board it was made from');
       const days = Object.fromEntries(odb(env).prepare('select k, n from order_days').all().map((r) => [r.k, r.n]));
       assert.deepEqual(days, { 'mock:checkout_start': 1, 'mock:pay_success': 1, 'mock:publish_ok': 1, 'mock:refund': 1 });
       // revenue leaves mock out
@@ -256,7 +256,7 @@ describe('webhook signatures (Standard Webhooks)', () => {
       env.PORTONE_WEBHOOK_SECRET = SEC; env.PAY_ALLOW = A.id;
       const bid = await board(H, A.token), id = (await (await H.post('/rt/order', { product: 'gift_long', boardId: bid }, A.token)).json()).order.id;
       await H.post('/rt/order/' + id + '/pay', {}, A.token);
-      state.pg.set(id, { id, status: 'PAID', transactionId: 'tx-1', amount: { total: 3900 }, currency: 'KRW', channel: { type: 'TEST' }, storeId: 'store-1' });
+      state.pg.set(id, { id, status: 'PAID', transactionId: 'tx-1', amount: { total: 3900 }, currency: 'KRW', channel: { type: 'TEST', key: 'channel-key-test' }, storeId: 'store-1' });
       assert.equal((await signed(H, SEC, hookBody(id), { sig: 'v1,' + Buffer.from('nope').toString('base64') })).status, 400);
       assert.equal((await signed(H, 'whsec_' + Buffer.from('wrong').toString('base64'), hookBody(id))).status, 400);
       assert.equal((await signed(H, SEC, hookBody(id), { ts: Math.floor(Date.now() / 1000) - 600 })).status, 400, 'old');
@@ -287,14 +287,14 @@ describe('PortOne test and live modes (fake api.portone.io)', () => {
       assert.equal((await H.post('/rt/order/' + id + '/confirm', {}, A.token)).status, 503, 'no API secret');
       env.PORTONE_API_SECRET = 'api-secret-test';
       const early = await (await H.post('/rt/order/' + id + '/confirm', {}, A.token)).json(); assert.equal(early.pending, true, 'PortOne does not know it yet');
-      state.pg.set(id, { id, status: 'PAID', transactionId: 'tx-9', amount: { total: 14900 }, currency: 'KRW', channel: { type: 'TEST' } });
+      state.pg.set(id, { id, status: 'PAID', transactionId: 'tx-9', amount: { total: 14900 }, currency: 'KRW', channel: { type: 'TEST', key: 'channel-key-test' } });
       const conf = await (await H.post('/rt/order/' + id + '/confirm', {}, A.token)).json(); assert.equal(conf.order.st, 'PUBLISHED'); assert.equal(conf.order.test, true);
       const rf = await (await H.admin('/rt/admin/order/' + id + '/refund', { note: '테스트 환불' })).json(); assert.equal(rf.order.st, 'REFUNDED');
       assert.deepEqual(state.cancels, [{ pid: id, body: { storeId: 'store-1', reason: '테스트 환불' }, key: 'refund-' + id }]);
       // live
       env.PAY_MODE = 'live'; delete env.PAY_ALLOW;
       const L = (await (await H.post('/rt/order', { product: 'gift_long', boardId: bid, shown: 3900 }, A.token)).json()).order.id; await H.post('/rt/order/' + L + '/pay', {}, A.token);
-      state.pg.set(L, { id: L, status: 'PAID', transactionId: 'tx-L', amount: { total: 3900 }, currency: 'KRW', channel: { type: 'LIVE' } });
+      state.pg.set(L, { id: L, status: 'PAID', transactionId: 'tx-L', amount: { total: 3900 }, currency: 'KRW', channel: { type: 'LIVE', key: 'channel-key-test' } });
       assert.equal((await (await H.post('/rt/order/' + L + '/confirm', {}, A.token)).json()).order.test, false);
       const rev = (await (await H.admin('/rt/admin/order-revenue')).json()).revenue;
       assert.equal(rev.paid, 1); assert.equal(rev.gross, 3900); assert.equal(rev.excluded, 1, 'the test-channel order'); assert.deepEqual(rev.buyers, { total: 1, new: 1, repeat: 0 });

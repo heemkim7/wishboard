@@ -8,6 +8,7 @@ import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 registerHooks({
   resolve(specifier, context, next) {
@@ -52,8 +53,13 @@ function makeEnv(extra = {}) {
 }
 const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json' } });
 function fakeNet(state) {
-  return async (url) => {
+  return async (url, opt = {}) => {
     const u = String(url); state.calls.push(u);
+    if (u.startsWith('https://api.portone.io/payments/')) { // a fake api.portone.io: payments by id in state.pg, a cancel flips one to CANCELLED
+      const m = /^https:\/\/api\.portone\.io\/payments\/([^/?]+)(\/cancel)?/.exec(u), p = state.pg.get(decodeURIComponent(m[1]));
+      if (m[2]) { if (!p) return json({ type: 'PAYMENT_NOT_FOUND' }, 404); p.status = 'CANCELLED'; return json({ cancellation: { status: 'SUCCEEDED' } }); }
+      return p ? json(p) : json({ type: 'PAYMENT_NOT_FOUND' }, 404);
+    }
     if (u.includes('/.well-known/jwks.json')) return json({ keys: state.jwks || [] });
     if (u.includes('/rest/v1/')) return json([]);
     if (u.includes('/rpc/')) return json({ ok: true });
@@ -72,7 +78,7 @@ function harness(env) {
 let clockBase = Date.parse('2028-03-01T03:00:00Z'); // 12:00 KST
 function setup() {
   clockBase += 60 * 864e5; let t = clockBase; const orig = Date.now; Date.now = () => t;
-  const prevFetch = globalThis.fetch, state = { calls: [] };
+  const prevFetch = globalThis.fetch, state = { calls: [], pg: new Map() };
   globalThis.fetch = fakeNet(state); globalThis.caches = { default: { async match() {}, async put() {}, async delete() { return true; } } };
   orderCacheDrop();
   return { clock: { add: (ms) => { t += ms; }, now: () => t }, state, done: () => { globalThis.fetch = prevFetch; Date.now = orig; } };
@@ -213,5 +219,144 @@ describe('메인 타워 주인공: the minute booked directly', () => {
     // the 12-hour window crosses midnight: the next day still has places
     assert.equal(giftDb.perkFit(q, 'tw000001', 'user:a', ['long', 'clean', 'tower'], now).ok, true);
     assert.deepEqual(giftDb.perkFit(q, 'tw000001', 'user:a', ['clean', 'tower'], now), { ok: false, code: 'tower' }, 'within its own 6 hours the day is sold out');
+  });
+});
+
+// ---- the payment review (2026-11-28) -------------------------------------------------------------------------------------------------
+const odb = (env) => env.meter('order').sql.db;
+const PG = (env) => ({ PORTONE_STORE_ID: 'store-1', PORTONE_CHANNEL_KEY: 'ck-mine', PORTONE_API_SECRET: 'api-secret-test', ...env });
+const pgPaid = (id, price, channel, x = {}) => ({ id, status: 'PAID', transactionId: 'tx-' + id.slice(2, 8), amount: { total: price }, currency: 'KRW', channel, ...x });
+const order = async (H, token, bid, product, shown) => (await (await H.post('/rt/order', { product, boardId: bid, ...(shown ? { shown } : {}) }, token)).json()).order;
+
+describe('review: the channel a payment came through', () => {
+  it('a live order paid on a TEST channel (or another channel) is FAILED channel, flagged for refund, with no perk; refundable', async () => {
+    const { clock, state, done } = setup();
+    try {
+      const env = makeEnv(PG({ PAY_MODE: 'live' })), H = harness(env), A = await userToken(state, clock, U1), bid = await board(H, A.token);
+      const o = await order(H, A.token, bid, 'gift_long'); await H.post('/rt/order/' + o.id + '/pay', {}, A.token);
+      state.pg.set(o.id, pgPaid(o.id, 3900, { type: 'TEST', key: 'ck-mine' }));
+      const c = await H.post('/rt/order/' + o.id + '/confirm', {}, A.token), cj = await c.json();
+      assert.equal(c.status, 409); assert.equal(cj.code, 'channel'); assert.equal(cj.order.st, 'FAILED'); assert.equal(cj.order.refundDue, true); assert.equal(cj.order.perksActive, false);
+      assert.deepEqual((await owner(H, A.token, bid)).mine.perks, [], 'no perk');
+      const row = odb(env).prepare('select pg_tx, flags, note from orders where id = ?').get(o.id); assert.equal(row.pg_tx, 'tx-' + o.id.slice(2, 8)); assert.ok(row.flags & 2); assert.match(row.note, /환불 필요/);
+      const rf = await (await H.admin('/rt/admin/order/' + o.id + '/refund', { note: '채널 불일치' })).json(); assert.equal(rf.order.st, 'REFUNDED');
+      // test mode: only our configured key
+      env.PAY_MODE = ''; env.PAY_ALLOW = A.id;
+      const b2 = await board(H, A.token), t = await order(H, A.token, b2, 'gift_long'); await H.post('/rt/order/' + t.id + '/pay', {}, A.token);
+      state.pg.set(t.id, pgPaid(t.id, 3900, { type: 'TEST', key: 'ck-someone-else' }));
+      assert.equal((await (await H.post('/rt/order/' + t.id + '/confirm', {}, A.token)).json()).code, 'channel');
+      state.pg.set(t.id, pgPaid(t.id, 3900, { type: 'TEST', key: 'ck-mine' }));
+      const ok = (await (await H.post('/rt/order/' + t.id + '/confirm', {}, A.token)).json()).order; assert.equal(ok.st, 'PUBLISHED', 'FAILED without paid_at can still be paid (a retried attempt)'); assert.equal(ok.refundDue, undefined);
+    } finally { done(); }
+  });
+});
+
+describe('review: payments that cannot stand', () => {
+  it('a wrong amount from CREATED or CANCELLED is kept as FAILED with its transaction and refunded by the operator', async () => {
+    const { clock, state, done } = setup();
+    try {
+      const env = makeEnv(), H = harness(env), A = await userToken(state, clock, U1), bid = await board(H, A.token);
+      const c = await order(H, A.token, bid, 'gift_long'); // CREATED: the sheet never asked to pay
+      await H.post('/rt/order/' + c.id + '/mock', { result: 'amount' }, A.token);
+      let row = odb(env).prepare('select st, pg_tx, flags from orders where id = ?').get(c.id); assert.equal(row.st, 'FAILED'); assert.ok(row.pg_tx); assert.ok(row.flags & 2);
+      assert.equal((await (await H.admin('/rt/admin/order/' + c.id + '/refund', { note: '금액 불일치' })).json()).order.st, 'REFUNDED');
+      const x = await order(H, A.token, bid, 'gift_long'); await H.post('/rt/order/' + x.id + '/pay', {}, A.token); await H.post('/rt/order/' + x.id + '/cancel', {}, A.token);
+      await H.post('/rt/order/' + x.id + '/mock', { result: 'amount' }, A.token);
+      row = odb(env).prepare('select st, pg_tx from orders where id = ?').get(x.id); assert.equal(row.st, 'FAILED'); assert.ok(row.pg_tx);
+      assert.equal((await (await H.admin('/rt/admin/order/' + x.id + '/refund', { note: '금액 불일치' })).json()).order.st, 'REFUNDED');
+    } finally { done(); }
+  });
+  it('a paid order that failed to publish is not re-opened by a replayed webhook or another confirm', async () => {
+    const { clock, state, done } = setup();
+    try {
+      const env = makeEnv(), H = harness(env), A = await userToken(state, clock, U1), bid = await board(H, A.token);
+      const o = await order(H, A.token, bid, 'gift_long'); await H.post('/rt/order/' + o.id + '/pay', {}, A.token);
+      env.meter('gift').sql.db.prepare('update gb set uid = ? where id = ?').run('user:other', bid); // the board is no longer the buyer's
+      await H.post('/rt/order/' + o.id + '/mock', { result: 'paid' }, A.token);
+      for (let i = 0; i < 3; i++) await H.get('/rt/order/' + o.id, A.token);
+      assert.equal(odb(env).prepare('select st from orders where id = ?').get(o.id).st, 'FAILED');
+      env.meter('gift').sql.db.prepare('update gb set uid = ? where id = ?').run(A.id, bid);
+      await H.post('/rt/order/' + o.id + '/confirm', {}, A.token); await H.post('/rt/order/' + o.id + '/mock', { result: 'paid' }, A.token);
+      assert.equal(odb(env).prepare('select st from orders where id = ?').get(o.id).st, 'FAILED', 'still the operator\'s call');
+      assert.equal(odb(env).prepare("select count(*) n from order_events where order_id = ? and to_st = 'PAID'").get(o.id).n, 1);
+    } finally { done(); }
+  });
+  it('two orders paid on one board: the second is refused at pay; one paid anyway stays PAID, unpublished, flagged, and the buyer is told', async () => {
+    const { clock, state, done } = setup();
+    try {
+      const env = makeEnv(), H = harness(env), A = await userToken(state, clock, U1), bid = await board(H, A.token);
+      const o1 = await order(H, A.token, bid, 'gift_long'), o2 = await order(H, A.token, bid, 'gift_video');
+      await H.post('/rt/order/' + o1.id + '/pay', {}, A.token); await H.post('/rt/order/' + o2.id + '/pay', {}, A.token);
+      await H.post('/rt/order/' + o1.id + '/mock', { result: 'paid' }, A.token);
+      const again = await H.post('/rt/order/' + o2.id + '/pay', {}, A.token); assert.equal(again.status, 409); assert.equal((await again.json()).code, 'have');
+      await H.post('/rt/order/' + o2.id + '/mock', { result: 'paid' }, A.token); // the second window was already open and went through
+      const c = await H.post('/rt/order/' + o2.id + '/confirm', {}, A.token), cj = await c.json();
+      assert.equal(c.status, 409); assert.equal(cj.code, 'twice'); assert.equal(cj.order.st, 'PAID'); assert.equal(cj.order.refundDue, true);
+      assert.deepEqual((await owner(H, A.token, bid)).mine.perks, ['long'], 'only the first order\'s perks');
+      assert.ok(odb(env).prepare('select detail from order_events where order_id = ?').all(o2.id).some((e) => /refund_due/.test(e.detail)));
+      assert.equal((await (await H.admin('/rt/admin/order/' + o2.id + '/refund', { note: '중복 결제' })).json()).order.st, 'REFUNDED');
+      assert.deepEqual((await owner(H, A.token, bid)).mine.perks, ['long'], 'refunding the second leaves the first');
+    } finally { done(); }
+  });
+});
+
+describe('review: perks and refunds, the operator\'s tools', () => {
+  it('a revoke that fails is recorded and the operator retries it; a refund during perkOn takes the perks off', async () => {
+    const { clock, state, done } = setup();
+    try {
+      const env = makeEnv(), H = harness(env), A = await userToken(state, clock, U1), bid = await board(H, A.token);
+      const o = await buy(H, A.token, bid, 'gift_long');
+      const gdo = env.meter('gift').do, off = gdo.giftPerkOff; gdo.giftPerkOff = () => { throw new Error('down'); };
+      assert.equal((await (await H.admin('/rt/admin/order/' + o.id + '/refund', { note: '고객 요청' })).json()).order.st, 'REFUNDED');
+      assert.ok(odb(env).prepare('select flags from orders where id = ?').get(o.id).flags & 4);
+      assert.ok(odb(env).prepare('select detail from order_events where order_id = ?').all(o.id).some((e) => /revoke_fail/.test(e.detail)));
+      assert.deepEqual((await owner(H, A.token, bid)).mine.perks, ['long'], 'still on the board');
+      gdo.giftPerkOff = off;
+      const r = await H.admin('/rt/admin/order/' + o.id + '/revoke', {}); assert.equal(r.status, 200);
+      assert.equal(odb(env).prepare('select flags from orders where id = ?').get(o.id).flags & 4, 0); giftDrop(bid);
+      assert.deepEqual((await owner(H, A.token, bid)).mine.perks, []);
+      // refunded while the perks went on
+      const b2 = await board(H, A.token), p = await order(H, A.token, b2, 'gift_long'); await H.post('/rt/order/' + p.id + '/pay', {}, A.token);
+      const on = gdo.giftPerkOn.bind(gdo);
+      gdo.giftPerkOn = (...a) => { const res = on(...a); env.meter('order').do.ordOp('refunded', { id: p.id, note: '동시 환불', by: 'admin', via: 'pg' }, Date.now()); return res; };
+      await H.post('/rt/order/' + p.id + '/mock', { result: 'paid' }, A.token);
+      gdo.giftPerkOn = on; giftDrop(b2);
+      assert.equal(odb(env).prepare('select st from orders where id = ?').get(p.id).st, 'REFUNDED'); assert.deepEqual((await owner(H, A.token, b2)).mine.perks, [], 'taken off again');
+    } finally { done(); }
+  });
+  it('the operator restarts a publish stuck at its last try; 손으로 환불했음 only for orders the PG did not take', async () => {
+    const { clock, state, done } = setup();
+    try {
+      const env = makeEnv(), H = harness(env), A = await userToken(state, clock, U1), bid = await board(H, A.token);
+      const o = await order(H, A.token, bid, 'gift_long'); await H.post('/rt/order/' + o.id + '/pay', {}, A.token);
+      const gdo = env.meter('gift').do, on = gdo.giftPerkOn; gdo.giftPerkOn = () => { throw new Error('down'); };
+      await H.post('/rt/order/' + o.id + '/mock', { result: 'paid' }, A.token); gdo.giftPerkOn = on;
+      odb(env).prepare("update orders set st = 'PUBLISH_PENDING', tries = 3 where id = ?").run(o.id); // stuck: the last try never answered
+      assert.equal((await (await H.get('/rt/order/' + o.id, A.token)).json()).order.st, 'PUBLISH_PENDING', 'reads do not try past the limit');
+      assert.equal((await (await H.admin('/rt/admin/order/' + o.id + '/publish', {})).json()).order.st, 'PUBLISHED');
+      const m = await H.admin('/rt/admin/order/' + o.id + '/manual', { op: 'refunded', note: '손으로' }); assert.equal(m.status, 409); assert.equal((await m.json()).code, 'pgref');
+    } finally { done(); }
+  });
+  it('the owner\'s board read asks PortOne again about a payment pending for over a minute (once a minute)', async () => {
+    const { clock, state, done } = setup();
+    try {
+      const env = makeEnv(), H = harness(env), A = await userToken(state, clock, U1), bid = await board(H, A.token);
+      const o = await order(H, A.token, bid, 'gift_long'); await H.post('/rt/order/' + o.id + '/pay', {}, A.token);
+      env.meter('order').do.ordOp('mockSet', { pid: o.id, j: { id: o.id, status: 'PAID', transactionId: 'mock-x', amount: { total: 3900 }, currency: 'KRW', channel: { type: 'TEST' } } }, Date.now()); // paid, but no webhook and no confirm
+      assert.equal((await (await H.get('/rt/order/board/' + bid, A.token)).json()).orders[0].st, 'PAYMENT_PENDING', 'not within the first minute');
+      clock.add(61000);
+      const r = await (await H.get('/rt/order/board/' + bid, A.token)).json(); assert.equal(r.orders[0].st, 'PUBLISHED'); assert.equal(r.orders[0].ownerSt, '게시됨');
+    } finally { done(); }
+  });
+  it('a paid tower booking is refused without a DO call while payments are off; server-only payment files are not static assets', async () => {
+    const { clock, state, done } = setup();
+    try {
+      const env = makeEnv({ PAY_ON: '' }), H = harness(env), A = await userToken(state, clock, U1), bid = await board(H, A.token);
+      const r = await H.post('/rt/gift/' + bid + '/tower', { m: firstMinute(Date.now(), Date.now()), how: 'paid' }, A.token);
+      assert.equal(r.status, 403); assert.equal((await r.json()).code, 'paid'); assert.equal(env.meters.has('order'), false, 'the order store was never called');
+      const ignore = readFileSync(new URL('../.assetsignore', import.meta.url), 'utf8').split(/\r?\n/).map((l) => l.trim());
+      for (const f of ['ordersrv.js', 'sharepage.js', 'giftsrv.js']) assert.ok(ignore.includes(f), f);
+      assert.ok(!ignore.includes('payrules.js') && !ignore.includes('payclient.js'), 'shared with the pages: served');
+    } finally { done(); }
   });
 });

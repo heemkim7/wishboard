@@ -51,6 +51,12 @@ const orderOf = (r) => (r ? { id: String(r.id), uid: String(r.uid), kind: String
   created_at: Number(r.created_at), paid_at: r.paid_at == null ? null : Number(r.paid_at), published_at: r.published_at == null ? null : Number(r.published_at), refunded_at: r.refunded_at == null ? null : Number(r.refunded_at),
   pg: String(r.pg || ''), pg_tx: String(r.pg_tx || ''), how: String(r.how), mode: String(r.mode), ref: String(r.ref || ''), name: String(r.name || ''), perks: js(r.perks) || [], tries: Number(r.tries) || 0, flags: Number(r.flags) || 0, note: String(r.note || '') } : null);
 const D_EVENT = { PAID: 'pay_success', PUBLISHED: 'publish_ok', REFUNDED: 'refund' };
+// orders.flags: 1 the pay_fail counter counted this order; 2 the operator must refund it (money taken that we keep no product for: a wrong
+// amount or channel, or a second paid order on one board); 4 taking its perks off the board after a refund failed (the admin retries).
+export const FLAG = Object.freeze({ failCounted: 1, refundDue: 2, revokeFail: 4 });
+const MONEY_SQL = "(st in ('PAID', 'PUBLISH_PENDING', 'PUBLISHED') or (st = 'FAILED' and paid_at is not null))";
+// Another order on o's board that took money and kept it (the one paid order a board may have).
+const otherMoney = (q, o) => !!(o?.ref_board && q.exec('select 1 from orders where ref_board = ? and id <> ? and ' + MONEY_SQL + ' limit 1', o.ref_board, o.id).toArray()[0]);
 export const orderDb = {
   tables(q) {
     q.exec("create table if not exists orders(id text primary key, uid text not null, kind text not null, product text not null, price integer not null, arm text not null, st text not null, ref_board text not null default '', created_at integer not null, paid_at integer, published_at integer, refunded_at integer, pg text not null default '', pg_tx text not null default '', how text not null, mode text not null, ref text not null default '', name text not null default '', perks text not null default '[]', tries integer not null default 0, flags integer not null default 0, note text not null default '')");
@@ -80,6 +86,17 @@ export const orderDb = {
     if (to === 'FAILED' && from === 'PAYMENT_PENDING') this.failOnce(q, o, now);
     return true;
   },
+  // A PAID order starts publishing (PAID -> PUBLISH_PENDING, try 1), unless another order of its board already took money: then it stays
+  // PAID, flagged for the operator's refund, and is not published (why 'have').
+  afterPaid(q, id, now) {
+    const o = this.one(q, id);
+    if (otherMoney(q, o)) {
+      q.exec('update orders set flags = flags | ? where id = ?', FLAG.refundDue, o.id); this.note(q, o.id, o.st, o.st, 'system', { refund_due: 'have' }, now);
+      return { ok: true, order: this.one(q, o.id), why: 'have' };
+    }
+    const pub = this.move(q, o.id, 'PAID', 'PUBLISH_PENDING', 'system', { try: 1 }, now, { tries: 1 });
+    return { ok: true, order: this.one(q, o.id), publish: pub };
+  },
   failOnce(q, o, now) { if (o.flags & 1) return; q.exec('update orders set flags = flags | 1 where id = ?', o.id); this.bump(q, o.mode, 'pay_fail', now); },
   products(q) { return productList(q.exec('select json from products').toArray().map((r) => js(r.json)).filter(Boolean)); },
   run(q, op, a = {}, now = Date.now()) {
@@ -87,7 +104,7 @@ export const orderDb = {
       const p = this.products(q).find((x) => x.id === a.product);
       if (!p || !p.active || (a.kind && p.kind !== a.kind)) return { ok: false, code: 'product' };
       // One paid order per board: another that took money (and was not given back) keeps a second one out.
-      if (a.board && q.exec("select 1 from orders where ref_board = ? and (st in ('PAID', 'PUBLISH_PENDING', 'PUBLISHED') or (st = 'FAILED' and paid_at is not null)) limit 1", String(a.board)).toArray()[0]) return { ok: false, code: 'have' };
+      if (a.board && q.exec('select 1 from orders where ref_board = ? and ' + MONEY_SQL + ' limit 1', String(a.board)).toArray()[0]) return { ok: false, code: 'have' };
       const { arm, price } = armOf(p, a.ladder);
       if (a.shown != null && Number(a.shown) !== price) return { ok: false, code: 'price', price };
       const id = newOrderId(), how = a.mode === 'live' ? 'pg' : 'test';
@@ -102,6 +119,7 @@ export const orderDb = {
     if (op === 'get') return o && mine() ? { ok: true, order: o, events: a.events ? q.exec('select at, from_st, to_st, by, detail from order_events where order_id = ? order by at asc, rowid asc', o.id).toArray().map((r) => ({ at: Number(r.at), from: String(r.from_st), to: String(r.to_st), by: String(r.by), detail: js(r.detail) })) : undefined } : { ok: false, code: 'nf' };
     if (op === 'pay') {
       if (!mine()) return { ok: false, code: 'nf' };
+      if (otherMoney(q, o)) return { ok: false, code: 'have', order: o }; // another order of this board was paid meanwhile
       if (o.st === 'CREATED') this.move(q, o.id, 'CREATED', 'PAYMENT_PENDING', 'buyer', null, now);
       const x = this.one(q, o.id); return x.st === 'PAYMENT_PENDING' ? { ok: true, order: x } : { ok: false, code: 'state', order: x };
     }
@@ -125,21 +143,31 @@ export const orderDb = {
         if (Math.random() < 0.05) q.exec('delete from webhooks where at < ?', now - 30 * 864e5);
       }
       if (!o) return { ok: false, code: 'nf' };
-      const v = pgVerdict(o, a.payment), by = String(a.by || 'pg');
+      const v = pgVerdict(o, a.payment, { chan: a.chan }), by = String(a.by || 'pg');
       if (!v.to) { if (v.why !== 'already') this.note(q, o.id, o.st, o.st, by, { seen: v.why }, now); return { ok: true, order: this.one(q, o.id), why: v.why }; }
       if (v.to === 'PAID') {
         let from = o.st; if (from === 'CREATED' && this.move(q, o.id, 'CREATED', 'PAYMENT_PENDING', by, null, now)) from = 'PAYMENT_PENDING';
-        if (!this.move(q, o.id, from, 'PAID', by, { tx: v.tx, how: v.how }, now, { paid_at: now, pg_tx: v.tx, how: v.how })) return { ok: true, order: this.one(q, o.id), why: 'raced' };
-        const pub = this.move(q, o.id, 'PAID', 'PUBLISH_PENDING', 'system', { try: 1 }, now, { tries: 1 });
-        return { ok: true, order: this.one(q, o.id), publish: pub };
+        if (!this.move(q, o.id, from, 'PAID', by, { tx: v.tx, how: v.how }, now, { paid_at: now, pg_tx: v.tx, how: v.how, flags: o.flags & ~FLAG.refundDue })) return { ok: true, order: this.one(q, o.id), why: 'raced' }; // a payment that now stands needs no refund
+        return this.afterPaid(q, o.id, now);
       }
-      if (v.to === 'FAILED') { this.move(q, o.id, o.st, 'FAILED', by, { why: v.why, paid: v.paid, currency: v.currency }, now, v.tx ? { pg_tx: v.tx } : {}); return { ok: true, order: this.one(q, o.id), why: v.why }; }
+      if (v.to === 'FAILED') {
+        // Money the PG took that we do not accept (a wrong amount or channel) is kept as FAILED with its transaction and a note, flagged for
+        // the operator's refund, from whatever state the order was in (CREATED steps through PAYMENT_PENDING; an order already FAILED only
+        // gets the transaction and the flag). A plain failed payment (pg_failed) moved no money.
+        const money = v.why === 'amount' || v.why === 'channel', tx = v.tx || (money ? o.id : ''), detail = { why: v.why, paid: v.paid, currency: v.currency, ...(v.channel ? { channel: v.channel } : {}) };
+        const set = { ...(tx ? { pg_tx: tx } : {}), ...(money ? { flags: o.flags | FLAG.refundDue, note: v.why === 'amount' ? '결제 금액이 주문과 다름: 환불 필요' : '결제 채널이 이 모드의 채널이 아님: 환불 필요' } : {}) };
+        let from = o.st; if (from === 'CREATED' && this.move(q, o.id, 'CREATED', 'PAYMENT_PENDING', by, null, now)) from = 'PAYMENT_PENDING';
+        if (!this.move(q, o.id, from, 'FAILED', by, detail, now, set) && money) { // already FAILED (or a state that cannot fail): keep what the PG said
+          q.exec('update orders set flags = flags | ?' + (tx ? ', pg_tx = ?' : '') + ' where id = ?', FLAG.refundDue, ...(tx ? [tx] : []), o.id); this.note(q, o.id, from, from, by, detail, now);
+        }
+        return { ok: true, order: this.one(q, o.id), why: v.why };
+      }
       if (v.to === 'REFUNDED') { const moved = this.move(q, o.id, o.st, 'REFUNDED', by, { why: v.why }, now, { refunded_at: now }); return { ok: true, order: this.one(q, o.id), why: v.why, revoke: moved }; }
       return { ok: true, order: o };
     }
-    // The publisher's answer for the current try.
+    // The publisher's answer for the current try. revoke: the order was refunded while its perks went on (take them off again).
     if (op === 'published') {
-      if (!o || o.st !== 'PUBLISH_PENDING') return { ok: false, code: 'state', order: o };
+      if (!o || o.st !== 'PUBLISH_PENDING') return { ok: false, code: 'state', order: o, revoke: !!(o && o.st === 'REFUNDED' && a.ok) };
       if (a.ok) { this.move(q, o.id, 'PUBLISH_PENDING', 'PUBLISHED', 'system', { board: o.ref_board || null }, now, { published_at: now, ...(Array.isArray(a.perks) ? { perks: JSON.stringify(a.perks) } : {}) }); return { ok: true, order: this.one(q, o.id) }; }
       this.bump(q, o.mode, 'publish_fail', now);
       if (o.tries >= PAY.publishTries) this.move(q, o.id, 'PUBLISH_PENDING', 'FAILED', 'system', { why: String(a.why || 'publish'), tries: o.tries }, now);
@@ -149,6 +177,7 @@ export const orderDb = {
     // Another try: on the owner's read (PUBLISH_PENDING under the limit), or the operator's 다시 공개 (FAILED with money: tries start over).
     if (op === 'publishAgain') {
       if (!o) return { ok: false, code: 'nf' };
+      if (o.st === 'PUBLISH_PENDING' && a.admin) { q.exec('update orders set tries = 1 where id = ? and st = ?', o.id, 'PUBLISH_PENDING'); this.note(q, o.id, o.st, o.st, 'admin', { try: 1, reset: o.tries }, now); return { ok: true, publish: true, order: this.one(q, o.id) }; } // a publish stuck at its last try
       if (o.st === 'PUBLISH_PENDING' && o.tries < PAY.publishTries) { q.exec('update orders set tries = tries + 1 where id = ? and st = ?', o.id, 'PUBLISH_PENDING'); this.note(q, o.id, o.st, o.st, String(a.by || 'system'), { try: o.tries + 1 }, now); return { ok: true, publish: true, order: this.one(q, o.id) }; }
       if (o.st === 'FAILED' && a.admin && o.paid_at != null) return this.move(q, o.id, 'FAILED', 'PUBLISH_PENDING', 'admin', { try: 1, again: true }, now, { tries: 1 }) ? { ok: true, publish: true, order: this.one(q, o.id) } : { ok: false, code: 'state', order: o };
       return { ok: true, publish: false, order: o };
@@ -167,8 +196,14 @@ export const orderDb = {
       let from = o.st; const note = String(a.note || '').slice(0, PAY.noteMax), how = o.mode === 'live' ? 'manual' : 'test';
       if (from === 'CREATED' && this.move(q, o.id, 'CREATED', 'PAYMENT_PENDING', 'admin', { note }, now)) from = 'PAYMENT_PENDING';
       if (!this.move(q, o.id, from, 'PAID', 'admin', { note, manual: true }, now, { paid_at: now, how, note })) return { ok: false, code: 'state', order: this.one(q, o.id) };
-      const pub = this.move(q, o.id, 'PAID', 'PUBLISH_PENDING', 'system', { try: 1 }, now, { tries: 1 });
-      return { ok: true, order: this.one(q, o.id), publish: pub };
+      return this.afterPaid(q, o.id, now);
+    }
+    // The operator's flags (FLAG): set and clear bits, with a note in the history.
+    if (op === 'flag') {
+      if (!o) return { ok: false, code: 'nf' };
+      q.exec('update orders set flags = (flags | ?) & ~? where id = ?', Number(a.set) || 0, Number(a.clear) || 0, o.id);
+      this.note(q, o.id, o.st, o.st, String(a.by || 'system'), a.detail || null, now);
+      return { ok: true, order: this.one(q, o.id) };
     }
     if (op === 'list') {
       const w = [], args = [];
@@ -282,14 +317,19 @@ export const PUBLISHERS = { gift: boardPublisher, personal: boardPublisher };
 async function publish(env, o, ctx = null) {
   let r; try { r = await (PUBLISHERS[o.kind] || (async () => ({ ok: false, why: 'kind' })))(env, o, ctx); } catch { r = { ok: false, why: 'error' }; }
   const x = await orderM(env).ordOp('published', { id: o.id, ok: !!r?.ok, perks: r?.perks, why: r?.why }, Date.now());
+  if (x?.revoke) await revoke(env, x.order, ctx); // refunded while the perks went on
   return x?.order || o;
 }
 // A refund takes the order's perks off its board again (k.perkOff, giftsrv.js giftPerkOff: the window back to GIFT.hours, or to now when
 // that is already past; the films carry the watermark again; a paid main tower minute that has not started is let go, never as points).
-// Never throws: the order is REFUNDED whatever the board says.
+// Never throws: the order is REFUNDED whatever the board says. A failure is kept on the order (FLAG.revokeFail, 'revoke_fail' in its
+// history) for the operator's 혜택 다시 떼기 (POST /rt/admin/order/<id>/revoke); a later success clears it. -> true when the perks are off.
 async function revoke(env, o, ctx = null) {
-  if (!o || o.st !== 'REFUNDED' || !GIFT_ID.test(o.ref_board) || !KIT?.perkOff) return;
-  try { await KIT.perkOff(env, ctx, { board: o.ref_board, order: o.id }); } catch { /* the board keeps them until the operator looks */ }
+  if (!o || o.st !== 'REFUNDED' || !GIFT_ID.test(o.ref_board)) return true;
+  let r = null; try { r = KIT?.perkOff ? await KIT.perkOff(env, ctx, { board: o.ref_board, order: o.id }) : null; } catch { r = null; }
+  const ok = !!r?.ok;
+  if (!ok || (o.flags & FLAG.revokeFail)) { try { await orderM(env).ordOp('flag', ok ? { id: o.id, clear: FLAG.revokeFail, detail: { revoked: true } } : { id: o.id, set: FLAG.revokeFail, detail: { revoke_fail: String(r?.why || (KIT?.perkOff ? 'error' : 'nohook')) } }, Date.now()); } catch { /* the next try records it */ } }
+  return ok;
 }
 // The perks a board's published orders carry (for the product side; one DO call): { ok, products, perks (text), gives (perk keys), uids }.
 export async function orderPerks(env, board) { try { return await orderM(env).ordOp('perks', { board }); } catch { return { ok: false, products: [], perks: [], gives: [], uids: [] }; } }
@@ -307,7 +347,8 @@ const hardOf = async (k, env) => { try { return (await k.lvlNow(env)) >= 2; } ca
 // The buyer's view of an order: no account ids of others, perks marked active only once PUBLISHED.
 export function orderView(o) {
   return { id: o.id, kind: o.kind, product: o.product, name: o.name, price: o.price, st: o.st, stName: ST_NAME[o.st] || o.st, ownerSt: OWNER_ST[o.st] || o.st, board: o.ref_board || null,
-    created_at: o.created_at, paid_at: o.paid_at, published_at: o.published_at, refunded_at: o.refunded_at, perks: o.perks, perksActive: o.st === 'PUBLISHED', gives: o.st === 'PUBLISHED' ? givesOf([o.product]) : [], test: o.how === 'test' };
+    created_at: o.created_at, paid_at: o.paid_at, published_at: o.published_at, refunded_at: o.refunded_at, perks: o.perks, perksActive: o.st === 'PUBLISHED', gives: o.st === 'PUBLISHED' ? givesOf([o.product]) : [], test: o.how === 'test',
+    ...(o.flags & FLAG.refundDue && o.st !== 'REFUNDED' ? { refundDue: true } : {}) }; // refundDue: money we keep no product for; the operator refunds it
 }
 let PCACHE = { at: 0, list: null };
 async function productsCached(env, now = Date.now()) {
@@ -346,8 +387,11 @@ export async function orderApi(req, env, ctx, u, k) {
     if (req.method !== 'GET') return J({ err: 'get' }, 405);
     if (await hardOf(k, env)) return no('busy', 503);
     let r; try { r = await orderM(env).ordOp('board', { board: bm[1], uid: actor.id }); } catch { return no('down', 503); }
-    const orders = [];
+    const orders = []; let asked = 0;
     for (let o of r?.orders || []) {
+      // A payment still pending a minute after the order was made (the buyer closed the page before confirm, and no webhook came): PortOne
+      // is asked again here, at most once a minute per order in this isolate and two orders a read (no cron).
+      if (o.st === 'PAYMENT_PENDING' && Date.now() - o.created_at > PEND_MS && asked < 2 && pendDue(o.id)) { asked++; try { const s = await settle(env, ctx, mode, o, 'pg:owner'); if (s.order) o = s.order; } catch { /* the next read asks again */ } }
       if (o.st === 'PUBLISH_PENDING') { try { const a = await orderM(env).ordOp('publishAgain', { id: o.id, by: 'buyer' }, Date.now()); if (a?.publish) o = await publish(env, a.order, ctx); } catch { /* the next read tries again */ } }
       orders.push(orderView(o));
     }
@@ -361,14 +405,16 @@ export async function orderApi(req, env, ctx, u, k) {
     // Every product is for a board: a gift board (kind gift) or a 내 전광판 (kind personal), the buyer's own. The board decides the kind,
     // its arm the price (the one its page showed), and the gift side whether its perks can be delivered (the window not over, a screen
     // for 12 hours, a main tower place left): one gift DO call (k.perkFit), so nobody pays for a perk the board cannot get.
-    const product = String(b.product || ''), board = String(b.boardId || ''), ref0 = GIFT_ID.test(String(b.ref || '')) ? String(b.ref) : '';
+    const product = String(b.product || ''), board = String(b.boardId || '');
     if (!GIFT_ID.test(board)) return no('board', 400);
     const want = productsBy().get(product); if (!want || (b.kind && b.kind !== want.kind)) return no('product', 400);
     let fit = null;
     try { fit = k.perkFit ? await k.perkFit(env, { board, uid: actor.id, gives: want.gives }) : await ownBoard(env, board, actor.id); } catch { return no('down', 503); }
     if (!fit?.ok) return !fit || fit.code === 'board' ? no('board', 403) : no(fit.code, 409);
     if (fit.kind !== want.kind) return no('product', 400);
-    const ref = ref0 && ref0 !== board ? ref0 : GIFT_ID.test(String(fit.ref || '')) ? String(fit.ref) : ''; // the board this one was made from (받는 사람 페이지에서 온 주문)
+    // ref (받는 사람 페이지에서 온 주문): the board this one was made from, as the gift store keeps it (another account's board, set when it
+    // was made). The buyer's own b.ref is not taken: revenue attribution never comes from what a page sends.
+    const ref = GIFT_ID.test(String(fit.ref || '')) && fit.ref !== board ? String(fit.ref) : '';
     let r; try { r = await orderM(env).ordOp('create', { uid: actor.id, product, kind: want.kind, board, ref, mode, ladder: ladderArm(board, env.GIFT_ARMS), shown: b.shown == null ? null : Number(b.shown) }, Date.now()); } catch { return no('down', 503); }
     if (!r?.ok) return r?.code === 'price' ? no('price', 409, { price: r.price }) : r?.code === 'have' ? no('have', 409) : no(r?.code === 'product' ? 'product' : 'down', r?.code === 'product' ? 400 : 503);
     return J({ ok: true, order: orderView(r.order) });
@@ -392,7 +438,7 @@ export async function orderApi(req, env, ctx, u, k) {
     const store = String(env.PORTONE_STORE_ID || ''), chan = String(env.PORTONE_CHANNEL_KEY || '');
     if (mode !== 'mock' && (!store || !chan)) return no('keys', 503);
     let r; try { r = await orderM(env).ordOp('pay', { id, uid: actor.id }, Date.now()); } catch { return no('down', 503); }
-    if (!r?.ok) return r?.code === 'nf' ? no('nf', 404) : no('state', 409, { order: r.order ? orderView(r.order) : null });
+    if (!r?.ok) return r?.code === 'nf' ? no('nf', 404) : r?.code === 'have' ? no('have', 409) : no('state', 409, { order: r.order ? orderView(r.order) : null });
     const o = r.order;
     const sdk = mode === 'mock' ? { mock: true, paymentId: o.id, orderName: o.name, totalAmount: o.price, currency: 'CURRENCY_KRW' }
       : { storeId: store, channelKey: chan, paymentId: o.id, orderName: o.name, totalAmount: o.price, currency: 'CURRENCY_KRW', payMethod: 'CARD' };
@@ -416,13 +462,25 @@ export async function orderApi(req, env, ctx, u, k) {
   return confirm(env, ctx, mode, g.order, 'pg:confirm');
 }
 
-async function confirm(env, ctx, mode, o, by) {
+// The channel key a payment must have come through (payrules.js channelFault): the configured one; mock has none.
+const chanOf = (env, mode) => (mode === 'mock' ? '' : String(env.PORTONE_CHANNEL_KEY || ''));
+// PortOne asked about order o and its answer applied, then published or its perks taken off. -> { order, why } | { code } (keys, nf, pg, down).
+async function settle(env, ctx, mode, o, by) {
   const got = await provider(env, mode).get(o.id);
-  if (!got.ok) return got.code === 'keys' ? no('keys', 503) : got.code === 'nf' ? J({ ok: true, order: orderView(o), pending: true }) : no('pg', 502);
-  let r; try { r = await orderM(env).ordOp('apply', { id: o.id, payment: got.payment, by }, Date.now()); } catch { return no('down', 503); }
-  if (!r?.ok) return no('nf', 404);
+  if (!got.ok) return { code: got.code, order: o };
+  let r; try { r = await orderM(env).ordOp('apply', { id: o.id, payment: got.payment, by, chan: chanOf(env, mode) }, Date.now()); } catch { return { code: 'down', order: o }; }
+  if (!r?.ok) return { code: 'gone', order: o };
   let x = r.order; if (r.publish) x = await publish(env, x, ctx); if (r.revoke) await revoke(env, x, ctx);
-  if (r.why === 'amount') return J({ ok: false, code: 'amount', error: PAY_ERR.amount, order: orderView(x) }, 409);
+  return { order: x, why: r.why };
+}
+const PEND_MS = 60000, PEND = new Map(); // order id -> when this isolate last asked PortOne about it from the owner's read
+const pendDue = (id, now = Date.now()) => { const at = PEND.get(id); if (at && now - at < PEND_MS && now >= at) return false; PEND.delete(id); if (PEND.size >= 500) PEND.delete(PEND.keys().next().value); PEND.set(id, now); return true; };
+async function confirm(env, ctx, mode, o, by) {
+  const s = await settle(env, ctx, mode, o, by);
+  if (s.code) return s.code === 'keys' ? no('keys', 503) : s.code === 'nf' ? J({ ok: true, order: orderView(o), pending: true }) : s.code === 'gone' ? no('nf', 404) : s.code === 'down' ? no('down', 503) : no('pg', 502);
+  const x = s.order;
+  if (s.why === 'amount' || s.why === 'channel') return J({ ok: false, code: s.why, error: PAY_ERR[s.why], order: orderView(x) }, 409);
+  if (s.why === 'have' || (x.st === 'PAID' && x.flags & FLAG.refundDue)) return J({ ok: false, code: 'twice', error: PAY_ERR.twice, order: orderView(x) }, 409); // also when the webhook got there first
   return J({ ok: true, order: orderView(x) });
 }
 
@@ -443,7 +501,7 @@ async function hookApi(req, env, ctx, mode, raw = null) {
   try { if ((await orderM(env).ordOp('hookSeen', { hook: v.id }))?.seen) return J({ ok: true, dup: true }); } catch { return J({ ok: false }, 503); }
   const got = await provider(env, mode).get(pid);
   if (!got.ok) return got.code === 'nf' ? J({ ok: true, ignored: 'payment' }) : J({ ok: false, why: got.code }, 503);
-  let r; try { r = await orderM(env).ordOp('apply', { id: pid, payment: got.payment, by: 'pg:hook', hook: v.id }, Date.now()); } catch { return J({ ok: false }, 503); }
+  let r; try { r = await orderM(env).ordOp('apply', { id: pid, payment: got.payment, by: 'pg:hook', hook: v.id, chan: chanOf(env, mode) }, Date.now()); } catch { return J({ ok: false }, 503); }
   if (r?.dup) return J({ ok: true, dup: true });
   if (!r?.ok) return J({ ok: true, ignored: 'order' });
   if (r.publish) await publish(env, r.order, ctx);
@@ -492,7 +550,7 @@ async function adminApi(req, env, ctx, u, k) {
       if (!picks) for (const x of rev.products) x.picks = null; // the gift counters could not be read: unknown, not zero
       return J({ ok: true, d0, d1, revenue: rev, funnelDays: r.days || {}, sw });
     }
-    const m = /^\/rt\/admin\/order\/(o_[A-Za-z0-9]{20})(?:\/(refund|manual|publish))?$/.exec(p);
+    const m = /^\/rt\/admin\/order\/(o_[A-Za-z0-9]{20})(?:\/(refund|manual|publish|revoke))?$/.exec(p);
     if (!m) return J({ err: 'not found' }, 404);
     const id = m[1], sub = m[2] || '';
     if (!sub) { if (req.method !== 'GET') return J({ err: 'get' }, 405); const r = await M.ordOp('get', { id, events: true }); return r.ok ? J({ ok: true, order: r.order, events: r.events, cost: costOf(r.order.price) }) : no('nf', 404); }
@@ -501,9 +559,14 @@ async function adminApi(req, env, ctx, u, k) {
     const g = await M.ordOp('get', { id }); if (!g.ok) return no('nf', 404);
     const o = g.order;
     if (sub === 'publish') { const a = await M.ordOp('publishAgain', { id, admin: true, by: 'admin' }, now); if (!a.ok) return no('state', 409); const x = a.publish ? await publish(env, a.order, ctx) : a.order; return J({ ok: true, order: x }); }
+    if (sub === 'revoke') { // 혜택 다시 떼기: a refunded order whose perks did not come off the board
+      if (o.st !== 'REFUNDED') return no('state', 409, { order: o });
+      const ok = await revoke(env, o, ctx); return J({ ok, order: (await M.ordOp('get', { id })).order }, ok ? 200 : 502);
+    }
     if (note.length < 2) return no('note', 400);
     if (sub === 'manual') {
       if (b.op === 'paid') { const r = await M.ordOp('manualPaid', { id, note }, now); if (!r.ok) return no('state', 409, { order: r.order }); const x = r.publish ? await publish(env, r.order, ctx) : r.order; return J({ ok: true, order: x }); }
+      if (b.op === 'refunded' && o.pg_tx && o.how !== 'manual') return no('pgref', 409, { order: o }); // money the PG holds goes back through the PG
       if (b.op === 'refunded') { const r = await M.ordOp('refunded', { id, note, by: 'admin', via: 'manual' }, now); if (r.revoke) await revoke(env, r.order, ctx); return r.ok ? J({ ok: true, order: r.order }) : no('state', 409, { order: r.order }); }
       return J({ ok: false, error: 'op' }, 400);
     }

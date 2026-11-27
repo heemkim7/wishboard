@@ -94,7 +94,7 @@ async function loadList() {
     const q = new URLSearchParams({ st: fSt.value, product: fProd.value, mode: fMode.value, limit: '100' });
     const r = await api('/rt/admin/orders?' + q); showSwitch(r.sw);
     $('ordList').replaceChildren(row('th', ['만든 때', '주문', '상품', '가격', '상태', '결제', '모드', '받는 사람 페이지에서']),
-      ...(r.orders.length ? r.orders.map((o) => { const tr = row('td', [kst(o.created_at), '', NAME[o.product] || o.product, won(o.price) + (o.arm !== 'A' ? ' (' + o.arm + ')' : ''), ST_NAME[o.st] || o.st, o.how, o.mode, o.ref ? '예' : '']);
+      ...(r.orders.length ? r.orders.map((o) => { const tr = row('td', [kst(o.created_at), '', NAME[o.product] || o.product, won(o.price) + (o.arm !== 'A' ? ' (' + o.arm + ')' : ''), (ST_NAME[o.st] || o.st) + ((o.flags & 2 && o.st !== 'REFUNDED') || o.flags & 4 ? ' ⚠' : ''), o.how, o.mode, o.ref ? '예' : '']);
         tr.children[1].replaceChildren(h('button', { type: 'button', text: o.id, onclick: () => loadOne(o.id) })); return tr; }) : [row('td', ['주문이 없어요.', '', '', '', '', '', '', ''])]));
   } catch (e) { say(e.message, true); }
 }
@@ -104,7 +104,7 @@ async function loadOne(id) {
     const r = await api('/rt/admin/order/' + id), o = r.order;
     const note = h('input', { type: 'text', maxlength: 300, placeholder: '이유 (필수, 주문 기록에 남아요)' });
     const act = (label, path, body, cls) => h('button', { type: 'button', class: cls, text: label, onclick: async () => {
-      if (!note.value.trim() && !path.endsWith('/publish')) { say('이유를 적어 주세요.', true); note.focus(); return; }
+      if (!note.value.trim() && !path.endsWith('/publish') && !path.endsWith('/revoke')) { say('이유를 적어 주세요.', true); note.focus(); return; }
       if (!confirm(label + ': ' + o.id + '\n' + (note.value || ''))) return;
       try { const x = await api('/rt/admin/order/' + o.id + path, { ...body, note: note.value }); say(x.requested ? '환불을 요청했어요. 결제사가 끝내면 웹훅으로 환불됨이 돼요.' : '처리했어요: ' + (ST_NAME[x.order?.st] || '')); loadOne(o.id); loadList(); } catch (e) { say(e.message, true); }
     } });
@@ -112,8 +112,9 @@ async function loadOne(id) {
     $('ordOne').replaceChildren(
       h('div', { class: 'hit' }, h('b', { text: o.id }), h('span', { text: `${NAME[o.product] || o.product} · ${won(o.price)} (${o.arm}안) · ${ST_NAME[o.st] || o.st} · ${o.how}/${o.mode}` }),
         h('span', { text: '구매자 ' + o.uid }), o.ref_board ? h('span', { text: '전광판 ' + o.ref_board }) : null, o.pg_tx ? h('span', { text: '거래 ' + o.pg_tx }) : null,
+        o.flags & 2 && o.st !== 'REFUNDED' ? h('span', { text: '⚠ 환불 필요(금액·채널이 맞지 않거나 같은 전광판의 두 번째 결제)' }) : null, o.flags & 4 ? h('span', { text: '⚠ 환불했지만 전광판에서 혜택을 떼지 못함: "혜택 다시 떼기"' }) : null,
         h('span', { text: `결제 수수료(추정) ${won(r.cost.pg.lo)}~${won(r.cost.pg.hi)}` })),
-      h('div', { class: 'bar' }, note, act('결제사로 환불', '/refund', {}, 'no'), act('입금 확인(수동 결제)', '/manual', { op: 'paid' }, 'ok'), act('손으로 환불했음', '/manual', { op: 'refunded' }), act('다시 공개', '/publish', {})),
+      h('div', { class: 'bar' }, note, act('결제사로 환불', '/refund', {}, 'no'), act('입금 확인(수동 결제)', '/manual', { op: 'paid' }, 'ok'), act('손으로 환불했음(결제사를 거치지 않은 주문만)', '/manual', { op: 'refunded' }), act('다시 공개(멈춘 공개도 처음부터)', '/publish', {}), o.st === 'REFUNDED' ? act('혜택 다시 떼기', '/revoke', {}) : null),
       ...ev);
   } catch (e) { say(e.message, true); }
 }
