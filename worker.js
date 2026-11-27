@@ -69,7 +69,7 @@ let TALLY = { n: 0, at: 0, p: null, pAt: 0, q: 0, q0: 0, w: 0, r: 0, h: {} }, LV
 // Share-page hits (GET /rt/card/<slot>, /rt/w/<id>, /rt/s/<id> answered with the HTML page), per KST day, kind and people | auto. h holds
 // 'day|kind|who' -> n and rides the tally add above to Meter 'day' (table lh): no DO call of its own, at most one add per TALLY_MS per isolate
 // while hits come in. Nothing of the visitor is kept, only the counts. Not counted at budget hard (LVL.l 2), so no add is started for them then.
-export const LINK_KINDS = Object.freeze(['card', 'wish', 'shot']);
+const LINK_KINDS = Object.freeze(['card', 'wish', 'shot']); // not exported: workerd takes only functions and classes as named exports
 // Link-preview fetchers and crawlers: named ones, then anything that says bot, crawler, spider or preview. Daum's crawler is Daumoa:
 // "DaumApps" (the Daum app's own browser, a person) does not match. No User-Agent at all is automated too.
 const LINK_BOT = /kakaotalk-scrap|facebookexternalhit|twitterbot|slackbot|discordbot|telegrambot|whatsapp|googlebot|bingbot|yeti|daumoa|linkedinbot|bot|crawler|spider|preview/i;

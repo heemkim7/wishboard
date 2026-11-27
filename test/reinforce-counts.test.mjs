@@ -28,7 +28,7 @@ describe('share-page hits', { concurrency: false }, () => {
       'SomeCrawler/2', 'my-spider', 'Link Preview Service', '', '   ', null, undefined];
     for (const ua of people) assert.equal(W.linkWho(ua), 'people', ua);
     for (const ua of auto) assert.equal(W.linkWho(ua), 'auto', String(ua));
-    assert.deepEqual(W.LINK_KINDS, ['card', 'wish', 'shot']);
+    assert.equal('LINK_KINDS' in W, false); // workerd takes only functions and classes as named exports (bot-guard.test.mjs)
   });
   it('counts each card page by kind and who, never waits for it, rides the tally add, skips redirects and HEAD, and stops at budget hard', async () => {
     await withClock(Date.parse('2027-06-01T03:00:00Z'), async (clock) => {

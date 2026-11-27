@@ -411,7 +411,7 @@ describe('the entry flow shows it once (main.js, ui.js: source checks)', () => {
     // The cart, the bake play and the 📢 claim wizard stay.
     assert.match(main, /if \(kind === 'cart'\) \{\n\s+if \(info\?\.near === false\) ui\.note\('붕어빵 포차 앞으로 가까이 가면 구울 수 있어요'\);\n\s+else ui\.startBake\(\);/);
     assert.match(ui, /function startBake\(\) \{/);
-    assert.match(ui, /function openClaimStep\(n, model\) \{/);
+    assert.match(ui, /function openClaimStep\(n, model, from = ''\) \{/);
   });
   it('the two events are on the allow-list (the Worker and analytics.js read the same list)', async () => {
     const { EVENT_NAMES } = await import('../plaza-account.js');

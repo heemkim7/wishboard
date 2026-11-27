@@ -271,7 +271,7 @@ describe('4. a repeated notice of the same kind is one notice', () => {
       ['ui.js', ui, /note\(`붕어빵 틀이 식는 중… [^`]*`, '', null, \{ key: 'bake-wait' \}\)/],
     ]) assert.match(src, re, file + ' ' + re);
     // every copy confirmation is one kind
-    assert.equal((ui.match(/복사했어요[^']*', 'ok', null, \{ key: 'copied' \}\)/g) || []).length, 8);
+    assert.equal((ui.match(/복사했어요[^']*', 'ok', null, \{ key: 'copied' \}\)/g) || []).length, 9); // 9th: shareOther (someone else's board or wish)
     assert.equal(/복사했어요[^']*', 'ok'\)/.test(ui), false);
   });
 });
