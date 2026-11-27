@@ -11,6 +11,7 @@ import { SEASONS } from '../seasons.js';
 import { GIFT_ID, GIFT_SCREENS, OCCASIONS, GIFT_THEMES, placeGifts, turnOf, giftScreen, cerTeaser, cerClock } from '../giftrules.js';
 import { paintGift, paintWelcome, paintTeaser } from '../giftart.js?v=202611271045';
 import { WELCOME } from '../ftue.js?v=202611271045';
+import { TOWER, towerAt, towerKey, towerWire } from '../towerrules.js';
 
 export const screenTime = { value: 0 };
 // Highest linear luminance a screen pixel may reach (see screenMaterial): just under the default bloom threshold.
@@ -392,10 +393,33 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     paintPrime(b.canvas, primeCard(e), { wide: b.tier === 'S', part: TOWER_PART[b.slotId], last: b.slotId === 'MAIN_LOW' });
     remember(b.canvas); b.tex.needsUpdate = true;
   }
+  // 메인 타워 축하 1분 (towerrules.js): /rt/world's tower and the rooms' TOWER pushes. In an entry's minute (wall clock, nowMs: everyone the
+  // same) the five MAIN_* faces show that gift board, before the plan's team: towerAt never returns an on-the-hour or 21 o'clock entry, so
+  // the 9 pm team and the anniversary minute keep theirs. b.primeKey 'tw|<id>|<m>' while it shows (wish cards and the king leave it alone).
+  let tower = [];
+  const TOWER_SET = new Set(TOWER.slots);
+  const towerNow = (b) => (TOWER_SET.has(b.slotId) && tower.length ? towerAt(tower, nowMs()) : null);
+  const mainKey = (b) => { const te = towerNow(b); return te ? 'tw|' + towerKey(te) : primeKey(primeNow(b)); };
+  function paintTower(b, e) {
+    if (b.wish) dropWish(b);
+    b.kingOn = 0; b.primeKey = 'tw|' + towerKey(e); b.primeName = ''; b.towerE = e;
+    paintGift(b.canvas, e);
+    remember(b.canvas); b.tex.needsUpdate = true;
+  }
+  /** list: [{ id, m, to, from, occ, msg, th }] (/rt/world tower, with the pushes merged by main.js). The same list again does nothing. */
+  function setTower(list) {
+    const next = (Array.isArray(list) ? list : []).map(towerWire).filter((e) => e && !e.off).slice(0, TOWER.worldMax);
+    const sig = JSON.stringify(next);
+    if (sig === setTower.sig) return false;
+    setTower.sig = sig; tower = next;
+    for (const b of boards.values()) if (TOWER_SET.has(b.slotId) && !b.shared) paint(b);
+    return true;
+  }
+  const towerSlot = (id) => { const e = tower.length ? towerAt(tower, nowMs()) : null; return e && e.id === String(id) ? TOWER.face : ''; };
   function primeTick() {
     for (const b of boards.values()) {
       if (!isPrime(b.slotId) || b.shared || !b.mounts.length) continue;
-      if (primeKey(primeNow(b)) !== (b.primeKey || '')) paint(b);
+      if (mainKey(b) !== (b.primeKey || '')) paint(b);
     }
   }
   /** plan: /rt/world's prime (the day's plan, primerules.js planDay) or null. The prime screens repaint what changed. */
@@ -408,6 +432,9 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     return true;
   }
   function paint(b) {
+    const te = towerNow(b);
+    if (te) { paintTower(b, te); return; }
+    b.towerE = null;
     const pe = primeNow(b);
     if (pe) { paintTeam(b, pe); return; }
     b.primeKey = ''; b.primeName = '';
@@ -631,6 +658,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
   // The 10 nearest boards every 0.08 s; on the phone tier the 3 nearest every 0.16 s (every other tick: the 0.08 s tick
   // itself stays, so the king and wish cadences that count ticks are the same on every tier).
   const LIVE_HOT = quality === 'low' ? 3 : 10, LIVE_EVERY = quality === 'low' ? 2 : 1;
+  const TOWER_TAIL = 'WISH BOARD  ·  모두의 전광판  ·  ';
   const TAGS = { prime: ['명당', '#ffb020', '#1c1300'], gift: ['선물', '#ff4fa3', '#ffffff'], welcome: ['환영', '#48d6f0', '#06202a'], done: ['완료', '#ffcf5a', '#1c1300'], king: ['소원왕', 'rgba(255,176,32,0.16)', '#ffb020'], wish: ['소원', 'rgba(255,176,32,0.16)', '#ffb020'], live: ['LIVE', '#ff4fa3', '#ffffff'], dark: ['꺼짐', '#1c2440', '#8f96b8'], free: ['빈칸', '#1c2440', '#b9bfdc'] };
   function drawLive(b, t) {
     const canvas = b.canvas;
@@ -651,8 +679,9 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     const held = !!b.row?.holder_id;
     const gift = b.gifts && b.giftKey ? (giftPin?.cer && giftPin.g.id === b.giftKey ? giftPin.g : null) || gifts.get(b.giftKey) || (giftPin?.g.id === b.giftKey ? giftPin.g : null) : null;
     const cerOn = !!gift && !!b.cerKey; // the ceremony's teaser is on this screen
-    const team = b.primeKey ? b.primeName || '' : null;
-    const [tag, tagBg, tagInk] = TAGS[team != null ? 'prime' : gift ? (gift.welcome ? (gift.card ? 'done' : 'welcome') : 'gift') : kingOn ? 'king' : wishOn ? 'wish' : onAir ? 'live' : held ? 'dark' : 'free'];
+    const towerE = b.towerE && b.primeKey ? b.towerE : null; // the main tower minute's gift board (a fixed tail: no house line about points)
+    const team = b.primeKey && !towerE ? b.primeName || '' : null;
+    const [tag, tagBg, tagInk] = TAGS[towerE ? 'gift' : team != null ? 'prime' : gift ? (gift.welcome ? (gift.card ? 'done' : 'welcome') : 'gift') : kingOn ? 'king' : wishOn ? 'wish' : onAir ? 'live' : held ? 'dark' : 'free'];
     const ph = Math.max(16, th - 16 * k), pw = 92 * k, px = 12 * k;
     roundRect(g, px, body + (th - ph) / 2, pw, ph, ph / 2);
     g.fillStyle = tagBg;
@@ -674,7 +703,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     const cheers = Math.max(0, Math.floor(Number(b.data?.cheers) || 0));
     const clicks = Math.max(0, Math.floor(Number(b.data?.clicks) || 0));
     const notes = Array.isArray(b.data?.notes) ? b.data.notes.map((t) => chars(String(t || ''), 16)).filter(Boolean).slice(-5) : [];
-    const msg = team != null ? `응원 팀 명당   ·   ${team ? chars(team, 16) + '   ·   ' : ''}서로 다른 사람의 응원으로 정해요   ·   ${liveHead}` : gift?.welcome ? (gift.card?.strip ? `${gift.card.strip}   ·   ${liveHead}` : `${gift.to}님, 가상 타임스퀘어에 오신 걸 환영해요   ·   ${liveHead}`) : cerOn ? `점등식   ·   To. ${gift.to}   ·   ${giftPin?.when || ''}에 켜져요   ·   ${liveHead}` : gift ? `선물 전광판   ·   To. ${gift.to}   ·   ${(OCCASIONS[gift.occ] || OCCASIONS.bday).head}${gift.from ? '   ·   From. ' + gift.from : ''}${gift.n ? '   ·   💌 친구 메시지 ' + gift.n + '개' : ''}   ·   ${liveHead}` : kingOn ? `어제의 소원왕   ·   ${chars(b.kingNick || '', 16)}   ·   ${liveHead}` : wishOn ? `오늘의 소원   ·   ${b.wishMsg}   ·   ${liveHead}` : `택시 정차 ${views}회   ·   응원 ${cheers}회   ·   링크 클릭 ${clicks}회   ·   ${notes.length ? notes.join('   ·   ') + '   ·   ' : ''}${liveHead}`;
+    const msg = towerE ? `메인 타워 축하 1분   ·   To. ${towerE.to}   ·   ${(OCCASIONS[towerE.occ] || OCCASIONS.bday).head}   ·   ${TOWER_TAIL}` : team != null ? `응원 팀 명당   ·   ${team ? chars(team, 16) + '   ·   ' : ''}서로 다른 사람의 응원으로 정해요   ·   ${liveHead}` : gift?.welcome ? (gift.card?.strip ? `${gift.card.strip}   ·   ${liveHead}` : `${gift.to}님, 가상 타임스퀘어에 오신 걸 환영해요   ·   ${liveHead}`) : cerOn ? `점등식   ·   To. ${gift.to}   ·   ${giftPin?.when || ''}에 켜져요   ·   ${liveHead}` : gift ? `선물 전광판   ·   To. ${gift.to}   ·   ${(OCCASIONS[gift.occ] || OCCASIONS.bday).head}${gift.from ? '   ·   From. ' + gift.from : ''}${gift.n ? '   ·   💌 친구 메시지 ' + gift.n + '개' : ''}   ·   ${liveHead}` : kingOn ? `어제의 소원왕   ·   ${chars(b.kingNick || '', 16)}   ·   ${liveHead}` : wishOn ? `오늘의 소원   ·   ${b.wishMsg}   ·   ${liveHead}` : `택시 정차 ${views}회   ·   응원 ${cheers}회   ·   링크 클릭 ${clicks}회   ·   ${notes.length ? notes.join('   ·   ') + '   ·   ' : ''}${liveHead}`;
     const tw = Math.max(8, g.measureText(msg).width);
     const x0 = sx + 6 * k - ((t * 90) % tw);
     g.fillText(msg, x0, body + th / 2 + 1);
@@ -733,7 +762,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
       drawLive(b, screenTime.value);
     }
     if (liveTick % 8 === 0) {
-      if (prime) primeTick();
+      if (prime || tower.length) primeTick();
       for (const b of boards.values()) {
         const text = shieldText(b);
         if (text !== (b.shield || '')) { b.shield = text; paint(b); }
@@ -886,7 +915,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     }
   }
 
-  return { boards, ensure, mount, unmount, set, expire, get: (id) => boards.get(id), worldPos, face, setTicker, setOps, setSeason, repaintAll, update, accentOf, tickerCanvas, watchShow, setShow, setAir, setKing, setDecals, setWishes, pinWish, setGifts, pinGift, pinWelcome, giftSlot, cerLit, setPrime, primeOf: (id) => { const b = boards.get(id); return b ? primeNow(b) : null; }, decalsOf: (id) => (boards.get(id)?.decals || []).slice(), setRim };
+  return { boards, ensure, mount, unmount, set, expire, get: (id) => boards.get(id), worldPos, face, setTicker, setOps, setSeason, repaintAll, update, accentOf, tickerCanvas, watchShow, setShow, setAir, setKing, setDecals, setWishes, pinWish, setGifts, pinGift, pinWelcome, giftSlot, cerLit, setPrime, setTower, towerSlot, primeOf: (id) => { const b = boards.get(id); return b && !towerNow(b) ? primeNow(b) : null; }, towerOf: (id) => { const b = boards.get(id); return (b && towerNow(b)?.id) || ''; }, decalsOf: (id) => (boards.get(id)?.decals || []).slice(), setRim };
 }
 
 // ---- ad-only screens AD_1..AD_5 (adsale.js) -------------------------------------------------------------------------

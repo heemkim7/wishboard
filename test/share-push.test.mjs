@@ -467,7 +467,7 @@ describe('immediate push', () => {
     } finally { done(); }
   });
 
-  it('a paid wish prize notifies the winner', async () => {
+  it('a first place pays no wish prize and sends no notice (removed 2026-11-27)', async () => {
     const { clock, state, done } = setup();
     try {
       const env = makeEnv({ VAPID_PRIV: VAPID }), { guest, post, get } = harness(env), w = await guest(), s = await subscriber();
@@ -476,9 +476,8 @@ describe('immediate push', () => {
       for (let i = 0; i < 5; i++) { const g = await guest(); await post('/rt/wish/heart', { id: wish.id }, g.token, '7.7.7.' + (i % 3)); }
       state.pushes.length = 0; clock.add(864e5);
       await get('/rt/wishes');
-      assert.deepEqual(state.paid.map((p) => [p.p_actor_id, p.p_amount]), [[w.id, 300]]);
-      assert.equal(state.pushes.length, 1);
-      assert.deepEqual(await decrypt(state.pushes[0].body, s), { body: '어제 소원이 1위였어요. +300 응원 포인트가 들어왔어요', url: '/?wish=' + wish.id });
+      assert.deepEqual(state.paid, []);
+      assert.equal(state.pushes.length, 0);
     } finally { done(); }
   });
 
@@ -693,7 +692,7 @@ describe('account withdrawal and merge carry the wish, push and snapshot data', 
     } finally { done(); }
   });
 
-  it('merge moves the guest wish, hearts and unpaid prize to the user', async () => {
+  it('merge moves the guest wish, hearts and stored winner entry to the user; nothing is paid', async () => {
     const { clock, state, done } = setup();
     try {
       const env = makeEnv(), { guest, post, get } = harness(env), g = await guest(), o = await guest();
@@ -704,7 +703,7 @@ describe('account withdrawal and merge carry the wish, push and snapshot data', 
       assert.equal((await post('/rt/auth/merge', { guest_id: g.id, guest_token: g.token }, u.token)).status, 200);
       const l = await (await get('/rt/wishes', u.token)).json();
       assert.equal(l.mine.id, gw.id); assert.equal(l.mine.mine, true); assert.deepEqual(l.given, [ow.id]); assert.equal(l.left, 4);
-      assert.deepEqual(state.paid.map((p) => [p.p_actor_id, p.p_amount]), [[u.id, 300]]);
+      assert.deepEqual(state.paid, []); assert.deepEqual(l.yesterday.map((x) => [x.rank, x.mine]), [[1, true]]);
       clock.add(31000);
       const again = await (await post('/rt/wish', { text: '고친 소원', nick: 'G' }, u.token)).json();
       assert.equal(again.ok, true); assert.equal(again.fresh, false); assert.equal(again.wish.id, gw.id);

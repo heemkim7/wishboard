@@ -1,6 +1,10 @@
 // 선물 전광판 in admin.html (one <script> line there): the daily numbers for E1 (price-ladder interest), E2 (boards, visitors per board,
 // boards made from another board's page: K; 답장: boards that got their first reply board) and E3 (lock vs open arm), one day's boards with their 롤링페이퍼 lines and hide/unhide,
 // and the "결제가 열렸어요" notice to the accounts that asked for it ((광고), never 21:00-08:00 KST). Same login cookie as the rest (a 401 goes back to the login page).
+// 메인 타워 축하 1분: the refunds grant_coins did not take (and spends whose answer never came), whom to pay by hand at /rt/admin/coins, and a
+// mark once paid (POST /rt/admin/gift/refund). Only this operator view carries the account ids.
+// 공유 보상 많이 받은 사람 (GET /rt/admin/gift/share): the last 7 KST days per maker (friends counted, account / guest, points paid, distinct
+// networks, by source), the top 50: how the operator spots abuse (the terms let points gained by abuse be taken back).
 import { TIERS, OCCASIONS, windowText, kstDay, addDays } from './giftrules.js';
 
 const $ = (id) => document.getElementById(id);
@@ -24,6 +28,12 @@ const box = h('section', { id: 'giftAdmin' },
   h('div', { class: 'hits', id: 'giftArms' }),
   h('div', { class: 'bar' }, dayIn),
   h('div', { class: 'hits', id: 'giftList' }),
+  h('h2', { text: '공유 보상 많이 받은 사람 (최근 7일)' }),
+  h('p', { class: 'sub', text: '링크로 온 친구가 반응해서 만든 사람이 받은 공유 보상입니다(선물 페이지, 소원 링크, 전광판 링크). 친구는 한 연결을 그날 한 번만 셉니다. 계정 친구 1~10번째 +50, 11~30번째 +20, 손님 친구 +10, 31번째부터는 세기만 합니다. 연결 수에 비해 친구가 많거나 손님 친구만 많으면 살펴보세요. 부정하게 얻은 포인트는 약관대로 회수할 수 있습니다.' }),
+  h('div', { class: 'hits', id: 'giftShare' }),
+  h('h2', { text: '메인 타워 1분: 손으로 돌려줄 포인트' }),
+  h('p', { class: 'sub', text: '돌려주기(grant_coins)가 실패했거나, 포인트를 뺀 답이 오지 않아 확인이 필요한 것입니다. 코인 지급(/rt/admin/coins)으로 2,000을 준 뒤 "줬어요"를 누릅니다. "확인 필요"는 지갑 기록을 먼저 봅니다.' }),
+  h('div', { class: 'hits', id: 'giftRefunds' }),
   h('h2', { text: '결제 오픈 알림 (광고)' }),
   h('p', { class: 'sub', text: '알림 신청을 한 계정에게 한 번씩 보냅니다. 한 번에 10명씩 보내고, 남은 사람이 있으면 다시 누릅니다. 밤 9시부터 아침 8시(한국 시간)까지는 보내지 않습니다.' }),
   h('div', { class: 'bar' }, text, h('button', { type: 'button', class: 'gold', text: '보내기', onclick: () => notify() })));
@@ -39,7 +49,8 @@ async function api(path, body) {
 }
 // The daily keys (giftsrv.js gd), then the ratios read at a glance: [name, numerator, denominator] of the same day (or the 30 days).
 const COLS = [['start', '만들기 시작'], ['start_ref', '다른 보드에서 와서 시작'], ['made', '만든 보드'], ['made_ref', '페이지에서 와서 만든'], ['reply', '답장'], ['made_again', '두 번째부터'],
-  ['hit', '링크 열림(사람)'], ['hitbot', '링크 열림(미리보기·봇)'], ['view', '새 방문자'], ['view_day', '그날 방문자'], ['return_day', '그날 다시 온'], ['msg', '메시지'], ['video', '영상'], ['ev:film', '그린 영상 재생'], ['ev:play', '저장 영상 재생'], ['ev:done', '끝까지 봄'], ['ev:save', '영상 저장'], ['ev:go', '직접 가서 봄'], ['ev:cer', '점등식 온 기기'], ['ev:cershot', '단체 사진 저장·공유'], ['ev:share', '공유(주인)'], ['ev:reshare', '공유(받는 사람)'], ['heart', '💖 하트'], ['ev:cta', '나도 걸기 누름'], ['ladder', '가격표 본 보드'], ['pick:1', '3,900 고름'], ['pick:2', '7,900 고름'], ['pick:3', '14,900 고름'], ['notify:1', '알림 1'], ['notify:2', '알림 2'], ['notify:3', '알림 3'], ['report', '신고']];
+  ['hit', '링크 열림(사람)'], ['hitbot', '링크 열림(미리보기·봇)'], ['view', '새 방문자'], ['view_day', '그날 방문자'], ['return_day', '그날 다시 온'], ['msg', '메시지'], ['video', '영상'], ['ev:film', '그린 영상 재생'], ['ev:play', '저장 영상 재생'], ['ev:done', '끝까지 봄'], ['ev:save', '영상 저장'], ['ev:go', '직접 가서 봄'], ['ev:cer', '점등식 온 기기'], ['ev:cershot', '단체 사진 저장·공유'], ['ev:share', '공유(주인)'], ['ev:reshare', '공유(받는 사람)'], ['heart', '💖 하트'], ['ev:cta', '나도 걸기 누름'], ['ladder', '가격표 본 보드'], ['pick:1', '3,900 고름'], ['pick:2', '7,900 고름'], ['pick:3', '14,900 고름'], ['notify:1', '알림 1'], ['notify:2', '알림 2'], ['notify:3', '알림 3'], ['report', '신고'],
+  ['react', '친구 반응'], ['friend:g', '공유 친구(선물)'], ['friend:w', '공유 친구(소원)'], ['friend:c', '공유 친구(전광판)'], ['tpay', '공유 보상'], ['tpay_pt', '공유 보상 포인트'], ['tpay_fail', '공유 보상 되돌림'], ['tpay_unknown', '공유 보상 답 없음'], ['tower:friends', '메인 타워(친구)'], ['tower:points', '메인 타워(포인트)'], ['tower_free', '메인 타워 풀림'], ['tower_refund_fail', '돌려주기 실패'], ['tower_spend_unknown', '포인트 답 없음']];
 const RATIOS = [['K', 'made_ref', 'made'], ['시작→만듦', 'made', 'start'], ['링크(사람)→방문', 'view', 'hit']];
 // A key a day does not have is '—' (the store keeps only keys that were counted, and days before a key existed have none). A ratio's
 // 30-day sum takes only the days that have its denominator: a month of made over one day of starts would mean nothing.
@@ -73,9 +84,22 @@ async function load() {
       ...g.lines.map((m) => h('div', { class: 'hit', style: 'width:100%' }, h('b', { text: m.nick }), h('span', { text: m.txt + ' · 신고 ' + m.rp + (m.st !== 'live' ? ' · 가려짐' : '') }),
         h('button', { type: 'button', class: m.st === 'live' ? 'no' : 'ok', text: m.st === 'live' ? '가리기' : '되살리기', onclick: () => hide(g.id, m.id, m.st === 'live') })))))
       : [h('div', { class: 'empty', text: '그날의 선물 전광판이 없어요.' })]));
+    const sh = await api('/rt/admin/gift/share'), S = $('giftShare'), top = Array.isArray(sh.top) ? sh.top : [];
+    if (S) S.replaceChildren(h('div', { class: 'hit' }, h('b', { text: `${sh.from || ''}부터 합계` }), h('span', { text: `만든 사람 ${sh.total?.makers || 0}명 · 친구 ${sh.total?.friends || 0} · 준 포인트 ${Number(sh.total?.paid || 0).toLocaleString('ko-KR')}` })),
+      ...(top.length ? top.map((x, i) => h('div', { class: 'hit' }, h('b', { text: `${i + 1}. ${x.uid}` }),
+        h('span', { text: `친구 ${x.friends}(계정 ${x.acct} · 손님 ${x.guest}) · ${Number(x.paid || 0).toLocaleString('ko-KR')}포인트 · 연결 ${x.nets}곳 · ${x.days}일 · 선물 ${x.src?.g || 0} · 소원 ${x.src?.w || 0} · 전광판 ${x.src?.c || 0}` + (x.fails ? ` · 지급 거절 ${x.fails}` : '') + (x.unknown ? ` · 답 없음 ${x.unknown}(지갑 기록 확인)` : '') + (x.waits ? ` · 묶음 한도로 못 줌 ${x.waits}` : '') })))
+        : [h('div', { class: 'empty', text: '최근 7일 공유 보상이 없어요.' })]));
+    const R = $('giftRefunds'), owed = Array.isArray(list.refunds) ? list.refunds : [];
+    if (R) R.replaceChildren(...(owed.length ? owed.map((x) => h('div', { class: 'hit' },
+      h('b', { text: (x.done ? '✔ 줬음 · ' : '') + x.uid + ' · ' + Number(x.amount || 2000).toLocaleString('ko-KR') + '포인트' }),
+      h('span', { text: '메인 타워 ' + new Date(x.m).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' }) + ' · ' + (x.why === 'unknown' ? '확인 필요(뺀 답이 오지 않음)' : x.why === 'off' ? '풀린 예약' : '예약 실패') + ' · ' + new Date(x.at).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' }) }),
+      h('a', { href: '/g/' + x.g, target: '_blank', rel: 'noopener', text: '/g/' + x.g }),
+      h('button', { type: 'button', class: x.done ? 'no' : 'ok', text: x.done ? '되돌리기' : '줬어요', onclick: () => refunded(x.k, !x.done) })))
+      : [h('div', { class: 'empty', text: '손으로 돌려줄 것이 없어요.' })]));
     say(`R2 영상 저장소 ${list.media ? '켜짐' : '없음'} · E3 반반 시험 ${list.e3 ? '켜짐(GIFT_E3=1)' : '꺼짐(모두 잠금)'}`);
   } catch (e) { say(e.message, true); }
 }
+async function refunded(k, done) { try { await api('/rt/admin/gift/refund', { k, done }); load(); } catch (e) { say(e.message, true); } }
 async function hide(id, m, on) { try { await api('/rt/admin/gift/hide', { id, m, hide: on }); load(); } catch (e) { say(e.message, true); } }
 async function notify() {
   const t = text.value.trim(); if (!t) { say('보낼 문구를 적어 주세요.', true); return; }

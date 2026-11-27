@@ -9,7 +9,7 @@ import { BALANCE, slotName, josa, SLOT_IDS, PAY, PLAY, BONUS_KINDS, ballOpen, fl
 import { nextBallUntil } from './live.js';
 import { CHEER_PHRASES, EVENT_NAMES, allowedLink, blockedText, parseGuestHandover, statsFromCounts } from './plaza-account.js';
 import { renderCardPng } from './cardpng.js';
-import { WISH, WISH_ERR, cleanWish, cleanNick, wishFault, wishNickFault, staffNick, ipNet, rankWishes, prizeFor, boardMix, wishShareText, wishDay as kstDay } from './wish.js';
+import { WISH, WISH_ERR, cleanWish, cleanNick, wishFault, wishNickFault, staffNick, ipNet, rankWishes, winsDay, boardMix, wishShareText, wishDay as kstDay } from './wish.js';
 import { ghostPacket } from './ts3d/walkers.js';
 import { LEAGUE, leagueBoard, leagueCut, weekEnds, botNick, leagueWeek as isoWeek } from './league.js';
 import { DARK, quietShift, darkNext, darkHours, darkText, litOf } from './dark.js';
@@ -18,8 +18,10 @@ import { adTables, adIngest, adTenure, adRename, adForget, adReport } from './ad
 import { OPS_THEME_KEYS } from './seasons.js';
 import * as ops from './ops.js'; // 운영 장치: error reports, 문의하기, operator details, maintenance, /rt/health extras
 import { adsApi, adsDb, adsWorld } from './adsrv.js';
-import { giftApi, giftDb, giftPath, giftPage, giftWorld, giftMove, giftForget } from './giftsrv.js'; // 선물 전광판 (docs/gift-board.md)
+import { giftApi, giftDb, giftPath, giftPage, giftWorld, giftMove, giftForget, shareOpen, shareReact, shareMaker, shareCount } from './giftsrv.js'; // 선물 전광판 (docs/gift-board.md); 공유 보상 on wish and board links
+import { friendsText } from './towerrules.js';
 import { GIFT_ID } from './giftrules.js';
+import { towerWire } from './towerrules.js'; // 메인 타워 축하 1분: the rooms' TOWER push
 import { teamApi, teamDb, teamPath, teamWorld, teamMove, teamForget } from './teamsrv.js'; // 응원 팀과 명당 (docs/prime-screens.md)
 import { isPrime, BOARD_ERR, PLOT_HOLD_MS } from './primerules.js';
 // v16 cost pass: ping 25s (client) / STALE 75s, idle scan alarm 60s, meter report 60s, compact pos ('p'/'P'), nearby fanout, event ring + world cache, HMAC guest tokens.
@@ -155,6 +157,7 @@ const FLUSH_N = 20, FLUSH_MS = 30000;
 const TRIBE_FLUSH_N = 20; // Room flushTribeScores: add_tribe_score fetches per pass
 const MINE_GAP = 2000, GAP_EARLY = 400;
 const AD_PAY = 15, AD_DAY = 5; // link visit: once per account per board per KST day, AD_DAY boards a day
+const SHARE_EVENTS = new Set(['share_link', 'share_send', 'wish_share']); // /rt/event names that mean the account shared a link (공유 보상's maker network)
 const MOVE_N = 8, MOVE_MS = 30000; // room moves per account: 8 in a row (a full queue bumps through square-2..8), then one per 30 s
 const RELAY = ['take', 'react', 'jump'], RELAY_N = 30, RELAY_MS = 10000; // client broadcasts the game uses, numbers only; 30 per 10 s per socket
 // Bot protection in a room (docs/bot-protection.md). SOCK_PER: sockets one account may hold in one room (its oldest goes, told 'moved', when a
@@ -279,8 +282,21 @@ export class Meter extends DurableObject {
   giftDel(id, uid) { return giftDb.del(this.giftI(), id, uid); }
   giftLive(now) { return giftDb.live(this.giftI(), now); } // pruning runs on giftMake and the admin list, which hand the gone ids to R2
   giftMove(from, to) { return giftDb.move(this.giftI(), from, to); }
-  giftForget(uid) { return giftDb.forget(this.giftI(), uid); }
+  giftForget(uid, now) { return giftDb.forget(this.giftI(), uid, now); }
   giftAdmin(op, arg, now) { return giftDb.admin(this.giftI(), op, arg, now); }
+  giftPayUndo(g, net, uid, d) { return giftDb.payUndo(this.giftI(), g, net, uid, d); } // a share reward grant_coins refused (giftsrv.js payOut)
+  giftPayUnknown(net, uid, d) { return giftDb.payUnknown(this.giftI(), net, uid, d); } // one with no clear answer: kept, marked
+  giftLinkOpen(o, now) { return giftDb.linkOpen(this.giftI(), o, now); } // 공유 보상: a person opened a wish or board link
+  giftMakerNet(uid, net, now) { return giftDb.makerNet(this.giftI(), uid, net, now); } // a network the maker posted or claimed from
+  giftShare(o, now) { return giftDb.share(this.giftI(), o, now); } // a wish 💖 or a board 응원: a link friend?
+  giftShareCount(k, owner) { return giftDb.shareCount(this.giftI(), k, owner); } // "친구 N명이 응원했어요" on a share page
+  giftTowerGet(id, uid, now) { return giftDb.towerGet(this.giftI(), id, uid, now); } // 메인 타워 축하 1분 (giftsrv.js tower)
+  giftTowerBook(id, uid, o, now, dry) { return giftDb.towerBook(this.giftI(), id, uid, o, now, !!dry); } // dry: check and hold (points)
+  giftTowerConfirm(id, uid, m, now) { return giftDb.towerConfirm(this.giftI(), id, uid, m, now); }
+  giftTowerUnhold(id, uid, m) { return giftDb.towerUnhold(this.giftI(), id, uid, m); }
+  giftTowerEntryAt(id, m, now) { return giftDb.towerEntryAt(this.giftI(), id, m, now); } // the 'dark' alarm at a board's reveal
+  giftWorldRead(now) { return giftDb.worldRead(this.giftI(), now); } // /rt/world's gifts and main tower bookings
+  giftRefundFail(o) { return giftDb.refundFail(this.giftI(), o); } // a row the operator pays by hand (the admin gift view)
   // 응원 팀과 명당 (teamsrv.js): instance 'team' keeps the teams, their members, one support per account and day, the day counters,
   // anniversaries, achievements and each day's frozen plan for the prime screens.
   teamI() { if (!this.teamOk) { this.teamOk = 1; teamDb.tables(this.ctx.storage.sql); } return this.ctx.storage.sql; }
@@ -326,7 +342,8 @@ export class Meter extends DurableObject {
   // 불 꺼지기 전 (instance 'dark', table dk): one row per board held by a person, its clock in ms and which notice went (pre: 6 hours before, out: at
   // dark; a row goes once out is sent). One DO alarm at the earliest pending notice, no polling. Tribe-held, empty and already dark boards have no row.
   dkInit() { if (this.dki) return; this.dki = 1; const q = this.ctx.storage.sql; q.exec('create table if not exists dk(slot text primary key, uid text not null, lit integer not null, pre integer not null default 0, out integer not null default 0)');
-    q.exec('create table if not exists dkx(k text primary key, v integer not null)'); } // dkx 'hold': until when a hard-budget retry holds the alarm
+    q.exec('create table if not exists dkx(k text primary key, v integer not null)'); // dkx 'hold': until when a hard-budget retry holds the alarm
+    q.exec('create table if not exists dtw(g text not null, m integer not null, at integer not null, primary key(g, m))'); } // 메인 타워 축하 1분: tell the rooms at the board's reveal
   dkPut(q, slot, uid, lit, now) { q.exec('insert into dk(slot, uid, lit, pre, out) values(?, ?, ?, ?, 0) on conflict(slot) do update set uid = excluded.uid, lit = excluded.lit, pre = excluded.pre, out = 0', slot, uid, lit, lit - DARK.preMs <= now ? 1 : 0); } // a 6-hour mark already passed is not sent
   // A board clock the Worker learned. A new holder or clock replaces the row (takeover, relight); the same holder and clock keep its flags (edit).
   async dkSet(slot, uid, lit, now = Date.now()) { this.dkInit(); const q = this.ctx.storage.sql, s = String(slot || ''), u = String(uid || ''), t = Math.floor(Number(lit)) || 0; if (!s) return { ok: false };
@@ -338,11 +355,17 @@ export class Meter extends DurableObject {
     for (const b of Array.isArray(list) ? list.slice(0, 100) : []) { const s = String(b?.slot || ''), u = String(b?.uid || ''), t = Math.floor(Number(b?.lit)) || 0;
       if (!s || !u || u.startsWith('tribe:') || t <= now || q.exec('select slot from dk where slot = ?', s).toArray()[0]) continue; this.dkPut(q, s, u, t, now); n++; }
     if (n) await this.dkArm(now); return { ok: true, n }; }
+  // 메인 타워 축하 1분 (giftsrv.js towerLater): a minute booked on a board not revealed yet. At `at` (its reveal) the alarm asks the gift store
+  // whether it still stands and, if so, tells the rooms (towerSend). Nothing about the board is kept here but its id and minute.
+  async dkTower(g, m, at, now = Date.now()) { this.dkInit(); const id = String(g || ''), t = Math.floor(Number(at)) || 0, mm = Math.floor(Number(m)) || 0;
+    if (!GIFT_ID.test(id) || !(t > 0) || !(mm > 0)) return { ok: false };
+    this.ctx.storage.sql.exec('insert into dtw(g, m, at) values(?, ?, ?) on conflict(g, m) do update set at = excluded.at', id, mm, t); await this.dkArm(now); return { ok: true }; }
   dkMove(from, to) { this.dkInit(); const f = String(from || ''), t = String(to || ''); if (!f || !t || f === t) return { ok: false }; this.ctx.storage.sql.exec('update dk set uid = ? where uid = ?', t, f); return { ok: true }; }
   async dkForget(uid) { this.dkInit(); this.ctx.storage.sql.exec('delete from dk where uid = ?', String(uid || '')); await this.dkArm(); return { ok: true }; }
   // The alarm goes to the earliest pending notice, or is removed when there is none. While a hard-budget retry holds it (dkx 'hold') it is never
   // brought earlier than that. -> the time set, 0 for none.
   async dkArm(now = Date.now()) { const q = this.ctx.storage.sql; let at = Infinity; for (const r of q.exec('select lit, pre, out from dk').toArray()) { const n = darkNext(r); if (n && n.at < at) at = n.at; }
+    const tw = Number(q.exec('select min(at) t from dtw').toArray()[0]?.t) || 0; if (tw && tw < at) at = tw;
     if (at === Infinity) { await this.ctx.storage.deleteAlarm(); return 0; } const hold = Number(q.exec("select v from dkx where k = 'hold'").toArray()[0]?.v) || 0;
     const t = Math.max(at, now + 1000, hold > now ? hold : 0); await this.ctx.storage.setAlarm(t); return t; }
   // Only the 'dark' instance ever sets an alarm; any other Meter instance has no dk table and returns here at once. One pass handles at most
@@ -350,9 +373,12 @@ export class Meter extends DurableObject {
   // budget ('day'); at the hard level nothing is sent or marked and the alarm is held for DARK.retryMs.
   async alarm() { const q = this.ctx.storage.sql; let rows; try { rows = q.exec('select slot, uid, lit, pre, out from dk').toArray(); } catch { return; } this.dkInit();
     const now = Date.now(), due = rows.map(r => ({ r, n: darkNext(r) })).filter(x => x.n && x.n.at <= now).sort((x, y) => x.n.at - y.n.at).slice(0, DARK.passMax).map(x => x.r);
-    if (due.length) { let lvl = 0; try { lvl = Number((await this.env.METER.get(this.env.METER.idFromName('day')).add(1 + due.length, 0, this.rowsOut()))?.lvl) || 0; } catch { /* unknown: send */ }
+    const tw = q.exec('select g, m from dtw where at <= ? order by at limit ?', now, DARK.passMax).toArray(); // reveals: one gift read and one room fan-out each
+    if (due.length || tw.length) { let lvl = 0; try { lvl = Number((await this.env.METER.get(this.env.METER.idFromName('day')).add(1 + due.length + 3 * tw.length, 0, this.rowsOut()))?.lvl) || 0; } catch { /* unknown: send */ }
       if (lvl >= 2) { q.exec("insert into dkx(k, v) values('hold', ?) on conflict(k) do update set v = excluded.v", now + DARK.retryMs); await this.ctx.storage.setAlarm(now + DARK.retryMs); return; }
-      q.exec("delete from dkx where k = 'hold'"); try { await this.dkFire(due, now); } catch { /* each flag is written before its send */ } }
+      q.exec("delete from dkx where k = 'hold'"); if (due.length) { try { await this.dkFire(due, now); } catch { /* each flag is written before its send */ } }
+      for (const r of tw) { q.exec('delete from dtw where g = ? and m = ?', String(r.g), Number(r.m)); // at most once: removed before the ask
+        try { const e = await this.env.METER.get(this.env.METER.idFromName('gift')).giftTowerEntryAt(String(r.g), Number(r.m), Date.now()); if (e) await towerSend(this.env, e); } catch { /* a missed reveal: /rt/world still carries it */ } } }
     await this.dkArm(Date.now()); }
   // Each due row is checked against the board (one Supabase read for all): relit, taken or cleared without the registry hearing it -> the row takes the
   // board's state and nothing goes now. After that read nothing awaits until every flag is written, and each write first checks the row is still the
@@ -568,13 +594,20 @@ export class Meter extends DurableObject {
     if (link) { q.exec('update lkl set n = n + 1, until = max(until, ?) where uid = ?', until, id); return Number(link.at); }
     q.exec('insert into lkl(uid, until, n, at) values(?, ?, 1, ?)', id, until, now); return now; }
   linkDone(uid, at) { this.shInit(); const q = this.ctx.storage.sql, id = String(uid || '').slice(0, 80); q.exec('update lkl set n = n - 1 where uid = ? and at = ?', id, Math.floor(Number(at)) || 0); q.exec('delete from lkl where uid = ? and n <= 0', id); return true; }
-  // Share bonus (instance 'acct'): one a KST day per key (the account, and the hashed address). Check and take in one call, so parallel claims
-  // cannot both pass; promoGive hands the day back when the grant itself failed. Older days go on every take.
-  promoInit() { if (this.prOk) return; this.prOk = 1; this.ctx.storage.sql.exec('create table if not exists prm(k text, d text, primary key(k, d))'); }
+  // Share bonus (instance 'acct'). An account key ('s:<id>') is used once, ever: table prs (k, the KST day it was taken), never pruned (owner
+  // decision 2026-11-27, "계정마다 한 번"). Any other key (the hashed network 'i:<hash>') is used once a KST day: table prm, older days go on
+  // every take. Check and take in one call, so parallel claims cannot both pass; promoGive hands the keys back when the grant itself failed.
+  // The account rows prm held while the bonus was daily (only the days not yet pruned survive) move into prs on the first call, and an account
+  // row still in prm on any day refuses too (prm keeps 's:' rows when it prunes), so whoever already got it then is not paid again.
+  promoInit() { if (this.prOk) return; this.prOk = 1; const q = this.ctx.storage.sql; q.exec('create table if not exists prm(k text, d text, primary key(k, d))'); q.exec('create table if not exists prs(k text primary key, d text not null)');
+    q.exec("insert or ignore into prs(k, d) select k, min(d) from prm where k like 's:%' group by k"); q.exec("delete from prm where k like 's:%'"); }
   promoTake(keys, day) { this.promoInit(); const q = this.ctx.storage.sql, d = String(day || ''), ks = (Array.isArray(keys) ? keys : []).map(k => String(k || '').slice(0, 120)).filter(Boolean).slice(0, 4); if (!d || !ks.length) return false;
-    q.exec('delete from prm where d < ?', d); const hit = ks.filter(k => q.exec('select 1 from prm where k = ? and d = ?', k, d).toArray()[0]); if (hit.length) return hit; // -> the keys already used today
-    for (const k of ks) q.exec('insert or ignore into prm(k, d) values(?, ?)', k, d); return true; }
-  promoGive(keys, day) { this.promoInit(); for (const k of (Array.isArray(keys) ? keys : []).slice(0, 4)) this.ctx.storage.sql.exec('delete from prm where k = ? and d = ?', String(k || '').slice(0, 120), String(day || '')); return true; }
+    q.exec("delete from prm where d < ? and k not like 's:%'", d);
+    const once = (k) => k.startsWith('s:'), hit = ks.filter(k => once(k) ? (q.exec('select 1 from prs where k = ?', k).toArray()[0] || q.exec('select 1 from prm where k = ?', k).toArray()[0]) : q.exec('select 1 from prm where k = ? and d = ?', k, d).toArray()[0]);
+    if (hit.length) return hit; // -> the keys already used (an account: ever; a network: today)
+    for (const k of ks) { if (once(k)) q.exec('insert or ignore into prs(k, d) values(?, ?)', k, d); else q.exec('insert or ignore into prm(k, d) values(?, ?)', k, d); } return true; }
+  promoGive(keys, day) { this.promoInit(); const q = this.ctx.storage.sql; for (const k of (Array.isArray(keys) ? keys : []).slice(0, 4).map(k => String(k || '').slice(0, 120))) {
+    if (k.startsWith('s:')) q.exec('delete from prs where k = ? and d = ?', k, String(day || '')); else q.exec('delete from prm where k = ? and d = ?', k, String(day || '')); } return true; }
   // New guests per network and KST day (instance 'acct', table gmt; bot protection, worker.js guestMint). keys: [[key, cap], ...], every one
   // checked and then every one counted, in one call, so parallel mints cannot pass a cap together. -> true, or the first key already at its cap
   // (nothing counted). Older days go on every take.
@@ -591,9 +624,9 @@ export class Meter extends DurableObject {
     const q = this.ctx.storage.sql, k = String(key || ''); if (!q.exec('select k from cards where k = ?', k).toArray()[0]) { const n = Number(q.exec('select count(*) n from cards').one().n) || 0; if (n >= 61) q.exec('delete from cards where k in (select k from cards order by at asc limit ?)', n - 60); }
     q.exec('insert into cards(k, png, at) values(?, ?, ?) on conflict(k) do update set png = excluded.png, at = excluded.at', k, png, Date.now()); return { ok: true }; }
   // 오늘의 소원 (instance 'wish'). One line per account per KST day (a few spaced edits while it has no hearts); hearts per actor per day and per IP net per
-  // wish; reports hide at WISH.reportHide distinct IP nets. wst keeps each settled day's winners (JSON). A winner is marked paid when it is handed out for
-  // payment and un-marked only on a clear refusal, so a prize is paid at most once. uid never leaves this object except to settlement, to the
-  // Worker's heart push (wHeart's au) and to its snapshot checks (wAuthor), and never reaches an HTTP response.
+  // wish; reports hide at WISH.reportHide distinct IP nets. wst keeps each settled day's winners (JSON): 어제의 소원 and the king, never a payment
+  // (the wish prize was removed on 2026-11-27; rows stored before it may still carry prize/paid fields, which nothing reads). uid never leaves this
+  // object except to the winner lists, to the Worker's heart push (wHeart's au) and to its snapshot checks (wAuthor), and never reaches an HTTP response.
   wInit() { if (this.wi) return; this.wi = 1; const q = this.ctx.storage.sql;
     q.exec('create table if not exists wsh(id text primary key, day text not null, uid text not null, nick text, txt text, at integer, et integer, ed integer not null default 0, hearts integer not null default 0, rep integer not null default 0, hid integer not null default 0, unique(day, uid))');
     q.exec('create index if not exists wsh_d on wsh(day, hid, hearts)'); q.exec('create table if not exists wht(wid text, uid text, day text, primary key(wid, uid))'); q.exec('create index if not exists wht_u on wht(uid, day)');
@@ -624,9 +657,9 @@ export class Meter extends DurableObject {
     const ipk = String(ip || 'x').slice(0, 16), n = Number(q.exec('select n from wip where day = ? and wid = ? and ip = ?', day, w.id, ipk).toArray()[0]?.n) || 0; if (n >= WISH.ipHeartsPerWish) return { ok: false, error: 'ip' };
     q.exec('insert into wht(wid, uid, day) values(?, ?, ?)', w.id, uid, day); q.exec('insert into wip(day, wid, ip, n) values(?, ?, ?, 1) on conflict(day, wid, ip) do update set n = n + 1', day, w.id, ipk);
     q.exec('update wsh set hearts = hearts + 1 where id = ?', w.id); return { ok: true, hearts: Number(w.hearts) + 1, left: WISH.heartsPerDay - used - 1, au: String(w.uid) }; } // au: the author, for the Worker's push only
-  // What settlement picks for a day: the top three by hearts, each with a prize only if prizeFor(rank, hearts, distinct IP nets) gives one.
-  wPick(day) { return this.wTop(day, 3).map(r => ({ r, prize: prizeFor(r.rank, r.hearts, this.wIps(r.id)) })).filter(x => x.prize > 0)
-    .map(({ r, prize }) => ({ id: String(r.id), uid: String(r.uid), nick: String(r.nick || ''), txt: String(r.txt || ''), hearts: Number(r.hearts) || 0, rank: r.rank, prize, paid: 0, tries: 0, at: 0 })); }
+  // What settlement picks for a day: the top WISH.winTop by hearts that winsDay(rank, hearts, distinct IP nets) lets in. No points come with it.
+  wPick(day) { return this.wTop(day, WISH.winTop).filter(r => winsDay(r.rank, r.hearts, this.wIps(r.id)))
+    .map(r => ({ id: String(r.id), uid: String(r.uid), nick: String(r.nick || ''), txt: String(r.txt || ''), hearts: Number(r.hearts) || 0, rank: r.rank })); }
   // Stored winners of a settled day, or (not settled yet) what settlement would pick. Either way only wishes visible now: a later hide drops that winner.
   // Ranks are kept as settled, so a hidden first place leaves no king that day.
   wWin(day) { const row = this.ctx.storage.sql.exec('select j from wst where day = ?', day).toArray()[0]; let list = [];
@@ -637,7 +670,7 @@ export class Meter extends DurableObject {
     return { day, count: Number(q.exec('select count(*) n from wsh where day = ? and hid = 0', day).one().n) || 0, top: top.map(r => this.wPub(r, uid, r.rank)), recent: this.wNew(day, WISH.recentMax).map(r => this.wPub(r, uid, rk.get(r.id) || 0)),
       mine: me ? this.wPub(me, uid, me.hid ? 0 : this.wRank(me)) : null, left: uid ? Math.max(0, WISH.heartsPerDay - this.wUsed(uid, day)) : 0,
       given: uid ? q.exec('select wid from wht where uid = ? and day = ?', uid, day).toArray().map(r => String(r.wid)) : [],
-      yesterday: this.wWin(dayShift(day, -1)).map(w => ({ id: w.id, rank: w.rank, nick: w.nick, txt: w.txt, hearts: w.hearts, prize: w.prize, mine: !!uid && w.uid === uid })) }; }
+      yesterday: this.wWin(dayShift(day, -1)).map(w => ({ id: w.id, rank: w.rank, nick: w.nick, txt: w.txt, hearts: w.hearts, mine: !!uid && w.uid === uid })) }; }
   wOne(wid, uid = '') { const r = this.wRow(wid); return r && !r.hid ? this.wPub(r, uid, this.wRank(r)) : null; }
   // The author of a visible wish, for the Worker's snapshot checks only ('' when missing or hidden). Never sent to a client.
   wAuthor(wid) { const r = this.wRow(wid); return r && !r.hid ? String(r.uid) : ''; }
@@ -674,7 +707,7 @@ export class Meter extends DurableObject {
       q.exec('update or ignore wrp set uid = ? where uid = ?', t, f); q.exec('delete from wrp where uid = ?', f);
       this.wStored(list => list.map(w => w.uid === f ? { ...w, uid: t } : w)); });
     return { ok: true }; }
-  // Account withdrawal: its wishes hidden for good and emptied (no uid, nick or text left, never listed or paid), its hearts taken back, its reports
+  // Account withdrawal: its wishes hidden for good and emptied (no uid, nick or text left, never listed), its hearts taken back, its reports
   // dropped (a wish already hidden by reports stays hidden), its stored winner entries removed.
   wForget(uid) { this.wInit(); const q = this.ctx.storage.sql, u = String(uid || ''); if (!u) return { ok: false };
     this.ctx.storage.transactionSync(() => {
@@ -684,23 +717,13 @@ export class Meter extends DurableObject {
       for (const wid of reported) q.exec('update wsh set rep = (select count(distinct ip) from wrp where wid = ?) where id = ?', wid, wid);
       this.wStored(list => list.filter(w => w.uid !== u)); });
     return { ok: true }; }
-  // Lazy settlement. Every day before `day` that still has rows (within keepDays) and no wst row is snapshotted, so a day nobody visited after is not lost.
-  // Then winners not yet handed out (visible now, under 5 attempts, 60 s apart) are returned AND marked paid in the same step: at most once even if the payer dies.
-  // max: winners handed out (and marked) in this call; the rest stay unmarked for the next call.
-  wSettle(day, now = Date.now(), max = Infinity) { this.wInit(); const q = this.ctx.storage.sql, cut = dayShift(day, -WISH.keepDays);
+  // Lazy settlement. Every day before `day` that still has rows (within keepDays) and no wst row is snapshotted, so a day nobody visited after is not lost,
+  // and rows older than keepDays are pruned. Nothing is handed out for payment (the wish prize is gone since 2026-11-27): the answer is always [].
+  wSettle(day) { this.wInit(); const q = this.ctx.storage.sql, cut = dayShift(day, -WISH.keepDays);
     if (this.wPr !== day) { this.wPr = day; q.exec('delete from wsh where day < ?', cut); q.exec('delete from wht where day < ?', cut); q.exec('delete from wip where day < ?', cut); q.exec('delete from wst where day < ?', cut); q.exec('delete from wpi where day < ?', cut);
       q.exec('delete from wrp where wid not in (select id from wsh)'); }
     for (const r of q.exec('select distinct day from wsh where day < ? and day >= ? and day not in (select day from wst) order by day', day, cut).toArray()) q.exec('insert or ignore into wst(day, j) values(?, ?)', r.day, JSON.stringify(this.wPick(String(r.day))));
-    const due = [];
-    for (const r of q.exec('select day, j from wst where day < ? order by day', day).toArray()) { let list = []; try { list = JSON.parse(r.j); } catch { continue; } let ch = 0;
-      for (const w of list) { if (due.length >= max) break; if (w.paid || (w.tries || 0) >= 5 || now - (w.at || 0) < 60000) continue; const row = this.wRow(w.id); if (!row || row.hid) continue;
-        w.paid = 1; w.tries = (w.tries || 0) + 1; w.at = now; ch = 1; due.push({ day: String(r.day), id: w.id, uid: w.uid, rank: w.rank, prize: w.prize }); }
-      if (ch) q.exec('update wst set j = ? where day = ?', JSON.stringify(list), r.day); }
-    return due; }
-  // Supabase clearly said no (HTTP ok, data.ok === false: no wallet row yet): hand the winner out again later, attempts permitting.
-  wUnpay(day, wid) { this.wInit(); const q = this.ctx.storage.sql, r = q.exec('select j from wst where day = ?', day).toArray()[0]; if (!r) return { ok: false };
-    let list = []; try { list = JSON.parse(r.j); } catch { return { ok: false }; } const w = list.find(x => x.id === wid); if (!w) return { ok: false };
-    w.paid = 0; q.exec('update wst set j = ? where day = ?', JSON.stringify(list), day); return { ok: true }; }
+    return []; }
   // 친구 초대 (instance 'inv'). ivc: codes (an account can own several after a merge; its first is the one handed out), ivip: IP nets an account used
   // per KST day (code requests and wish posts), ivs: accounts seen posting a fresh wish (d0 = first day) or tried as an invitee, ivr: rewarded invitees
   // (one row each, ever), ivp: the two payments of each reward, marked paid when handed out and done once Supabase took them, iva: guest→user links
@@ -957,7 +980,9 @@ export class Room extends DurableObject {
     const room = (u.searchParams.get('room') || '').slice(0, 48), v2 = req.headers.get('x-v2') === '1';
     const prof = await this.loadProf(k);
     const [c, s] = Object.values(new WebSocketPair()); this.ctx.acceptWebSocket(s);
-    const a = { k, an: req.headers.get('x-anon') === '1', m: null, q: false, t: Date.now() + Math.random(), ls: Date.now(), lob: /lobby$/.test(topic), v2, fl: 0, sf, prof };
+    const nt = String(req.headers.get('x-net') || ''); // the network hash (worker.js wishIp), for 공유 보상 on a cheer
+    const via = String(req.headers.get('x-via') || '').split('.').filter((x) => VIA_KEY.test(x)).slice(0, VIA_MAX); // kts_via: kept in the attachment
+    const a = { k, an: req.headers.get('x-anon') === '1', m: null, q: false, t: Date.now() + Math.random(), ls: Date.now(), lob: /lobby$/.test(topic), v2, fl: 0, sf, prof, ...(/^[0-9a-f]{16}$/.test(nt) ? { nt } : {}), ...(via.length ? { via } : {}) };
     this.crowd(k); this.socks().set(s, a); this.conns++;
     if (v2 && room && /^[\w:-]{1,48}$/.test(room) && !a.lob && /^chapel(qa)?:/.test(topic)) await this.loadHist(room);
     if (a.lob || this.adm() < CAP) this.admit(s, a); else { this.save(s, a); this.waitMsgs(); }
@@ -1217,6 +1242,14 @@ export class Room extends DurableObject {
     this.ibPut({ kind: 'cheer', slot_id: slot, phrase: p, from_name: fromName, from: a.k, to: holder });
     const note = { t: 'INBOX', kind: 'cheer', slot_id: slot, phrase: p, from_name: fromName, from: a.k };
     for (const [sock, peer] of this.socks()) if (peer.q && peer.k === holder) this.tx(sock, note);
+    // 공유 보상 (giftsrv.js shareReact): a cheer from a network that opened this board's link (/rt/card/<slot>) in the last 24 hours, while this
+    // holder had it, pays the holder (+50 / +20 an account, +10 a guest: a.an). a.nt: the network hash the Worker put on the socket (x-net).
+    // Asked only when this browser came through the board's link (a.via, kts_via) and the holder is not in this room on the same network.
+    // One DO call, counted; none at budget hard (returned above). shareP: the job (tests).
+    const kc = 'c:' + slot;
+    if (a.nt && Array.isArray(a.via) && a.via.includes(kc) && ![...this.socks().values()].some((peer) => peer.k === holder && peer.nt === a.nt)) {
+      this.conns++; this.shareP = shareReact(this.env, this.ctx, { rpc: supabaseRpc }, { o: holder, k: kc, net: a.nt, uid: a.k, acct: !a.an });
+    }
     // 소속 scores (bit 1 per cheer) are no longer kept: 응원 팀 count people who support their team (teamsrv.js), not cheers.
     try {
       this.conns++; // a DO call, counted toward the daily budget
@@ -1443,6 +1476,10 @@ export class Room extends DurableObject {
   // Clients no longer poll /rt/world or /rt/wallet while connected, so this push carries everything a claim changes: the row, the top-20 ranks,
   // and a WALLET_SYNC for third parties whose balance moved (m.sync). A message without kind tells clients to refetch the world (bulk change).
   async httpWorld(req) { let m = null; try { m = await req.json(); } catch { return J({ err: 'json' }, 400); }
+    if (m && m.t === 'WORLD_UPDATE' && m.kind === 'TOWER') { // 메인 타워 축하 1분 (towerrules.js towerWire): to every socket; kept for a reconnect's replay
+      const d = towerWire(m.data); if (!d) return J({ err: 'world' }, 400);
+      const msg = { t: 'WORLD_UPDATE', kind: 'TOWER', data: d }; this.pushEv(msg); const s = JSON.stringify(msg); for (const w of this.socks().keys()) this.tx(w, s);
+      return J({ ok: true, n: this.socks().size }); }
     if (m && m.t === 'WORLD_UPDATE' && !m.kind) { this.tapDb(); this.ctx.storage.sql.exec('delete from brd'); const s = JSON.stringify({ t: 'WORLD_UPDATE' }); for (const w of this.socks().keys()) this.tx(w, s); return J({ ok: true, n: this.socks().size }); } // bulk change: the room's boards are read again
     if (!m || m.t !== 'WORLD_UPDATE' || (m.kind !== 'BILLBOARD' && m.kind !== 'PLOT') || !m.data || typeof m.data !== 'object') return J({ err: 'world' }, 400);
     if (m.kind === 'BILLBOARD') { this.tapDb(); if (brdRow(m.data)) this.brdPut(m.data, Date.now()); else this.ctx.storage.sql.exec('delete from brd where slot = ?', String(m.data.slot_id || '')); } // a row without holder and clock: read it again
@@ -1672,18 +1709,19 @@ function pushText(row) {
   if (row?.kind === 'tribe') return '지난 소속 결과가 나왔어요';
   if (row?.kind === 'ball') return '21시 볼 드랍이 곧 시작돼요';
   if (row?.kind === 'wish') { const n = Math.floor(Number(row.n)) || 0; return n <= 1 ? '내 소원에 첫 하트가 왔어요' : `내 소원이 하트 ${n}개를 받았어요`; }
-  if (row?.kind === 'wishwin') return `어제 소원이 ${Math.max(1, Math.floor(Number(row.rank)) || 1)}위였어요. +${Math.max(0, Math.floor(Number(row.prize)) || 0)} 응원 포인트가 들어왔어요`;
   if (row?.kind === 'invite') return `초대한 친구가 소원을 걸었어요. +${Math.max(0, Math.floor(Number(row.amount)) || 0)} 응원 포인트가 들어왔어요`;
   if (row?.kind === 'giftopen') return /^\(광고\) /.test(String(row.text || '')) ? clip(row.text, 90) : ''; // 선물 전광판 "열리면 알림": advertising, labelled (giftsrv.js)
   if (row?.kind === 'giftreply') return name ? `${name}님이 답장 전광판을 걸었어요` : '답장 전광판이 도착했어요'; // 답장 전광판: informational, to the answered board's owner, once per board (giftsrv.js make: never 21:00-08:00 KST)
+  if (row?.kind === 'gifttower') return '친구 응원 10곳이 모였어요. 메인 타워 1분을 고르세요'; // 메인 타워 축하 1분: informational (no "(광고)", any hour), to the board's owner, once per board (giftsrv.js react)
   return '';
 }
 // Where a notification click lands (same origin, validated ids only); '' leaves it to the service worker's default '/'.
 function pushUrl(row) {
   const slot = String(row?.slot_id || ''), wid = String(row?.wid || '');
   if ((row?.kind === 'taken' || row?.kind === 'dark') && SLOT_RE.test(slot)) return '/?focus=' + slot;
-  if ((row?.kind === 'wish' || row?.kind === 'wishwin') && WISH_ID.test(wid)) return '/?wish=' + wid;
+  if (row?.kind === 'wish' && WISH_ID.test(wid)) return '/?wish=' + wid;
   if (row?.kind === 'giftopen') return '/gift';
+  if (row?.kind === 'gifttower') return GIFT_ID.test(String(row.gid || '')) ? '/g/' + row.gid + '?o=1' : '/gift'; // the board's own page as its owner: the main tower card is there
   if (row?.kind === 'giftreply') return GIFT_ID.test(String(row.gid || '')) ? '/g/' + row.gid + '?o=1' : '/gift'; // the answered board's own page, asked as its owner (giftpage.js board): the reply card is there on any device of that account
   return '';
 }
@@ -2041,11 +2079,34 @@ export async function humanCheck(env, token, ip, action = HUMAN_ACTION) {
 }
 const HUMAN_BAD = new Set(['missing-input-response', 'invalid-input-response', 'timeout-or-duplicate', 'bad-request']), HUMAN_OURS = new Set(['internal-error', 'missing-input-secret', 'invalid-input-secret']);
 // The coin rewards a scripted account could farm (docs/bot-protection.md): the link reward held back by holdReward (action 'link'), the share
-// bonus ('bonus') and a VIP code ('code') need a fresh check of their own action while Turnstile is on; off, nothing is asked. -> null to go on,
+// bonus ('bonus') need a fresh check of their own action while Turnstile is on; off, nothing is asked. -> null to go on,
 // or the answer: 403 { code:'human', site } with no token or one Cloudflare refused (the page gets a token and asks once more, as for a new
 // guest), 503 busy when siteverify cannot judge it: never paid unverified, the reward is still there to be had later.
 // What giftsrv.js gets from here (the env it is handed is the tallied one, so its DO calls count in the daily budget).
-const giftKit = () => ({ adminOk, lvlNow, resolveActor, tokenOf, ipHash: wishIp, humanGate, actOk, pushNow });
+// humanSite: the public Turnstile key for the gift page's data (a 💖 asks its 'theart' token itself); rpc: grant_coins for the share reward
+// and refunds, spend_plaza for the main tower minute; towerTell: the rooms' TOWER push; towerLater: the same at a board's reveal.
+const giftKit = () => ({ adminOk, lvlNow, resolveActor, tokenOf, ipHash: wishIp, humanGate, humanSite, actOk, pushNow, rpc: supabaseRpc, towerTell, towerLater, guestLike });
+// 메인 타워 축하 1분 (giftsrv.js): a booking, or its release ({ id, m, off: 1 }), to the plaza rooms someone sits in (wishRooms of both
+// bases) as WORLD_UPDATE kind TOWER. env is the tallied one giftsrv.js was handed, so these DO calls count. Nothing at budget hard.
+// giftsrv.js sends only entries whose board is revealed (towerOn, towerOff); one revealed later goes from the 'dark' alarm (towerLater).
+function towerTell(env, ctx, data) {
+  const job = (async () => { if (await budgetHard(env)) return; await towerSend(env, data); })().catch(() => { });
+  try { ctx?.waitUntil?.(job); } catch { /* the answer already went */ }
+  return job;
+}
+// The fan-out itself (the budget is the caller's: towerTell asks the level, the dark alarm counted itself in its add).
+async function towerSend(env, data) {
+  const names = [...new Set((await Promise.all(['chapel:square', 'chapelqa:square'].map((t) => wishRooms(env, t)))).flat())];
+  const body = JSON.stringify({ t: 'WORLD_UPDATE', kind: 'TOWER', data });
+  await Promise.all(names.map((t) => env.ROOM.get(env.ROOM.idFromName(t)).fetch(new Request('https://room.internal/world', { method: 'POST', headers: { 'content-type': 'application/json' }, body })).catch(() => null)));
+}
+// A minute booked on a board whose reveal is still ahead ({ id, m, at }): the 'dark' instance's alarm tells the rooms at `at` (no cron). One
+// tallied DO call; at budget hard nothing is booked anyway (the booking route answers 503 first).
+function towerLater(env, ctx, o) {
+  const job = Promise.resolve().then(() => darkM(env).dkTower(o.id, o.m, o.at, Date.now())).catch(() => { });
+  try { ctx?.waitUntil?.(job); } catch { /* the answer already went */ }
+  return job;
+}
 // What teamsrv.js gets from here (the tallied env too). supa: the project URL and its publishable key (teamsrv.js reads an account's creation
 // time from Supabase Auth with the caller's own token). myTribe: the old 소속 of an account, { id, tag, role } or null.
 async function oldTribe(env, uid) {
@@ -2088,7 +2149,7 @@ function queueTaken(env, ctx, victim, fromName, slotId) {
 }
 // Immediate web push without the cron. Subscriptions live in the Meter instance 'push' (filled by /rt/push), because Supabase push_subs cannot be read
 // per actor with the publishable key. One notice per (actor, kind) per PUSH_GAP; everything runs in waitUntil and never touches the triggering response.
-const PUSH_GAP = { taken: 60000, wish: 600000, wishwin: 60000, dark: 1, invite: 60000, giftopen: 864e5, giftreply: 60000 }, WISH_PUSH_AT = [1, 3, 5, 10, 20, 30, 50, 100]; // dark: no gap, each notice is once per (slot, lit_until) already
+const PUSH_GAP = { taken: 60000, wish: 600000, dark: 1, invite: 60000, giftopen: 864e5, giftreply: 60000, gifttower: 60000 }, WISH_PUSH_AT = [1, 3, 5, 10, 20, 30, 50, 100]; // dark: no gap, each notice is once per (slot, lit_until) already
 const pushM = env => env.METER.get(env.METER.idFromName('push'));
 function pushNow(env, ctx, actorId, note) {
   if (!env?.VAPID_PRIV || !actorId || !PUSH_GAP[note?.kind]) return Promise.resolve();
@@ -2121,7 +2182,7 @@ function evProps(p) { const o = {}; let n = 0; if (p && typeof p === 'object') f
 // today = { visitors, wishes } for the boot screen comes from the account registry: one DO call per cache refill (15 s), never per request.
 async function readWorld(env) {
   const h = { apikey: ANON, accept: 'application/json' };
-  const [bs, ps, rs, tally, live, wish, prime, ads, gifts] = await Promise.all([
+  const [bs, ps, rs, tally, live, wish, prime, ads, gw] = await Promise.all([
     fetch(SUPA + '/rest/v1/billboards?select=*&slot_id=in.(' + SLOT_IDS.join(',') + ')&order=slot_id.asc', { headers: h }),
     fetch(SUPA + '/rest/v1/plots?select=*&order=plot_id.asc', { headers: h }),
     fetch(SUPA + '/rest/v1/wallets?select=actor_id, nickname, spent, linked&spent=gt.0&order=spent.desc&limit=60', { headers: h }), // 60: room for the 네온봇N rows filtered out below
@@ -2130,7 +2191,7 @@ async function readWorld(env) {
     lvlNow(env).then(l => l >= 2 ? (WWLAST.day === kstDay() ? WWLAST.v : null) : wishM(env).wWorld(kstDay()).then(v => { WWLAST = { day: kstDay(), v }; return v; })).catch(() => null), // budget hard: the last copy, no wish-DO call
     Promise.resolve().then(() => teamWorld(env, { lvlNow })).catch(() => null), // 명당 (teamsrv.js): the day's plan, today's leading teams, one 'team' DO call per isolate a minute at most
     Promise.resolve().then(() => adsWorld(env, { lvlNow })).catch(() => null), // the ad screens' bookings (adsrv.js): one 'ads' DO call per isolate per minute at most
-    Promise.resolve().then(() => giftWorld(env, { lvlNow })).catch(() => null), // 선물 전광판 on the plaza now (giftsrv.js): one 'gift' DO call per isolate per 2 minutes at most (5 while none is up)
+    Promise.resolve().then(() => giftWorld(env, { lvlNow })).catch(() => null), // 선물 전광판 on the plaza now and the main tower bookings (giftsrv.js): one 'gift' DO call per isolate per 2 minutes at most (5 while there is neither)
   ]);
   if (!bs.ok || !ps.ok) return { err: 'upstream ' + (bs.ok ? ps.status : bs.status) };
   const [billboards, plots, ranks] = await Promise.all([bs.json(), ps.json(), rs.ok ? rs.json() : null]);
@@ -2144,7 +2205,8 @@ async function readWorld(env) {
   if (prime?.top?.length) world.teams = prime.top.map(t => ({ id: String(t.id), name: clip(t.name, 16), n: Math.max(0, Math.floor(Number(t.n)) || 0) })); // today's leading teams (HUD, 20:50 banner)
   const ww = wishWorld(wish); if (ww.count || ww.board.length || ww.king) world.wish = ww; // left out while empty or failing: clients read a missing key as { board: [], king: null, count: 0 }
   if (ads) world.ads = ads; // { on, list }: left out while ADS_ON is off and nothing is booked
-  if (gifts?.length) world.gifts = gifts; // [{ id, to, from, occ, msg, th, scr, a, b, n }]: left out while none is up
+  if (gw?.gifts?.length) world.gifts = gw.gifts; // [{ id, to, from, occ, msg, th, scr, a, b, n }]: left out while none is up
+  if (gw?.tower?.length) world.tower = gw.tower; // 메인 타워 축하 1분 [{ id, m, to, from, occ, msg, th }], the next 26 h: left out while none
   return { body: JSON.stringify(world), world, ranked: Array.isArray(ranks) };
 }
 function wishWorld(v) {
@@ -2204,16 +2266,21 @@ async function settle(env, topic, actorId) {
   return { ok: true, pending: data.pending || 0, flushed: data.flushed || 0 };
 }
 // Share bonus: accounts only (owner decision 2026-11-22, "로그인했을 때만"). A guest or an anonymous sign-in (guestLike) is refused first, before
-// any DO call or RPC: 403 { code:'account' }, which the screen turns into the account-link prompt. Then once a KST day per account and per
-// network (IPv6 by its /64). The record is in the 'acct' instance (promoTake, the network as ipHash, never raw) and PROMO is this isolate's copy,
-// checked first (it only refuses sooner, it never lets a claim through). Budget hard, or that call failing: refused ("잠시 뒤에 다시", code busy),
-// because this isolate's copy alone would let every other isolate pay the 300 again. Redeem codes: one use per account and code for good, recorded
-// in 'acct' (codeTake, the pair hashed); closed the same way when it cannot be asked.
-// Turnstile on (humanSite): the share bonus and a code need a fresh human check (humanGate, actions 'bonus' and 'code'), after the checks that
-// cost nothing and before the record is asked. /rt/link-reward pays the link reward holdReward kept back, once, with a check of its own ('link').
+// any DO call or RPC: 403 { code:'account' }, which the screen turns into the account-link prompt. Then once per account, ever (owner decision
+// 2026-11-27: still paid on the share itself, nobody checks a friend opened it), 400 { code:'once' }; and once a KST day per network (IPv6 by
+// its /64, so a family on one Wi-Fi is not blocked for good), 400 { code:'net' }. The record is in the 'acct' instance (promoTake, the network
+// as ipHash, never raw) and PROMO is this isolate's copy, checked first (it only refuses sooner, it never lets a claim through). Budget hard, or that call failing: refused ("잠시 뒤에 다시", code busy),
+// because this isolate's copy alone would let every other isolate pay the 300 again.
+// Turnstile on (humanSite): the share bonus needs a fresh human check (humanGate, action 'bonus'), after the checks that cost nothing and before
+// the record is asked. /rt/link-reward pays the link reward holdReward kept back, once, with a check of its own ('link').
+// The VIP sponsor code (/rt/redeem-code, 10,000 points per code from env VIP_CODES) is closed since 2026-11-27: 410 { code:'off' } like the
+// closed send and pool routes, before any token check, DO call or database call; VIP_CODES is not read. The 'acct' codeTake records stay as they are.
 const PROMO = new Map(), PROMO_BUSY = '지금은 광장이 붐벼요. 잠시 뒤에 다시 해 주세요.';
+const SHARE_ONCE = { ok: false, code: 'once', error: '공유 보너스는 계정마다 한 번만 받아요.' }, SHARE_NET = { ok: false, code: 'net', error: '오늘 이 인터넷 연결에서는 이미 공유 보너스를 받았어요. 내일 다시 해 주세요.' };
 const SHARE_ACCOUNT = '계정을 연결하면 공유 보너스 300포인트를 받을 수 있어요.'; // not exported: workerd takes every named export of the main module as an entrypoint and refuses to start on a string
+const NO_CODE = { ok: false, code: 'off', error: '스폰서 코드는 닫혔어요. 코드로 주는 응원 포인트는 없어요.' };
 async function promo(req, env, u) {
+  if (u.pathname === '/rt/redeem-code') return J(NO_CODE, 410); // closed: no points for a code, before any check or call
   if (req.method !== 'POST') return J({ err: 'post' }, 405);
   const actor = await resolveActor(env, tokenOf(req));
   if (!actor) return J({ err: 'auth' }, 401);
@@ -2235,48 +2302,31 @@ async function promo(req, env, u) {
   }
   if (u.pathname === '/rt/share-bonus') {
     if (guestLike(actor)) return J({ ok: false, code: 'account', error: SHARE_ACCOUNT }, 403);
-    const ak = 's:' + actor.id + ':' + day, ik = 'i:' + ip + ':' + day;
-    const had = () => J({ ok: false, error: '오늘은 이미 공유 보너스를 받았어요.' }, 400);
-    if (PROMO.get(ak) || PROMO.get(ik)) return had();
+    if (LVL.l < 2) shareMaker(env, env[CTX]?.ctx, actor.id, await wishIp(env, req)); // 공유 보상: the network a link leaves from is the maker's own (ctx: the tallied env's)
+    const ak = 's:' + actor.id, ik = 'i:' + ip + ':' + day; // the account: for good; the network: today
+    const had = (mine) => J(mine ? SHARE_ONCE : SHARE_NET, 400);
+    if (PROMO.get(ak) || PROMO.get(ik)) return had(PROMO.get(ak));
     const gate = humanSite(env) ? await humanGate(env, req, await readJson(req), 'bonus') : null; if (gate) return gate;
     if (await budgetHard(env)) return busy();
     const keys = ['s:' + actor.id, 'i:' + await ipHash(env, req)]; // taken in the acct instance, given back if the grant fails
     let hit; try { hit = await acct(env).promoTake(keys, day); } catch { return busy(); }
-    if (hit !== true) { if (Array.isArray(hit)) { if (hit.includes(keys[0])) PROMO.set(ak, 1); if (hit.includes(keys[1])) PROMO.set(ik, 1); } return had(); }
+    if (hit !== true) { const mine = Array.isArray(hit) && hit.includes(keys[0]); if (mine) PROMO.set(ak, 1); if (Array.isArray(hit) && hit.includes(keys[1])) PROMO.set(ik, 1); return had(mine); }
     const rpc = await supabaseRpc('grant_coins', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_amount: 300 }).catch(() => ({ ok: false, data: {} }));
     const data = rpc.data || {};
-    if (!rpc.ok || data.ok === false) { try { await acct(env).promoGive(keys, day); } catch { /* today's bonus is lost for this account, never doubled */ }
+    if (!rpc.ok || data.ok === false) { try { await acct(env).promoGive(keys, day); } catch { /* the bonus is lost for this account, never doubled */ }
       return J({ ok: false, error: pointWords(data.error || '포인트를 넣지 못했어요.') }, rpc.ok ? 400 : 502); }
     PROMO.set(ak, 1); PROMO.set(ik, 1);
     return J({ ok: true, coins: data.coins, amount: 300 });
   }
-  const b = await readJson(req);
-  const code = String(b?.code || '').trim();
-  if (!/^[A-Za-z0-9]{8,32}$/.test(code)) return J({ ok: false, error: '8자리 코드를 입력하세요.' }, 400);
-  const gate = await humanGate(env, req, b, 'code'); if (gate) return gate; // before the code is compared: no guessing without a check
-  const codes = String(env.VIP_CODES || '').split(/[\s,]+/).filter((s) => s.length >= 8);
-  if (!codes.includes(code)) return J({ ok: false, error: '코드가 맞지 않아요.' }, 400);
-  const key = 'v:' + actor.id + ':' + code, used = () => J({ ok: false, error: '이미 사용한 코드예요.' }, 400);
-  if (PROMO.get(key)) return used();
-  if (await budgetHard(env)) return busy();
-  const dig = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key))); let ck = 'v:'; for (const x of dig.slice(0, 16)) ck += x.toString(16).padStart(2, '0'); // the code never sits in 'acct' raw
-  let fresh; try { fresh = await acct(env).codeTake(ck); } catch { return busy(); }
-  if (fresh !== true) { PROMO.set(key, 1); return used(); }
-  const rpc = await supabaseRpc('grant_coins', { p_key: env.FLUSH_KEY || '', p_actor_id: actor.id, p_amount: 10000 }).catch(() => ({ ok: false, data: {} }));
-  const data = rpc.data || {};
-  if (!rpc.ok || data.ok === false) { try { await acct(env).codeGive(ck); } catch { /* the code stays used for this account, never paid twice */ }
-    return J({ ok: false, error: pointWords(data.error || '포인트를 넣지 못했어요.') }, rpc.ok ? 400 : 502); }
-  PROMO.set(key, 1);
-  return J({ ok: true, coins: data.coins, amount: 10000 });
+  return J({ err: 'path' }, 404);
 }
-// 오늘의 소원 HTTP. State lives in the Meter instance 'wish' (DO SQLite), never in Supabase; prizes go through grant_coins like promo().
+// 오늘의 소원 HTTP. State lives in the Meter instance 'wish' (DO SQLite), never in Supabase. It pays no points (the wish prize was removed on 2026-11-27).
 const wishM = env => env.METER.get(env.METER.idFromName('wish'));
 const WISH_ID = /^[0-9a-z]{10}$/, WISH_PATHS = new Set(['/rt/wishes', '/rt/wish', '/rt/wish/heart', '/rt/wish/report', '/rt/admin/wish', '/rt/admin/wishes']);
 const WISHC = { at: 0, day: '', v: null }; // anonymous list, 10 s per isolate; cleared on post / hide
 const WONE = new Map(); // single wish by id (share page, ?id=), 10 s per isolate, misses too
 let WWLAST = { day: '', v: null }; // the last wWorld answer, served instead of the wish DO while the budget is hard
-let WSET = { day: '', at: 0, more: false }; // settlement: once per isolate per day, again every 60 s after a clear refusal or a full batch
-const WISH_PAY_N = 3; // prizes paid per settlement run (grant_coins + its push each): the subrequest limit of one invocation
+let WSET = { day: '', at: 0, more: false }; // settlement: once per isolate per day, again 60 s after a failed run
 let WFULL = 0; // last full world refill caused by a wish, so a burst of wishes refills at most once per 10 s per isolate
 let WLIVE = { at: 0, day: '', v: null }; // rooms with seated accounts (Meter 'acct' liveRooms), 30 s per isolate, for the fresh-wish fan-out
 // The shards of topic a fresh wish is sent to: the poster's own room, plus shards the seat registry says someone sits in. A failed lookup: own room only.
@@ -2286,7 +2336,7 @@ async function wishRooms(env, topic) {
   return squareTopics(topic).filter(name => name === topic || (live && live.has(name)));
 }
 // Wish limits count IP nets (IPv6 by /64). The shared ipHash stays as it is for the other features.
-async function wishIp(env, req) {
+export async function wishIp(env, req) {
   const dig = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(ipNet(req.headers.get('cf-connecting-ip') || '') + String(env.GUEST_KEY || ''))));
   let hex = ''; for (const b of dig) hex += b.toString(16).padStart(2, '0'); return hex.slice(0, 16);
 }
@@ -2297,17 +2347,12 @@ async function wishOne(env, id, req) {
   if (req && !(await rateOk(env.EVENT_RL, req))) return undefined;
   const v = await wishM(env).wOne(id); if (WONE.size > 500) WONE.clear(); WONE.set(id, { at: Date.now(), v }); return v;
 }
-// At most once: wSettle marks a winner paid when it hands it out. Only Supabase's clear refusal (HTTP ok, data.ok === false, e.g. no wallet row yet)
-// un-marks it for a later attempt. A thrown fetch, a 5xx or a failed DO call leaves it marked, so a prize is never paid twice.
+// Settlement keeps yesterday's winners (어제의 소원, the king) and prunes old days. It pays nothing and sends no notice: the 300/200/100 wish prize
+// (grant_coins + a 'wishwin' push) was removed on 2026-11-27 (docs/point-sources-2026-11-27.md). No database function was involved, so no migration.
 function wishSettle(env, ctx, day) {
   if (WSET.day === day && (!WSET.more || Date.now() - WSET.at < 60000)) return;
   WSET = { day, at: Date.now(), more: false };
-  const job = (async () => { const M = wishM(env), due = await M.wSettle(day, Date.now(), WISH_PAY_N); let more = Array.isArray(due) && due.length >= WISH_PAY_N; // a full batch: the rest 60 s later
-    for (const w of Array.isArray(due) ? due : []) {
-      try { const rpc = await supabaseRpc('grant_coins', { p_key: env.FLUSH_KEY || '', p_actor_id: w.uid, p_amount: w.prize });
-        if (rpc.ok && rpc.data && typeof rpc.data === 'object' && rpc.data.ok === false) { more = true; await M.wUnpay(w.day, w.id); }
-        else if (rpc.ok) await pushNow(env, ctx, w.uid, { kind: 'wishwin', rank: w.rank, prize: w.prize, wid: w.id }); } catch { /* unknown outcome: stays paid */ } }
-    if (WSET.day === day) WSET.more = more; })().catch(() => { if (WSET.day === day) WSET.more = true; }); // a failed run is tried again 60 s later (payment stays at most once)
+  const job = Promise.resolve().then(() => wishM(env).wSettle(day)).catch(() => { if (WSET.day === day) WSET.more = true; }); // a failed run is tried again 60 s later
   try { ctx?.waitUntil?.(job); } catch { /* the next request retries */ }
 }
 // The list and single-wish copies always go. full = a wish appeared or disappeared: refill the world once per 10 s per isolate (that refill replaces the
@@ -2318,12 +2363,36 @@ function wishFresh(env, ctx, full, id) {
     else ctx?.waitUntil?.(caches.default.delete(new Request(WORLD_CACHE)).catch(() => null)); } catch { }
 }
 const wishNo = (code, s = 400) => J({ ok: false, code, error: WISH_ERR[code] || WISH_ERR.down }, s);
-async function wishPage(req, env, u) {
+// 공유 보상 (giftsrv.js): a person (not a preview fetcher) opened a wish or board link: kept against the content and its owner now, so that
+// network's 💖 or 응원 within 24 hours pays the owner. Not at budget hard (no DO call). Then "친구 N명이 응원했어요": the count only, '' at 0.
+// kts_via (cookie, this browser only, a day): the links it came through, newest first, VIA_MAX at most. The plaza asks the gift store about a
+// 💖 or a cheer only for content whose link is in it (budget: no DO call for every heart and cheer); a forged one only costs a refused read.
+// -> { fr: the count line, cookie: a Set-Cookie value or '' }.
+const VIA_MAX = 8, VIA_KEY = /^[wc]:[\w-]{1,24}$/;
+export function viaKeys(cookie) {
+  const m = /(?:^|;\s*)kts_via=([^;]*)/.exec(String(cookie || '')), out = [];
+  for (const x of m ? m[1].split('.') : []) if (VIA_KEY.test(x) && !out.includes(x) && out.length < VIA_MAX) out.push(x);
+  return out;
+}
+async function shareLink(env, ctx, req, k, owner) {
+  try {
+    const hard = (await lvlNow(env)) >= 2;
+    let cookie = '';
+    if (!hard && owner && req.method === 'GET' && linkWho(req.headers.get('user-agent')) === 'people') {
+      shareOpen(env, ctx, { k, o: owner, net: await wishIp(env, req) });
+      const keys = [k, ...viaKeys(req.headers.get('cookie')).filter((x) => x !== k)].slice(0, VIA_MAX);
+      cookie = 'kts_via=' + keys.join('.') + '; Path=/; Max-Age=86400; HttpOnly; SameSite=Lax' + (new URL(req.url).protocol === 'https:' ? '; Secure' : '');
+    }
+    return { fr: friendsText(await shareCount(env, k, owner, hard)), cookie };
+  } catch { return { fr: '', cookie: '' }; }
+}
+async function wishPage(req, env, u, ctx) {
   if (req.method !== 'GET' && req.method !== 'HEAD') return new Response('method', { status: 405 });
   const id = u.pathname.slice('/rt/w/'.length); let w = null;
   if (WISH_ID.test(id)) { try { w = await wishOne(env, id, req); } catch { w = null; } }
   if (!w) return Response.redirect(new URL('/' + invTail(u, true), req.url).href, 302);
-  const s = wishShareText(w), dest = '/?wish=' + id + invTail(u), title = esc(s.title), desc = esc(w.txt), shot = await snapFor(env, 'wish', id, await wishAuthor(env, id)); // only the author's own shot
+  const au = await wishAuthor(env, id), sl = await shareLink(env, ctx, req, 'w:' + id, au), fr = esc(sl.fr);
+  const s = wishShareText(w), dest = '/?wish=' + id + invTail(u), title = esc(s.title), desc = esc(w.txt) + (fr ? ' · ' + fr : ''), shot = await snapFor(env, 'wish', id, au); // only the author's own shot
   const html = '<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>' + title + '</title>'
     + '<meta property="og:title" content="' + title + '">'
     + '<meta property="og:description" content="' + desc + '">'
@@ -2332,8 +2401,9 @@ async function wishPage(req, env, u) {
     + '<meta name="twitter:card" content="summary_large_image">'
     + '<meta http-equiv="refresh" content="0;url=' + esc(dest) + '">'
     + '<script>location.replace(' + JSON.stringify(dest) + ')</script>'
-    + '</head><body><p><a href="' + esc(dest) + '">타임스퀘어에서 이 소원 보기</a></p></body></html>';
-  return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=30' } });
+    + '</head><body>' + (fr ? '<p>' + fr + '</p>' : '') + '<p><a href="' + esc(dest) + '">타임스퀘어에서 이 소원 보기</a></p></body></html>';
+  // A page that sets kts_via is this person's: never kept by a shared cache. The preview fetchers' copy stays public for 30 s.
+  return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', ...(sl.cookie ? { 'cache-control': 'private, no-store', 'set-cookie': sl.cookie } : { 'cache-control': 'public, max-age=30' }) } });
 }
 async function wishApi(req, env, ctx, u) {
   const day = kstDay(), M = wishM(env), lv = u.pathname.startsWith('/rt/admin/') ? 0 : await lvlNow(env);
@@ -2371,10 +2441,11 @@ async function wishApi(req, env, ctx, u) {
     const actor = await resolveActor(env, tokenOf(req)); if (!actor) return J({ err: 'auth', code: 'auth', error: WISH_ERR.auth }, 401);
     const b = await readJson(req); if (!b) return J({ err: 'json' }, 400);
     if (u.pathname === '/rt/wish') {
-      if (!(inviteOn(env) && invCode(b.inv))) wishSettle(env, ctx, day); // a post that runs the invite step leaves the prize settlement to GET /rt/wishes (subrequest budget)
+      if (!(inviteOn(env) && invCode(b.inv))) wishSettle(env, ctx, day); // a post that runs the invite step leaves the settlement to GET /rt/wishes (subrequest budget)
       const fault = wishFault(b.text); if (fault) return wishNo(fault);
       const nick = cleanNick(b.nick ?? b.nickname ?? '') || '네온손님'; if (wishNickFault(nick)) return wishNo('nick');
       const ip = await wishIp(env, req), r = await M.wPost(actor.id, nick, cleanWish(b.text), day, Date.now(), ip); if (!r.ok) return wishNo(r.error || 'already', 409);
+      if (lv < 2) shareMaker(env, ctx, actor.id, ip); // 공유 보상: this network is the author's own, never a friend of the author
       const wc = PC.get('world'); // the world copy before wishFresh drops it, for the invite step
       wishFresh(env, ctx, !!r.fresh, r.wish.id); // an edit (fresh false) reaches boards with the next world read; no refill, no fan-out
       if (inviteOn(env)) { ctx.waitUntil(inviteStep(env, ctx, actor.id, b.inv, !!r.fresh, day, ip, wc, req.headers.get('cf-connecting-ip') || '')); // never part of the answer
@@ -2385,14 +2456,16 @@ async function wishApi(req, env, ctx, u) {
       return J({ ok: true, wish: r.wish, fresh: !!r.fresh });
     }
     const id = String(b.id || ''); if (!WISH_ID.test(id)) return wishNo('gone');
-    if (u.pathname === '/rt/wish/heart') { const r = await M.wHeart(actor.id, id, await wishIp(env, req), day); if (!r.ok) return wishNo(r.error);
+    if (u.pathname === '/rt/wish/heart') { const ip = await wishIp(env, req), r = await M.wHeart(actor.id, id, ip, day); if (!r.ok) return wishNo(r.error);
       if (lv < 1 && r.au && WISH_PUSH_AT.includes(r.hearts)) pushNow(env, ctx, r.au, { kind: 'wish', n: r.hearts, wid: id }); // r.au stays here: the response lists its fields
+      // 공유 보상: only for a wish whose link this browser came through (kts_via), and never at budget hard; the store checks the open itself
+      if (lv < 2 && r.au && viaKeys(req.headers.get('cookie')).includes('w:' + id)) ctx.waitUntil(shareReact(env, ctx, giftKit(), { o: r.au, k: 'w:' + id, net: ip, uid: actor.id, acct: !guestLike(actor) }));
       return J({ ok: true, hearts: r.hearts, left: r.left }); }
     if (u.pathname === '/rt/wish/report') { const r = await M.wReport(actor.id, id, await wishIp(env, req)); if (!r.ok) return wishNo(r.error); if (r.hidden) wishFresh(env, ctx, true, id); return J({ ok: true, hidden: !!r.hidden }); }
     return J({ err: 'path' }, 404);
   } catch { return wishNo('down', 502); }
 }
-// 친구 초대. State lives in the Meter instance 'inv', never in Supabase. Payments go through grant_coins at most once each, like the wish prize:
+// 친구 초대. State lives in the Meter instance 'inv', never in Supabase. Payments go through grant_coins at most once each:
 // marked paid when handed out, un-marked only on Supabase's clear refusal (HTTP ok, data.ok === false: no wallet row yet), tried again 60 s apart.
 const invM = env => env.METER.get(env.METER.idFromName('inv'));
 let INVP = { day: '', at: 0, more: false }; // retries: once per isolate per day, then every 60 s while refused payments wait
@@ -2694,6 +2767,7 @@ async function plaza(req, env, ctx, u) {
   }
   if (claim) {
     darkNote(env, ctx, row); // any mode: a takeover replaces the old holder's row, an edit with the same holder and clock keeps it
+    if (LVL.l < 2) shareMaker(env, ctx, String(row.holder_id || actor.id), await wishIp(env, req)); // 공유 보상: the holder's own network, never a friend of the board
     try { await acct(env).wish(kstDay()); } catch { }
     if (mode !== 'edit') await adSoon(ctx, () => adM(env).adClaim(row.slot_id, String(row.holder_id || actor.id), String(data.prev_holder_id || ''))); // a new holder's report starts now
     if (mode === 'claim' || mode === 'starter' || mode === 'tribe') {
@@ -3301,6 +3375,7 @@ async function accountApi(req, env, ctx, u) {
     if (await budgetHard(env)) return J({ ok: true, kept: false }); // budget hard: the funnel count is dropped, no DO call
     // The account is whoever the bearer token proves (guest or user), never a client-sent id. page_landing may arrive without one; its session ties it in.
     const actor = await resolveActor(env, tokenOf(req)), sid = /^[\w-]{8,40}$/.test(String(b.sid || '')) ? String(b.sid) : '';
+    if (actor && SHARE_EVENTS.has(name)) shareMaker(env, ctx, actor.id, await wishIp(env, req)); // 공유 보상: the sharer's network is its own
     try { await env.METER.get(env.METER.idFromName('ev')).evAdd(name, kstDay(), sid, actor ? actor.id : '', evProps(b.p)); }
     catch { return J({ err: 'meter' }, 503); }
     return J({ ok: true });
@@ -3390,7 +3465,7 @@ async function accountApi(req, env, ctx, u) {
     ctx.waitUntil(wishRooms(env, topic).then(names => Promise.all(names.map(t => env.ROOM.get(env.ROOM.idFromName(t)).fetch(new Request('https://room.internal/world', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"t":"WORLD_UPDATE"}' })).catch(() => null)))).catch(() => null)); }
   ctx.waitUntil(Promise.resolve().then(() => env.METER.get(env.METER.idFromName('ev')).evAlias(guestId, actor.id)).catch(() => { })); // return and funnel numbers follow the person across the link
   // Pushes to the user: id reach the guest's browsers, and the guest's board shots stay the holder's own (card page, share-page title).
-  // The guest's wish, hearts, reports and unpaid prizes become the user's (wMove), so mine, the one-wish-a-day rule and the prize follow the person.
+  // The guest's wish, hearts, reports and stored winner entries become the user's (wMove), so mine, the one-wish-a-day rule and 어제의 소원 follow the person.
   ctx.waitUntil(Promise.resolve().then(() => Promise.all([pushM(env).psMove(guestId, actor.id), snapM(env).snapMove(guestId, actor.id).then(() => { SNX.clear(); SNC.clear(); }),
     wishM(env).wMove(guestId, actor.id).then(() => { WISHC.at = 0; WONE.clear(); WAU.clear(); }), darkM(env).dkMove(guestId, actor.id), lgM(env).lgMove(guestId, actor.id).then(lgDrop), invM(env).ivMove(guestId, actor.id), giftMove(env, guestId, actor.id), teamMove(env, guestId, actor.id)])).catch(() => { })); // the invite code, counts and pending rewards too; 선물 전광판 boards; 응원 팀 membership and supports
   // The guest's cosmetics (bought or from attendance) go with it (move_cosmetics, migrations/2026-11-22-shop.sql; before it the call is a 404).
@@ -3426,7 +3501,7 @@ async function forgetActor(env, uid) {
     await Promise.all((r?.e || []).map(e => supabaseRpc('push_unsubscribe', { p_key: env.FLUSH_KEY || '', p_actor_id: id, p_endpoint: e }).catch(() => null))); };
   await Promise.all(ids.map(id => Promise.all([dropSubs(id), wishM(env).wForget(id), snapM(env).snapForget(id), darkM(env).dkForget(id), lgM(env).lgForget(id), invM(env).ivForget(id)].map(p => p.catch(() => null)))));
   await Promise.all(ids.map(id => adM(env).adForget(id).catch(() => null))); // the board reports of their tenures go too
-  await Promise.all(ids.map(id => giftForget(env, id))); // 선물 전광판 they made: boards, lines, videos
+  await Promise.all(ids.map(id => giftForget(env, id, null, towerTell))); // 선물 전광판 they made: boards, lines, videos; the rooms drop their main tower minutes
   await Promise.all(ids.map(id => teamForget(env, id))); // 응원 팀: membership (a team it owned passes to its next member), supports, joins
   WISHC.at = 0; WONE.clear(); WAU.clear(); SNX.clear(); SNC.clear(); PC.delete('world'); lgDrop();
   try { await caches.default.delete(new Request(WORLD_CACHE)); } catch { }
@@ -3478,7 +3553,7 @@ async function loadCard(env, slot) {
     return { ref, holder: holder, holder_name: String(row.holder_name || ''), line1: String(row.line1 || ''), line2: String(row.line2 || ''), line3: String(row.line3 || ''), tier: String(row.tier || ''), updated_at: String(row.updated_at || '') };
   } catch { return empty; }
 }
-async function cardPage(req, env, u) {
+async function cardPage(req, env, u, ctx) {
   if (req.method !== 'GET' && req.method !== 'HEAD') return new Response('method', { status: 405 });
   const parsed = cardSlotOf(u.pathname);
   if (!parsed) return new Response('not found', { status: 404 });
@@ -3502,16 +3577,17 @@ async function cardPage(req, env, u) {
   const page = new URL('/rt/card/' + parsed.slot, req.url).href;
   const dest = cardTarget(parsed.slot, u.searchParams, card.ref);
   const title = esc([clip(card.holder_name, 16), clip(card.line1, 16)].filter(Boolean).join(' ') || '타임스퀘어 전광판');
-  const desc = esc(clip(card.line2, 16));
+  const sl = await shareLink(env, ctx, req, 'c:' + parsed.slot, String(card.holder || '')), fr = esc(sl.fr);
+  const desc = esc(clip(card.line2, 16)) + (fr ? (card.line2 ? ' · ' : '') + fr : '');
   const html = '<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>' + title + '</title>'
     + '<meta property="og:title" content="' + title + '">'
     + '<meta property="og:description" content="' + desc + '">'
     + '<meta property="og:image" content="' + esc(image) + '">'
     + '<meta property="og:url" content="' + esc(page) + '">'
     + '<meta http-equiv="refresh" content="0;url=' + esc(dest) + '">'
-    + '</head><body><p><a href="' + esc(dest) + '">타임스퀘어에서 이 전광판 보기</a></p></body></html>';
+    + '</head><body>' + (fr ? '<p>' + fr + '</p>' : '') + '<p><a href="' + esc(dest) + '">타임스퀘어에서 이 전광판 보기</a></p></body></html>';
   // Not for search results (a player's name and line); link-preview crawlers still read the Open Graph tags (robots.txt allows /rt/card/).
-  return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex' } });
+  return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex', ...(sl.cookie ? { 'set-cookie': sl.cookie } : {}) } });
 }
 // Payload { body, url? } (the service worker defaults the title to 모두의 전광판). drop(endpoint) also forgets a gone endpoint in the 'push' instance.
 async function sendPushItems(env, items, drop) {
@@ -3642,6 +3718,8 @@ export default {
       const actor = await resolveActor(env, at); if (!actor) return wsShut(4001, 'auth', v2); // the page renews its token only on this (net.js badTok)
       if (!(await actOk(env, 'ws', actor.id))) return new Response('rate', { status: 429, headers: { 'retry-after': '60' } }); // joins per account a minute (ACT_RL), before the room
       const h = new Headers(req.headers); h.set('x-uid', actor.id); h.set('x-anon', (actor.guest || actor.anon) ? '1' : '0'); h.set('x-v2', v2 ? '1' : '0');
+      h.set('x-net', await wishIp(env, req)); // the network hash, for 공유 보상 on a cheer (never the address)
+      h.set('x-via', viaKeys(req.headers.get('cookie')).join('.')); // the links this browser came through (kts_via); never the client's own x-via
       return env.ROOM.get(env.ROOM.idFromName(t)).fetch(new Request(req, { headers: h }));
     }
     if (u.pathname === '/rt/guest') { if (req.method !== 'POST') return J({ err: 'post' }, 405); if (!env.GUEST_KEY) return J({ err: 'no guest key' }, 503);
@@ -3670,7 +3748,7 @@ export default {
     if (u.pathname.startsWith('/g/')) return giftPage(req, env, ctx, u, giftKit(env, req)); // its recipient page: no room, no 3D
     if (u.pathname === '/rt/share-bonus' || u.pathname === '/rt/redeem-code' || u.pathname === '/rt/link-reward') return promo(req, env, u);
     if (u.pathname === '/rt/report') return fileReport(req, env);
-    if (u.pathname.startsWith('/rt/card/')) return linkHit(env, ctx, req, 'card', await cardPage(req, env, u));
+    if (u.pathname.startsWith('/rt/card/')) return linkHit(env, ctx, req, 'card', await cardPage(req, env, u, ctx));
     if (u.pathname === '/rt/relight') return relightBoard(req, env, ctx);
     if (u.pathname === '/rt/ad-report') return adReportApi(req, env, u);
     if (u.pathname === '/rt/tribe' || u.pathname === '/rt/tribe/pledge') return tribeApi(req, env, u);
@@ -3678,7 +3756,7 @@ export default {
     if (u.pathname === '/rt/recap') return recapApi(req, env);
     if (u.pathname === '/rt/world' || u.pathname === '/rt/wallet' || u.pathname === '/rt/claim-billboard' || u.pathname === '/rt/buy-plot' || u.pathname === '/rt/sell-coins' || u.pathname === '/rt/flush-wallet' || u.pathname === '/rt/spend') return plaza(req, env, ctx, u);
     if (WISH_PATHS.has(u.pathname)) return wishApi(req, env, ctx, u);
-    if (u.pathname.startsWith('/rt/w/')) return linkHit(env, ctx, req, 'wish', await wishPage(req, env, u));
+    if (u.pathname.startsWith('/rt/w/')) return linkHit(env, ctx, req, 'wish', await wishPage(req, env, u, ctx));
     if (u.pathname === '/rt/invite') return inviteApi(req, env, ctx);
     if (u.pathname === '/rt/billboard-photo' || u.pathname.startsWith('/rt/photo/') || u.pathname.startsWith('/rt/admin/')) return photos(req, env, ctx, u);
     if (u.pathname === '/rt/grp') { const M = env.METER.get(env.METER.idFromName('grp'));

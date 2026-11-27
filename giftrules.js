@@ -358,10 +358,18 @@ export function giftView(g, now = Date.now()) {
     ...(Number(g.at) > 0 ? { fx: Number(g.at) < Number(g.a) ? 1 : 0 } : {}),
     // hearts (💖): only once the content is revealed (heartsOpen); before that the view has no such key.
     ...(heartsOpen(g, now) ? { hearts: Number(g.hr) || 0 } : {}),
+    // friends (공유 보상's word, towerrules.js friendsText): how many networks reacted on the page, only the count and only from the reveal
+    // (the owner's read carries mine.friends before it).
+    ...(heartsOpen(g, now) ? { friends: Number(g.fr) || 0 } : {}),
+    // tw: the booked main tower minute (towerrules.js), never how it was won (the owner's read carries mine.tw for that).
+    ...(g.tw && Number(g.tw.m) > 0 ? { tw: Number(g.tw.m) } : {}),
   };
 }
 // 💖 is taken and shown once the recipient page shows the board itself (pageLook past 'before'), and while the board's page lives.
 export function heartsOpen(g, now = Date.now()) { return !!g && giftPhase(g, now) !== 'gone' && Number(now) >= revealAt(g); }
+// 💖 is taken from the making on (the friends' threshold of the main tower minute counts before the day: towerrules.js); the count is
+// still shown only once heartsOpen.
+export function heartTakes(g, now = Date.now()) { return !!g && giftPhase(g, now) !== 'gone'; }
 // The recipient page's 🔗 공유하기: a visitor passing the page on (the owner's own words are in giftpage.js share). look: pageLook's.
 export function visitorShareText(g, look = 'live') {
   const o = OCCASIONS[g?.occ] || OCCASIONS.bday, to = String(g?.to || '') || '당신';
@@ -431,6 +439,8 @@ export const CER = Object.freeze({
 });
 // Page beacons (giftsrv.js SEEN_EV; ev:<key> in the daily counters): a device arrived at a ceremony; it saved or shared the group photo.
 export const CER_BEACONS = Object.freeze(['cer', 'cershot']);
+// 실사 축하 영상 (realvideo.js, the owner page): a scene picked, a video made, saved, shared, or the device could not make it.
+export const REAL_BEACONS = Object.freeze(['real_pick', 'real_made', 'real_save', 'real_share', 'real_fail']);
 export const CER_TEXT = Object.freeze({
   early: '10분 전부터 들어올 수 있어요',
   busy: '지금은 광장이 붐벼서 점등식에 들어갈 수 없어요. 잠시 뒤에 다시 해 주세요',

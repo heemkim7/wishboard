@@ -5,7 +5,8 @@
 // cheering crew (timesSquare3d.js giftShow), drawn into a 9:16 frame with the words and the free watermark, recorded with
 // MediaRecorder (MP4 where it can, WebM otherwise) and uploaded to the board when the Worker has the R2 store (else kept on the device).
 // main.js calls mountGift once and gift.apply(remote.gifts) with every world; ui.js is not touched (the button is put next to 🌠); the frame asks it for ui.layer.
-import { GIFT_ID, OCCASIONS, windowText, plazaLook, plazaNote, CER, CER_TEXT, cerStart, cerArrive, cerBack, cerDebugStart, cerSteps, cerDigit, cerPinMs, cerArriveNote, cerBand, cerPhotoText, beaconOnce, kstDay } from './giftrules.js';
+import { GIFT_ID, OCCASIONS, windowText, plazaLook, plazaNote, CER, CER_TEXT, cerStart, cerArrive, cerBack, cerDebugStart, cerSteps, cerDigit, cerPinMs, cerArriveNote, cerBand, cerPhotoText, beaconOnce, kstDay, revealAt } from './giftrules.js';
+import { towerLook } from './towerrules.js';
 import { nowMs, clock, skewOf } from './live.js';
 import { GIFT_SANS, fitSize } from './giftart.js?v=202611271045';
 import { recordCanvas, canRecord, saveBlob, fileName } from './giftfilm.js?v=202611271045';
@@ -114,7 +115,7 @@ if (CER_ID) cerGate();
 
 // budgetDown: a real budget-hard signal (net.js budgetHard), the only thing that sends a waiting ceremony visitor back; netDown: the
 // connection is down for another reason (net.js gateDown), which the ceremony only mentions once (the pin and the clock are local).
-export function mountGift({ world, ui, whenBuilt, introDone, budgetDown, netDown }) {
+export function mountGift({ world, ui, whenBuilt, introDone, budgetDown, netDown, towerAdd }) {
   const st = { list: [], busy: false };
   const style = document.createElement('style'); style.textContent = CSS; document.head.append(style);
   const note = (t, k, fn, o) => { try { ui?.note?.(t, k, fn, o); } catch { /* no toast */ } };
@@ -208,6 +209,12 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown, netDown
     if (!g || look === 'gone') { note('없어졌거나 가려진 선물 전광판이에요', 'err'); return; }
     if (look === 'wait') { note(`이 선물 전광판은 ${windowText(g.a, g.b)}에 걸려요`, 'ok', () => { location.href = '/g/' + id; }); return; }
     whenBuilt(() => {
+      // 메인 타워 축하 1분: in its minute the board is on the tower, for everyone. Right after boot the world's copy may not have come yet:
+      // the fetched view's minute (tw) is enough, once the board is revealed (main.js towerPush keeps it for that minute).
+      const t1 = nowMs();
+      if (!world?.towerSlot?.(id) && Number(g.tw) > 0 && towerLook(g.tw, t1) === 'live' && t1 >= revealAt(g)) towerAdd?.({ ...g, id, m: Number(g.tw) });
+      const face = world?.towerSlot?.(id);
+      if (face) { world.goToSlot?.(face); world.focusSlot?.(face, { hold: 0, celebrate: false }); setTimeout(() => world.cheerAt?.(face), 900); note('🎉 지금 메인 타워에 걸려 있어요!', 'ok'); return; }
       const slot = world?.pinGift?.(g, 60000);
       if (!slot) { note('지금은 이 전광판을 보여 줄 화면이 비어 있지 않아요', 'err'); return; }
       world.goToSlot?.(slot);

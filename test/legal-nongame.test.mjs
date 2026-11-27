@@ -21,16 +21,32 @@ describe('terms of the non-game service', () => {
     for (const w of ['출석', '공유', '전광판 구경과 응원', '하트', '친구 초대', '계정 연결', '조작하는 놀이나 추첨으로는 주지 않습니다', '응원 포인트를 돈을 받고 팔지 않습니다',
       '다른 사람에게 보내거나 넘길 수 없고', '현금 가치가 없으므로', '돈이나 다른 재산을 받고 사고팔거나 빌려줄 수 없고', '그 포인트를 거두거나']) assert.ok(p.includes(w), w);
     assert.equal(sec('terms', '코인'), '');
+    // 2026-11-27: the wish ranking prize and the sponsor code are gone; the terms say no points come from hearts, the ranking or a code
+    for (const w of ['소원 순위(어제의 소원)로는 포인트를 주지 않고', '하트 하나마다 주는 포인트도 없습니다', '코드를 넣어 받는 포인트도 없습니다']) assert.ok(p.includes(w), w);
+    for (const w of ['300, 200, 100', '10,000', '스폰서 코드', '⑨', '⑩']) assert.equal(p.includes(w), false, w);
+    // 메인 타워 축하 1분 (2026-11-27 설계): one place points are spent on the tower, one share reward, both with their numbers
+    for (const w of ['메인 타워 축하 1분(2,000)', '응원 팀 응원과 응원 팀 명당에는 쓰지 않습니다']) assert.ok(p.includes(w), w);
+    // 공유 보상 (owner, 2026-11-27): a link friend on gift pages, wish links and board links; account vs guest; steps 10 / 30; one network a day
+    for (const w of ['내 링크로 온 친구가 반응하면', '내 소원 링크를 열고 그 소원이 걸린 날(한국 시간) 안에', '내 전광판 링크를 열고 24시간 안에', '한 사람은 연결이 바뀌어도 하루 한 번', '1~10번째 친구는 계정이면 50', '11~30번째 친구는 계정이면 20',
+      '손님이면 몇 번째든 10', '31번째부터는 주지 않습니다', '하루 900까지', '하루 한 번만 친구로 세고', '내 계정과, 내가 만들거나 걸거나 링크를 공유한 인터넷 연결', '링크 미리보기 같은 자동 접속']) assert.ok(p.includes(w), w);
+    for (const w of ['하루 5명까지', '50(하루 5명']) assert.equal(p.includes(w), false, w);
+    assert.ok(p.includes('하트나 응원 수가 아니라') && p.indexOf('하트나 응원 수가 아니라') < p.indexOf('하트 하나마다 주는 포인트도 없습니다'), 'the share reward counts friends, said before the no-points-per-heart line');
+    assert.ok(p.includes('이 공유 보상 말고는 내 소원이나 전광판이 받은 하트와 응원'), 'the link-friend exception to "hearts and cheers give no points" is explicit');
   });
   it('prime screens are never sold and no payment counts toward them', () => {
     const p = sec('terms', '명당과 전광판');
     assert.match(p, /^명당\(메인 타워와 큰 화면\)은 돈으로 팔지 않습니다\./);
     assert.match(p, /어떤 유료 결제도 응원 포인트, 응원 목표, 팀 순위, 참여율 계산에 들어가지 않습니다/);
     assert.match(p, /추첨으로 정하지 않습니다/);
+    assert.match(p, /메인 타워 축하 1분은 응원 포인트 2,000이나 친구 응원 10곳으로, 남은 자리에서 먼저 고른 사람이 갖습니다/); assert.match(p, /누가 어떤 방법으로 올렸는지는 보이지 않습니다/);
+    assert.match(p, /하루 30자리/); assert.match(p, /정각과 밤 9시대는 응원 팀의 자리입니다/);
   });
   it('gift boards keep the recipient to a name, and the keepsake lasts seven days after the day', () => {
     const p = sec('terms', '선물 전광판과 롤링페이퍼');
     assert.match(p, /연락처는 적지 않습니다/); assert.match(p, /그날이 지나고 7일 동안/);
+  });
+  it('the 실사 축하 영상 is said to be an AI composite of a virtual scene, not a real broadcast', () => {
+    assert.match(sec('terms', '선물 전광판과 롤링페이퍼'), /실사 축하 영상은 AI로 만든 가상의 장면에 전광판을 합성한 영상이고, 실제 타임스퀘어에서 송출한 영상이 아닙니다\./);
   });
   it('content rules: consent for photos, idol names as cheer labels only, nothing of theirs in paid products, reports', () => {
     const p = sec('terms', '게시물');
@@ -58,6 +74,15 @@ describe('privacy policy of the non-game service', () => {
     const g = sec('privacy', '선물 전광판과 롤링페이퍼'), n = sec('privacy', '알림');
     for (const w of ['계정 번호 또는 손님 번호', '연락처가 아닌 화면에 보일 이름', '전화번호, 이메일, 주소는 받지 않습니다', '쓴 사람의 닉네임', '링크를 받은 사람은 누구나', 'Cloudflare R2', '그날이 지나고 7일 뒤에 지웁니다', '합계로만']) assert.ok(g.includes(w), w);
     for (const w of ['푸시 구독 정보', '열리면 알림', '광고성 정보', '(광고)', '밤 9시부터 다음 날 아침 8시까지는 보내지 않습니다', '이메일을 받지 않습니다', '60일']) assert.ok(n.includes(w), w);
+    // 메인 타워 축하 1분: the friends' networks (a hash, per board) and the bookings
+    assert.match(sec('privacy', '선물 전광판과 롤링페이퍼'), /하트를 누르거나 메시지를 남긴 인터넷 연결의 해시/);
+    // 실사 축하 영상: made on the device, never uploaded
+    assert.match(sec('privacy', '선물 전광판과 롤링페이퍼'), /실사 축하 영상은 이용자의 기기 안에서 만들어지고, 서버로 보내거나 저장하지 않습니다\./);
+    assert.match(sec('privacy', '선물 전광판과 롤링페이퍼'), /메인 타워 축하 1분을 고르면/); assert.match(sec('privacy', '선물 전광판과 롤링페이퍼'), /31일 동안/);
+    // 공유 보상 (2026-11-27): the network records it keeps, why, and how long; only the count is shown
+    const s = sec('privacy', '선물 전광판과 롤링페이퍼');
+    for (const w of ['소원 링크나 전광판 링크를 연 인터넷 연결의 해시', '이틀 동안', '마지막으로 쓴 날부터 30일', '8일 동안', '7일 동안', '다른 이용자에게는 친구 수만',
+      '어느 곳(선물 전광판, 소원, 전광판)의 무엇', '센 시각', '반응한 사람의 계정 번호나 손님 번호(토큰 없이 누른 하트는 그 기기의 해시)', '쿠키(kts_via)', '하루 동안', '광장에서 하트나 응원을 보낼 때']) assert.ok(s.includes(w), w);
   });
   it('names every processor the code uses, where it keeps data, and how to refuse', () => {
     const x = sec('privacy', '처리 위탁과 국외 이전');

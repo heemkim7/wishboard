@@ -62,8 +62,9 @@ describe('client: humanCall (net.js) for the coin rewards', { concurrency: false
       localStorage.setItem(GT_LS, JSON.stringify({ token: 'g1.a.b', sub: 'g-00000000-0000-4000-8000-000000000009', exp: Math.floor(Date.now() / 1000) + 30 * 86400 }));
       globalThis.fetch = async (url, opt) => { bodies.push([String(url), JSON.parse(opt.body)]); return json({ ok: true }); };
       const n = new net.Net();
-      await n.shareBonus(); await n.shareBonus('T1'); await n.redeemCode('GOLDCODE1'); await n.redeemCode('GOLDCODE1', 'T2'); await n.linkReward(); await n.linkReward('T3');
-      assert.deepEqual(bodies, [['/rt/share-bonus', {}], ['/rt/share-bonus', { ts: 'T1' }], ['/rt/redeem-code', { code: 'GOLDCODE1' }], ['/rt/redeem-code', { code: 'GOLDCODE1', ts: 'T2' }], ['/rt/link-reward', {}], ['/rt/link-reward', { ts: 'T3' }]]);
+      await n.shareBonus(); await n.shareBonus('T1'); await n.linkReward(); await n.linkReward('T3');
+      assert.deepEqual(bodies, [['/rt/share-bonus', {}], ['/rt/share-bonus', { ts: 'T1' }], ['/rt/link-reward', {}], ['/rt/link-reward', { ts: 'T3' }]]);
+      assert.equal(typeof n.redeemCode, 'undefined'); // the sponsor code is closed (2026-11-27): the page has no way to send one
       globalThis.fetch = async () => json(HUMAN_NO, 403);
       await assert.rejects(n.shareBonus(), (e) => e.code === 'human' && e.site === SITE);
       globalThis.fetch = async () => json({ ok: false, code: 'account', error: 'x' }, 403);
@@ -83,7 +84,7 @@ describe('client: human.js tokens for the rewards', () => {
     assert.equal(await human.humanToken(SITE, { ...p, action: 'bonus' }), 'T2'); assert.equal(p.win.turnstile.renders[1].action, 'bonus');
     assert.equal(await human.humanToken(SITE, { ...p, action: 'code' }), 'T3'); assert.equal(p.win.turnstile.renders[2].action, 'code');
     assert.equal(await human.humanToken(SITE, { ...p, action: 'login' }), 'T4'); assert.equal(p.win.turnstile.renders[3].action, 'guest');
-    assert.deepEqual(human.HUMAN_ACTIONS, ['guest', 'link', 'bonus', 'code', 'gift', 'gmsg', 'gvid']); assert.equal(p.doc.scripts.length, 1, 'one script for all of them'); // gift*: giftsrv.js
+    assert.deepEqual(human.HUMAN_ACTIONS, ['guest', 'link', 'bonus', 'code', 'gift', 'gmsg', 'gvid', 'theart', 'tower']); assert.equal(p.doc.scripts.length, 1, 'one script for all of them'); // gift*: giftsrv.js
     assert.deepEqual(p.win.turnstile.removed, ['w1', 'w2', 'w3', 'w4']);
   });
   it('a reward check that fails is quiet: no card, no reload button, and it neither sets nor obeys the guest failure', async () => {
@@ -107,14 +108,17 @@ describe('client: human.js tokens for the rewards', () => {
 describe('the pieces fit together', () => {
   const W_SRC = read('worker.js'), M = read('main.js'), N = read('net.js');
   it('worker.js asks each reward for its own action, and human.js knows them all', () => {
-    for (const [route, action] of [['/rt/link-reward', 'link'], ['/rt/share-bonus', 'bonus'], ['/rt/redeem-code', 'code']]) {
+    for (const [route, action] of [['/rt/link-reward', 'link'], ['/rt/share-bonus', 'bonus']]) {
       assert.ok(human.HUMAN_ACTIONS.includes(action)); assert.match(W_SRC, new RegExp("humanGate\\(env, req, [^\\n]*?, '" + action + "'\\)"), route);
     }
     assert.match(W_SRC, /u\.pathname === '\/rt\/share-bonus' \|\| u\.pathname === '\/rt\/redeem-code' \|\| u\.pathname === '\/rt\/link-reward'\) return promo\(req, env, u\)/);
+    // the closed sponsor code answers before any check: no humanGate 'code', no VIP_CODES read
+    assert.match(W_SRC, /async function promo\(req, env, u\) \{\n  if \(u\.pathname === '\/rt\/redeem-code'\) return J\(NO_CODE, 410\);/);
+    assert.equal(/humanGate\([^\n]*'code'\)/.test(W_SRC), false); assert.equal(/env\.VIP_CODES/.test(W_SRC), false);
   });
-  it('main.js: the share bonus and codes go through humanCall; a held link reward is claimed after the link, never before it, and not by a following window', () => {
+  it('main.js: the share bonus goes through humanCall (no code hook since 2026-11-27); a held link reward is claimed after the link, never before it, and not by a following window', () => {
     assert.match(M, /shareBonus: async \(\) => \{ const r = await humanCall\('bonus', \(ts\) => net\.shareBonus\(ts\)\);/);
-    assert.match(M, /redeemCode: async \(code\) => \{ const r = await humanCall\('code', \(ts\) => net\.redeemCode\(code, ts\)\);/);
+    assert.equal(/redeemCode/.test(M) || /redeem-code/.test(N), false);
     const fl = M.slice(M.indexOf('async function finishLink('), M.indexOf('async function bootAccount('));
     assert.ok(fl.indexOf('net.mergeGuest(') > 0 && fl.indexOf('net.mergeGuest(') < fl.indexOf('claimLinkReward(user, merged.held)'), 'the link goes first');
     assert.match(fl, /if \(merged\?\.held > 0 && !echo\) claimLinkReward\(user, merged\.held\);/);

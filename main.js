@@ -19,6 +19,7 @@ import { invCode, inviteFrom, inviteView } from './invite.js';
 import { saveClip, dropParams } from './share.js?v=202611271045';
 import { mountGift } from './gift.js?v=202611271045';
 import { GIFT_ID } from './giftrules.js';
+import { TOWER, towerAt, towerKey, towerWire } from './towerrules.js';
 import { welcomeDue, WELCOME, crowdFacts, kstDay, lockCelebration, wishAutoOpen, wishBootLine, awayRows, inboxUnread, seenAdd, liveKey, liveSeenAdd } from './ftue.js?v=202611271045';
 import { photoVerdicts } from './ftue.js?v=202611271045';
 import { WISH, cleanWish } from './wish.js';
@@ -184,6 +185,8 @@ const state = {
   prime: null,
   teams: [],
   team: null,
+  // 메인 타워 축하 1분 (towerrules.js): the booked minutes [{ id, m, to, from, occ, msg, th }] (/rt/world tower, the rooms' TOWER pushes).
+  tower: [],
   // ponytail: session cheers and ticker lines, a column if they must survive refresh
   cheers: {},
   notes: {},
@@ -352,6 +355,9 @@ const ui = createUI(document.getElementById('ui'), {
   teamRanks: (q) => net.teamGet('/rt/teams' + (q ? '?q=' + encodeURIComponent(q) : '')),
   prime: () => state.prime,
   primeOf: (slot) => world?.primeOf?.(slot) || null, // what a prime screen shows now (a team, or null)
+  // 메인 타워 축하 1분: the gift board a main tower face shows in its minute ('' none), and its page over the plaza (a tap on that face)
+  towerOf: (slot) => world?.towerOf?.(slot) || '',
+  openGiftPage: (id) => giftUi?.open?.('/g/' + id),
   myTeamId: () => state.team?.id || '',
   inbox: () => openInbox(),
   report: (slot, reason) => reportBoard(slot, reason),
@@ -429,7 +435,6 @@ const ui = createUI(document.getElementById('ui'), {
   frameBillboard: (slot) => { const ok = world?.frameBillboard?.(slot); if (ok) focusedSlot = String(slot || ''); return ok; },
   giftPop: (slot) => world?.giftPop?.(slot),
   shareBonus: async () => { const r = await humanCall('bonus', (ts) => net.shareBonus(ts)); refreshWallet(); return r; }, // a token first only while Turnstile is on
-  redeemCode: async (code) => { const r = await humanCall('code', (ts) => net.redeemCode(code, ts)); refreshWallet(); return r; },
   sponsorUrl: () => net.sponsorUrl(),
   minimap: () => world?.minimap(),
   hud: () => world?.hud(),
@@ -606,7 +611,7 @@ world = createTimesSquare(document.getElementById('view'), {
 window.G.world = world;
 window.G.ui = ui;
 errlogCtx({ tier: String(world?.quality || '') });
-giftUi = mountGift({ world, ui, whenBuilt, introDone: () => introDone(), budgetDown: () => !!net.budgetHard, netDown: () => !!net.gateDown }); // 선물 전광판: the 🎁 button, ?gb= links (and the 점등식), the 15-second video (gift.js)
+giftUi = mountGift({ world, ui, whenBuilt, introDone: () => introDone(), budgetDown: () => !!net.budgetHard, netDown: () => !!net.gateDown, towerAdd: (e) => towerPush(e) }); // 선물 전광판: the 🎁 button, ?gb= links (and the 점등식), the 15-second video (gift.js)
 
 // ---- 환영 전광판: the newcomer's first seconds --------------------------------------------------------------------------
 // Once the arrival intro has landed (or a sheet a link opened has closed), a newcomer who came without a link sees their own nickname on a free
@@ -1127,6 +1132,28 @@ function noteChains() {
   // A whole building lit by one side (only the main tower and the corners, prime screens now) is no news any more: nobody can claim them.
   chainSeen = new Set(list.map((c) => c.id));
 }
+// 메인 타워 축하 1분 (towerrules.js): /rt/world's tower, and the rooms' TOWER pushes merged into it (a booking made after this page loaded,
+// or its release). The news line goes once per booking when its minute starts (towerSeen), only after entering.
+// A /rt/world copy can be older than the pushes: towerOff ('id|m' -> m) keeps a released booking out of every later copy, towerPushed keeps a
+// pushed booking the copy does not carry yet. Both forget a booking once its minute is over. A release takes only that exact id and minute.
+const towerSeen = new Set(), towerOff = new Map(), towerPushed = new Map();
+let towerWorld = [];
+function applyTower(list) { towerWorld = (Array.isArray(list) ? list : []).map(towerWire).filter((e) => e && !e.off); towerMerge(); }
+function towerMerge() {
+  const t = nowMs(), over = (m) => m + TOWER.minMs <= t;
+  for (const [k, m] of towerOff) if (over(m)) towerOff.delete(k);
+  for (const [k, e] of towerPushed) if (over(e.m)) towerPushed.delete(k);
+  const keep = new Map();
+  for (const e of [...towerWorld, ...towerPushed.values()]) { const k = towerKey(e); if (!towerOff.has(k) && !keep.has(k)) keep.set(k, e); }
+  state.tower = [...keep.values()].sort((a, b) => a.m - b.m).slice(0, TOWER.worldMax);
+  world?.setTower?.(state.tower);
+}
+function towerPush(d) {
+  const w = towerWire(d); if (!w) return;
+  const k = towerKey(w);
+  if (w.off) { towerOff.set(k, w.m); towerPushed.delete(k); } else { towerOff.delete(k); towerPushed.set(k, w); }
+  towerMerge();
+}
 function applyPlaza(remote) {
   if (!remote) return;
   state.billboards = (remote.billboards || []).filter((b) => slotOf(b.slot_id));
@@ -1152,6 +1179,7 @@ function applyPlaza(remote) {
   world.setAds?.(remote.ads); // 광고 화면 (adsale.js adWorld checks it; a missing key is off and empty)
   if (giftUi) giftUi.apply(remote.gifts); else world.setGifts?.(remote.gifts); // 선물 전광판 up now (a missing key is none)
   world.setPrime?.(state.prime);
+  applyTower(remote.tower); // 메인 타워 축하 1분 (a missing key is none)
   markMine();
   paintCrown();
   photoNotice();
@@ -1233,7 +1261,7 @@ function mergeWishes(r, id) {
   w.given = Array.isArray(r.given) ? r.given.map(String) : [];
   w.yesterday = (Array.isArray(r.yesterday) ? r.yesterday : []).slice(0, 3).map((y) => ({
     id: String(y?.id || ''), rank: Math.floor(Number(y?.rank)) || 0, nick: chars(y?.nick, 16), txt: cleanWish(y?.txt),
-    hearts: Math.max(0, Math.floor(Number(y?.hearts) || 0)), prize: Math.max(0, Math.floor(Number(y?.prize) || 0)), mine: !!y?.mine,
+    hearts: Math.max(0, Math.floor(Number(y?.hearts) || 0)), mine: !!y?.mine, // no prize: a place pays no points since 2026-11-27
   })).filter((y) => y.txt);
   if (Number.isFinite(Number(r.count))) w.count = Math.max(0, Math.floor(Number(r.count)));
   if (id) {
@@ -1680,6 +1708,7 @@ net.on('gate', (g) => {
   if (g && g.live != null) ui.setCrowd(g.live);
 });
 net.onWorldUpdate((ev) => {
+  if (ev?.kind === 'TOWER') { towerPush(ev.data); return; } // 메인 타워 축하 1분: no board row changes, no news here (the minute says it)
   // No kind: the world changed in bulk (an account was withdrawn). Refetch, spread over 3 s so a full room does not ask at once.
   if (!ev?.kind) { if (!ev?.replay) setTimeout(refreshWorld, Math.random() * 3000); return; }
   if (Array.isArray(ev.ranks) && !ev.replay) state.ranks = ev.ranks;
@@ -2379,6 +2408,8 @@ setInterval(() => {
     world.setTicker(`🌠 별똥별 ${10 - shower.taken.size}개 남음 · ${left}초 · 별똥별 빛기둥에 서 보세요`);
   } else paintCrown();
   ui.setPeople(1 + (net.peers?.size || 0), net.shard || 1);
+  const e = entered && state.tower?.length ? towerAt(state.tower, nowMs()) : null;
+  if (e && !towerSeen.has(towerKey(e))) { towerSeen.add(towerKey(e)); ui.news('TOWER', e); }
 }, 1000);
 setInterval(savePlace, 1000);
 window.addEventListener('pagehide', savePlace);

@@ -51,6 +51,9 @@ self.addEventListener('fetch', (event) => {
   let url;
   try { url = new URL(req.url); } catch { return; }
   if (url.origin !== self.location.origin || !url.pathname.startsWith('/assets/')) return;
+  // 실사 축하 영상 plates (5-8 MB each, versioned by ?v=): straight to the network, so the page sees the download as it comes and a full
+  // cache never stops one. Not cached here.
+  if (url.pathname.startsWith('/assets/plates/')) return;
   event.respondWith(fromAssetCache(req));
 });
 

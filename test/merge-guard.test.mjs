@@ -733,34 +733,47 @@ describe('the share bonus and the VIP code', { concurrency: false }, () => {
     } finally { s.done(); }
   });
 
-  it('share bonus: once a day per account and per address, remembered in the acct instance, the address hashed', async () => {
+  // Owner decision 2026-11-27: the account gets the share bonus once, ever (still paid on the share itself); the network stays once a KST day.
+  const ONCE = { ok: false, code: 'once', error: '공유 보너스는 계정마다 한 번만 받아요.' };
+  const NET = { ok: false, code: 'net', error: '오늘 이 인터넷 연결에서는 이미 공유 보너스를 받았어요. 내일 다시 해 주세요.' };
+  it('share bonus: once per account ever and once a KST day per network, remembered in the acct instance, the address hashed', async () => {
     const s = await scene(db);
     try {
-      const a = await s.linked(), b = await s.linked(), c = await s.linked(), M = s.env.meter('acct').do, log = spyDo(s.env);
+      const a = await s.linked(), b = await s.linked(), c = await s.linked(), d = await s.linked(), M = s.env.meter('acct').do, sql = s.env.meter('acct').sql.db, log = spyDo(s.env);
       const claim = async (who, ip) => { const res = await s.post('/rt/share-bonus', {}, who.token, ip); return { status: res.status, body: await res.json() }; };
       const grants = () => s.state.rpcs.filter((x) => x.startsWith('grant_coins ')).length;
       const first = await claim(a, '7.7.7.1'); assert.equal(first.status, 200); assert.equal(first.body.amount, 300); assert.equal(await s.coins(a.id), 740);
       assert.deepEqual(s.acctCalls(log, /^promo/), ['acct.promoTake']);
-      const rows = s.env.meter('acct').sql.db.prepare('select k, d from prm order by k').all();
-      assert.equal(rows.length, 2); assert.equal(rows[1].k, 's:' + a.id); assert.match(rows[0].k, /^i:[0-9a-f]{16}$/); assert.equal(JSON.stringify(rows).includes('7.7.7.1'), false);
+      const once = sql.prepare('select k, d from prs').all(), rows = sql.prepare('select k, d from prm').all();
+      assert.equal(once.length, 1); assert.equal(once[0].k, 's:' + a.id); // the account: a row of its own that is never pruned
+      assert.equal(rows.length, 1); assert.match(rows[0].k, /^i:[0-9a-f]{16}$/); assert.equal(JSON.stringify(rows).includes('7.7.7.1'), false); // the network, hashed
+      const day = rows[0].d; assert.equal(once[0].d, day);
       // What another isolate would see: this one's memory is not asked, the acct record alone refuses.
-      const day = rows[0].d;
       assert.deepEqual(M.promoTake(['s:' + a.id, 'i:someone-else'], day), ['s:' + a.id]); // the account, from another address
       assert.deepEqual(M.promoTake(['s:' + b.id, rows[0].k], day), [rows[0].k]); // another account, from the same address
       assert.equal(M.promoTake(['s:' + b.id, 'i:other'], day), true); // b claimed somewhere else: only the acct instance knows
-      const g0 = grants(), no = await claim(b, '7.7.7.2'); assert.equal(no.status, 400); assert.equal(no.body.error, '오늘은 이미 공유 보너스를 받았어요.'); assert.equal(grants(), g0);
-      // A grant that fails gives the day back, so the claim can be made again.
+      const g0 = grants(), no = await claim(b, '7.7.7.2'); assert.equal(no.status, 400); assert.deepEqual(no.body, ONCE); assert.equal(grants(), g0);
+      const fam = await claim(d, '7.7.7.1'); assert.equal(fam.status, 400); assert.deepEqual(fam.body, NET); assert.equal(grants(), g0); // a's network, today
+      // A grant that fails gives the record back, so the claim can be made again; then it is the account's one.
       s.state.fail = (name) => (name === 'grant_coins' ? json({ message: 'upstream' }, 500) : null);
-      const bad = await claim(c, '7.7.7.3'); assert.equal(bad.status, 502);
+      const bad = await claim(c, '7.7.7.3'); assert.equal(bad.status, 502); assert.equal(sql.prepare('select count(*) n from prs where k = ?').get('s:' + c.id).n, 0);
       s.state.fail = null; const again = await claim(c, '7.7.7.3'); assert.equal(again.status, 200); assert.equal(await s.coins(c.id), 740);
-      assert.equal((await claim(c, '7.7.7.3')).status, 400);
-      // The next day everything is open again and yesterday's rows are gone.
-      s.clock.add(864e5); assert.equal((await claim(a, '7.7.7.1')).status, 200);
-      assert.equal(s.env.meter('acct').sql.db.prepare('select count(*) n from prm where d = ?').get(day).n, 0);
+      assert.deepEqual((await claim(c, '7.7.7.3')).body, ONCE);
+      // The next day the networks are open again and yesterday's network rows are gone; the accounts are not open again.
+      s.clock.add(864e5);
+      for (const ip of ['7.7.7.1', '7.7.7.9']) { const r = await claim(a, ip); assert.equal(r.status, 400); assert.deepEqual(r.body, ONCE); }
+      const next = await claim(d, '7.7.7.1'); assert.equal(next.status, 200); assert.equal(await s.coins(d.id), 740); // another account on a's network, the next day
+      assert.equal(sql.prepare('select count(*) n from prm where d = ?').get(day).n, 0); assert.equal(sql.prepare('select count(*) n from prs').get().n, 4);
+      const day2 = sql.prepare('select d from prm').get().d; assert.notEqual(day2, day);
+      assert.deepEqual(M.promoTake(['s:' + a.id, 'i:fresh'], day2), ['s:' + a.id]); // another isolate, the next day: the acct record alone refuses
+      assert.equal(await s.coins(a.id), 740); assert.equal(await s.coins(b.id), 440); // a was paid once, b (claimed elsewhere) never here
+      // A guest is still refused before anything is asked or counted.
+      const g = await s.guest(), gl = spyDo(s.env), gr = await claim(g, '7.7.7.5'); assert.equal(gr.status, 403); assert.equal(gr.body.code, 'account'); assert.deepEqual(gl, []);
       // The address key is the network: another address in the same IPv6 /64 is the same address (one phone cannot walk through its /64).
-      const v6 = await claim(b, '2001:db8:1:2::10'); assert.equal(v6.status, 200);
-      const same = await claim(c, '2001:db8:1:2:ffff::99'); assert.equal(same.status, 400); assert.equal(same.body.error, '오늘은 이미 공유 보너스를 받았어요.');
-      assert.equal((await claim(c, '2001:db8:1:3::10')).status, 200); // the next /64 is another network
+      const e = await s.linked(), f = await s.linked();
+      const v6 = await claim(e, '2001:db8:1:2::10'); assert.equal(v6.status, 200);
+      const same = await claim(f, '2001:db8:1:2:ffff::99'); assert.equal(same.status, 400); assert.deepEqual(same.body, NET);
+      assert.equal((await claim(f, '2001:db8:1:3::10')).status, 200); // the next /64 is another network
     } finally { s.done(); }
   });
 
@@ -779,26 +792,16 @@ describe('the share bonus and the VIP code', { concurrency: false }, () => {
     } finally { s.done(); }
   });
 
-  it('redeem code: one use per account and code, kept in the acct instance (hashed), so another isolate refuses it too; closed when it cannot be asked', async () => {
+  it('redeem code is closed (2026-11-27): 410 off before any token check, acct call or grant, even with VIP_CODES set', async () => {
     const s = await scene(db, { VIP_CODES: 'GOLDCODE1, SILVERCODE2' });
     try {
-      const a = await s.guest(), b = await s.guest(), M = s.env.meter('acct').do, log = spyDo(s.env);
-      const redeem = async (who, code) => { const res = await s.post('/rt/redeem-code', { code }, who.token); return { status: res.status, body: await res.json() }; };
-      const ok = await redeem(a, 'GOLDCODE1'); assert.equal(ok.status, 200); assert.equal(ok.body.amount, 10000); assert.equal(await s.coins(a.id), 10140);
-      assert.deepEqual(s.acctCalls(log, /^code/), ['acct.codeTake']);
-      const rows = s.env.meter('acct').sql.db.prepare('select k from vcu').all(); assert.equal(rows.length, 1); assert.match(rows[0].k, /^v:[0-9a-f]{32}$/);
-      assert.equal(JSON.stringify(rows).includes('GOLDCODE1'), false); assert.equal(JSON.stringify(rows).includes(a.id), false);
-      assert.equal(M.codeTake(rows[0].k), false); // what another isolate's call gets: the record alone refuses
-      assert.deepEqual((await redeem(a, 'GOLDCODE1')).body, { ok: false, error: '이미 사용한 코드예요.' });
-      assert.equal((await redeem(a, 'SILVERCODE2')).status, 200); assert.equal((await redeem(b, 'GOLDCODE1')).status, 200); // another code, another account
-      assert.deepEqual((await redeem(b, 'NOTACODE99')).body, { ok: false, error: '코드가 맞지 않아요.' });
-      // A grant that fails hands the use back; the acct call failing, or budget hard, refuses without paying.
-      const c = await s.guest(); s.state.fail = (name) => (name === 'grant_coins' ? json({ message: 'upstream' }, 500) : null);
-      assert.equal((await redeem(c, 'GOLDCODE1')).status, 502); s.state.fail = null;
-      const real = s.env.METER.get; s.env.METER.get = (n) => (n === 'acct' ? new Proxy(real(n), { get: (t, k) => (k === 'codeTake' ? async () => { throw new Error('do down'); } : t[k]) }) : real(n));
-      const down = await redeem(c, 'GOLDCODE1'); assert.equal(down.status, 503); assert.deepEqual(down.body, HARD); s.env.METER.get = real;
-      await s.hard(); const hard = await redeem(c, 'GOLDCODE1'); assert.equal(hard.status, 503); assert.deepEqual(hard.body, HARD);
-      await s.calm(); assert.equal((await redeem(c, 'GOLDCODE1')).status, 200); assert.equal(await s.coins(c.id), 10140);
+      const a = await s.guest(), log = spyDo(s.env), before = await s.coins(a.id);
+      const redeem = async (who, code) => { const res = await s.post('/rt/redeem-code', { code }, who?.token); return { status: res.status, body: await res.json() }; };
+      for (const [who, code] of [[a, 'GOLDCODE1'], [a, 'SILVERCODE2'], [a, 'NOTACODE99'], [null, 'GOLDCODE1']]) {
+        const r = await redeem(who, code); assert.equal(r.status, 410); assert.deepEqual(r.body, { ok: false, code: 'off', error: '스폰서 코드는 닫혔어요. 코드로 주는 응원 포인트는 없어요.' });
+      }
+      assert.deepEqual(s.acctCalls(log, /^code/), []);
+      assert.equal(await s.coins(a.id), before);
     } finally { s.done(); }
   });
 });
@@ -840,13 +843,31 @@ describe('Meter leases, marks and the share-bonus record', () => {
     assert.equal(m.stTake('guest:c', 60, 140), 60); // not settled by a link that was not a first one
     assert.deepEqual(m.stFirst('guest:d', 70, 140, 'hash-2'), { gone: false, part: 0 }); assert.deepEqual(m.stFirst('guest:e', 70, 140, ''), { gone: false, part: 0 });
   });
-  it('promoTake / promoGive: all keys or none, per day, older days dropped', () => {
-    const m = new Meter(makeCtx(sqliteStorage()), {});
+  it('promoTake / promoGive: all keys or none; an account key once ever, a network key once a day, older network days dropped', () => {
+    const m = new Meter(makeCtx(sqliteStorage()), {}), n = (t) => m.ctx.storage.sql.exec(`select count(*) n from ${t}`).one().n;
     assert.equal(m.promoTake(['s:a', 'i:1'], '2029-01-02'), true); assert.deepEqual(m.promoTake(['s:a', 'i:2'], '2029-01-02'), ['s:a']); assert.deepEqual(m.promoTake(['s:b', 'i:1'], '2029-01-02'), ['i:1']);
     assert.equal(m.promoTake(['s:b', 'i:2'], '2029-01-02'), true); // the refused ones took nothing
-    m.promoGive(['s:a', 'i:1'], '2029-01-02'); assert.equal(m.promoTake(['s:a', 'i:1'], '2029-01-02'), true);
-    assert.equal(m.promoTake(['s:a', 'i:1'], '2029-01-03'), true); assert.equal(m.ctx.storage.sql.exec('select count(*) n from prm').one().n, 2);
+    m.promoGive(['s:a', 'i:1'], '2029-01-02'); assert.equal(m.promoTake(['s:a', 'i:1'], '2029-01-02'), true); // a failed grant hands both back
+    // The next day the networks are open again, the accounts are not.
+    assert.deepEqual(m.promoTake(['s:a', 'i:1'], '2029-01-03'), ['s:a']); assert.deepEqual(m.promoTake(['s:b', 'i:9'], '2029-01-03'), ['s:b']);
+    assert.equal(m.promoTake(['s:c', 'i:1'], '2029-01-03'), true);
+    assert.deepEqual(m.promoTake(['s:a', 'i:5'], '2030-06-01'), ['s:a']); // a year later too
+    assert.equal(n('prs'), 3); assert.equal(m.ctx.storage.sql.exec("select count(*) n from prm where d < '2030-06-01'").one().n, 0);
+    m.promoGive(['s:c'], '2029-01-02'); assert.deepEqual(m.promoTake(['s:c', 'i:7'], '2030-06-01'), ['s:c']); // a hand-back names its own day: it never frees an older record
     assert.equal(m.promoTake([], '2029-01-03'), false); assert.equal(m.promoTake(['s:z'], ''), false);
+  });
+  it('promoTake: the account rows prm kept while the bonus was daily move into prs, and an account row left in prm refuses on any day', () => {
+    const m = new Meter(makeCtx(sqliteStorage()), {}), q = m.ctx.storage.sql;
+    q.exec('create table prm(k text, d text, primary key(k, d))'); // as the daily version left it on the day of the deploy
+    for (const [k, d] of [['s:today', '2029-01-02'], ['i:net', '2029-01-02'], ['s:twice', '2029-01-01'], ['s:twice', '2029-01-02']]) q.exec('insert into prm(k, d) values(?, ?)', k, d);
+    assert.deepEqual(m.promoTake(['s:today', 'i:other'], '2029-01-02'), ['s:today']); // got it today, before the change: not paid again
+    assert.deepEqual(q.exec('select k, d from prs order by k').toArray().map((r) => [r.k, r.d]), [['s:today', '2029-01-02'], ['s:twice', '2029-01-01']]);
+    assert.equal(q.exec("select count(*) n from prm where k like 's:%'").one().n, 0);
+    assert.deepEqual(m.promoTake(['s:new', 'i:net'], '2029-01-02'), ['i:net']); // the network row stays a network row for that day
+    assert.equal(m.promoTake(['s:new', 'i:net'], '2029-01-03'), true);
+    q.exec("insert into prm(k, d) values('s:late', '2029-01-03')"); // a row an older Worker wrote after the move
+    assert.deepEqual(m.promoTake(['s:late', 'i:x'], '2029-02-01'), ['s:late']); // pruning keeps it, and it still refuses
+    assert.equal(m.promoTake(['s:gone-before', 'i:y'], '2029-02-01'), true); // a record already pruned before the change is not known: paid once more
   });
 });
 

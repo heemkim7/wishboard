@@ -2,7 +2,7 @@
 import { blockedText } from './plaza-account.js';
 import { botNick } from './league.js';
 
-export const WISH = Object.freeze({ maxLen: 24, heartsPerDay: 5, ipHeartsPerWish: 3, reportHide: 3, topMax: 50, recentMax: 20, boardMax: 24, keepDays: 8, prizes: Object.freeze([300, 200, 100]), prizeMinHearts: 5, prizeMinIps: 3, editsPerDay: 3, editGapMs: 30000, ipPostsPerDay: 20 });
+export const WISH = Object.freeze({ maxLen: 24, heartsPerDay: 5, ipHeartsPerWish: 3, reportHide: 3, topMax: 50, recentMax: 20, boardMax: 24, keepDays: 8, winTop: 3, winMinHearts: 5, winMinIps: 3, editsPerDay: 3, editGapMs: 30000, ipPostsPerDay: 20 });
 
 // Korean copy for every error code the wish routes return (`code` in the JSON), so the client can show the same text.
 export const WISH_ERR = Object.freeze({
@@ -99,11 +99,11 @@ export function rankWishes(rows) {
     .map((r, i) => ({ ...r, rank: i + 1 }));
 }
 
-// ips = distinct IP nets that gave the wish hearts; a prize needs WISH.prizeMinIps of them.
-export function prizeFor(rank, hearts, ips) {
+// Yesterday's wishes (어제의 소원, the plaza king): rank 1..winTop with winMinHearts hearts from winMinIps distinct IP nets. A place in that list
+// pays nothing: the 300/200/100 points it used to pay were removed on 2026-11-27 (docs/point-sources-2026-11-27.md).
+export function winsDay(rank, hearts, ips) {
   const r = Math.floor(Number(rank));
-  if (!(r >= 1 && r <= WISH.prizes.length) || !((Number(hearts) || 0) >= WISH.prizeMinHearts) || !((Number(ips) || 0) >= WISH.prizeMinIps)) return 0;
-  return WISH.prizes[r - 1];
+  return r >= 1 && r <= WISH.winTop && (Number(hearts) || 0) >= WISH.winMinHearts && (Number(ips) || 0) >= WISH.winMinIps;
 }
 
 // Up to max distinct wishes, alternating top-ranked and newest, so a fresh wish with no hearts still reaches a board.

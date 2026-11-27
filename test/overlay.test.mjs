@@ -365,8 +365,10 @@ describe('ui.js: taps, late answers, buttons that come back', () => {
     assert.equal(/class: 'acts'/.test(card), false);
     assert.match(ui, /h\('div', \{ class: 'acts' \}, boostBtn, actBtn, jumpBtn\)/); // the column keeps its own class
   });
-  it('an answer that comes back late closes only its own sheet (plot purchase, profile, sponsor code)', () => {
-    for (const [from, to] of [['  function openPlot(', '  function openHub('], ['  function openProfile(', '  // ---------------------------------------------------------------- boot / onboarding'], ['  function openVip(', '  // ---------------------------------------------------------------- city map']]) {
+  it('an answer that comes back late closes only its own sheet (plot purchase, profile; the sponsor code that did this is gone since 2026-11-27)', () => {
+    const vip = ui.slice(ui.indexOf('  function openVip('), ui.indexOf('  // ---------------------------------------------------------------- city map'));
+    assert.ok(vip.length > 200); assert.equal(/closeSheet\(\)|redeemCode/.test(vip), false, 'the share sheet closes nothing after an await and asks for no code');
+    for (const [from, to] of [['  function openPlot(', '  function openHub('], ['  function openProfile(', '  // ---------------------------------------------------------------- boot / onboarding']]) {
       const src = ui.slice(ui.indexOf(from), ui.indexOf(to));
       assert.ok(src.length > 200, from);
       assert.match(src, /const me = sheet;/, from);

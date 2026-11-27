@@ -253,19 +253,16 @@ describe('board edits are spaced per account', { concurrency: false }, () => {
 describe('subrequest caps', { concurrency: false }, () => {
   it('the dark alarm handles at most 6 rows a pass', () => { assert.equal(DARK.passMax, 6); });
 
-  it('wish prizes: at most 3 paid per settlement run, the rest on the next run 60 s later, each once', async () => {
+  it('wish settlement pays no winner (the wish prize was removed on 2026-11-27), so it spends no subrequest on it', async () => {
     const { clock, state, done } = setup();
     try {
       const env = makeEnv(), { get } = harness(env), m = env.meter('wish').do, now = clock.now(), want = [];
       for (const back of [2, 1]) { const day = wishDay(now - back * 864e5);
         for (let k = 0; k < 3; k++) { const uid = `guest:win${back}${k}`, w = m.wPost(uid, '가', '소원 ' + back + k, day, now - back * 864e5 + k).wish; want.push(uid);
           for (let i = 0; i < 8 - k; i++) assert.equal(m.wHeart(`guest:h${back}${k}${i}`, w.id, 'ip' + i, day).ok, true); } }
-      await get('/rt/wishes'); assert.equal(state.paid.length, 3);
-      clock.add(30000); await get('/rt/wishes'); assert.equal(state.paid.length, 3, 'not again inside 60 s');
-      clock.add(31000); await get('/rt/wishes'); assert.equal(state.paid.length, 6);
-      clock.add(61000); await get('/rt/wishes'); clock.add(61000); await get('/rt/wishes');
-      assert.deepEqual(state.paid.map((p) => p.p_actor_id).sort(), want.sort(), 'every winner once, nobody twice');
-      assert.deepEqual(state.paid.map((p) => p.p_amount).sort(), [100, 100, 200, 200, 300, 300]);
+      for (const ms of [0, 30000, 31000, 61000, 61000]) { clock.add(ms); await get('/rt/wishes'); }
+      assert.deepEqual(state.paid, [], 'six winners over two days: no grant_coins, no subrequest for it');
+      assert.equal(want.length, 6);
     } finally { done(); }
   });
 

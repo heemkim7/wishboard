@@ -82,7 +82,7 @@ describe('first load budget', () => {
 
   it('bumps the service worker cache with the new assets', () => {
     const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-    assert.match(html, /register\('\/sw\.js\?v=10'\)/);
+    assert.match(html, /register\('\/sw\.js\?v=11'\)/); // 11: the 실사 영상 plates are left to the network (sw.js)
   });
 });
 

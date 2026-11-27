@@ -13,7 +13,7 @@ globalThis.WebSocketRequestResponsePair = class { constructor(req, res) { this.r
 
 const { Room, Meter } = await import('../worker.js');
 const worker = (await import('../worker.js')).default;
-const { WISH, WISH_ERR, cleanWish, wishFault, wishRejected, wishNickFault, ipNet, wishDay, rankWishes, prizeFor, boardMix, wishShareText } = await import('../wish.js');
+const { WISH, WISH_ERR, cleanWish, wishFault, wishRejected, wishNickFault, ipNet, wishDay, rankWishes, winsDay, boardMix, wishShareText } = await import('../wish.js');
 
 // Same harness as plaza.test.mjs: real DOs on in-memory SQLite behind a stub that copies arguments and results like the runtime does.
 function sqliteStorage() {
@@ -96,7 +96,7 @@ const hasActor = (s) => /guest:|user:/.test(String(s));
 describe('wish rules (wish.js)', () => {
   it('pins the limits', () => {
     assert.ok(Object.isFrozen(WISH));
-    assert.deepEqual({ ...WISH, prizes: [...WISH.prizes] }, { maxLen: 24, heartsPerDay: 5, ipHeartsPerWish: 3, reportHide: 3, topMax: 50, recentMax: 20, boardMax: 24, keepDays: 8, prizes: [300, 200, 100], prizeMinHearts: 5, prizeMinIps: 3, editsPerDay: 3, editGapMs: 30000, ipPostsPerDay: 20 });
+    assert.deepEqual({ ...WISH }, { maxLen: 24, heartsPerDay: 5, ipHeartsPerWish: 3, reportHide: 3, topMax: 50, recentMax: 20, boardMax: 24, keepDays: 8, winTop: 3, winMinHearts: 5, winMinIps: 3, editsPerDay: 3, editGapMs: 30000, ipPostsPerDay: 20 });
   });
   it('blocks Korean phone-number shapes in text and nick (not dates, scores or lotto numbers), and links in the nick', () => {
     const PHONES = ['010-1234-5678', '01012345678', '010 1234 5678', '010.1234.5678', '02-123-4567', '+82 10 1234 5678', '연락 0101234 5678', '연락 010-1234-5678 주세요'];
@@ -145,12 +145,13 @@ describe('wish rules (wish.js)', () => {
     assert.equal(wishDay(Date.parse('2026-11-15T15:00:00Z')), '2026-11-16');
     assert.match(wishDay(), /^\d{4}-\d{2}-\d{2}$/);
   });
-  it('ranks by hearts, then the earlier wish; prizes need rank 1-3, 5 hearts and 3 IP nets', () => {
+  it('ranks by hearts, then the earlier wish; yesterday\'s list needs rank 1-3, 5 hearts and 3 IP nets, and no amount comes with it', () => {
     const r = rankWishes([{ id: 'a', hearts: 2, at: 5 }, { id: 'b', hearts: 7, at: 9 }, { id: 'c', hearts: 2, at: 1 }]);
     assert.deepEqual(r.map((x) => [x.id, x.rank]), [['b', 1], ['c', 2], ['a', 3]]);
-    assert.equal(prizeFor(1, 5, 3), 300); assert.equal(prizeFor(2, 9, 9), 200); assert.equal(prizeFor(3, 5, 3), 100);
-    assert.equal(prizeFor(3, 4, 9), 0); assert.equal(prizeFor(4, 99, 99), 0); assert.equal(prizeFor(0, 99, 99), 0);
-    assert.equal(prizeFor(1, 50, 2), 0); assert.equal(prizeFor(1, 50), 0);
+    assert.equal(winsDay(1, 5, 3), true); assert.equal(winsDay(2, 9, 9), true); assert.equal(winsDay(3, 5, 3), true);
+    assert.equal(winsDay(3, 4, 9), false); assert.equal(winsDay(4, 99, 99), false); assert.equal(winsDay(0, 99, 99), false);
+    assert.equal(winsDay(1, 50, 2), false); assert.equal(winsDay(1, 50), false);
+    assert.equal('prizes' in WISH, false); // the 300/200/100 wish prize was removed on 2026-11-27
   });
   it('mixes top and recent without duplicates', () => {
     const t = [{ id: 'a' }, { id: 'b' }, { id: 'c' }], n = [{ id: 'z' }, { id: 'a' }, { id: 'y' }];
@@ -247,32 +248,34 @@ describe('wish meter (instance wish)', { concurrency: false }, () => {
     const full = m.wBoard('2026-11-21');
     assert.equal(full.length, WISH.boardMax); assert.equal(full.some((x) => x.txt.startsWith('어제')), false);
   });
-  it('settles at most once per winner: handed-out winners are marked paid, only a clear refusal hands them out again, 5 attempts', () => {
+  it('settlement keeps yesterday\'s winners and hands nobody out for payment (the wish prize is gone since 2026-11-27)', () => {
     const m = meter(), y = '2026-11-19', d = '2026-11-20';
     const w = ['a', 'b', 'c', 'e'].map((k, i) => m.wPost('guest:' + k, k.toUpperCase(), k, y, i).wish);
     give(m, w[0].id, 6, y); give(m, w[1].id, 5, y, 2); give(m, w[2].id, 4, y); give(m, w[3].id, 7, y); // b: third by hearts, but only 2 IP nets
-    let due = m.wSettle(d, 1e6);
-    assert.deepEqual(due.map((x) => [x.uid, x.rank, x.prize]).sort(), [['guest:a', 2, 200], ['guest:e', 1, 300]]);
-    assert.equal(due.every((x) => x.day === y && x.id), true);
-    assert.deepEqual(m.wSettle(d, 1e6 + 120000), []); // handed out = paid; a lost answer never pays again
-    m.wUnpay(y, w[0].id); // clear refusal (no wallet row)
-    assert.deepEqual(m.wSettle(d, 1e6 + 1000), []); // 60 s apart
-    for (let i = 2; i <= 5; i++) { assert.deepEqual(m.wSettle(d, 1e6 + i * 120000).map((x) => x.uid), ['guest:a']); m.wUnpay(y, w[0].id); }
-    assert.deepEqual(m.wSettle(d, 1e6 + 9 * 120000), []); // five attempts used up
+    assert.deepEqual(m.wSettle(d, 1e6), []);
+    assert.deepEqual(m.wSettle(d, 1e6 + 120000), []);
+    assert.equal(typeof m.wUnpay, 'undefined');
+    assert.deepEqual(m.wWin(y).map((x) => [x.uid, x.rank]), [['guest:e', 1], ['guest:a', 2]]);
+    assert.equal(m.wWin(y).some((x) => 'prize' in x || 'paid' in x), false);
     const l = m.wList(d, 'guest:e');
-    assert.deepEqual(l.yesterday.map((x) => [x.rank, x.nick, x.prize, x.mine]), [[1, 'E', 300, true], [2, 'A', 200, false]]);
+    assert.deepEqual(l.yesterday.map((x) => [x.rank, x.nick, x.mine]), [[1, 'E', true], [2, 'A', false]]);
+    assert.equal(l.yesterday.some((x) => 'prize' in x), false);
     assert.equal(hasActor(JSON.stringify(l.yesterday)), false);
     assert.deepEqual(m.wWorld(d).king, { nick: 'E', txt: 'e', hearts: 7 });
+    // A day stored before the change still carries prize and paid fields: nothing shows them and nothing hands them out.
+    m.ctx.storage.sql.exec('update wst set j = ? where day = ?', JSON.stringify(m.wWin(y).map((x) => ({ ...x, prize: 300, paid: 0, tries: 0, at: 0 }))), y);
+    assert.deepEqual(m.wSettle(d, 2e6), []);
+    assert.equal(m.wList(d, 'guest:e').yesterday.some((x) => 'prize' in x), false);
   });
-  it('drops a winner hidden after settlement from yesterday, king and payment', () => {
+  it('drops a winner hidden after settlement from yesterday and king', () => {
     const m = meter(), y = '2026-11-19', d = '2026-11-20';
     const a = m.wPost('guest:a', 'A', 'a', y, 1).wish, b = m.wPost('guest:b', 'B', 'b', y, 2).wish;
     give(m, a.id, 7, y); give(m, b.id, 5, y);
-    m.wSettle(d, 1e6); m.wUnpay(y, a.id); m.wUnpay(y, b.id);
+    m.wSettle(d, 1e6);
     m.wHide(a.id, true);
     assert.equal(m.wWorld(d).king, null); // ranks stay as settled: a hidden first place leaves no king
     assert.deepEqual(m.wList(d, '').yesterday.map((x) => [x.rank, x.nick]), [[2, 'B']]);
-    assert.deepEqual(m.wSettle(d, 1e6 + 120000).map((x) => x.uid), ['guest:b']);
+    assert.deepEqual(m.wSettle(d, 1e6 + 120000), []);
     // not settled yet: the live pick skips hidden wishes too
     const m2 = meter(), c = m2.wPost('guest:c', 'C', 'c', y, 1).wish; give(m2, c.id, 6, y); m2.wHide(c.id, true);
     assert.equal(m2.wWorld(d).king, null); assert.deepEqual(m2.wSettle(d, 1e6), []);
@@ -281,7 +284,8 @@ describe('wish meter (instance wish)', { concurrency: false }, () => {
     const m = meter();
     const old = m.wPost('guest:o', 'O', '사흘 전', '2026-11-17', 1).wish, mid = m.wPost('guest:p', 'P', '이틀 전', '2026-11-18', 1).wish;
     give(m, old.id, 5, '2026-11-17'); give(m, mid.id, 6, '2026-11-18');
-    assert.deepEqual(m.wSettle('2026-11-20', 1e6).map((x) => [x.day, x.uid, x.prize]), [['2026-11-17', 'guest:o', 300], ['2026-11-18', 'guest:p', 300]]);
+    assert.deepEqual(m.wSettle('2026-11-20', 1e6), []);
+    assert.deepEqual(['2026-11-17', '2026-11-18'].map((day) => m.wWin(day).map((x) => x.uid)), [['guest:o'], ['guest:p']]); // both days snapshotted
     assert.deepEqual(m.wSettle('2026-11-21', 2e6), []);
     assert.deepEqual(m.wSettle('2026-12-05', 1e7), []);
     assert.equal(m.wOne(old.id), null); // pruned after keepDays
@@ -298,13 +302,13 @@ describe('wish meter (instance wish)', { concurrency: false }, () => {
   it('moves a guest wish, hearts, reports and stored winners to the user; keeps the user wish when both exist', () => {
     const m = meter(), y = '2026-11-19', d = '2026-11-20', q = (s, ...a) => m.ctx.storage.sql.db.prepare(s).all(...a);
     const gy = m.wPost('guest:g', 'G', '어제 소원', y, 1).wish; give(m, gy.id, 6, y);
-    m.wSettle(d, 1e6); m.wUnpay(y, gy.id); // a stored, unpaid winner of the guest
+    m.wSettle(d, 1e6); // a stored winner of the guest
     const g = m.wPost('guest:g', 'G', '오늘 소원', d, 1).wish, other = m.wPost('guest:o', 'O', '남의 소원', d, 2).wish;
     assert.equal(m.wHeart('guest:g', other.id, 'ip', d).ok, true); m.wReport('guest:g', other.id, 'ip');
     assert.deepEqual({ ...m.wMove('guest:g', 'user:u') }, { ok: true });
     assert.equal(m.wList(d, 'user:u').mine.id, g.id); assert.deepEqual(m.wList(d, 'user:u').given, [other.id]); assert.equal(m.wList(d, 'user:u').left, 4);
     assert.equal(q('select count(*) n from wrp where uid = ?', 'user:u')[0].n, 1);
-    assert.deepEqual(m.wSettle(d, 1e6 + 120000).map((x) => [x.uid, x.prize]), [['user:u', 300]]);
+    assert.deepEqual(m.wWin(y).map((x) => x.uid), ['user:u']);
     assert.equal(m.wPost('user:u', 'G', '두 번째', d, 1e7).fresh, false); // the moved wish is the user's one wish of the day
     // Both had a wish today: the user's stays, the guest's is hidden.
     const u2 = m.wPost('user:v', 'V', '유저 소원', d, 5).wish, g2 = m.wPost('guest:h', 'H', '게스트 소원', d, 6).wish;
@@ -327,7 +331,7 @@ describe('wish meter (instance wish)', { concurrency: false }, () => {
   });
   it('forgets an actor: wish hidden and anonymised, hearts and reports gone, stored winner entries dropped', () => {
     const m = meter(), y = '2026-11-19', d = '2026-11-20', q = (s, ...a) => m.ctx.storage.sql.db.prepare(s).all(...a);
-    const wy = m.wPost('user:z', 'Z', '어제 일등', y, 1).wish; give(m, wy.id, 6, y); m.wSettle(d, 1e6); m.wUnpay(y, wy.id);
+    const wy = m.wPost('user:z', 'Z', '어제 일등', y, 1).wish; give(m, wy.id, 6, y); m.wSettle(d, 1e6);
     const w = m.wPost('user:z', '제트', '내 소원', d, 1).wish, other = m.wPost('guest:o', 'O', '남의 소원', d, 2).wish;
     m.wHeart('user:z', other.id, 'ip', d); m.wReport('user:z', other.id, 'ip');
     m.wForget('user:z');
@@ -507,8 +511,8 @@ describe('wish routes', { concurrency: false }, () => {
       assert.equal(body.wish, undefined); // an empty or failing wish instance leaves the key out (see IMPLEMENTED.md)
     } finally { done(); }
   });
-  it('pays yesterday\'s winners through grant_coins, retries only a clear refusal, never pays twice, drops a winner hidden later', async () => {
-    const { clock, state, done } = setup({ wallets: new Set(['guest:win1']) });
+  it('pays yesterday\'s winners nothing: no grant_coins, no notice; keeps the king and yesterday, drops a winner hidden later (2026-11-27)', async () => {
+    const { clock, state, done } = setup({ wallets: new Set(['guest:win1', 'guest:win2']) });
     const env = makeEnv(), { get, admin } = harness(env), m = env.meter('wish').do;
     try {
       const y = D(clock.now() - 864e5), t = D(clock.now());
@@ -518,38 +522,17 @@ describe('wish routes', { concurrency: false }, () => {
       for (let i = 0; i < 4; i++) m.wHeart('guest:g' + i, lo.id, 'jp' + i, y);
       const l = await (await get('/rt/wishes')).json();
       assert.equal(l.day, t);
-      assert.deepEqual(state.paid, [['guest:win1', 300]]);
+      assert.deepEqual(l.yesterday.map((x) => [x.nick, x.rank]), [['W1', 1], ['W2', 2]]);
+      assert.equal(l.yesterday.some((x) => 'prize' in x), false);
+      for (let i = 0; i < 4; i++) { clock.add(61000); await get('/rt/wishes'); }
       const grants = () => state.calls.filter((c) => c.url.includes('grant_coins'));
-      assert.equal(grants().length, 2);
-      assert.equal(JSON.parse(grants()[0].body).p_key, 'flush-test-key');
-      await get('/rt/wishes'); assert.equal(grants().length, 2); // throttled, not every request
-      state.wallets.add('guest:win2'); clock.add(61000);
-      await get('/rt/wishes');
-      assert.deepEqual(state.paid, [['guest:win1', 300], ['guest:win2', 200]]);
-      clock.add(61000); await get('/rt/wishes'); clock.add(864e5); await get('/rt/wishes');
-      assert.equal(state.paid.length, 2); assert.equal(grants().length, 3);
-      clock.add(-864e5);
+      assert.equal(grants().length, 0); assert.deepEqual(state.paid, []);
       const king = (await (await get('/rt/world')).json()).wish.king;
       assert.deepEqual(king, { nick: 'W1', txt: '일등', hearts: 6 });
       assert.deepEqual(await (await admin({ id: w1.id, hide: true })).json(), { ok: true });
       assert.equal(((await (await get('/rt/world')).json()).wish || {}).king ?? null, null);
       assert.deepEqual((await (await get('/rt/wishes')).json()).yesterday.map((x) => x.nick), ['W2']);
-    } finally { done(); }
-  });
-  it('never retries a payment whose answer was lost (thrown fetch or 5xx)', async () => {
-    const { clock, state, done } = setup({ throws: new Set(['guest:t1']), fail5xx: new Set(['guest:t2']) });
-    const env = makeEnv(), { get } = harness(env), m = env.meter('wish').do;
-    try {
-      const y = D(clock.now() - 864e5);
-      for (const k of ['t1', 't2']) { const w = m.wPost('guest:' + k, k, k, y, k === 't1' ? 1 : 2).wish; for (let i = 0; i < 6; i++) m.wHeart('guest:f' + k + i, w.id, 'ip' + i, y); }
-      await get('/rt/wishes');
-      const grants = () => state.calls.filter((c) => c.url.includes('grant_coins')).length;
-      assert.equal(grants(), 2);
-      state.wallets.add('guest:t1'); state.wallets.add('guest:t2'); state.throws.clear(); state.fail5xx.clear();
-      for (let i = 0; i < 4; i++) { clock.add(61000); await get('/rt/wishes'); }
-      clock.add(864e5); await get('/rt/wishes');
-      assert.equal(grants(), 2); assert.deepEqual(state.paid, []);
-      assert.deepEqual(m.wSettle(D(clock.now()), clock.now() + 1e6), []);
+      assert.equal(grants().length, 0);
     } finally { done(); }
   });
   // Records which rooms receive the internal /wish fan-out.

@@ -76,9 +76,9 @@ describe('개인정보처리방침과 이용약관', () => {
     assert.match(terms, /아이디로 만든 계정은 비밀번호를 잊으면 되찾을 수 없습니다/);
     assert.equal(/Google/.test(terms), false);
   });
-  it('both carry the 2026-11-23 date', async () => {
+  it('both carry the 2026-11-27 date', async () => {
     const { policyDoc } = await import('../legal.js');
-    for (const kind of ['privacy', 'terms']) { const last = policyDoc(kind).sections.at(-1); assert.equal(last.h, '시행일'); assert.match(last.p, /2026년 11월 23일/); assert.match(last.p, /2026-11-23/); }
+    for (const kind of ['privacy', 'terms']) { const last = policyDoc(kind).sections.at(-1); assert.equal(last.h, '시행일'); assert.match(last.p, /^2026년 11월 27일부터 적용합니다/); assert.match(last.p, /개정 2026-11-27/); }
   });
 });
 

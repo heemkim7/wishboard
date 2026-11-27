@@ -67,7 +67,7 @@ it('the shares go through sendLink without my invite code and call no reward: no
   const send = between('async function sendLink(', '// 카카오톡으로 보내기');
   assert.match(send, /if \(invite\) url = invited\(url, hooks\.inviteCode\?\.\(\)\);/);
   for (const reward of ['askShot', 'hooks.bonus', 'shareBonus', 'adClick']) assert.equal(send.includes(reward), false, reward);
-  // The share bonus (+300) is asked for only from the 공유·코드 sheet, the photo bonus only from askShot, the link-visit pay only from 링크 열기.
+  // The share bonus (+300) is asked for only from the 공유 sheet, the photo bonus only from askShot, the link-visit pay only from 링크 열기.
   assert.equal((ui.match(/hooks\.shareBonus\?\.\(\)/g) || []).length, 1);
   assert.equal((ui.match(/hooks\.bonus\?\.\('shot'/g) || []).length, 1);
 });

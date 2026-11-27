@@ -1,0 +1,112 @@
+{
+ "v": 1,
+ "w": 1080,
+ "h": 1920,
+ "fps": 24,
+ "frames": 241,
+ "flash": 1.5,
+ "plates": [
+  {
+   "id": "01",
+   "name": "정면 밤",
+   "mp4": "plate-01.mp4",
+   "mp4Bytes": 6943813,
+   "jpg": "plate-01.jpg",
+   "jpgBytes": 34958,
+   "json": "plate-01.json",
+   "jsonBytes": 25806
+  },
+  {
+   "id": "02",
+   "name": "타워",
+   "mp4": "plate-02.mp4",
+   "mp4Bytes": 7348369,
+   "jpg": "plate-02.jpg",
+   "jpgBytes": 33840,
+   "json": "plate-02.json",
+   "jsonBytes": 14632
+  },
+  {
+   "id": "03",
+   "name": "비 오는 밤",
+   "mp4": "plate-03.mp4",
+   "mp4Bytes": 7390201,
+   "jpg": "plate-03.jpg",
+   "jpgBytes": 36693,
+   "json": "plate-03.json",
+   "jsonBytes": 13931
+  },
+  {
+   "id": "04",
+   "name": "연말 군중",
+   "mp4": "plate-04.mp4",
+   "mp4Bytes": 7192682,
+   "jpg": "plate-04.jpg",
+   "jpgBytes": 34638,
+   "json": "plate-04.json",
+   "jsonBytes": 83293
+  },
+  {
+   "id": "05",
+   "name": "내 손 휴대폰",
+   "mp4": "plate-05.mp4",
+   "mp4Bytes": 2674803,
+   "jpg": "plate-05.jpg",
+   "jpgBytes": 25793,
+   "json": "plate-05.json",
+   "jsonBytes": 28940
+  },
+  {
+   "id": "06",
+   "name": "코너 입체",
+   "mp4": "plate-06.mp4",
+   "mp4Bytes": 6810844,
+   "jpg": "plate-06.jpg",
+   "jpgBytes": 31652,
+   "json": "plate-06.json",
+   "jsonBytes": 28858
+  },
+  {
+   "id": "07",
+   "name": "블루아워",
+   "mp4": "plate-07.mp4",
+   "mp4Bytes": 6666455,
+   "jpg": "plate-07.jpg",
+   "jpgBytes": 22840,
+   "json": "plate-07.json",
+   "jsonBytes": 14654
+  }
+ ],
+ "music": [
+  {
+   "occ": "bday",
+   "file": "music-bday.m4a",
+   "bytes": 145470
+  },
+  {
+   "occ": "anniv",
+   "file": "music-anniv.m4a",
+   "bytes": 145414
+  },
+  {
+   "occ": "pass",
+   "file": "music-pass.m4a",
+   "bytes": 146116
+  },
+  {
+   "occ": "cheer",
+   "file": "music-cheer.m4a",
+   "bytes": 145715
+  },
+  {
+   "occ": "just",
+   "file": "music-just.m4a",
+   "bytes": 145913
+  },
+  {
+   "occ": "thanks",
+   "file": "music-thanks.m4a",
+   "bytes": 145925
+  }
+ ]
+}

@@ -1381,7 +1381,9 @@ BEGIN
 END;
 $$;
 
--- Sticker (30) and all-board takeover (5000, or one VIP ticket). Amounts are fixed so this cannot drain a wallet by a guessed call.
+-- Sticker (30), the main tower minute (2000, migrations/2026-11-27-tower-minute.sql), all-board takeover (5000, or one VIP ticket). Amounts are
+-- fixed so this cannot drain a wallet by a guessed call. The refusal words stay exactly '그 금액은 쓸 수 없어요.': the Worker reads them to
+-- know whether 2,000 is taken yet (towerrules.js SPEND_OLD).
 CREATE OR REPLACE FUNCTION public.spend_plaza(
   p_key TEXT,
   p_actor_id TEXT,
@@ -1402,6 +1404,7 @@ BEGIN
   END IF;
   IF NOT (
     (p_coins = 30 AND p_tickets = 0) OR
+    (p_coins = 2000 AND p_tickets = 0) OR
     (p_coins = 5000 AND p_tickets = 0) OR
     (p_coins = 0 AND p_tickets = 1)
   ) THEN

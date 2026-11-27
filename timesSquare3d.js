@@ -3196,6 +3196,11 @@ void main(){
     // 명당 (primerules.js): the day's plan for the prime screens (/rt/world prime, or /rt/prime at midnight and 21:00); primeOf: what one shows now.
     setPrime(plan) { return boards.setPrime?.(plan); },
     primeOf(id) { return boards.primeOf?.(id) || null; },
+    // 메인 타워 축하 1분 (towerrules.js): the bookings (/rt/world tower and the rooms' pushes); towerSlot: 'MAIN_MID' while that board is on the tower.
+    setTower(list) { return boards.setTower?.(list); },
+    towerSlot(id) { return boards.towerSlot?.(id) || ''; },
+    // towerOf: the gift board on that main tower face now ('' none); primeOf is null meanwhile (a tap opens the gift, not the team).
+    towerOf(id) { return boards.towerOf?.(id) || ''; },
     showGhost,
     setWatchPortrait,
     // 멍때리기: only the camera tours the boards (tourNext, every 8 s); the avatar stays where it stands.

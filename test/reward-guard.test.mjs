@@ -337,29 +337,18 @@ describe('share bonus and VIP codes behind Turnstile', { concurrency: false }, (
     } finally { console.warn = warn; s.done(); }
   });
 
-  it('VIP code, switched on: a token of the action code before the code is even compared; guests still may; siteverify down is busy and uses nothing', async () => {
-    const db = memDb({ guard: true }), s = await scene(db, { ...ON, VIP_CODES: 'GOLDCODE1' }), warn = console.warn;
-    try {
-      const g = await s.guest(), redeem = (code, ts) => s.post('/rt/redeem-code', ts === undefined ? { code } : { code, ts }, g.token);
-      assert.equal((await redeem('short')).status, 400, 'the shape is checked first, for free');
-      assert.deepEqual((await redeem('WRONGCODE9')).body, HUMAN_NO, 'no token: not even told whether the code is right');
-      assert.deepEqual((await redeem('GOLDCODE1', 'forged')).body, HUMAN_NO);
-      s.state.action = 'bonus'; assert.deepEqual((await redeem('GOLDCODE1', 'good')).body, HUMAN_NO); s.state.action = 'code';
-      const log = spyDo(s.env); s.state.verify = () => { throw new Error('network'); }; console.warn = () => {};
-      const down = await redeem('GOLDCODE1', 'good'); assert.equal(down.status, 503); assert.deepEqual(down.body, BUSY); assert.deepEqual(log.filter((x) => x.startsWith('acct.code')), []);
-      console.warn = warn; s.state.verify = null;
-      assert.deepEqual((await redeem('WRONGCODE9', 'good')).body, { ok: false, error: '코드가 맞지 않아요.' });
-      const ok = await redeem('GOLDCODE1', 'good'); assert.equal(ok.status, 200); assert.equal(ok.body.amount, 10000); assert.equal(await s.coins(g.id), 10140);
-      assert.deepEqual((await redeem('GOLDCODE1', 'good')).body, { ok: false, error: '이미 사용한 코드예요.' });
-    } finally { console.warn = warn; s.done(); }
-  });
-
-  it('VIP code, switched off: no token, no siteverify (as before)', async () => {
-    const db = memDb({ guard: true }), s = await scene(db, { VIP_CODES: 'GOLDCODE1' });
-    try {
-      const g = await s.guest(), ok = await s.post('/rt/redeem-code', { code: 'GOLDCODE1' }, g.token);
-      assert.equal(ok.status, 200); assert.equal(s.state.verifies.length, 0);
-    } finally { s.done(); }
+  it('VIP code (closed 2026-11-27), Turnstile on or off: 410 off, no token asked, no siteverify, no acct call, nothing paid', async () => {
+    for (const extra of [{ ...ON, VIP_CODES: 'GOLDCODE1' }, { VIP_CODES: 'GOLDCODE1' }]) {
+      const db = memDb({ guard: true }), s = await scene(db, extra);
+      try {
+        const g = await s.guest(), before = await s.coins(g.id), log = spyDo(s.env);
+        for (const body of [{ code: 'GOLDCODE1' }, { code: 'GOLDCODE1', ts: 'good' }, { code: 'short' }]) {
+          const r = await s.post('/rt/redeem-code', body, g.token); assert.equal(r.status, 410); assert.equal(r.body.code, 'off');
+        }
+        assert.equal(s.state.verifies.length, 0); assert.deepEqual(log.filter((x) => x.startsWith('acct.code')), []);
+        assert.equal(await s.coins(g.id), before);
+      } finally { s.done(); }
+    }
   });
 });
 

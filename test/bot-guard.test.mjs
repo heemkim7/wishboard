@@ -406,7 +406,7 @@ describe('client: human.js (Turnstile widget, the card)', () => {
 });
 
 describe('client: the share bonus is for accounts', () => {
-  const ui = read('ui.js'), vip = ui.slice(ui.indexOf('function openVip()'), ui.indexOf("const redeem = h('button'"));
+  const ui = read('ui.js'), vip = ui.slice(ui.indexOf('function openVip()'), ui.indexOf("const ask = h('a'"));
   it('a guest sees the account wording, a button to the account sheet and a plain share; the bonus is never asked for a guest', () => {
     assert.match(ui, /const SHARE_ACCOUNT = '계정을 연결하면 공유 보너스 300포인트를 받을 수 있어요';/);
     assert.match(vip, /const shareGuest = accountView\.ready && accountView\.guest && !accountView\.linked;/);
@@ -418,10 +418,25 @@ describe('client: the share bonus is for accounts', () => {
     assert.match(ui, /function linkCallout\(\) \{\n\s+if \(!accountView\.ready \|\| !accountView\.guest \|\| accountView\.linked\) return null;/);
     assert.match(ui, /h\('button', \{ class: 'btn ghost', type: 'button', text: '계정 연결', onclick: \(\) => openLogin\(\) \}\),\n\s+\);\n\s+\}/);
     assert.equal(vip.includes('계정 연결하고 받기'), false);
-    assert.match(vip, /shareGuest \? '링크만 공유하기' : '링크 복사하고 \+300'/);
+    assert.match(vip, /shareGuest \? '링크만 공유하기' : shareDone \? '링크 공유하기' : '링크 복사하고 \+300'/);
     const guestOut = vip.indexOf("if (shareGuest) { share.disabled = false; note(SHARE_ACCOUNT, 'ok', () => openLogin()); return; }");
     assert.ok(guestOut > 0 && guestOut < vip.indexOf('hooks.shareBonus?.()'));
     assert.match(vip, /if \(e\?\.code === 'account'\) note\(SHARE_ACCOUNT, 'err', \(\) => openLogin\(\)\);/);
     assert.match(whole, /shareGuest \? '오늘 내 소원이나 내 전광판 링크를 보내요\. 공유 보너스 \+300은 계정 전용이에요\.'/);
+  });
+  it('once per account (2026-11-27): the wording says so, and after the bonus or a code once answer the sheet stops offering +300', () => {
+    const whole = ui.slice(ui.indexOf('function openVip()'), ui.indexOf('// ---------------------------------------------------------------- city map'));
+    assert.equal(whole.includes('하루 한 번'), false); assert.equal(whole.includes('오늘은 이미'), false);
+    assert.match(whole, /'계정 전용, 계정마다 한 번\. 오늘 내 소원이나 내 전광판 링크를 보내면 포인트가 바로 들어와요\.'/);
+    assert.match(whole, /shareDone \? '오늘 내 소원이나 내 전광판 링크를 보내요\. 공유 보너스는 계정마다 한 번이라 이미 받았어요\.'/);
+    assert.match(whole, /shareGuest \|\| shareDone \? '친구에게 링크 공유하기' : '친구에게 링크 공유하고 \+300'/);
+    // remembered per account id on this device from the server's answers only: no request when the page or the sheet opens
+    assert.match(ui, /const shareGotKey = \(\) => \{ const id = hooks\.actorId\?\.\(\); return id \? 'kts_share_got:' \+ id : ''; \};/);
+    assert.match(vip, /let shareDone = !shareGuest && shareGot\(\);/);
+    const plainOut = vip.indexOf("if (shareDone) { share.disabled = false; return; }");
+    assert.ok(plainOut > 0 && plainOut < vip.indexOf('hooks.shareBonus?.()'), 'an account that had its bonus asks for nothing');
+    assert.match(vip, /const r = await hooks\.shareBonus\?\.\(\);\n\s+sharePlain\(\);/);
+    assert.match(vip, /else if \(e\?\.code === 'once'\) \{ sharePlain\(\); note\(e\.message/);
+    assert.match(vip, /const sharePlain = \(\) => \{ shareDone = true; shareGotSet\(\);/);
   });
 });

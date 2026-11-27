@@ -325,9 +325,9 @@ export function awayRows({ newbie, inbox, seen, copy, wish, wishSeen, prizeDay, 
   let nextPrize = '';
   if (won && day && prizeDay !== day) {
     const rank = Math.floor(Number(won.rank));
-    const prize = Math.max(0, Math.floor(Number(won.prize) || 0));
     const at = Date.parse(day + 'T00:00:00+09:00');
-    rows.push({ kind: 'prize', id: 0, slot: '', text: prize ? `어제 소원이 ${rank}위였어요. +${prize} 포인트` : `어제 소원이 ${rank}위였어요`, label: mine?.id ? '내 소원 보기' : '오늘 소원 걸기', at: Number.isFinite(at) ? at : now - 1 });
+    // Rank only: a place pays no points since 2026-11-27 (the row kind 'prize' and prizeDay keep their old names, like the stored day key).
+    rows.push({ kind: 'prize', id: 0, slot: '', text: `어제 소원이 ${rank}위였어요`, label: mine?.id ? '내 소원 보기' : '오늘 소원 걸기', at: Number.isFinite(at) ? at : now - 1 });
     nextPrize = day;
   }
   const inv = inviteNews(invite, invSeen);

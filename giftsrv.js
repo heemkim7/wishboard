@@ -1,8 +1,9 @@
 // 선물 전광판 on the Worker: the /rt/gift* routes, the admin routes /rt/admin/gift*, the recipient page /g/<id>, the gift part of
 // /rt/world and the Meter instance 'gift' (Durable Object SQLite, so no Supabase migration). worker.js imports this with no query,
 // sends those paths here and hands over what it owns (k): adminOk, lvlNow, resolveActor, tokenOf, ipHash (the network hash, IPv6
-// by /64), humanGate (Turnstile, only while it is switched on), actOk (ACT_RL) and pushNow (web push). Server only: .assetsignore keeps
-// this file off the static assets.
+// by /64), humanGate (Turnstile, only while it is switched on), humanSite (its public key, or ''), actOk (ACT_RL), pushNow (web push),
+// rpc (Supabase RPC: grant_coins for the share reward and refunds, spend_plaza for the main tower minute), towerTell (the rooms' TOWER
+// push) and towerLater (the same at a board's reveal, from the 'dark' alarm). Server only: .assetsignore keeps this file off the static assets.
 //
 // Budget: every DO call on these HTTP paths goes through the tallied env worker.js passes in. Reads are cached per isolate (20 s,
 // 10 min at the hard budget level); page beacons are kept in the isolate and go to the DO in one call per GIFT.seenBatch or
@@ -26,11 +27,34 @@
 //   gi(uid, t, at, sent)                       "열리면 알림" opt-ins (consented) per paid tier; sent: when the opening notice went
 //   grp(g, m, ip)                              reports per board ('') or line (its id), one per network
 //   gc(g, jpg, at)                             the link-preview card (JPEG the sender's device drew)
-import { GIFT, GIFT_ID, PAPER_ID, VISITOR_ID, GIFT_ERR, giftFault, paperFault, pickScreen, nextFree, giftPhase, paperTakes, lockArm, giftView, giftShareText, refOf, kstDay, addDays, pruneDay, quietNow, AD_LABEL, videoKind, VIDEO_TYPE, rangeOf, windowText, OCCASIONS, TIERS, CER_BEACONS, heartsOpen, dayStart, botAgent } from './giftrules.js';
+//   gn(g, net, at, paid)                       networks that reacted on a board's page (a checked 💖 or a 롤링페이퍼 line), once each; never the
+//                                              maker's network or the maker's own line (towerrules.js reactCounts). paid: the share reward went
+//   gt(m, day, g, how, uid, at, hold)          main tower minutes (메인 타워 축하 1분): one board a minute, one minute a board; day: m's KST day;
+//                                              hold > 0: a points booking's place while spend_plaza runs (until then), 0: booked. A minute that
+//                                              aired stays (the day's 30 counts it) until its day is over and its board is gone
+//   ga(uid, day, how, at, g)                   a maker's bookings by KST day and board, kept TOWER.gapDays + 1 days (the 30 days between points)
+//   gf(k, uid, m, g, why, at, done)            refunds grant_coins did not take, and spends whose answer was lost: whom the operator pays by hand
+//                                              (the admin gift view only; never in a public read), kept 90 days
+// 공유 보상 over gift pages, wish links and board links (towerrules.js SHARE; worker.js hands the wish and board parts over):
+//   sl(k, net, o, at)                          link opens by a person (not a preview fetcher): content key ('w:<wish>' | 'c:<slot>'), the opener's
+//                                              network hash, the content's owner then; kept SHARE.openKeepMs (2 days)
+//   sm(uid, net, at)                           networks a maker made a gift board, posted a wish or claimed a board from: never a friend of that
+//                                              maker; kept SHARE.makerKeepMs (30 days) from the last time
+//   sk(k, o, net, at)                          link friends per wish / board and owner, for "친구 N명이 응원했어요" (gift boards count gn); kept 7 days
+//   sf(uid, d, net, src, k, acct, amt, st, at) a maker's friends by KST day: one network once a day over every source (src g | w | c, k: the
+//                                              board, wish or slot, at: when), acct: a linked account, amt: the step (0 past the steps), st: ''
+//                                              counted (paid when amt > 0), 'unk' grant_coins gave no clear answer (its place kept), 'fail' a
+//                                              clear refusal (unpaid, its place goes to the next friend), 'wait' left unpaid by the beacon batch's
+//                                              TOWER.payMax (no place). The operator's list (/rt/admin/gift/share) reads it; kept SHARE.dayKeep days
+//   sfr(uid, d, who)                           who already counted for that maker that day, on any network: 'a:<account or guest id>' or, for a
+//                                              gift page 💖 sent without a token, 'v:<device hash>'; kept SHARE.dayKeep days
+import { GIFT, GIFT_ID, PAPER_ID, VISITOR_ID, GIFT_ERR, giftFault, paperFault, pickScreen, nextFree, giftPhase, paperTakes, lockArm, giftView, giftShareText, refOf, kstDay, addDays, pruneDay, quietNow, AD_LABEL, videoKind, VIDEO_TYPE, rangeOf, windowText, OCCASIONS, TIERS, CER_BEACONS, REAL_BEACONS, heartsOpen, heartTakes, dayStart, botAgent, revealAt } from './giftrules.js';
+import { TOWER, SHARE, shareAmount, linkFault, TOWER_HOW, SPEND_OLD, TOWER_ERR, reactCounts, towerFault, towerDays, towerEntry } from './towerrules.js'; // 메인 타워 축하 1분 and the share reward
 import { opsRate } from './ops.js';
 
 const J = (o, s = 200, h = {}) => new Response(JSON.stringify(o), { status: s, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...h } });
-const no = (code, s = 400, extra = {}) => J({ ok: false, code, error: GIFT_ERR[code] || GIFT_ERR.down, ...extra }, s);
+const ERR = { ...GIFT_ERR, ...TOWER_ERR };
+const no = (code, s = 400, extra = {}) => J({ ok: false, code, error: ERR[code] || GIFT_ERR.down, ...extra }, s);
 const giftM = (env) => env.METER.get(env.METER.idFromName('gift'));
 const ID_ABC = '0123456789abcdefghijklmnopqrstuvwxyz';
 const rid = (n) => { const b = new Uint8Array(n); crypto.getRandomValues(b); let s = ''; for (const x of b) s += ID_ABC[x % 36]; return s; };
@@ -53,11 +77,27 @@ const rowOf = (r) => {
 const bump = (q, d, k, n = 1) => q.exec('insert into gd(d, k, n) values(?, ?, ?) on conflict(d, k) do update set n = n + excluded.n', d, k, n);
 const lim = (q, k, d) => Number(q.exec('select n from gr where k = ? and d = ?', k, d).toArray()[0]?.n) || 0;
 const limAdd = (q, k, d) => q.exec('insert into gr(k, d, n) values(?, ?, 1) on conflict(k, d) do update set n = n + 1', k, d);
+// 메인 타워 축하 1분: a points booking holds its minute this long while the Worker spends (towerBook dry -> towerConfirm); then it lapses.
+export const HOLD_MS = 30000;
+const lapse = (q, now) => q.exec('delete from gt where hold > 0 and hold <= ?', now);
+// When the board's words may reach anyone but its owner (giftrules.js revealAt), judged as if it were still live: a hidden ceremony board
+// keeps its lighting as the reveal (cerStart reads nothing of a hidden board).
+const revOf = (b) => (b ? revealAt({ ...b, st: 'live' }) : Infinity);
+// This maker has a booking (or a hold) on that KST day / a points booking under TOWER.gapDays old or one being held now. exceptG: the
+// board being booked (its own hold is not a second booking).
+const mineOn = (q, uid, day) => q.exec('select 1 from ga where uid = ? and day = ? limit 1', uid, day).toArray().length > 0 || q.exec('select 1 from gt where uid = ? and day = ? limit 1', uid, day).toArray().length > 0;
+function gapOf(q, uid, now) {
+  const last = Number(q.exec("select max(at) t from ga where uid = ? and how = 'points'", uid).one().t) || 0;
+  return (last > 0 && now - last < TOWER.gapDays * 864e5) || q.exec("select 1 from gt where uid = ? and how = 'points' and hold > ? limit 1", uid, now).toArray().length > 0;
+}
 // A board that goes takes its reply mark off the board it answered (a reply's ref is that board, so this is a key lookup, not a scan).
-function dropBoards(q, ids) {
-  for (const id of ids) for (const t of ['gm', 'gv', 'grp', 'gc']) q.exec(`delete from ${t} where g = ?`, id);
+// Its main tower minute goes only if it has not started: one that aired still counts in its day's 30 (prune drops it once the day is over).
+function dropBoards(q, ids, now = Date.now()) {
+  for (const id of ids) for (const t of ['gm', 'gv', 'grp', 'gc', 'gn']) q.exec(`delete from ${t} where g = ?`, id);
   for (const id of ids) {
     q.exec('delete from gr where k = ?', 'vb:' + id); q.exec('delete from gr where k = ?', 'rn:' + id);
+    q.exec('delete from gr where k = ?', 'to:' + id); // the friends' push went for this board
+    q.exec('delete from gt where g = ? and m > ?', id, now); // its main tower minute not yet started (ga stays for the 30 days)
     q.exec('delete from gr where k >= ? and k < ?', 'h:' + id + ':', 'h:' + id + ';'); // today's 💖 per network: a range on gr's key, not a scan
     q.exec("update gb set re = '' where id = (select ref from gb where id = ?) and re = ?", id, id);
     q.exec('delete from gb where id = ?', id);
@@ -72,15 +112,53 @@ function visitAdd(q, g, v, onDay, d, now) {
 // 💖 from a device: kept on its visitor row (gv.h, on the device hash a view already keeps). For the cap a heart also keeps the network
 // hash against the board for that KST day (gr 'h:<board>:<net>'): that one is new for someone who only looked and pressed, so it goes the
 // next day (heartPrune on the first beacon batch of the day, or the make/admin prune) or with the board, whichever is first. A device that
-// hearts before its 'open' beacon arrived is seen here first (its later open then changes nothing). -> true when it was counted.
+// hearts before its 'open' beacon arrived is seen here first (its later open then changes nothing). Taken from the making on (heartTakes:
+// the friends of the main tower minute count before the day); the count is shown only once heartsOpen. -> true when it was counted.
 function heartAdd(q, g, v, net, d, now) {
-  if (!g || !heartsOpen(g, now)) return false;
+  if (!g || !heartTakes(g, now)) return false;
   const nk = 'h:' + g.id + ':' + net;
   if (!net || lim(q, nk, d) >= GIFT.heartNet) return false;
   visitAdd(q, g.id, v, g.day === d, d, now);
   if (q.exec('update gv set h = 1 where g = ? and v = ? and h = 0', g.id, v).rowsWritten < 1) return false;
   q.exec('update gb set hr = hr + 1 where id = ?', g.id); limAdd(q, nk, d); bump(q, d, 'heart');
   return true;
+}
+// 공유 보상: network net is a friend of maker uid today (src 'g' | 'w' | 'c', k the content). Once per maker, network and KST day over every
+// source (sf), never a network the maker made or claimed from (sm); the n-th friend of the day (refused grants not counted) pays
+// shareAmount(n, acct). pay: false (the beacon batch already handed TOWER.payMax to the Worker) keeps it unpaid.
+// -> { uid, net, d, amt, src, g? } for the Worker to pay, or null.
+const SHARE_PRUNE = 100;
+const makerNet = (q, uid, net) => q.exec('select 1 from sm where uid = ? and net = ? limit 1', uid, net).toArray().length > 0;
+// who: the person behind the reaction ('a:<id>' | 'v:<device hash>'): one person counts once a maker and day whatever network it comes from
+// (sfr), so airplane mode or a VPN does not make a second friend.
+function friendDay(q, o, now, pay = true) {
+  const d = kstDay(now), uid = String(o.uid || ''), net = String(o.net || ''), src = String(o.src || ''), who = String(o.who || '');
+  if (!uid || !net || makerNet(q, uid, net)) return null;
+  if (who && q.exec('select 1 from sfr where uid = ? and d = ? and who = ? limit 1', uid, d, who).toArray().length) return null;
+  if (q.exec("insert or ignore into sf(uid, d, net, src, k, acct, amt, st, at) values(?, ?, ?, ?, ?, ?, 0, ?, ?)", uid, d, net, src, String(o.k || ''), o.acct ? 1 : 0, pay ? '' : 'wait', now).rowsWritten < 1) return null;
+  if (who) q.exec('insert or ignore into sfr(uid, d, who) values(?, ?, ?)', uid, d, who);
+  bump(q, d, 'friend:' + src);
+  if (!pay) return null;
+  const n = Number(q.exec("select count(*) n from sf where uid = ? and d = ? and st in ('', 'unk')", uid, d).one().n) || 0, amt = shareAmount(n, !!o.acct);
+  if (amt <= 0) return null;
+  q.exec('update sf set amt = ? where uid = ? and d = ? and net = ?', amt, uid, d, net); bump(q, d, 'tpay'); bump(q, d, 'tpay_pt', amt);
+  return { uid, net, d, amt, src, ...(src === 'g' ? { g: String(o.k) } : {}) };
+}
+// A friend reacted on g's page from network net (a 💖 counted just now, or a 롤링페이퍼 line). Once per board and network for good (gn);
+// the maker's network and the maker's own account never (reactCounts). The share reward is friendDay's (acct: the friend is a linked
+// account; who: the person, friendDay's); pay: false keeps a reaction unpaid. A network the maker made, posted or claimed from (sm) is no
+// friend here either, so the count, the tower's 10 and the reward agree. The TOWER.friends-th network sends the maker one push (gr
+// 'to:<board>', kept until the board goes). -> { pay?, open? } or null.
+function react(q, g, net, uid, human, now, pay = true, acct = false, who = '') {
+  if (!reactCounts(g, { net, uid, human }) || makerNet(q, g.uid, net)) return null;
+  if (q.exec('insert or ignore into gn(g, net, at) values(?, ?, ?)', g.id, net, now).rowsWritten < 1) return null;
+  const d = kstDay(now), out = {};
+  bump(q, d, 'react');
+  const p = friendDay(q, { uid: g.uid, net, src: 'g', k: g.id, acct, who }, now, pay);
+  if (p) { q.exec('update gn set paid = 1 where g = ? and net = ?', g.id, net); out.pay = p; }
+  const n = Number(q.exec('select count(*) n from gn where g = ?', g.id).one().n) || 0;
+  if (n >= TOWER.friends && lim(q, 'to:' + g.id, '*') === 0) { limAdd(q, 'to:' + g.id, '*'); out.open = { uid: g.uid, g: g.id }; }
+  return out;
 }
 // Yesterday's (and older) 💖 network marks, on the beacon path: once a KST day (the mark 'hprune' for today, itself pruned tomorrow),
 // HEART_PRUNE rows at a time; the day's mark is set only once none are left, so a large backlog goes over the next batches.
@@ -112,16 +190,89 @@ export const giftDb = {
     q.exec('create table if not exists gi(uid text not null, t integer not null, at integer not null, sent integer not null default 0, primary key(uid, t))');
     q.exec('create table if not exists grp(g text not null, m text not null, ip text not null, primary key(g, m, ip))');
     q.exec('create table if not exists gc(g text primary key, jpg blob not null, at integer not null)');
+    q.exec('create table if not exists gn(g text not null, net text not null, at integer not null, paid integer not null default 0, primary key(g, net))');
+    q.exec('create table if not exists gt(m integer primary key, day text not null, g text not null unique, how text not null, uid text not null, at integer not null, hold integer not null default 0)');
+    q.exec('create index if not exists gt_day on gt(day)');
+    q.exec('create index if not exists gt_uid on gt(uid)');
+    q.exec('create table if not exists ga(uid text not null, day text not null, how text not null, at integer not null, g text not null, primary key(uid, day, g))');
+    q.exec("create table if not exists gf(k integer primary key, uid text not null, m integer not null, g text not null, why text not null, at integer not null, done integer not null default 0)");
+    q.exec('create table if not exists sl(k text not null, net text not null, o text not null, at integer not null, primary key(k, net))');
+    q.exec('create index if not exists sl_at on sl(at)');
+    q.exec('create table if not exists sm(uid text not null, net text not null, at integer not null, primary key(uid, net))');
+    q.exec('create index if not exists sm_at on sm(at)');
+    q.exec('create table if not exists sk(k text not null, o text not null, net text not null, at integer not null, primary key(k, o, net))');
+    q.exec('create index if not exists sk_at on sk(at)');
+    q.exec("create table if not exists sf(uid text not null, d text not null, net text not null, src text not null, k text not null, acct integer not null, amt integer not null default 0, st text not null default '', at integer not null, primary key(uid, d, net))");
+    q.exec('create index if not exists sf_d on sf(d)');
+    q.exec('create table if not exists sfr(uid text not null, d text not null, who text not null, primary key(uid, d, who))');
+    q.exec('create index if not exists sfr_d on sfr(d)');
+    q.exec('create index if not exists sfr_who on sfr(who)');
+  },
+  // 공유 보상's old rows, SHARE_PRUNE a table at a time (on the link-open path and with the other prunes): link opens, maker networks,
+  // friends per content, and friend days past SHARE.dayKeep.
+  sharePrune(q, now = Date.now()) {
+    q.exec('delete from sl where rowid in (select rowid from sl where at < ? limit ?)', now - SHARE.openKeepMs, SHARE_PRUNE);
+    q.exec('delete from sm where rowid in (select rowid from sm where at < ? limit ?)', now - SHARE.makerKeepMs, SHARE_PRUNE);
+    q.exec('delete from sk where rowid in (select rowid from sk where at < ? limit ?)', now - SHARE.contentKeepMs, SHARE_PRUNE);
+    q.exec('delete from sf where rowid in (select rowid from sf where d < ? limit ?)', addDays(kstDay(now), -SHARE.dayKeep), SHARE_PRUNE);
+    q.exec('delete from sfr where rowid in (select rowid from sfr where d < ? limit ?)', addDays(kstDay(now), -SHARE.dayKeep), SHARE_PRUNE);
+  },
+  // A person opened a wish or board link (worker.js shareOpen). o: { k: 'w:<id>' | 'c:<slot>', o: its owner now, net }. -> { ok }.
+  linkOpen(q, o, now = Date.now()) {
+    const k = String(o?.k || ''), owner = String(o?.o || ''), net = String(o?.net || '');
+    if (!/^[wc]:[\w-]{1,24}$/.test(k) || !owner || !/^[0-9a-f]{16}$/.test(net)) return { ok: false };
+    q.exec('insert into sl(k, net, o, at) values(?, ?, ?, ?) on conflict(k, net) do update set o = excluded.o, at = excluded.at', k, net, owner, now);
+    this.sharePrune(q, now);
+    return { ok: true };
+  },
+  // A network the maker used to make or claim something (a gift board here in make; a wish post or a board claim from worker.js).
+  makerNet(q, uid, net, now = Date.now()) {
+    if (!String(uid || '') || !/^[0-9a-f]{16}$/.test(String(net || ''))) return { ok: false };
+    q.exec('insert into sm(uid, net, at) values(?, ?, ?) on conflict(uid, net) do update set at = excluded.at', String(uid), String(net), now);
+    return { ok: true };
+  },
+  // A 💖 on a wish or an 응원 on a board (worker.js shareReact). o: { o: the owner now, k, net, uid (who reacted), acct }. Counts only for a
+  // link opened from that network within SHARE.windowMs while the same owner had it, never the owner's account or networks (linkFault);
+  // then a friend of that content (sk) and of the owner's day (friendDay). A reaction with no such open writes nothing. -> { ok, pay?, why? }.
+  share(q, o, now = Date.now()) {
+    const owner = String(o?.o || ''), k = String(o?.k || ''), net = String(o?.net || '');
+    if (!/^[wc]:/.test(k)) return { ok: false };
+    const row = q.exec('select o, at from sl where k = ? and net = ?', k, net).toArray()[0];
+    const nets = owner ? q.exec('select net from sm where uid = ?', owner).toArray().map((r) => String(r.net)) : [];
+    const why = linkFault(row ? { o: String(row.o), at: Number(row.at) } : null, { owner, net, uid: String(o?.uid || ''), now, makerNets: nets });
+    if (why) return { ok: true, why };
+    q.exec('insert or ignore into sk(k, o, net, at) values(?, ?, ?, ?)', k, owner, net, now);
+    const p = friendDay(q, { uid: owner, net, src: k[0], k: k.slice(2), acct: !!o?.acct, who: o?.uid ? 'a:' + String(o.uid) : '' }, now, true);
+    return { ok: true, ...(p ? { pay: [p] } : {}) };
+  },
+  // How many link friends a wish or board has (its owner now), for its share page.
+  shareCount(q, k, owner) { return Number(q.exec('select count(*) n from sk where k = ? and o = ?', String(k || ''), String(owner || '')).one().n) || 0; },
+  // The operator's list: SHARE.adminDays KST days, per maker: friends, of them accounts, points paid, distinct networks, per source; the
+  // SHARE.adminTop who got most first. Account and guest ids only here (the admin gate); never in a public read.
+  shareTop(q, now = Date.now()) {
+    const d0 = addDays(kstDay(now), -(SHARE.adminDays - 1));
+    const top = q.exec(`select uid, count(*) friends, sum(acct) acct, sum(case when st = '' then amt else 0 end) paid, count(distinct net) nets,
+      sum(case when src = 'g' then 1 else 0 end) g, sum(case when src = 'w' then 1 else 0 end) w, sum(case when src = 'c' then 1 else 0 end) c,
+      sum(case when st = 'fail' then 1 else 0 end) fails, sum(case when st = 'unk' then 1 else 0 end) unknown, sum(case when st = 'wait' then 1 else 0 end) waits, count(distinct d) days
+      from sf where d >= ? group by uid order by paid desc, friends desc, uid asc limit ?`, d0, SHARE.adminTop).toArray()
+      .map((r) => ({ uid: String(r.uid), friends: Number(r.friends) || 0, acct: Number(r.acct) || 0, guest: (Number(r.friends) || 0) - (Number(r.acct) || 0), paid: Number(r.paid) || 0, nets: Number(r.nets) || 0,
+        src: { g: Number(r.g) || 0, w: Number(r.w) || 0, c: Number(r.c) || 0 }, fails: Number(r.fails) || 0, unknown: Number(r.unknown) || 0, waits: Number(r.waits) || 0, days: Number(r.days) || 0 }));
+    const t = q.exec("select count(*) friends, count(distinct uid) makers, sum(case when st = '' then amt else 0 end) paid from sf where d >= ?", d0).one();
+    return { ok: true, days: SHARE.adminDays, from: d0, top, total: { friends: Number(t.friends) || 0, makers: Number(t.makers) || 0, paid: Number(t.paid) || 0 } };
   },
   // Boards whose day ended GIFT.keepDays ago go with their lines, visitors, reports and card; yesterday's limits, counters older than 400
   // days and opt-ins not renewed for GIFT.optinDays too. -> the ids whose video (if any) the Worker deletes from R2.
   prune(q, now = Date.now()) {
     const old = q.exec('select id from gb where day <= ? limit 200', pruneDay(now)).toArray().map((r) => String(r.id));
-    if (old.length) dropBoards(q, old);
+    if (old.length) dropBoards(q, old, now);
     const d = kstDay(now);
     q.exec("delete from gr where d < ? and d <> '*'", d);
     q.exec('delete from gd where d < ?', addDays(d, -400));
     q.exec('delete from gi where at < ?', now - GIFT.optinDays * 864e5);
+    q.exec('delete from ga where at < ?', now - (TOWER.gapDays + 1) * 864e5); // a maker's bookings: the 30 days between point bookings need them
+    q.exec('delete from gt where day < ? and g not in (select id from gb)', d); lapse(q, now); // aired minutes of boards that went, once their day is over
+    q.exec('delete from gf where at < ?', now - 90 * 864e5);
+    this.sharePrune(q, now);
     return old;
   },
   // o: { uid, ip, v (giftFault's), ref, re, split }. -> { ok: true, row, gone, reply? } | { ok: false, code: 'mine' | 'net' | 'full', next, gone }.
@@ -146,7 +297,7 @@ export const giftDb = {
     const again = q.exec('select 1 from gb where uid = ? limit 1', o.uid).toArray().length > 0;
     q.exec("insert into gb(id, at, uid, ip, day, a, b, scr, st, lk, ref, j) values(?, ?, ?, ?, ?, ?, ?, ?, 'live', ?, ?, ?)", id, now, o.uid, o.ip, v.day, v.a, v.b, scr, lockArm(id, !!o.split), ref,
       JSON.stringify({ to: v.to, from: v.from, occ: v.occ, msg: v.msg, th: v.th }));
-    limAdd(q, 'u:' + o.uid, d); limAdd(q, 'n:' + o.ip, d);
+    limAdd(q, 'u:' + o.uid, d); limAdd(q, 'n:' + o.ip, d); this.makerNet(q, o.uid, o.ip, now); // 공유 보상: never a friend of this maker
     bump(q, d, 'made'); if (again) bump(q, d, 'made_again');
     if (ref) { q.exec('update gb set kids = kids + 1 where id = ?', ref); bump(q, d, 'made_ref'); }
     // Only a board whose page can still be opened is answered (not a hidden one, not one past its 7 days), and the place is taken only
@@ -166,10 +317,14 @@ export const giftDb = {
     const row = rowOf(q.exec('select * from gb where id = ?', String(id || '')).toArray()[0]);
     if (!row) return null;
     if (row.re && giftPhase(rowOf(q.exec('select * from gb where id = ?', row.re).toArray()[0]), now) === 'gone') row.re = '';
+    row.fr = Number(q.exec('select count(*) n from gn where g = ?', row.id).one().n) || 0; // friends (networks that reacted): giftView shows it from the reveal
+    const t = q.exec('select m, how from gt where g = ? and hold = 0', row.id).toArray()[0]; // its main tower minute: giftView shows only m, the owner's read how too
+    if (t) row.tw = { m: Number(t.m), how: String(t.how) };
     if (withPaper) row.paper = q.exec("select id, nick, txt from gm where g = ? and st = 'live' order by at asc, rowid asc limit ?", row.id, GIFT.paper.max).toArray().map((r) => ({ id: String(r.id), nick: String(r.nick), txt: String(r.txt) }));
     return row;
   },
-  // A 롤링페이퍼 line. o: { uid (the writer), ip, nick, txt }. -> { ok: true, n, id } | { ok: false, code }.
+  // A 롤링페이퍼 line. o: { uid (the writer), ip, nick, txt, human (the route's 'gmsg' check passed, or Turnstile is off), acct (a linked account) }.
+  // -> { ok: true, n, id, pay?, open? } | { ok: false, code }. pay / open: a friend's reaction (react), for the Worker to pay and tell.
   paper(q, id, o, now = Date.now()) {
     const g = this.get(q, id, now, false);
     if (!g || giftPhase(g, now) === 'gone') return { ok: false, code: 'gone' };
@@ -182,15 +337,19 @@ export const giftDb = {
     q.exec('insert into gm(g, id, at, uid, nick, txt, ip) values(?, ?, ?, ?, ?, ?, ?)', g.id, mid, now, o.uid, o.nick, o.txt, o.ip);
     q.exec('update gb set n = n + 1 where id = ?', g.id);
     limAdd(q, nk, d); bump(q, d, 'msg');
-    return { ok: true, n: g.n + 1, id: mid };
+    const rx = react(q, g, o.ip, o.uid, o.human !== false, now, true, !!o.acct, 'a:' + o.uid);
+    return { ok: true, n: g.n + 1, id: mid, ...(rx?.pay ? { pay: [rx.pay] } : {}), ...(rx?.open ? { open: [rx.open] } : {}) };
   },
   // Page beacons, many boards in one call: [{ g, v (visitor hash), e }]. 'open' counts a distinct visitor per board (and, on the
   // board's own day, a distinct visitor that day and a returning one); every other event is a daily count only.
   // Also carried in the same call, with no board: { e: 'hit' | 'hitbot', d, n } (GETs of /g/<id> HTML, summed in the isolate per KST day)
   // and { e: 'start', r } (the maker form shown; r: 1 when it came from another board: start_ref). 'heart' ({ g, v, e, n: network hash})
-  // is 💖: once per device and board for good (gv.h), only while heartsOpen, at most GIFT.heartNet per board, network and day.
+  // is 💖: once per device and board for good (gv.h), from the making on (heartTakes), at most GIFT.heartNet per board, network and day.
+  // A heart that counted is also a friend's reaction when t: 1 (Turnstile off, or its 'theart' check passed): react (u: the account that
+  // pressed it when the page sent its token, a: 1 when that is a linked account, else a guest friend). -> { ok, n, pay?, open? }
+  // (the share rewards and friends' pushes for the Worker, at most TOWER.payMax rewards a call).
   seen(q, items, now = Date.now()) {
-    const d = kstDay(now); let n = 0;
+    const d = kstDay(now), pay = [], open = []; let n = 0;
     heartPrune(q, d);
     for (const it of (Array.isArray(items) ? items : []).slice(0, SEEN_MAX)) { // the isolate sends at most SEEN_MAX a call
       const g = String(it?.g || ''), v = String(it?.v || ''), e = String(it?.e || '');
@@ -200,11 +359,36 @@ export const giftDb = {
       const row = q.exec(e === 'heart' ? 'select * from gb where id = ?' : 'select day from gb where id = ?', g).toArray()[0];
       if (!row) continue;
       n++;
-      if (e === 'heart') { heartAdd(q, rowOf(row), v, String(it?.n || ''), d, now); continue; }
+      if (e === 'heart') {
+        const b = rowOf(row), net = String(it?.n || '');
+        if (heartAdd(q, b, v, net, d, now)) {
+          // at: when it was pressed (the route's clock), so a 💖 just before midnight is that day's friend even if its batch goes after
+          const at = Math.floor(Number(it?.at)), t = at > 0 && at <= now && now - at < 864e5 ? at : now, u = String(it?.u || '');
+          const rx = react(q, b, net, u, Number(it?.t) === 1, t, pay.length < TOWER.payMax, Number(it?.a) === 1, u ? 'a:' + u : 'v:' + v);
+          if (rx?.pay) pay.push(rx.pay);
+          if (rx?.open) open.push(rx.open);
+        }
+        continue;
+      }
       if (e !== 'open') { bump(q, d, 'ev:' + e); continue; }
       visitAdd(q, g, v, String(row.day) === d, d, now);
     }
-    return { ok: true, n };
+    return { ok: true, n, ...(pay.length ? { pay } : {}), ...(open.length ? { open } : {}) };
+  },
+  // A share reward grant_coins clearly refused (no wallet yet): that network stays a friend of the day, unpaid (st 'fail'), and its place
+  // goes to the maker's next friend. g: the gift board ('' for a wish or board link). -> { ok }.
+  payUndo(q, g, net, uid, d, now = Date.now()) {
+    if (q.exec("update sf set amt = 0, st = 'fail' where uid = ? and d = ? and net = ? and st = '' and amt > 0", String(uid), String(d), String(net)).rowsWritten < 1) return { ok: false };
+    if (g) q.exec('update gn set paid = 0 where g = ? and net = ? and paid = 1', String(g), String(net));
+    bump(q, kstDay(now), 'tpay_fail');
+    return { ok: true };
+  },
+  // One grant_coins gave no clear answer to (a timeout, a 5xx): it may have gone through, so its place stays taken (never paid twice) and the
+  // operator sees it (st 'unk', tpay_unknown). -> { ok }.
+  payUnknown(q, net, uid, d, now = Date.now()) {
+    if (q.exec("update sf set st = 'unk' where uid = ? and d = ? and net = ? and st = '' and amt > 0", String(uid), String(d), String(net)).rowsWritten < 1) return { ok: false };
+    bump(q, kstDay(now), 'tpay_unknown');
+    return { ok: true };
   },
   // E1 on the owner's preview: act 'view' (the ladder was shown), 'pick' (tier t chosen) are daily totals only, never kept against the
   // account or the board (the page asks once per board). 'notify' (tier t, with the advertising consent) keeps the account against the
@@ -251,27 +435,29 @@ export const giftDb = {
     return { ok: true };
   },
   cardGet(q, id) { const r = q.exec("select c.jpg from gc c join gb b on b.id = c.g where c.g = ? and b.st = 'live'", String(id || '')).toArray()[0]; return r?.jpg || null; },
-  // A report from one network on the board (m '') or one of its lines. GIFT.report networks hide it. -> { ok, hidden }.
+  // A report from one network on the board (m '') or one of its lines. GIFT.report networks hide it. -> { ok, hidden, off? } (off: its main
+  // tower minute was let go, towerFree).
   report(q, id, m, ip, now = Date.now()) {
-    const g = this.get(q, id, now, false);
+    const g = this.get(q, id, now, false); let off = null;
     if (!g) return { ok: false, code: 'gone' };
     const mid = PAPER_ID.test(String(m || '')) ? String(m) : '';
     if (mid && !q.exec('select 1 from gm where g = ? and id = ?', g.id, mid).toArray().length) return { ok: false, code: 'gone' };
     if (q.exec('insert or ignore into grp(g, m, ip) values(?, ?, ?)', g.id, mid, ip).rowsWritten < 1) return { ok: true, hidden: false };
     const n = Number(q.exec('select count(*) n from grp where g = ? and m = ?', g.id, mid).one().n) || 0;
     if (mid) { q.exec('update gm set rp = ? where g = ? and id = ?', n, g.id, mid); if (n >= GIFT.report) q.exec("update gm set st = 'hidden' where g = ? and id = ?", g.id, mid); }
-    else { q.exec('update gb set rp = ? where id = ?', n, g.id); if (n >= GIFT.report) q.exec("update gb set st = 'hidden' where id = ?", g.id); }
+    else { q.exec('update gb set rp = ? where id = ?', n, g.id); if (n >= GIFT.report) { q.exec("update gb set st = 'hidden' where id = ?", g.id); off = this.towerFree(q, g.id, now); } }
     bump(q, kstDay(now), 'report');
-    return { ok: true, hidden: n >= GIFT.report };
+    return { ok: true, hidden: n >= GIFT.report, ...(off ? { off } : {}) };
   },
-  // The owner takes the board down: it goes with everything of it. -> { ok, vid, up } (vid: had a video to delete; up: the board it was
-  // the reply of, whose copy in the Worker is now old).
-  del(q, id, uid) {
-    const g = this.get(q, id, Date.now(), false);
+  // The owner takes the board down: it goes with everything of it. -> { ok, vid, up, off? } (vid: had a video to delete; up: the board it
+  // was the reply of, whose copy in the Worker is now old; off: its main tower minute let go (towerFree)).
+  del(q, id, uid, now = Date.now()) {
+    const g = this.get(q, id, now, false);
     if (!g) return { ok: false, code: 'gone' };
     if (g.uid !== uid) return { ok: false, code: 'owner' };
-    dropBoards(q, [g.id]);
-    return { ok: true, vid: !!g.vid, up: g.ref };
+    const off = this.towerFree(q, g.id, now);
+    dropBoards(q, [g.id], now);
+    return { ok: true, vid: !!g.vid, up: g.ref, ...(off ? { off } : {}) };
   },
   // Boards on the plaza now (the public copy /rt/world carries), at most GIFT.liveMax, earliest first.
   live(q, now = Date.now()) {
@@ -284,19 +470,130 @@ export const giftDb = {
     q.exec('update gb set uid = ? where uid = ?', to, from);
     q.exec('update gm set uid = ? where uid = ?', to, from);
     q.exec('update or ignore gi set uid = ? where uid = ?', to, from); q.exec('delete from gi where uid = ?', from); // the account's own opt-in for a tier wins
+    q.exec('update gt set uid = ? where uid = ?', to, from); // its main tower minutes
+    // Its booking records, each by board: both accounts' records of a day are kept, so a points booking's 30 days survive the link.
+    q.exec('update or ignore ga set uid = ? where uid = ?', to, from); q.exec('delete from ga where uid = ?', from);
+    // 공유 보상: the guest's own networks, its friend days (the account's row of a day and network wins), its links' opens and friends, and
+    // the guest as someone's friend (sfr who).
+    for (const [t, c] of [['sm', 'uid'], ['sf', 'uid'], ['sfr', 'uid'], ['sl', 'o'], ['sk', 'o']]) { q.exec(`update or ignore ${t} set ${c} = ? where ${c} = ?`, to, from); q.exec(`delete from ${t} where ${c} = ?`, from); }
+    q.exec('update or ignore sfr set who = ? where who = ?', 'a:' + to, 'a:' + from); q.exec('delete from sfr where who = ?', 'a:' + from);
     return { ok: true };
   },
   // Withdrawal: the account's boards with every line on them, the lines it wrote on other boards (those boards' counts follow), its
-  // opt-ins. -> { ok, ids } (the boards gone, whose videos the Worker deletes from R2).
-  forget(q, uid) {
-    if (!uid) return { ok: false, ids: [] };
+  // opt-ins, its main tower bookings (no points back: the wallet goes). A minute that aired stays in its day's 30 with no account on it.
+  // -> { ok, ids, offs } (ids: the boards gone, whose videos the Worker deletes from R2; offs: [{ id, m }] its minutes not over yet whose board
+  // the plazas already know (revealed): the Worker tells the rooms to drop them).
+  forget(q, uid, now = Date.now()) {
+    if (!uid) return { ok: false, ids: [], offs: [] };
+    const offs = q.exec('select t.m tm, t.g tg, b.* from gt t left join gb b on b.id = t.g where t.uid = ? and t.hold = 0 and t.m + ? > ?', uid, TOWER.minMs, now).toArray()
+      .filter((r) => r.id != null && now >= revOf(rowOf(r))).map((r) => ({ id: String(r.tg), m: Number(r.tm) }));
     const ids = q.exec('select id from gb where uid = ?', uid).toArray().map((r) => String(r.id));
-    if (ids.length) dropBoards(q, ids);
+    if (ids.length) dropBoards(q, ids, now);
     const touched = q.exec('select distinct g from gm where uid = ?', uid).toArray().map((r) => String(r.g));
     q.exec('delete from gm where uid = ?', uid);
     for (const g of touched) recount(q, g);
     q.exec('delete from gi where uid = ?', uid);
-    return { ok: true, ids, lines: touched.length };
+    q.exec('delete from ga where uid = ?', uid); q.exec('delete from gt where uid = ? and m > ?', uid, now); q.exec("update gt set uid = '' where uid = ?", uid);
+    q.exec("update gf set uid = '' where uid = ? and done = 1", uid); // a refund still owed keeps whom it is owed to (the operator decides)
+    for (const [t, c] of [['sm', 'uid'], ['sf', 'uid'], ['sfr', 'uid'], ['sl', 'o'], ['sk', 'o']]) q.exec(`delete from ${t} where ${c} = ?`, uid); // 공유 보상's rows of this maker
+    q.exec('delete from sfr where who = ?', 'a:' + uid); // and of this account as someone's friend
+    return { ok: true, ids, lines: touched.length, offs };
+  },
+  // ---- 메인 타워 축하 1분 (towerrules.js) ----
+  // The owner's card: the booking, each window day's places left (holds count) and whether this maker has one that day, the taken minutes of
+  // the window (holds too), the friends so far, and whether a points booking of this account is under TOWER.gapDays old (or held now).
+  towerState(q, g, uid, now = Date.now()) {
+    lapse(q, now);
+    const t = q.exec('select m, how from gt where g = ? and hold = 0', g.id).toArray()[0], days = {};
+    for (const day of towerDays(g)) {
+      const n = Number(q.exec('select count(*) n from gt where day = ?', day).one().n) || 0;
+      days[day] = { left: Math.max(0, TOWER.perDay - n), mine: mineOn(q, uid, day) };
+    }
+    const taken = q.exec('select m from gt where m >= ? and m < ? order by m', g.a, g.b).toArray().map((r) => Number(r.m));
+    const friends = Number(q.exec('select count(*) n from gn where g = ?', g.id).one().n) || 0;
+    return { tw: t ? { m: Number(t.m), how: String(t.how) } : null, days, taken, friends, need: TOWER.friends, gap: gapOf(q, uid, now) };
+  },
+  // The owner's read. With a booking it also carries entry and rev (what the plaza gets, and when it may: the Worker's own use after a
+  // write it could not hear back from; towerRead never passes them on).
+  towerGet(q, id, uid, now = Date.now()) {
+    const g = this.get(q, id, now, false);
+    if (!g || giftPhase(g, now) === 'gone') return { ok: false, code: 'gone' };
+    if (g.uid !== uid) return { ok: false, code: 'owner' };
+    const s = this.towerState(q, g, uid, now);
+    return { ok: true, ...s, ...(s.tw ? { entry: towerEntry(g, s.tw.m), rev: revOf(g) } : {}) };
+  },
+  // A booking of minute o.m by o.how ('friends' | 'points'); o.guest: the asker is a guest or an anonymous login. One synchronous method, so
+  // two asks for one minute never both pass. dry (the points path, before it spends): the same checks, then the minute is held for this
+  // account for HOLD_MS (it counts in the day's 30 and nobody else can take it; towerConfirm books it, towerUnhold or the time lets it go).
+  // A retry replaces this account's own hold on the board. -> { ok, tw, entry, rev } | { ok, hold } (dry) | { ok: false, code, taken, days }.
+  towerBook(q, id, uid, o = {}, now = Date.now(), dry = false) {
+    lapse(q, now);
+    const g = this.get(q, id, now, false), m = Number(o.m), how = String(o.how || '');
+    if (g && g.uid === uid) q.exec('delete from gt where g = ? and uid = ? and hold > 0', g.id, uid);
+    const day = g && Number.isSafeInteger(m) && m >= g.a && m < g.b ? kstDay(m) : ''; // the window first: a minute far outside it is never a date
+    const s = g && g.uid === uid ? this.towerState(q, g, uid, now) : null;
+    const dayN = day ? Number(q.exec('select count(*) n from gt where day = ?', day).one().n) || 0 : 0;
+    const code = towerFault({ g, uid, how, m, now, guest: !!o.guest, boardHas: !!s?.tw, taken: day ? q.exec('select 1 from gt where m = ?', m).toArray().length > 0 : false,
+      dayN, mine: day ? mineOn(q, uid, day) : false, gap: !!s?.gap, friends: s?.friends || 0 });
+    if (code) return { ok: false, code, ...(s ? { taken: s.taken, days: s.days } : {}) };
+    try { q.exec('insert into gt(m, day, g, how, uid, at, hold) values(?, ?, ?, ?, ?, ?, ?)', m, day, g.id, how, uid, now, dry ? now + HOLD_MS : 0); }
+    catch { return { ok: false, code: 'taken', taken: s.taken, days: s.days }; }
+    if (dry) return { ok: true, hold: now + HOLD_MS };
+    q.exec('insert or replace into ga(uid, day, how, at, g) values(?, ?, ?, ?, ?)', uid, day, how, now, g.id);
+    bump(q, kstDay(now), 'tower:' + how);
+    return { ok: true, tw: { m, how }, entry: towerEntry(g, m), rev: revOf(g) };
+  },
+  // The spend went through: the held minute is booked. A hold that lapsed meanwhile is booked afresh if every check still passes (else the
+  // Worker pays back). -> as towerBook.
+  towerConfirm(q, id, uid, m, now = Date.now()) {
+    lapse(q, now);
+    const t = q.exec('select day from gt where m = ? and g = ? and uid = ? and hold > 0', Number(m), String(id), String(uid)).toArray()[0];
+    if (!t) return this.towerBook(q, id, uid, { m, how: 'points' }, now);
+    const g = this.get(q, id, now, false);
+    if (!g || giftPhase(g, now) === 'gone') { q.exec('delete from gt where m = ? and hold > 0', Number(m)); return { ok: false, code: 'gone' }; }
+    q.exec('update gt set hold = 0, at = ? where m = ?', now, Number(m));
+    q.exec('insert or replace into ga(uid, day, how, at, g) values(?, ?, ?, ?, ?)', String(uid), String(t.day), 'points', now, g.id);
+    bump(q, kstDay(now), 'tower:points');
+    return { ok: true, tw: { m: Number(m), how: 'points' }, entry: towerEntry(g, Number(m)), rev: revOf(g) };
+  },
+  // Nothing was spent (too few points, not ready, a refusal): the hold goes now. -> { ok }.
+  towerUnhold(q, id, uid, m) { q.exec('delete from gt where m = ? and g = ? and uid = ? and hold > 0', Number(m), String(id), String(uid)); return { ok: true }; },
+  // A board was hidden or deleted. A booking whose minute has not started is let go: the minute and the maker's record for that day go
+  // (off.pay: points come back). One on the tower now stays booked, aired, and the plazas drop it (pay: false). tell: the plazas know the
+  // board (revealed), so the rooms are told; before the reveal nobody but the owner has heard of it. -> { uid, how, m, pay, tell } or null.
+  towerFree(q, gid, now = Date.now()) {
+    const t = q.exec('select m, day, how, uid from gt where g = ? and hold = 0', String(gid)).toArray()[0];
+    if (!t) return null;
+    const m = Number(t.m), tell = now >= revOf(rowOf(q.exec('select * from gb where id = ?', String(gid)).toArray()[0]));
+    if (m > now) {
+      q.exec('delete from gt where g = ?', String(gid)); q.exec('delete from ga where uid = ? and day = ? and g = ?', String(t.uid), String(t.day), String(gid));
+      bump(q, kstDay(now), 'tower_free');
+      return { uid: String(t.uid), how: String(t.how), m, pay: String(t.how) === 'points', tell };
+    }
+    return now < m + TOWER.minMs ? { uid: String(t.uid), how: String(t.how), m, pay: false, tell } : null;
+  },
+  // /rt/world's tower: booked minutes of live boards starting in the next TOWER.worldAhead (or in their minute now), earliest first, only
+  // those whose board is revealed (a board's words reach nobody but its owner before revealAt). soon: the next reveal among the rest (the
+  // isolate's copy is read again then). -> { list, soon }.
+  towerLive(q, now = Date.now()) {
+    const rows = q.exec("select t.m tm, b.* from gt t join gb b on b.id = t.g where t.hold = 0 and b.st = 'live' and t.m + ? > ? and t.m < ? order by t.m asc limit ?", TOWER.minMs, now, now + TOWER.worldAhead, TOWER.worldMax).toArray();
+    const list = [], later = [];
+    for (const r of rows) { const b = rowOf(r), rev = revOf(b); if (now >= rev) list.push(towerEntry(b, Number(r.tm))); else later.push(rev); }
+    return { list, soon: later.length ? Math.min(...later) : 0 };
+  },
+  worldRead(q, now = Date.now()) { const t = this.towerLive(q, now); return { gifts: this.live(q, now), tower: t.list, ...(t.soon ? { soon: t.soon } : {}) }; },
+  // The 'dark' alarm at a board's reveal: the entry to tell the rooms, if the minute is still booked, the board live and revealed, and the
+  // minute not over. -> entry | null.
+  towerEntryAt(q, id, m, now = Date.now()) {
+    const t = q.exec('select m from gt where m = ? and g = ? and hold = 0', Number(m), String(id)).toArray()[0];
+    const b = t ? rowOf(q.exec("select * from gb where id = ? and st = 'live'", String(id)).toArray()[0]) : null;
+    return b && now >= revOf(b) && now < Number(m) + TOWER.minMs ? towerEntry(b, Number(m)) : null;
+  },
+  // A refund grant_coins did not take, or a spend whose answer never came (why 'unknown': it may or may not have gone through): one row for
+  // the operator (the admin gift view lists it; /rt/admin/coins pays it) and a daily total.
+  refundFail(q, o = {}, now = Date.now()) {
+    q.exec('insert into gf(uid, m, g, why, at) values(?, ?, ?, ?, ?)', String(o.uid || ''), Math.floor(Number(o.m)) || 0, String(o.g || ''), String(o.why || '').slice(0, 16), now);
+    bump(q, kstDay(now), o.why === 'unknown' ? 'tower_spend_unknown' : 'tower_refund_fail'); return { ok: true };
   },
   // Makers, by the board row's uid (the account, or the guest id this browser keeps; a guest's boards move to the account on linking).
   // Counted from the boards still kept, by when they were made (at): the KST week from Monday 00:00, and the last 30 days split into
@@ -321,7 +618,9 @@ export const giftDb = {
         g.lines = q.exec('select id, nick, txt, st, rp, at from gm where g = ? order by at asc, rowid asc', g.id).toArray().map((r) => ({ id: String(r.id), nick: String(r.nick), txt: String(r.txt), st: String(r.st), rp: Number(r.rp) || 0, at: Number(r.at) }));
         g.phase = giftPhase(g, now); delete g.uid; delete g.ip;
       }
-      return { ok: true, day, boards: rows, gone };
+      // The refunds the operator owes by hand (newest first): the admin gift view only.
+      const refunds = q.exec('select k, uid, m, g, why, at, done from gf order by at desc limit 100').toArray().map((r) => ({ k: Number(r.k), uid: String(r.uid), m: Number(r.m), g: String(r.g), why: String(r.why), at: Number(r.at), done: Number(r.done) ? 1 : 0, amount: TOWER.price }));
+      return { ok: true, day, boards: rows, gone, refunds };
     }
     if (op === 'stats') {
       const d1 = /^\d{4}-\d{2}-\d{2}$/.test(String(arg.d1 || '')) ? String(arg.d1) : kstDay(now);
@@ -333,6 +632,7 @@ export const giftDb = {
         .map((r) => ({ lk: Number(r.lk) || 0, boards: Number(r.b) || 0, visitors: Number(r.v) || 0, dayVisitors: Number(r.vd) || 0, lines: Number(r.n) || 0, kids: Number(r.kids) || 0, videos: Number(r.vid) || 0 }));
       return { ok: true, d0, d1, days: [...days].map(([d, k]) => ({ d, ...k })), arms, makers: this.makers(q, now), optins: this.admin(q, 'optins', {}, now).optins };
     }
+    if (op === 'share') return this.shareTop(q, now);
     if (op === 'optins') {
       return { ok: true, optins: q.exec('select t, count(*) n, sum(case when sent > 0 then 1 else 0 end) s from gi group by t order by t').toArray().map((r) => ({ t: Number(r.t), n: Number(r.n) || 0, sent: Number(r.s) || 0 })) };
     }
@@ -345,14 +645,20 @@ export const giftDb = {
     if (op === 'hide') {
       const id = String(arg.id || ''), m = PAPER_ID.test(String(arg.m || '')) ? String(arg.m) : '', st = arg.hide === false ? 'live' : 'hidden';
       const n = m ? q.exec('update gm set st = ? where g = ? and id = ?', st, id, m).rowsWritten : q.exec('update gb set st = ? where id = ?', st, id).rowsWritten;
-      return n ? { ok: true } : { ok: false, error: '그 선물 전광판(또는 메시지)이 없어요.' };
+      // Hiding a board lets go of its main tower minute (towerFree); bringing it back does not book it again.
+      const off = n && !m && st === 'hidden' ? this.towerFree(q, id, now) : null;
+      return n ? { ok: true, ...(off ? { off } : {}) } : { ok: false, error: '그 선물 전광판(또는 메시지)이 없어요.' };
+    }
+    if (op === 'refund') { // the operator paid one by hand (/rt/admin/coins) and marks it
+      const n = q.exec('update gf set done = ? where k = ?', arg.done === false ? 0 : 1, Math.floor(Number(arg.k)) || 0).rowsWritten;
+      return n ? { ok: true } : { ok: false, error: '그 줄이 없어요.' };
     }
     return { ok: false, error: 'op' };
   },
 };
 // reply: the recipient page's 답장 button; cer, cershot (점등식): a device came to a ceremony, it saved or shared the group photo.
-// share: the owner's 공유하기; reshare: a visitor's 🔗 공유하기 on the recipient page (its own key, ev:reshare).
-const SEEN_EV = new Set(['open', 'film', 'play', 'done', 'save', 'go', 'share', 'reshare', 'cta', 'reply', 'paper_open', ...CER_BEACONS]);
+// share: the owner's 공유하기; reshare: a visitor's 🔗 공유하기 on the recipient page (its own key, ev:reshare). real_*: 실사 축하 영상.
+const SEEN_EV = new Set(['open', 'film', 'play', 'done', 'save', 'go', 'share', 'reshare', 'cta', 'reply', 'paper_open', ...CER_BEACONS, ...REAL_BEACONS]);
 
 // ---- isolate caches ------------------------------------------------------------------------------------------------------
 const ONE = new Map(); // id -> { at, v: stored board | null }
@@ -367,17 +673,20 @@ async function loadGiftH(env, k, id) {
   return { v: oneKeep(id, v || null), h };
 }
 const loadGift = async (env, k, id) => (await loadGiftH(env, k, id)).v;
-// /rt/world's gifts: one DO call per isolate per 2 minutes at most (5 while none is up); at hard the last copy; a failed read keeps the last copy.
-// A board made in this isolate shows at once; one made in another isolate shows within that time.
+// /rt/world's gifts and main tower bookings: one DO call per isolate per 2 minutes at most (5 while there is neither), and again at the next
+// board reveal the last read named (soon: a booked minute whose board was not revealed yet is left out until then); at hard the last copy;
+// a failed read keeps the last copy. A board made (or a minute booked) in this isolate shows at once; one in another isolate within that
+// time (the rooms' TOWER push tells the plaza sooner). -> { gifts, tower } or null while there is neither.
 const NOW = { at: 0, v: null }, NOW_TTL = 120000, NOW_IDLE = 300000;
+const NOW_NONE = () => ({ gifts: [], tower: [] });
 export async function giftWorld(env, k) {
-  const now = Date.now();
-  if (now - NOW.at >= (NOW.v?.length ? NOW_TTL : NOW_IDLE) || now < NOW.at) {
-    if (!(await hard(k, env))) { try { NOW.v = await giftM(env).giftLive(now); NOW.at = now; } catch { NOW.v = NOW.v || []; NOW.at = now; } }
-    else if (!NOW.v) { NOW.v = []; NOW.at = now; } // hard with no copy yet: nothing shown, no DO call, asked again in a minute
+  const now = Date.now(), busy = !!(NOW.v && (NOW.v.gifts?.length || NOW.v.tower?.length)), due = Number(NOW.v?.soon) > 0 && now >= Number(NOW.v.soon);
+  if (now - NOW.at >= (busy ? NOW_TTL : NOW_IDLE) || now < NOW.at || due) {
+    if (!(await hard(k, env))) { try { NOW.v = await giftM(env).giftWorldRead(now); NOW.at = now; } catch { NOW.v = { ...(NOW.v || NOW_NONE()), soon: 0 }; NOW.at = now; } } // a failed read waits its turn, not each request
+    else if (!NOW.v) { NOW.v = NOW_NONE(); NOW.at = now; } // hard with no copy yet: nothing shown, no DO call, asked again in a minute
   }
-  const list = (NOW.v || []).filter((g) => g.a <= now && g.b > now);
-  return list.length ? list : null;
+  const gifts = (NOW.v?.gifts || []).filter((g) => g.a <= now && g.b > now), tower = (NOW.v?.tower || []).filter((e) => e.m + TOWER.minMs > now);
+  return gifts.length || tower.length ? { gifts, tower } : null;
 }
 // Page beacons: kept here, one DO call per GIFT.seenBatch or once the oldest is GIFT.seenMs old (the next beacon's waitUntil sends it).
 // An isolate that dies loses what it held (like the request tally).
@@ -403,8 +712,10 @@ function seenFlush(env, ctx, force = false) {
   HITS.clear(); HIT.at = 0;
   items.push(...SEEN.list.splice(0, Math.max(0, SEEN_MAX - items.length)));
   if (!SEEN.list.length) SEEN.at = 0; // what is left keeps its age: the next request sends it
+  // A failed DO call puts the items back; what the answer hands over to pay (share rewards, the friends' push) never does (payOut never
+  // throws, and a reward is never paid twice). The batch's promise waits for the payouts too.
   SEEN.p = Promise.resolve().then(() => giftM(env).giftSeen(items, now))
-    .catch(() => { const back = items.filter((it) => !it.re).map((it) => ({ ...it, re: 1 })); if (back.length) { SEEN.list = [...back, ...SEEN.list].slice(0, SEEN_CAP); SEEN.at = SEEN.at || now; } })
+    .then((r) => payOut(env, ctx, KIT, r), () => { const back = items.filter((it) => !it.re).map((it) => ({ ...it, re: 1 })); if (back.length) { SEEN.list = [...back, ...SEEN.list].slice(0, SEEN_CAP); SEEN.at = SEEN.at || now; } })
     .finally(() => { SEEN.p = null; });
   try { ctx?.waitUntil?.(SEEN.p); } catch { /* tests */ }
   return SEEN.p;
@@ -422,7 +733,81 @@ function hitsFlush(env, ctx, k, h) {
   return job;
 }
 export const giftSeenFlush = (env, ctx) => seenFlush(env, ctx, true); // tests
+// The kit of the request that came last (worker.js giftKit): a beacon batch runs after its request answered, and pays out with it.
+let KIT = null;
+// Share rewards (p.amt by grant_coins, to the maker's actor id: an account or a guest id) and the friends' push from one DO answer
+// ({ pay, open }), in waitUntil. A grant that fails (no wallet yet, no answer) is undone in the DO (one more call, only then): the friend
+// stays unpaid and the maker's day keeps its place. A reward is never paid twice. Never throws. -> the job, or null when nothing was due.
+function payOut(env, ctx, k, r) {
+  try {
+    const jobs = [];
+    for (const o of Array.isArray(r?.open) ? r.open : []) if (k?.pushNow) jobs.push(k.pushNow(env, ctx, o.uid, { kind: 'gifttower', gid: o.g }));
+    for (const p of Array.isArray(r?.pay) ? r.pay.slice(0, TOWER.payMax) : []) {
+      jobs.push(Promise.resolve().then(async () => {
+        const amt = Math.floor(Number(p.amt)); if (!(amt > 0)) return;
+        const res = k?.rpc ? await k.rpc('grant_coins', { p_key: env.FLUSH_KEY || '', p_actor_id: p.uid, p_amount: amt }).catch(() => null) : null;
+        if (res?.ok && res.data?.ok === true) return;
+        // Only a clear refusal gives the place back; no answer (it may have been paid) keeps it and is marked for the operator. A throw here
+        // leaves the row as paid: the day loses one place, never pays twice.
+        if (res?.ok && res.data?.ok === false) await giftM(env).giftPayUndo(p.g || '', p.net, p.uid, p.d);
+        else await giftM(env).giftPayUnknown(p.net, p.uid, p.d);
+      }).catch(() => { }));
+    }
+    if (!jobs.length) return null;
+    const job = Promise.all(jobs).catch(() => { });
+    try { ctx?.waitUntil?.(job); } catch { /* tests */ }
+    return job;
+  } catch { return null; }
+}
 export const giftSeenState = () => ({ list: SEEN.list.length, hits: HITS.size, busy: !!SEEN.p }); // tests
+
+// ---- 공유 보상 on wish and board links (worker.js calls these; env is the tallied one on HTTP paths, a Room counts its own call) ----------
+// shareOpen: a person (worker.js linkWho) opened /rt/w/<id> or /rt/card/<slot>: one DO write, in waitUntil, the same network and link once
+// per OPEN_GAP per isolate. The caller has checked the budget level (nothing at hard). -> the job or null.
+const OPENED = new Map(), OPEN_GAP = 600000;
+export function shareOpen(env, ctx, o) {
+  try {
+    const key = String(o?.k || '') + '|' + String(o?.net || ''), now = Date.now(), at = OPENED.get(key);
+    if (!o?.o || !o?.net || (at && now - at < OPEN_GAP && now >= at)) return null;
+    OPENED.delete(key); if (OPENED.size >= 2000) OPENED.delete(OPENED.keys().next().value); OPENED.set(key, now);
+    const job = Promise.resolve().then(() => giftM(env).giftLinkOpen({ k: String(o.k), o: String(o.o), net: String(o.net) }, now)).catch(() => { OPENED.delete(key); });
+    try { ctx?.waitUntil?.(job); } catch { /* tests */ }
+    return job;
+  } catch { return null; }
+}
+// shareMaker: the maker made or claimed something from this network (a wish post, a board claim): one DO write in waitUntil.
+export function shareMaker(env, ctx, uid, net) {
+  try {
+    if (!uid || !net) return null;
+    const job = Promise.resolve().then(() => giftM(env).giftMakerNet(String(uid), String(net), Date.now())).catch(() => { });
+    try { ctx?.waitUntil?.(job); } catch { /* tests */ }
+    return job;
+  } catch { return null; }
+}
+// shareReact: a 💖 on a wish or an 응원 on a board that landed. o: { o: the owner now, k: 'w:<id>' | 'c:<slot>', net, uid, acct }. One DO
+// call; what it hands over is paid as the gift page's (payOut). k: { rpc }. Never throws. -> the payout job, or null.
+export async function shareReact(env, ctx, k, o) {
+  try {
+    if (!o?.o || !o?.net || String(o.uid || '') === String(o.o)) return null;
+    const r = await giftM(env).giftShare({ o: String(o.o), k: String(o.k || ''), net: String(o.net), uid: String(o.uid || ''), acct: !!o.acct }, Date.now());
+    if (r?.ok && !r.why) CNT.delete(String(o.k) + '|' + String(o.o)); // a new friend: this isolate's share page counts it at once
+    return payOut(env, ctx, k, r);
+  } catch { return null; }
+}
+// "친구 N명이 응원했어요" on a share page: the count of a wish's or board's link friends (its owner now), 60 s per isolate; at hard (h) the
+// copy only, else 0 (no DO call). -> a number.
+const CNT = new Map(), CNT_MS = 60000;
+export async function shareCount(env, key, owner, h = false) {
+  const id = String(key || '') + '|' + String(owner || ''), hit = CNT.get(id), now = Date.now();
+  if (!owner) return 0;
+  if (hit && ((now - hit.at < CNT_MS && now >= hit.at) || h)) return hit.n;
+  if (h) return 0;
+  let n = 0; try { n = Number(await giftM(env).giftShareCount(String(key), String(owner))) || 0; } catch { return hit ? hit.n : 0; }
+  if (CNT.size >= 500) CNT.delete(CNT.keys().next().value);
+  CNT.set(id, { at: now, n });
+  return n;
+}
+export const shareCountDrop = () => CNT.clear(); // tests
 
 // ---- helpers -------------------------------------------------------------------------------------------------------------
 async function readSmall(req, max) {
@@ -440,19 +825,19 @@ const visitorHash = (env, v) => hex('gv|' + String(v) + '|' + String(env.GUEST_K
 const actorOf = async (req, k, env) => { try { return await k.resolveActor(env, k.tokenOf(req)); } catch { return null; } };
 const isOwner = (g, actor) => !!(g && actor && g.uid === String(actor.id));
 // What only the owner's read carries. re: the first reply board's id while it can be opened (giftDb.get decides); never in the public view.
-const ownerExtras = (g) => ({ kids: g.kids, vd: g.vd, at: g.at, lk: g.lk, ...(g.re ? { re: g.re } : {}) });
+const ownerExtras = (g) => ({ kids: g.kids, vd: g.vd, at: g.at, lk: g.lk, friends: Number(g.fr) || 0, ...(g.re ? { re: g.re } : {}), ...(g.tw ? { tw: g.tw } : {}) }); // tw: { m, how }, the main tower minute; friends: before the reveal too
 const actNo = async (k, env, id) => !!(k.actOk && !(await k.actOk(env, 'misc', id)));
 
 // ---- routes --------------------------------------------------------------------------------------------------------------
 export const giftPath = (p) => p === '/rt/gift' || p.startsWith('/rt/gift/') || p === '/rt/admin/gift' || p.startsWith('/rt/admin/gift/');
 export async function giftApi(req, env, ctx, u, k) {
-  const p = u.pathname;
+  const p = u.pathname; KIT = k;
   seenFlush(env, ctx); // beacons kept here go out with any gift request once they are due (no-op otherwise)
   hitsFlush(env, ctx, k); // link hits no beacon took, once they are due (no-op otherwise; in waitUntil, the answer does not wait)
   if (p === '/rt/admin/gift' || p.startsWith('/rt/admin/gift/')) return adminApi(req, env, ctx, u, k);
   if (p === '/rt/gift') return make(req, env, ctx, k);
   if (p === '/rt/gift/start') return startSeen(req, env, ctx, k);
-  const m = /^\/rt\/gift\/([0-9a-z]{8})(?:\/(paper|seen|heart|interest|video|card\.jpg|card|report|delete))?$/.exec(p);
+  const m = /^\/rt\/gift\/([0-9a-z]{8})(?:\/(paper|seen|heart|interest|video|card\.jpg|card|report|delete|tower))?$/.exec(p);
   if (!m) return J({ err: 'not found' }, 404);
   const id = m[1], sub = m[2] || '';
   if (sub === 'seen') return seen(req, env, ctx, id, k);
@@ -460,10 +845,11 @@ export async function giftApi(req, env, ctx, u, k) {
   if (sub === 'video') return req.method === 'POST' ? videoUp(req, env, ctx, id, k) : videoGet(req, env, id, k);
   if (sub === 'card.jpg') return cardGet(req, env, id, k);
   if (sub === 'card') return cardUp(req, env, id, k);
-  if (sub === 'paper') return paper(req, env, id, k);
+  if (sub === 'paper') return paper(req, env, ctx, id, k);
   if (sub === 'interest') return interest(req, env, id, k);
-  if (sub === 'report') return report(req, env, id, k);
+  if (sub === 'report') return report(req, env, ctx, id, k);
   if (sub === 'delete') return remove(req, env, ctx, id, k);
+  if (sub === 'tower') return tower(req, env, ctx, id, k);
   if (req.method !== 'GET') return J({ err: 'get' }, 405);
   if (!(await opsRate(env, req, 'gread', 120, env.EVENT_RL))) return no('rate', 429);
   let g, h; try { ({ v: g, h } = await loadGiftH(env, k, id)); } catch { return no('down', 503); }
@@ -483,7 +869,7 @@ export async function giftApi(req, env, ctx, u, k) {
 async function make(req, env, ctx, k) {
   if (req.method !== 'POST') return J({ err: 'post' }, 405);
   const actor = await actorOf(req, k, env); if (!actor) return no('auth', 401);
-  if (await actNo(k, env, actor.id)) return no('rate', 429, { 'retry-after': '60' });
+  if (await actNo(k, env, actor.id)) return noRate();
   if (!(await opsRate(env, req, 'gift'))) return no('rate', 429);
   const got = await readSmall(req, 3000); if (got.big) return no('long', 413); if (!got.b) return no('down', 400);
   if (await hard(k, env)) return no('busy', 503);
@@ -511,8 +897,9 @@ function mediaDrop(env, ctx, ids) {
 
 // POST /rt/gift/<id>/paper { nick, txt, ts }: a guest token is enough (the policy keeps the writer's id, never shown). The account's and
 // the network's minute, the body, budget hard, Turnstile ('gmsg'), the line, then one DO call with the caps (per board, per writer, per
-// network and day).
-async function paper(req, env, id, k) {
+// network and day). A line from another network than the maker's is a friend's reaction (giftDb.paper → react): its reward and the
+// friends' push go out after the answer (payOut).
+async function paper(req, env, ctx, id, k) {
   if (req.method !== 'POST') return J({ err: 'post' }, 405);
   const actor = await actorOf(req, k, env); if (!actor) return no('auth', 401);
   if (await actNo(k, env, actor.id)) return no('rate', 429);
@@ -522,10 +909,11 @@ async function paper(req, env, id, k) {
   const gate = k.humanGate ? await k.humanGate(env, req, got.b, 'gmsg') : null; if (gate) return gate;
   const f = paperFault(got.b);
   if (!f.ok) return J({ ok: false, code: f.code, field: f.field, error: f.error }, 400);
-  let r = null; try { r = await giftM(env).giftPaper(id, { uid: String(actor.id), ip: await k.ipHash(env, req), nick: f.v.nick, txt: f.v.txt }, Date.now()); } catch { r = null; }
+  // human: this line passed its 'gmsg' check above (or Turnstile is off); acct: a linked account writes it (a guest friend otherwise)
+  let r = null; try { r = await giftM(env).giftPaper(id, { uid: String(actor.id), ip: await k.ipHash(env, req), nick: f.v.nick, txt: f.v.txt, human: true, acct: !!(k.guestLike && !k.guestLike(actor)) }, Date.now()); } catch { r = null; }
   if (!r) return no('down', 503);
   if (!r.ok) return no(r.code, r.code === 'gone' ? 404 : 409);
-  ONE.delete(id);
+  ONE.delete(id); payOut(env, ctx, k, r);
   return J({ ok: true, n: r.n, id: r.id });
 }
 
@@ -542,17 +930,24 @@ async function seen(req, env, ctx, id, k) {
   return ok();
 }
 
-// POST /rt/gift/<id>/heart { v }: 💖 from this device (v: the page's random device id, hashed as for a view). No token, no account,
-// no notice to anyone. The network's minute, budget hard (503 busy, no DO call), then it waits in the isolate with the beacons: the DO
-// keeps one per device and board, only while the board's content is revealed, GIFT.heartNet per board, network and day. The answer
-// cannot say whether it was counted (the page shows its own press); a heart on a board that is gone or not yet revealed is dropped there.
+// POST /rt/gift/<id>/heart { v, ts? }: 💖 from this device (v: the page's random device id, hashed as for a view). No account, no notice
+// to anyone. The network's minute, budget hard (503 busy, no DO call), then it waits in the isolate with the beacons: the DO keeps one per
+// device and board, from the making on (the count is shown once the board is revealed), GIFT.heartNet per board, network and day. The
+// answer cannot say whether it was counted (the page shows its own press); a heart on a board that is gone is dropped there.
+// ts: a Turnstile 'theart' token (up to 2,048 characters) while it is on. Only a checked heart (or any, while Turnstile is off) may count as a
+// friend of the main tower minute and pay the share reward (t: 1); one without is still a heart. No token at all: humanGate answers at once,
+// siteverify is not asked. Authorization (optional): the page sends its signed-in account's token, so the share reward can tell an account
+// friend (+50 / +20) from a guest one (+10); without it, or with a guest token, the heart is a guest friend's. A token that does not verify is
+// the same as none (the heart is never refused for it).
 async function heart(req, env, ctx, id, k) {
   if (req.method !== 'POST') return J({ err: 'post' }, 405);
   if (!(await opsRate(env, req, 'gheart', 20))) return no('rate', 429);
-  const got = await readSmall(req, 300); const b = got.b || {};
+  const got = await readSmall(req, 2600); const b = got.b || {};
   if (!VISITOR_ID.test(String(b.v || ''))) return no('down', 400);
   if (await hard(k, env)) return no('busy', 503);
-  seenAdd({ g: id, v: await visitorHash(env, b.v), e: 'heart', n: await k.ipHash(env, req) });
+  const t = k.humanGate && (await k.humanGate(env, req, b, 'theart')) ? 0 : 1;
+  const actor = k.tokenOf(req) ? await actorOf(req, k, env) : null, acct = !!(actor && k.guestLike && !k.guestLike(actor));
+  seenAdd({ g: id, v: await visitorHash(env, b.v), e: 'heart', n: await k.ipHash(env, req), t, at: Date.now(), ...(actor ? { u: String(actor.id) } : {}), ...(acct ? { a: 1 } : {}) });
   seenFlush(env, ctx);
   return J({ ok: true });
 }
@@ -584,8 +979,132 @@ async function interest(req, env, id, k) {
   return J({ ok: true });
 }
 
-// POST /rt/gift/<id>/report { m }: one per network per board or line. Three networks hide it (the admin can bring it back).
-async function report(req, env, id, k) {
+// ---- 메인 타워 축하 1분 (towerrules.js) -----------------------------------------------------------------------------------
+// Whether spend_plaza takes 2,000 yet (migrations/2026-11-27-tower-minute.sql): asked with a wallet that never exists ('probe:tower'),
+// once per isolate per 10 minutes; before the migration the answer is SPEND_OLD, after it 지갑을 찾지 못했습니다. A failed ask counts as
+// ready and is asked again in a minute (the press then finds out). A Supabase call, not a DO call. -> true while it is known not to (prep).
+const PREP = { at: 0, v: false, p: null };
+function towerPrep(env, k, now = Date.now()) {
+  if (now - PREP.at < 600000 && now >= PREP.at) return Promise.resolve(PREP.v);
+  if (!k.rpc) return Promise.resolve(false);
+  PREP.p = PREP.p || Promise.resolve().then(() => k.rpc('spend_plaza', { p_key: env.FLUSH_KEY || '', p_actor_id: 'probe:tower', p_coins: TOWER.price, p_tickets: 0 }))
+    .then((r) => { PREP.v = !!(r?.ok && r.data?.ok === false && r.data.error === SPEND_OLD); PREP.at = Date.now(); return PREP.v; },
+      () => { PREP.v = false; PREP.at = Date.now() - 540000; return false; })
+    .finally(() => { PREP.p = null; });
+  return PREP.p;
+}
+export const towerPrepReset = () => { PREP.at = 0; PREP.v = false; }; // tests
+// 2,000 from the account's wallet. -> { ok, coins } | { prep } (spend_plaza does not take 2,000 yet) | { poor } | { no } (an answer that
+// spent nothing) | { unknown } (no answer, or a gateway error: it may have gone through).
+async function spendTower(env, k, uid) {
+  const r = await Promise.resolve().then(() => k.rpc('spend_plaza', { p_key: env.FLUSH_KEY || '', p_actor_id: uid, p_coins: TOWER.price, p_tickets: 0 })).catch(() => null);
+  if (!r || !(Number(r.status) < 500)) return { unknown: true };
+  const d = r.data || {};
+  if (r.ok && d.ok === true) { PREP.v = false; PREP.at = Date.now(); return { ok: true, coins: d.remaining_coins ?? null }; }
+  if (r.ok && d.error === SPEND_OLD) { PREP.v = true; PREP.at = Date.now(); return { prep: true }; }
+  if (r.ok && /부족/.test(String(d.error || ''))) return { poor: true };
+  return { no: true };
+}
+// A row for the operator (the admin gift view): o: { uid, m, g, why }. Never throws.
+const owe = (env, o) => Promise.resolve().then(() => giftM(env).giftRefundFail(o)).catch(() => { console.warn('tower owe row lost', o.why, o.g, o.m); return null; });
+// 2,000 back (a booking that could not be written after the spend, or one let go before its minute): once, in waitUntil when ctx is given.
+// A refund grant_coins does not take leaves a row (uid, m, g, why) the operator pays by hand (/rt/admin/coins).
+function refund(env, ctx, k, uid, why, m, g) {
+  const job = Promise.resolve().then(() => k.rpc('grant_coins', { p_key: env.FLUSH_KEY || '', p_actor_id: uid, p_amount: TOWER.price }))
+    .then((r) => { if (!(r?.ok && r.data?.ok === true)) throw new Error('refund'); })
+    .catch(() => { console.warn('tower refund failed', why); return owe(env, { uid, m, g, why }); });
+  if (ctx) { try { ctx.waitUntil(job); } catch { /* tests */ } }
+  return job;
+}
+// The rooms hear of a booked minute once its board is revealed: now, or at the reveal by the 'dark' alarm (towerLater).
+function towerOn(env, ctx, k, id, r) {
+  if (!r?.entry) return;
+  if (Number(r.rev) <= Date.now()) { if (k.towerTell) k.towerTell(env, ctx, r.entry); }
+  else if (k.towerLater) k.towerLater(env, ctx, { id, m: r.entry.m, at: Number(r.rev) });
+}
+// A booking let go (off: { uid, how, m, pay, tell }, towerFree): points back when it had not started, and the rooms told to drop it when
+// they know of it (a board before its reveal was never told).
+function towerOff(env, ctx, k, id, off) {
+  if (!off) return;
+  if (off.pay && off.how === 'points' && k.rpc) refund(env, ctx, k, off.uid, 'off', off.m, id);
+  if (off.tell && k.towerTell) k.towerTell(env, ctx, { id, m: off.m, off: 1 });
+  NOW.at = 0;
+}
+const TOWER_409 = new Set(['taken', 'sold', 'board', 'day', 'gap', 'friends']);
+const towerNo = (r) => no(r.code, r.code === 'owner' || r.code === 'account' ? 403 : r.code === 'gone' ? 404 : TOWER_409.has(r.code) ? 409 : 400, { ...(r.taken ? { taken: r.taken } : {}), ...(r.days ? { days: r.days } : {}) });
+// 429 with Retry-After as a header (and in the body, as the other refusals carry it).
+const noRate = () => J({ ok: false, code: 'rate', error: ERR.rate || GIFT_ERR.down, 'retry-after': '60' }, 429, { 'retry-after': '60' });
+// GET: the owner's card. POST { m, how, ts }: a booking. Cheapest first: token, the account's minute, the network's minute, body, the minute's
+// shape, the path's own refusals (a guest asking for points), budget hard (503, no DO call), Turnstile 'tower' (points only), whether the
+// database takes 2,000 (points only, see towerPrep), then:
+// - friends: one DO call that books.
+// - points: a DO call that checks and holds the minute for this account (HOLD_MS), spend_plaza, a DO call that books the held minute. Nothing
+//   spent: the hold goes (one more call). A spend whose answer never came may have gone through: the minute is booked anyway, and a row tells
+//   the operator if it cannot be. The booking call itself failing (it may have written): the owner's read says whether it did before
+//   anything is paid back. So no path both keeps a booking and pays back, and a spend that went through is booked or paid back (or, when
+//   neither can be known, left as a row for the operator).
+async function tower(req, env, ctx, id, k) {
+  if (req.method === 'GET') return towerRead(req, env, id, k);
+  if (req.method !== 'POST') return J({ err: 'post' }, 405);
+  const actor = await actorOf(req, k, env); if (!actor) return no('auth', 401);
+  if (await actNo(k, env, actor.id)) return noRate();
+  if (!(await opsRate(env, req, 'gtower', 10))) return noRate();
+  const got = await readSmall(req, 3000); if (got.big) return no('long', 413); if (!got.b) return no('down', 400);
+  const how = String(got.b.how || ''), m = Math.floor(Number(got.b.m)), uid = String(actor.id), guest = !!(actor.guest || actor.anon);
+  if (!TOWER_HOW.includes(how) || !Number.isSafeInteger(m) || !(m > 0) || Math.abs(m - Date.now()) > 400 * 864e5) return no('minute', 400); // a year either way: never a date the store cannot read
+  if (how === 'points' && guest) return no('account', 403);
+  if (await hard(k, env)) return no('busy', 503);
+  const M = giftM(env), o = { m, how, guest };
+  let spent = null;
+  if (how === 'points') {
+    const gate = k.humanGate ? await k.humanGate(env, req, got.b, 'tower') : null; if (gate) return gate;
+    if (!k.rpc || (await towerPrep(env, k))) return no('prep', 503);
+    let ask = null; try { ask = await M.giftTowerBook(id, uid, o, Date.now(), true); } catch { ask = null; }
+    if (!ask) return no('down', 503); // a hold that was written lapses by itself
+    if (!ask.ok) return towerNo(ask);
+    spent = await spendTower(env, k, uid);
+    if (!spent.ok && !spent.unknown) {
+      await Promise.resolve().then(() => M.giftTowerUnhold(id, uid, m)).catch(() => null); // else it lapses
+      return spent.prep ? no('prep', 503) : spent.poor ? no('poor', 400) : no('down', 502);
+    }
+    if (spent.unknown) console.warn('tower spend: no answer', id, m);
+  }
+  let r = null, lost = false;
+  try { r = how === 'points' ? await M.giftTowerConfirm(id, uid, m, Date.now()) : await M.giftTowerBook(id, uid, o, Date.now()); } catch { lost = true; }
+  if (lost) { // it may have written: read before answering, and before paying anything back
+    let s = null; try { s = await M.giftTowerGet(id, uid, Date.now()); } catch { s = null; }
+    if (s?.ok && s.tw && Number(s.tw.m) === m && s.tw.how === how) r = { ok: true, tw: s.tw, entry: s.entry, rev: s.rev };
+    else if (s) r = { ok: false, code: 'down' };
+    else { if (spent) await owe(env, { uid, m, g: id, why: 'unknown' }); return no('down', 503); } // neither the write nor the read answered
+  }
+  if (!r.ok) {
+    if (spent?.ok) await refund(env, null, k, uid, 'book', m, id);
+    else if (spent?.unknown) await owe(env, { uid, m, g: id, why: 'unknown' }); // may have been spent: never paid back blind
+    return r.code === 'down' ? no('down', 503) : towerNo(r);
+  }
+  ONE.delete(id); NOW.at = 0;
+  towerOn(env, ctx, k, id, r);
+  return J({ ok: true, tw: r.tw, ...(spent?.ok ? { coins: spent.coins } : {}) });
+}
+// GET /rt/gift/<id>/tower: the owner's card (towerrules.js towerCard). guest: a guest or an anonymous login (no points path); prep: the
+// database does not take 2,000 yet (accounts only, towerPrep). At budget hard: this isolate's copy of the board (ONE), no DO call.
+async function towerRead(req, env, id, k) {
+  const actor = k.tokenOf(req) ? await actorOf(req, k, env) : null; if (!actor) return no('auth', 401);
+  if (!(await opsRate(env, req, 'gtowerget', 30))) return noRate(); // its own count: a page reading its card never blocks the press
+  const uid = String(actor.id), guest = !!(actor.guest || actor.anon), prep = guest ? false : await towerPrep(env, k);
+  if (await hard(k, env)) {
+    const hit = ONE.get(id)?.v;
+    return hit && hit.uid === uid ? J({ ok: true, hard: true, tw: hit.tw || null, guest, prep }) : no('busy', 503);
+  }
+  let r = null; try { r = await giftM(env).giftTowerGet(id, uid, Date.now()); } catch { r = null; }
+  if (!r) return no('down', 503);
+  if (!r.ok) return no(r.code, r.code === 'owner' ? 403 : 404);
+  return J({ ok: true, tw: r.tw, days: r.days, taken: r.taken, friends: r.friends, need: r.need, gap: r.gap, guest, prep });
+}
+
+// POST /rt/gift/<id>/report { m }: one per network per board or line. Three networks hide it (the admin can bring it back). A board hidden
+// this way lets go of its main tower minute (towerOff: points back if it had not started, the rooms told if they know of it).
+async function report(req, env, ctx, id, k) {
   if (req.method !== 'POST') return J({ err: 'post' }, 405);
   if (!(await opsRate(env, req, 'grep', 10))) return no('rate', 429);
   const got = await readSmall(req, 300); const b = got.b || {};
@@ -594,10 +1113,11 @@ async function report(req, env, id, k) {
   if (!r) return no('down', 503);
   if (!r.ok) return no(r.code, 404);
   ONE.delete(id); if (r.hidden) NOW.at = 0;
+  if (r.off) towerOff(env, ctx, k, id, r.off);
   return J({ ok: true, hidden: !!r.hidden });
 }
 
-// POST /rt/gift/<id>/delete: the owner takes it down (and its video).
+// POST /rt/gift/<id>/delete: the owner takes it down (and its video). A main tower minute that has not started is let go (points back).
 async function remove(req, env, ctx, id, k) {
   if (req.method !== 'POST') return J({ err: 'post' }, 405);
   const actor = await actorOf(req, k, env); if (!actor) return no('auth', 401);
@@ -608,6 +1128,7 @@ async function remove(req, env, ctx, id, k) {
   if (r.vid) mediaDrop(env, ctx, [id]);
   giftDrop(id);
   if (r.up) ONE.delete(r.up); // it may have been that board's reply: its owner's next read asks again
+  if (r.off) towerOff(env, ctx, k, id, r.off);
   return J({ ok: true });
 }
 
@@ -696,10 +1217,15 @@ async function adminApi(req, env, ctx, u, k) {
       return J({ ...r, gone: undefined, media: mediaOn(env), e3: String(env.GIFT_E3 || '') === '1', tiers: TIERS.map((x) => ({ t: x.t, name: x.name, price: x.price })) });
     }
     if (p === '/rt/admin/gift/stats' && req.method === 'GET') return J(await M.giftAdmin('stats', { d0: u.searchParams.get('d0') || '', d1: u.searchParams.get('d1') || '' }, now));
+    if (p === '/rt/admin/gift/share' && req.method === 'GET') return J(await M.giftAdmin('share', {}, now)); // 공유 보상 많이 받은 사람 (7 days)
     if (p === '/rt/admin/gift/hide' && req.method === 'POST') {
       const got = await readSmall(req, 500); if (!got.b) return J({ ok: false, error: '요청을 읽지 못했어요.' }, 400);
-      const r = await M.giftAdmin('hide', got.b, now); if (r.ok) giftDrop(String(got.b.id || ''));
-      return J(r, r.ok ? 200 : 400);
+      const r = await M.giftAdmin('hide', got.b, now); if (r.ok) { giftDrop(String(got.b.id || '')); towerOff(env, ctx, k, String(got.b.id || ''), r.off); } // off: in waitUntil, also at hard
+      return J({ ...r, off: undefined }, r.ok ? 200 : 400);
+    }
+    if (p === '/rt/admin/gift/refund' && req.method === 'POST') { // { k, done }: a refund the operator paid by hand (the list is in GET /rt/admin/gift)
+      const got = await readSmall(req, 300); if (!got.b) return J({ ok: false, error: '요청을 읽지 못했어요.' }, 400);
+      const r = await M.giftAdmin('refund', got.b, now); return J(r, r.ok ? 200 : 400);
     }
     if (p === '/rt/admin/gift/notify' && req.method === 'POST') {
       const got = await readSmall(req, 800); const text = String(got.b?.text || '').replace(/\s+/g, ' ').trim().slice(0, 80);
@@ -716,9 +1242,11 @@ async function adminApi(req, env, ctx, u, k) {
 
 // Account link (/rt/auth/merge) and withdrawal (/rt/auth/withdraw), from worker.js's waitUntil.
 export async function giftMove(env, from, to) { try { await giftM(env).giftMove(String(from || ''), String(to || '')); } catch { /* the boards stay with the guest id */ } }
-export async function giftForget(env, uid, ctx) {
-  let r = null; try { r = await giftM(env).giftForget(String(uid || '')); } catch { r = null; }
+// tell: worker.js towerTell, so the rooms drop the account's main tower minutes the plazas already know (r.offs).
+export async function giftForget(env, uid, ctx, tell) {
+  let r = null; try { r = await giftM(env).giftForget(String(uid || ''), Date.now()); } catch { r = null; }
   if (r?.ids?.length) { for (const id of r.ids) giftDrop(id); await mediaDrop(env, ctx, r.ids); }
+  if (r?.offs?.length) { NOW.at = 0; if (tell) await Promise.all(r.offs.map((o) => Promise.resolve(tell(env, ctx, { id: o.id, m: o.m, off: 1 })).catch(() => null))); }
   if (r?.lines || r?.ids?.length) ONE.clear(); // their lines left other boards, their replies left the boards they answered: no copy here shows them
   return r;
 }
@@ -740,7 +1268,7 @@ const LS = String.fromCharCode(0x2028), PS = String.fromCharCode(0x2029); // JSO
 const jsonTag = (o) => '<script id="gift-data" type="application/json">' + JSON.stringify(o).replace(/</g, '\\u003c').split(LS).join('\\u2028').split(PS).join('\\u2029') + '</script>';
 export async function giftPage(req, env, ctx, u, k) {
   if (req.method !== 'GET' && req.method !== 'HEAD') return new Response('method', { status: 405 });
-  seenFlush(env, ctx);
+  KIT = k; seenFlush(env, ctx);
   const id = u.pathname.slice(3).replace(/\/+$/, '');
   if (!GIFT_ID.test(id)) return Response.redirect(new URL('/gift', req.url).href, 302);
   if (!(await opsRate(env, req, 'gpage', 120, env.EVENT_RL))) return Response.redirect(new URL('/gift', req.url).href, 302);
@@ -760,7 +1288,9 @@ export async function giftPage(req, env, ctx, u, k) {
     + '<meta property="og:type" content="website"><meta property="og:site_name" content="WISH BOARD"><meta property="og:title" content="' + esc(words.title) + '"><meta property="og:description" content="' + esc(desc) + '">'
     + '<meta property="og:url" content="' + esc(origin + '/g/' + id) + '"><meta property="og:image" content="' + esc(img) + '"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">'
     + '<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="' + esc(words.title) + '"><meta name="twitter:description" content="' + esc(desc) + '"><meta name="twitter:image" content="' + esc(img) + '">';
-  const data = { id, gift: view, now, media: mediaOn(env), down: !!down, occ: live ? OCCASIONS[view.occ]?.name || '' : '', ...(h ? { hard: true } : {}) };
+  // site: the public Turnstile key while it is on ('' when off): the page asks a 'theart' token for 💖 itself (a heart is never refused for
+  // want of one, so the route cannot answer 403 with the key the way the others do).
+  const data = { id, gift: view, now, media: mediaOn(env), down: !!down, occ: live ? OCCASIONS[view.occ]?.name || '' : '', site: k.humanSite ? k.humanSite(env) : '', ...(h ? { hard: true } : {}) };
   const html = (await shell(env, req)).replace(META_BLOCK, meta).replace('<!--GIFT_DATA-->', jsonTag(data));
   return new Response(req.method === 'HEAD' ? null : html, { status: live ? 200 : down ? 503 : 404, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': live ? 'public, max-age=20' : 'no-store', 'x-robots-tag': 'noindex, nofollow', 'referrer-policy': 'strict-origin-when-cross-origin' } });
 }

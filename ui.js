@@ -11,6 +11,7 @@ import { backFields, returnGap, claimStarter, sheetStarts } from './growth.js?v=
 import { A2HS_KEY, VISITS_KEY, bumpVisits, isStandalone, isIosSafari, installMode, installDue, INSTALL_COPY, INSTALL_CRAMPED_Q } from './install.js?v=202611271045';
 import { RECAP_KEY, RECAP_SHOWN_KEY, noteDay, noteHeld, noteHearts, noteClaim as recapClaim, recapDue, recapLines, recapShareText, weekOf } from './recap.js?v=202611271045';
 import { nowMs } from './live.js';
+import { TOWER, towerNews } from './towerrules.js';
 import { cardUrl, vipShareLink, composeWishShot, kakaoFeed, kakaoSend, loadKakao, invited } from './share.js?v=202611271045';
 import { inviteView } from './invite.js';
 import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611271045';
@@ -430,7 +431,7 @@ export function createUI(root, hooks) {
   const viewRow = h('div', { class: 'viewrow' }, viewBtn);
   // The tool row, in the order of use (TOOL_ORDER, overlay.js), the same on every screen and in the ⋯ menu: the core action
   // (전광판 걸기), the growth loop (선물 전광판: gift.js adds it, placeTools moves it to second), today's wish, then the social
-  // ones (응원 순위, 받은 소식 while something is unread), then the self ones (사진 찍어 공유, 공유·코드, 내 건물), and the window's
+  // ones (응원 순위, 받은 소식 while something is unread), then the self ones (사진 찍어 공유, 공유, 내 건물), and the window's
   // own (조작 안내, 전체 화면) with 설정 last. A desktop window from 1024px writes every visible tool's name beside its icon
   // (index.html "Desktop tool row"); what does not fit at that width is in ⋯ (.t-1280, .t-1440, .t-1680: inline from that width).
   root.append(h('div', { class: 'hud-r' },
@@ -445,7 +446,7 @@ export function createUI(root, hooks) {
         h('button', { class: 'btn icon tool-rank', type: 'button', 'aria-label': '응원 순위', title: '응원 순위', onclick: () => openRanks() }, icon('trophy')),
         inboxBtn,
         h('button', { class: 'btn icon tool-more tool-shot t-1280', type: 'button', 'aria-label': '사진 찍어 공유', title: '사진 찍어 공유', onclick: () => openShot() }, icon('camera')),
-        h('button', { class: 'btn icon tool-more tool-adv tool-vip t-1280', type: 'button', 'aria-label': '공유·코드', title: '공유·코드', onclick: () => openVip() }, icon('share')),
+        h('button', { class: 'btn icon tool-more tool-adv tool-vip t-1280', type: 'button', 'aria-label': '공유', title: '공유', onclick: () => openVip() }, icon('share')),
         h('button', { class: 'btn icon tool-more tool-adv tool-hub t-1440', type: 'button', 'aria-label': '내 건물', title: '내 건물', onclick: () => openHub() }, icon('building')),
         fsBtn,
         h('button', { class: 'btn ghost icon tool-more tool-set t-1680', type: 'button', 'aria-label': '설정', title: '설정', onclick: () => openSettings() }, icon('gear')),
@@ -1057,8 +1058,9 @@ export function createUI(root, hooks) {
   }
   const newsQueue = [];
   let newsBusy = false;
-  function pushNews(kicker, text, sound = true, slot = '') {
-    newsQueue.push({ kicker, text, sound, slot: String(slot || '') });
+  // until: when the line stops being news (ms, nowMs; 0 never): a line still waiting then is dropped (the main tower minute is over).
+  function pushNews(kicker, text, sound = true, slot = '', until = 0) {
+    newsQueue.push({ kicker, text, sound, slot: String(slot || ''), until: Number(until) || 0 });
     if (newsQueue.length > 6) newsQueue.shift();
     pumpNews();
   }
@@ -1067,6 +1069,8 @@ export function createUI(root, hooks) {
     // While one board is being looked at (the focus camera) or the boards are toured (멍때리기) the line waits: it used to
     // run across the top of the board in view. focusLock(false) and lounge(false) pump again.
     if (focusOn || root.classList.contains('lounging')) return;
+    while (newsQueue.length && newsQueue[0].until && nowMs() >= newsQueue[0].until) newsQueue.shift();
+    if (!newsQueue.length) return;
     newsBusy = true;
     const item = newsQueue.shift();
     const slot = item.slot;
@@ -1165,8 +1169,8 @@ export function createUI(root, hooks) {
   function showFarCard(slot, info = {}) {
     if (!slot || sheet || baking || dance) return;
     hideFar();
-    const state = info.state || 'free';
-    const who = state === 'other' ? `${info.who || '익명'}님의 전광판` : state === 'mine' ? '내 전광판' : '빈 전광판';
+    const state = info.state || 'free', tw = isPrimeSlot(slot) ? hooks.towerOf?.(slot) || '' : ''; // tw: the main tower minute's gift board
+    const who = tw ? '메인 타워 축하 1분' : state === 'other' ? `${info.who || '익명'}님의 전광판` : state === 'mine' ? '내 전광판' : '빈 전광판';
     const far = Number.isFinite(info.dist) ? ` · ${Math.round(info.dist)}m` : '';
     const act = (text, fn, cls = '') => h('button', { type: 'button', class: cls, text, onclick: () => { hideFar(); fn(); } });
     const cheerBtn = act('응원', () => hooks.cheer?.(slot, 1));
@@ -1176,7 +1180,7 @@ export function createUI(root, hooks) {
       h('div', { class: 'far-acts' }, // not 'acts': that class is the touch button column (absolute, pointer-events: none)
         act('보기', () => hooks.focusShot?.(slot)),
         cheerBtn,
-        act(state === 'mine' ? '수정' : '걸기', () => (state === 'mine' ? openAd(slot) : openBillboard(slot)), 'go')));
+        tw ? act('선물 보기', () => hooks.openGiftPage?.(tw), 'go') : act(state === 'mine' ? '수정' : '걸기', () => (state === 'mine' ? openAd(slot) : openBillboard(slot)), 'go')));
     toasts.prepend(el); // the bottom of the floating stack: toasts go above it, never on it
     farEl = el;
     requestAnimationFrame(() => el.classList.add('show'));
@@ -2359,7 +2363,7 @@ export function createUI(root, hooks) {
   }
   // ---------------------------------------------------------------- 오늘의 소원
   // Wish text and nicknames are other people's words: they reach the DOM only through `text:` (textContent).
-  const WISH_FOOT = '매일 0시에 새로 시작해요. 여러 사람에게서 하트 5개 이상 받은 1~3위는 다음 날 응원 포인트 300·200·100.';
+  const WISH_FOOT = '매일 0시에 새로 시작해요. 여러 사람에게서 하트 5개 이상 받은 1~3위는 다음 날 어제의 소원에 올라요. 순위로 주는 포인트는 없어요.'; // the 300·200·100 prize was removed on 2026-11-27
   const WISH_CHIPS = ['올해는 꼭 합격', '우리 가족 건강하게', '월급 오르게 해 주세요'];
   // 계절 소원 테마 (seasons.js, main.js applySeason): null on a day with no theme. A theme adds one header line on top of the sheet
   // and swaps the three example chips; the form, the rules and the rest of the sheet are the same.
@@ -2695,8 +2699,9 @@ export function createUI(root, hooks) {
         if (me) { try { localStorage.setItem('kts_wish_prize', kstDay()); } catch { /* private mode */ } }
         fill(yBox,
           h('h3', { text: '어제의 소원' }),
-          ...ys.map((y) => h('p', { class: 'wish-yrow', text: `${y.rank}위 ${quote(y.txt)} — ${y.nick || '누군가'} · ♥ ${y.hearts}${y.prize ? ` · +${y.prize}` : ''}` })),
-          me ? h('p', { class: 'note ok', text: me.prize ? `내 소원이 어제 ${me.rank}위였어요. +${me.prize} 포인트가 들어와요.` : `내 소원이 어제 ${me.rank}위였어요.` }) : null,
+          // A place here pays no points (the wish prize was removed on 2026-11-27): rank and hearts only, whatever an older Worker still sends.
+          ...ys.map((y) => h('p', { class: 'wish-yrow', text: `${y.rank}위 ${quote(y.txt)} — ${y.nick || '누군가'} · ♥ ${y.hearts}` })),
+          me ? h('p', { class: 'note ok', text: `내 소원이 어제 ${me.rank}위였어요.` }) : null,
         );
       }
 
@@ -2733,6 +2738,8 @@ export function createUI(root, hooks) {
     }, true, 'wish');
   }
   function openAd(slotId) {
+    // 메인 타워 축하 1분: in its minute a main tower face shows a gift board; a tap opens that board's page, not the team sheet.
+    const tw = isPrimeSlot(slotId) ? hooks.towerOf?.(slotId) : ''; if (tw) { hooks.openGiftPage?.(tw); return; }
     if (isPrimeSlot(slotId) && teamUi().primeNow(slotId)) { teamUi().openPrime(slotId); return; } // a team is on it: the prime screen sheet
     const b = boardById(slotId);
     if (!boardActive(b)) { openBillboard(slotId); return; }
@@ -5107,16 +5114,24 @@ export function createUI(root, hooks) {
     return true;
   }
   const SHARE_ACCOUNT = '계정을 연결하면 공유 보너스 300포인트를 받을 수 있어요'; // worker.js SHARE_ACCOUNT, the 403 code 'account' answer
+  // The share bonus is once per account, ever (worker.js promo, 2026-11-27; 400 code 'once' after that). This device remembers, per account id,
+  // that the bonus was paid or that the server said 'once', so the sheet stops offering +300. Nothing is asked for it when the page loads:
+  // another device offers +300 until its first answer, and the server alone decides.
+  const shareGotKey = () => { const id = hooks.actorId?.(); return id ? 'kts_share_got:' + id : ''; };
+  function shareGot() { const k = shareGotKey(); if (!k) return false; try { return localStorage.getItem(k) === '1'; } catch { return false; } }
+  function shareGotSet() { const k = shareGotKey(); if (!k) return; try { localStorage.setItem(k, '1'); } catch { /* private mode */ } }
   function openVip() {
     trackEvent('vip_modal_open');
     promptLink('vip');
-    // The sheet is called what its tool button is called (공유·코드). It was 공유와 스폰서 코드 · SPONSOR behind a crown named VIP 메뉴.
-    openSheet(['share', '공유·코드'], null, (host) => {
-      const code = h('input', { class: 'input', maxLength: 32, placeholder: '8자리 스폰서 코드', 'aria-label': '스폰서 코드', autocomplete: 'off', autocapitalize: 'characters', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'go' });
+    // The sheet is called what its tool button is called (공유). It was 공유·코드 until the 10,000-point sponsor code was removed (2026-11-27,
+    // POST /rt/redeem-code answers 410 off), and before that 공유와 스폰서 코드 · SPONSOR behind a crown named VIP 메뉴.
+    openSheet(['share', '공유'], null, (host) => {
       // The share bonus is for accounts (POST /rt/share-bonus answers a guest 403 code 'account'). A guest sees that, a button to the account
       // sheet, and a plain share button that asks for no bonus.
       const shareGuest = accountView.ready && accountView.guest && !accountView.linked;
-      const share = h('button', { class: shareGuest ? 'btn ghost' : 'btn gold', type: 'button', text: shareGuest ? '링크만 공유하기' : '링크 복사하고 +300' });
+      let shareDone = !shareGuest && shareGot(); // this account already had its one bonus: a plain share that asks for nothing
+      const share = h('button', { class: shareGuest || shareDone ? 'btn ghost' : 'btn gold', type: 'button', text: shareGuest ? '링크만 공유하기' : shareDone ? '링크 공유하기' : '링크 복사하고 +300' });
+      const sharePlain = () => { shareDone = true; shareGotSet(); share.className = 'btn ghost'; share.textContent = '링크 공유하기'; };
       // A guest is asked to link once, by the callout at the top of this sheet; this card keeps only the plain share.
       const shareLink = null;
       const shareBox = h('div', { class: 'manual-copy', hidden: true });
@@ -5136,25 +5151,17 @@ export function createUI(root, hooks) {
         }
         if (shareGuest) { share.disabled = false; note(SHARE_ACCOUNT, 'ok', () => openLogin()); return; } // sent, and no bonus asked for
         if (how === 'copied') note('링크를 복사했어요', 'ok', null, { key: 'copied' });
+        if (shareDone) { share.disabled = false; return; } // sent, and no bonus asked for: this account had its one
         try {
           const r = await hooks.shareBonus?.();
+          sharePlain(); share.disabled = false;
           note(r?.coins != null ? `공유 보너스 +300 · 잔액 ${r.coins}` : '공유 보너스를 넣었어요', 'ok');
         } catch (e) {
           share.disabled = false;
           if (e?.code === 'account') note(SHARE_ACCOUNT, 'err', () => openLogin()); // the server sees a guest (an anonymous sign-in too): tap to link
-          else note(e?.message || '오늘은 이미 받았거나, 아직 입장 전이에요', 'err');
+          else if (e?.code === 'once') { sharePlain(); note(e.message || '공유 보너스는 계정마다 한 번만 받아요.', 'err'); } // received before (another device too)
+          else note(e?.message || '이미 받았거나, 아직 입장 전이에요', 'err');
         }
-      });
-      const redeem = h('button', { class: 'btn ghost', type: 'button', text: '코드 사용' });
-      const me = sheet; // a late answer must not close a sheet opened after this one
-      redeem.addEventListener('click', async () => {
-        redeem.disabled = true;
-        try {
-          const r = await hooks.redeemCode?.(code.value);
-          note(`+10,000 포인트를 받았어요 · 잔액 ${r?.coins ?? ''}`, 'ok');
-          if (sheet === me) closeSheet();
-          else { code.value = ''; redeem.disabled = false; } // still open under another sheet
-        } catch (e) { note(e?.message || '코드가 맞지 않아요', 'err'); redeem.disabled = false; }
       });
       // The address is asked for when the sheet opens and shown as a real link: a window.open after an await is a pop-up
       // that Safari blocks. Until it answers there is a status line; no address (or a failed request) says so in place.
@@ -5170,10 +5177,11 @@ export function createUI(root, hooks) {
       host.append(
         h('div', { class: 'hub' },
           vipLink,
-          h('div', { class: 'vipcard' }, h('h4', null, ...withIcon('gift', shareGuest ? '친구에게 링크 공유하기' : '친구에게 링크 공유하고 +300')),
-            h('p', { text: shareGuest ? '오늘 내 소원이나 내 전광판 링크를 보내요. 공유 보너스 +300은 계정 전용이에요.' : '계정 전용, 하루 한 번. 오늘 내 소원이나 내 전광판 링크를 보내면 포인트가 바로 들어와요.' }),
+          h('div', { class: 'vipcard' }, h('h4', null, ...withIcon('gift', shareGuest || shareDone ? '친구에게 링크 공유하기' : '친구에게 링크 공유하고 +300')),
+            h('p', { text: shareGuest ? '오늘 내 소원이나 내 전광판 링크를 보내요. 공유 보너스 +300은 계정 전용이에요.'
+              : shareDone ? '오늘 내 소원이나 내 전광판 링크를 보내요. 공유 보너스는 계정마다 한 번이라 이미 받았어요.'
+                : '계정 전용, 계정마다 한 번. 오늘 내 소원이나 내 전광판 링크를 보내면 포인트가 바로 들어와요.' }),
             shareLink, share, shareBox),
-          h('div', { class: 'vipcard' }, h('h4', null, ...withIcon('key', 'VIP 스폰서 코드')), h('p', { text: '코드가 맞으면 응원 포인트 10,000이 들어와요. 명당(메인 타워와 큰 화면)은 응원 팀 사람 수로만 정해서 포인트로는 걸 수 없어요.' }), code, redeem),
           askCard,
         ),
       );
@@ -6428,6 +6436,7 @@ export function createUI(root, hooks) {
       } else if (kind === 'STAR') pushNews('EVENT · STARFALL', [h('em', { text: '별똥별 샤워' }), ' 시작! 빛기둥에 먼저 닿아 보세요']);
       else if (kind === 'WISH') pushNews('TODAY’S WISH', [h('em', { text: chars(data?.nick || '누군가', 16) }), '님이 소원을 걸었어요'], false);
       else if (kind === 'WELCOME') pushNews('WELCOME', [h('em', { text: data?.nick || '' }), '님, 위시보드에 오신 걸 환영해요!'], false);
+      else if (kind === 'TOWER') pushNews('MAIN TOWER', [towerNews(data)], true, 'MAIN_MID', Number(data?.m) + TOWER.minMs);
     },
   };
 }

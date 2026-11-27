@@ -630,7 +630,7 @@ describe('the first load', () => {
   it('the service worker needs no new revision: it caches /assets/* by URL and this is a new one', () => {
     const sw = read('sw.js');
     assert.match(sw, /url\.pathname\.startsWith\('\/assets\/'\)/);
-    assert.match(read('index.html'), /register\('\/sw\.js\?v=10'\)/);
+    assert.match(read('index.html'), /register\('\/sw\.js\?v=11'\)/); // 11 since the 실사 영상 plates (not for the taxi)
     assert.equal(/taxi/.test(sw), false);
     // served: .assetsignore keeps tools/ and out/ (where the build script writes it) back, not assets/models or *.glb
     const kept = read('.assetsignore').split('\n').map((l) => l.trim()).filter(Boolean);

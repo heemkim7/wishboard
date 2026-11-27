@@ -529,7 +529,7 @@ describe('desktop windows', () => {
     for (const vw of [641, 700, 771, 819]) assert.ok(vw - 14 - row(6) - IDENT_RIGHT >= 12, String(vw));
     assert.equal(700 - 14 - row(5) - IDENT_RIGHT, 122);
     // from 820px the full row fits again: 11 buttons end 2px right of the card (the sound button is gone: 소리 is a
-    // switch in the settings sheet, so the row is 전광판, 소원, 선물, 받은 소식, 공유·코드, 사진, 순위, 내 건물, 전체 화면, 설정, 조작 안내)
+    // switch in the settings sheet, so the row is 전광판, 소원, 선물, 받은 소식, 공유, 사진, 순위, 내 건물, 전체 화면, 설정, 조작 안내)
     assert.ok(820 - 14 - row(11) - IDENT_RIGHT >= 0);
     const ui = read('ui.js');
     assert.equal(/soundBtn/.test(ui), false);
@@ -545,7 +545,7 @@ describe('desktop windows', () => {
   });
   it('a button and the sheet it opens say the same thing', () => {
     const ui = read('ui.js');
-    for (const [label, title] of [['공유·코드', "openSheet(['share', '공유·코드'], null,"], ['내 건물', "openSheet(['building', '내 건물'], null,"],
+    for (const [label, title] of [['공유', "openSheet(['share', '공유'], null,"], ['내 건물', "openSheet(['building', '내 건물'], null,"],
       ['사진 찍어 공유', "openSheet(['camera', '사진 찍어 공유'], null,"], ['내 캐릭터', "openSheet(['user', '내 캐릭터'], null,"]]) {
       assert.ok(ui.includes(`'aria-label': '${label}', title: '${label}'`), label);
       assert.ok(ui.includes(title), title);

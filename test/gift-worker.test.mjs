@@ -626,6 +626,20 @@ describe('점등식 on the Worker: two beacon keys and the hard flag on the two 
       d = dayCounts(env); assert.equal(d['ev:cer'], 2, 'dropped at hard');
     } finally { done(); }
   });
+  it('takes the 실사 축하 영상 beacons (real_pick, real_made, real_save, real_share, real_fail) as daily counts', async () => {
+    const { done } = setup();
+    try {
+      const env = makeEnv(), H = harness(env), A = await H.guest();
+      const r = await (await H.post('/rt/gift', FORM({ day: addDays(today(), 1), at: 18 }), A.token)).json();
+      const seen = (v, e) => H.post('/rt/gift/' + r.id + '/seen', { v: VIS(v), e });
+      for (const e of ['real_pick', 'real_made', 'real_save', 'real_share', 'real_fail', 'real_x']) assert.equal((await seen(1, e)).status, 204);
+      await seen(2, 'real_pick');
+      await giftSeenFlush(env, H.ctx);
+      const d = dayCounts(env);
+      assert.deepEqual(['real_pick', 'real_made', 'real_save', 'real_share', 'real_fail'].map((e) => d['ev:' + e]), [2, 1, 1, 1, 1]);
+      assert.equal('ev:real_x' in d, false, 'an unknown key is dropped');
+    } finally { done(); }
+  });
   it('GET /rt/gift/<id> and the /g/<id> page data say hard: true at level 2 only, with no more DO calls than at level 0', async () => {
     const { clock, done } = setup();
     try {
@@ -703,19 +717,19 @@ describe('the gift loop: reshare, hearts, starts, link hits and makers on the Wo
     } finally { done(); }
   });
 
-  it('💖 is hidden and refused before the board is revealed (a scheduled board until its lighting)', async () => {
+  it('💖 is hidden before the board is revealed but kept (the friends of the main tower minute count before the day)', async () => {
     const { clock, done } = setup();
     try {
       await drain();
       const env = makeEnv(), H = harness(env), A = await H.guest();
       const r = await (await H.post('/rt/gift', FORM({ day: addDays(today(), 1), at: 9 }), A.token)).json();
       assert.equal('hearts' in r.gift, false);
-      assert.equal('hearts' in (await (await H.get('/rt/gift/' + r.id)).json()).gift, false, 'no count in the public read');
       await heart(H, r.id, 1); await giftSeenFlush(env, H.ctx);
-      assert.equal(db(env).prepare('select hr from gb where id = ?').get(r.id).hr, 0, 'dropped before the reveal');
+      assert.equal(db(env).prepare('select hr from gb where id = ?').get(r.id).hr, 1, 'kept before the reveal');
+      assert.equal('hearts' in (await (await H.get('/rt/gift/' + r.id)).json()).gift, false, 'no count in the public read');
       clock.add(21 * 36e5 + 60000); // 09:01 the next day: lit
       await heart(H, r.id, 1); await giftSeenFlush(env, H.ctx);
-      assert.equal(db(env).prepare('select hr from gb where id = ?').get(r.id).hr, 1, 'the same device, once it is revealed');
+      assert.equal(db(env).prepare('select hr from gb where id = ?').get(r.id).hr, 1, 'the same device is still one');
       assert.equal((await (await H.get('/rt/gift/' + r.id)).json()).gift.hearts, 1);
     } finally { done(); }
   });

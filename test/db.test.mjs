@@ -556,6 +556,12 @@ describe('SQL in PGlite', { skip: PGlite ? false : 'PGlite not installed (see th
     // And coin_batch answering each account's balance (the Room's WALLET_SYNC carries it; test/traffic-tabs.test.mjs).
     const bal = (await old.exec(read('migrations/2026-11-22-coin-balance.sql'))).at(-1).rows;
     assert.equal(bal.length, 1); assert.equal(bal[0].applied, true, bal[0].note);
+    // And the main tower minute (spend_plaza takes 2,000; test/tower-worker.test.mjs): before it the Worker's probe gets the refusal it reads as
+    // "not yet" (towerrules.js SPEND_OLD), after it a wallet that is not there.
+    const probe = async () => (await old.query("SELECT public.spend_plaza($1, 'probe:tower', 2000, 0) AS r", [KEY])).rows[0].r;
+    assert.deepEqual(await probe(), { ok: false, error: '그 금액은 쓸 수 없어요.' });
+    await old.exec(read('migrations/2026-11-27-tower-minute.sql'));
+    assert.deepEqual(await probe(), { ok: false, error: '지갑을 찾지 못했습니다.' });
     const neu = await fresh(read('schema.sql'));
     const cons = async (d) => (await d.query("SELECT conrelid::regclass::text AS t, conname, pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid IN ('public.cosmetics'::regclass, 'public.coin_ledger'::regclass, 'public.ops_events'::regclass) AND contype = 'c' ORDER BY 1, 2")).rows;
     assert.deepEqual(await cons(old), await cons(neu));

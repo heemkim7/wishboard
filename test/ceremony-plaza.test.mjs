@@ -470,7 +470,7 @@ describe('the entry waits for the ceremony gate (main.js, ui.js)', () => {
     assert.ok(hold > 0 && join > hold, 'the gate before net.join');
   });
   it('mountGift hears about budget hard (net.js budgetHard only) and, apart, about a connection that is down', () => {
-    assert.match(main, /giftUi = mountGift\(\{ world, ui, whenBuilt, introDone: \(\) => introDone\(\), budgetDown: \(\) => !!net\.budgetHard, netDown: \(\) => !!net\.gateDown \}\);/);
+    assert.match(main, /giftUi = mountGift\(\{ world, ui, whenBuilt, introDone: \(\) => introDone\(\), budgetDown: \(\) => !!net\.budgetHard, netDown: \(\) => !!net\.gateDown, towerAdd: \(e\) => towerPush\(e\) \}\);/);
   });
   it('a ceremony link is a deep link: no welcome board, no intro (main.js DEEP_LINK reads ?gb=)', () => {
     const a = main.indexOf('const DEEP_LINK = (() => {'), deep = main.slice(a, main.indexOf('})();', a));

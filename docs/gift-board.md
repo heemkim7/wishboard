@@ -50,6 +50,15 @@
 | `gi` 열리면 알림 | uid, t(단), at, sent | 60일 동안 다시 누르지 않으면, 탈퇴 |
 | `grp` 신고 | g, m, ip | 보드와 함께 |
 | `gc` 카드 그림 | g, jpg(≤300KB) | 보드와 함께 |
+| `gn` 반응한 연결 (2026-11-27) | g, net(네트워크 해시), at, paid(공유 보상을 줬는지). 보드·네트워크마다 한 줄, 만든 사람의 네트워크(`gb.ip`)와 만든 사람이 쓴 줄은 없다 | 보드와 함께 |
+| `gt` 메인 타워 1분 (2026-11-27) | m(그 분의 시작, 기본 키), day(그 분의 KST 날), g(보드, 유일), how(`friends`/`points`), uid(만든 사람), at | 보드와 함께, 아직 시작하지 않은 분은 보드가 가려지거나 지워질 때(`towerFree`), 탈퇴 |
+| `ga` 만든 사람의 예약 기록 (2026-11-27) | uid, day, how, at, g. 기본 키 (uid, day, g): 하루 한 번과 포인트의 30일 간격. 계정 연결 때 두 계정의 기록이 모두 남는다 | 31일 뒤(`prune`), 풀린 예약과 함께, 탈퇴 |
+| `gf` 손으로 돌려줄 포인트 (2026-11-27) | k, uid, m, g, why(`off`/`book`/`unknown`), at, done. 운영자 화면(`GET /rt/admin/gift`의 `refunds`)에만 나온다 | 90일. 탈퇴 때 다 준 줄은 계정 번호를 지운다 |
+| `sl` 링크 열림 (2026-11-27, 공유 보상) | k(`w:<소원>` / `c:<칸>`), net, o(그때의 주인), at. 사람이 연 것만(`linkWho`, 미리보기 봇은 없다). 기본 키 (k, net), 다시 열면 at과 o를 새로 | 이틀(`SHARE.openKeepMs`) |
+| `sm` 만든 사람의 연결 (2026-11-27) | uid, net, at. 선물 전광판을 만들거나 소원을 걸거나 전광판을 건 네트워크: 그 사람의 친구로 세지 않는다 | 마지막으로 쓴 날부터 30일 |
+| `sk` 소원·전광판의 링크 친구 (2026-11-27) | k, o, net, at. 공유 페이지의 "친구 N명이 응원했어요"(선물 보드는 `gn` 수) | 7일 |
+| `sf` 만든 사람의 그날 친구 (2026-11-27) | uid, d(KST, 하트는 누른 시각의 날), net, src(`g`/`w`/`c`), k, acct, amt, st(`''` 셈·지급, `unk` 지급 답 없음(자리 유지), `fail` 분명한 거절(자리 돌려줌), `wait` 묶음 한도로 못 줌), at. 기본 키 (uid, d, net): 한 네트워크는 세 곳을 합쳐 하루 한 번. 운영자 목록(`GET /rt/admin/gift/share`)만 읽는다 | 8일(`SHARE.dayKeep`) |
+| `sfr` 그날 센 사람 (2026-11-27) | uid, d, who(`a:<계정·손님 번호>`, 토큰 없는 하트는 `v:<기기 해시>`). 한 사람은 네트워크가 바뀌어도 만든 사람마다 하루 한 번. 계정 연결 때 옮기고 탈퇴 때 지운다(반응한 사람으로서의 줄도) | 8일 |
 
 R2(있을 때): `gift/<id>.v` 한 파일(다시 찍으면 덮어쓴다). 보드가 지워질 때(정리, 주인, 탈퇴) 같이 지운다.
 
@@ -62,10 +71,12 @@ R2(있을 때): `gift/<id>.v` 한 파일(다시 찍으면 덮어쓴다). 보드�
 | 경로 | 누가 | 내용 |
 | --- | --- | --- |
 | `POST /rt/gift` | 토큰(손님 가능) | 만들기. 401 토큰, 429 `rate`(계정 1분 `ACT_RL`, 네트워크 1분 `OPS_RL`), 413, 503 `busy`(hard), 403 `human`(Turnstile `gift`, 켜져 있을 때), 400 필드 오류, 429 `mine`/`net`(하루 한도), 409 `full`(+`next`). 본문의 `re: 1`은 답장이다(`ref`가 원래 보드). 응답은 보통 보드와 같고 원래 보드나 그 주인을 담지 않는다 |
-| `GET /rt/gift/<id>` | 누구나 | 공개 보기. 토큰이 주인이면 `own`, `mine`(답장이 있으면 `mine.re`), `media` |
+| `GET /rt/gift/<id>` | 누구나 | 공개 보기. 토큰이 주인이면 `own`, `mine`(답장이 있으면 `mine.re`, 메인 타워 1분이 있으면 `mine.tw = { m, how }`), `media`. 공개 보기의 `gift.tw`는 그 분뿐(방법은 없다) |
 | `POST /rt/gift/<id>/paper` | 토큰(손님 가능) | 롤링페이퍼 한 줄. Turnstile `gmsg`. 409 `paperFull`/`paperMine`/`paperNet`/`paperClosed` |
 | `POST /rt/gift/<id>/seen` | 누구나 | 페이지 비컨 `{ v, e }`(open, film, play, done, save, go, share, reshare, cta, reply). 늘 204 |
-| `POST /rt/gift/<id>/heart` | 누구나(토큰 없음) | 하트 `{ v }`(기기 id). 네트워크 1분 20(429 `rate`), hard면 503 `busy`. 비컨과 함께 모았다가 DO에서 기기·보드마다 한 번, 공개된 뒤에만 센다 |
+| `POST /rt/gift/<id>/heart` | 누구나(토큰 없음) | 하트 `{ v, ts? }`(기기 id, Turnstile `theart` 토큰). 본문 2,600바이트까지. 네트워크 1분 20(429 `rate`), hard면 503 `busy`. 비컨과 함께 모았다가 DO에서 기기·보드마다 한 번 센다. 2026-11-27부터 그날 전에도 받고(`heartTakes`), 수는 공개된 뒤에만 보인다. 토큰이 없거나 거절돼도 하트는 센다. 친구 응원으로는 확인된 하트(또는 Turnstile이 꺼졌을 때)만 센다 |
+| `GET /rt/gift/<id>/tower` | 주인 | 메인 타워 카드 `{ ok, tw: { m, how } \| null, days: { 'YYYY-MM-DD': { left, mine } }, taken: [m…], friends, need: 10, gap, guest, prep }`. hard면 isolate 사본으로 `{ ok, hard: true, tw, guest, prep }`(사본이 없으면 503 `busy`). 401 `auth`, 403 `owner`, 404 `gone`, 429 `rate`(네트워크 1분 30, 키 `gtowerget`) |
+| `POST /rt/gift/<id>/tower` | 주인 | `{ m, how: 'friends' \| 'points', ts? }` → `{ ok, tw, coins? }`. 거절 `{ ok: false, code, error, taken?, days? }`: 401 `auth`, 403 `account`/`owner`/`human`, 400 `minute`/`poor`, 404 `gone`, 409 `taken`/`sold`/`board`/`day`/`gap`/`friends`, 413 `long`, 429 `rate`(계정 1분 `ACT_RL`, 네트워크 1분 10), 503 `busy`/`prep`/`down`, 502 `down` |
 | `POST /rt/gift/start` | 누구나 | 만들기 화면이 뜬 것 `{ r }`(1이면 다른 보드에서 옴). 페이지마다 한 번. 늘 204 |
 | `POST /rt/gift/<id>/interest` | 주인 | `{ act: view \| pick \| notify, t, consent }` |
 | `POST /rt/gift/<id>/report` | 누구나 | `{ m? }` 보드 또는 한 줄. 네트워크마다 한 번 |
@@ -73,9 +84,10 @@ R2(있을 때): `gift/<id>.v` 한 파일(다시 찍으면 덮어쓴다). 보드�
 | `POST /rt/gift/<id>/video` | 주인 | 본문이 파일, 머리글 `x-ts`(Turnstile `gvid`). `MEDIA`가 없으면 501 `nostore` |
 | `GET /rt/gift/<id>/video` | 누구나 | R2에서, Range 지원(206) |
 | `POST /rt/gift/<id>/card` · `GET .../card.jpg` | 주인 · 누구나 | 링크 미리보기 그림(없으면 `/og.jpg`로 302) |
-| `GET /g/<id>` | 누구나 | 받는 사람 페이지(HTML, `noindex`, 미리보기 메타, 공개 JSON). 없으면 404 페이지 |
-| `GET /rt/admin/gift?day=` · `/stats?d0=&d1=` · `POST /hide` · `POST /notify` | `ADMIN_KEY` | 하루 목록(줄 포함), 지표, 가리기·되살리기, 결제 오픈 알림 |
+| `GET /g/<id>` | 누구나 | 받는 사람 페이지(HTML, `noindex`, 미리보기 메타, 공개 JSON). 없으면 404 페이지. 공개 JSON의 `site`는 Turnstile 공개 키(꺼져 있으면 `''`): 페이지가 하트의 `theart` 토큰을 스스로 받는다 |
+| `GET /rt/admin/gift?day=` · `/stats?d0=&d1=` · `POST /hide` · `POST /notify` · `POST /refund` | `ADMIN_KEY` | 하루 목록(줄 포함, 손으로 돌려줄 포인트 `refunds`), 지표, 가리기·되살리기, 결제 오픈 알림, 돌려준 줄 표시 `{ k, done }` |
 | `/rt/world`의 `gifts` | | 지금 걸린 보드 `[{ id, to, from, occ, msg, th, scr, a, b, n }]`, 없으면 키가 없다 |
+| `/rt/world`의 `tower` (2026-11-27) | | 앞으로 26시간 안(지금 그 분 포함)의 메인 타워 1분 `[{ id, m, to, from, occ, msg, th }]`, 60개까지, 가려진 보드는 빠진다. 없으면 키가 없다. `gifts` 항목은 그대로 |
 
 ## 한도
 
@@ -90,7 +102,24 @@ R2(있을 때): `gift/<id>.v` 한 파일(다시 찍으면 덮어쓴다). 보드�
 | 카드 그림 | JPEG 3~300KB |
 | 예산 hard | 쓰기는 모두 DO 호출 없이 503 `busy`, 비컨은 버린다. 읽기는 isolate 사본을 10분 쓴다 |
 
-봇 막기: Turnstile이 켜져 있으면(운영은 켜져 있다) 만들기 `gift`, 줄 쓰기 `gmsg`, 영상 `gvid` 토큰이 있어야 한다(`human.js` `HUMAN_ACTIONS`에 더했다. 위젯 설정은 바꿀 것이 없다). 손님을 새로 만들 때는 원래의 `guest` 확인을 거친다.
+봇 막기: Turnstile이 켜져 있으면(운영은 켜져 있다) 만들기 `gift`, 줄 쓰기 `gmsg`, 영상 `gvid`, 포인트로 메인 타워 올리기 `tower` 토큰이 있어야 한다. 하트의 `theart`는 없어도 하트는 받고 친구 응원으로만 세지 않는다(`human.js` `HUMAN_ACTIONS`에 더했다. 위젯 설정은 바꿀 것이 없다). 손님을 새로 만들 때는 원래의 `guest` 확인을 거친다.
+
+## 메인 타워 축하 1분과 공유 보상 (2026-11-27)
+
+설계 `docs/superpowers/specs/2026-11-27-main-tower-minute-design.md`, 계획 `docs/superpowers/plans/2026-11-27-main-tower-minute.md`. 규칙은 순수 모듈 `towerrules.js`(Worker·브라우저·테스트, 쿼리 없이 import)다.
+
+- **자리**: 보드의 창 안의 1분, KST 하루(그 분의 날) 30자리, 먼저 고른 사람이 갖는다. 정각(`:00`, 기념일 팀)과 21시대(9시 팀), 지금부터 5분 안, 지난 분은 고를 수 없다. 보드 하나에 한 번, 만든 사람은 하루 한 번(두 길 합쳐서).
+- **(A) 친구 응원 10곳**: 그 보드 페이지에서 서로 다른 네트워크 10곳이 하트(확인된 것)나 롤링페이퍼를 남기면 고를 수 있다(`gn` 수). 만든 사람의 네트워크(`gb.ip`, 만들 때의 해시)와 만든 사람 계정이 쓴 줄은 세지 않는다. 만든 사람이 소원을 걸거나 전광판을 걸거나 링크를 공유한 네트워크(`sm`)도 세지 않는다(2026-11-27 오후: 친구 수, 이 10곳, 공유 보상이 같은 기준). 10번째에서 만든 사람에게 웹 푸시 한 번(`gifttower`, 광고가 아닌 거래 알림, 밤 시간 제한 없음, 보드마다 한 번: `gr`의 `to:<id>`).
+- **(B) 응원 포인트 2,000**: 계정만(손님과 익명 로그인은 403 `account`), 계정마다 30일에 한 번(`ga.at`부터), Turnstile `tower`. 순서: 검사하고 그 분을 이 계정에 30초 잡아 둔다(`towerBook` dry, `gt.hold`: 하루 30에 들고 다른 사람은 못 고른다) → `spend_plaza` 2,000 → 잡아 둔 분을 예약한다(`towerConfirm`). 빼지 못했으면(부족, 준비 전, 거절) 잡은 것을 바로 놓는다(`towerUnhold`). 30초가 지나 잡은 것이 풀렸으면 다시 검사해 예약하고, 그 사이 다른 사람이 가졌으면 `grant_coins` 2,000으로 돌려주고 409와 새 목록. 빼기의 답이 오지 않았으면(연결 끊김, 5xx) 빠졌을 수 있으므로 예약한다(돌려주지 않는다). 예약 호출이 실패하면 주인 읽기(`giftTowerGet`)로 예약됐는지 본 뒤에만 돌려준다. 그것도 알 수 없으면 운영자 줄(`gf`, `why: unknown`)을 남긴다.
+- **마이그레이션 전후**: 운영 DB의 `spend_plaza`는 `migrations/2026-11-27-tower-minute.sql`(주인이 SQL 편집기에서 돌린다) 전에는 2,000을 받지 않고 `그 금액은 쓸 수 없어요.`를 돌려준다(`towerrules.js` `SPEND_OLD`). `GET .../tower`가 없는 지갑 `probe:tower`로 2,000을 한 번 물어 isolate에 10분 기억한다(`prep`). 전에는 B가 503 `prep`이고 아무것도 빼지 않는다. 뒤에는 탐침이 `지갑을 찾지 못했습니다.`를 받는다. 물어보기가 실패하면 준비된 것으로 보고 1분 뒤 다시 묻는다. A는 마이그레이션과 상관없다.
+- **풀림과 환불**: 보드가 신고로 가려지거나, 운영자가 가리거나(hard에도), 주인이 지우면 아직 시작하지 않은 1분은 풀리고(`gt`, 그날의 `ga` 줄도 지움: 하루 한 번과 30일 간격을 돌려준다), B는 2,000을 돌려준다(waitUntil). 그 1분이 지금 메인 타워에 걸려 있으면 돌려주지 않고 방에 풀림만 보낸다. 방에는 공개된 보드만 풀림을 보낸다. 시작한 1분(지난 것 포함)의 `gt` 줄은 보드가 지워져도 남아 그날의 30에 든다(그날이 지나고 보드가 없으면 `prune`이 지운다). 탈퇴는 아직 끝나지 않은 공개된 1분의 풀림을 방에 보내고, 지난 줄은 계정 번호를 지운 채 남긴다. 운영자가 되살려도 자리는 풀린 채다. 탈퇴는 `gt`·`ga`를 지우고 돌려주지 않는다(지갑이 없어진다). 계정 연결은 손님의 `gt`·`ga`를 계정으로 옮긴다(같은 날 기록은 계정 쪽이 남는다). 환불 `grant_coins`가 실패하면 로그와 하루 합계 `tower_refund_fail`, 운영자가 `/rt/admin/coins`로 손으로 준다.
+- **공개 전에는 아무에게도 (개인정보)**: 보드의 id·이름·한마디는 그 보드의 공개 시각(`revealAt`, 점등식 보드는 점등 시각, 그 밖은 그날 0시) 전에는 주인 말고 누구에게도 가지 않는다. `/rt/world`의 `tower`는 공개된 것만 싣고(isolate 사본은 다음 공개 시각에 다시 읽는다), 예약 때 방 푸시는 공개된 보드만 바로 보낸다. 공개 전 예약은 Meter `dark` 인스턴스의 표 `dtw(g, m, at)`에 id와 분만 두고, 그 인스턴스의 알람(크론 아님)이 공개 시각에 `gift`에 그 예약이 아직 있는지 물어(`giftTowerEntryAt`) 방에 보낸다. 알람은 `day` 예산에 함께 세고 hard면 30분 미룬다.
+- **광장이 아는 길**: `/rt/world`의 `tower`(위 표), 그리고 예약·풀림 때 사람이 앉아 있는 방(`wishRooms`, `chapel:square`·`chapelqa:square` 두 갈래)에 `{ t: 'WORLD_UPDATE', kind: 'TOWER', data: { id, m, to, from, occ, msg, th } }`, 풀림은 `data: { id, m, off: 1 }`. `Room.httpWorld`가 `towerWire`로 깨끗이 한 뒤 모든 소켓에 보내고 다시 붙는 소켓의 재생 목록에 둔다(나쁜 것은 400). 예산 hard면 보내지 않는다. DO 호출은 giftsrv가 받은 tallied env로 하므로 예산에 센다.
+- **공유 보상(링크 친구, 2026-11-27 오후 주인 결정으로 넓힘)**: 만든 사람의 링크로 온 친구가 반응하면 친구 한 사람마다 만든 사람(계정이든 손님이든 그 actor id)에게 `grant_coins`. 세는 곳은 셋이다. ① 이 보드 페이지에서 처음 반응(위 (A)와 같은 조건). ② 소원 링크 `/rt/w/<id>`를 사람이 연 네트워크가 24시간 안에, 그 소원의 날 안에 그 소원에 하트(`/rt/w/<id>`이 `sl`에 적고, `/rt/wish/heart`가 `giftShare`로 묻는다). ③ 전광판 링크 `/rt/card/<slot>`을 사람이 연 네트워크가 24시간 안에, 그때와 같은 주인일 때 그 전광판을 응원(방의 소켓에 Worker가 `x-net`으로 붙인 해시, Room `cheer`가 묻는다. 그 방에 주인이 같은 네트워크로 있으면 묻지 않는다). 공유 페이지는 사람이 열면 쿠키 `kts_via`(HttpOnly, Secure, SameSite=Lax, 하루, 최근 8개, 그때는 `private, no-store`)에 `w:<id>`·`c:<slot>`를 앞에 넣는다. `/rt/ws`가 그것을 `x-via`로 방에 넘기고(클라이언트가 보낸 값은 덮어쓴다, 소켓 첨부에 남아 hibernation 뒤에도), 하트와 응원은 그 키가 있을 때만 DO를 부른다. 한 사람(`sfr`)은 네트워크가 바뀌어도 하루 한 번. `/rt/share-bonus`와 `/rt/event`의 공유 이벤트(`share_link`·`share_send`·`wish_share`)도 그 계정의 네트워크를 `sm`에 적는다. 금액은 `towerrules.js` `SHARE`: 그날 n번째 친구가 계정이면 1~10번째 50, 11~30번째 20, 손님이면 10, 31번째부터 0(세기는 한다). 하트는 로그인한 계정이면 페이지가 계정 토큰을 붙여 보낸다(없으면 손님 친구). 한 네트워크는 세 곳을 합쳐 만든 사람마다 하루 한 번(`sf`). 만든 사람 계정, 만든 사람의 네트워크(`gb.ip`와 `sm`: 만들기·소원 걸기·전광판 걸기)는 세지 않는다. 비컨 묶음 하나가 넘기는 선물 페이지 보상은 10건까지(`TOWER.payMax`, 하위 요청 한도), 넘치는 반응은 친구로만 남는다. `grant_coins`가 분명히 거절하면 DO 한 번으로 되돌린다(`giftPayUndo`: `sf.st` `fail`, 그 자리는 다음 친구에게, `tpay_fail`). 답이 없으면(시간 초과, 5xx) 들어갔을 수 있으므로 자리를 지키고 `unk`로 표시한다(`giftPayUnknown`, `tpay_unknown`, 운영자가 지갑 기록을 본다). 묶음 한도로 못 준 친구는 `wait`(자리 없음, 나중에 주지 않는다). 지갑을 새로 만들지 않는다. 메인 타워 (A) 친구 10곳은 그대로 이 페이지에서만 센다.
+- **"친구 N명이 응원했어요"**: 공개되는 것은 수뿐이다(포인트, 계정/손님, 네트워크는 없다, 0이면 줄이 없다). 선물 보드는 `gn` 수로, 주인 화면(`mine.friends`)에는 처음부터, 받는 사람 페이지(`gift.friends`)에는 공개 뒤에만(그 전에는 깜짝 선물이 드러나지 않게). 소원·전광판은 공유 페이지(`/rt/w/<id>`, `/rt/card/<slot>`)의 본문과 미리보기 설명에 `sk` 수(isolate마다 60초 사본, hard면 사본만).
+- **운영자 목록**: `GET /rt/admin/gift/share`(운영 화면 로그인 뒤, `adminOk`). 최근 7일 만든 사람마다 친구 수, 계정/손님, 준 포인트, 서로 다른 네트워크 수, 곳별 수, 지급 실패, 날 수. 많이 받은 50명. `admin-gift.js`의 "공유 보상 많이 받은 사람".
+- **그날 전 하트**: 하트는 만든 때부터 받는다(`heartTakes`), 수는 공개 뒤에만 보인다(`heartsOpen`).
+- **하루 합계 키**(`gd`): `react`(새로 반응한 연결), `friend:g`·`friend:w`·`friend:c`(그날 새 친구, 곳별), `tpay`(보상을 넘긴 것), `tpay_pt`(넘긴 포인트 합), `tpay_fail`(되돌린 것), `tower:friends`, `tower:points`(예약), `tower_free`(풀린 예약), `tower_refund_fail`, `tower_spend_unknown`(빼기의 답이 오지 않음).
 
 ## 15초 영상
 
@@ -119,6 +148,12 @@ npx wrangler r2 bucket lifecycle add wishboard-media gift-expire gift/ --expire-
 그리고 `npx wrangler deploy`. 바인딩이 생기면 주인 화면이 "받는 사람 페이지에 올라가요"로 바뀌고 `/rt/admin/gift`의 `media`가 `true`가 된다. 버킷은 공개로 열지 않는다(영상은 Worker를 거쳐 나간다). lifecycle 명령의 인자 순서는 wrangler 버전에 따라 `npx wrangler r2 bucket lifecycle add --help`로 확인한다.
 
 비용: 무료 10GB 저장, 쓰기(Class A) 월 100만, 읽기(Class B) 월 1,000만. 보드 1,000개에 영상 3MB면 3GB이고 7~8일마다 비워진다. 재생 한 번에 Worker 요청 1~3개(Range)와 R2 읽기 2~6번.
+
+### 실사 축하 영상 (2026-11-27)
+
+주인 화면의 "🎬 실사 축하 영상" 카드: AI로 만든 바탕 영상 7개(`assets/plates/`)에서 하나를 고르면 그 장면만 받고, 이 기기에서 WebGL로 전광판을 합성해 10초 세로 영상(1080×1920, 느리면 720×1280)을 녹화한다. 오른쪽 아래 "AI 합성". 저장·공유는 기기에서만 하고 서버에 올리지 않는다(R2와 상관없다). 서버가 아는 것은 비컨 `real_pick`·`real_made`·`real_save`·`real_share`·`real_fail`(하루 합계 `ev:<키>`)뿐이다. 모듈은 `realrules.js`·`realcard.js`·`realvideo.js`, 자세한 것은 `IMPLEMENTED.md` '실사 축하 영상'. 받는 사람 페이지에는 아직 없다.
+
+장면 파일(`/assets/plates/`, 장면당 3~8MB)은 서비스워커가 캐시하지 않고(`sw.js`, 등록 `?v=11`), 주소에 `index.json`의 크기를 버전으로 단다.
 
 ## 측정 (E1·E2·E3)
 
@@ -156,6 +191,13 @@ npx wrangler r2 bucket lifecycle add wishboard-media gift-expire gift/ --expire-
 | 페이지 한 번 열기 | 1(HTML) + 비컨 1~3 | 보드 읽기는 isolate마다 20초에 1번, 비컨은 25개마다 1번 | 처음 본 기기면 약 4 |
 | 롤링페이퍼 한 줄 | 1 (+ 처음이면 손님 1) | 1 | 약 6 |
 | 하트 하나 / 공유 / 만들기 시작 | 1 | 비컨과 같은 묶음(25개마다 1번) | 약 4 / 1 / 1~2 |
+| 친구 반응 하나(공유 보상, 선물 페이지) | 0(하트·줄 요청에 얹는다) | 0, `grant_coins`가 실패하면 +1(`giftPayUndo`). 보상은 Supabase RPC 1(하위 요청) | 약 5 |
+| 소원·전광판 링크 열림(사람) | 0(페이지 요청 그 자체) | 1(`giftLinkOpen`, waitUntil, isolate마다 같은 링크·네트워크는 10분에 한 번) + 친구 수 읽기 isolate마다 60초에 1번. 봇과 hard는 0 | 1~2 |
+| 소원 하트 / 전광판 응원 하나 | 0(그 요청·메시지에 얹는다) | 그 브라우저의 `kts_via`에 그 소원·칸이 있을 때만 1(`giftShare`, 링크 열림이 없으면 읽기만), 없으면 0. hard는 0(하트는 503, 응원은 `wait`) | 0, 친구면 약 5 |
+| 공유 보너스 / 공유 이벤트 | 0 | 1(`giftMakerNet`), hard는 0 | 1 |
+| 소원 걸기 / 전광판 걸기 | 0 | 1(`giftMakerNet`, 만든 사람의 연결) | 1 |
+| 메인 타워 예약 한 번 | 1 | friends: DO 1 / points: DO 2 + RPC 1~2(`spend_plaza`, 경합이면 `grant_coins`). 방 푸시 = 사람 있는 방 수 + `acct` 1(30초 캐시) | 약 4 |
+| 메인 타워 카드 읽기 | 1 | 1(hard면 0), 포인트 준비 탐침 RPC는 isolate마다 10분에 1번 | 0 |
 | 링크 열림(`/g/<id>` HTML) | 0(페이지 요청 그 자체) | 보통 0(다음 비컨 묶음에 얹는다). 비컨이 없으면 isolate마다 30초에 최대 1번 | 묶음마다 하루 키 1~2 |
 | 영상 올리기 / 재생 | 1 / 1~3 | 2 / 20초 캐시 | 2 / 0 |
 | 광장 `/rt/world` | 0 | isolate마다 2분에 1번(걸린 보드가 없으면 5분) | 0 |

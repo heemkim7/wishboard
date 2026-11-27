@@ -1755,7 +1755,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   /* Desktop tool row (2026-11-24, the owner: "some have text and some do not; make them one"). From 1024px every tool in
      the row carries its name beside the icon, in the order of use (overlay.js TOOL_ORDER); the ones that do not fit at
      that width are in ⋯ (더보기), which opens a menu of every tool as an icon + name row, as on a phone. Inline from:
-     1024px 전광판 걸기, 선물 전광판, 오늘의 소원, 응원 순위, 받은 소식 (while unread); 1280px + 사진 찍어 공유, 공유·코드;
+     1024px 전광판 걸기, 선물 전광판, 오늘의 소원, 응원 순위, 받은 소식 (while unread); 1280px + 사진 찍어 공유, 공유;
      1440px + 내 건물, 조작 안내; 1680px + 전체 화면, 설정, and no ⋯. Under 1024px the row is icons only, all of them
      (820-1023px) or folded (under 820px): one form either way. It used to be four named pills and seven bare icons. */
   @media (min-width: 1024px) {
@@ -1874,7 +1874,7 @@ const CLARITY_ID = '';
   </div>
 </div>
 <script>
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js?v=10');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js?v=11');
 </script>
 <script type="module" src="./legal.js?v=202611271045"></script>
 <script type="module" src="./main.js?v=202611271045"></script>

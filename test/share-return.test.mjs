@@ -143,10 +143,10 @@ describe('다녀간 사이 rows', () => {
     assert.equal(awayRows({ ...args, wishSeen: { id: 'abcdefghij', hearts: 7 } }).rows.some((r) => r.kind === 'wish'), false);
     assert.equal(awayRows({ ...args, wishSeen: { id: 'otherwish0', hearts: 50 } }).rows[0].text, '내 소원에 하트가 7개 늘었어요 (지금 7개)');
   });
-  it('shows yesterday\'s prize once a day', () => {
+  it('shows yesterday\'s rank once a day, with no points even when an older Worker still sends a prize (removed 2026-11-27)', () => {
     const first = awayRows(args);
     const prize = first.rows.find((r) => r.kind === 'prize');
-    assert.equal(prize.text, '어제 소원이 2위였어요. +200 포인트');
+    assert.equal(prize.text, '어제 소원이 2위였어요');
     assert.equal(first.prizeDay, DAY);
     assert.equal(awayRows({ ...args, prizeDay: DAY }).rows.some((r) => r.kind === 'prize'), false);
     assert.equal(awayRows({ ...args, wish: { mine: null, yesterday: wish.yesterday } }).rows.find((r) => r.kind === 'prize').label, '오늘 소원 걸기');
@@ -209,7 +209,7 @@ describe('share links', () => {
   });
   it('the VIP bonus is asked only after the link really went out', () => {
     const ui = read('ui.js');
-    const vip = ui.slice(ui.indexOf('function openVip()'), ui.indexOf("const redeem = h('button'"));
+    const vip = ui.slice(ui.indexOf('function openVip()'), ui.indexOf("const ask = h('a'"));
     assert.ok(vip.indexOf("if (how !== 'shared' && how !== 'copied')") > 0);
     assert.ok(vip.indexOf("if (how !== 'shared' && how !== 'copied')") < vip.indexOf('hooks.shareBonus?.()'));
     assert.equal(vip.includes('navigator.clipboard.writeText'), false);

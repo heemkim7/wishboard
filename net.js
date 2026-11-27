@@ -49,8 +49,8 @@ export async function doToken(sb, fresh) { try { const c = (window.G?.net?.sb ||
 // this page makes no new guest for 10 minutes, so a reconnect loop neither repeats the request nor the card.
 export const HUMAN = { site: '', until: 0, run: (site) => import('./human.js?v=202611271045').then((m) => m.humanToken(site)).catch(() => ''), say: (code) => import('./human.js?v=202611271045').then((m) => m.humanSay(code)).catch(() => { }),
   token: (site, action) => import('./human.js?v=202611271045').then((m) => m.humanToken(site, { action })).catch(() => '') }; // token: the coin rewards' check (humanCall)
-// The coin rewards a scripted account could farm (docs/bot-protection.md): the held link reward (action 'link'), the share bonus ('bonus'), a VIP
-// code ('code'). While /rt/config names a site key (HUMAN.site) the call gets a fresh token of its own action first and sends it as ts, as a new
+// The coin rewards a scripted account could farm (docs/bot-protection.md): the held link reward (action 'link'), the share bonus ('bonus'); 'code' was the
+// VIP code, closed on 2026-11-27, and nothing asks for it now. While /rt/config names a site key (HUMAN.site) the call gets a fresh token of its own action first and sends it as ts, as a new
 // guest does; a 403 human (a spent token, or the switch turned on after this page loaded: the answer names the key) gets one more token and one
 // more try, without a word. Off: no human.js, no Cloudflare script, no extra request, the call as before. -> the call's answer. Throws the call's
 // own error, or (code 'human') HUMAN_FAIL[action] when no token got through.
@@ -388,7 +388,6 @@ export class Net {
   async publishShot(blob, ctx) { const tok = await doToken(this.sb); if (!tok) throw new Error('auth'); const r = await fetch('/rt/snap' + snapQuery(ctx), { method: 'POST', headers: { authorization: 'Bearer ' + tok, 'content-type': 'image/jpeg' }, body: blob }); const data = await r.json().catch(() => ({})); if (!r.ok || !data.url) throw new Error(data.err || 'snap'); return { url: String(data.url), page: typeof data.page === 'string' ? data.page : '' }; }
   // ts: a Turnstile token (main.js humanCall), only while the Worker has the human check on.
   async shareBonus(ts) { return this.authed('/rt/share-bonus', ts ? { ts } : {}); }
-  async redeemCode(code, ts) { return this.authed('/rt/redeem-code', ts ? { code, ts } : { code }); }
   async linkReward(ts) { return this.authed('/rt/link-reward', ts ? { ts } : {}); } // the link reward held for a human check (merge answer `held`)
   // 오늘의 소원. None of these throw: GET gives the body or null, POSTs give the body even on 4xx/5xx so the sheet can show `error`.
   // anon: no token at all (the deep link before entering), so no guest is made just to read one wish.

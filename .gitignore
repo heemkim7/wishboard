@@ -1,6 +1,7 @@
 .wrangler/
 node_modules/
 out/
+video/
 .dev.vars
 .env
 .env.*

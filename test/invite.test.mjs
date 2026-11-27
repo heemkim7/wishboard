@@ -702,8 +702,8 @@ describe('invite budget per invocation and the master switch', () => {
     assert.equal(inviteOn({ INVITE_ON: '1' }), true); for (const v of [undefined, '', '0', 'true', 1]) assert.equal(inviteOn({ INVITE_ON: v }), false, String(v));
   });
 });
-describe('invite and the wish prize settlement', () => {
-  it('a wish post that runs the invite step skips the prize settlement; a post without a code still settles', async () => {
+describe('invite and the wish settlement', () => {
+  it('a wish post that runs the invite step skips the wish settlement; a post without a code still settles', async () => {
     const { state, done } = setup();
     try {
       const env = makeEnv(), h = harness(env), [a, b, x] = await people(h, state, 3), c = await h.code(a, '9.9.9.9');

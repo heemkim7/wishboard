@@ -78,7 +78,7 @@ describe('1. the tool row: one form at every desktop width, in the order of use'
     }
     // the width the named row takes at each width (measured in Chrome: 13px names, 10 + 12px padding, 22px icon, 6px gap,
     // 4px between buttons, 4px padding and a 1px border each side) stays clear of the left column (it ends at 354px) by 12px
-    const W = { 'tool-board': 109, 'tool-gift': 109, 'tool-wish': 109, 'tool-rank': 98, 'tool-inbox': 98, 'tool-shot': 122, 'tool-vip': 98, 'tool-hub': 85, 'tool-keys': 98, 'tool-fs': 98, 'tool-set': 72, 'tool-fold': 85 };
+    const W = { 'tool-board': 109, 'tool-gift': 109, 'tool-wish': 109, 'tool-rank': 98, 'tool-inbox': 98, 'tool-shot': 122, 'tool-vip': 72, 'tool-hub': 85, 'tool-keys': 98, 'tool-fs': 98, 'tool-set': 72, 'tool-fold': 85 };
     const tier = { 'tool-shot': 1280, 'tool-vip': 1280, 'tool-hub': 1440, 'tool-keys': 1440, 'tool-fs': 1680, 'tool-set': 1680 };
     assert.match(ui, /'btn icon tool-more tool-shot t-1280'/);
     assert.match(ui, /'btn icon tool-more tool-adv tool-vip t-1280'/);
