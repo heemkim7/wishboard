@@ -1779,6 +1779,9 @@ describe('B2C: 내 전광판, DISCOVER, the nudge', () => {
       assert.equal(P.btn(/계정에 남겨 두기/), null, 'a signed-in visitor is never nudged');
     } finally { P.done(); }
   });
+  it('the header fits a 320-375px phone: the brand\'s small words go under 400px', () => {
+    assert.match(src('gift.html'), /@media \(max-width: 400px\) \{ \.brand small \{ display: none; \} \}/);
+  });
   it('the real video asks the day\'s own track first, then its stand-in', () => {
     assert.match(src('giftpage.js'), /musicUrls\(occ\)/);
   });

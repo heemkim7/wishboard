@@ -108,6 +108,7 @@
   .tag.live { background: rgba(255,61,120,.2); color: #ffd0de; border-color: rgba(255,61,120,.6); }
   /* 2026-11-27: the header's 둘러보기 (/discover), the account nudge's link, a paid tier's 결제가 열리면 label */
   .toplinks { display: inline-flex; align-items: center; gap: 2px; }
+  @media (max-width: 400px) { .brand small { display: none; } } /* 둘러보기 and the tag keep one row at 320-375px */
   .linkbtn.toplink { color: var(--gold2); font-weight: 800; }
   .nudge .linkbtn { min-height: 44px; padding: 0 2px; color: var(--gold); font-weight: 800; font-size: 13px; }
   .tier .soon { display: inline-block; margin: 2px 0 0; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--stroke); color: var(--muted); font-size: 12px; font-weight: 800; }
