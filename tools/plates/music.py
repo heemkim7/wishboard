@@ -797,11 +797,100 @@ def thanks_score(t_hit=T_FLASH, dur=FRAMES / FPS):
     return sc
 
 
+def love_score(t_hit=T_FLASH, dur=FRAMES / FPS):
+    """사랑: tender and romantic. A major, 4/4, 70 bpm; soft piano with a bell layer over a warm,
+    string-like pad, almost no beat. A F#m7 | Dmaj7 E7sus E7 | Amaj9. Original tune."""
+    sc = _common(t_hit, dur)
+    sc.update(
+        name='love', key='A major', meter=4, bpm=70.0,
+        intro=dict(chord=(40, 47, 50, 56), shimmer=(83, 86, 88, 92)),
+        hit=dict(chord=(69, 73, 76, 81, 83), sparkle=(83, 85, 88, 90, 93, 95, 97, 100)),
+        melody=[(1.0, 0.5, 76, 0.62), (1.5, 0.5, 81, 0.7), (2, 1.5, 78, 0.8), (3.5, 0.5, 76, 0.64),
+                (4, 1, 73, 0.76), (5, 0.5, 74, 0.64), (5.5, 0.5, 78, 0.7), (6, 1, 76, 0.78), (7, 0.5, 74, 0.64),
+                (7.5, 0.5, 71, 0.62), (8, 3.0, 73, 0.82)],
+        chords=[(0, (57, 61, 64, 71), 'Aadd9'), (2, (54, 57, 61, 64), 'F#m7'), (4, (54, 57, 61, 62), 'Dmaj7'),
+                (6, (52, 57, 59, 62), 'E7sus'), (7, (52, 56, 59, 62), 'E7'), (8, (57, 61, 64, 68, 71), 'Amaj9')],
+        stabs=[3, 5, 7], stab_len=0.8,
+        bass=[(0, 1.9, 45), (2, 1.9, 42), (4, 1.9, 38), (6, 1.9, 40), (8, 3.0, 45)],
+        kick=[(4, 0.35), (8, 0.45)], kick_gain=0.6,
+        lead='ep', lead_gain=0.45, bell_layer=0.18, pad_gain=0.42, pad_cut=1800,
+        pings=[(0.5, 93), (2.5, 97)],
+        ending=dict(beat=8, arp=(81, 85, 88, 92, 93), last=(9.5, 97)),
+        final_ep=(57, 61, 64, 68),
+    )
+    return sc
+
+
+def grad_score(t_hit=T_FLASH, dur=FRAMES / FPS):
+    """졸업·승진: proud and uplifting, a warm march. Ab major, 4/4, 108 bpm; mellow brass lead with a
+    dotted pickup, oom-pah piano, kick on 1 and 3, claps on 2 and 4 with march snare pickups.
+    Ab | Db | Eb Eb7 | Ab. Original tune."""
+    sc = _common(t_hit, dur)
+    sc.update(
+        name='grad', key='Ab major', meter=4, bpm=108.0,
+        intro=dict(chord=(39, 46, 49, 55), shimmer=(82, 85, 87, 91)),
+        hit=dict(chord=(68, 72, 75, 80, 82), sparkle=(84, 87, 89, 92, 94, 96, 99, 101)),
+        melody=[(3.0, 0.75, 75, 0.78), (3.75, 0.25, 75, 0.68),
+                (4, 1, 80, 0.92), (5, 0.5, 77, 0.76), (5.5, 0.5, 80, 0.8), (6, 1, 85, 0.92), (7, 0.5, 84, 0.8),
+                (7.5, 0.5, 82, 0.78),
+                (8, 1.5, 82, 0.9), (9.5, 0.5, 79, 0.75), (10, 0.75, 75, 0.82), (10.75, 0.25, 77, 0.7), (11, 0.5, 79, 0.82),
+                (11.5, 0.5, 82, 0.86), (12, 3.0, 84, 1.0)],
+        chords=[(0, (56, 60, 63, 68), 'Ab'), (4, (56, 61, 65, 68), 'Db'), (8, (55, 58, 63, 67), 'Eb'),
+                (10, (55, 58, 61, 63), 'Eb7'), (12, (56, 60, 63, 68, 70), 'Abadd9')],
+        stabs=[4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5], stab_len=0.25,
+        bass=[(0, 1.9, 44), (2, 0.9, 44), (3, 0.9, 39), (4, 0.9, 37), (5, 0.9, 44), (6, 0.9, 37), (7, 0.9, 44),
+              (8, 0.9, 39), (9, 0.9, 46), (10, 0.9, 39), (11, 0.9, 46), (12, 3.0, 44)],
+        kick=[(4, 1.0), (6, 0.9), (8, 1.0), (10, 0.9), (12, 1.0)], kick_gain=0.9,
+        clap=[(5, 0.75), (7, 0.75), (7.75, 0.4), (9, 0.75), (11, 0.7), (11.5, 0.45), (11.75, 0.6)],
+        lead='brass', lead_gain=0.34, bell_layer=0.16, pad_gain=0.3, pad_cut=2100,
+        pings=[(1.0, 96), (2.0, 99)],
+        ending=dict(beat=12, arp=(80, 84, 87, 92, 96), last=(13.5, 99)),
+        final_ep=(56, 60, 63, 67),
+    )
+    return sc
+
+
+def me_score(t_hit=T_FLASH, dur=FRAMES / FPS):
+    """내 전광판: bright, confident modern pop with a spotlight feel. E major, 4/4, 118 bpm; pluck lead,
+    syncopated kick and bass, claps on 2 and 4, off-beat hats, an eighth-note arpeggio.
+    Eadd9 | C#m7 | Aadd9 B | E. Original tune."""
+    sc = _common(t_hit, dur)
+    roots = {0: 40, 4: 37, 8: 33, 10: 35}
+    bassl = [(0, 1.9, 40), (2.5, 0.5, 40), (3, 0.9, 40)]
+    for b0 in (4, 8):
+        r = roots[b0]
+        bassl += [(b0, 1.4, r), (b0 + 1.5, 0.5, r), (b0 + 2 if b0 == 4 else b0 + 2, 0.9, r if b0 == 4 else roots[10]),
+                  (b0 + 3, 0.9, r + 12 if b0 == 4 else roots[10] + 12)]
+    bassl.append((12, 3.0, 40))
+    sc.update(
+        name='me', key='E major', meter=4, bpm=118.0,
+        intro=dict(chord=(47, 54, 57, 63), shimmer=(87, 90, 93, 95)),
+        hit=dict(chord=(64, 68, 71, 76, 78), sparkle=(85, 88, 90, 92, 95, 97, 100, 102)),
+        melody=[(2.5, 0.5, 71, 0.75), (3, 0.5, 76, 0.8), (3.5, 0.5, 80, 0.85),
+                (4, 0.75, 83, 0.95), (4.75, 0.75, 80, 0.82), (5.5, 0.5, 76, 0.78), (6, 0.5, 78, 0.8), (6.5, 1, 80, 0.88),
+                (7.5, 0.5, 76, 0.75),
+                (8, 0.75, 85, 0.95), (8.75, 0.75, 83, 0.85), (9.5, 0.5, 81, 0.8), (10, 0.5, 78, 0.82), (10.5, 0.5, 75, 0.78),
+                (11, 0.5, 78, 0.82), (11.5, 0.5, 87, 0.9), (12, 3.0, 88, 1.0)],
+        chords=[(0, (59, 64, 66, 68), 'Eadd9'), (4, (56, 59, 61, 64), 'C#m7'), (8, (57, 61, 64, 71), 'Aadd9'),
+                (10, (59, 63, 66, 68), 'B6'), (12, (59, 64, 66, 68, 71), 'Eadd9')],
+        stabs=[], arp=dict(start=4, end=12, step=0.5, oct=12, vel=0.55, gain=0.4),
+        bass=bassl,
+        kick=[(4, 1.0), (5.5, 0.7), (6, 0.9), (8, 1.0), (9.5, 0.7), (10, 0.9), (12, 1.0)],
+        clap=[(5, 0.85), (7, 0.85), (9, 0.85), (11, 0.85), (11.75, 0.5)],
+        hats=[(b / 2, 0.75 if b % 2 else 0.4) for b in range(8, 24)],
+        lead='pluck', lead_gain=0.6, bell_layer=0.1, pad_gain=0.26, pad_cut=2600,
+        pings=[(1.0, 97), (2.0, 100)],
+        ending=dict(beat=12, arp=(88, 92, 95, 100, 104), last=(13.5, 100)),
+        final_ep=(59, 64, 66, 68),
+    )
+    return sc
+
+
 OCCASIONS = {
     'bday': bday, 'anniv': anniv_score, 'pass': pass_score, 'cheer': cheer_score, 'just': just_score,
-    'thanks': thanks_score,
+    'thanks': thanks_score, 'love': love_score, 'grad': grad_score, 'me': me_score,
 }
-OCC_KEYS = ('bday', 'anniv', 'pass', 'cheer', 'just', 'thanks')   # giftrules.js OCCASIONS, same order
+OCC_KEYS = ('bday', 'anniv', 'pass', 'cheer', 'just', 'thanks', 'love', 'grad', 'me')   # giftrules.js OCCASIONS
 
 
 def chord_at(score, beat):
