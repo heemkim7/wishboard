@@ -463,14 +463,15 @@ function supportSend(p) {
 
 // 점검 (launch plan 상4): /rt/config carries maint { msg, until } while the operator has it on (admin.html 점검). The boot card shows it in place
 // of 입장하기 and asks again every 60 s; inside, every 5 minutes while the tab is visible, and a player inside only gets a toast. No bypass for
-// players: ?maint=skip opens the card only in a tab where admin.html kept an ADMIN_KEY the Worker accepts (GET /rt/admin/maint answers 200).
+// players: ?maint=skip opens the card only in a browser logged in as the operator (the /admin session cookie rides along; GET /rt/admin/maint
+// answers 200 only to it). The page never holds the key.
 const MAINT_SKIP = (() => {
-  let k = ''; try { k = new URLSearchParams(location.search).get('maint') === 'skip' ? sessionStorage.getItem('kts-admin') || '' : ''; } catch { k = ''; }
-  return k ? fetch('/rt/admin/maint', { headers: { 'x-admin-key': k }, cache: 'no-store' }).then((r) => r.ok).catch(() => false) : Promise.resolve(false);
+  let skip = false; try { skip = new URLSearchParams(location.search).get('maint') === 'skip'; } catch { skip = false; }
+  return skip ? fetch('/rt/admin/maint', { cache: 'no-store', credentials: 'same-origin' }).then((r) => r.ok).catch(() => false) : Promise.resolve(false);
 })();
 let maintSkipTold = false, maintTimer = 0;
 async function maintShow(m) {
-  if (m && await MAINT_SKIP) { if (!maintSkipTold) { maintSkipTold = true; ui.note('점검 중이지만 운영자 키로 열었어요', 'ok'); } m = null; }
+  if (m && await MAINT_SKIP) { if (!maintSkipTold) { maintSkipTold = true; ui.note('점검 중이지만 운영자 로그인으로 열었어요', 'ok'); } m = null; }
   ui.boot.maint(m);
 }
 function maintTick() {
