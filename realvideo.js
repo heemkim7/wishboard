@@ -20,9 +20,9 @@
 // Recording: the WebGL canvas (captureStream) and a WebAudio mix (the plate's own street sound through a high-pass and a gain that
 // sits about -34 LUFS and swells around the flash, plus the occasion's music started at the video's own current time) go to one
 // MediaRecorder, MP4 first. The video plays in real time from frame 0 to its last frame; the 241 frames set the length.
-import { REAL, homography, invert3, quadAt, frameOf, timeOf, screenStats, texSize, ledCols, ledMean, ambBaseDb, ambCurve, keepsUp, popAt, pickRealType, realReason, finishReason } from './realrules.js?v=202611280912';
-import { createRealCard } from './realcard.js?v=202611280912';
-import { GIFT_SANS } from './giftart.js?v=202611280912';
+import { REAL, homography, invert3, quadAt, frameOf, timeOf, screenStats, texSize, ledCols, ledMean, ambBaseDb, ambCurve, keepsUp, popAt, pickRealType, realReason, finishReason } from './realrules.js?v=202611280944';
+import { createRealCard } from './realcard.js?v=202611280944';
+import { GIFT_SANS } from './giftart.js?v=202611280944';
 import { filmMark } from './giftrules.js';
 
 const MAX = 10; // screen entries the shader takes at most (a corner screen is two)
