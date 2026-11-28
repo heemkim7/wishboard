@@ -1,9 +1,9 @@
 // 선물 전광판 light pages (gift.html): the maker at /gift and the board page at /g/<id> (owner preview with the price ladder, the
 // recipient page, the 롤링페이퍼). No three.js, no realtime room, no Supabase client: what the page needs from the Worker comes inline in
 // #gift-data (the Worker renders /g/<id>), the rest is a few small JSON calls. Text people wrote is only set with textContent.
-import { GIFT, GIFT_ID, OCCASIONS, OCC_KEYS, GIFT_THEMES, THEME_KEYS, TIERS, TIER_NOTE, TIER_ASK, won, giftFault, paperFault, startChoices, windowText, dayText, hourText, kstDay, addDays, countdown, dDay, refOf, keptRef, cpLen, norm, windowFor, replyDraft, replyLabel, PLAZA_BTN, videoFirst, CER_TEXT, cerStart, cerButton, cerInvite, cerShareLine, cerBackWhy, cerDebugStart, pageLook, hiddenWords, visitorShareText, GIFT_PICK, ME_KINDS, isMe, toLine, boardTitle, cut, filmMark, teaserCard } from './giftrules.js';
+import { GIFT, GIFT_ID, OCCASIONS, OCC_KEYS, GIFT_THEMES, THEME_KEYS, TIERS, TIER_NOTE, TIER_ASK, won, giftFault, paperFault, startChoices, windowText, dayText, hourText, clockText, plazaLook, kstDay, addDays, countdown, dDay, refOf, keptRef, cpLen, norm, windowFor, replyDraft, replyLabel, PLAZA_BTN, videoFirst, CER_TEXT, cerStart, cerButton, cerInvite, cerShareLine, cerBackWhy, cerDebugStart, pageLook, hiddenWords, visitorShareText, GIFT_PICK, ME_KINDS, isMe, toLine, boardTitle, cut, filmMark, teaserCard } from './giftrules.js';
 import { TOWER, TOWER_ERR, towerCard as towerState, towerClock, towerLook, friendsText } from './towerrules.js';
-import { paintGift, giftCardJpeg } from './giftart.js?v=202611280944';
+import { paintGift, paintStreet, giftCardJpeg } from './giftart.js?v=202611280944';
 import { createFilm, FILM_MS, recordCanvas, canRecord, saveBlob, fileName } from './giftfilm.js?v=202611280944';
 import { SCENES, REAL_DIR, plateUrls, musicUrls, plateFault, realFileName, realReason, inAppBrowser, lowFor, scenesToDrop } from './realrules.js?v=202611280944';
 
@@ -53,7 +53,22 @@ const top = (me = false) => h('div', { class: 'top' }, h('a', { class: 'brand', 
 const foot = (...more) => h('footer', { class: 'foot' }, ...more.map((t) => h('p', { text: t })),
   h('p', {}, '뉴욕 타임스퀘어를 본뜬 가상 광장이에요. 실제 타임스퀘어와는 관계가 없어요.', h('br'), '약관과 개인정보처리방침은 광장의 설정 › 정보에 있어요.'),
   h('a', { class: 'linkbtn', href: '/', text: '광장 가기', onclick: (e) => toPlaza(e, 'close', '') }));
-const screenName = (s) => { const m = /^(STREET|PLOT)_(\d+)$/.exec(String(s || '')); return m ? (m[1] === 'STREET' ? '메인거리 ' : '건물 앞 ') + m[2] + '번 화면' : '광장 화면'; };
+// A screen by the plaza's own name for it (balance.js SLOTS: '31번 메인거리', '6번 건물 앞 전광판'), and where it stands (ts3d/bowtie.js:
+// STREET_31..50 are the bowtie's core, the plaza people gather in; STREET_1..30 the walls along the main street; PLOT_* the 위시 스트리트 lots).
+const screenName = (s) => { const m = /^(STREET|PLOT)_(\d+)$/.exec(String(s || '')); return m ? m[2] + (m[1] === 'STREET' ? '번 메인거리 전광판' : '번 건물 앞 전광판') : '거리 전광판'; };
+const screenZone = (s) => { const m = /^(STREET|PLOT)_(\d+)$/.exec(String(s || '')); return !m ? '' : m[1] === 'PLOT' ? '위시 스트리트' : Number(m[2]) > 30 ? '광장 한가운데' : '메인거리 건물 벽'; };
+// 어디에 걸리나, before a board is made: what the code does to every free board (giftrules.js GIFT.hours on one of GIFT_SCREENS).
+const PLACE_LINE = '📍 가상 타임스퀘어 거리 전광판 한 곳에 ' + GIFT.hours + '시간 · 3D 광장에 온 누구나 봐요';
+// icons/boot.jpg, the plaza's picture of a street of screens (giftart.js paintStreet's ground): asked once, when a page first paints a street.
+// -> the image once it has loaded, else null (then: done runs when it has).
+let STREET = null;
+function streetImg(done) {
+  if (STREET?.ok) return STREET.img;
+  if (typeof Image === 'undefined') return null;
+  if (!STREET) { const img = new Image(); STREET = { img, ok: false, waits: new Set() }; img.decoding = 'async'; img.onload = () => { STREET.ok = true; for (const f of STREET.waits) { try { f(); } catch { /* a view that went */ } } STREET.waits.clear(); }; img.src = '/icons/boot.jpg'; }
+  if (done) STREET.waits.add(done);
+  return null;
+}
 // A line under a form or a button: read out when it changes (an error at once, a result when the reader is free).
 const say = (el, text, ok = false) => { el.textContent = text || ''; el.className = ok ? 'okmsg' : 'err'; el.setAttribute('role', ok ? 'status' : 'alert'); };
 const flag = (el, bad) => el?.setAttribute?.('aria-invalid', String(!!bad)); // a field the form refused, until it is typed in again
@@ -123,7 +138,7 @@ const dropMine = (id) => ls.set('kts_gmine', JSON.stringify(mine().filter((x) =>
 const TICK = new Set();
 setInterval(() => { for (const f of TICK) { try { f(); } catch { /* one bad line */ } } }, 1000);
 function live(el, fn) { const run = () => { if (!el.isConnected) { TICK.delete(run); return; } el.textContent = fn(); }; run(); TICK.add(run); return el; }
-function clear() { TICK.clear(); STAGES.forEach((s) => s.stop()); STAGES.clear(); REAL_RUN?.ctl.abort(); $app.replaceChildren(); window.scrollTo(0, 0); } // a 실사 영상 being made stops with its view
+function clear() { try { document.documentElement.classList.remove('mkpage'); } catch { /* a page without classes */ } TICK.clear(); STAGES.forEach((s) => s.stop()); STAGES.clear(); REAL_RUN?.ctl.abort(); $app.replaceChildren(); window.scrollTo(0, 0); } // a 실사 영상 being made stops with its view
 const STAGES = new Set();
 
 // The 9:16 stage: the stored video when there is one this browser can play, else the drawn film. opts: { watermark, auto, quiet,
@@ -291,6 +306,13 @@ function twoTap(btn, label, run) {
 // 내 전광판 (PERSONAL, /gift?me=1): the same maker for a board of one's own: occ 'me', the name is the shown name (prefilled with the plaza
 // nickname, kts_nick, when this browser has one), four kinds that only seed the line (ME_KINDS), no sender. Everything after making is the
 // gift path.
+// 2026-11-28 (the owner: "항목이 많아서 어렵다 · 색이 바로 안 보이고 스크롤하며 만들어야 한다"): three short steps on one screen of a phone
+// (1 무슨 날 · 2 이름과 한마디 · 3 언제와 색, then 무료로 걸기), the preview of the board on the virtual street held at the top while the
+// fields change under it (gift.html .pv), one gold button a step, ← 이전 back, the dots for where one is. Today now and the occasion's colour
+// are chosen already, so the shortest way is a day, a name, 다음, 걸기. A tap on a day goes on to the names by itself.
+// The form is one <form>: its submit (the last step's button, or the tests) hangs the board whatever step is up; a refused field brings its
+// step back. Enter in a field of step 2 goes to the next step instead (a phone's 이동 key must not hang a board unseen).
+const STEP_OF = { occ: 1, to: 2, from: 2, msg: 2, day: 3, at: 3 };
 function maker({ re: answers = '', ...prefill } = {}) {
   clear();
   const q = new URLSearchParams(location.search), ref = refOf(q.get('ref')), re = refOf(answers);
@@ -302,25 +324,28 @@ function maker({ re: answers = '', ...prefill } = {}) {
   const nick = ME ? cut(ls.get('kts_nick') || '', GIFT.toMax) : '';
   const f = { to: nick, from: '', occ: ME ? 'me' : 'bday', msg: '', th: '', day: today, at: 'now', ...prefill };
   let kind = ''; // 내 전광판: the kind chip last pressed (only seeds the line)
-  const cv = h('canvas', { class: 'preview', width: 1024, height: 576, 'aria-label': '광장 화면 미리보기' });
-  let raf = 0; const repaint = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => paintGift(cv, { id: 'preview', ...f, th: f.th || OCCASIONS[f.occ].th })); };
+  const cv = h('canvas', { class: 'preview', width: 1024, height: 576, 'aria-label': '가상 타임스퀘어 거리 전광판에 걸린 모습 미리보기' });
+  let raf = 0; const repaint = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => paintStreet(cv, { id: 'preview', ...f, th: f.th || OCCASIONS[f.occ].th }, streetImg(repaint))); };
   // A refused field: its line is read out (role alert), the field says it is wrong and points at the line, until it is typed in again.
   const errs = {}; const err = (k) => (errs[k] = h('p', { class: 'err', id: 'err-' + k, role: 'alert' }));
   const count = (el, max) => { const c = h('small'); const up = () => { c.textContent = cpLen(norm(el.value)) + '/' + max; }; el.addEventListener('input', up); up(); return c; };
   const typed = (k, el) => { f[k] = el.value; flag(el, false); if (errs[k]) errs[k].textContent = ''; repaint(); };
-  const toIn = h('input', { type: 'text', id: 'to', maxlength: 24, autocomplete: 'off', placeholder: '예: 민지', 'aria-describedby': 'err-to', value: f.to, oninput: () => typed('to', toIn) });
-  const msgIn = h('input', { type: 'text', id: 'msg', maxlength: 80, autocomplete: 'off', placeholder: (OCCASIONS[f.occ] || OCCASIONS.bday).hint, 'aria-describedby': 'err-msg', value: f.msg, oninput: () => typed('msg', msgIn) });
-  const fromIn = h('input', { type: 'text', id: 'from', maxlength: 24, autocomplete: 'off', placeholder: '예: 동아리 친구들', 'aria-describedby': 'err-from', value: f.from, oninput: () => typed('from', fromIn) });
+  const onward = (e) => { if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); ahead(); } };
+  const toIn = h('input', { type: 'text', id: 'to', maxlength: 24, autocomplete: 'off', enterkeyhint: 'next', placeholder: ME ? '예: 하늘' : '예: 민지', 'aria-describedby': 'err-to', value: f.to, oninput: () => typed('to', toIn), onkeydown: onward });
+  const msgIn = h('input', { type: 'text', id: 'msg', maxlength: 80, autocomplete: 'off', enterkeyhint: 'next', placeholder: (OCCASIONS[f.occ] || OCCASIONS.bday).hint, 'aria-describedby': 'err-msg', value: f.msg, oninput: () => typed('msg', msgIn), onkeydown: onward });
+  const fromIn = h('input', { type: 'text', id: 'from', maxlength: 24, autocomplete: 'off', enterkeyhint: 'next', placeholder: '예: 동아리 친구들', 'aria-describedby': 'err-from', value: f.from, oninput: () => typed('from', fromIn), onkeydown: onward });
   const fields = ME ? { to: toIn, msg: msgIn } : { to: toIn, msg: msgIn, from: fromIn };
   const occRow = h('div', { class: 'chips', role: 'group', 'aria-label': ME ? '무엇을 걸까요' : '무슨 날' });
+  // A day (or a kind) chosen on the first step: the preview changes at once and, a moment later, the names come up.
+  let auto = 0; const onOn = () => { if (step !== 1) return; clearTimeout(auto); auto = setTimeout(() => { if (step === 1 && occRow.isConnected) go(2); }, 260); };
   // 내 전광판's kinds: a press puts the kind's example in the line when the line is empty or still another kind's example.
   const seeds = new Set(ME_KINDS.map((x) => x.msg));
   const paintKind = () => occRow.replaceChildren(...ME_KINDS.map((x) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(kind === x.k), onclick: () => {
     kind = x.k; msgIn.placeholder = x.msg;
     if (!norm(msgIn.value) || seeds.has(norm(msgIn.value))) { msgIn.value = x.msg; f.msg = x.msg; flag(msgIn, false); if (errs.msg) errs.msg.textContent = ''; msgIn.dispatchEvent?.(new Event('input')); }
-    paintKind(); repaint();
+    paintKind(); repaint(); onOn();
   } }, x.name)));
-  const paintOcc = () => { if (ME) { paintKind(); return; } occRow.replaceChildren(...GIFT_PICK.filter((k) => OCC_KEYS.includes(k)).map((k) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(f.occ === k), onclick: () => { f.occ = k; f.th = ''; msgIn.placeholder = OCCASIONS[k].hint; paintOcc(); paintTh(); repaint(); } }, OCCASIONS[k].emoji + ' ' + OCCASIONS[k].name))); };
+  const paintOcc = () => { if (ME) { paintKind(); return; } occRow.replaceChildren(...GIFT_PICK.filter((k) => OCC_KEYS.includes(k)).map((k) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(f.occ === k), onclick: () => { f.occ = k; f.th = ''; msgIn.placeholder = OCCASIONS[k].hint; paintOcc(); paintTh(); repaint(); onOn(); } }, OCCASIONS[k].emoji + ' ' + OCCASIONS[k].name))); };
   const thRow = h('div', { class: 'chips sws', role: 'group', 'aria-label': '색' });
   const paintTh = () => { const cur = f.th || OCCASIONS[f.occ].th; thRow.replaceChildren(...THEME_KEYS.map((k) => h('button', { type: 'button', class: 'sw', title: GIFT_THEMES[k].name, 'aria-label': GIFT_THEMES[k].name, 'aria-pressed': String(cur === k), style: `background:linear-gradient(135deg,${GIFT_THEMES[k].a},${GIFT_THEMES[k].b})`, onclick: () => { f.th = k; paintTh(); repaint(); } }))); };
   const dayRow = h('div', { class: 'chips', role: 'group', 'aria-label': '날짜' }), atRow = h('div', { class: 'chips', role: 'group', 'aria-label': '시간' }), whenLine = h('p', { class: 'when' });
@@ -334,24 +359,67 @@ function maker({ re: answers = '', ...prefill } = {}) {
     if (!ch.includes(f.at)) f.at = ch.includes('now') ? 'now' : ch.includes(18) ? 18 : ch[0] ?? '';
     atRow.replaceChildren(...ch.map((a) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(f.at === a), onclick: () => { f.at = a; paintDay(); } }, a === 'now' ? '⚡ 지금 바로' : hourText(a) + '부터')));
     const w = f.at === '' ? null : windowFor(f.day, f.at, now());
-    whenLine.textContent = w ? windowText(w.a, w.b) + ' · ' + GIFT.hours + '시간 동안 걸려요' : '그날은 고를 수 있는 시간이 없어요';
+    whenLine.textContent = w ? windowText(w.a, w.b) + ' · ' + GIFT.hours + '시간' : '그날은 고를 수 있는 시간이 없어요';
   };
+  // ---- the steps ----
+  const LAST = 3;
+  let step = 1;
+  const label = (text, small = null, forId = '') => h(forId ? 'label' : 'div', forId ? { for: forId, class: 'qlabel' } : { class: 'label' }, text, small);
+  const steps = [null,
+    h('div', { class: 'step' }, h('h2', { class: 'q', text: ME ? '무엇을 걸까요?' : '무슨 날이에요?' }), ME ? h('p', { class: 'fine hint', text: '고르면 한마디 예시를 채워 드려요. 그냥 다음으로 가도 돼요.' }) : null, occRow, err('occ'),
+      EMBED || re ? null : h('a', { class: 'linkbtn more', href: '/discover', text: '다른 사람 전광판 둘러보기 ›' })),
+    h('div', { class: 'step', hidden: true },
+      re ? h('p', { class: 'fine hint', text: f.to ? '받는 사람과 한마디를 채워 두었어요. 고쳐 써도 되고, 그대로 걸어도 돼요.' : '한마디를 채워 두었어요. 받는 사람 이름만 적으면 돼요.' }) : null,
+      h('div', { class: 'field' }, h('label', { for: 'to' }, ME ? h('span', {}, '이름 ', h('small', { text: '(전광판에 보일 이름)' })) : '누구에게 걸까요?', count(toIn, GIFT.toMax)), toIn, err('to')),
+      h('div', { class: 'field' }, h('label', { for: 'msg' }, '한마디', count(msgIn, GIFT.msgMax)), msgIn, err('msg')),
+      ME ? null : h('div', { class: 'field' }, h('label', { for: 'from' }, '보내는 사람', h('small', { text: '선택' })), fromIn, err('from'))),
+    h('div', { class: 'step', hidden: true },
+      h('div', { class: 'field' }, label('언제 걸까요?', h('small', { text: '한국 시간' })), dayRow, dateIn, h('div', { style: 'height:6px' }), atRow, whenLine, err('day'), err('at')),
+      h('div', { class: 'field' }, label('색', h('small', { text: '선택' })), thRow)),
+  ];
+  const dots = h('div', { class: 'dots', 'aria-hidden': 'true' }, h('i'), h('i'), h('i'));
+  const stepNo = h('span', { class: 'stepno' });
+  const back = h('button', { class: 'linkbtn back', type: 'button', onclick: () => go(step - 1) }, '← 이전');
+  const next = h('button', { class: 'btn gold', type: 'button', onclick: () => ahead() }, '다음');
   const send = h('button', { class: 'btn gold', type: 'submit' }, sendLabel);
   const sendErr = h('p', { class: 'err', role: 'alert' });
   const nextBtn = h('button', { class: 'btn sm', type: 'button', hidden: true });
+  const fine = h('p', { class: 'fine', text: '결제는 없어요. 문구는 광장에서 누구나 볼 수 있어요.' }); // what is needed before pressing; the other rules are in 규칙 (MAKER_RULES)
+  const rules = h('details', { class: 'rules' }, h('summary', { text: '규칙' }), h('p', { class: 'fine', text: MAKER_RULES }),
+    h('p', { class: 'fine', text: '뉴욕 타임스퀘어를 본뜬 가상 광장이에요. 실제 타임스퀘어와는 관계가 없어요. 약관과 개인정보처리방침은 광장의 설정 › 정보에 있어요.' }));
+  // Which step is up. focus: the step's first field takes the cursor (a step the person moved to; never on load on a phone).
+  function go(n, focus = true) {
+    step = Math.max(1, Math.min(LAST, n));
+    for (let i = 1; i <= LAST; i++) steps[i].hidden = i !== step;
+    [...(dots.children || dots.kids || [])].forEach((d, i) => { d.className = i + 1 === step ? 'on' : i + 1 < step ? 'done' : ''; });
+    stepNo.textContent = step + ' / ' + LAST;
+    back.hidden = step === 1; next.hidden = step === LAST; send.hidden = step !== LAST; fine.hidden = step !== LAST; rules.hidden = step !== LAST;
+    if (step !== LAST) { say(sendErr, ''); nextBtn.hidden = true; }
+    if (focus && step === 2 && FINE) setTimeout(() => { try { toIn.focus({ preventScroll: true }); } catch { toIn.focus(); } }, 50);
+  }
+  // 다음: the fields of this step are checked first (the whole form's rules, giftrules.js giftFault, its first refused field on this step or before).
+  function ahead() {
+    const v = giftFault(f, now());
+    if (!v.ok && (STEP_OF[v.field] || LAST) <= step) { refuse(v); return; }
+    go(step + 1);
+  }
+  function refuse(v) {
+    go(STEP_OF[v.field] || step, false);
+    (errs[v.field] || sendErr).textContent = v.error; flag(fields[v.field], true); fields[v.field]?.focus?.();
+  }
   const form = h('form', { novalidate: true, onsubmit: async (e) => {
     e.preventDefault();
     for (const el of Object.values(errs)) el.textContent = '';
     for (const el of Object.values(fields)) flag(el, false);
     say(sendErr, ''); nextBtn.hidden = true;
     const v = giftFault(f, now());
-    if (!v.ok) { (errs[v.field] || sendErr).textContent = v.error; flag(fields[v.field], true); fields[v.field]?.focus?.(); return; }
+    if (!v.ok) { refuse(v); return; }
     send.disabled = true; send.textContent = '거는 중…';
     const kept = keptRef(ls.get('kts_gref'), Date.now()), ref = re || kept; // a reply names the board it answers, whatever ref was kept
     const r = await post('/rt/gift', { to: f.to, from: ME ? '' : f.from, occ: f.occ, msg: f.msg, th: f.th || OCCASIONS[f.occ].th, day: f.day, at: f.at, ...(ref ? { ref } : {}), ...(re ? { re: 1 } : {}) }, { mint: true, action: 'gift' });
     send.disabled = false; send.textContent = sendLabel;
     if (!r.ok) {
-      if (r.field && errs[r.field]) { errs[r.field].textContent = r.error; flag(fields[r.field], true); } else say(sendErr, r.error || '걸지 못했어요. 다시 해 주세요.');
+      if (r.field && errs[r.field]) { go(STEP_OF[r.field] || step, false); errs[r.field].textContent = r.error; flag(fields[r.field], true); } else { go(LAST, false); say(sendErr, r.error || '걸지 못했어요. 다시 해 주세요.'); }
       if (r.code === 'full' && r.next) { nextBtn.hidden = false; nextBtn.textContent = '빈 시간으로: ' + dayText(r.next.day) + ' ' + (r.next.at === 'now' ? '지금' : hourText(r.next.at)); nextBtn.onclick = () => { f.day = r.next.day; f.at = r.next.at; paintDay(); nextBtn.hidden = true; }; }
       return;
     }
@@ -364,26 +432,26 @@ function maker({ re: answers = '', ...prefill } = {}) {
     // The teaser card (the name and when, never the line): what a link preview shows until the reveal (giftsrv.js cardGet).
     giftCardJpeg(teaserCard(r.gift, now())).then(async (jpg) => { const tok = await token(false); if (jpg && tok) fetch('/rt/gift/' + r.id + '/card?t=1', { method: 'POST', headers: { authorization: 'Bearer ' + tok, 'content-type': 'image/jpeg' }, body: jpg }).catch(() => { }); });
   } },
-  h('div', { class: 'field' }, h('label', { for: 'to' }, ME ? h('span', {}, '이름 ', h('small', { text: '(전광판에 보일 이름)' })) : '누구에게 걸까요?', count(toIn, GIFT.toMax)), toIn, err('to')),
-  h('div', { class: 'field' }, h('div', { class: 'label' }, ME ? '무엇을 걸까요?' : '무슨 날이에요?', ME ? h('small', { text: '예시 문구만 채워요' }) : null), occRow, err('occ')),
-  h('div', { class: 'field' }, h('label', { for: 'msg' }, '한마디', count(msgIn, GIFT.msgMax)), msgIn, err('msg')),
-  h('div', { class: 'field' }, h('div', { class: 'label' }, '언제 걸까요?', h('small', { text: '한국 시간' })), dayRow, dateIn, h('div', { style: 'height:8px' }), atRow, whenLine, err('day'), err('at')),
-  ME ? null : h('div', { class: 'field' }, h('label', { for: 'from' }, '보내는 사람', h('small', { text: '선택' })), fromIn, err('from')),
-  h('div', { class: 'field' }, h('div', { class: 'label' }, '색', h('small', { text: '선택' })), thRow),
-  send, sendErr, nextBtn,
-  h('p', { class: 'fine', text: '결제는 없어요. 문구는 광장에서 누구나 볼 수 있어요.' })); // what is needed before pressing; the other rules are the page's last lines (MAKER_RULES)
+  h('div', { class: 'stephead' }, dots, stepNo), steps[1], steps[2], steps[3],
+  h('div', { class: 'nav' }, back, next, send), sendErr, nextBtn, h('div', { class: 'mkfoot' }, fine, rules));
   paintOcc(); paintTh(); paintDay(); repaint();
-  const lead = h('div', {}, h('h1', { text: re ? '💌 답장 전광판을 걸어요' : ME ? '✨ 내 이름을 뉴욕 타임스퀘어 가상 전광판에 걸어요' : '친구를 위해 뉴욕 타임스퀘어에 전광판을 걸어요' }),
-    h('p', { class: 'sub', text: re ? (f.to ? '받는 사람과 한마디를 채워 두었어요. 고쳐 써도 되고, 그대로 걸어도 돼요.' : '한마디를 채워 두었어요. 받는 사람 이름만 적으면 돼요.') + ` 가상 광장의 화면에 ${GIFT.hours}시간 무료로 걸려요.`
-      : ME ? `이름, 다짐, 작품, 특별한 순간을 가상 광장의 화면에 ${GIFT.hours}시간 무료로 걸어요. 15초 영상과 친구들의 응원 메시지가 함께 가요.`
-        : `가상 광장의 화면에 ${GIFT.hours}시간 무료로 걸리고, 15초 축하 영상과 친구들의 롤링페이퍼가 함께 가요. 30초면 끝나요.` }),
-    cv, h('p', { class: 'fine', text: '광장 화면에는 이렇게 보여요' }),
-    re ? null : h('a', { class: 'btn sm', href: ME ? '/gift' : '/gift?me=1', style: 'margin-top:10px' }, ME ? '🎁 누군가에게 선물하기' : '✨ 내 전광판 만들기'));
-  put(top(ME), h('div', { class: 'cols' }, h('div', { class: 'sticky' }, lead), card(form)), foot(MAKER_RULES));
-  // The cursor in the name, where a mouse is the pointer (FINE). A filled reply is one tap away: no cursor there either; a board
-  // without a sender leaves the name to write. The page stays at its top (preventScroll): the title and the preview are read first.
-  if (FINE && (!re || !f.to)) setTimeout(() => { try { toIn.focus({ preventScroll: true }); } catch { toIn.focus(); } }, 50);
+  // 어디에 걸리나 (the owner, 2026-11-28: "무료로 걸면 어디 걸리는 건지 와닿지 않는다"): the preview is the board on the virtual street, and
+  // the line under it says where and how long, in the code's numbers (giftrules.js GIFT.hours, GIFT_SCREENS: the street and lot screens).
+  const lead = h('div', { class: 'pvcol' }, h('h1', { class: 'mkh', text: re ? '💌 답장 전광판을 걸어요' : ME ? '✨ 내 이름을 가상 전광판에 걸어요' : '🎁 친구에게 가상 전광판 선물하기' }),
+    h('div', { class: 'pv' }, cv, h('p', { class: 'place', text: PLACE_LINE })));
+  put(makerTop(ME, !!re), h('div', { class: 'cols mk' }, lead, h('section', { class: 'card mkcard' }, form)));
+  document.documentElement.classList?.add?.('mkpage');
+  go(re ? 2 : 1, false);
+  // The cursor in the name, where a mouse is the pointer (FINE), once its step is up (a reply opens on it). Never on a phone: the keyboard
+  // would come up over the preview before anything was read.
+  if (FINE && re && !f.to) setTimeout(() => { try { toIn.focus({ preventScroll: true }); } catch { toIn.focus(); } }, 50);
 }
+// The maker's top: the brand, and the two makers side by side (선물하기 | 내 전광판) as the switch between them; a reply has neither switch.
+const makerTop = (me, re) => h('div', { class: 'top' }, h('a', { class: 'brand', href: '/', onclick: (e) => toPlaza(e, 'close', '') }, 'WISH BOARD'),
+  re ? h('span', { class: 'tag', text: '💌 답장 전광판' }) : h('nav', { class: 'seg', 'aria-label': '무엇을 만들까요' },
+    h('a', { class: 'chip seg1', href: '/gift', 'aria-current': me ? null : 'page' }, '🎁 선물하기'),
+    h('a', { class: 'chip seg1', href: '/gift?me=1', 'aria-current': me ? 'page' : null }, '✨ 내 전광판')));
+
 // The maker form was shown: one count per page load (a form built again, after a delete or back and forward, is not counted again).
 // r: 1 when it came from another board (a kept ref or a reply), as made_ref is to made. No device id: a daily total only.
 let STARTED = false;
@@ -426,24 +494,21 @@ function gone() {
     h('a', { class: 'btn gold', href: '/gift', text: '🎁 나도 누군가에게 걸어 주기' })), foot());
 }
 
-// The owner: what is up and when, the free preview, the price ladder (E1), sharing, the real video, the 롤링페이퍼 count.
-// On a phone the first screen holds the title, a small preview and the first thing to press: 공유하기 and 링크 복사 (or, video first,
-// the gold video button). So each card starts with its buttons and says the rest in small print under them.
+// The owner (2026-11-28, the owner: "항목이 많아서 어렵다", "영상이 많아 헷갈린다", "유료 옵션은 숨겨 줘"): first where the board hangs (the
+// screen by its plaza name, the window, the board drawn on the street) with 3D 광장에서 보기 under it, then the three things people do:
+// 링크 보내기, 축하 영상 만들기 (one entry: the 실사 video, or the drawn 15 s film where this browser cannot make it), and the rest under one
+// 더 보기 (메인 타워, 둘러보기 switch, card image, the numbers, the recipient's view, delete). Nothing about paid tiers unless checkout is open
+// (paidCard: /rt/config carries pay).
 function owner(g, { fresh = false, mine: extra = null, media = false, signNudge = false } = {}) {
   clear(); CUR = g;
   const ME = isMe(g), nudged = signNudge ? nudgeLine(g) : (NUDGE = null);
   if (nudged) nudged.hidden = false;
   const url = location.origin + '/g/' + g.id, note = h('p', { class: 'okmsg', role: 'status' }), O = OCCASIONS[g.occ] || OCCASIONS.bday;
-  const phaseTag = h('span', { class: 'tag' + (g.phase === 'live' ? ' live' : '') });
-  live(phaseTag, () => { const t = now(); const d = dDay(g.day, t); return t >= g.b ? '광장에서 내려왔어요' : t >= g.a ? '● 지금 광장에 걸려 있어요' : d >= 1 ? 'D-' + d : '걸리기까지 ' + countdown(g.a - t); });
-  const st = stage(g, { auto: true, quiet: true, small: true });
-  const saveNote = h('p', { class: 'okmsg', role: 'status' }), saveBtn = h('button', { class: 'btn', type: 'button', onclick: () => saveVideo(g, st, saveBtn, saveNote) }, '⬇ 이 미리보기 영상 저장');
-  // Video first (giftrules.js videoFirst): only when the Worker stores videos, this board has none and is not over. Then the video card
-  // leads, its button is the page's gold one, and the first share or copy of this board asks once (kts_gnudge) whether to make the video
-  // first. It never blocks: "그냥 보내기" does what was asked. Without a video store nothing here changes.
-  const vfirst = videoFirst({ media, vid: g.vid, phase: g.phase }) && canRecord(); // a browser that cannot record (some in-app ones) keeps the page as it was
+  // Video first (giftrules.js videoFirst): only when the Worker stores videos (the R2 store), this board has none and is not over. Then the
+  // first share or copy of this board asks once (kts_gnudge) whether to record the plaza video for the recipient page first. It never blocks:
+  // "그냥 보내기" does what was asked. Without a video store (the live site today) nothing of this shows.
+  const vfirst = videoFirst({ media, vid: g.vid, phase: g.phase }) && canRecord();
   const recLink = (cls, label) => h('a', { class: cls, href: '/?gb=' + g.id + '&rec=1', onclick: (e) => toPlaza(e, 'rec', g.id) }, label);
-  const rec = recLink(vfirst ? 'btn gold' : 'btn pink', '🎬 광장에서 진짜 15초 영상 만들기' + (vfirst ? ' · 약 25초' : ''));
   const nudge = h('div', { class: 'ask', hidden: true });
   const sendOr = (run) => {
     if (!vfirst) return run();
@@ -451,37 +516,87 @@ function owner(g, { fresh = false, mine: extra = null, media = false, signNudge 
     if (asked[g.id]) return run();
     const ks = Object.keys(asked); if (ks.length > 100) for (const k of ks.slice(0, 50)) delete asked[k];
     asked[g.id] = 1; ls.set('kts_gnudge', JSON.stringify(asked));
-    nudge.replaceChildren(h('p', { style: 'margin:0 0 10px;font-weight:800', text: '영상을 먼저 만들면 받는 사람이 진짜 광장 영상을 봐요' }),
-      h('div', { class: 'stack' }, recLink('btn gold', '🎬 영상 먼저 만들기'), h('button', { class: 'btn', type: 'button', onclick: () => { nudge.hidden = true; run(); } }, '그냥 보내기')));
+    nudge.replaceChildren(h('p', { style: 'margin:0 0 10px;font-weight:800', text: '광장 영상을 먼저 찍으면 받는 사람이 그 영상을 봐요' }),
+      h('div', { class: 'stack' }, recLink('btn gold', '🎬 광장 영상 먼저 찍기'), h('button', { class: 'btn', type: 'button', onclick: () => { nudge.hidden = true; run(); } }, '그냥 보내기')));
     nudge.hidden = false;
   };
-  const vidCard = card(h('h2', { text: '🎬 15초 축하 영상' }),
-    g.phase === 'after' ? h('p', { class: 'fine', text: '광장에서 내려온 전광판은 새 영상을 찍을 수 없어요.' }) : rec,
-    g.phase === 'after' ? null : h('p', { class: 'fine', text: '광장에서 이 전광판 앞의 폭죽과 환호를 세로 영상으로 찍어요. 이 기기에서 만들고, 1~2분 걸릴 수 있어요.' }),
-    h('p', { class: 'fine', text: media ? (g.vid ? '찍은 영상이 받는 사람 페이지에 올라가 있어요. 다시 찍으면 바뀌어요(3번까지).' : '찍은 영상은 받는 사람 페이지에 올라가요. 그날이 지나고 7일 뒤에 지워져요.') : '지금은 영상 저장소가 없어서, 찍은 영상은 이 기기에만 저장돼요. 받는 사람 페이지에서는 그려진 축하 영상이 나와요.' }),
-    h('div', { style: 'height:8px' }), saveBtn, saveNote, h('p', { class: 'fine', text: filmMark(g) ? '미리보기 영상은 무료 버전이라 워터마크가 있어요.' : '결제한 상품이라 영상에 워터마크가 없어요.' }));
   const linkBox = h('div', { class: 'link', text: url });
   const shareCard = card(h('h2', { text: '🔗 링크 보내기' }),
-    h('div', { class: 'row' }, h('button', { class: vfirst ? 'btn' : 'btn gold', type: 'button', onclick: () => sendOr(() => share(g, url, note, extra?.at)) }, '공유하기'),
+    h('div', { class: 'row' }, h('button', { class: 'btn gold', type: 'button', onclick: () => sendOr(() => share(g, url, note, extra?.at)) }, '공유하기'),
       h('button', { class: 'btn', type: 'button', onclick: () => sendOr(async () => { try { await navigator.clipboard.writeText(url); say(note, '링크를 복사했어요.', true); } catch { say(note, '아래 주소를 길게 눌러 복사해 주세요.'); } }) }, '링크 복사')),
     vfirst ? nudge : null, linkBox, note,
-    h('p', { class: 'fine', text: (ME ? '친구들에게 보내 응원 메시지를 모아 보세요. ' : '친구들에게 먼저 보내 메시지를 모으고, 그날 ' + g.to + '님에게 보내세요. ') + (g.lk ? '메시지는 그날(' + dayText(g.day) + ') 0시에 함께 열려요.' : '메시지는 남기는 대로 바로 보여요.') }),
-    h('div', { style: 'height:10px' }), discoverBtn(g, extra?.dc, note, ME), cardBtn(g, note));
+    h('p', { class: 'fine', text: (ME ? '친구들에게 보내 응원 메시지를 모아 보세요. ' : '친구들에게 먼저 보내 메시지를 모으고, 그날 ' + g.to + '님에게 보내세요. ') + (g.lk ? '메시지는 그날(' + dayText(g.day) + ') 0시에 함께 열려요.' : '메시지는 남기는 대로 바로 보여요.') }));
   const stats = h('div', { class: 'stats' }, h('div', {}, h('b', { text: String(g.v || 0) }), h('span', { text: '열어 본 사람' })), h('div', {}, h('b', { text: String(g.n || 0) }), h('span', { text: ME ? '응원 메시지' : '친구 메시지' })), h('div', {}, h('b', { text: String(g.hearts || 0) }), h('span', { text: '💖 하트' })), h('div', {}, h('b', { text: String(extra?.kids || 0) }), h('span', { text: '이어서 걸린 전광판' })));
   const del = twoTap(h('button', { class: 'linkbtn', type: 'button' }, '이 선물 전광판 지우기'), '한 번 더 누르면 지워요(되돌릴 수 없어요)', async () => {
     const r = await post('/rt/gift/' + g.id + '/delete', {});
     if (r.ok) { dropMine(g.id); history.replaceState(null, '', '/gift'); maker(); } else say(note, r.error || '지우지 못했어요.');
   });
-  const head = h('div', {}, h('h1', { text: fresh ? '🎉 걸었어요!' : O.emoji + ' ' + boardTitle(g) }),
-    h('p', { class: 'sub' }, windowText(g.a, g.b) + ' · ' + screenName(g.scr) + ' ', phaseTag),
-    nudged, st.box);
+  const head = h('div', {}, h('h1', { text: fresh ? '🎉 걸었어요!' : O.emoji + ' ' + boardTitle(g) }), nudged, ...whereBlock(g, { owner: true }));
   // 답장 전광판: the first board hung in answer to this one (only the owner's read carries it, while that board can be opened).
   const replyCard = extra?.re && GIFT_ID.test(String(extra.re)) ? card(h('h2', { text: '💌 답장이 도착했어요' }),
     h('p', { class: 'sub', text: '이 전광판의 링크를 연 사람이 답장 전광판을 걸었어요.' }),
     h('a', { class: 'btn pink', href: '/g/' + extra.re + (EMBED ? '?in=1' : '') }, '답장 보기')) : null;
+  const moreNote = h('p', { class: 'okmsg', role: 'status' });
+  const more = h('details', { class: 'more' }, h('summary', { class: 'btn' }, '더 보기'),
+    towerCard(g),
+    card(h('h2', { text: '🌐 둘러보기와 카드' }), discoverBtn(g, extra?.dc, moreNote, ME), h('div', { style: 'height:8px' }), cardBtn(g, moreNote), moreNote),
+    card(h('h2', { text: '📊 지금까지' }), stats, friendsLine(extra?.friends), h('p', { class: 'fine', text: '같은 기기는 한 번으로 세요.' })),
+    media && g.phase !== 'after' && canRecord() ? card(h('h2', { text: '📤 받는 사람 페이지에 광장 영상 올리기' }), recLink('btn', '🎬 광장에서 영상 찍기 · 약 25초'),
+      h('p', { class: 'fine', text: g.vid ? '찍은 영상이 받는 사람 페이지에 올라가 있어요. 다시 찍으면 바뀌어요(3번까지).' : '광장에서 이 전광판 앞의 폭죽과 환호를 찍어 받는 사람 페이지에 올려요. 그날이 지나고 7일 뒤에 지워져요.' })) : null,
+    card(h('button', { class: 'btn', type: 'button', onclick: () => visit(g, { preview: true }) }, '👀 받는 사람에게 보이는 화면'), h('div', { style: 'text-align:center;margin-top:8px' }, del)));
   put(top(ME), h('div', { class: 'cols' }, h('div', { class: 'sticky' }, head),
-    h('div', {}, replyCard, ...(vfirst ? [vidCard, shareCard, realCard(g), towerCard(g), ladder(g, extra?.ladder)] : [shareCard, towerCard(g), ladder(g, extra?.ladder), vidCard, realCard(g)]), card(h('h2', { text: '📊 지금까지' }), stats, friendsLine(extra?.friends), h('p', { class: 'fine', text: '같은 기기는 한 번으로 세요.' })),
-      card(h('button', { class: 'btn', type: 'button', onclick: () => visit(g, { preview: true }) }, '👀 받는 사람에게 보이는 화면'), h('div', { style: 'text-align:center;margin-top:8px' }, del)))), foot());
+    h('div', {}, replyCard, shareCard, videoCard(g), paidCard(g, extra?.ladder), more)), foot());
+}
+// 어디에 걸리나, on a board's own pages: the screen by its plaza name and where it stands, the window, the board drawn on the street, and the
+// way into the 3D plaza (gift.js land: 'live' takes the camera to it for everyone's same screen; on its day before the window and after it
+// the plaza shows it on this device only; before the reveal there is nothing to show yet, so no button, only when).
+// The plaza keeps a board on this screen while nobody has lit it (ts3d/screens.js giftFree, giftrules.js placeGifts); a lit screen sends it to
+// another free street screen, and boards sharing a screen take 9-second turns: the fine line says so, in a few words.
+function whereBlock(g, { owner: own = false } = {}) {
+  const hours = Math.max(1, Math.round((Number(g.b) - Number(g.a)) / 36e5));
+  const tag = h('span', { class: 'tag' + (g.phase === 'live' ? ' live' : '') });
+  const tagText = () => { const t = now(), d = dDay(g.day, t); tag.className = 'tag' + (t >= g.a && t < g.b ? ' live' : ''); return t >= g.b ? '광장에서 내려왔어요' : t >= g.a ? '● 지금 걸려 있어요' : d >= 1 ? 'D-' + d : clockText(g.a) + '에 켜져요 · ' + countdown(g.a - t) + ' 남음'; };
+  tag.textContent = tagText(); live(tag, tagText); // live() paints from the next second on (the tag is not on the page yet)
+  const zone = screenZone(g.scr);
+  const line = h('p', { class: 'where' }, h('b', { text: '📍 ' + screenName(g.scr) }), zone ? ' · ' + zone : '', ' ', tag);
+  const when = h('p', { class: 'fine whenl', text: windowText(g.a, g.b) + ' · ' + hours + '시간 · 누가 그 화면을 켜면 빈 거리 전광판으로 옮겨요' });
+  const scene = h('canvas', { class: 'preview scene', width: 1024, height: 576, role: 'img', 'aria-label': `${screenName(g.scr)}에 걸린 ${boardTitle(g)}` });
+  const paint = () => paintStreet(scene, g, streetImg(paint)); paint();
+  const label = () => { const l = plazaLook(g, now()); return l === 'live' ? '🗽 3D 광장에서 내 전광판 보기' : l === 'replay' ? (now() < Number(g.a) ? '🗽 3D 광장에서 미리 보기' : '🗽 3D 광장에서 다시 보기') : ''; };
+  const go = h('a', { class: 'btn go3d', href: '/?gb=' + g.id, onclick: (e) => { beacon(g.id, 'go'); toPlaza(e, 'go', g.id); } });
+  const paintGo = () => { const t = label(); go.hidden = !t; return t; };
+  go.textContent = paintGo(); live(go, paintGo);
+  return own ? [line, when, scene, go] : [line, when];
+}
+// 🎬 축하 영상: one entry (the owner, 2026-11-28: "영상이 많아 헷갈린다"). It opens the 실사 video maker (the seven AI scenes, realvideo.js);
+// where this browser cannot make it (no recording, no WebGL, or an app's own browser), the same entry opens the drawn 15-second film
+// (giftfilm.js) with its save, and says why in one line. Nothing to choose between.
+function videoCard(g) {
+  const panel = h('div', { class: 'vpanel', hidden: true });
+  let built = false;
+  const btn = h('button', { class: 'btn pink', type: 'button', 'aria-expanded': 'false' }, '🎬 축하 영상 만들기');
+  btn.addEventListener('click', () => {
+    if (!built) { built = true; panel.append(...videoBody(g)); }
+    panel.hidden = !panel.hidden; btn.setAttribute('aria-expanded', String(!panel.hidden));
+  });
+  return card(h('h2', { text: '🎬 축하 영상' }), btn, panel);
+}
+// What the entry opens: the real video's scene picker, or the drawn film (realReason / inAppBrowser decide).
+function videoBody(g) {
+  const why = realReason({ rec: canRecord(), gl: hasGL() }), inApp = inAppBrowser(navigator?.userAgent);
+  if (!why && !inApp) return realBody(g);
+  const st = stage(g, { auto: true, quiet: true, small: true });
+  const saveNote = h('p', { class: 'okmsg', role: 'status' }), saveBtn = h('button', { class: 'btn', type: 'button', onclick: () => saveVideo(g, st, saveBtn, saveNote) }, '⬇ 15초 영상 저장');
+  if (inApp) {
+    const note = h('p', { class: 'okmsg', role: 'status' }), box = h('input', { type: 'text', class: 'link', readonly: true, value: location.href, hidden: true, 'aria-label': '이 페이지 주소' });
+    const copy = h('button', { class: 'btn', type: 'button', onclick: async () => {
+      try { await navigator.clipboard.writeText(location.href); say(note, '주소를 복사했어요. Chrome이나 Safari 주소창에 붙여 넣어 주세요.', true); }
+      catch { box.hidden = false; pickAll(box); say(note, '아래 주소를 길게 눌러 복사해 주세요.'); }
+    } }, '🔗 이 페이지 주소 복사');
+    return [h('p', { class: 'sub', text: '카카오톡 같은 앱 안의 브라우저에서는 영상을 만들거나 저장할 수 없어요. Chrome이나 Safari에서 열면 실사 축하 영상을 만들 수 있어요.' }), copy, box, note, st.box];
+  }
+  return [h('p', { class: 'fine', text: why === 'webgl' ? '이 기기에서는 실사 영상을 만들 수 없어서, 그려진 15초 축하 영상으로 만들어요.' : '이 브라우저는 영상 녹화를 지원하지 않아요. 영상을 보며 화면 녹화로 저장해 주세요.' }),
+    st.box, h('div', { style: 'height:8px' }), saveBtn, saveNote];
 }
 
 // E1: the planned price ladder. Free is chosen and stays the default; a paid tier only says payment is not open and offers a notice
@@ -489,7 +604,7 @@ function owner(g, { fresh = false, mine: extra = null, media = false, signNudge 
 // arm: the board's arm from the owner's read ({ a, p }, giftrules.js ladderArm): its prices are shown (the Worker counts the pick at the same
 // price); an older Worker sends none, and the planned prices show. The paid tiers carry their label (결제가 열리면).
 const armPrices = (arm) => (Array.isArray(arm?.p) && arm.p.length === TIERS.length && arm.p.every((x, i) => Number.isFinite(Number(x)) && (i === 0 ? Number(x) === 0 : Number(x) > 0)) ? arm.p.map(Number) : TIERS.map((t) => t.price));
-function ladder(g, arm = null) {
+function ladder(g, arm = null, into = null) {
   const price = armPrices(arm);
   const flags = json('kts_gint', {}), mark = (k) => { flags[g.id + ':' + k] = 1; const ks = Object.keys(flags); if (ks.length > 300) for (const x of ks.slice(0, 150)) delete flags[x]; ls.set('kts_gint', JSON.stringify(flags)); };
   const once = (k, body) => { if (flags[g.id + ':' + k]) return; mark(k); post('/rt/gift/' + g.id + '/interest', body).catch(() => { }); };
@@ -523,10 +638,23 @@ function ladder(g, arm = null) {
       h('button', { class: 'linkbtn', type: 'button', onclick: () => choose(0) }, '무료로 둘게요'));
   }
   paint();
-  const box = card(h('h2', { text: '✨ 더 오래, 더 깔끔하게 걸고 싶다면' }),
+  const kids = [h('h2', { text: '✨ 더 오래, 더 깔끔하게 걸고 싶다면' }),
     h('p', { class: 'sub', text: '무료 걸기는 지금 그대로 쓸 수 있어요. 그 아래는 결제가 열리면 생기는 상품이에요. 지금은 결제가 없고, 고르면 "열리면 알림"을 받을 수 있어요.' }),
-    list, ask, h('p', { class: 'fine', text: TIER_NOTE }));
+    list, ask, h('p', { class: 'fine', text: TIER_NOTE })];
+  const box = into || card(); box.replaceChildren(...kids); box.hidden = false;
   payLadder(g, box).catch(() => { }); // checkout open for this account (PAY_ON=1): the same card turns into 결제하기; else it stays as it is
+  return box;
+}
+// 유료 옵션 숨기기 (the owner, 2026-11-28: "유료옵션은 숨겨줘 일단"): the ladder above and everything paid show only while /rt/config carries
+// pay (PAY_ON=1). Until then the owner page has no price, no tier, no "열리면 알림" and none of its beacons (ladder() is not even built, so its
+// view and pick counts do not fire). With pay on, the card is the one it always was (ladder, then payLadder's checkout for an account that may pay).
+function paidCard(g, arm = null) {
+  const box = h('section', { class: 'card', hidden: true });
+  payMod().then(async (m) => {
+    if (!m || !box.isConnected) return;
+    let cfg = null; try { cfg = await payApiOf(m).config(); } catch { cfg = null; }
+    if (cfg && box.isConnected) ladder(g, arm, box);
+  }).catch(() => { });
   return box;
 }
 // 결제 (payclient.js, only while the Worker has PAY_ON=1 and this account may pay): loaded on the owner page only, when its card is built.
@@ -677,7 +805,7 @@ function visit(g, { preview = false, swap = null } = {}) {
   // The plaza button: the visit while the board hangs; on its day before that and after its window the plaza shows it on this device only
   // (gift.js land, giftrules.js plazaLook). The label follows the clock; this part of the page is only built from the day on (a 점등식
   // board: from its start, so it never offers 광장에서 미리 보기).
-  const go = h('a', { class: 'btn gold', href: '/?gb=' + g.id, onclick: (e) => { beacon(g.id, 'go'); toPlaza(e, 'go', g.id); } }, PLAZA_BTN[phase()] || PLAZA_BTN.live);
+  const go = h('a', { class: 'btn', href: '/?gb=' + g.id, onclick: (e) => { beacon(g.id, 'go'); toPlaza(e, 'go', g.id); } }, PLAZA_BTN[phase()] || PLAZA_BTN.live);
   live(go, () => PLAZA_BTN[phase()] || PLAZA_BTN.live);
   const where = h('p', { class: 'sub' });
   live(where, () => { const p = phase(), t = now(); return p === 'live' ? `지금 ${screenName(g.scr)}에 걸려 있어요 · ${countdown(g.b - t)} 남음` : p === 'day' ? `${hourText(new Date(g.a + 9 * 36e5).getUTCHours())}에 광장에 걸려요 · ${countdown(g.a - t)} 남음` : windowText(g.a, g.b) + ' 광장에 걸렸어요'; });
@@ -694,14 +822,14 @@ function visit(g, { preview = false, swap = null } = {}) {
   const url = location.origin + '/g/' + g.id, shareNote = h('p', { class: 'okmsg', role: 'status' }), copyBox = h('input', { type: 'text', class: 'link', readonly: true, value: url, hidden: true, 'aria-label': '이 전광판 주소', onfocus: () => { try { copyBox.select(); } catch { /* the field still shows the address */ } } });
   const reshare = preview ? null : h('button', { class: 'btn', type: 'button', onclick: () => sendLink(g.id, { ...visitorShareText(g, phase()), url }, shareNote, 'reshare', copyBox) }, '🔗 공유하기');
   const pass = h('div', { class: 'row' }, reshare, heartBtn(g, shareNote, { off: preview, sent: showNudge }));
-  const acts = h('div', { class: 'stack', hidden: !preview && !st.ended }, reply, pass, nudge, copyBox, shareNote, saveBtn, go, h('a', { class: 'btn', href: '/gift?ref=' + g.id, onclick: () => beacon(g.id, 'cta') }, '🎁 나도 누군가에게 걸어 주기'), saveNote);
+  const cardNote = h('p', { class: 'okmsg', role: 'status' });
+  const more = h('details', { class: 'more' }, h('summary', { class: 'btn' }, '더 보기'), h('div', { class: 'stack' }, go, saveBtn, saveNote, cardBtn(g, cardNote), cardNote));
+  const acts = h('div', { class: 'stack', hidden: !preview && !st.ended }, reply, pass, nudge, copyBox, shareNote, more);
   const skip = h('button', { class: 'linkbtn', type: 'button', onclick: () => { acts.hidden = false; skip.remove(); } }, '영상 건너뛰기');
   st.ends.add(() => { acts.hidden = false; skip.remove(); });
   const rp = twoTap(h('button', { class: 'linkbtn', type: 'button' }, '이 전광판 신고'), '한 번 더 누르면 신고해요', async () => { const r = await fetch('/rt/gift/' + g.id + '/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then((x) => x.json()).catch(() => null); rp.textContent = r?.ok ? '신고했어요' : '신고하지 못했어요'; rp.disabled = true; });
   const left = h('div', { class: 'sticky' }, h('h1', { text: ME ? O.emoji + ' ' + boardTitle(g) : O.emoji + ' ' + g.to + '님, ' + O.head + '!' }), where, friendsLine(g.friends), towerLine(g), cer, st.box, acts.hidden ? skip : null, h('div', { style: 'height:10px' }), acts);
-  const cardNote = h('p', { class: 'okmsg', role: 'status' });
-  const posted = card(h('h2', { text: '📺 광장에 걸린 글' }), h('p', { class: 'big', style: 'font-size:22px', text: toLine(g) }), h('p', { style: 'font-weight:800;margin:4px 0', text: g.msg || O.hint }), g.from && !ME ? h('p', { class: 'sub', text: 'From. ' + g.from }) : null,
-    h('div', { style: 'height:8px' }), cardBtn(g, cardNote), cardNote, rp);
+  const posted = card(h('h2', { text: '📺 광장에 걸린 글' }), h('p', { class: 'big', style: 'font-size:22px', text: toLine(g) }), h('p', { style: 'font-weight:800;margin:4px 0', text: g.msg || O.hint }), g.from && !ME ? h('p', { class: 'sub', text: 'From. ' + g.from }) : null, rp);
   if (swap) swapLeft(swap, left, posted);
   else put(top(ME), back, h('div', { class: 'cols' }, left, h('div', {}, posted, paper, cta(g))), foot());
 }
@@ -759,19 +887,8 @@ function downloadBlob(blob, name) {
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 20000);
 }
-function realCard(g) {
-  const why = realReason({ rec: canRecord(), gl: hasGL() }), inApp = inAppBrowser(navigator?.userAgent);
+function realBody(g) {
   const note = h('p', { class: 'okmsg', role: 'status' });
-  const head = [h('h2', { text: '🎬 실사 축하 영상' }), h('p', { class: 'fine', text: '타임스퀘어처럼 만든 AI 장면의 전광판에 이 선물 전광판을 합성한 10초 세로 영상이에요. 이 기기에서 만들고, 서버에는 올리지 않아요.' })];
-  if (inApp) {
-    const box = h('input', { type: 'text', class: 'link', readonly: true, value: location.href, hidden: true, 'aria-label': '이 페이지 주소' });
-    const copy = h('button', { class: 'btn', type: 'button', onclick: async () => {
-      try { await navigator.clipboard.writeText(location.href); say(note, '주소를 복사했어요. Chrome이나 Safari 주소창에 붙여 넣어 주세요.', true); }
-      catch { box.hidden = false; pickAll(box); say(note, '아래 주소를 길게 눌러 복사해 주세요.'); }
-    } }, '🔗 이 페이지 주소 복사');
-    return card(...head, h('p', { class: 'sub', text: '카카오톡 같은 앱 안의 브라우저에서는 영상을 저장하거나 보낼 수 없어요. 이 페이지를 Chrome이나 Safari에서 열어 주세요.' }), copy, box, note);
-  }
-  if (why) return card(...head, h('p', { class: 'sub', text: why === 'webgl' ? '이 브라우저는 그래픽 가속(WebGL)을 쓸 수 없어서 실사 영상을 만들 수 없어요. 위의 15초 축하 영상을 저장해 보세요.' : '이 브라우저는 영상 녹화를 지원하지 않아서 실사 영상을 만들 수 없어요. Chrome이나 Safari 최신 버전에서 열어 주세요.' }));
   let pick = null, made = null;
   const idx = new Map(); // scene id -> its index.json entry (its file sizes are the files' version)
   const fill = h('i'), bar = h('div', { class: 'bar', hidden: true, role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-label': '진행' }, fill);
@@ -881,8 +998,8 @@ function realCard(g) {
     result.hidden = false;
     say(note, '영상을 만들었어요. 저장하거나 바로 보내 보세요.', true);
   }
-  return card(...head, grid, bar, barText, makeBtn, live, result, note,
-    h('p', { class: 'fine', text: '장면을 누르면 그 장면만 받아요(3~8MB). 만드는 동안(10초 남짓) 이 화면을 켜 두어야 해요. 영상 오른쪽 아래에 ‘AI 합성’ 표시가 들어가요.' }));
+  return [h('p', { class: 'fine', text: '장면을 고르면 이 전광판을 넣은 10초 세로 영상을 이 기기에서 만들어요. 서버에는 올리지 않아요.' }), grid, bar, barText, makeBtn, live, result, note,
+    h('p', { class: 'fine', text: '장면을 누르면 그 장면만 받아요(3~8MB). 만드는 동안(10초 남짓) 이 화면을 켜 두어야 해요. 영상 오른쪽 아래에 ‘AI 합성’ 표시가 들어가요.' })];
 }
 
 // 점등식: the button for a board with a fixed start (giftrules.js cerButton), with the line under it, or null. Before the window a tap says

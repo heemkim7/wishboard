@@ -152,7 +152,7 @@ export function createFilm(canvas, gift, opts = {}) {
     }
     if (opts.watermark !== false) { // the line that it is a virtual plaza stays on a clean film; only the free mark goes
       g.textBaseline = 'alphabetic';
-      if (filmMark(gift)) { g.textAlign = 'right'; g.font = `800 ${Math.round(W * 0.03)}px ${GIFT_SANS}`; g.fillStyle = 'rgba(255,255,255,0.72)'; g.fillText('WISH BOARD · 무료', W - W * 0.04, H - H * 0.022); }
+      if (filmMark(gift)) { g.textAlign = 'right'; g.font = `800 ${Math.round(W * 0.03)}px ${GIFT_SANS}`; g.fillStyle = 'rgba(255,255,255,0.72)'; g.fillText('WISH BOARD', W - W * 0.04, H - H * 0.022); }
       g.textAlign = 'left'; g.font = `600 ${Math.round(W * 0.022)}px ${GIFT_SANS}`; g.fillStyle = 'rgba(255,255,255,0.5)'; g.fillText('가상 광장 · 실제 타임스퀘어와 무관', W * 0.04, H - H * 0.022);
     }
     // Fade in and the last half second's fade to black, so a loop or the end card does not jump.

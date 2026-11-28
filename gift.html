@@ -158,11 +158,54 @@
   .brand:active { background: var(--press); box-shadow: 0 0 0 6px var(--press); }
   .note .rp:active { background: rgba(43,29,14,.18); box-shadow: 0 0 0 6px rgba(43,29,14,.18); color: #2b1d0e; }
   .stage .play:active span { background: rgba(255,255,255,.34); transform: scale(.95); }
+  /* 2026-11-28 the maker in 3 steps on one phone screen (giftpage.js maker): the board on the street held at the top (.pv), the step's
+     question and fields under it, one gold button a step and ← 이전 beside it (.nav), the dots for where one is. The two makers are a
+     switch in the top row (.seg). 어디에 걸리나 on a board's pages: .where (the screen by its plaza name), .scene (the board on the street). */
+  .seg { display: inline-flex; gap: 6px; }
+  .chip.seg1 { display: inline-flex; align-items: center; padding: 0 12px; font-size: 13px; text-decoration: none; }
+  .chip.seg1[aria-current=page] { border-color: rgba(255,207,90,.85); background: rgba(255,207,90,.16); color: var(--gold2); }
+  h1.mkh { font-size: 19px; margin: 0 0 6px; }
+  .pv .preview { box-shadow: 0 8px 28px rgba(0,0,0,.45); }
+  .place { margin: 4px 0 0; color: var(--muted); font-size: 13px; line-height: 1.4; font-weight: 700; }
+  .card.mkcard { padding: 12px 14px; margin: 6px 0 0; }
+  .stephead { display: flex; align-items: center; justify-content: space-between; margin: 0 0 6px; }
+  .dots { display: inline-flex; gap: 6px; align-items: center; }
+  .dots i { width: 8px; height: 8px; border-radius: 999px; background: rgba(255,255,255,.22); transition: width .2s, background-color .2s; }
+  .dots i.done { background: rgba(255,233,168,.6); } .dots i.on { width: 22px; background: var(--gold); }
+  .stepno { color: var(--dim); font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  h2.q { font-size: 17px; margin: 0 0 10px; }
+  .hint { margin: 0 0 10px; }
+  .step .field:last-child { margin-bottom: 4px; }
+  .linkbtn.more { margin-top: 6px; padding: 0 2px; }
+  .nav { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+  .nav .btn { flex: 1; } .nav .back { flex: none; color: var(--text); text-decoration: none; font-weight: 800; padding: 0 10px; }
+  details.rules > summary { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; min-width: 44px; padding: 0 8px; color: var(--muted); font-size: 13px; font-weight: 700; cursor: pointer; text-decoration: underline; }
+  details.more { margin: 12px 0; }
+  details > summary { list-style: none; } details > summary::-webkit-details-marker { display: none; }
+  details.more > summary::after { content: " ▾"; } details.more[open] > summary::after { content: " ▴"; }
+  details.more[open] > summary { margin-bottom: 4px; }
+  .where { margin: 2px 0 2px; font-size: 15px; font-weight: 700; color: var(--text); } .where .tag { margin-left: 4px; vertical-align: 1px; }
+  .whenl { margin: 0 0 10px; }
+  .preview.scene { margin: 0 0 10px; }
+  .preview + .row, .preview + .stack, .preview + .btn { margin-top: 10px; }
+  .btn.go3d { border-color: rgba(255,207,90,.55); color: var(--gold2); }
+  .vpanel { margin-top: 10px; } .vpanel .stage { margin-top: 8px; }
+  html.mkpage main { padding-top: max(6px, env(safe-area-inset-top)); padding-bottom: calc(8px + env(safe-area-inset-bottom)); }
+  html.mkpage .top { padding-bottom: 4px; }
+  .mk .step .field { margin-bottom: 8px; }
+  .mkfoot { display: flex; align-items: center; justify-content: space-between; gap: 8px; } .mkfoot .fine { margin: 0; flex: 1; }
+  details.rules[open] { flex-basis: 100%; } .mkfoot:has(details[open]) { flex-wrap: wrap; }
+  .mk .when { margin-top: 4px; }
+  @media (max-width: 899px) and (orientation: portrait) {
+    .mk > .pvcol { display: contents; }
+    .mk .pv { position: sticky; top: 0; z-index: 3; margin: 0 -16px; padding: 6px 16px 4px; background: rgba(7,6,26,.97); }
+    html.mkpage { scroll-padding-top: calc((100vw - 32px) * 9 / 16 + 60px); } /* a field the keyboard scrolls to lands under the held preview */
+  }
   .hidden, [hidden] { display: none !important; }
   @media (min-width: 900px) { main { max-width: 980px; } .cols { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 28px; align-items: start; } .cols > .sticky { position: sticky; top: 16px; } h1 { font-size: 30px; }
     .stage.sm { max-width: min(100%, calc(72vh * 9 / 16)); border-radius: 20px; } } /* beside the cards there is room for the whole film */
   /* A phone on its side: the picture on the left, what to press on the right, so the first screen is not the picture alone. */
-  @media (orientation: landscape) and (max-height: 520px) and (min-width: 600px) and (max-width: 899px) { main { max-width: 900px; } .cols { display: grid; grid-template-columns: minmax(0, 38%) minmax(0, 1fr); gap: 20px; align-items: start; } }
+  @media (orientation: landscape) and (max-height: 520px) and (min-width: 600px) and (max-width: 899px) { main { max-width: 900px; } .cols { display: grid; grid-template-columns: minmax(0, 38%) minmax(0, 1fr); gap: 20px; align-items: start; } .stage { max-width: min(100%, calc(46vh * 9 / 16)); } .mk > .pvcol { position: sticky; top: 8px; } }
   @media (prefers-reduced-motion: reduce) { .btn, .chip, .sw, .tier, .linkbtn, .brand, .note .rp, .stage .play span { transition: none; } .bar.wait > i { animation: none; width: 100%; opacity: .5; } } /* the pressed state stays (it is a state, not a movement); only its fade goes */
 </style>
 </head>

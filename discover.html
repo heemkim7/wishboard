@@ -38,7 +38,7 @@
   .btn.gold:active { box-shadow: inset 0 0 0 99px rgba(70,36,0,.34); }
   .btn[aria-pressed=true] { border-color: rgba(255,79,163,.75); }
   .btn:disabled { opacity: .5; cursor: default; }
-  .tabs { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 8px; margin: 0 -2px; scrollbar-width: none; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 2px 8px; margin: 0 -2px; } /* all six in sight (2026-11-28: on a 360-390px phone 개인 전광판 and 소원 sat past the edge with nothing to say so) */
   .tabs::-webkit-scrollbar { display: none; }
   .tab { flex: none; min-height: 44px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--stroke); background: rgba(255,255,255,.04); color: var(--text); font: inherit; font-weight: 800; font-size: 14px; cursor: pointer; }
   .tab[aria-selected=true] { border-color: rgba(255,207,90,.85); background: rgba(255,207,90,.16); color: var(--gold2); }

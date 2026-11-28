@@ -121,7 +121,7 @@ function paint() {
     h('div', { class: 'top' }, h('a', { class: 'brand', href: '/' }, 'WISH BOARD', h('small', { text: '모두의 전광판' })), h('span', { class: 'tag', text: '둘러보기' })),
     h('h1', { text: '가상 타임스퀘어에 걸린 전광판' }),
     h('p', { class: 'sub', text: '지금 걸린 전광판과 오늘의 소원을 3D 없이 둘러봐요. 선물 전광판은 만든 사람이 ‘DISCOVER에 보이기’를 켠 것만 보여요.' }),
-    h('div', { class: 'make' }, h('a', { class: 'btn gold', href: '/gift' }, '🎁 누군가에게 선물하기'), h('a', { class: 'btn', href: '/gift?me=1' }, '✨ 내 전광판 만들기')),
+    h('div', { class: 'make' }, h('a', { class: 'btn gold', href: '/gift' }, '🎁 선물하기'), h('a', { class: 'btn', href: '/gift?me=1' }, '✨ 내 전광판')),
     tabs, h('div', { id: 'panel', role: 'tabpanel', 'aria-labelledby': 'tab-' + tab }, body, samples),
     h('p', { class: 'foot' }, '뉴욕 타임스퀘어를 본뜬 가상 광장이에요. 실제 타임스퀘어와는 관계가 없어요. 많이 반응한 순서로 보여 줄 뿐, 순위를 매기지 않아요.', h('br'), h('a', { href: '/' }, '3D 광장 둘러보기')));
 }

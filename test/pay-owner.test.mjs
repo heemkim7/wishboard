@@ -88,9 +88,9 @@ describe('the films without the watermark', () => {
   });
   it('the drawn film, the plaza video and the real video ask filmMark; the AI 합성 mark and the virtual-plaza line stay', () => {
     const film = read('giftfilm.js'), plaza = read('gift.js'), real = read('realvideo.js');
-    assert.match(film, /if \(filmMark\(gift\)\) \{[^\n]*WISH BOARD · 무료/); assert.match(film, /가상 광장 · 실제 타임스퀘어와 무관/);
-    assert.match(plaza, /if \(filmMark\(g\)\) \{[^\n]*WISH BOARD · 무료/); assert.match(plaza, /가상 광장 · 실제 타임스퀘어와 무관/);
-    assert.match(real, /captionCanvas\(W \/ plate\.w, filmMark\(gift\)\)/); assert.match(real, /fillText\('AI 합성', x, y\);\n  if \(mark\) g\.fillText\('WISH BOARD · 무료'/);
+    assert.match(film, /if \(filmMark\(gift\)\) \{[^\n]*'WISH BOARD'/); assert.doesNotMatch(film, /WISH BOARD · 무료/, 'no 무료 next to no paid tier (2026-11-28)'); assert.match(film, /가상 광장 · 실제 타임스퀘어와 무관/);
+    assert.match(plaza, /if \(filmMark\(g\)\) \{[^\n]*WISH BOARD/); // the plaza's own mark (gift.js) drops 무료 with its own change assert.match(plaza, /가상 광장 · 실제 타임스퀘어와 무관/);
+    assert.match(real, /captionCanvas\(W \/ plate\.w, filmMark\(gift\)\)/); assert.match(real, /fillText\('AI 합성', x, y\);\n  if \(mark\) g\.fillText\('WISH BOARD'/);
   });
 });
 

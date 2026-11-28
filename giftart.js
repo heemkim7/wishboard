@@ -119,6 +119,46 @@ export function paintGift(canvas, g = {}, opts = {}) {
   c.restore();
 }
 
+// 어디에 걸리나 (giftpage.js: the maker's live preview, the owner page's head): the board as one screen on the virtual street, laid in
+// perspective on the right-hand wall over the plaza's own picture of a street of screens (icons/boot.jpg, the boot card's and og.jpg's
+// ground). img: that picture once it has loaded, or null (then a dark street of its own, the board in the same place, so nothing jumps).
+// The quad is a fraction of the canvas: x0..x1, the far (left) edge's top and bottom, the near (right) edge's. The board's own drawing
+// (paintGift) is laid on it in strips with a perspective-correct step, so the far side is the narrower one.
+export const STREET_QUAD = Object.freeze({ x0: 0.3, x1: 0.985, l: Object.freeze([0.15, 0.76]), r: Object.freeze([0.05, 0.87]) });
+let BOARD_CV = null;
+export function paintStreet(canvas, g = {}, img = null, opts = {}) {
+  const c = canvas.getContext('2d'), W = canvas.width, H = canvas.height, Q = STREET_QUAD;
+  c.save(); c.setTransform(1, 0, 0, 1, 0, 0);
+  if (img && img.width) { // cover, a little lower than the middle (the street's vanishing point stays in sight)
+    const s = Math.max(W / img.width, H / img.height), w = img.width * s, h = img.height * s;
+    c.drawImage(img, (W - w) / 2, (H - h) * 0.45, w, h);
+    c.fillStyle = 'rgba(6,4,20,0.28)'; c.fillRect(0, 0, W, H);
+  } else {
+    const sky = c.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, '#0b0820'); sky.addColorStop(0.6, '#151032'); sky.addColorStop(1, '#07061a');
+    c.fillStyle = sky; c.fillRect(0, 0, W, H);
+    for (let i = 0; i < 5; i++) { c.fillStyle = ['#3a1150', '#14205a', '#4a1a6a', '#1d2c70', '#2a1250'][i]; c.fillRect(W * (0.02 + i * 0.05), H * (0.18 + i * 0.07), W * 0.045, H * (0.32 - i * 0.04)); }
+  }
+  // the board, drawn once at its own size, then laid on the wall
+  if (typeof document !== 'undefined' && document.createElement) {
+    if (!BOARD_CV) { BOARD_CV = document.createElement('canvas'); BOARD_CV.width = 1024; BOARD_CV.height = 576; }
+    paintGift(BOARD_CV, g, opts);
+    const X0 = Q.x0 * W, X1 = Q.x1 * W, lt = Q.l[0] * H, lb = Q.l[1] * H, rt = Q.r[0] * H, rb = Q.r[1] * H, hl = lb - lt, hr = rb - rt;
+    const T = themeOf(g);
+    c.save(); c.shadowColor = T.a; c.shadowBlur = 48 * (W / 1024);
+    c.beginPath(); c.moveTo(X0, lt); c.lineTo(X1, rt); c.lineTo(X1, rb); c.lineTo(X0, lb); c.closePath(); c.fillStyle = '#05040f'; c.fill(); c.restore();
+    const N = 96, sw = BOARD_CV.width / N, at = (u) => (u * hr) / ((1 - u) * hl + u * hr); // screen fraction of board fraction u
+    for (let i = 0; i < N; i++) {
+      const t0 = at(i / N), t1 = at((i + 1) / N), tm = (t0 + t1) / 2;
+      const x = X0 + (X1 - X0) * t0, w = (X1 - X0) * (t1 - t0) + 0.8, top = lt + (rt - lt) * tm, bot = lb + (rb - lb) * tm;
+      c.drawImage(BOARD_CV, i * sw, 0, sw, BOARD_CV.height, x, top, w, bot - top);
+    }
+    c.beginPath(); c.moveTo(X0, lt); c.lineTo(X1, rt); c.lineTo(X1, rb); c.lineTo(X0, lb); c.closePath();
+    c.lineWidth = Math.max(3, 9 * (W / 1024)); c.strokeStyle = '#0c0a1c'; c.stroke();
+    c.lineWidth = Math.max(1, 2 * (W / 1024)); c.strokeStyle = 'rgba(255,255,255,0.35)'; c.stroke();
+  }
+  c.restore();
+}
+
 // 환영 전광판 (ts3d/screens.js pinWelcome): the newcomer's own name on a plaza screen, drawn on their device only. name is cut to 12 code
 // points here; line is the fixed words under it (ftue.js WELCOME.line). The gift board's ground, frame and fonts, in the 밤하늘 theme.
 // chip: the top-left pill (the 오늘 할 일 card's '🎉 오늘 할 일 완료', todo.js cardText); without one it is the welcome's own.
