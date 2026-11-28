@@ -31,6 +31,7 @@ import { AD, AD_TEMPLATES, adSums, adBars } from './adreport.js';
 import { adScreenName, linkHost } from './adsale.js';
 import { qrEncode, paintQr } from './qr.js?v=202611280944';
 import { icon } from './uiicons.js?v=202611280944';
+import { soonBlock } from './soon.js?v=202611280944'; // 출시 예정: the coming features and their interest button (the proof bar's sheet)
 import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, proofOffers, proofPlan, TOAST, touchTag, goalKnown, PRESS, createTapGuard, backdropClose, TOOL_ORDER, hintLeft, sameNews } from './overlay.js?v=202611280944';
 import { linesFault, LINES_ERR } from './ftue.js?v=202611280944'; // the board-line checks
 import { TODO, TODO_TEXT, todoList, todoSettled, todoProgress, todoNext, todoSnap, todoDiff, allDue, momentHold, itemNote, allNote, attendNote, footLine, cardText, pillPlan, markStamp, stampRow, stampName, giftSeen, giftDone, weekStart, todoKeep } from './todo.js?v=202611280944';
@@ -4794,8 +4795,12 @@ export function createUI(root, hooks) {
     proofLink,
     proofPush,
     h('button', { class: 'btn ghost', type: 'button', text: '둘러보기', onclick: () => leaveProof() }),
+    // 출시 예정 (soon.js): one quiet text link after a board was hung; the four cards open in their own sheet (src 'plaza'), never on the bar.
+    h('button', { class: 'linkbtn proof-soon', type: 'button', text: '준비 중인 기능 보기', onclick: () => openSoon() }),
   );
   root.append(proof);
+  // The coming features (soonrules.js): opening the sheet leaves the bar (openSheet does), so nothing is covered.
+  function openSoon() { openSheet(['wish', '준비 중인 기능'], null, (host) => { host.append(soonBlock({ src: 'plaza', heading: false })); }, true); }
   let proofNext = null, clipStop = null;
   // The one way out. Whatever else happens, input is unlocked, the focus camera ends (keepFocus: a photo frames the board
   // next and ends it itself) and the bar's history entry goes. quiet: something else takes over (a sheet, the photo), so

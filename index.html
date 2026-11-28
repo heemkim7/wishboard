@@ -531,7 +531,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .sheet-keep .btn { height: 44px; }
   /* Proof bar while a 5 s clip records: only the countdown and its cancel. */
   .proof .rec-row { flex: 1 1 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 15px; color: var(--text); }
-  .proof.rec > p, .proof.rec > .btn, .proof.rec > .manual-copy { display: none; }
+  .proof.rec > p, .proof.rec > .btn, .proof.rec > .manual-copy, .proof.rec > .proof-soon { display: none; }
   /* Touch: small controls keep their look and get a larger hit area through ::after (44px tall where the neighbours leave room;
      rows that sit against each other only grow into the gap between them, so no control takes another one's taps). */
   html.touch .x::after, html.touch .guestwarn .btn::after, html.touch .tools:not(.open) .btn::after, html.touch .rank .mini::after,
@@ -785,7 +785,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   #boot.gone { opacity: 0; visibility: hidden; pointer-events: none; }
   #boot .grid { display: none; }
   #boot .wrap { position: relative; z-index: 3; width: min(560px, calc(100% - 32px)); margin: auto 0; padding: 0 18px 18px; border-radius: var(--r-sheet); background: var(--bg); border: 1px solid var(--line); overflow: hidden; }
-  #boot h1 { margin: 16px 0 6px; font: 900 34px/1.15 var(--font); letter-spacing: -.035em; color: var(--text); }
+  #boot h1 { margin: 16px 0 6px; font: 900 26px/1.25 var(--font); letter-spacing: -.035em; color: var(--text); word-break: keep-all; } /* the free-first headline, two lines on a phone */
   #boot .tag { font-size: 15px; font-weight: 500; color: var(--text-2); line-height: 1.45; word-break: keep-all; }
   #boot .prog { margin: 30px auto 10px; height: 6px; border-radius: var(--r); background: var(--surface-2); overflow: hidden; }
   #boot .prog i { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--info); transition: width .3s ease; }
@@ -811,10 +811,13 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   #boot .bootbtn.gift:active { background: var(--accent-press); }
   #boot .bootbtn.me { color: var(--text); background: var(--surface-2); border: 1px solid var(--line); }
   #boot .bootbtn.me:active { background: var(--surface); }
+  /* Two quiet links on one row: 둘러보기, and the coming-soon list (출시 예정, soon.js on /discover#soon) in a dimmer grey. */
+  #boot .bootlinks { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; column-gap: 12px; }
+  #boot .bootsoon { display: inline-flex; align-items: center; min-height: 44px; font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: underline; }
   #boot .bootdisc { grid-column: 1 / -1; display: inline-flex; align-items: center; justify-content: flex-start; min-height: 44px; font-size: 13px; font-weight: 600; color: var(--text-2); text-decoration: underline; }
   /* One row even at 320px (a long label wraps inside its button), and on a short screen a smaller title: the 3D entry and the nickname
      stay on the first screen of a 375x812 phone. */
-  @media (max-height: 760px) { #boot h1 { font-size: 30px; margin: 10px 0 4px; } #boot .bootcta { margin-top: 10px; } }
+  @media (max-height: 760px) { #boot h1 { font-size: 24px; margin: 10px 0 4px; } #boot .bootcta { margin-top: 10px; } }
   /* An upright phone: the card sits at the foot of the screen, full width, and the plaza at night shows above it. */
   @media (max-width: 599px) and (orientation: portrait) { #boot { padding: 0; } #boot .wrap { width: 100%; margin: auto 0 0; border-width: 1px 0 0; border-radius: var(--r-sheet) var(--r-sheet) 0 0; padding-bottom: max(18px, var(--safe-b)); } }
   /* With the makers above it, 3D 광장 둘러보기 is the quieter third choice (the accent stays the gift's). */
@@ -831,6 +834,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .proof { position: absolute; left: 50%; bottom: calc(24px + var(--safe-b)); transform: translateX(-50%); width: min(560px, calc(100% - 24px)); z-index: 8; pointer-events: auto; padding: 14px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .proof p { flex: 1 1 100%; margin: 0; font-weight: 700; }
   .proof .btn { height: 44px; }
+  .proof .proof-soon { flex: 1 1 100%; justify-content: flex-start; color: var(--muted); font-size: 13px; font-weight: 600; } /* 출시 예정: a quiet text link, not a button */
   #ui.proofing > :not(.proof) { visibility: hidden !important; }
   /* 멍때리기: the boards are the view. The left column, the map column (the tool row stays) and the news lines step aside;
      the lounge line, the dock with 그만 and 시점 해제 stay. Moving ends the tour and brings them back. */
@@ -1032,7 +1036,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
        and the right-hand column. */
     html.touch .bake { bottom: calc(8px + var(--safe-b)); width: min(560px, calc(100% - 24px)); }
     html.touch .dancebar { bottom: calc(10px + var(--safe-b)); left: calc(110px + var(--safe-l)); }
-    #boot h1 { font-size: 28px; margin: 8px 0 4px; }
+    #boot h1 { font-size: 22px; margin: 8px 0 4px; }
     /* A phone on its side: tighter rows, so less of the card needs scrolling to reach 입장하기. */
     #boot .wrap { padding: 0 18px 14px; }
     #boot .bootlive { margin-top: 8px; padding: 8px 12px; }
@@ -1923,14 +1927,15 @@ const CLARITY_ID = '';
   <div class="grid" aria-hidden="true"></div>
   <div class="wrap">
     <div class="ticker" aria-hidden="true"><span>거리 전광판 68곳 · 6시간 무료 · 15초 축하 영상 · 친구들의 롤링페이퍼 · WISH BOARD · 거리 전광판 68곳 · 6시간 무료 · 15초 축하 영상 · 친구들의 롤링페이퍼 · WISH BOARD · </span></div>
-    <h1>모두의 전광판</h1>
+    <!-- Free first (2026-11-28, the owner): the first thing the card says is that anyone makes and shares a board for free. -->
+    <h1>누구나 무료로 전광판을 만들고 공유할 수 있어요</h1>
     <div class="tag">친구 이름이나 내 다짐을 가상 타임스퀘어 전광판에 걸어요. 6시간 무료예요.</div>
     <!-- B2C (2026-11-27): the two things to make, in plain links that work before the 3D city loads (and without it). The 3D plaza is the
          third choice, the button below that comes once the city is built (ui.js bootReady: 3D 광장 둘러보기). -->
     <nav class="bootcta" aria-label="만들기">
       <a class="bootbtn gift" href="/gift"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="9" width="16" height="4" rx="1"/><path d="M5.5 13V19.5A1 1 0 0 0 6.5 20.5H17.5A1 1 0 0 0 18.5 19.5V13"/><path d="M12 9V20.5"/><path d="M12 9C10.5 6.5 7.5 5 7 7C6.6 8.6 9.5 9 12 9"/><path d="M12 9C13.5 6.5 16.5 5 17 7C17.4 8.6 14.5 9 12 9"/></svg>누군가에게 선물하기</a>
       <a class="bootbtn me" href="/gift?me=1"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 8L11.2 12.15L15.68 12.49L12.26 15.4L13.32 19.76L9.5 17.4L5.68 19.76L6.74 15.4L3.32 12.49L7.8 12.15Z"/><path d="M13.5 8.5L20 3.5"/><path d="M17 11L21 8"/><path d="M11.5 6L15 3"/></svg>내 전광판 만들기</a>
-      <a class="bootdisc" href="/discover">다른 사람들의 전광판 둘러보기</a>
+      <div class="bootlinks"><a class="bootdisc" href="/discover">다른 사람들의 전광판 둘러보기</a><a class="bootsoon" href="/discover#soon">준비 중인 기능</a></div>
     </nav>
     <div class="bootlive" id="bootLive"><div id="bootSeason" hidden></div><div id="bootWish" hidden></div><div id="bootKing">메인 타워 소식을 불러오는 중…</div><div id="bootStat">빈 자리와 오늘 다녀간 사람을 세는 중…</div></div>
     <div class="prog" aria-hidden="true"><i id="bootBar"></i></div>

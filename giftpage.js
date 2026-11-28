@@ -7,6 +7,7 @@ import { paintGift, paintStreet, giftCardJpeg } from './giftart.js?v=20261128094
 import { createFilm, FILM_MS, recordCanvas, canRecord, saveBlob, fileName } from './giftfilm.js?v=202611280944';
 import { icon } from './uiicons.js?v=202611280944';
 import { SCENES, REAL_DIR, plateUrls, musicUrls, plateFault, realFileName, realReason, inAppBrowser, lowFor, scenesToDrop } from './realrules.js?v=202611280944';
+import { soonBlock } from './soon.js?v=202611280944'; // 출시 예정: the four coming features and their interest button (owner pages only)
 
 const $app = document.getElementById('app');
 // Opened over the plaza (gift.js, ?in=1 in a frame): links into the plaza tell the plaza instead of loading a second one in the frame.
@@ -548,9 +549,12 @@ function owner(g, { fresh = false, mine: extra = null, media = false, signNudge 
     card(h('h2', {}, icon('chart'), '지금까지'), stats, friendsLine(extra?.friends), h('p', { class: 'fine', text: '같은 기기는 한 번으로 세요.' })),
     media && g.phase !== 'after' && canRecord() ? card(h('h2', {}, icon('camera'), '받는 사람 페이지에 광장 영상 올리기'), recLink('btn', [icon('camera'), '광장에서 영상 찍기 · 약 25초']),
       h('p', { class: 'fine', text: g.vid ? '찍은 영상이 받는 사람 페이지에 올라가 있어요. 다시 찍으면 바뀌어요(3번까지).' : '광장에서 이 전광판 앞의 폭죽과 환호를 찍어 받는 사람 페이지에 올려요. 그날이 지나고 7일 뒤에 지워져요.' })) : null,
-    card(h('button', { class: 'btn', type: 'button', onclick: () => visit(g, { preview: true }) }, icon('eye'), '받는 사람에게 보이는 화면'), h('div', { style: 'text-align:center;margin-top:8px' }, del)));
+    card(h('button', { class: 'btn', type: 'button', onclick: () => visit(g, { preview: true }) }, icon('eye'), '받는 사람에게 보이는 화면'), h('div', { style: 'text-align:center;margin-top:8px' }, del)),
+    fresh ? null : soonBlock({ src: 'more' }));
+  // 출시 예정 (soon.js): right after a board was hung, under everything the owner does now (never in the making steps, never on the
+  // recipient's page); on a later visit only inside 더 보기, above.
   put(top(ME), h('div', { class: 'cols' }, h('div', { class: 'sticky' }, head),
-    h('div', {}, replyCard, shareCard, videoCard(g), paidCard(g, extra?.ladder), more)), foot());
+    h('div', {}, replyCard, shareCard, videoCard(g), paidCard(g, extra?.ladder), more, fresh ? soonBlock({ src: ME ? 'me' : 'owner' }) : null)), foot());
 }
 // 어디에 걸리나, on a board's own pages: the screen by its plaza name and where it stands, the window, the board drawn on the street, and the
 // way into the 3D plaza (gift.js land: 'live' takes the camera to it for everyone's same screen; on its day before the window and after it

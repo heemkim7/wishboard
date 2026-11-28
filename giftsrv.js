@@ -49,11 +49,16 @@
 //                                              TOWER.payMax (no place). The operator's list (/rt/admin/gift/share) reads it; kept SHARE.dayKeep days
 //   sfr(uid, d, who)                           who already counted for that maker that day, on any network: 'a:<account or guest id>' or, for a
 //                                              gift page 💖 sent without a token, 'v:<device hash>'; kept SHARE.dayKeep days
+// 출시 예정 관심 (soonrules.js; the counts are gd keys 'si:<feature>:<imp|tap|reg>' with ':a' / ':g' and '@<source>'):
+//   gsi(f, w, at, lg, src)                     who registered interest in a coming feature, once per person and feature: w a keyed hash of
+//                                              the account, the guest id or the browser's random id (soonWho), lg 1 a signed-in account, src
+//                                              where the card was; kept SOON_KEEP.keepDays from the registration
 import { GIFT, GIFT_ID, PAPER_ID, VISITOR_ID, GIFT_ERR, giftFault, paperFault, pickScreen, screenLoad, nextFree, PERK, perksOf, longEnd, giftPhase, paperTakes, lockArm, giftView, giftShareText, refOf, kstDay, addDays, pruneDay, quietNow, AD_LABEL, videoKind, VIDEO_TYPE, rangeOf, windowText, OCCASIONS, TIERS, CER_BEACONS, REAL_BEACONS, MORE_BEACONS, ladderArm, heartsOpen, heartTakes, dayStart, botAgent, revealAt, publicView } from './giftrules.js';
 import { TOWER, SHARE, shareAmount, linkFault, TOWER_HOW, SPEND_OLD, TOWER_ERR, reactCounts, towerFault, towerDays, towerEntry, towerMinutes } from './towerrules.js'; // 메인 타워 축하 1분 and the share reward
 import { orderPerks } from './ordersrv.js'; // 메인 타워 주인공: the order ledger says whether a board's paid booking stands
 import { payOn } from './payrules.js';
 import { opsRate } from './ops.js';
+import { SOON_KEEP, soonFault, soonKeys, soonReport } from './soonrules.js'; // 출시 예정 관심 (the interest counts, no Supabase)
 
 const J = (o, s = 200, h = {}) => new Response(JSON.stringify(o), { status: s, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...h } });
 const ERR = { ...GIFT_ERR, ...TOWER_ERR };
@@ -222,6 +227,8 @@ export const giftDb = {
     q.exec('create table if not exists sfr(uid text not null, d text not null, who text not null, primary key(uid, d, who))');
     q.exec('create index if not exists sfr_d on sfr(d)');
     q.exec('create index if not exists sfr_who on sfr(who)');
+    q.exec('create table if not exists gsi(f text not null, w text not null, at integer not null, lg integer not null default 0, src text not null, primary key(f, w))'); // 출시 예정 관심 (2026-11-28)
+    q.exec('create index if not exists gsi_w on gsi(w)');
   },
   // 공유 보상's old rows, SHARE_PRUNE a table at a time (on the link-open path and with the other prunes): link opens, maker networks,
   // friends per content, and friend days past SHARE.dayKeep.
@@ -287,6 +294,7 @@ export const giftDb = {
     q.exec('delete from ga where at < ?', now - (TOWER.gapDays + 1) * 864e5); // a maker's bookings: the 30 days between point bookings need them
     q.exec('delete from gt where day < ? and g not in (select id from gb)', d); lapse(q, now); // aired minutes of boards that went, once their day is over
     q.exec('delete from gf where at < ?', now - 90 * 864e5);
+    q.exec('delete from gsi where at < ?', now - SOON_KEEP.keepDays * 864e5); // 출시 예정 관심: the people, kept as long as the daily counts
     this.sharePrune(q, now);
     return old;
   },
@@ -370,6 +378,7 @@ export const giftDb = {
       const g = String(it?.g || ''), v = String(it?.v || ''), e = String(it?.e || '');
       if (e === 'hit' || e === 'hitbot') { const day = String(it?.d || ''), k = Math.floor(Number(it?.n)); if (/^\d{4}-\d{2}-\d{2}$/.test(day) && k > 0 && k <= 1e6) { bump(q, day, e, k); n++; } continue; }
       if (e === 'start') { bump(q, d, 'start'); if (Number(it?.r) === 1) bump(q, d, 'start_ref'); n++; continue; }
+      if (e === 'soon') { if (this.soonAdd(q, it, d, now)) n++; continue; } // 출시 예정 관심 (no board)
       if (!GIFT_ID.test(g) || !/^[0-9a-f]{16}$/.test(v) || !(SEEN_EV.has(e) || e === 'heart')) continue;
       const row = q.exec(e === 'heart' ? 'select * from gb where id = ?' : 'select day from gb where id = ?', g).toArray()[0];
       if (!row) continue;
@@ -389,6 +398,22 @@ export const giftDb = {
       visitAdd(q, g, v, String(row.day) === d, d, now);
     }
     return { ok: true, n, ...(pay.length ? { pay } : {}), ...(open.length ? { open } : {}) };
+  },
+  // 출시 예정 관심, one beacon item (seen): { f, a: 'imp' | 'tap', lg: 'a' | 'g', s, w }. imp and tap are daily counts; a tap is also a
+  // registration the first time this person (w) taps that feature (gsi), counted as reg once and never again. -> true when it counted.
+  soonAdd(q, it, d, now = Date.now()) {
+    const v = soonFault({ a: it?.a, f: it?.f, s: it?.s }); if (!v.ok || v.fs.length !== 1) return false;
+    const f = v.fs[0], lg = it?.lg === 'a' ? 'a' : 'g', w = String(it?.w || '');
+    for (const k of soonKeys(f, v.a, lg, v.s)) bump(q, d, k);
+    if (v.a === 'tap' && /^[0-9a-f]{16}$/.test(w) && q.exec('insert or ignore into gsi(f, w, at, lg, src) values(?, ?, ?, ?, ?)', f, w, now, lg === 'a' ? 1 : 0, v.s).rowsWritten > 0) for (const k of soonKeys(f, 'reg', lg, v.s)) bump(q, d, k);
+    return true;
+  },
+  // The admin block (admin-gift.js): SOON_KEEP.adminDays KST days of the counts and the people so far (soonrules.js soonReport).
+  soonStats(q, now = Date.now()) {
+    const d1 = kstDay(now), d0 = addDays(d1, -(SOON_KEEP.adminDays - 1)), days = new Map();
+    for (const r of q.exec("select d, k, n from gd where d >= ? and d <= ? and k >= 'si:' and k < 'si;'", d0, d1).toArray()) { const x = days.get(String(r.d)) || { d: String(r.d) }; x[String(r.k)] = Number(r.n) || 0; days.set(String(r.d), x); }
+    const people = q.exec('select f, count(*) n, sum(lg) a from gsi group by f').toArray().map((r) => ({ f: String(r.f), n: Number(r.n) || 0, a: Number(r.a) || 0 }));
+    return soonReport([...days.values()], people, d0, d1, addDays);
   },
   // A share reward grant_coins clearly refused (no wallet yet): that network stays a friend of the day, unpaid (st 'fail'), and its place
   // goes to the maker's next friend. g: the gift board ('' for a wish or board link). -> { ok }.
@@ -503,8 +528,11 @@ export const giftDb = {
     return { ok: true, dc };
   },
   // Account link: the guest's boards, the lines it wrote and its opt-ins move to the account (running it again changes nothing).
-  move(q, from, to) {
+  // si: { from, to }, the guest's and the account's 출시 예정 hashes (soonWho, made by the Worker): the guest's interest becomes the
+  // account's (a feature both had stays one person, now signed in).
+  move(q, from, to, si = null) {
     if (!from || !to || from === to) return { ok: false };
+    if (si?.from && si?.to && si.from !== si.to) { q.exec('update or ignore gsi set w = ?, lg = 1 where w = ?', String(si.to), String(si.from)); q.exec('delete from gsi where w = ?', String(si.from)); }
     q.exec('update gb set uid = ? where uid = ?', to, from);
     q.exec('update gm set uid = ? where uid = ?', to, from);
     q.exec('update or ignore gi set uid = ? where uid = ?', to, from); q.exec('delete from gi where uid = ?', from); // the account's own opt-in for a tier wins
@@ -521,8 +549,9 @@ export const giftDb = {
   // opt-ins, its main tower bookings (no points back: the wallet goes). A minute that aired stays in its day's 30 with no account on it.
   // -> { ok, ids, offs } (ids: the boards gone, whose videos the Worker deletes from R2; offs: [{ id, m }] its minutes not over yet whose board
   // the plazas already know (revealed): the Worker tells the rooms to drop them).
-  forget(q, uid, now = Date.now()) {
+  forget(q, uid, now = Date.now(), si = '') {
     if (!uid) return { ok: false, ids: [], offs: [] };
+    if (si) q.exec('delete from gsi where w = ?', String(si)); // 출시 예정 관심 of this account (its hash; the daily totals stay, they name nobody)
     const offs = q.exec('select t.m tm, t.g tg, b.* from gt t left join gb b on b.id = t.g where t.uid = ? and t.hold = 0 and t.m + ? > ?', uid, TOWER.minMs, now).toArray()
       .filter((r) => r.id != null && now >= revOf(rowOf(r))).map((r) => ({ id: String(r.tg), m: Number(r.tm) }));
     const ids = q.exec('select id from gb where uid = ?', uid).toArray().map((r) => String(r.id));
@@ -727,7 +756,7 @@ export const giftDb = {
       // Boards whose day is in the range, as they stand now: visitors and lines per board, boards that led to another, by lock arm (E3).
       const arms = q.exec("select lk, count(*) b, sum(v) v, sum(vd) vd, sum(n) n, sum(kids) kids, sum(case when vid <> '' then 1 else 0 end) vid from gb where day >= ? and day <= ? group by lk", d0, d1).toArray()
         .map((r) => ({ lk: Number(r.lk) || 0, boards: Number(r.b) || 0, visitors: Number(r.v) || 0, dayVisitors: Number(r.vd) || 0, lines: Number(r.n) || 0, kids: Number(r.kids) || 0, videos: Number(r.vid) || 0 }));
-      return { ok: true, d0, d1, days: [...days].map(([d, k]) => ({ d, ...k })), arms, makers: this.makers(q, now), optins: this.admin(q, 'optins', {}, now).optins };
+      return { ok: true, d0, d1, days: [...days].map(([d, k]) => ({ d, ...k })), arms, makers: this.makers(q, now), optins: this.admin(q, 'optins', {}, now).optins, soon: this.soonStats(q, now) };
     }
     if (op === 'share') return this.shareTop(q, now);
     if (op === 'optins') {
@@ -936,6 +965,7 @@ export async function giftApi(req, env, ctx, u, k) {
   if (p === '/rt/admin/gift' || p.startsWith('/rt/admin/gift/')) return adminApi(req, env, ctx, u, k);
   if (p === '/rt/gift') return make(req, env, ctx, k);
   if (p === '/rt/gift/start') return startSeen(req, env, ctx, k);
+  if (p === '/rt/gift/soon') return soonSeen(req, env, ctx, k);
   const m = /^\/rt\/gift\/([0-9a-z]{8})(?:\/(paper|seen|heart|interest|video|card\.jpg|card|report|delete|tower|discover))?$/.exec(p);
   if (!m) return J({ err: 'not found' }, 404);
   const id = m[1], sub = m[2] || '';
@@ -1065,6 +1095,30 @@ async function startSeen(req, env, ctx, k) {
   seenAdd({ e: 'start', r: Number(b.r) === 1 ? 1 : 0 });
   seenFlush(env, ctx);
   return ok();
+}
+
+// POST /rt/gift/soon { a: 'imp' | 'tap', f, s, v }: 출시 예정 관심 (soon.js). imp: the cards f (up to four ids) were on screen; tap: the
+// interest button of feature f, which is also that person's registration the first time (giftDb.soonAdd). s: where (SOON_SRC); v: this
+// browser's random id (the gift pages' kts_gv), used only when no token comes. Authorization (optional, never minted for this): the
+// account or guest the person already is; a token that does not verify is the same as none. The person is kept only as a keyed hash
+// (soonWho). Like the other beacons: the network's minute (gseen), not for the operator's device or the e2e tool, nothing at budget hard
+// (no DO call: kept false, so the page can say it did not go), and it waits in the isolate for the next batch (one DO call per
+// GIFT.seenBatch or GIFT.seenMs, the same at budget lean). -> { ok, kept }.
+export const soonWho = (env, who) => hex('si|' + String(who) + '|' + String(env.GUEST_KEY || ''));
+async function soonSeen(req, env, ctx, k) {
+  if (req.method !== 'POST') return J({ err: 'post' }, 405);
+  if (!(await opsRate(env, req, 'gseen', 120, env.EVENT_RL))) return J({ ok: false, kept: false, code: 'rate' }, 429);
+  const got = await readSmall(req, SOON_KEEP.bodyMax), b = got.b || {}, v = soonFault(b);
+  if (!v.ok) return J({ ok: false, kept: false }, 400);
+  if (k.testTraffic?.(req)) return J({ ok: true, kept: false, test: true }); // the operator's device or tools/prod-e2e.mjs: not counted
+  if (await hard(k, env)) return J({ ok: true, kept: false, busy: true });
+  const actor = k.tokenOf(req) ? await actorOf(req, k, env) : null, lg = actor && k.guestLike && !k.guestLike(actor) ? 'a' : 'g';
+  if (v.a === 'imp') { for (const f of v.fs) seenAdd({ e: 'soon', a: 'imp', f, s: v.s, lg }); seenFlush(env, ctx); return J({ ok: true, kept: true }); }
+  const who = actor ? String(actor.id) : VISITOR_ID.test(String(b.v || '')) ? 'd:' + String(b.v) : '';
+  if (!who) return J({ ok: false, kept: false }, 400);
+  seenAdd({ e: 'soon', a: 'tap', f: v.fs[0], s: v.s, lg, w: await soonWho(env, who) });
+  seenFlush(env, ctx);
+  return J({ ok: true, kept: true });
 }
 
 // POST /rt/gift/<id>/interest { act: 'view' | 'pick' | 'notify', t, consent }: the owner's preview only (E1). view and pick are anonymous
@@ -1397,10 +1451,11 @@ async function adminApi(req, env, ctx, u, k) {
 }
 
 // Account link (/rt/auth/merge) and withdrawal (/rt/auth/withdraw), from worker.js's waitUntil.
-export async function giftMove(env, from, to) { try { await giftM(env).giftMove(String(from || ''), String(to || '')); } catch { /* the boards stay with the guest id */ } }
+// Both carry the 출시 예정 hashes of the ids (soonWho), which only the Worker can make.
+export async function giftMove(env, from, to) { try { const si = from && to ? { from: await soonWho(env, from), to: await soonWho(env, to) } : null; await giftM(env).giftMove(String(from || ''), String(to || ''), si); } catch { /* the boards stay with the guest id */ } }
 // tell: worker.js towerTell, so the rooms drop the account's main tower minutes the plazas already know (r.offs).
 export async function giftForget(env, uid, ctx, tell) {
-  let r = null; try { r = await giftM(env).giftForget(String(uid || ''), Date.now()); } catch { r = null; }
+  let r = null; try { r = await giftM(env).giftForget(String(uid || ''), Date.now(), uid ? await soonWho(env, uid) : ''); } catch { r = null; }
   if (r?.ids?.length) { for (const id of r.ids) giftDrop(id); await mediaDrop(env, ctx, r.ids); }
   if (r?.offs?.length) { NOW.at = 0; if (tell) await Promise.all(r.offs.map((o) => Promise.resolve(tell(env, ctx, { id: o.id, m: o.m, off: 1 })).catch(() => null))); }
   if (r?.lines || r?.ids?.length) ONE.clear(); // their lines left other boards, their replies left the boards they answered: no copy here shows them

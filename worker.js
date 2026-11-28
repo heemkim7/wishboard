@@ -287,8 +287,8 @@ export class Meter extends DurableObject {
   giftReport(id, m, ip, now) { return giftDb.report(this.giftI(), id, m, ip, now); }
   giftDel(id, uid) { return giftDb.del(this.giftI(), id, uid); }
   giftLive(now) { return giftDb.live(this.giftI(), now); } // pruning runs on giftMake and the admin list, which hand the gone ids to R2
-  giftMove(from, to) { return giftDb.move(this.giftI(), from, to); }
-  giftForget(uid, now) { return giftDb.forget(this.giftI(), uid, now); }
+  giftMove(from, to, si) { return giftDb.move(this.giftI(), from, to, si); } // si: the 출시 예정 hashes { from, to } (giftsrv.js soonWho)
+  giftForget(uid, now, si) { return giftDb.forget(this.giftI(), uid, now, si); }
   giftAdmin(op, arg, now) { return giftDb.admin(this.giftI(), op, arg, now); }
   giftPayUndo(g, net, uid, d) { return giftDb.payUndo(this.giftI(), g, net, uid, d); } // a share reward grant_coins refused (giftsrv.js payOut)
   giftPayUnknown(net, uid, d) { return giftDb.payUnknown(this.giftI(), net, uid, d); } // one with no clear answer: kept, marked

@@ -7,6 +7,7 @@
 import { TABS, DISCOVER, discoverItems, discoverTab, samplesFor, SAMPLE_LABEL, refreshDue } from './discoverrules.js?v=202611280944';
 import { paintGift } from './giftart.js?v=202611280944';
 import { icon } from './uiicons.js?v=202611280944';
+import { soonBlock } from './soon.js?v=202611280944';
 
 const $app = document.getElementById('app');
 const ls = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
@@ -106,6 +107,9 @@ function itemCard(it) {
 }
 
 // ---- the page ----
+// 출시 예정 (soon.js): one block for the page's life (a refill paints the list again, never this: its cards are counted once), at the
+// end of the page; the boot card's small link comes to it (/discover#soon).
+const SOON_BOX = soonBlock({ src: 'soon', id: 'soon' });
 const TAB_KEY = 'kts_dtab';
 let ITEMS = [], tab = (() => { const q = new URLSearchParams(location.search).get('tab') || ls.get(TAB_KEY) || 'hot'; return TABS.some((t) => t.k === q) ? q : 'hot'; })(), DOWN = false;
 function paint() {
@@ -124,6 +128,7 @@ function paint() {
     h('p', { class: 'sub', text: '전광판과 오늘의 소원을 3D 없이 봐요. 선물 전광판은 만든 사람이 ‘DISCOVER에 보이기’를 켠 것만 나와요.' }),
     h('div', { class: 'make' }, h('a', { class: 'btn gold', href: '/gift' }, icon('gift'), '선물하기'), h('a', { class: 'btn', href: '/gift?me=1' }, icon('wish'), '내 전광판')),
     tabs, h('div', { id: 'panel', role: 'tabpanel', 'aria-labelledby': 'tab-' + tab }, body, samples),
+    SOON_BOX,
     h('p', { class: 'foot' }, '뉴욕 타임스퀘어를 본뜬 가상 광장이에요. 실제 타임스퀘어와는 관계가 없어요. 많이 반응한 순서로 보여 줄 뿐, 순위를 매기지 않아요.', h('br'), h('a', { href: '/' }, '3D 광장 둘러보기')));
 }
 let LAST = 0, LOADING = false;
@@ -142,5 +147,9 @@ async function load() {
 // minutes), and when the tab comes back after that long. The reads are the cached ones above.
 setInterval(() => { if (refreshDue(LAST, Date.now(), document.hidden)) load(); }, 15000);
 document.addEventListener('visibilitychange', () => { if (refreshDue(LAST, Date.now(), document.hidden)) load(); });
-paint();
-load();
+// Opened at #soon: the block stays in view while the lists above it fill in, until the reader moves the page themselves.
+let SOON_STICK = location.hash === '#soon';
+const soonShow = () => { if (SOON_STICK) { try { SOON_BOX.scrollIntoView(); } catch { /* the page is there */ } } };
+for (const e of ['wheel', 'touchstart', 'keydown', 'pointerdown']) addEventListener(e, () => { SOON_STICK = false; }, { passive: true, once: true });
+paint(); soonShow();
+load().then(soonShow, () => { });

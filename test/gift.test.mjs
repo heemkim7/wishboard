@@ -498,7 +498,7 @@ describe('the owner page leads with the real video only when the Worker stores v
     let P = own({ media: true });
     try {
       await P.load('giftpage.js');
-      assert.deepEqual(P.heads(), ['링크 보내기', '축하 영상', '둘러보기와 카드', '지금까지', '받는 사람 페이지에 광장 영상 올리기']);
+      assert.deepEqual(P.heads(), ['링크 보내기', '축하 영상', '둘러보기와 카드', '지금까지', '받는 사람 페이지에 광장 영상 올리기', '준비 중인 기능']); // 출시 예정 (soon.js): last under 더 보기
       const rec = P.btn(/광장에서 영상 찍기/);
       assert.equal(rec.textContent, '광장에서 영상 찍기 · 약 25초'); assert.equal(rec.className, 'btn'); assert.equal(rec.href, REC);
       assert.equal(P.btn(/^공유하기$/).className, 'btn gold', 'one gold button');
@@ -530,7 +530,7 @@ describe('the owner page leads with the real video only when the Worker stores v
     const same = async (P, upload) => {
       try {
         await P.load('giftpage.js');
-        assert.deepEqual(P.heads(), ['링크 보내기', '축하 영상', '둘러보기와 카드', '지금까지', ...(upload ? ['받는 사람 페이지에 광장 영상 올리기'] : [])]);
+        assert.deepEqual(P.heads(), ['링크 보내기', '축하 영상', '둘러보기와 카드', '지금까지', ...(upload ? ['받는 사람 페이지에 광장 영상 올리기'] : []), '준비 중인 기능']);
         assert.equal(!!P.btn(/광장에서 영상 찍기/), upload);
         assert.equal(P.btn(/^공유하기$/).className, 'btn gold');
         await P.press(P.btn(/^공유하기$/));
@@ -1189,7 +1189,7 @@ describe('the gift pages on a phone: what the page script builds (giftpage.js)',
       assert.deepEqual(P.controls().filter((n) => n.className !== 'brand' && !/\btoplink\b/.test(n.className)).slice(0, 4).map((n) => n.textContent), ['3D 광장에서 내 전광판 보기', '공유하기', '링크 복사', '축하 영상 만들기'], 'the three things first');
       const words = share.kids.filter((n) => n.tag === 'p' && n.className === 'fine').map((n) => n.textContent);
       assert.deepEqual(words, ['친구들에게 먼저 보내 메시지를 모으고, 그날 ' + (title === '걸었어요' ? '수아' : '민지') + '님에게 보내세요. 메시지는 그날(11월 25일 (수)) 0시에 함께 열려요.'], 'how to use the link: kept, small, under the buttons');
-      assert.deepEqual(P.heads(), ['링크 보내기', '축하 영상', '둘러보기와 카드', '지금까지']);
+      assert.deepEqual(P.heads(), ['링크 보내기', '축하 영상', '둘러보기와 카드', '지금까지', '준비 중인 기능']); // 출시 예정: the last thing under 더 보기 on a later visit
       assert.equal(P.says(/원$|결제|열리면 알림|워터마크|무료 버전/), false, 'nothing paid while checkout is off');
       assert.equal(P.sent.some((s) => s.url.endsWith('/interest')), false, 'and none of its counts');
       const more = P.all('details').find((n) => n.className === 'more'); assert.equal(more.kids[0].textContent, '더 보기');
@@ -1222,8 +1222,9 @@ describe('the gift pages on a phone: what the page script builds (giftpage.js)',
     await at(KST('2026-11-26T09:00:00'), '3D 광장에서 다시 보기', /^광장에서 내려왔어요$/);
   });
   it('every button and link the pages build carries a class that has a pressed state in the sheet', async () => {
-    const RULE = { btn: '.btn:not(:disabled):active', chip: '.chip:not(:disabled):active', sw: '.sw:active', tier: '.tier:active', linkbtn: '.linkbtn:active', brand: '.brand:active', rp: '.note .rp:active', play: '.stage .play:active span' };
-    for (const sel of Object.values(RULE)) assert.ok(SHEET.rules.some((r) => r.sels.includes(sel)), sel);
+    const RULE = { btn: '.btn:not(:disabled):active', chip: '.chip:not(:disabled):active', sw: '.sw:active', tier: '.tier:active', linkbtn: '.linkbtn:active', brand: '.brand:active', rp: '.note .rp:active', play: '.stage .play:active span', 'soon-btn': '.soon .soon-btn:not(:disabled):active' };
+    // soon-btn (출시 예정) brings its own small sheet (soon.js CSS), the same on the plaza and /discover.
+    for (const [k, sel] of Object.entries(RULE)) assert.ok(k === 'soon-btn' ? src('soon.js').includes(sel + ' {') : SHEET.rules.some((r) => r.sels.includes(sel)), sel);
     const seen = new Set();
     const sweep = (P, where) => { for (const n of [...P.all('button'), ...P.all('a')]) { const c = n.className.split(/\s+/).find((x) => RULE[x]); assert.ok(c, `${where}: "${n.textContent}" (${n.className || 'no class'}) has no pressed state`); seen.add(c); } };
     let P = maker();
@@ -1488,7 +1489,8 @@ describe('the recipient page passes itself on and takes a heart; the maker count
     globalThis.sessionStorage = { getItem: () => 'admin-key' };
     try {
       await P.load('admin-gift.js');
-      const rows = P.all('tr').map((r) => r.kids.map((c) => c.textContent)), head = rows[0], col = (name) => head.indexOf(name);
+      const T = P.doc.getElementById('giftStats'), inT = (n) => { for (let x = n; x; x = x.parent) if (x === T) return true; return false; }; // the daily table (출시 예정 has its own below)
+      const rows = P.all('tr').filter(inT).map((r) => r.kids.map((c) => c.textContent)), head = rows[0], col = (name) => head.indexOf(name);
       for (const n of ['만들기 시작', '다른 보드에서 와서 시작', '두 번째부터', '링크 열림(사람)', '링크 열림(미리보기·봇)', '공유(주인)', '공유(받는 사람)', '💖 하트', 'K', '시작→만듦', '링크(사람)→방문']) assert.ok(col(n) > 0, n);
       const day = rows.find((r) => r[0] === '2026-11-25'), sum = rows.at(-1);
       assert.deepEqual([day[col('만들기 시작')], day[col('공유(받는 사람)')], day[col('공유(주인)')], day[col('💖 하트')], day[col('링크 열림(미리보기·봇)')]], ['10', '2', '5', '3', '7']);
@@ -1840,5 +1842,73 @@ describe('B2C: 내 전광판, DISCOVER, the nudge', () => {
   });
   it('the real video asks the day\'s own track first, then its stand-in', () => {
     assert.match(src('giftpage.js'), /musicUrls\(occ\)/);
+  });
+});
+
+// 출시 예정 (soonrules.js, soon.js, 2026-11-28): the coming features appear only after a board was hung (the owner page right after
+// making it, then under 더 보기), never in the making steps nor on the recipient's page; a press counts and the button stays registered.
+describe('출시 예정 on the gift pages', () => {
+  const AT = KST('2026-11-25T19:00:00'), SOONOK = { ok: true, kept: true };
+  const made = (gift) => (u, opt) => (u === '/rt/gift' && opt.method === 'POST' ? { ok: true, id: gift.id, gift, mine: { kids: 0, vd: 0, at: 1, lk: 1 }, media: false } : u === '/rt/gift/soon' ? SOONOK : null);
+  const cards = (P) => P.all('li').filter((n) => n.className === 'soon-card');
+  const soonSent = (P) => P.sent.filter((s) => s.url === '/rt/gift/soon').map((s) => s.body);
+  const inMore = (P, n) => { for (let x = n; x; x = x.parent) if (x.tag === 'details') return true; return false; };
+  it('the maker shows none of it at any step; the board just hung shows the four cards under everything else (src owner)', async () => {
+    const P = fakeDom({ path: '/gift', at: AT, store: { masil_gt: GUEST() }, respond: made(view({ id: 'nnnnnnnn', to: '수아', from: '' })) });
+    try {
+      await P.load('giftpage.js');
+      assert.equal(cards(P).length, 0); assert.equal(P.says(/출시 예정|관심 있어요|준비 중인 기능/), false, 'nothing of it while making');
+      P.input('to').value = '수아'; for (const f of P.input('to').on.input) f();
+      await P.submit();
+      assert.deepEqual(P.heads('h1'), ['걸었어요']);
+      const cs = cards(P); assert.equal(cs.length, 4);
+      assert.equal(inMore(P, cs[0]), false, 'right after making: on the page, not folded');
+      assert.deepEqual(cs.map((c) => c.attrs['data-f']), ['board', 'gift', 'keep', 'place']);
+      assert.deepEqual(cs.map((c) => c.kids[0].kids.map((k) => k.textContent).slice(-2)), [['특별한 전광판', '출시 예정'], ['선물 특별 연출·선물 보관함', '출시 예정'], ['오래 남기기', '출시 예정'], ['특별한 자리', '출시 예정']]);
+      assert.equal(P.says(/원$|결제|구매|열리면 알림/), false, 'no price, no pay word, no notice');
+      await P.timers();
+      assert.deepEqual(soonSent(P), [{ a: 'imp', f: ['board', 'gift', 'keep', 'place'], s: 'owner' }], 'seen once, the four together');
+      const b = P.btn(/^이 기능에 관심 있어요$/, cs[2]); await P.press(b);
+      assert.deepEqual(soonSent(P).at(-1), { a: 'tap', f: 'keep', s: 'owner', v: P.store.kts_gv });
+      assert.equal(b.textContent, '관심 담음'); assert.equal(b.disabled, true); assert.equal(b.attrs['aria-pressed'], 'true');
+      assert.ok(P.says(/^관심을 담았어요\. 고마워요!$/)); assert.equal(P.says(/알려 드릴게요|준비되면/), false, 'no promise');
+      assert.deepEqual(JSON.parse(P.store.kts_soon), { keep: 1 });
+      await P.press(b); assert.equal(soonSent(P).length, 2, 'a registered button sends nothing more');
+    } finally { P.done(); }
+  });
+  it('a 내 전광판 just hung counts as me; a later visit has it only under 더 보기 (src more), registered ones as registered; the recipient sees none', async () => {
+    let P = fakeDom({ path: '/gift', search: '?me=1', at: AT, store: { masil_gt: GUEST() }, respond: made(view({ id: 'mmmmmmmm', occ: 'me', to: '나', from: '' })) });
+    try {
+      await P.load('giftpage.js'); assert.equal(cards(P).length, 0);
+      P.input('to').value = '나'; for (const f of P.input('to').on.input) f();
+      await P.submit(); await P.timers();
+      assert.equal(soonSent(P)[0]?.s, 'me');
+    } finally { P.done(); }
+    const g = view();
+    P = pageOf(g, AT, { store: { masil_gt: GUEST(), kts_gmine: JSON.stringify([g.id]), kts_soon: JSON.stringify({ gift: 1 }) }, respond: (u) => (u === '/rt/gift/' + g.id ? { ok: true, gift: g, own: true, mine: { kids: 0, vd: 0, at: 1, lk: 1 } } : u === '/rt/gift/soon' ? SOONOK : null) });
+    try {
+      await P.load('giftpage.js');
+      const cs = cards(P); assert.equal(cs.length, 4); assert.ok(cs.every((c) => inMore(P, c)), 'folded under 더 보기');
+      assert.equal(cs[1].kids[2].textContent, '관심 담음', 'this browser registered it before');
+      await P.timers(); assert.equal(soonSent(P)[0].s, 'more');
+    } finally { P.done(); }
+    P = pageOf(view(), AT, { respond: (u) => (u === '/rt/gift/soon' ? SOONOK : null) });
+    try { await P.load('giftpage.js'); assert.equal(cards(P).length, 0); await P.timers(); assert.equal(soonSent(P).length, 0, 'the recipient\'s page has none'); } finally { P.done(); }
+  });
+  it('a busy answer keeps the button to press again, and says so without promising anything', async () => {
+    const g = view();
+    const P = pageOf(g, AT, { store: { masil_gt: GUEST(), kts_gmine: JSON.stringify([g.id]) }, respond: (u) => (u === '/rt/gift/' + g.id ? { ok: true, gift: g, own: true, mine: { kids: 0, vd: 0, at: 1, lk: 1 } } : u === '/rt/gift/soon' ? { ok: true, kept: false, busy: true } : null) });
+    try {
+      await P.load('giftpage.js');
+      const b = P.all('button').find((n) => n.className === 'soon-btn'); await P.press(b);
+      assert.equal(b.disabled, false); assert.equal(b.textContent, '이 기능에 관심 있어요');
+      assert.ok(P.says(/^지금은 붐벼서 담지 못했어요/)); assert.equal(P.store.kts_soon, undefined);
+    } finally { P.done(); }
+  });
+  it('the source: the maker function and the recipient\'s view never build it; the paid ladder stays behind PAY_ON', () => {
+    const s = src('giftpage.js'), fn = (name, next) => s.slice(s.indexOf('function ' + name + '('), s.indexOf(next));
+    assert.equal(/soon/i.test(fn('maker', 'const makerTop')), false);
+    assert.equal(/soon/i.test(fn('visit', 'function swapLeft')), false);
+    assert.match(s, /function paidCard\(g, arm = null\) \{\n  const box = h\('section', \{ class: 'card', hidden: true \}\);/);
   });
 });

@@ -18,6 +18,16 @@ describe('the boot card', () => {
     assert.ok(html.indexOf('class="bootcta"') < html.indexOf('src="./main.js'), 'in the markup, not built by a script');
     assert.ok(boot.indexOf('class="bootcta"') < boot.indexOf('id="bootEnter"'), 'above the 3D entry');
   });
+  it('says first that anyone makes and shares a board for free (2026-11-28); one small coming-soon link, no price, no cards', () => {
+    const h1 = /<h1>([\s\S]*?)<\/h1>/.exec(boot)?.[1] || '';
+    assert.equal(h1, '누구나 무료로 전광판을 만들고 공유할 수 있어요');
+    assert.ok(boot.indexOf('<h1>') < boot.indexOf('class="bootcta"'), 'the headline comes before the buttons');
+    assert.match(html, /#boot h1 \{ margin: 16px 0 6px; font: 900 26px\/1\.25 var\(--font\);/);
+    assert.equal((boot.match(/href="\/discover#soon"/g) || []).length, 1, 'one link to the coming-soon list');
+    assert.match(boot, /<a class="bootsoon" href="\/discover#soon">준비 중인 기능<\/a>/);
+    assert.equal(/출시 예정|관심 있어요|[0-9],[0-9]{3}원|결제|구매|유료/.test(boot), false, 'no card, price or pay word on the boot card');
+    assert.ok(boot.indexOf('class="bootbtn gift"') < boot.indexOf('class="bootsoon"'), 'the free makers come first');
+  });
   it('says in its tagline that the plaza is virtual', () => {
     const tag = /<div class="tag">([\s\S]*?)<\/div>/.exec(boot)[1];
     assert.match(tag, /가상 타임스퀘어 전광판에 걸어요/); assert.match(tag, /6시간 무료/); assert.equal(/당신/.test(tag), false, 'names what it does, not "당신의 특별한 순간"');
@@ -32,7 +42,7 @@ describe('the boot card', () => {
     assert.match(html, /#boot \.bootbtn \{[^}]*min-height: 48px/);
   });
   it('a short screen tightens the title so 3D 광장 둘러보기 is not pushed below the fold; no app mark or English badge on the card', () => {
-    assert.match(html, /@media \(max-height: 760px\) \{ #boot h1 \{ font-size: 30px; margin: 10px 0 4px; \} #boot \.bootcta \{ margin-top: 10px; \} \}/);
+    assert.match(html, /@media \(max-height: 760px\) \{ #boot h1 \{ font-size: 24px; margin: 10px 0 4px; \} #boot \.bootcta \{ margin-top: 10px; \} \}/); // the free-first headline is two lines (2026-11-28)
     assert.equal(/bootmark|NEW YORK WISH SQUARE/.test(boot), false);
   });
 });

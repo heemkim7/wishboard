@@ -6,6 +6,7 @@
 // 공유 보상 많이 받은 사람 (GET /rt/admin/gift/share): the last 7 KST days per maker (friends counted, account / guest, points paid, distinct
 // networks, by source), the top 50: how the operator spots abuse (the terms let points gained by abuse be taken back).
 import { TIERS, OCCASIONS, windowText, kstDay, addDays } from './giftrules.js';
+import { SOON_SRC } from './soonrules.js';
 
 const $ = (id) => document.getElementById(id);
 function h(tag, props, ...kids) {
@@ -26,6 +27,11 @@ const box = h('section', { id: 'giftAdmin' },
   h('div', { class: 'msg', id: 'giftMsg' }),
   h('div', { class: 'scroll' }, h('table', { id: 'giftStats' })),
   h('div', { class: 'hits', id: 'giftArms' }),
+  // 출시 예정 관심 (soonrules.js soonReport, in the stats answer): which coming feature people want first.
+  h('h2', { text: '출시 예정 관심 (최근 14일)' }),
+  h('p', { class: 'sub', text: '준비 중인 기능 카드가 화면에 보인 수(페이지마다 한 번), 관심 버튼을 누른 수(누를 때마다), 관심을 등록한 사람(같은 사람은 한 번: 로그인한 계정, 손님 번호, 아니면 브라우저의 무작위 번호)입니다. 전환 = 등록 ÷ 보임. 운영자 기기와 시험 도구는 세지 않습니다. 사람 수(누적)는 지금까지 등록한 사람 전체입니다.' }),
+  h('div', { class: 'scroll' }, h('table', { id: 'giftSoon' })),
+  h('div', { class: 'scroll' }, h('table', { id: 'giftSoonDays' })),
   h('div', { class: 'bar' }, dayIn),
   h('div', { class: 'hits', id: 'giftList' }),
   h('h2', { text: '공유 보상 많이 받은 사람 (최근 7일)' }),
@@ -74,6 +80,7 @@ async function load() {
     const arms = $('giftArms'); arms.replaceChildren(...(makers ? [makers] : []), ...st.arms.map((a) => h('div', { class: 'hit' }, h('b', { text: a.lk ? '잠금(그날 공개)' : '바로 공개' }),
       h('span', { text: `보드 ${a.boards} · 보드당 방문자 ${a.boards ? (a.visitors / a.boards).toFixed(1) : 0} · 그날 방문자 ${a.dayVisitors} · 보드당 메시지 ${a.boards ? (a.lines / a.boards).toFixed(1) : 0} · 이어 만든 보드 ${a.kids} · 영상 ${a.videos}` }))),
       h('div', { class: 'hit' }, h('b', { text: '알림 신청' }), h('span', { text: (st.optins || []).map((o) => `${TIERS[o.t]?.name || o.t} ${o.n}명(보냄 ${o.sent})`).join(' · ') || '없음' })));
+    soonPaint(st.soon);
     const list = await api('/rt/admin/gift?day=' + (dayIn.value || kstDay()));
     const L = $('giftList');
     L.replaceChildren(...(list.boards.length ? list.boards.map((g) => h('div', { class: 'hit' },
@@ -98,6 +105,22 @@ async function load() {
       : [h('div', { class: 'empty', text: '손으로 돌려줄 것이 없어요.' })]));
     say(`R2 영상 저장소 ${list.media ? '켜짐' : '없음'} · E3 반반 시험 ${list.e3 ? '켜짐(GIFT_E3=1)' : '꺼짐(모두 잠금)'}`);
   } catch (e) { say(e.message, true); }
+}
+// 출시 예정 관심: the ranking table (rank, feature, seen, taps, registered in the 14 days, conversion, login / guest, by source, people so
+// far), then the 14 days, one row a day: registered / taps / seen per feature. An older Worker sends no soon: the block says so.
+const SRC_NAME = { owner: '선물 주인', me: '내 전광판 주인', more: '더 보기', plaza: '광장', soon: '목록(/discover)' };
+const pct = (x) => (x * 100).toFixed(1) + '%';
+function soonPaint(so) {
+  const T = $('giftSoon'), D = $('giftSoonDays'); if (!T || !D) return;
+  if (!so || !Array.isArray(so.features)) { T.replaceChildren(h('tr', {}, h('td', { text: '아직 집계가 없어요(이 Worker에는 출시 예정 관심이 없어요).' }))); D.replaceChildren(); return; }
+  const by = new Map(so.features.map((x) => [x.f, x]));
+  T.replaceChildren(h('tr', {}, ...['순위', '기능', '보임', '누름', '등록', '전환(등록÷보임)', '누름÷보임', '등록 계정/손님', '보임 계정/손님', '출처별 보임·누름·등록', '사람(누적, 계정/손님)'].map((t) => h('th', { text: t }))),
+    ...so.rank.map((f, i) => { const x = by.get(f); return h('tr', {}, h('td', { text: String(i + 1) }), h('td', {}, h('b', { text: x.name })), h('td', { text: String(x.imp) }), h('td', { text: String(x.tap) }), h('td', {}, h('b', { text: String(x.reg) })),
+      h('td', { text: x.imp ? pct(x.conv) : '—' }), h('td', { text: x.imp ? pct(x.tapRate) : '—' }), h('td', { text: x.login.reg + ' / ' + x.guest.reg }), h('td', { text: x.login.imp + ' / ' + x.guest.imp }),
+      h('td', { text: SOON_SRC.map((s) => SRC_NAME[s] + ' ' + x.src[s].imp + '·' + x.src[s].tap + '·' + x.src[s].reg).join(' | ') }), h('td', { text: x.people.all + ' (' + x.people.login + '/' + x.people.guest + ')' })); }));
+  const feats = so.features;
+  D.replaceChildren(h('tr', {}, h('th', { text: '날짜' }), ...feats.map((x) => h('th', { text: x.name + ' 등록/누름/보임' }))),
+    ...[...(feats[0]?.trend || [])].map((_, i) => i).reverse().map((i) => h('tr', {}, h('td', { text: feats[0].trend[i].d }), ...feats.map((x) => { const t = x.trend[i]; return h('td', { text: t.reg + ' / ' + t.tap + ' / ' + t.imp }); }))));
 }
 async function refunded(k, done) { try { await api('/rt/admin/gift/refund', { k, done }); load(); } catch (e) { say(e.message, true); } }
 async function hide(id, m, on) { try { await api('/rt/admin/gift/hide', { id, m, hide: on }); load(); } catch (e) { say(e.message, true); } }
