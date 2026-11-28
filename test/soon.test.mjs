@@ -4,7 +4,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { makeEnv, harness, withClock, KEY } from './reinforce-harness.mjs';
+import { makeEnv, harness, withClock, KEY, worker } from './reinforce-harness.mjs';
 import { SOON, SOON_IDS, SOON_SRC, SOON_LABEL, SOON_BTN, SOON_THANKS, SOON_INTRO, SOON_FREE, SOON_KEEP, soonFault, soonKeys, soonReport } from '../soonrules.js';
 import { TIERS, kstDay, addDays } from '../giftrules.js';
 import { giftSeenFlush } from '../giftsrv.js';
@@ -151,6 +151,71 @@ describe('POST /rt/gift/soon (giftsrv.js) and the admin block', () => {
       assert.equal(counts(env, kstDay(clock.now()))['si:board:reg'], 2, 'the totals name nobody and stay');
     });
   });
+  it('impressions are summed in the isolate: 30 beacons of the four cards are one item per counter key and one row write each in one batch', async () => {
+    await world(async ({ env, send, flush, clock }) => {
+      const d = kstDay(clock.now()), M = env.meter('gift').do, real = M.giftSeen.bind(M), giftI = M.giftI.bind(M), got = [];
+      let writes = 0;
+      M.giftSeen = (items, now) => { got.push(items); writes = 0; return real(items, now); };
+      M.giftI = () => { const q = giftI(); return { exec: (...a) => { const c = q.exec(...a); if (/\b(gd|gsi)\b/.test(String(a[0]))) writes += Number(c.rowsWritten) || 0; return c; } }; }; // the 출시 예정 tables' writes
+      try {
+        await flush(); got.length = 0;
+        for (let i = 0; i < 30; i++) assert.equal((await (await send({ a: 'imp', f: ['board', 'gift', 'keep', 'place'], s: 'owner' })).json()).kept, true, 'beacon ' + i);
+        assert.equal(got.length, 0, 'nothing sent before the batch is due');
+        writes = 0; await flush();
+        assert.equal(got.length, 1, 'one DO call');
+        const si = got[0].filter((it) => it.e === 'si');
+        assert.equal(si.length, 12, 'four cards x (total, login, source)');
+        assert.equal(got[0].filter((it) => it.e === 'soon').length, 0, 'no item per beacon');
+        assert.ok(si.every((it) => it.n === 30));
+        assert.ok(writes <= 12, 'one counter row written per key: ' + writes);
+        assert.equal(counts(env, d)['si:keep:imp'], 30); assert.equal(counts(env, d)['si:keep:imp:g'], 30); assert.equal(counts(env, d)['si:keep:imp@owner'], 30);
+      } finally { M.giftSeen = real; M.giftI = giftI; }
+    });
+  });
+  it('its own lower rate per network (SOON_KEEP.rateMin a minute), apart from the page beacons', async () => {
+    await world(async ({ send, clock }) => {
+      for (let i = 0; i < SOON_KEEP.rateMin; i++) assert.equal((await send({ a: 'imp', f: ['board'], s: 'soon' }, { ip: '3.3.3.3' })).status, 200, 'beacon ' + i);
+      const r = await send({ a: 'imp', f: ['board'], s: 'soon' }, { ip: '3.3.3.3' });
+      assert.equal(r.status, 429); assert.deepEqual(await r.json(), { ok: false, kept: false, code: 'rate' });
+      assert.equal((await send({ a: 'imp', f: ['board'], s: 'soon' }, { ip: '3.3.3.4' })).status, 200, 'another network');
+      clock.add(61000);
+      assert.equal((await send({ a: 'imp', f: ['board'], s: 'soon' }, { ip: '3.3.3.3' })).status, 200, 'the next minute');
+    });
+  });
+  it('taps: counted in the isolate, one item each for the registration; made-up browser ids register at most SOON_KEEP.regNet.d a network and day', async () => {
+    await world(async ({ env, send, flush, clock }) => {
+      const d = kstDay(clock.now()), N = SOON_KEEP.regNet.d + 5;
+      for (let i = 0; i < N; i++) assert.equal((await (await send({ a: 'tap', f: 'gift', s: 'soon', v: VIS('c' + i) }, { ip: '4.4.4.4' })).json()).kept, true);
+      await send({ a: 'tap', f: 'gift', s: 'soon', v: VIS('e') }, { ip: '4.4.4.5' });
+      await flush();
+      const c = counts(env, d);
+      assert.equal(c['si:gift:tap'], N + 1, 'every press is a tap');
+      assert.equal(c['si:gift:reg'], SOON_KEEP.regNet.d + 1, 'the cap per network, and the other network its own');
+      assert.equal(people(env).filter((p) => p.f === 'gift').length, SOON_KEEP.regNet.d + 1);
+      clock.add(864e5);
+      await send({ a: 'tap', f: 'gift', s: 'soon', v: VIS('ae') }, { ip: '4.4.4.4' }); await flush();
+      assert.equal(counts(env, kstDay(clock.now()))['si:gift:reg'], 1, 'a new day, a new allowance');
+    });
+  });
+  it('a tap the isolate cannot hold (SEEN_CAP items waiting) answers kept: false and counts nothing, so the button goes back', async () => {
+    await world(async ({ env, flush, clock }) => {
+      const M = env.meter('gift').do, real = M.giftSeen.bind(M), held = [], loose = { waitUntil() {} }; // the batch is never waited for here
+      const tap = async (v, ip) => (await worker.fetch(new Request('https://sq.example/rt/gift/soon', { method: 'POST', headers: { 'content-type': 'application/json', 'cf-connecting-ip': ip }, body: JSON.stringify({ a: 'tap', f: 'board', s: 'soon', v }) }), env, loose)).json();
+      M.giftSeen = (items, now) => new Promise((res) => held.push(() => res(real(items, now))));
+      let i = 0, last = null;
+      try {
+        await tap(VIS('a0'), '5.0.0.1'); clock.add(31000);
+        await tap(VIS('a1'), '5.0.0.1'); // the batch goes and hangs: what comes now waits in the isolate
+        assert.equal(held.length, 1);
+        for (; i < 1100 && (!last || last.kept); i++) last = await tap(VIS('f' + i), '5.1.' + Math.floor(i / 25) + '.1');
+        assert.deepEqual(last, { ok: true, kept: false, busy: true });
+        assert.ok(i >= 990 && i <= 1001, 'full at SEEN_CAP: ' + i);
+        assert.equal(held.length, 1, 'still the one batch');
+      } finally { M.giftSeen = real; for (const r of held) r(); }
+      for (let k = 0; k < 7; k++) await flush();
+      assert.equal(counts(env, kstDay(clock.now()))['si:board:tap'], i + 1, 'the refused tap was not counted');
+    });
+  });
   it('soonReport: every day of the range, zeros where nothing came, ranked by registrations then taps', () => {
     const r = soonReport([{ d: '2027-03-02', 'si:gift:imp': 4, 'si:gift:tap': 2, 'si:gift:reg': 1 }, { d: '2027-03-01', 'si:board:tap': 3 }], [{ f: 'gift', n: 5, a: 2 }], '2027-03-01', '2027-03-03', addDays);
     assert.equal(r.days, 3); assert.deepEqual(r.rank, ['gift', 'board', 'keep', 'place']);
@@ -174,12 +239,29 @@ describe('where the cards are (the pages\' source)', () => {
     const gp = src('giftpage.js');
     assert.equal((gp.match(/soonBlock\(\{/g) || []).length, 2, 'the owner page: fresh, or under 더 보기');
   });
-  it('soon.js counts an impression once per block and feature, on screen, and sends no id but the browser one, never minting a guest', () => {
+  it('soon.js counts an impression once per page view and feature, on screen, and sends no id but the browser one, never minting a guest', () => {
     const s = src('soon.js');
     assert.match(s, /new IntersectionObserver\(/); assert.match(s, /threshold: 0\.5/);
     assert.equal(/\/rt\/guest/.test(s), false, 'no new guest for this');
     assert.match(s, /send\(\{ a: 'tap', f: F\.id, s, v: visitor\(\) \}\)/);
     assert.equal(/email|phone|tel:/.test(s), false);
+  });
+  it('one impression per page view and feature: a second block, or the same block built again, sends none', async () => {
+    const node = (tag) => { const n = { tag, kids: [], attrs: {}, className: '', textContent: '', append(...k) { n.kids.push(...k); }, replaceChildren(...k) { n.kids = k; }, setAttribute(k, v) { n.attrs[k] = String(v); }, getAttribute: (k) => n.attrs[k] ?? null, addEventListener() {} }; return n; };
+    const sent = [], timers = [], keep = {};
+    const G = { document: { createElement: node, createElementNS: (ns, t) => node(t), getElementById: () => null, head: node('head') },
+      localStorage: { getItem: (k) => keep[k] ?? null, setItem: (k, v) => { keep[k] = String(v); } },
+      fetch: async (url, o) => { sent.push(JSON.parse(o.body)); return { json: async () => ({ ok: true, kept: true }) }; }, setTimeout: (f) => { timers.push(f); return 1; }, IntersectionObserver: undefined };
+    const before = Object.fromEntries(Object.keys(G).map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
+    for (const [k, value] of Object.entries(G)) Object.defineProperty(globalThis, k, { value, configurable: true, writable: true });
+    try {
+      const { soonBlock } = await import('../soon.js?pv=' + Date.now());
+      const run = () => { for (const f of timers.splice(0)) f(); };
+      soonBlock({ src: 'owner' }); run();
+      assert.deepEqual(sent.map((b) => [b.a, b.f, b.s]), [['imp', ['board', 'gift', 'keep', 'place'], 'owner']]);
+      soonBlock({ src: 'owner' }); soonBlock({ src: 'more' }); run();
+      assert.equal(sent.length, 1, 'built again, or another block in the same page view: nothing more');
+    } finally { for (const [k, d] of Object.entries(before)) { if (d) Object.defineProperty(globalThis, k, d); else delete globalThis[k]; } }
   });
   it('the privacy policy says what the button keeps; its date is as it was', () => {
     const l = src('legal.js');

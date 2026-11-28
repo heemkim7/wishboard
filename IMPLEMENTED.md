@@ -1438,3 +1438,16 @@ node tools/prod-e2e.mjs https://studio.wishboard.workers.dev
 - 코너 방(`roomPalette`): 벽은 판 색의 어두운 톤(검정 판은 무채색), 네온은 판 색을 가장 밝게(밤하늘은 호박색), 모서리 띠는 튀어나오는 글자 색. 3D 글자(`realvideo.js` `glyphAtlas`)는 단색, 옆면은 같은 색을 어둡게.
 - `GIFT_THEMES`에서 옛 키 a, b, ink, hi, deep를 지웠다(쓰는 곳 없음). 키 이름(party…night)은 그대로라 옛 보드도 같은 색이다.
 - 비교 그림: `out/popout-2026-11-28/app-palette/`(cmp-bday.jpg, cmp-cheer.jpg: 위 예전, 아래 지금). 테스트: `test/realbox.test.mjs`(파티는 빨강 네온, 하늘은 파랑, 밤하늘 상자, 골드 글자, 옛 분홍·보라 값과 카드 glow가 없음).
+
+### 배포 전 검토 고침: 선물 응원 예산, 출시 예정 쓰기, 만들기 단계 (2026-11-28)
+
+- 선물 전광판 응원(`worker.js` `Room.giftFacts`): 방이 보드마다 묻지 않고, 지금 광장에 걸린 보드 전부의 사실을 한 번에 묻는다(`giftsrv.js` `giftDb.cheerLive`, Meter `giftCheerLive`, 최대 `GIFT.liveMax`). 목록은 방에 `GF_TTL` 60초(lean 300초) 두고, 목록에 없는 id는 목록이 `GF_MISS` 30초 넘었을 때만 다시 읽는다(lean에서는 안 읽음). 지어낸 id를 아무리 보내도 방마다 30초에 DO 호출 한 번이다. 예전의 500개 넘으면 통째로 비우던 캐시는 없다.
+- 숨김·삭제된 선물 보드: 신고 3번이나 운영자 숨김, 주인 삭제, 탈퇴로 보드가 내려가면 Worker가 광장 방들에 `WORLD_UPDATE` `GIFT_OFF`를 보낸다(`giftOffTell`, 예산 hard면 안 보냄). 방은 그 보드를 목록에서 바로 빼고 `GF_LEAN` 동안 다시 넣지 않는다(`Room.giftGone`). 소켓에는 아무것도 안 보낸다.
+- 출시 예정 관심(`giftsrv.js`): imp은 isolate에서 (KST 날짜, 키)마다 합쳐(`soonCount`) 배치 하나에 키마다 항목 하나(`e: si`)로 보낸다. 카드 네 장 imp은 몇 번이 와도 배치마다 12행(기능 4 × 합계·로그인·출처)만 쓴다. tap 횟수도 같이 합치고, 등록(gsi)만 tap마다 항목 하나다. DO는 한 호출 안의 출시 예정 키를 키마다 한 번 쓴다.
+- `/rt/gift/soon`은 자기 분당 한도(`gsoon`, `SOON_KEEP.rateMin` 30)를 쓴다(페이지 비콘 `gseen` 120과 따로). 계정이 아닌 등록은 네트워크·KST 날짜마다 `SOON_KEEP.regNet`까지만 새로 센다(게스트 40, 토큰 없는 브라우저 id 12). 넘으면 tap은 세고 등록은 안 센다. isolate 버퍼가 꽉 차면(`SEEN_CAP`) tap은 `kept: false, busy: true`라 버튼이 되돌아간다.
+- `soon.js`: imp은 페이지 하나(문서)마다 기능당 한 번이다. 블록을 다시 그리거나 다른 블록이 떠도 다시 보내지 않는다.
+- 만들기 세 단계(`giftpage.js`): 마지막 단계가 아닐 때의 submit(입력칸에서 Enter를 치면 브라우저가 숨은 걸기 버튼을 누름)은 `다음`이고 걸지 않는다. 이름·한마디 칸의 Enter는 한글 조합 중에도 기본 동작을 막고, 조합이 끝난 Enter만 다음 단계로 간다. 사람이 넘어간 단계마다 같은 주소로 history 항목이 생겨(`stepPush`, state `mk`·`mki`·`d`) 휴대폰 뒤로가기는 앞 단계로 가고 쓴 내용이 남는다. 첫 단계에서 뒤로가기는 페이지를 떠난다. ← 이전도 그 항목을 따라간다. 걸고 나면 단계 항목을 먼저 되돌린 뒤 `/g/<id>`를 넣어, 보드 페이지에서 뒤로가기 한 번이 만들기 화면이다.
+- 길게 누른 걸기의 늦은 click(`overlay.js` `GHOST_MS`): 1.5초에서 4초로. 키보드 click(detail 0)과 HUD가 자기 click으로 연 시트는 그대로다.
+- 서버가 그리는 공유 페이지의 `og:image` 기본 그림은 `/og.jpg?v=4`다(카드 리다이렉트, 응원 팀, 카카오 피드, 소원·카드 공유 페이지). HTML 페이지들과 같은 버전이다.
+- 선물 전광판 응원의 분석 이벤트는 `gift_cheer`다(`main.js` `cheerGift`, `EVENT_NAMES`, 성장 퍼널의 첫 행동 `EV_ACT`에도 들어감). `wish_cheer`는 불 켜진 전광판 응원만이다.
+- 테스트: `test/gift-cheer.test.mjs`(지어낸 id 900개에 목록 읽기 4번 이하, lean, 새로 걸린 보드, GIFT_OFF), `test/soon.test.mjs`(imp 30번이 배치 하나에 12행, 분당 한도, 등록 상한, 버퍼 꽉 참, 페이지당 imp 한 번), `test/gift.test.mjs`(2단계 Enter·submit은 안 걺, 단계 history), `test/ghost-click.test.mjs`(길게 누르기).

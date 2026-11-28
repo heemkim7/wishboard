@@ -179,7 +179,10 @@ export const PRESS = Object.freeze({ sel: 'button, [role="button"], summary, a.b
 // ui.js calls down() on every pointerdown, opened() whenever a sheet, a layer or a floating card comes up, and click(event)
 // first thing on every click: true means "this click belongs to the press that opened it", and ui.js swallows it. A click
 // whose own handler opens something is not affected (it has already been let through), nor a keyboard click (detail 0).
-export const GHOST_MS = 1500;
+// GHOST_MS: how long a press may be held before its click is no longer taken for its ghost. Every pointerdown starts again, so only a
+// click with no press of its own after it (none a person makes) could be taken wrongly; 4 s covers a slow, held press on 걸기 (a click
+// after 1.5 s used to land on the new sheet's button).
+export const GHOST_MS = 4000;
 export function createTapGuard({ now = () => Date.now(), ms = GHOST_MS } = {}) {
   let g = null;
   return {

@@ -3,7 +3,7 @@
 // the plaza's sheet after a board was hung (ui.js). Browser only; its own small stylesheet over the pages' shared tokens (--surface,
 // --line, --text, --accent, --r).
 //
-// What goes to the server (POST /rt/gift/soon, giftsrv.js soonSeen): 'imp' once per block and feature when its card is half on screen
+// What goes to the server (POST /rt/gift/soon, giftsrv.js soonSeen): 'imp' once per page view and feature when its card is half on screen
 // (IntersectionObserver; the cards that come in together go in one request), 'tap' at every press of the button. The person is the
 // account or guest this browser already is (its token, never a new guest for this), else the gift pages' random browser id (kts_gv).
 // Nothing else: no contact, no notice. This browser remembers what it registered (kts_soon), so the button stays "관심 담음".
@@ -61,6 +61,11 @@ function style() {
 }
 function el(tag, cls, text) { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
 
+// The features whose card was on screen in this page view (this module lives as long as the page): the owner page built again after a
+// 💖 or a delete, 더 보기 opened, the plaza sheet opened twice: one impression each, as soonrules.js counts them. Kept per document (a
+// page view has one), so a module shared by several documents (the tests' pages) keeps theirs apart.
+const PV = new WeakMap();
+const seenNow = () => { const d = typeof document === 'object' && document ? document : PV; let s = PV.get(d); if (!s) PV.set(d, (s = new Set())); return s; };
 // The block. src: where it stands (SOON_SRC); heading: false when the place has its own (the plaza sheet's title); id: the section's id.
 export function soonBlock({ src, heading = true, id = '' } = {}) {
   style();
@@ -70,8 +75,9 @@ export function soonBlock({ src, heading = true, id = '' } = {}) {
   if (heading) box.append(el('h2', 'soon-h', SOON_HEAD));
   box.append(el('p', 'soon-intro', SOON_INTRO), el('p', 'soon-free', SOON_FREE));
   const list = el('ul', 'soon-list');
-  // Impressions: once per block and feature; the cards that come into view together go in one request.
-  const seen = new Set(); let wait = new Set(), timer = 0;
+  // Impressions: once per page view and feature (seenNow, over every block and every block built again); the cards that come into view
+  // together go in one request.
+  const seen = seenNow(); let wait = new Set(), timer = 0;
   const flush = () => { timer = 0; const fs = [...wait]; wait = new Set(); if (fs.length) send({ a: 'imp', f: fs, s }); };
   const saw = (f) => { if (seen.has(f)) return; seen.add(f); wait.add(f); if (!timer) timer = setTimeout(flush, 400); };
   const io = typeof IntersectionObserver === 'function'

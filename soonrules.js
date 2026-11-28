@@ -32,8 +32,10 @@ export const SOON_IDS = Object.freeze(SOON.map((x) => x.id));
 // board was hung, and the list on /discover (#soon, the boot card's small link).
 export const SOON_SRC = Object.freeze(['owner', 'me', 'more', 'plaza', 'soon']);
 export const SOON_ACTS = Object.freeze(['imp', 'tap']);
-// keepDays: the distinct set (gsi) goes this long after a registration; adminDays: the admin block's trend.
-export const SOON_KEEP = Object.freeze({ keepDays: 400, adminDays: 14, bodyMax: 400 });
+// keepDays: the distinct set (gsi) goes this long after a registration; adminDays: the admin block's trend. regNet: new registrations one
+// network may add a KST day that are not an account's (g: guests, d: a browser's own random id with no token), so made-up ids cannot grow
+// the set without end; past it a tap still counts as a tap. rateMin: /rt/gift/soon beacons per network a minute (its own count).
+export const SOON_KEEP = Object.freeze({ keepDays: 400, adminDays: 14, bodyMax: 400, regNet: Object.freeze({ g: 40, d: 12 }), rateMin: 30 });
 
 // A beacon's body -> { ok: true, a, fs (feature ids), s } | { ok: false }. imp may carry up to four ids (the cards seen at once); tap one.
 export function soonFault(b) {

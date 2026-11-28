@@ -493,7 +493,7 @@ async function sharePage(req, env, u, k) {
   const desc = t ? `오늘 서로 다른 ${n.toLocaleString('en-US')}명이 응원했어요.${ng ? ` ${ng.at.toLocaleString('en-US')}명까지 ${ng.left.toLocaleString('en-US')}명 남았어요.` : ''} 함께 응원하면 가상 타임스퀘어 명당에 팀 이름이 걸려요.` : '가상 타임스퀘어에서 함께 응원하고 명당에 팀 이름을 걸어 보세요.';
   const html = '<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + esc(title) + '</title>'
     + '<meta name="robots" content="noindex, nofollow"><meta name="description" content="' + esc(desc) + '"><meta property="og:type" content="website"><meta property="og:site_name" content="WISH BOARD">'
-    + '<meta property="og:title" content="' + esc(title) + '"><meta property="og:description" content="' + esc(desc) + '"><meta property="og:image" content="' + esc(origin + '/og.jpg') + '"><meta property="og:url" content="' + esc(origin + '/t/' + id) + '">'
+    + '<meta property="og:title" content="' + esc(title) + '"><meta property="og:description" content="' + esc(desc) + '"><meta property="og:image" content="' + esc(origin + '/og.jpg?v=4') + '"><meta property="og:url" content="' + esc(origin + '/t/' + id) + '">'
     + '<meta name="twitter:card" content="summary_large_image"><meta http-equiv="refresh" content="0;url=' + esc(to) + '"></head><body style="background:#070a18;color:#eef0fb;font-family:sans-serif"><p><a style="color:#ffb020" href="' + esc(to) + '">' + esc(t ? t.name + ' 팀 페이지 열기' : '광장으로') + '</a></p><script>location.replace(' + JSON.stringify(to) + ')</script></body></html>';
   return new Response(req.method === 'HEAD' ? null : html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
 }

@@ -203,9 +203,9 @@ describe('G2 KakaoTalk share behind a key', () => {
     const w = `${O}/rt/w/abcdefghij?inv=ab12cd34`;
     const q = share.kakaoFeed({ title: 't', text: 'x', url: w, origin: O });
     assert.equal(q.content.link.webUrl, w);
-    assert.equal(q.content.imageUrl, `${O}/og.jpg`);
+    assert.equal(q.content.imageUrl, `${O}/og.jpg?v=4`);
     assert.equal(share.kakaoImage(`${page}?inv=ab12cd34`, O + '/'), `${O}/rt/snap/${SNAP}`);
-    assert.equal(share.kakaoImage('', O), `${O}/og.jpg`);
+    assert.equal(share.kakaoImage('', O), `${O}/og.jpg?v=4`);
     assert.equal(share.kakaoFeed({ title: 'x'.repeat(500), text: 'y'.repeat(500), url: w }).content.title.length, 200);
   });
   it('pins the SDK to a version with a sha384 integrity and loads it once, inits once, and falls back on any failure', async () => {

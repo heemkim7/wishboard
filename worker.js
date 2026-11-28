@@ -173,8 +173,9 @@ const burst = (a, f, n, now = Date.now()) => { const t = a[f + 't'] || 0; if (no
 const EV_STEP = { page_landing: 1, enter_square: 2, first_coin: 4, board_claim: 8 }, EV_RET = [1, 7, 30], EV_KEEP = 14, LH_KEEP = 100, CH_KEEP = 100;
 // Growth funnel steps (admin 성장 퍼널), one bit each: landing, entered, posted a wish, shared a link, arrived by a shared link, came back on a later day.
 const EV_GROW = { page_landing: 1, enter_square: 2, wish_post: 4, wish_share: 8, share_link: 8, share_send: 8, wish_land: 16, focus_enter: 16, return_visit: 32 };
-// A first meaningful action (admin 성장 퍼널, act_new): posted a wish, gave a heart, cheered a board (wish_cheer is the board cheer), lit a board.
-const EV_ACT = new Set(['wish_post', 'wish_heart', 'wish_cheer', 'board_claim']);
+// A first meaningful action (admin 성장 퍼널, act_new): posted a wish, gave a heart, cheered a board (wish_cheer is the board cheer,
+// gift_cheer a gift board's), lit a board.
+const EV_ACT = new Set(['wish_post', 'wish_heart', 'wish_cheer', 'gift_cheer', 'board_claim']);
 // Once-only and per-day gates per account: (uid, k, d) -> count, d = KST day or '' for ever. Counts only grow, so copies merge by max.
 const PS_MAX = 50000, PS_TTL = 60 * 864e5; // immediate-push subscriptions kept in the 'push' instance, and how long one lives without a re-subscribe
 const AG = 'create table if not exists ag(uid text, k text, d text, v integer not null, primary key(uid, k, d))';
@@ -302,7 +303,8 @@ export class Meter extends DurableObject {
   giftTowerUnhold(id, uid, m) { return giftDb.towerUnhold(this.giftI(), id, uid, m); }
   giftTowerEntryAt(id, m, now) { return giftDb.towerEntryAt(this.giftI(), id, m, now); } // the 'dark' alarm at a board's reveal
   giftWorldRead(now) { return giftDb.worldRead(this.giftI(), now); } // /rt/world's gifts and main tower bookings
-  giftCheerOf(id, now) { return giftDb.cheerOf(this.giftI(), id, now); } // 선물 전광판 응원: a room asks who made the board and when it is up (Room.giftFacts)
+  giftCheerOf(id, now) { return giftDb.cheerOf(this.giftI(), id, now); } // 선물 전광판 응원: who made one board and when it is up (tests; an older room)
+  giftCheerLive(now) { return giftDb.cheerLive(this.giftI(), now); } // the same for every board up now, in one call (Room.giftFacts)
   giftRefundFail(o) { return giftDb.refundFail(this.giftI(), o); } // a row the operator pays by hand (the admin gift view)
   giftPerkFit(id, uid, gives, now) { return giftDb.perkFit(this.giftI(), id, uid, gives, now); } // 주문·결제: can the board take these perks
   giftPerkOn(id, uid, order, gives, now) { return giftDb.perkOn(this.giftI(), id, uid, order, gives, now); } // a paid order published: its perks on
@@ -1297,7 +1299,8 @@ export class Room extends DurableObject {
   // (PAY.cheer.base), the same hour cap, day points and quest count (cheerLand), its own gap per board (gate '|cheer:g:<id>', PAY.cheer.gapMs).
   // It lands only on a board that is up on the plaza now (st live, inside its window a..b, past its reveal: a board before its reveal is never
   // counted and nothing of it is told) and was not made by this account or guest ('dark', as my own lit board). The facts come from the
-  // gift store (giftFacts, one counted DO call per board per GF_TTL); unknown (the call failed): 'wait'. Budget hard: 'wait' before any call.
+  // gift store (giftFacts: one counted DO call per room per GF_TTL for every board up now, an unknown id no call of its own); unknown (the
+  // call failed): 'wait'. Budget hard: 'wait' before any call.
   // No inbox, no board report, no share reward: those belong to the lit boards. Every answer carries g.
   async cheerGift(w, a, m) {
     const p = Math.floor(Number(m.p)), id = String(m.g || '');
@@ -1313,24 +1316,42 @@ export class Room extends DurableObject {
     if (this.cheerLand(w, a, gate, PAY.cheer.base, now, tag) < 0) return;
     this.cheerTouch(a, now);
   }
-  // A gift board's facts for a cheer (giftsrv.js giftDb.cheerOf: { uid, a, b, rev } or null for none, hidden or gone), kept in this room's memory
-  // GF_TTL (GF_LEAN at budget lean), shared by cheers that ask at once. A failed call, or one with no answer in BRD_MS: undefined, and that board
-  // is not asked again for BRD_FAIL.
+  // A gift board's facts for a cheer: { uid, a, b, rev } for a board up on the plaza now, null for any other id (none, hidden, gone, not up
+  // yet, or made up), undefined when the list could not be read. The facts of every board up now come in one counted DO call (giftsrv.js
+  // giftDb.cheerLive), kept in this room's memory GF_TTL (GF_LEAN at budget lean) and shared by cheers that ask at once. An id not in the
+  // list reads it again only once the list is GF_MISS old (a board that went up since), never at lean: made-up ids cost at most one call
+  // per GF_MISS per room, however many come and from however many sockets. A failed call, or one with no answer in BRD_MS: undefined for
+  // every id, not asked again for BRD_FAIL. A board its maker or the operator took down (GIFT_OFF, httpWorld) is out at once (giftGone).
   giftFacts(id) {
-    if (!this._gf) this._gf = new Map();
-    const now = Date.now(), hit = this._gf.get(id), ttl = this.lvl >= 1 ? GF_LEAN : GF_TTL;
-    if (hit && (hit.p || (hit.bad ? now < hit.at + BRD_FAIL : now - hit.at < ttl))) return hit.p || Promise.resolve(hit.bad ? undefined : hit.f);
-    if (this._gf.size >= 500) this._gf.clear();
-    const e = { at: now, p: null };
+    const now = Date.now(), s = this._gf, lean = this.lvl >= 1;
+    if (s?.p) return s.p.then(() => this.giftPick(id));
+    if (s && now >= s.at && (s.bad ? now < s.at + BRD_FAIL : now - s.at < (lean ? GF_LEAN : GF_TTL) && (lean || s.m.has(id) || now - s.at < GF_MISS))) return Promise.resolve(this.giftPick(id));
+    const e = { at: now, p: null, m: new Map(), bad: 0 };
     this.conns++; // a DO call, counted toward the daily budget
     let t = 0;
-    const ask = Promise.resolve().then(() => this.env.METER.get(this.env.METER.idFromName('gift')).giftCheerOf(id, now));
+    const ask = Promise.resolve().then(() => this.env.METER.get(this.env.METER.idFromName('gift')).giftCheerLive(now));
     e.p = Promise.race([ask, new Promise((_, no) => { t = setTimeout(() => no(new Error('slow')), BRD_MS); })])
-      .then((f) => { e.f = f && typeof f === 'object' ? { uid: String(f.uid || ''), a: Number(f.a) || 0, b: Number(f.b) || 0, rev: Number.isFinite(Number(f.rev)) ? Number(f.rev) : Infinity } : null; return e.f; },
-        () => { e.bad = 1; return undefined; })
+      .then((list) => {
+        for (const f of Array.isArray(list) ? list.slice(0, 500) : []) {
+          const g = String(f?.id || ''); if (!GIFT_ID.test(g)) continue;
+          e.m.set(g, { uid: String(f.uid || ''), a: Number(f.a) || 0, b: Number(f.b) || 0, rev: Number.isFinite(Number(f.rev)) ? Number(f.rev) : Infinity });
+        }
+      }, () => { e.bad = 1; })
       .finally(() => { clearTimeout(t); e.at = Date.now(); e.p = null; });
-    this._gf.set(id, e);
-    return e.p;
+    this._gf = e;
+    return e.p.then(() => this.giftPick(id));
+  }
+  giftPick(id) { const s = this._gf; if (!s || s.bad) return undefined; return this._gfOff?.has(id) ? null : s.m.get(id) || null; }
+  // Boards taken down (hidden by reports or the operator, deleted by their maker, or their maker's account withdrawn): out of the list now,
+  // and out of any list read in the next GF_LEAN (a read that started before the take-down). At most GF_OFF_N kept.
+  giftGone(ids, now = Date.now()) {
+    if (!this._gfOff) this._gfOff = new Map();
+    for (const [g, at] of this._gfOff) if (!(now - at < GF_LEAN)) this._gfOff.delete(g);
+    for (const g of ids) {
+      if (!GIFT_ID.test(String(g || ''))) continue;
+      this._gf?.m?.delete(String(g)); this._gfOff.delete(String(g)); this._gfOff.set(String(g), now);
+      if (this._gfOff.size > GF_OFF_N) this._gfOff.delete(this._gfOff.keys().next().value);
+    }
   }
   async replyCheer(w, a, m) {
     const p = Math.floor(Number(m?.p));
@@ -1555,6 +1576,8 @@ export class Room extends DurableObject {
       const d = towerWire(m.data); if (!d) return J({ err: 'world' }, 400);
       const msg = { t: 'WORLD_UPDATE', kind: 'TOWER', data: d }; this.pushEv(msg); const s = JSON.stringify(msg); for (const w of this.socks().keys()) this.tx(w, s);
       return J({ ok: true, n: this.socks().size }); }
+    if (m && m.t === 'WORLD_UPDATE' && m.kind === 'GIFT_OFF') { // 선물 전광판 taken down (giftOffTell): no cheer on them counts from now; nothing goes to the sockets
+      this.giftGone((Array.isArray(m.data?.ids) ? m.data.ids : []).slice(0, 50)); return J({ ok: true }); }
     if (m && m.t === 'WORLD_UPDATE' && !m.kind) { this.tapDb(); this.ctx.storage.sql.exec('delete from brd'); const s = JSON.stringify({ t: 'WORLD_UPDATE' }); for (const w of this.socks().keys()) this.tx(w, s); return J({ ok: true, n: this.socks().size }); } // bulk change: the room's boards are read again
     if (!m || m.t !== 'WORLD_UPDATE' || (m.kind !== 'BILLBOARD' && m.kind !== 'PLOT') || !m.data || typeof m.data !== 'object') return J({ err: 'world' }, 400);
     if (m.kind === 'BILLBOARD') { this.tapDb(); if (brdRow(m.data)) this.brdPut(m.data, Date.now()); else this.ctx.storage.sql.exec('delete from brd where slot = ?', String(m.data.slot_id || '')); } // a row without holder and clock: read it again
@@ -2088,7 +2111,7 @@ function cachedBoards() {
     return Array.isArray(world?.billboards) ? world.billboards : [];
   } catch { return []; }
 }
-const GF_TTL = 60000, GF_LEAN = 300000; // Room.giftFacts: how long a gift board's facts are kept in a room (budget lean: longer)
+const GF_TTL = 60000, GF_LEAN = 300000, GF_MISS = 30000, GF_OFF_N = 500; // Room.giftFacts: how long the list of gift boards up now is kept in a room (budget lean: longer), and how old it must be before an id outside it reads it again; Room.giftGone: boards taken down kept out
 // Room board rows (brd): trusted for BRD_TTL, a missing one is read with a BRD_MS limit, not again for BRD_FAIL after a failure. Room inbox queue (ibq):
 // IBQ_N rows per inbox_batch, kept IBQ_DAYS, IBQ_MAX rows.
 const BRD_TTL = 300000, BRD_MS = 2500, BRD_FAIL = 10000, BRD_KEYS = 'slot_id,holder_id,holder_name,line1,line2,line3,lit_until,expires_at', IBQ_N = 100, IBQ_DAYS = 7, IBQ_MAX = 500;
@@ -2166,7 +2189,7 @@ const HUMAN_BAD = new Set(['missing-input-response', 'invalid-input-response', '
 // What ordersrv.js gets: the account and budget checks, and the gift side's perk hooks (giftsrv.js: perkFit before an order, perkOn when
 // one is published, perkOff when one is refunded), which take the same kit giftsrv.js gets (a main tower minute let go is told to the rooms).
 const orderKit = () => ({ adminOk, lvlNow, resolveActor, tokenOf, actOk, perkFit: (env, o) => giftPerkFit(env, o), perkOn: (env, ctx, o) => giftPerkOn(env, ctx, giftKit(), o), perkOff: (env, ctx, o) => giftPerkOff(env, ctx, giftKit(), o) });
-const giftKit = () => ({ adminOk, lvlNow, resolveActor, tokenOf, ipHash: wishIp, humanGate, humanSite, actOk, pushNow, rpc: supabaseRpc, towerTell, towerLater, guestLike, testTraffic, dropWorld: worldDrop }); // testTraffic: the operator's device and tools/prod-e2e.mjs are not visitors
+const giftKit = () => ({ adminOk, lvlNow, resolveActor, tokenOf, ipHash: wishIp, humanGate, humanSite, actOk, pushNow, rpc: supabaseRpc, towerTell, towerLater, giftOff: giftOffTell, guestLike, testTraffic, dropWorld: worldDrop }); // giftOff: the rooms' cheer list (Room.giftGone); testTraffic: the operator's device and tools/prod-e2e.mjs are not visitors
 // 메인 타워 축하 1분 (giftsrv.js): a booking, or its release ({ id, m, off: 1 }), to the plaza rooms someone sits in (wishRooms of both
 // bases) as WORLD_UPDATE kind TOWER. env is the tallied one giftsrv.js was handed, so these DO calls count. Nothing at budget hard.
 // giftsrv.js sends only entries whose board is revealed (towerOn, towerOff); one revealed later goes from the 'dark' alarm (towerLater).
@@ -2175,10 +2198,20 @@ function towerTell(env, ctx, data) {
   try { ctx?.waitUntil?.(job); } catch { /* the answer already went */ }
   return job;
 }
+// 선물 전광판 taken down (giftsrv.js: hidden by reports or the operator, deleted by its maker, its maker withdrawn): the plaza rooms drop them
+// from their cheer list at once (Room.giftGone), so no cheer on them is paid for the rest of GF_TTL. The same fan-out as towerTell (counted
+// DO calls, nothing at budget hard: the rooms' list then runs out by itself). Rare: an operator's or a maker's act.
+function giftOffTell(env, ctx, ids) {
+  const list = (Array.isArray(ids) ? ids : [ids]).map(String).filter((g) => GIFT_ID.test(g)).slice(0, 50);
+  if (!list.length) return null;
+  const job = (async () => { if (await budgetHard(env)) return; await towerSend(env, { ids: list }, 'GIFT_OFF'); })().catch(() => { });
+  try { ctx?.waitUntil?.(job); } catch { /* the answer already went */ }
+  return job;
+}
 // The fan-out itself (the budget is the caller's: towerTell asks the level, the dark alarm counted itself in its add).
-async function towerSend(env, data) {
+async function towerSend(env, data, kind = 'TOWER') {
   const names = [...new Set((await Promise.all(['chapel:square', 'chapelqa:square'].map((t) => wishRooms(env, t)))).flat())];
-  const body = JSON.stringify({ t: 'WORLD_UPDATE', kind: 'TOWER', data });
+  const body = JSON.stringify({ t: 'WORLD_UPDATE', kind, data });
   await Promise.all(names.map((t) => env.ROOM.get(env.ROOM.idFromName(t)).fetch(new Request('https://room.internal/world', { method: 'POST', headers: { 'content-type': 'application/json' }, body })).catch(() => null)));
 }
 // A minute booked on a board whose reveal is still ahead ({ id, m, at }): the 'dark' instance's alarm tells the rooms at `at` (no cron). One
@@ -2475,7 +2508,7 @@ async function wishPage(req, env, u, ctx) {
   const au = await wishAuthor(env, id), sl = await shareLink(env, ctx, req, 'w:' + id, au);
   const s = wishShareText(w), dest = '/?wish=' + id + invTail(u), desc = w.txt + (sl.fr ? ' · ' + sl.fr : ''), shot = await snapFor(env, 'wish', id, au); // only the author's own shot
   // Its own page (sharepage.js, 2026-11-27) with 3D 광장에서 보기 (dest, where it used to jump at once), 공유하기 and 나도 만들기.
-  const image = new URL(shot ? '/rt/snap/' + shot : '/og.jpg', req.url).href;
+  const image = new URL(shot ? '/rt/snap/' + shot : '/og.jpg?v=4', req.url).href;
   const html = sharePage({ kind: 'wish', title: s.title, desc, image, url: new URL('/rt/w/' + id, req.url).href, dest, chip: '오늘의 소원', big: clip(w.txt, WISH.maxLen),
     by: w.nick ? clip(w.nick, 16) + '님의 소원' : '', fr: sl.fr, shot: shot ? image : '', share: { title: s.title, text: w.txt + ' · 가상 타임스퀘어의 소원' }, make: '/gift' + invTail(u, true) });
   // A page that sets kts_via is this person's: never kept by a shared cache. The preview fetchers' copy stays public for 30 s.
@@ -3583,7 +3616,7 @@ async function forgetActor(env, uid) {
     await Promise.all((r?.e || []).map(e => supabaseRpc('push_unsubscribe', { p_key: env.FLUSH_KEY || '', p_actor_id: id, p_endpoint: e }).catch(() => null))); };
   await Promise.all(ids.map(id => Promise.all([dropSubs(id), wishM(env).wForget(id), snapM(env).snapForget(id), darkM(env).dkForget(id), lgM(env).lgForget(id), invM(env).ivForget(id)].map(p => p.catch(() => null)))));
   await Promise.all(ids.map(id => adM(env).adForget(id).catch(() => null))); // the board reports of their tenures go too
-  await Promise.all(ids.map(id => giftForget(env, id, null, towerTell))); // 선물 전광판 they made: boards, lines, videos; the rooms drop their main tower minutes
+  await Promise.all(ids.map(id => giftForget(env, id, null, towerTell, giftOffTell))); // 선물 전광판 they made: boards, lines, videos; the rooms drop their main tower minutes and cheer lists
   await Promise.all(ids.map(id => teamForget(env, id))); // 응원 팀: membership (a team it owned passes to its next member), supports, joins
   WISHC.at = 0; WONE.clear(); WAU.clear(); SNX.clear(); SNC.clear(); PC.delete('world'); lgDrop();
   try { await caches.default.delete(new Request(WORLD_CACHE)); } catch { }
@@ -3662,7 +3695,7 @@ async function cardPage(req, env, u, ctx) {
     } catch { return new Response('not found', { status: 404 }); }
   }
   const shot = await snapFor(env, 'slot', parsed.slot, card.holder); // only the current holder's own shot
-  const image = shot ? new URL('/rt/snap/' + shot, req.url).href : env.PLAN === 'paid' ? new URL('/rt/card/' + parsed.slot + '.png', req.url).href : 'https://studio.wishboard.workers.dev/og.jpg';
+  const image = shot ? new URL('/rt/snap/' + shot, req.url).href : env.PLAN === 'paid' ? new URL('/rt/card/' + parsed.slot + '.png', req.url).href : 'https://studio.wishboard.workers.dev/og.jpg?v=4';
   const page = new URL('/rt/card/' + parsed.slot, req.url).href;
   const dest = cardTarget(parsed.slot, u.searchParams, card.ref);
   const title = [clip(card.holder_name, 16), clip(card.line1, 16)].filter(Boolean).join(' ') || '타임스퀘어 전광판';
@@ -3741,7 +3774,7 @@ async function snapPage(req, env, u) {
     else shot = false; // a hidden or gone wish: the photo likely shows its text
   }
   dest += invTail(u, dest === '/');
-  const t = esc(title), d = esc(desc), img = esc(new URL(shot ? '/rt/snap/' + id : '/og.jpg', req.url).href);
+  const t = esc(title), d = esc(desc), img = esc(new URL(shot ? '/rt/snap/' + id : '/og.jpg?v=4', req.url).href);
   const html = '<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>' + t + '</title>'
     + '<meta property="og:title" content="' + t + '">'
     + '<meta property="og:description" content="' + d + '">'

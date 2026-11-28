@@ -315,9 +315,11 @@ function twoTap(btn, label, run) {
 // (1 무슨 날 · 2 이름과 한마디 · 3 언제와 색, then 무료로 걸기), the preview of the board on the virtual street held at the top while the
 // fields change under it (gift.html .pv), one gold button a step, ← 이전 back, the dots for where one is. Today now and the occasion's colour
 // are chosen already, so the shortest way is a day, a name, 다음, 걸기. A tap on a day goes on to the names by itself.
-// The form is one <form>: its submit (the last step's button, or the tests) hangs the board whatever step is up; a refused field brings its
-// step back. Enter in a field of step 2 goes to the next step instead (a phone's 이동 key must not hang a board unseen).
+// The form is one <form>: only its submit on the last step (the 걸기 button) hangs the board; before it a submit is 다음 (ahead), and a
+// refused field brings its step back. Enter in a field of step 2 goes to the next step (a phone's 이동 key must not hang a board unseen).
+// Each step a person moves to is an entry in the browser's history (stepPush): back goes to the step before, and from the first step leaves.
 const STEP_OF = { occ: 1, to: 2, from: 2, msg: 2, day: 3, at: 3 };
+let MK = null, MKN = 0; // the maker on screen ({ pop }: a popstate within its steps) and a count for its history entries
 function maker({ re: answers = '', ...prefill } = {}) {
   clear();
   const q = new URLSearchParams(location.search), ref = refOf(q.get('ref')), re = refOf(answers);
@@ -326,6 +328,8 @@ function maker({ re: answers = '', ...prefill } = {}) {
   if (ref) { ls.set('kts_gref', JSON.stringify({ id: ref, at: Date.now() })); history.replaceState(null, '', ME ? '/gift?me=1' : '/gift'); }
   started(re || keptRef(ls.get('kts_gref'), Date.now()) ? 1 : 0);
   const today = kstDay(now()), sendLabel = re ? '답장 걸기' : '무료로 걸기';
+  const mki = Date.now().toString(36) + '.' + (++MKN), ours = () => history.state?.mki === mki; // this maker's own history entries (stepPush)
+  let leaving = false;
   const nick = ME ? cut(ls.get('kts_nick') || '', GIFT.toMax) : '';
   const f = { to: nick, from: '', occ: ME ? 'me' : 'bday', msg: '', th: '', day: today, at: 'now', ...prefill };
   let kind = ''; // 내 전광판: the kind chip last pressed (only seeds the line)
@@ -335,14 +339,16 @@ function maker({ re: answers = '', ...prefill } = {}) {
   const errs = {}; const err = (k) => (errs[k] = h('p', { class: 'err', id: 'err-' + k, role: 'alert' }));
   const count = (el, max) => { const c = h('small'); const up = () => { c.textContent = cpLen(norm(el.value)) + '/' + max; }; el.addEventListener('input', up); up(); return c; };
   const typed = (k, el) => { f[k] = el.value; flag(el, false); if (errs[k]) errs[k].textContent = ''; repaint(); };
-  const onward = (e) => { if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); ahead(); } };
+  // Enter in a name or the line: never the form's own submit (it would press the hidden 걸기), also while Hangul is being composed (the
+  // keyboard ends the syllable by itself); it goes to the next step only when nothing is being composed.
+  const onward = (e) => { if (e.key !== 'Enter') return; e.preventDefault(); if (!e.isComposing && e.keyCode !== 229) ahead(); };
   const toIn = h('input', { type: 'text', id: 'to', maxlength: 24, autocomplete: 'off', enterkeyhint: 'next', placeholder: ME ? '예: 하늘' : '예: 민지', 'aria-describedby': 'err-to', value: f.to, oninput: () => typed('to', toIn), onkeydown: onward });
   const msgIn = h('input', { type: 'text', id: 'msg', maxlength: 80, autocomplete: 'off', enterkeyhint: 'next', placeholder: (OCCASIONS[f.occ] || OCCASIONS.bday).hint, 'aria-describedby': 'err-msg', value: f.msg, oninput: () => typed('msg', msgIn), onkeydown: onward });
   const fromIn = h('input', { type: 'text', id: 'from', maxlength: 24, autocomplete: 'off', enterkeyhint: 'next', placeholder: '예: 동아리 친구들', 'aria-describedby': 'err-from', value: f.from, oninput: () => typed('from', fromIn), onkeydown: onward });
   const fields = ME ? { to: toIn, msg: msgIn } : { to: toIn, msg: msgIn, from: fromIn };
   const occRow = h('div', { class: 'chips', role: 'group', 'aria-label': ME ? '무엇을 걸까요' : '무슨 날' });
   // A day (or a kind) chosen on the first step: the preview changes at once and, a moment later, the names come up.
-  let auto = 0; const onOn = () => { if (step !== 1) return; clearTimeout(auto); auto = setTimeout(() => { if (step === 1 && occRow.isConnected) go(2); }, 260); };
+  let auto = 0; const onOn = () => { if (step !== 1) return; clearTimeout(auto); auto = setTimeout(() => { if (step === 1 && occRow.isConnected) { go(2); stepPush(); } }, 260); };
   // 내 전광판's kinds: a press puts the kind's example in the line when the line is empty or still another kind's example.
   const seeds = new Set(ME_KINDS.map((x) => x.msg));
   const paintKind = () => occRow.replaceChildren(...ME_KINDS.map((x) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(kind === x.k), onclick: () => {
@@ -384,7 +390,8 @@ function maker({ re: answers = '', ...prefill } = {}) {
   ];
   const dots = h('div', { class: 'dots', 'aria-hidden': 'true' }, h('i'), h('i'), h('i'));
   const stepNo = h('span', { class: 'stepno' });
-  const back = h('button', { class: 'linkbtn back', type: 'button', onclick: () => go(step - 1) }, icon('chevronLeft'), '이전');
+  // ← 이전: the browser's back when this step is an entry this maker pushed (the entry before is the step before), else the step before.
+  const back = h('button', { class: 'linkbtn back', type: 'button', onclick: () => { if (ours() && Number(history.state.mk) === step) history.back(); else go(step - 1); } }, icon('chevronLeft'), '이전');
   const next = h('button', { class: 'btn gold', type: 'button', onclick: () => ahead() }, '다음');
   const sendFace = () => [icon(re ? 'envelope' : 'board'), sendLabel];
   const send = h('button', { class: 'btn gold', type: 'submit' }, sendFace());
@@ -407,8 +414,13 @@ function maker({ re: answers = '', ...prefill } = {}) {
   function ahead() {
     const v = giftFault(f, now());
     if (!v.ok && (STEP_OF[v.field] || LAST) <= step) { refuse(v); return; }
-    go(step + 1);
+    const was = step; go(step + 1); if (step !== was) stepPush();
   }
+  // A step the person moved on to: an entry of its own in the browser's history at the same address (state mk: the step, mki: this maker),
+  // so a phone's back gesture on step 3 comes to step 2, not off the page with what was typed. Another maker's entry (a reload, a maker
+  // built again) counts as this maker's first step.
+  // d: how many of this maker's entries are above its first one (the hung board's page goes back over them first).
+  function stepPush() { try { history.pushState({ ...(history.state || {}), mk: step, mki, d: (ours() ? Number(history.state.d) || 0 : 0) + 1 }, '', location.pathname + location.search); } catch { /* the steps stay off the history */ } }
   function refuse(v) {
     go(STEP_OF[v.field] || step, false);
     (errs[v.field] || sendErr).textContent = v.error; flag(fields[v.field], true); fields[v.field]?.focus?.();
@@ -418,6 +430,8 @@ function maker({ re: answers = '', ...prefill } = {}) {
     for (const el of Object.values(errs)) el.textContent = '';
     for (const el of Object.values(fields)) flag(el, false);
     say(sendErr, ''); nextBtn.hidden = true;
+    // Before the last step a submit (Enter in any field: the browser presses the first submit button, the hidden 걸기) is 다음, never a post.
+    if (step !== LAST || (e.submitter && e.submitter !== send)) { ahead(); return; }
     const v = giftFault(f, now());
     if (!v.ok) { refuse(v); return; }
     send.disabled = true; send.textContent = '거는 중…';
@@ -430,6 +444,9 @@ function maker({ re: answers = '', ...prefill } = {}) {
       return;
     }
     addMine(r.id);
+    // The steps' entries go first (back to the maker's first entry), so back from the board's page is the maker once, then off the page.
+    const d = ours() ? Number(history.state.d) || 0 : 0;
+    if (d > 0) await new Promise((res) => { let t = 0; const on = () => { window.removeEventListener('popstate', on); clearTimeout(t); res(); }; leaving = true; window.addEventListener('popstate', on); t = setTimeout(on, 600); try { history.go(-d); } catch { on(); } });
     if (kept && kept === ref) ls.set('kts_gref', '');
     if (re) history.replaceState(null, '', '/gift'); // the reply is hung: going back to this maker starts an ordinary board
     history.pushState(null, '', '/g/' + r.id);
@@ -447,7 +464,14 @@ function maker({ re: answers = '', ...prefill } = {}) {
     h('div', { class: 'pv' }, cv, h('p', { class: 'place' }, icon('pin'), PLACE_LINE)));
   put(makerTop(ME, !!re), h('div', { class: 'cols mk' }, lead, h('section', { class: 'card mkcard' }, form)));
   document.documentElement.classList?.add?.('mkpage');
-  go(re ? 2 : 1, false);
+  const base = re ? 2 : 1, path = location.pathname + location.search;
+  go(base, false);
+  // back or forward within this maker's entries (popstate, before route): that entry's step, nothing built again, nothing typed lost.
+  MK = { pop: () => {
+    if (leaving && form.isConnected) return true; // going back over the steps after the board was hung: the board's page comes next
+    if (!form.isConnected || location.pathname + location.search !== path || refOf(history.state?.re) !== re) return false;
+    go(ours() ? Math.max(1, Math.min(LAST, Number(history.state.mk) || base)) : base, false); return true;
+  } };
   // The cursor in the name, where a mouse is the pointer (FINE), once its step is up (a reply opens on it). Never on a phone: the keyboard
   // would come up over the preview before anything was read.
   if (FINE && re && !f.to) setTimeout(() => { try { toIn.focus({ preventScroll: true }); } catch { toIn.focus(); } }, 50);
@@ -1194,5 +1218,5 @@ function route() {
   else { const re = refOf(history.state?.re); maker(re && DATA?.gift?.id === re ? { ...replyDraft(DATA.gift), re } : {}); } // a reply's maker, reached again by forward
 }
 window.addEventListener('load', () => { if (scrollY > 0 && !document.activeElement?.matches?.('input,textarea')) scrollTo(0, 0); }, { once: true }); // a reload's kept scroll: start at the film
-window.addEventListener('popstate', () => { if (/^\/g\//.test(location.pathname) && !DATA?.gift) location.reload(); else route(); });
+window.addEventListener('popstate', () => { if (MK?.pop()) return; if (/^\/g\//.test(location.pathname) && !DATA?.gift) location.reload(); else route(); }); // MK: a step of the maker on screen
 route();

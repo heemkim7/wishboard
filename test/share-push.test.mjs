@@ -206,8 +206,8 @@ describe('share pages', () => {
       const hr = await get('/rt/s/' + id), hid = await hr.text();
       assert.equal(hr.headers.get('cache-control'), 'public, max-age=30');
       assert.equal(metaOf(hid, 'property', 'og:title'), 'WISH BOARD : 모두의 전광판');
-      assert.equal(metaOf(hid, 'property', 'og:image'), 'https://sq.example/og.jpg');
-      assert.equal(metaOf(hid, 'name', 'twitter:image'), 'https://sq.example/og.jpg');
+      assert.equal(metaOf(hid, 'property', 'og:image'), 'https://sq.example/og.jpg?v=4');
+      assert.equal(metaOf(hid, 'name', 'twitter:image'), 'https://sq.example/og.jpg?v=4');
       assert.match(hid, /location\.replace\("\/"\)/);
     } finally { done(); }
   });
@@ -252,15 +252,15 @@ describe('share pages', () => {
       const card = await (await get('/rt/card/STREET_12')).text();
       assert.equal(metaOf(card, 'property', 'og:image'), 'https://sq.example/rt/snap/' + id);
       const other = await (await get('/rt/card/STREET_13')).text();
-      assert.equal(metaOf(other, 'property', 'og:image'), 'https://studio.wishboard.workers.dev/og.jpg');
+      assert.equal(metaOf(other, 'property', 'og:image'), 'https://studio.wishboard.workers.dev/og.jpg?v=4');
       // Somebody else's upload tagged STREET_14 does not reach b's card.
       await snap('?slot=STREET_14', a.token);
-      assert.equal(metaOf(await (await get('/rt/card/STREET_14')).text(), 'property', 'og:image'), 'https://studio.wishboard.workers.dev/og.jpg');
+      assert.equal(metaOf(await (await get('/rt/card/STREET_14')).text(), 'property', 'og:image'), 'https://studio.wishboard.workers.dev/og.jpg?v=4');
       // The board is taken: the old holder's shot no longer previews the new holder's card.
       state.victim = a.id; state.boards = [board('STREET_12', b.id, '새주인', '새 줄')];
       assert.equal((await post('/rt/claim-billboard', { topic: 'chapel:square', slot_id: 'STREET_12', bid: 300, line1: '새 줄', nickname: '새주인' }, b.token)).status, 200);
       clock.add(61000);
-      assert.equal(metaOf(await (await get('/rt/card/STREET_12')).text(), 'property', 'og:image'), 'https://studio.wishboard.workers.dev/og.jpg');
+      assert.equal(metaOf(await (await get('/rt/card/STREET_12')).text(), 'property', 'og:image'), 'https://studio.wishboard.workers.dev/og.jpg?v=4');
     } finally { done(); }
   });
 
@@ -289,10 +289,10 @@ describe('share pages', () => {
       const env = makeEnv(), { guest, snap, get, post } = harness(env), a = await guest(), b = await guest();
       const w = (await (await post('/rt/wish', { text: '소원', nick: '가' }, a.token)).json()).wish;
       await snap('?wish=' + w.id, b.token);
-      assert.equal(metaOf(await (await get('/rt/w/' + w.id)).text(), 'property', 'og:image'), 'https://sq.example/og.jpg');
+      assert.equal(metaOf(await (await get('/rt/w/' + w.id)).text(), 'property', 'og:image'), 'https://sq.example/og.jpg?v=4');
       env.meter('snaps').do.snapPut('c'.repeat(32), JPEG, 'wish', w.id, b.id); // even a row stored for someone else is not used
       clock.add(61000);
-      assert.equal(metaOf(await (await get('/rt/w/' + w.id)).text(), 'property', 'og:image'), 'https://sq.example/og.jpg');
+      assert.equal(metaOf(await (await get('/rt/w/' + w.id)).text(), 'property', 'og:image'), 'https://sq.example/og.jpg?v=4');
     } finally { done(); }
   });
 

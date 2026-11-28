@@ -4,10 +4,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { readFileSync } from 'node:fs';
-import { makeEnv, withClock } from './reinforce-harness.mjs';
+import { makeEnv, withClock, harness, KEY } from './reinforce-harness.mjs';
 import { PAY } from '../balance.js';
 import { kstDay, dayStart } from '../giftrules.js';
 import { sendGiftCheer, sendCheer } from '../tribe.js';
+import { EVENT_NAMES } from '../plaza-account.js';
 
 const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json' } });
 function net(boards) {
@@ -36,7 +37,8 @@ function gift(env, o = {}) {
   return id;
 }
 const T0 = Date.parse('2027-06-10T03:00:00Z'); // 12:00 KST
-const factCalls = (env) => env.calls.filter((c) => c === 'gift.giftCheerOf').length;
+const factCalls = (env) => env.calls.filter((c) => c === 'gift.giftCheerLive' || c === 'gift.giftCheerOf').length;
+const rnd = () => Array.from({ length: 8 }, () => '0123456789abcdefghijklmnopqrstuvwxyz'[Math.floor(Math.random() * 36)]).join('');
 
 describe('선물 전광판 응원: the server decides', { concurrency: false }, () => {
   it('a non-maker on a revealed gift board up now: paid like a board cheer, with g on the answer, one counted DO call', async () => {
@@ -132,15 +134,75 @@ describe('선물 전광판 응원: the server decides', { concurrency: false }, 
         R.do.lvl = 1; clock.add(120000);
         await cheerG(R.do, fan, id);
         assert.equal(factCalls(env), 2, 'lean keeps them longer');
-        R.do.lvl = 0;
-        const meter = env.meter('gift').do, real = meter.giftCheerOf;
-        meter.giftCheerOf = () => { throw new Error('down'); };
+        R.do.lvl = 0; clock.add(300000); // the list runs out
+        const meter = env.meter('gift').do, real = meter.giftCheerLive;
+        meter.giftCheerLive = () => { throw new Error('down'); };
         assert.deepEqual(await cheerG(R.do, fan, id2), { t: 'PAY', kind: 'cheer', amount: 0, why: 'wait', g: id2 });
         clock.add(2000);
         assert.deepEqual(await cheerG(R.do, fan, id2), { t: 'PAY', kind: 'cheer', amount: 0, why: 'wait', g: id2 });
         assert.equal(factCalls(env), 3, 'not asked again during the failure pause');
-        meter.giftCheerOf = real; clock.add(10000);
+        meter.giftCheerLive = real; clock.add(10000);
         assert.equal((await cheerG(R.do, fan, id2)).amount, PAY.cheer.base);
+      } finally { restore(); }
+    });
+  });
+  it('made-up ids from many sockets cost at most one list read per GF_MISS a room (never one each); a board that went up since counts once the list is that old', async () => {
+    await withClock(T0, async (clock) => {
+      const restore = net([]);
+      try {
+        const env = makeEnv(), R = env.room('chapel:square'), socks = [1, 2, 3].map((i) => sock(R.do, 'guest:fan' + i)), id = gift(env);
+        env.calls.length = 0;
+        assert.equal((await cheerG(R.do, socks[0], id)).amount, PAY.cheer.base);
+        let dark = 0;
+        for (let i = 0; i < 900; i++) { // 90 s, 30 a second over three sockets (under FLOOD_N for each)
+          clock.add(100);
+          const g = rnd(), p = await cheerG(R.do, socks[i % 3], g);
+          if (p?.why === 'dark' && p.g === g) dark++;
+        }
+        assert.equal(dark, 900, 'every made-up id is dark');
+        assert.ok(factCalls(env) <= 4, 'one read at the start, then at most one per 30 s: ' + factCalls(env));
+        assert.equal(env.calls.filter((c) => c === 'gift.giftCheerOf').length, 0, 'never a call per id');
+        // At lean an unknown id never reads the list again before GF_LEAN.
+        const setLvl = R.do.setLvl; R.do.setLvl = () => {}; R.do.lvl = 1; const n = factCalls(env); // the room's own report would set its level back
+        for (let i = 0; i < 300; i++) { clock.add(1000); await cheerG(R.do, socks[i % 3], rnd()); }
+        assert.ok(factCalls(env) - n <= 1, 'lean: one read in 300 s at most');
+        R.do.setLvl = setLvl; R.do.lvl = 0; clock.add(300000);
+        // A board that went up after the room read its list: dark while the list is under GF_MISS old, counted after.
+        await cheerG(R.do, socks[1], rnd());
+        const fresh = gift(env);
+        assert.equal((await cheerG(R.do, socks[1], fresh)).why, 'dark');
+        clock.add(30000);
+        assert.equal((await cheerG(R.do, socks[1], fresh)).amount, PAY.cheer.base);
+      } finally { restore(); }
+    });
+  });
+  it('a board taken down (the operator hides it, its maker deletes it) stops counting at once: the rooms drop it from their list (GIFT_OFF)', async () => {
+    await withClock(T0, async (clock) => {
+      const restore = net([]);
+      try {
+        const env = makeEnv(), H = harness(env), R = env.room('chapel:square'), fan = sock(R.do, 'guest:fan'), id = gift(env), id2 = gift(env);
+        assert.equal((await cheerG(R.do, fan, id)).amount, PAY.cheer.base);
+        assert.equal((await cheerG(R.do, fan, id2)).amount, PAY.cheer.base);
+        const r = await H.call('/rt/admin/gift/hide', { method: 'POST', headers: { 'x-admin-key': KEY, 'content-type': 'application/json' }, body: JSON.stringify({ id }) });
+        assert.equal(r.status, 200); await H.settle();
+        clock.add(PAY.cheer.gapMs); env.calls.length = 0;
+        assert.deepEqual(await cheerG(R.do, fan, id), { t: 'PAY', kind: 'cheer', amount: 0, why: 'dark', g: id }, 'hidden: dark within the minute the list is kept');
+        assert.equal((await cheerG(R.do, fan, id2)).amount, PAY.cheer.base, 'the other board still counts');
+        assert.equal(factCalls(env), 0, 'no read for it');
+        // A list read that started before the take-down cannot bring it back.
+        R.do._gf.m.set(id, { uid: 'guest:maker', a: 0, b: Infinity, rev: 0 });
+        clock.add(PAY.cheer.gapMs);
+        assert.equal((await cheerG(R.do, fan, id)).why, 'dark');
+        // Brought back by the operator: no room is told (it counts again once its list is read after GF_LEAN).
+        await H.call('/rt/admin/gift/hide', { method: 'POST', headers: { 'x-admin-key': KEY, 'content-type': 'application/json' }, body: JSON.stringify({ id, hide: false }) });
+        await H.settle();
+        assert.equal(env.calls.filter((c) => c === 'chapel:square.fetch').length, 0, 'bringing it back tells no room');
+        // The room message itself: ids checked, nothing to the sockets.
+        const n = fan.sent.length;
+        const res = await R.do.fetch(new Request('https://room.internal/world', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ t: 'WORLD_UPDATE', kind: 'GIFT_OFF', data: { ids: [id2, '../x'] } }) }));
+        assert.equal(res.status, 200); assert.equal(fan.sent.length, n);
+        clock.add(PAY.cheer.gapMs);
+        assert.equal((await cheerG(R.do, fan, id2)).why, 'dark');
       } finally { restore(); }
     });
   });
@@ -156,8 +218,11 @@ describe('선물 전광판 응원: the server decides', { concurrency: false }, 
       assert.equal(q.giftCheerOf(gift(env, { st: 'hidden' }), now), null);
       assert.equal(q.giftCheerOf('zz00zz00', now), null);
       assert.equal(q.giftCheerOf('../x', now), null);
-      // /rt/world's public list still carries no maker.
+      // /rt/world's public list still carries no maker; the rooms' list (server to server) is the boards up now only.
       assert.ok(q.giftLive(now).every((g) => !('uid' in g)));
+      const all = q.giftCheerLive(now);
+      assert.ok(all.some((g) => g.id === id && g.uid === 'guest:maker'));
+      assert.deepEqual(all.map((g) => g.id).sort(), q.giftLive(now).map((g) => g.id).sort(), 'the same boards /rt/world shows');
     } finally { Date.now = orig; }
   });
 });
@@ -178,6 +243,9 @@ describe('선물 전광판 응원: the page', () => {
     assert.match(fn, /sendGiftCheer\(id, phraseId\)/);
     assert.match(fn, /net\.ch\?\.raw\?\.\(msg\)/);
     assert.match(fn, /PAY\.cheer\.gapMs/);
+    assert.match(fn, /trackEvent\('gift_cheer', \{ slot: String\(slot \|\| ''\) \}\)/, 'its own event name');
+    assert.doesNotMatch(fn, /trackEvent\('wish_cheer'/, 'not the lit board cheer\'s');
+    assert.ok(EVENT_NAMES.includes('gift_cheer') && EVENT_NAMES.includes('wish_cheer'));
   });
   it('a tap on a gift screen opens its sheet with the cheer phrases; the far card cheers it; the world says which gift a screen shows', () => {
     assert.match(ui, /const gift = !boardActive\(b\) \? hooks\.giftOn\?\.\(slotId\) \|\| null : null;\n\s+if \(gift\) \{ openGiftScreen\(slotId, gift\); return; \}/);

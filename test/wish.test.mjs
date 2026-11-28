@@ -468,7 +468,7 @@ describe('wish routes', { concurrency: false }, () => {
       assert.equal(html.includes('<script>x'), false); assert.equal(html.includes('<b>'), false);
       assert.ok(html.includes('&lt;script&gt;x&lt;/script&gt;&quot;&amp;'));
       assert.equal(hasActor(html), false);
-      assert.match(html, /<meta property="og:image" content="https:\/\/sq\.example\/og\.jpg">/);
+      assert.match(html, /<meta property="og:image" content="https:\/\/sq\.example\/og\.jpg\?v=4">/);
       assert.match(html, /twitter:card/); assert.match(html, /og:title/);
       // its own page (sharepage.js, 2026-11-27): no jump; the 3D plaza is a link, beside 공유하기 and 나도 만들기
       assert.ok(html.includes('href="/?wish=' + w.id + '">3D 광장에서 보기')); assert.doesNotMatch(html, /location\.replace|http-equiv="refresh"/);

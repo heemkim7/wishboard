@@ -58,7 +58,7 @@ import { TOWER, SHARE, shareAmount, linkFault, TOWER_HOW, SPEND_OLD, TOWER_ERR, 
 import { orderPerks } from './ordersrv.js'; // 메인 타워 주인공: the order ledger says whether a board's paid booking stands
 import { payOn } from './payrules.js';
 import { opsRate } from './ops.js';
-import { SOON_KEEP, soonFault, soonKeys, soonReport } from './soonrules.js'; // 출시 예정 관심 (the interest counts, no Supabase)
+import { SOON_KEEP, SOON_IDS, SOON_SRC, soonFault, soonKeys, soonReport } from './soonrules.js'; // 출시 예정 관심 (the interest counts, no Supabase)
 
 const J = (o, s = 200, h = {}) => new Response(JSON.stringify(o), { status: s, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...h } });
 const ERR = { ...GIFT_ERR, ...TOWER_ERR };
@@ -83,6 +83,9 @@ const rowOf = (r) => {
     to: String(j.to || ''), from: String(j.from || ''), occ: String(j.occ || 'bday'), msg: String(j.msg || ''), th: String(j.th || '') };
 };
 const bump = (q, d, k, n = 1) => q.exec('insert into gd(d, k, n) values(?, ?, ?) on conflict(d, k) do update set n = n + excluded.n', d, k, n);
+// 출시 예정 관심: every daily counter key there is (soonKeys over the features, acts, logins and sources), and a call's or an isolate's sums.
+const SOON_KEYSET = new Set(SOON_IDS.flatMap((f) => ['imp', 'tap', 'reg'].flatMap((a) => ['a', 'g'].flatMap((lg) => SOON_SRC.flatMap((s) => soonKeys(f, a, lg, s))))));
+const siAdd = (m, d, keys, n) => { for (const k of keys) m.set(d + '|' + k, (m.get(d + '|' + k) || 0) + n); };
 const lim = (q, k, d) => Number(q.exec('select n from gr where k = ? and d = ?', k, d).toArray()[0]?.n) || 0;
 const limAdd = (q, k, d) => q.exec('insert into gr(k, d, n) values(?, ?, 1) on conflict(k, d) do update set n = n + 1', k, d);
 // 메인 타워 축하 1분: a points booking holds its minute this long while the Worker spends (towerBook dry -> towerConfirm); then it lapses.
@@ -372,13 +375,16 @@ export const giftDb = {
   // pressed it when the page sent its token, a: 1 when that is a linked account, else a guest friend). -> { ok, n, pay?, open? }
   // (the share rewards and friends' pushes for the Worker, at most TOWER.payMax rewards a call).
   seen(q, items, now = Date.now()) {
-    const d = kstDay(now), pay = [], open = []; let n = 0;
+    const d = kstDay(now), pay = [], open = [], si = new Map(); let n = 0;
     heartPrune(q, d);
     for (const it of (Array.isArray(items) ? items : []).slice(0, SEEN_MAX)) { // the isolate sends at most SEEN_MAX a call
       const g = String(it?.g || ''), v = String(it?.v || ''), e = String(it?.e || '');
       if (e === 'hit' || e === 'hitbot') { const day = String(it?.d || ''), k = Math.floor(Number(it?.n)); if (/^\d{4}-\d{2}-\d{2}$/.test(day) && k > 0 && k <= 1e6) { bump(q, day, e, k); n++; } continue; }
       if (e === 'start') { bump(q, d, 'start'); if (Number(it?.r) === 1) bump(q, d, 'start_ref'); n++; continue; }
-      if (e === 'soon') { if (this.soonAdd(q, it, d, now)) n++; continue; } // 출시 예정 관심 (no board)
+      // 출시 예정 관심 (no board). si: a counter the isolate summed (soonCount: one item per KST day and key, whatever the number of
+      // beacons); soon: a tap's registration (or an older isolate's imp or tap). Every 출시 예정 key is written once per call (si, below).
+      if (e === 'si') { const day = String(it?.d || ''), k = String(it?.k || ''), c = Math.floor(Number(it?.n)); if (/^\d{4}-\d{2}-\d{2}$/.test(day) && SOON_KEYSET.has(k) && c > 0 && c <= 1e6) { siAdd(si, day, [k], c); n++; } continue; }
+      if (e === 'soon') { if (this.soonAdd(q, it, d, now, si)) n++; continue; }
       if (!GIFT_ID.test(g) || !/^[0-9a-f]{16}$/.test(v) || !(SEEN_EV.has(e) || e === 'heart')) continue;
       const row = q.exec(e === 'heart' ? 'select * from gb where id = ?' : 'select day from gb where id = ?', g).toArray()[0];
       if (!row) continue;
@@ -397,15 +403,22 @@ export const giftDb = {
       if (e !== 'open') { bump(q, d, 'ev:' + e); continue; }
       visitAdd(q, g, v, String(row.day) === d, d, now);
     }
+    for (const [dk, c] of si) bump(q, dk.slice(0, 10), dk.slice(11), c);
     return { ok: true, n, ...(pay.length ? { pay } : {}), ...(open.length ? { open } : {}) };
   },
-  // 출시 예정 관심, one beacon item (seen): { f, a: 'imp' | 'tap', lg: 'a' | 'g', s, w }. imp and tap are daily counts; a tap is also a
-  // registration the first time this person (w) taps that feature (gsi), counted as reg once and never again. -> true when it counted.
-  soonAdd(q, it, d, now = Date.now()) {
+  // 출시 예정 관심, one beacon item (seen): { f, a: 'imp' | 'tap', lg: 'a' | 'g', s, w, nc, wk, n }. imp and tap are daily counts (nc: 1,
+  // the isolate counted the tap already: soonCount); a tap is also a registration the first time this person (w) taps that feature (gsi),
+  // counted as reg once and never again. One that is not an account's (wk 'g' a guest, 'd' a browser id) counts as a registration at most
+  // SOON_KEEP.regNet[wk] times per network (n) and KST day, so random ids cannot grow gsi and reg without end (the tap still counts).
+  // si: the call's counters (seen bumps each key once). -> true when it counted.
+  soonAdd(q, it, d, now = Date.now(), si = null) {
     const v = soonFault({ a: it?.a, f: it?.f, s: it?.s }); if (!v.ok || v.fs.length !== 1) return false;
-    const f = v.fs[0], lg = it?.lg === 'a' ? 'a' : 'g', w = String(it?.w || '');
-    for (const k of soonKeys(f, v.a, lg, v.s)) bump(q, d, k);
-    if (v.a === 'tap' && /^[0-9a-f]{16}$/.test(w) && q.exec('insert or ignore into gsi(f, w, at, lg, src) values(?, ?, ?, ?, ?)', f, w, now, lg === 'a' ? 1 : 0, v.s).rowsWritten > 0) for (const k of soonKeys(f, 'reg', lg, v.s)) bump(q, d, k);
+    const f = v.fs[0], lg = it?.lg === 'a' ? 'a' : 'g', w = String(it?.w || ''), add = (keys) => (si ? siAdd(si, d, keys, 1) : keys.forEach((k) => bump(q, d, k)));
+    if (!(v.a === 'tap' && Number(it?.nc) === 1)) add(soonKeys(f, v.a, lg, v.s));
+    if (v.a !== 'tap' || !/^[0-9a-f]{16}$/.test(w)) return true;
+    const wk = lg === 'a' ? 'a' : it?.wk === 'd' ? 'd' : 'g', net = String(it?.n || ''), capK = wk === 'a' || !net ? '' : 'si' + wk + ':' + net; // no n: an older isolate's item
+    if (capK && lim(q, capK, d) >= SOON_KEEP.regNet[wk]) return true;
+    if (q.exec('insert or ignore into gsi(f, w, at, lg, src) values(?, ?, ?, ?, ?)', f, w, now, lg === 'a' ? 1 : 0, v.s).rowsWritten > 0) { add(soonKeys(f, 'reg', lg, v.s)); if (capK) limAdd(q, capK, d); }
     return true;
   },
   // The admin block (admin-gift.js): SOON_KEEP.adminDays KST days of the counts and the people so far (soonrules.js soonReport).
@@ -517,6 +530,12 @@ export const giftDb = {
     const g = rowOf(q.exec('select * from gb where id = ?', String(id)).toArray()[0]);
     if (!g || giftPhase(g, now) === 'gone') return null;
     return { uid: g.uid, a: g.a, b: g.b, rev: revOf(g) };
+  },
+  // The same facts for every board up on the plaza now (the boards live lists, at most GIFT.liveMax: /rt/world never shows more), so a room
+  // asks once for all of them and an id outside the list costs no call. -> [{ id, uid, a, b, rev }].
+  cheerLive(q, now = Date.now()) {
+    return q.exec("select * from gb where st = 'live' and a <= ? and b > ? order by a asc, id asc limit ?", now, now, GIFT.liveMax).toArray().map(rowOf)
+      .map((g) => ({ id: g.id, uid: g.uid, a: g.a, b: g.b, rev: revOf(g) }));
   },
   // The owner's DISCOVER switch (default off): the board's name, line and sender may then be listed on /discover while it is up. -> { ok, dc }.
   discover(q, id, uid, on, now = Date.now()) {
@@ -825,7 +844,15 @@ export async function giftWorld(env, k) {
 export const SEEN_MAX = 200;
 const SEEN_CAP = 1000;
 const SEEN = { list: [], at: 0, p: null }, HITS = new Map(), HIT = { at: 0, last: 0 };
-const seenAdd = (it) => { if (!SEEN.list.length) SEEN.at = Date.now(); if (SEEN.list.length < SEEN_CAP) SEEN.list.push(it); };
+// -> false when the isolate holds SEEN_CAP already (the item is dropped: a page told kept: false can show it did not go).
+const seenAdd = (it) => { if (SEEN.list.length >= SEEN_CAP) return false; if (!SEEN.list.length && !SOONC.size) SEEN.at = Date.now(); SEEN.list.push(it); return true; };
+// 출시 예정 관심 counters summed here per KST day and key ('d|k' -> n, like HITS): however many imp beacons come, the next batch carries one
+// item per key (e 'si'), so a DO call writes each counter row once. Only known keys (soonKeys) come here; a few days at most.
+const SOONC = new Map();
+function soonCount(keys, now = Date.now()) {
+  if (!SEEN.list.length && !SOONC.size) SEEN.at = now;
+  if (SOONC.size < SOON_KEYSET.size * 2) siAdd(SOONC, kstDay(now), keys, 1);
+}
 function hitAdd(bot, now = Date.now()) {
   const d = kstDay(now), x = HITS.get(d) || { hit: 0, hitbot: 0 };
   x[bot ? 'hitbot' : 'hit']++; HITS.set(d, x); if (!HIT.at) HIT.at = now;
@@ -833,10 +860,12 @@ function hitAdd(bot, now = Date.now()) {
 }
 function seenFlush(env, ctx, force = false) {
   const now = Date.now();
-  if (SEEN.p || (!SEEN.list.length && !(force && HITS.size)) || (!force && SEEN.list.length < GIFT.seenBatch && now - SEEN.at < GIFT.seenMs)) return SEEN.p;
+  if (SEEN.p || (!SEEN.list.length && !SOONC.size && !(force && HITS.size)) || (!force && SEEN.list.length < GIFT.seenBatch && now - SEEN.at < GIFT.seenMs)) return SEEN.p;
   const items = [];
   for (const [d, x] of HITS) for (const e of ['hit', 'hitbot']) if (x[e]) items.push({ e, d, n: x[e] });
   HITS.clear(); HIT.at = 0;
+  for (const [dk, n] of SOONC) items.push({ e: 'si', d: dk.slice(0, 10), k: dk.slice(11), n });
+  SOONC.clear();
   items.push(...SEEN.list.splice(0, Math.max(0, SEEN_MAX - items.length)));
   if (!SEEN.list.length) SEEN.at = 0; // what is left keeps its age: the next request sends it
   // A failed DO call puts the items back; what the answer hands over to pay (share rewards, the friends' push) never does (payOut never
@@ -1101,22 +1130,26 @@ async function startSeen(req, env, ctx, k) {
 // interest button of feature f, which is also that person's registration the first time (giftDb.soonAdd). s: where (SOON_SRC); v: this
 // browser's random id (the gift pages' kts_gv), used only when no token comes. Authorization (optional, never minted for this): the
 // account or guest the person already is; a token that does not verify is the same as none. The person is kept only as a keyed hash
-// (soonWho). Like the other beacons: the network's minute (gseen), not for the operator's device or the e2e tool, nothing at budget hard
+// (soonWho). Like the other beacons: the network's minute (its own, gsoon: SOON_KEEP.rateMin), not for the operator's device or the e2e tool, nothing at budget hard
 // (no DO call: kept false, so the page can say it did not go), and it waits in the isolate for the next batch (one DO call per
 // GIFT.seenBatch or GIFT.seenMs, the same at budget lean). -> { ok, kept }.
 export const soonWho = (env, who) => hex('si|' + String(who) + '|' + String(env.GUEST_KEY || ''));
 async function soonSeen(req, env, ctx, k) {
   if (req.method !== 'POST') return J({ err: 'post' }, 405);
-  if (!(await opsRate(env, req, 'gseen', 120, env.EVENT_RL))) return J({ ok: false, kept: false, code: 'rate' }, 429);
+  if (!(await opsRate(env, req, 'gsoon', SOON_KEEP.rateMin, env.EVENT_RL))) return J({ ok: false, kept: false, code: 'rate' }, 429); // its own count, lower than the page beacons'
   const got = await readSmall(req, SOON_KEEP.bodyMax), b = got.b || {}, v = soonFault(b);
   if (!v.ok) return J({ ok: false, kept: false }, 400);
   if (k.testTraffic?.(req)) return J({ ok: true, kept: false, test: true }); // the operator's device or tools/prod-e2e.mjs: not counted
   if (await hard(k, env)) return J({ ok: true, kept: false, busy: true });
   const actor = k.tokenOf(req) ? await actorOf(req, k, env) : null, lg = actor && k.guestLike && !k.guestLike(actor) ? 'a' : 'g';
-  if (v.a === 'imp') { for (const f of v.fs) seenAdd({ e: 'soon', a: 'imp', f, s: v.s, lg }); seenFlush(env, ctx); return J({ ok: true, kept: true }); }
+  // imp: summed here (soonCount), one counter row per key and batch however many come. tap: its counts summed the same way (nc: 1), and one
+  // item for the registration; the isolate full (SEEN_CAP): kept false and nothing counted, so the button goes back.
+  if (v.a === 'imp') { for (const f of v.fs) soonCount(soonKeys(f, 'imp', lg, v.s)); seenFlush(env, ctx); return J({ ok: true, kept: true }); }
   const who = actor ? String(actor.id) : VISITOR_ID.test(String(b.v || '')) ? 'd:' + String(b.v) : '';
   if (!who) return J({ ok: false, kept: false }, 400);
-  seenAdd({ e: 'soon', a: 'tap', f: v.fs[0], s: v.s, lg, w: await soonWho(env, who) });
+  const wk = lg === 'a' ? 'a' : actor ? 'g' : 'd';
+  if (!seenAdd({ e: 'soon', a: 'tap', f: v.fs[0], s: v.s, lg, w: await soonWho(env, who), nc: 1, wk, ...(wk === 'a' ? {} : { n: await k.ipHash(env, req) }) })) return J({ ok: true, kept: false, busy: true });
+  soonCount(soonKeys(v.fs[0], 'tap', lg, v.s));
   seenFlush(env, ctx);
   return J({ ok: true, kept: true });
 }
@@ -1313,7 +1346,7 @@ async function report(req, env, ctx, id, k) {
   let r = null; try { r = await giftM(env).giftReport(id, String(b.m || ''), await k.ipHash(env, req), Date.now()); } catch { r = null; }
   if (!r) return no('down', 503);
   if (!r.ok) return no(r.code, 404);
-  ONE.delete(id); if (r.hidden) NOW.at = 0;
+  ONE.delete(id); if (r.hidden) { NOW.at = 0; if (!PAPER_ID.test(String(b.m || '')) && k.giftOff) k.giftOff(env, ctx, [id]); } // the board itself hidden: the rooms' cheer list drops it
   if (r.off) towerOff(env, ctx, k, id, r.off);
   return J({ ok: true, hidden: !!r.hidden });
 }
@@ -1327,7 +1360,7 @@ async function remove(req, env, ctx, id, k) {
   if (!r) return no('down', 503);
   if (!r.ok) return no(r.code, r.code === 'owner' ? 403 : 404);
   if (r.vid) mediaDrop(env, ctx, [id]);
-  giftDrop(id);
+  giftDrop(id); if (k.giftOff) k.giftOff(env, ctx, [id]);
   if (r.up) ONE.delete(r.up); // it may have been that board's reply: its owner's next read asks again
   if (r.off) towerOff(env, ctx, k, id, r.off);
   return J({ ok: true });
@@ -1396,7 +1429,7 @@ const CARD = new Map(); // id (or id:t, the teaser) -> { at, v: bytes | null }, 
 // budget hard with no copy here, og.jpg with no DO call, as before.
 async function cardGet(req, env, id, k) {
   if (req.method !== 'GET' && req.method !== 'HEAD') return new Response('method', { status: 405 });
-  const og = () => Response.redirect(new URL('/og.jpg', req.url).href, 302);
+  const og = () => Response.redirect(new URL('/og.jpg?v=4', req.url).href, 302);
   if (!(await opsRate(env, req, 'gcard', 240, env.EVENT_RL))) return og();
   const now = Date.now(), want = new URL(req.url).searchParams.get('t') === '1', h = await hard(k, env);
   if (h && !ONE.has(id)) return og();
@@ -1430,7 +1463,7 @@ async function adminApi(req, env, ctx, u, k) {
     if (p === '/rt/admin/gift/share' && req.method === 'GET') return J(await M.giftAdmin('share', {}, now)); // 공유 보상 많이 받은 사람 (7 days)
     if (p === '/rt/admin/gift/hide' && req.method === 'POST') {
       const got = await readSmall(req, 500); if (!got.b) return J({ ok: false, error: '요청을 읽지 못했어요.' }, 400);
-      const r = await M.giftAdmin('hide', got.b, now); if (r.ok) { giftDrop(String(got.b.id || '')); towerOff(env, ctx, k, String(got.b.id || ''), r.off); } // off: in waitUntil, also at hard
+      const r = await M.giftAdmin('hide', got.b, now); if (r.ok) { giftDrop(String(got.b.id || '')); towerOff(env, ctx, k, String(got.b.id || ''), r.off); if (got.b.hide !== false && !PAPER_ID.test(String(got.b.m || '')) && k.giftOff) k.giftOff(env, ctx, [String(got.b.id || '')]); } // a board hidden (not a line, not brought back): the rooms' cheer list drops it // off: in waitUntil, also at hard
       return J({ ...r, off: undefined }, r.ok ? 200 : 400);
     }
     if (p === '/rt/admin/gift/refund' && req.method === 'POST') { // { k, done }: a refund the operator paid by hand (the list is in GET /rt/admin/gift)
@@ -1453,10 +1486,11 @@ async function adminApi(req, env, ctx, u, k) {
 // Account link (/rt/auth/merge) and withdrawal (/rt/auth/withdraw), from worker.js's waitUntil.
 // Both carry the 출시 예정 hashes of the ids (soonWho), which only the Worker can make.
 export async function giftMove(env, from, to) { try { const si = from && to ? { from: await soonWho(env, from), to: await soonWho(env, to) } : null; await giftM(env).giftMove(String(from || ''), String(to || ''), si); } catch { /* the boards stay with the guest id */ } }
-// tell: worker.js towerTell, so the rooms drop the account's main tower minutes the plazas already know (r.offs).
-export async function giftForget(env, uid, ctx, tell) {
+// tell: worker.js towerTell, so the rooms drop the account's main tower minutes the plazas already know (r.offs); off: worker.js
+// giftOffTell, so they drop its boards from their cheer lists.
+export async function giftForget(env, uid, ctx, tell, off) {
   let r = null; try { r = await giftM(env).giftForget(String(uid || ''), Date.now(), uid ? await soonWho(env, uid) : ''); } catch { r = null; }
-  if (r?.ids?.length) { for (const id of r.ids) giftDrop(id); await mediaDrop(env, ctx, r.ids); }
+  if (r?.ids?.length) { for (const id of r.ids) giftDrop(id); await mediaDrop(env, ctx, r.ids); if (off) await Promise.resolve(off(env, ctx, r.ids)).catch(() => null); }
   if (r?.offs?.length) { NOW.at = 0; if (tell) await Promise.all(r.offs.map((o) => Promise.resolve(tell(env, ctx, { id: o.id, m: o.m, off: 1 })).catch(() => null))); }
   if (r?.lines || r?.ids?.length) ONE.clear(); // their lines left other boards, their replies left the boards they answered: no copy here shows them
   return r;
@@ -1494,7 +1528,7 @@ export async function giftPage(req, env, ctx, u, k) {
   const view = live ? publicView(giftView(g, now), now) : null; // before the reveal: no line, no sender (the page is public and cached)
   const words = live ? giftShareText(view) : { title: down ? '잠시 뒤에 다시 열어 주세요 · WISH BOARD' : '선물 전광판 · WISH BOARD', text: down ? '지금은 광장이 붐벼요.' : '뉴욕 타임스퀘어를 본뜬 가상 광장에 친구를 위한 전광판을 6시간 무료로 걸어 보세요.' };
   const desc = live ? words.text + ' (' + windowText(view.a, view.b) + ')' : words.text;
-  const img = live ? origin + '/rt/gift/' + id + '/card.jpg' + (view.hide ? '?t=1' : '') : origin + '/og.jpg'; // ?t=1: the teaser card (a preview fetched now keeps no line)
+  const img = live ? origin + '/rt/gift/' + id + '/card.jpg' + (view.hide ? '?t=1' : '') : origin + '/og.jpg?v=4'; // ?t=1: the teaser card (a preview fetched now keeps no line)
   const meta = '<title>' + esc(words.title) + '</title><meta name="robots" content="noindex, nofollow"><meta name="description" content="' + esc(desc) + '">'
     + '<meta property="og:type" content="website"><meta property="og:site_name" content="WISH BOARD"><meta property="og:title" content="' + esc(words.title) + '"><meta property="og:description" content="' + esc(desc) + '">'
     + '<meta property="og:url" content="' + esc(origin + '/g/' + id) + '"><meta property="og:image" content="' + esc(img) + '"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">'

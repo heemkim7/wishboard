@@ -56,7 +56,8 @@ function fakeDom({ path = '/gift', search = '', data = null, store = {}, at = 0,
   // The session history of this document: entries with their state, as pushState and replaceState leave them.
   const entries = [{ url: path + search, state: null }]; let cur = 0;
   const hist = { scrollRestoration: 'auto', get state() { return entries[cur].state; },
-    pushState(s, t, url) { entries.splice(cur + 1); entries.push({ url: String(url), state: s }); cur++; go(url); }, replaceState(s, t, url) { entries[cur] = { url: String(url), state: s }; go(url); } };
+    pushState(s, t, url) { entries.splice(cur + 1); entries.push({ url: String(url), state: s }); cur++; go(url); }, replaceState(s, t, url) { entries[cur] = { url: String(url), state: s }; go(url); },
+    back() { P.step(-1); }, go(d) { P.step(Number(d) || 0); }, get length() { return entries.length; }, get index() { return cur; } };
   const go = (url) => { const u = new URL(String(url), loc.origin); loc.pathname = u.pathname; loc.search = u.search; };
   const win = { addEventListener(t, f) { (winOn[t] ||= []).push(f); }, removeEventListener() {}, scrollTo() {}, postMessage() {} }; win.parent = embed ? { postMessage(m) { posted.push(m); } } : win;
   const realNow = Date.now;
@@ -88,7 +89,13 @@ function fakeDom({ path = '/gift', search = '', data = null, store = {}, at = 0,
     heads: (tag = 'h2') => walk(app).filter((n) => n.tag === tag && shown(n)).map((n) => n.textContent),
     says: (re) => walk(app).some((n) => shown(n) && n.kids.some((k) => k.nodeType === 3 && re.test(k.textContent))),
     async press(n, ev = {}) { assert.ok(n, 'the button is on screen'); for (const f of n.on.click || []) await f({ preventDefault() {}, target: n, ...ev }); await settle(); },
-    async submit() { const f = walk(app).find((n) => n.tag === 'form'); assert.ok(f, 'a form'); for (const s of f.on.submit) await s({ preventDefault() {} }); await settle(); },
+    /** The form's submit as a person gets there: on the maker's steps, 다음 (a submit before the last step) until the last step, then 걸기
+     *  (or the step where a field was refused, which stays); any other form at once. */
+    async submit() {
+      const f = walk(app).find((n) => n.tag === 'form'); assert.ok(f, 'a form');
+      const no = () => walk(f).find((n) => n.className === 'stepno')?.textContent || '';
+      for (let i = 0; i < 4; i++) { const was = no(), last = !was || /^(\d+) \/ \1$/.test(was); for (const s of f.on.submit) await s({ preventDefault() {} }); await settle(); if (last || no() === was || !f.isConnected) break; }
+    },
     input: (id) => walk(app).find((n) => n.attrs.id === id) || null,
     async timers() { for (const t of timeouts.splice(0)) await t.f(); await settle(); }, timeouts,
     tick() { for (const f of ticks) f(); },
@@ -1168,9 +1175,47 @@ describe('the gift pages on a phone: what the page script builds (giftpage.js)',
       assert.equal(P.all('div').find((n) => n.attrs['aria-label'] === '색').className, 'chips sws');
       // Enter in a field of step 2 goes on, never hangs the board unseen; Hangul being composed is left alone
       const key = (more) => { const e = { key: 'Enter', isComposing: false, keyCode: 13, defaultPrevented: false, preventDefault() { e.defaultPrevented = true; }, ...more }; for (const f of P.input('to').on.keydown) f(e); return e; };
-      assert.equal(key({ isComposing: true }).defaultPrevented, false); assert.deepEqual(steps.map((n) => !!n.hidden), [true, false, true]);
+      assert.equal(key({ isComposing: true }).defaultPrevented, true, 'no form submit while Hangul is composed'); assert.deepEqual(steps.map((n) => !!n.hidden), [true, false, true], 'nor a step');
+      assert.equal(key({ keyCode: 229 }).defaultPrevented, true); assert.deepEqual(steps.map((n) => !!n.hidden), [true, false, true]);
       assert.equal(key().defaultPrevented, true); assert.deepEqual(steps.map((n) => !!n.hidden), [true, true, false]);
       assert.equal(P.sent.some((s) => s.url === '/rt/gift' && s.method === 'POST'), false, 'nothing sent by Enter');
+    } finally { P.done(); }
+  });
+  it('a submit before the last step (the browser pressing the hidden 걸기 for an Enter) is 다음, never a post', async () => {
+    const P = maker();
+    try {
+      await P.load('giftpage.js');
+      const form = P.all('form')[0], steps = form.kids.filter((n) => n.className === 'step'), send = P.all('button').find((n) => n.attrs.type === 'submit');
+      const implicit = async () => { for (const s of form.on.submit) await s({ preventDefault() {}, submitter: send }); await P.settle(); };
+      const posts = () => P.sent.filter((s) => s.url === '/rt/gift' && s.method === 'POST').length;
+      await implicit(); assert.deepEqual(steps.map((n) => !!n.hidden), [true, false, true], 'step 1: on to the names');
+      await implicit(); assert.deepEqual(steps.map((n) => !!n.hidden), [true, false, true], 'step 2 with no name: refused there');
+      assert.equal(P.says(/받는 사람 이름을 적어 주세요/), true);
+      P.input('to').value = '수아'; for (const f of P.input('to').on.input) f(); P.input('msg').value = '생일 축하해'; for (const f of P.input('msg').on.input) f();
+      await implicit(); assert.deepEqual(steps.map((n) => !!n.hidden), [true, true, false], 'step 2 filled in: on to the last step');
+      assert.equal(posts(), 0, 'nothing hung before the last step');
+      await implicit(); assert.equal(posts(), 1, 'the last step hangs it');
+    } finally { P.done(); }
+  });
+  it('the steps are in the browser history: back on step 3 is step 2 with what was typed, back on step 1 leaves; the hung board is one back from the maker', async () => {
+    const P = maker();
+    try {
+      await P.load('giftpage.js');
+      const form = () => P.all('form')[0], steps = () => form().kids.filter((n) => n.className === 'step'), up = () => steps().findIndex((n) => !n.hidden) + 1;
+      const n0 = history.length;
+      await P.press(P.btn(/^생일$/)); await P.timers();
+      assert.equal(up(), 2); assert.equal(history.length, n0 + 1, 'the day picked: one entry'); assert.equal(P.loc.pathname, '/gift');
+      P.input('to').value = '수아'; for (const f of P.input('to').on.input) f();
+      await P.press(P.btn(/^다음$/)); assert.equal(up(), 3); assert.equal(history.length, n0 + 2);
+      await P.step(-1); assert.equal(up(), 2, 'back: step 2'); assert.equal(P.input('to').value, '수아', 'nothing typed lost'); assert.equal(P.all('form')[0], form());
+      await P.step(1); assert.equal(up(), 3, 'forward: step 3 again');
+      await P.press(P.btn(/^이전$/)); assert.equal(up(), 2, '← 이전 goes back in the history'); assert.equal(history.index, n0);
+      await P.press(P.btn(/^이전$/)); assert.equal(up(), 1); assert.equal(history.index, n0 - 1, 'to the first entry');
+      await P.press(P.btn(/^다음$/)); assert.equal(up(), 2); await P.press(P.btn(/^다음$/)); assert.equal(up(), 3);
+      await P.submit();
+      assert.match(P.loc.pathname, /^\/g\/[0-9a-z]{8}$/);
+      assert.equal(history.index, n0, 'the steps went: the board right after the maker\'s first entry');
+      assert.equal(history.length, n0 + 1);
     } finally { P.done(); }
   });
   // 2026-11-28 (the owner: "내 전광판을 무료로 걸면 어디 걸리는 건지 와닿지 않는다", "항목이 많다", "유료 옵션은 숨겨 줘"): where it hangs first,

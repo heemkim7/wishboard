@@ -11,6 +11,7 @@ export const EVENT_NAMES = Object.freeze([
   'taxi_dropoff',
   'board_claim',
   'wish_cheer',
+  'gift_cheer',  // 선물 전광판 응원 (main.js cheerGift): a cheer on a gift board, apart from wish_cheer (a lit board's)
   'cheer',
   'outlink_click',
   'vip_modal_open',

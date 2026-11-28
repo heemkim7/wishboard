@@ -34,6 +34,26 @@ describe('tap guard', () => {
     g.down(); g.opened();
     assert.equal(g.click({ detail: 0 }), false);
   });
+  it('a long press on 걸기 (held 1.5 to 3.9 s, then let go): its late click is still the ghost, never a press on the new sheet', () => {
+    for (const held of [1600, 2500, 3900]) {
+      const c = clock(), g = createTapGuard({ now: c.now });
+      g.down(); g.opened(); c.step(held);
+      assert.equal(g.click({ detail: 1 }), true, held + ' ms');
+      c.step(300); g.down(); c.step(80);
+      assert.equal(g.click({ detail: 1 }), false, 'the next tap on the sheet works');
+    }
+    assert.ok(GHOST_MS >= 4000);
+  });
+  it('a long press does not hold back a keyboard click, nor a sheet the HUD button opened from its own click', () => {
+    const c = clock(), g = createTapGuard({ now: c.now });
+    g.down(); g.opened(); c.step(3000);
+    assert.equal(g.click({ detail: 0 }), false, 'Enter or Space on a button');
+    const h = createTapGuard({ now: c.now });
+    h.down(); c.step(3000);
+    assert.equal(h.click({ detail: 1 }), false); h.opened();
+    c.step(500); h.down(); c.step(60);
+    assert.equal(h.click({ detail: 1 }), false);
+  });
   it('forgets an old press: a click long after it is not a ghost', () => {
     const c = clock(), g = createTapGuard({ now: c.now });
     g.down(); g.opened(); c.step(GHOST_MS + 1);

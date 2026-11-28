@@ -197,7 +197,7 @@ const SNAP_PAGE = /\/rt\/s\/([0-9a-f]{32})(?:[/?#]|$)/;
 export function kakaoImage(url, origin = SITE) {
   const base = String(origin || SITE).replace(/\/+$/, '');
   const m = SNAP_PAGE.exec(String(url || ''));
-  return m ? base + '/rt/snap/' + m[1] : base + '/og.jpg';
+  return m ? base + '/rt/snap/' + m[1] : base + '/og.jpg?v=4';
 }
 // Share.sendDefault payload (feed template). title and text are the words the link share uses; the link is the same share URL.
 export function kakaoFeed({ title, text, url, origin = SITE } = {}) {

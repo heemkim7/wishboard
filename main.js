@@ -785,7 +785,7 @@ function cheerGift(id, slot, phraseId) {
   if (!net.ch?.raw?.(msg)) { ui.note('광장 서버에 연결되면 응원이 기록됩니다', 'err', null, { key: 'offline' }); return; }
   cheerAt.set(key, Date.now());
   if (slot) world?.cheerAt?.(slot);
-  trackEvent('wish_cheer', { slot: String(slot || '') });
+  trackEvent('gift_cheer', { slot: String(slot || '') }); // its own name: wish_cheer is a lit board's cheer
   ui.note(`🙏 ${CHEER_PHRASES[msg.p - 1]}`, 'ok', null, { key: 'cheer-sent' });
   ui.sfx.hit();
 }

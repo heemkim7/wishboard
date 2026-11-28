@@ -316,7 +316,7 @@ describe('선물 전광판 on the Worker', { concurrency: false }, () => {
       const env = makeEnv(), H = harness(env), A = await H.guest();
       const r = await (await H.post('/rt/gift', FORM({ to: '<b>민지</b>' }), A.token)).json();
       const og = await H.get('/rt/gift/' + r.id + '/card.jpg');
-      assert.equal(og.status, 302); assert.match(og.headers.get('location'), /\/og\.jpg$/);
+      assert.equal(og.status, 302); assert.match(og.headers.get('location'), /\/og\.jpg\?v=4$/);
       assert.equal((await H.call('/rt/gift/' + r.id + '/card', { method: 'POST', headers: { authorization: 'Bearer ' + A.token, 'content-type': 'image/jpeg' }, body: JPEG() })).status, 200);
       const jpg = await H.get('/rt/gift/' + r.id + '/card.jpg');
       assert.equal(jpg.status, 200); assert.equal(jpg.headers.get('content-type'), 'image/jpeg');
