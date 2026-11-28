@@ -1170,11 +1170,12 @@ export function createUI(root, hooks) {
     if (!slot || sheet || baking || dance) return;
     hideFar();
     const state = info.state || 'free', tw = isPrimeSlot(slot) ? hooks.towerOf?.(slot) || '' : ''; // tw: the main tower minute's gift board
-    const who = tw ? '메인 타워 축하 1분' : state === 'other' ? `${info.who || '익명'}님의 전광판` : state === 'mine' ? '내 전광판' : '빈 전광판';
+    const gift = !tw && state !== 'other' && state !== 'mine' ? hooks.giftOn?.(slot) || null : null; // 선물 전광판 on this screen now
+    const who = tw ? '메인 타워 축하 1분' : gift ? giftWho(gift) : state === 'other' ? `${info.who || '익명'}님의 전광판` : state === 'mine' ? '내 전광판' : '빈 전광판';
     const far = Number.isFinite(info.dist) ? ` · ${Math.round(info.dist)}m` : '';
     const act = (text, fn, cls = '') => h('button', { type: 'button', class: cls, text, onclick: () => { hideFar(); fn(); } });
-    const cheerBtn = act('응원', () => hooks.cheer?.(slot, 1));
-    cheerBtn.disabled = state !== 'other';
+    const cheerBtn = act('응원', () => (gift ? hooks.cheerGift?.(gift.id, slot, 1) : hooks.cheer?.(slot, 1)));
+    cheerBtn.disabled = gift ? giftMine(gift.id) : state !== 'other';
     const el = h('div', { class: 'farcard', role: 'status' },
       h('div', { class: 'where' }, h('b', { text: slotName(slot) }), h('span', { text: who + far })),
       h('div', { class: 'far-acts' }, // not 'acts': that class is the touch button column (absolute, pointer-events: none)
@@ -1974,8 +1975,9 @@ export function createUI(root, hooks) {
   }
   const RINGS = [{ x: 16, z: 52 }, { x: 16, z: 90 }];
   // A row's tap (the card, the sheet, a 오늘 할 일 notice): the wish sheet for the wish and heart rows, the 응원 팀 sheet for the team row,
-  // the week's stamps for attendance, and for a cheer the nearest lit board of someone else, walked to by itself (자동으로 가기). With no
-  // such board there is no waypoint, only TODO_TEXT.cheerNone: an empty slot or my own board takes no cheer (worker.js Room.cheer 'dark').
+  // the week's stamps for attendance, and for a cheer the nearest lit board of someone else or gift board on a screen that I did not make,
+  // walked to by itself (자동으로 가기). With neither there is no waypoint, only TODO_TEXT.cheerNone: an empty slot or my own board takes no
+  // cheer (worker.js Room.cheer 'dark').
   function guideQuest(key) {
     if (key === 'wish' || key === 'heart') { openWish({ from: 'todo' }); return; }
     if (key === 'team') { openTribeSheet(); return; }
@@ -1986,21 +1988,29 @@ export function createUI(root, hooks) {
     const at = hooks.minimap?.()?.me;
     let best = null, dist = Infinity;
     for (const b of rows) {
-      const card = hooks.slotCard?.(b.slot_id);
+      const card = hooks.slotCard?.(b.slot);
       if (!Number.isFinite(card?.x) || !Number.isFinite(card?.z)) continue;
       const d = at ? (card.x - at.x) ** 2 + (card.z - at.z) ** 2 : 0;
-      if (d < dist) { dist = d; best = { x: card.x, z: card.z, name: '전광판' }; }
+      if (d < dist) { dist = d; best = { x: card.x, z: card.z, name: b.gift ? '선물 전광판' : '전광판' }; }
     }
     if (!best) { note('길안내할 전광판이 없어요', 'err'); return; }
     hooks.setWaypoint?.({ ...best, auto: true });
-    note(`전광판 길안내를 시작해요. 켜진 남의 전광판을 눌러 응원하면 응원 포인트 +${PAY.cheer.base}, 멀리서도 돼요`, 'ok');
+    note(`${best.name} 길안내를 시작해요. 켜진 남의 전광판이나 선물 전광판을 눌러 응원하면 응원 포인트 +${PAY.cheer.base}, 멀리서도 돼요`, 'ok');
   }
-  // The boards a cheer counts on (worker.js Room.cheer): lit and held by someone else. Gift boards on free screens, empty slots and my
-  // own boards are not among them. cheerSignal: todo.js cheerOpen (null until the plaza's boards are in).
+  // What a cheer counts on (worker.js Room.cheer, Room.cheerGift), as { slot, gift? }: lit boards held by someone else, and the gift boards
+  // on a screen now (hooks.giftScreens: /rt/world's public list) that were not made on this device (kts_gmine) and that the room did not
+  // refuse as mine or gone this visit (giftNoCheer). Empty slots and my own boards are not among them. cheerSignal: todo.js cheerOpen (null
+  // until the plaza's boards are in).
   function cheerBoards() {
     const me = hooks.actorId?.() || '';
-    return (world.billboards || []).filter((b) => boardActive(b) && (!me || b.holder_id !== me));
+    const out = (world.billboards || []).filter((b) => boardActive(b) && (!me || b.holder_id !== me)).map((b) => ({ slot: b.slot_id }));
+    const mine = new Set((Array.isArray(recall('kts_gmine', [])) ? recall('kts_gmine', []) : []).map(String));
+    for (const s of hooks.giftScreens?.() || []) if (s?.slot && s.id && !mine.has(String(s.id)) && !giftNoCheer.has(String(s.id))) out.push({ slot: String(s.slot), gift: String(s.id) });
+    return out;
   }
+  const giftNoCheer = new Set(); // gift ids the room answered 'dark' this visit (my own board made on another device, or no longer up)
+  // A gift board made on this device (kts_gmine, giftpage.js): no cheer of mine counts on it (worker.js Room.cheerGift 'dark').
+  function giftMine(id) { const ids = recall('kts_gmine', []); return Array.isArray(ids) && ids.map(String).includes(String(id)); }
   function cheerSignal() { return plazaReady ? cheerBoards().length > 0 : null; }
 
   // ---- 오늘 할 일 (todo.js holds the rules; docs/superpowers/specs/2026-11-24-today-todo-design.md) ---------------------------------
@@ -2753,6 +2763,8 @@ export function createUI(root, hooks) {
     const tw = isPrimeSlot(slotId) ? hooks.towerOf?.(slotId) : ''; if (tw) { hooks.openGiftPage?.(tw); return; }
     if (isPrimeSlot(slotId) && teamUi().primeNow(slotId)) { teamUi().openPrime(slotId); return; } // a team is on it: the prime screen sheet
     const b = boardById(slotId);
+    const gift = !boardActive(b) ? hooks.giftOn?.(slotId) || null : null;
+    if (gift) { openGiftScreen(slotId, gift); return; } // 선물 전광판 on this screen now: its sheet (cheers count like a lit board's)
     if (!boardActive(b)) { openBillboard(slotId); return; }
     const mine = b.holder_id === hooks.actorId();
     const other = mine ? null : otherShare({ board: b, me: hooks.actorId?.() || '' }); // 공유 for a visitor: this board's card page
@@ -2820,6 +2832,27 @@ export function createUI(root, hooks) {
       );
       adRefresh = paintStats;
       return () => { adRefresh = null; };
+    }, true);
+  }
+  // 선물 전광판 on a free screen (ts3d/screens.js giftOn: the public copy /rt/world carries, past its reveal): who it is for, the line, and
+  // the cheer phrases (worker.js Room.cheerGift: the same 응원 포인트 and 오늘 할 일 count as a lit board). One made on this device has no
+  // phrases. The screen is still free to claim (이 자리에 걸기).
+  function giftWho(g) { const to = chars(g?.to || '', 12) || '누군가'; return g?.occ === 'me' ? `${to}님의 선물 전광판` : `${to}님을 위한 선물 전광판`; }
+  function openGiftScreen(slotId, g) {
+    const card = hooks.slotCard?.(slotId), mine = giftMine(g.id);
+    openSheet('선물 전광판', null, (host) => {
+      host.append(
+        card ? h('div', { class: 'place' }, h('div', { class: 'where' }, h('b', { text: card.title }), h('span', { text: card.line }))) : null,
+        h('p', { class: 'note', text: `🎁 ${giftWho(g)}이에요.` }),
+        g.msg ? h('p', { class: 'note', text: `“${chars(g.msg, 40)}”${g.from ? ` · ${chars(g.from, 12)}` : ''}` }) : null,
+        mine ? h('p', { class: 'note', text: '내가 건 선물 전광판이에요. 응원은 다른 사람이 보낼 수 있어요.' })
+          : h('p', { class: 'note', text: `응원하면 응원 포인트 +${PAY.cheer.base} · 오늘 할 일 '전광판 응원'에도 들어가요` }),
+        mine ? null : h('div', { class: 'chips' }, ...CHEER_PHRASES.map((text, i) => h('button', { type: 'button', text, onclick: () => hooks.cheerGift?.(g.id, slotId, i + 1) }))),
+        h('div', { class: 'row' },
+          h('button', { type: 'button', class: 'btn primary', text: '선물 보기', onclick: () => { closeSheet(); hooks.openGiftPage?.(g.id); } }),
+          h('button', { type: 'button', class: 'btn ghost', text: '이 전광판 보기', onclick: () => { closeSheet(); hooks.focusShot?.(slotId); } }),
+          h('button', { type: 'button', class: 'btn ghost', text: '이 자리에 걸기', onclick: () => openBillboard(slotId) })),
+      );
     }, true);
   }
   // Photo review results main.js told this session (photoNews), by slot: { kind: 'on' | 'off' | 'down' | 'lost', text }.
@@ -6389,6 +6422,9 @@ export function createUI(root, hooks) {
     setStatus(text, kind = 'warn') { statusText = text || ''; statusKind = kind; renderStatus(); },
     setNear(v) { near = v || null; renderPrompt(); },
     farBoard: showFarCard,
+    // 선물 전광판 응원: the room refused a gift board as mine or no longer up (it leaves the cheer guide this visit); gifts came in (the list).
+    giftNoCheer(id) { if (/^[0-9a-z]{8}$/.test(String(id || ''))) { giftNoCheer.add(String(id)); renderTodo(); renderGoal(); } },
+    giftsIn() { renderTodo(); renderGoal(); },
     adCard: showAdCard,
     setWorld(next) {
       world = { billboards: next?.billboards || [], plots: next?.plots || [], ranks: next?.ranks || [], today: next?.today || null, teams: Array.isArray(next?.teams) ? next.teams : [] };

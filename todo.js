@@ -4,7 +4,7 @@
 // and draw. It adds no point source: the values are the pays that already exist (BONUS attend/mission, QUEST cheer).
 
 export const TODO = Object.freeze({
-  cheerNeed: 3,    // 전광판 응원 3번 (QUEST cheer)
+  cheerNeed: 3,    // 전광판 응원 3번 (QUEST cheer): a lit board of someone else or a gift board on a screen, one count (worker.js Room.cheerLand)
   cheerPts: 45,    // 15 on the first cheer (BONUS mission) + 30 on the third (QUEST cheer): today's pays, unchanged
   wishPts: 15,     // BONUS mission
   heartPts: 15,    // BONUS mission
@@ -21,8 +21,8 @@ export const TODO_TEXT = Object.freeze({
   chip: '🎉 오늘 할 일 완료',
   bye: '내일 또 만나요',
   teamValue: '팀 기록',
-  cheerWait: '지금은 응원할 전광판이 없어요', // the cheer row while nobody else's board is lit (todoList cheerOpen false)
-  cheerNone: '지금은 켜진 남의 전광판이 없어요. 누가 전광판을 켜면 응원할 수 있어요', // its tap: no waypoint (ui.js guideQuest)
+  cheerWait: '지금은 응원할 전광판이 없어요', // the cheer row while nobody else's board is lit and no gift board of someone else is up (todoList cheerOpen false)
+  cheerNone: '지금은 켜진 남의 전광판도, 걸린 선물 전광판도 없어요. 누가 전광판을 켜거나 선물 전광판을 걸면 응원할 수 있어요', // its tap: no waypoint (ui.js guideQuest)
 });
 const WD = ['월', '화', '수', '목', '금', '토', '일'];
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -44,7 +44,7 @@ export function weekStart(day) {
 
 // ---- the list ---------------------------------------------------------------------------------------------------------------
 /** s: { attendPts, cheer (today's landed cheers), cheerDone (qPaid.cheer, the server's qc), cheerOpen (false: no lit board of someone
- *  else to cheer now, the only cheer worker.js Room.cheer counts; null while the boards are not in; left out: open), wish / heart (true,
+ *  else and no gift board of someone else on a screen to cheer now, the only cheers worker.js Room.cheer counts; null while the boards are not in; left out: open), wish / heart (true,
  *  false, or null when not known yet), team (null while it is being decided, false when teams are not usable now, else { has: a team of
  *  mine, done: today's cheer for it is on record }) }. -> rows in the spec's order: { id, name, label, value, pts, done, known, wait?,
  *  why?, n?, need? }. team is a row only when { has, done } came: without it N is 4. A cheer row not done while cheerOpen is false waits

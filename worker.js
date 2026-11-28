@@ -302,6 +302,7 @@ export class Meter extends DurableObject {
   giftTowerUnhold(id, uid, m) { return giftDb.towerUnhold(this.giftI(), id, uid, m); }
   giftTowerEntryAt(id, m, now) { return giftDb.towerEntryAt(this.giftI(), id, m, now); } // the 'dark' alarm at a board's reveal
   giftWorldRead(now) { return giftDb.worldRead(this.giftI(), now); } // /rt/world's gifts and main tower bookings
+  giftCheerOf(id, now) { return giftDb.cheerOf(this.giftI(), id, now); } // 선물 전광판 응원: a room asks who made the board and when it is up (Room.giftFacts)
   giftRefundFail(o) { return giftDb.refundFail(this.giftI(), o); } // a row the operator pays by hand (the admin gift view)
   giftPerkFit(id, uid, gives, now) { return giftDb.perkFit(this.giftI(), id, uid, gives, now); } // 주문·결제: can the board take these perks
   giftPerkOn(id, uid, order, gives, now) { return giftDb.perkOn(this.giftI(), id, uid, order, gives, now); } // a paid order published: its perks on
@@ -1233,7 +1234,9 @@ export class Room extends DurableObject {
   // PAY.cheer.perHour cheers this clock hour: 'cap' (the cheer is refused). A cheer that lands pays PAY.cheer.base (BALANCE.cheerGroup for a
   // building one side holds whole) while today's PAY.cheer.perDay paid cheers are not used up; after that it still lands (inbox, count, tribe
   // score, the quest) and is answered amount 0, why 'full'.
+  // A message with g (a gift board's id) is a cheer on a 선물 전광판 (cheerGift).
   async cheer(w, a, m) {
+    if (m.g != null) return this.cheerGift(w, a, m);
     const p = Math.floor(Number(m.p));
     const slot = String(m.slot || '');
     if (!AD_SLOT.test(slot) || p < 1 || p > 12) return;
@@ -1247,15 +1250,8 @@ export class Room extends DurableObject {
     if (!board.holder_id || board.holder_id === a.k || !(until > now)) { this.tx(w, { t: 'PAY', kind: 'cheer', amount: 0, why: 'dark' }); return; }
     this.tapDb();
     if (soon()) { this.tx(w, { t: 'PAY', kind: 'cheer', amount: 0, why: 'soon' }); return; } // again: another cheer may have landed during the read
-    const q = this.ctx.storage.sql, day = kstDay(now), hb = String(Math.floor(now / 3600000)), hn = agGet(q, a.k, 'hr:cheer', hb);
-    if (hn >= PAY.cheer.perHour) { this.tx(w, { t: 'PAY', kind: 'cheer', amount: 0, why: 'cap' }); return; }
-    this.gateSet(a.k + '|cheer:' + slot, now);
-    agPut(q, a.k, 'hr:cheer', hb, hn + 1);
     const base = chainBoost([...boards.values()], slot, now) ? BALANCE.cheerGroup : PAY.cheer.base;
-    const amount = this.dayPay(a, 'cheer', base, PAY.cheer.perDay, '', now);
-    agPut(q, a.k, 'qc', day, agGet(q, a.k, 'qc', day) + 1);
-    this.tx(w, amount > 0 ? { t: 'PAY', kind: 'cheer', amount } : { t: 'PAY', kind: 'cheer', amount: 0, why: 'full' });
-    q.exec('insert into chd(d, paid, free) values(?, ?, ?) on conflict(d) do update set paid = paid + excluded.paid, free = free + excluded.free', day, amount > 0 ? 1 : 0, amount > 0 ? 0 : 1); // no DO call: flushAds hands it over
+    if (this.cheerLand(w, a, a.k + '|cheer:' + slot, base, now) < 0) return;
     this.adTally(slot, 'h', a.k);
     this.shareCheer(slot, p);
     const holder = String(board.holder_id);
@@ -1272,11 +1268,69 @@ export class Room extends DurableObject {
       this.conns++; this.shareP = shareReact(this.env, this.ctx, { rpc: supabaseRpc }, { o: holder, k: kc, net: a.nt, uid: a.k, acct: !a.an });
     }
     // 소속 scores (bit 1 per cheer) are no longer kept: 응원 팀 count people who support their team (teamsrv.js), not cheers.
+    this.cheerTouch(a, now);
+  }
+  // What every cheer that lands shares, a lit board's or a gift board's: this clock hour's PAY.cheer.perHour ('cap': refused), the target's
+  // gap (gate), today's PAY.cheer.perDay paid cheers (dp:cheer; after that amount 0, why 'full'), the quest's count (qc: 오늘 할 일
+  // "전광판 응원 3번", one QUEST cheer a day) and the day's landed cheers (chd, the admin's). tag: more fields on the answer (g: a gift board).
+  // -> the amount paid (0 when today's points are used up), or -1 when this hour's cap refused it.
+  cheerLand(w, a, gate, base, now, tag = {}) {
+    this.tapDb();
+    const q = this.ctx.storage.sql, day = kstDay(now), hb = String(Math.floor(now / 3600000)), hn = agGet(q, a.k, 'hr:cheer', hb);
+    if (hn >= PAY.cheer.perHour) { this.tx(w, { t: 'PAY', kind: 'cheer', amount: 0, why: 'cap', ...tag }); return -1; }
+    this.gateSet(gate, now);
+    agPut(q, a.k, 'hr:cheer', hb, hn + 1);
+    const amount = this.dayPay(a, 'cheer', base, PAY.cheer.perDay, '', now);
+    agPut(q, a.k, 'qc', day, agGet(q, a.k, 'qc', day) + 1);
+    this.tx(w, amount > 0 ? { t: 'PAY', kind: 'cheer', amount, ...tag } : { t: 'PAY', kind: 'cheer', amount: 0, why: 'full', ...tag });
+    q.exec('insert into chd(d, paid, free) values(?, ?, ?) on conflict(d) do update set paid = paid + excluded.paid, free = free + excluded.free', day, amount > 0 ? 1 : 0, amount > 0 ? 0 : 1); // no DO call: flushAds hands it over
+    return amount;
+  }
+  cheerTouch(a, now) {
     try {
       this.conns++; // a DO call, counted toward the daily budget
       const job = this.env.METER.get(this.env.METER.idFromName('ev'))?.touch?.(isoWeek(now), a.k);
       if (job && typeof job.then === 'function') job.catch(() => {});
     } catch { /* north-star touch is best-effort */ }
+  }
+  // 선물 전광판 응원 (the owner's decision, 2026-11-28): { t: 'CHEER', g: <gift id>, p } counts like a cheer on a lit board: the same pay
+  // (PAY.cheer.base), the same hour cap, day points and quest count (cheerLand), its own gap per board (gate '|cheer:g:<id>', PAY.cheer.gapMs).
+  // It lands only on a board that is up on the plaza now (st live, inside its window a..b, past its reveal: a board before its reveal is never
+  // counted and nothing of it is told) and was not made by this account or guest ('dark', as my own lit board). The facts come from the
+  // gift store (giftFacts, one counted DO call per board per GF_TTL); unknown (the call failed): 'wait'. Budget hard: 'wait' before any call.
+  // No inbox, no board report, no share reward: those belong to the lit boards. Every answer carries g.
+  async cheerGift(w, a, m) {
+    const p = Math.floor(Number(m.p)), id = String(m.g || '');
+    if (!GIFT_ID.test(id) || p < 1 || p > 12) return;
+    const tag = { g: id }, say = (why) => this.tx(w, { t: 'PAY', kind: 'cheer', amount: 0, why, ...tag });
+    const gate = a.k + '|cheer:g:' + id, soon = () => Date.now() - this.gateAt(gate) < PAY.cheer.gapMs - GAP_EARLY;
+    if (this.lvl >= 2) return say('wait');
+    if (soon()) return say('soon');
+    const f = await this.giftFacts(id), now = Date.now();
+    if (f === undefined) return say('wait');
+    if (!f || !f.uid || f.uid === a.k || !(now >= f.a && now < f.b && now >= f.rev)) return say('dark');
+    if (soon()) return say('soon');
+    if (this.cheerLand(w, a, gate, PAY.cheer.base, now, tag) < 0) return;
+    this.cheerTouch(a, now);
+  }
+  // A gift board's facts for a cheer (giftsrv.js giftDb.cheerOf: { uid, a, b, rev } or null for none, hidden or gone), kept in this room's memory
+  // GF_TTL (GF_LEAN at budget lean), shared by cheers that ask at once. A failed call, or one with no answer in BRD_MS: undefined, and that board
+  // is not asked again for BRD_FAIL.
+  giftFacts(id) {
+    if (!this._gf) this._gf = new Map();
+    const now = Date.now(), hit = this._gf.get(id), ttl = this.lvl >= 1 ? GF_LEAN : GF_TTL;
+    if (hit && (hit.p || (hit.bad ? now < hit.at + BRD_FAIL : now - hit.at < ttl))) return hit.p || Promise.resolve(hit.bad ? undefined : hit.f);
+    if (this._gf.size >= 500) this._gf.clear();
+    const e = { at: now, p: null };
+    this.conns++; // a DO call, counted toward the daily budget
+    let t = 0;
+    const ask = Promise.resolve().then(() => this.env.METER.get(this.env.METER.idFromName('gift')).giftCheerOf(id, now));
+    e.p = Promise.race([ask, new Promise((_, no) => { t = setTimeout(() => no(new Error('slow')), BRD_MS); })])
+      .then((f) => { e.f = f && typeof f === 'object' ? { uid: String(f.uid || ''), a: Number(f.a) || 0, b: Number(f.b) || 0, rev: Number.isFinite(Number(f.rev)) ? Number(f.rev) : Infinity } : null; return e.f; },
+        () => { e.bad = 1; return undefined; })
+      .finally(() => { clearTimeout(t); e.at = Date.now(); e.p = null; });
+    this._gf.set(id, e);
+    return e.p;
   }
   async replyCheer(w, a, m) {
     const p = Math.floor(Number(m?.p));
@@ -2034,6 +2088,7 @@ function cachedBoards() {
     return Array.isArray(world?.billboards) ? world.billboards : [];
   } catch { return []; }
 }
+const GF_TTL = 60000, GF_LEAN = 300000; // Room.giftFacts: how long a gift board's facts are kept in a room (budget lean: longer)
 // Room board rows (brd): trusted for BRD_TTL, a missing one is read with a BRD_MS limit, not again for BRD_FAIL after a failure. Room inbox queue (ibq):
 // IBQ_N rows per inbox_batch, kept IBQ_DAYS, IBQ_MAX rows.
 const BRD_TTL = 300000, BRD_MS = 2500, BRD_FAIL = 10000, BRD_KEYS = 'slot_id,holder_id,holder_name,line1,line2,line3,lit_until,expires_at', IBQ_N = 100, IBQ_DAYS = 7, IBQ_MAX = 500;

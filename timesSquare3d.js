@@ -3189,6 +3189,9 @@ void main(){
     // whether the player is walking right now (keys or the stick: a scripted camera would end at once).
     cerPrep, cerPose, cerEnd, cerPhoto, walking: () => walkingNow(),
     giftSlot(id) { return boards.giftSlot(id); },
+    // 선물 전광판 응원 (ui.js cheerBoards): the public gift a screen shows now ({ id, to, from, occ, msg } or null), and every screen with one.
+    giftOn(slot) { return boards.giftOn(slot); },
+    giftScreens() { return boards.giftScreens(); },
     giftShow,
     onFrame(fn) { afterRender.add(fn); return () => afterRender.delete(fn); },
     // 밤 9시 소원왕: {nick, txt, hearts} puts yesterday's top wish on every claimable board but the main tower; null ends it.

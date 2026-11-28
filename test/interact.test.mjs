@@ -412,7 +412,7 @@ describe('auto-walk in the world and on the pill', () => {
     assert.match(ui, /hooks\.setWaypoint\(\{ x: p\.x, z: p\.z, name: label \}\);/);
     assert.match(ui, /hooks\.setWaypoint\(\{ x: q\.x, z: q\.z, name: q\.ko \}\);/);
     assert.match(ui, /hooks\.setWaypoint\(\{ x: p\.x, z: p\.z, name: `\$\{slot\.id\}번 토지` \}\); openMap\(p\);/);
-    assert.match(ui, /best = \{ x: card\.x, z: card\.z, name: '전광판' \};/);
+    assert.match(ui, /best = \{ x: card\.x, z: card\.z, name: b\.gift \? '선물 전광판' : '전광판' \};/);
     // the pill keeps its class and its three parts: the arrow, .way (.name over .sub: the distance and .go) and the ✕
     assert.match(ui, /\}, wayArrow, h\('span', \{ class: 'way' \}, wayName, h\('span', \{ class: 'sub' \}, wayText, wayGo\)\), h\('small', \{ title: '목적지 지우기' \}, icon\('close'\)\)\);/);
     assert.match(ui, /wayName\.textContent = name;\n\s+wayName\.hidden = !name;\n\s+wayPill\.classList\.toggle\('named', !!name\);/);

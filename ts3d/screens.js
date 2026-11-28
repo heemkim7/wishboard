@@ -364,6 +364,12 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     return slot;
   }
   const giftSlot = (id) => [...giftPlan].find(([, ids]) => ids.includes(String(id)))?.[0] || '';
+  // 선물 전광판 응원 (ui.js cheerBoards, worker.js Room.cheerGift): the public gifts from /rt/world on a screen now (never the welcome card, never a
+  // pin that is not on the live list: a replay or a ceremony before its start). giftOn: the one a screen shows at this turn, or null.
+  const giftTeasing = (id) => !!(giftPin?.cer && giftPin.g.id === id && !giftPin.lit); // a ceremony's teaser is up: not cheerable yet
+  const giftPub = (g) => (g && gifts.has(g.id) && !giftTeasing(g.id) ? { id: g.id, to: g.to, from: g.from, occ: g.occ, msg: g.msg } : null);
+  const giftOn = (slot) => { const b = boards.get(String(slot || '')); return b?.gifts ? giftPub(giftAt(b)) : null; };
+  const giftScreens = () => { const out = []; for (const [slot, ids] of giftPlan) for (const id of ids) if (gifts.has(id) && !giftTeasing(id)) out.push({ slot, id }); return out; };
   function wishOk(b) { return wishes.length > 0 && !b.shared && !b.gifts && !b.primeKey && b.mounts.length > 0 && wishRotates(b.slotId, b.row, airOn(), towerOpen, Date.now(), b.untilMs) && !kingFor(b); }
   function dropWish(b) {
     if (b.wish) wishShown--;
@@ -915,7 +921,7 @@ export function createBoards({ renderer, kitMats, onBurst, pick, quality }) {
     }
   }
 
-  return { boards, ensure, mount, unmount, set, expire, get: (id) => boards.get(id), worldPos, face, setTicker, setOps, setSeason, repaintAll, update, accentOf, tickerCanvas, watchShow, setShow, setAir, setKing, setDecals, setWishes, pinWish, setGifts, pinGift, pinWelcome, giftSlot, cerLit, setPrime, setTower, towerSlot, primeOf: (id) => { const b = boards.get(id); return b && !towerNow(b) ? primeNow(b) : null; }, towerOf: (id) => { const b = boards.get(id); return (b && towerNow(b)?.id) || ''; }, decalsOf: (id) => (boards.get(id)?.decals || []).slice(), setRim };
+  return { boards, ensure, mount, unmount, set, expire, get: (id) => boards.get(id), worldPos, face, setTicker, setOps, setSeason, repaintAll, update, accentOf, tickerCanvas, watchShow, setShow, setAir, setKing, setDecals, setWishes, pinWish, setGifts, pinGift, pinWelcome, giftSlot, giftOn, giftScreens, cerLit, setPrime, setTower, towerSlot, primeOf: (id) => { const b = boards.get(id); return b && !towerNow(b) ? primeNow(b) : null; }, towerOf: (id) => { const b = boards.get(id); return (b && towerNow(b)?.id) || ''; }, decalsOf: (id) => (boards.get(id)?.decals || []).slice(), setRim };
 }
 
 // ---- ad-only screens AD_1..AD_5 (adsale.js) -------------------------------------------------------------------------

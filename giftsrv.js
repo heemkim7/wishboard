@@ -485,6 +485,14 @@ export const giftDb = {
     return q.exec("select * from gb where st = 'live' and a <= ? and b > ? order by a asc, id asc limit ?", now, now, GIFT.liveMax).toArray().map(rowOf)
       .map((g) => ({ id: g.id, to: g.to, from: g.from, occ: g.occ, msg: g.msg, th: g.th, scr: g.scr, a: g.a, b: g.b, n: g.n, ...(g.dc ? { dc: 1 } : {}), ...(perksOf(g.pk).includes(PERK.clean) ? { clean: 1 } : {}) })); // clean: the plaza's 15 s video without the watermark (giftrules.js filmMark)
   },
+  // 선물 전광판 응원 (worker.js Room.cheerGift): what a room needs to judge a cheer on board id, server to server only (uid never reaches a
+  // page). -> { uid: its maker, a, b: its window, rev: its reveal (revOf) } or null for no such board, a hidden one or one gone.
+  cheerOf(q, id, now = Date.now()) {
+    if (!GIFT_ID.test(String(id || ''))) return null;
+    const g = rowOf(q.exec('select * from gb where id = ?', String(id)).toArray()[0]);
+    if (!g || giftPhase(g, now) === 'gone') return null;
+    return { uid: g.uid, a: g.a, b: g.b, rev: revOf(g) };
+  },
   // The owner's DISCOVER switch (default off): the board's name, line and sender may then be listed on /discover while it is up. -> { ok, dc }.
   discover(q, id, uid, on, now = Date.now()) {
     const g = this.get(q, id, now, false);

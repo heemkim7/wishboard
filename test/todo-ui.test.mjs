@@ -250,27 +250,51 @@ describe('the pays and their words', () => {
     assert.match(fn, /hooks\.setWaypoint\?\.\(\{ \.\.\.best, auto: true \}\);/);
     assert.match(fn, /if \(key === 'team'\) \{ openTribeSheet\(\); return; \}/);
   });
-  // guideQuest('cheer') run with stubs: worker.js Room.cheer counts only a lit board held by someone else.
+  // guideQuest('cheer') run with stubs: worker.js Room.cheer counts a lit board held by someone else, Room.cheerGift a gift board on a
+  // screen now that I did not make.
   describe('the cheer guide, run', () => {
     const H = 3600e3, NOW = Date.now();
     const lit = (slot, holder) => ({ slot_id: slot, holder_id: holder, lit_until: new Date(NOW + H).toISOString() });
-    const POS = { STREET_20: { x: 1, z: 1 }, STREET_3: { x: 2, z: 2 }, STREET_40: { x: 90, z: 90 }, STREET_9: { x: 5, z: 5 } };
-    function guide(billboards, { me = 'me', ready = true } = {}) {
+    const POS = { STREET_20: { x: 1, z: 1 }, STREET_3: { x: 2, z: 2 }, STREET_40: { x: 90, z: 90 }, STREET_9: { x: 5, z: 5 }, STREET_31: { x: 30, z: 30 }, PLOT_7: { x: 3, z: 3 } };
+    // gifts: hooks.giftScreens ({ slot, id }); mine: kts_gmine (ids made on this device); no: the ids the room refused this visit (giftNoCheer).
+    function guide(billboards, { me = 'me', ready = true, gifts = [], mine = [], no = [] } = {}) {
       const calls = [];
       const ctx = {
         TODO_TEXT: TODO_MOD.TODO_TEXT, PAY: { cheer: { base: 4 } },
         world: { billboards }, plazaReady: ready,
-        hooks: { actorId: () => me, minimap: () => ({ me: { x: 0, z: 0 } }), slotCard: (id) => POS[id] || {}, setWaypoint: (w) => calls.push(['way', w]) },
+        recall: (k, d) => (k === 'kts_gmine' ? mine : d), giftNoCheer: new Set(no),
+        hooks: { actorId: () => me, minimap: () => ({ me: { x: 0, z: 0 } }), slotCard: (id) => POS[id] || {}, setWaypoint: (w) => calls.push(['way', w]), giftScreens: () => gifts },
         note: (text, kind, tap, o) => calls.push(['note', text, kind, o?.key || '']),
         openWish() {}, openTribeSheet() {}, openToday() {},
       };
       runInNewContext(`${body(ui, '  function boardActive(b) {')}\n${body(ui, '  function guideQuest(key) {')}\n${body(ui, '  function cheerBoards() {')}\n${ui.match(/  function cheerSignal\(\) \{[^\n]*\}/)[0]}\nthis.go = guideQuest; this.sig = cheerSignal;`, ctx);
       return { go: () => { ctx.go('cheer'); return JSON.parse(JSON.stringify(calls)); }, sig: () => ctx.sig() };
     }
+    const NONE = ['note', '지금은 켜진 남의 전광판도, 걸린 선물 전광판도 없어요. 누가 전광판을 켜거나 선물 전광판을 걸면 응원할 수 있어요', '', 'cheer-none'];
     it('only my own lit board and empty or dark slots: no waypoint, an honest note, and the row waits', () => {
       const g = guide([lit('STREET_20', 'me'), { slot_id: 'STREET_3' }, { slot_id: 'STREET_9', holder_id: 'x', lit_until: new Date(NOW - 1).toISOString() }]);
-      assert.deepEqual(g.go(), [['note', '지금은 켜진 남의 전광판이 없어요. 누가 전광판을 켜면 응원할 수 있어요', '', 'cheer-none']]);
+      assert.deepEqual(g.go(), [NONE]);
       assert.equal(g.sig(), false);
+    });
+    it('no lit board of someone else, a gift board on a screen: walked to the gift screen, and the row does not wait', () => {
+      const g = guide([lit('STREET_20', 'me'), { slot_id: 'STREET_3' }], { gifts: [{ slot: 'STREET_31', id: 'ab12cd34' }] });
+      const c = g.go();
+      assert.deepEqual(c[0], ['way', { x: 30, z: 30, name: '선물 전광판', auto: true }]);
+      assert.equal(c[1][2], 'ok');
+      assert.match(c[1][1], /^선물 전광판 길안내를 시작해요\. 켜진 남의 전광판이나 선물 전광판을 눌러 응원하면 응원 포인트 \+4/);
+      assert.equal(g.sig(), true);
+    });
+    it('the nearest of the lit boards and the gift screens', () => {
+      assert.deepEqual(guide([lit('STREET_40', 'other')], { gifts: [{ slot: 'PLOT_7', id: 'ab12cd34' }] }).go()[0], ['way', { x: 3, z: 3, name: '선물 전광판', auto: true }]);
+      assert.deepEqual(guide([lit('STREET_9', 'other')], { gifts: [{ slot: 'STREET_31', id: 'ab12cd34' }] }).go()[0], ['way', { x: 5, z: 5, name: '전광판', auto: true }]);
+    });
+    it('a gift board made on this device, or one the room refused this visit, is nothing to cheer: wait only when nothing else is left', () => {
+      const mine = guide([], { gifts: [{ slot: 'STREET_31', id: 'ab12cd34' }], mine: ['ab12cd34'] });
+      assert.deepEqual(mine.go(), [NONE]);
+      assert.equal(mine.sig(), false);
+      const no = guide([lit('STREET_20', 'me')], { gifts: [{ slot: 'STREET_31', id: 'ab12cd34' }], no: ['ab12cd34'] });
+      assert.equal(no.sig(), false);
+      assert.equal(guide([], { gifts: [{ slot: 'STREET_31', id: 'ab12cd34' }, { slot: 'PLOT_7', id: 'zz99yy88' }], mine: ['ab12cd34'] }).go()[0][1].name, '선물 전광판');
     });
     it('the nearest lit board of someone else, walked to by itself; never mine, never an empty slot nearer', () => {
       const g = guide([lit('STREET_20', 'me'), { slot_id: 'STREET_3' }, lit('STREET_40', 'other')]);

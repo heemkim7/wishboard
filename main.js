@@ -25,7 +25,7 @@ import { photoVerdicts } from './ftue.js?v=202611280944';
 import { WISH, cleanWish } from './wish.js';
 import { seasonFor, seasonPreview } from './seasons.js';
 import { applyInboxPush, loadInbox, readInbox, liveOnly, handledRead, liveSeeable } from './inbox.js?v=202611280944';
-import { sendCheer } from './tribe.js?v=202611280944';
+import { sendCheer, sendGiftCheer } from './tribe.js?v=202611280944';
 import { applyOps, ballNotice, nineBanner, kingMinute, clockSkew, clock, nowMs } from './live.js';
 import { pushRoute, awayRead } from './overlay.js?v=202611280944';
 import { isMailbox, mailArrival, mailBack, mailErrorText, retryAfterS, MAIL_ERR } from './mailcode.js?v=202611280944';
@@ -351,6 +351,10 @@ const ui = createUI(document.getElementById('ui'), {
   boost: (on) => world?.setBoost?.(on),
   adClick: (slot, url) => adClick(slot, url),
   cheer: (slot, msg) => cheer(slot, msg),
+  // 선물 전광판 응원: a gift board shown on a screen (worker.js Room.cheerGift); which public gift a screen shows, and every screen with one.
+  cheerGift: (id, slot, p) => cheerGift(id, slot, p),
+  giftOn: (slot) => world?.giftOn?.(slot) || null,
+  giftScreens: () => world?.giftScreens?.() || [],
   // 응원 팀 (teamsrv.js): my team, a team's page, the writes (create / join / leave / cheer / anniv), rankings and search, the day's plan.
   teamMe: () => teamMe(),
   teamPage: (id) => net.teamGet('/rt/team?id=' + encodeURIComponent(id)),
@@ -769,6 +773,21 @@ function cheer(slot, phraseId) {
   ui.sfx.hit();
 }
 const cheerAt = new Map();
+// 선물 전광판 응원 (worker.js Room.cheerGift): the same gap per board as a lit board's (key 'g:<id>'), the same notes. The server decides
+// whether it counts (up now, past its reveal, not my own); its answer is the PAY every cheer gets (net.on('pay')).
+function cheerGift(id, slot, phraseId) {
+  const msg = sendGiftCheer(id, phraseId);
+  if (!msg) return;
+  const key = 'g:' + msg.g;
+  const wait = PAY.cheer.gapMs - (Date.now() - (cheerAt.get(key) || 0));
+  if (wait > 0) { ui.note(`다음 응원까지 ${Math.ceil(wait / 1000)}초`, '', null, { key: 'cheer-wait' }); return; }
+  if (!net.ch?.raw?.(msg)) { ui.note('광장 서버에 연결되면 응원이 기록됩니다', 'err', null, { key: 'offline' }); return; }
+  cheerAt.set(key, Date.now());
+  if (slot) world?.cheerAt?.(slot);
+  trackEvent('wish_cheer', { slot: String(slot || '') });
+  ui.note(`🙏 ${CHEER_PHRASES[msg.p - 1]}`, 'ok', null, { key: 'cheer-sent' });
+  ui.sfx.hit();
+}
 
 async function openInbox() {
   const items = await loadInbox();
@@ -1181,6 +1200,7 @@ function applyPlaza(remote) {
   world.updateWorld(state);
   world.setAds?.(remote.ads); // 광고 화면 (adsale.js adWorld checks it; a missing key is off and empty)
   if (giftUi) giftUi.apply(remote.gifts); else world.setGifts?.(remote.gifts); // 선물 전광판 up now (a missing key is none)
+  ui.giftsIn?.(); // 오늘 할 일's cheer row: a gift board on a screen is something to cheer too
   world.setPrime?.(state.prime);
   applyTower(remote.tower); // 메인 타워 축하 1분 (a missing key is none)
   markMine();
@@ -1548,6 +1568,7 @@ net.on('pay', (m) => {
     if (!capTold.has('full:' + m.kind)) { capTold.add('full:' + m.kind); ui.note(m.kind === 'cheer' ? '오늘 받을 수 있는 응원 포인트는 다 받았어요. 응원은 그대로 전해져요' : '오늘 받을 수 있는 관람 포인트는 다 받았어요', 'err'); }
     return;
   }
+  if (m?.why === 'dark' && m.g) { ui.giftNoCheer?.(m.g); ui.note('지금 광장에 걸린 다른 사람의 선물 전광판에만 응원할 수 있어요', 'err', null, { key: 'cheer-dark' }); return; } // 선물 전광판: my own, or no longer up
   if (m?.why === 'dark') { ui.note('켜져 있는 다른 사람 전광판에만 응원할 수 있어요', 'err', null, { key: 'cheer-dark' }); return; }
   if (m?.why === 'wait') { ui.note('잠시 뒤 다시 응원해 주세요', 'err', null, { key: 'cheer-wait' }); return; }
   if (m?.why === 'soon') {
