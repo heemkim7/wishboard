@@ -1902,7 +1902,7 @@ describe('출시 예정 on the gift pages', () => {
       await P.load('giftpage.js');
       const b = P.all('button').find((n) => n.className === 'soon-btn'); await P.press(b);
       assert.equal(b.disabled, false); assert.equal(b.textContent, '이 기능에 관심 있어요');
-      assert.ok(P.says(/^지금은 붐벼서 담지 못했어요/)); assert.equal(P.store.kts_soon, undefined);
+      assert.ok(P.says(/^지금은 붐벼서 담지 못했어요/)); assert.deepEqual(JSON.parse(P.store.kts_soon), {}, 'shown as registered at once, then taken back');
     } finally { P.done(); }
   });
   it('the source: the maker function and the recipient\'s view never build it; the paid ladder stays behind PAY_ON', () => {

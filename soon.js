@@ -15,7 +15,7 @@ const ls = { get(k) { try { return localStorage.getItem(k); } catch { return nul
 const json = (k, d) => { try { return JSON.parse(ls.get(k) || '') ?? d; } catch { return d; } };
 const mineAll = () => { const o = json(KEY, {}); return o && typeof o === 'object' && !Array.isArray(o) ? o : {}; };
 export const soonMine = (f) => !!mineAll()[f];
-const keep = (f) => { const o = mineAll(); o[f] = 1; ls.set(KEY, JSON.stringify(o)); };
+const keep = (f, on = true) => { const o = mineAll(); if (on) o[f] = 1; else delete o[f]; ls.set(KEY, JSON.stringify(o)); };
 
 // The plaza's own identity, read only: a live signed-in session, else the guest token (masil_gt) while it is good.
 const AUTH_KEYS = ['maeul_auth', 'sb-yxddhpacuyaffaoutxjn-auth-token'];
@@ -89,12 +89,13 @@ export function soonBlock({ src, heading = true, id = '' } = {}) {
       btn.setAttribute('aria-pressed', String(on)); btn.disabled = on;
       btn.setAttribute('aria-label', on ? F.name + ' · ' + SOON_DONE : F.name + ' · ' + SOON_BTN);
     };
+    // Shown as registered at once (the answer can take a few seconds); a refused or lost one comes back to press again, and says so.
     btn.addEventListener('click', async () => {
       if (btn.disabled || soonMine(F.id)) return;
-      btn.disabled = true; msg.textContent = ''; msg.className = 'soon-msg';
+      keep(F.id); paint(); msg.className = 'soon-msg'; msg.textContent = SOON_THANKS;
       const r = await send({ a: 'tap', f: F.id, s, v: visitor() });
-      if (r?.ok && (r.kept || r.test)) { keep(F.id); paint(); msg.textContent = SOON_THANKS; return; }
-      btn.disabled = false; msg.className = 'soon-msg err'; msg.textContent = SOON_BUSY;
+      if (r?.ok && (r.kept || r.test)) return;
+      keep(F.id, false); paint(); msg.className = 'soon-msg err'; msg.textContent = SOON_BUSY;
     });
     paint();
     card.append(top, el('p', 'soon-line', F.line), btn, msg);
