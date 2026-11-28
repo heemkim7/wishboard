@@ -4,72 +4,50 @@
 <meta charset="utf-8" />
 <title>og.jpg source (1200 x 630)</title>
 <!-- The source of /og.jpg, the link-preview picture. Build: node tools/build-og.mjs (serves the repo root, so /icons and /giftart.js resolve).
-     The boards are painted by the product's own giftart.js, so the picture shows what a 선물 전광판 really looks like. -->
+     The board is painted by the product's own giftart.js, so the picture shows what a 선물 전광판 really looks like.
+     2026-11-28 (A. LED 전광판): true black, the marquee amber, one flat board on a capture of the 3D plaza at night (icons/street.jpg), the
+     ticker band along the foot. No glow, gradient, reflection or tilted cards. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
 <style>
-  html, body { margin: 0; background: #05060f; }
-  #card { position: relative; width: 1200px; height: 630px; overflow: hidden; background: #05060f; color: #fff;
+  html, body { margin: 0; background: #000; }
+  #card { position: relative; width: 1200px; height: 630px; overflow: hidden; background: #000; color: #f7f5ee;
     font-family: "Pretendard Variable", Pretendard, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif; }
-  .bg { position: absolute; inset: 0; background: url(/icons/boot.jpg) 50% 42% / cover no-repeat; filter: saturate(1.1) brightness(.95); }
-  .shade { position: absolute; inset: 0;
-    background:
-      linear-gradient(90deg, rgba(5,6,16,.97) 0%, rgba(5,6,16,.93) 26%, rgba(5,6,16,.6) 46%, rgba(5,6,16,.12) 70%, rgba(5,6,16,.12) 100%),
-      linear-gradient(180deg, rgba(5,6,16,.5) 0%, rgba(5,6,16,0) 28%, rgba(5,6,16,0) 70%, rgba(5,6,16,.55) 100%); }
-
-  .copy { position: absolute; left: 72px; top: 150px; width: 520px; }
-  .brand { font-size: 27px; font-weight: 800; letter-spacing: .13em; color: #ffcf6b; }
-  .rule { width: 86px; height: 3px; margin: 16px 0 30px; background: #ffcf6b; border-radius: 2px; }
-  h1 { margin: 0; font-size: 90px; line-height: 1.08; font-weight: 800; letter-spacing: -.025em; text-shadow: 0 2px 24px rgba(0,0,0,.55); }
-  .sub { margin: 30px 0 0; font-size: 35px; line-height: 1.42; font-weight: 600; letter-spacing: -.01em; color: #eef0fb; text-shadow: 0 2px 16px rgba(0,0,0,.6); }
-  .sub b { font-weight: 800; color: #ffe08a; }
-
-  .stage { position: absolute; inset: 0; perspective: 1050px; perspective-origin: 44% 48%; }
-  .board { position: absolute; transform-origin: 50% 50%; border-radius: 7px; background: #070913; padding: 8px; transform: rotateY(-27deg);
-    box-shadow: 0 0 0 2px rgba(255,255,255,.1), 0 24px 60px rgba(0,0,0,.6); }
-  .board canvas { display: block; width: 100%; height: 100%; border-radius: 3px; }
-  .board::after { content: ""; position: absolute; inset: 8px; border-radius: 3px; pointer-events: none;
-    background: linear-gradient(160deg, rgba(255,255,255,.14) 0%, rgba(255,255,255,0) 34%); }
-  .main { left: 616px; top: 222px; width: 496px; height: 279px;
-    box-shadow: 0 0 0 2px rgba(255,255,255,.14), 0 0 70px rgba(255,79,163,.6), 0 0 170px rgba(91,33,255,.55), 0 30px 70px rgba(0,0,0,.6);
-    -webkit-box-reflect: below 12px linear-gradient(rgba(0,0,0,0) 50%, rgba(0,0,0,.36)); }
-  .b2 { left: 640px; top: 66px; width: 228px; height: 128px; padding: 6px;
-    box-shadow: 0 0 0 2px rgba(255,255,255,.1), 0 0 50px rgba(56,189,248,.5), 0 18px 40px rgba(0,0,0,.55); }
-  .b3 { left: 884px; top: 66px; width: 228px; height: 128px; padding: 6px;
-    box-shadow: 0 0 0 2px rgba(255,255,255,.1), 0 0 50px rgba(255,211,107,.45), 0 18px 40px rgba(0,0,0,.55); }
-  .b2::after, .b3::after { inset: 6px; }
+  .bg { position: absolute; top: 0; right: 0; width: 640px; height: 566px; background: url(/icons/street.jpg) 50% 50% / cover no-repeat; }
+  .bg::after { content: ""; position: absolute; inset: 0; background: rgba(0,0,0,.35); }
+  .copy { position: absolute; left: 64px; top: 92px; width: 520px; }
+  .brand { display: flex; align-items: center; gap: 12px; font-size: 26px; font-weight: 900; color: #f7f5ee; }
+  .brand i { width: 16px; height: 16px; background: #ffb020; }
+  h1 { margin: 34px 0 0; font-size: 92px; line-height: 1.05; font-weight: 900; letter-spacing: -.035em; }
+  .sub { margin: 28px 0 0; font-size: 33px; line-height: 1.4; font-weight: 600; color: #c9c6bc; }
+  .sub b { font-weight: 800; color: #ffb020; }
+  .board { position: absolute; left: 640px; top: 150px; width: 504px; height: 284px; }
+  .board canvas { display: block; width: 100%; height: 100%; }
+  .ticker { position: absolute; left: 0; right: 0; bottom: 0; height: 64px; background: #000; border-top: 1px solid #2e2e2e;
+    display: flex; align-items: center; padding: 0 64px; font-size: 26px; font-weight: 800; color: #ffb020; white-space: nowrap; }
 </style>
 </head>
 <body>
 <div id="card">
   <div class="bg"></div>
-  <div class="shade"></div>
-  <div class="stage">
-    <div class="board b2"><canvas id="c2" width="1024" height="576"></canvas></div>
-    <div class="board b3"><canvas id="c3" width="1024" height="576"></canvas></div>
-    <div class="board main"><canvas id="c1" width="1024" height="576"></canvas></div>
-  </div>
   <div class="copy">
-    <div class="brand">WISH BOARD</div>
-    <div class="rule"></div>
-    <h1>모두의 전광판</h1>
-    <p class="sub">생일 축하 · 응원 · 소원을<br /><b>가상 타임스퀘어</b> 전광판에<br />걸어 보세요</p>
+    <div class="brand"><i></i>WISH BOARD</div>
+    <h1>모두의<br />전광판</h1>
+    <p class="sub">친구 이름이나 내 다짐을<br /><b>가상 타임스퀘어</b> 전광판에.<br />6시간 무료예요.</p>
   </div>
+  <div class="board"><canvas id="c1" width="1024" height="576"></canvas></div>
+  <div class="ticker">거리 전광판 68곳 · 6시간 무료 · 15초 축하 영상 · 친구들의 롤링페이퍼 · WISH BOARD</div>
 </div>
 <script type="module">
   import { paintGift, GIFT_SANS } from '/giftart.js';
-  // Sample boards. Names are made up; the words are the product's own occasion lines.
-  const BOARDS = [
-    ['c1', { id: 'og-main', to: '민지', from: '지수', occ: 'bday', msg: '태어나 줘서 고마워!' }, {}],
-    ['c2', { id: 'og-cheer', to: '우리 팀', from: '', occ: 'cheer', msg: '끝까지 응원할게!' }, { chip: false }],
-    ['c3', { id: 'og-pass', to: '서연', from: '', occ: 'pass', msg: '고생 많았어, 정말 축하해!' }, { chip: false }],
-  ];
+  // A sample board. The name is made up; the words are the product's own occasion line.
+  const G = { id: 'og-main', to: '민지', from: '지수', occ: 'bday', msg: '태어나 줘서 고마워!', n: 3 };
   window.ogReady = (async () => {
-    const text = BOARDS.map(([, g]) => 'To. From. ' + g.to + g.from + g.msg).join('') + '선물 전광판 생일 축하해요 언제나 응원해요 합격 축하해요';
-    // Canvas text does not start a font download by itself: ask for the weights the boards use first.
+    const text = 'To. From. 친구 메시지 개 WISH BOARD 선물 전광판 생일 축하해요 ' + G.to + G.from + G.msg + '0123456789';
+    // Canvas text does not start a font download by itself: ask for the weights the board uses first.
     try { await Promise.all([700, 800, 900].map((w) => document.fonts.load(`${w} 40px ${GIFT_SANS}`, text))); } catch { /* the system font draws instead */ }
     try { await document.fonts.ready; } catch { /* same */ }
-    await new Promise((res) => { const im = new Image(); im.onload = im.onerror = res; im.src = '/icons/boot.jpg'; });
-    for (const [id, g, opts] of BOARDS) paintGift(document.getElementById(id), g, opts);
+    await new Promise((res) => { const im = new Image(); im.onload = im.onerror = res; im.src = '/icons/street.jpg'; });
+    paintGift(document.getElementById('c1'), G);
     await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
     return document.fonts.check('800 40px "Pretendard Variable"') ? 'pretendard' : 'fallback font';
   })();

@@ -1,7 +1,9 @@
 // Builds /og.jpg, the 1200 x 630 link-preview picture, from tools/og/og.html with a local headless Chrome or Edge.
 //   node tools/build-og.mjs            -> writes og.jpg at the repo root
 //   node tools/build-og.mjs --out x.jpg
-// The page is served from a throwaway local server rooted at the repo, so it can import giftart.js and read icons/boot.jpg.
+//   node tools/build-og.mjs --icons    -> the app icons from tools/og/icon.html: icons/app-icon-192.png, -512.png, -maskable-512.png,
+//                                         app-icon.png and app-icon.jpg (512). Raise ?v= on app-icon.jpg in the pages after a rebuild.
+// The page is served from a throwaway local server rooted at the repo, so it can import giftart.js and read icons/street.jpg.
 // Set CHROME to the browser's path if it is not found. After a rebuild, raise og.jpg?v= in index.html, gift.html and ads.html
 // (link scrapers cache the picture by address).
 import { spawn } from 'node:child_process';
@@ -52,7 +54,12 @@ function cdp(wsUrl) {
   });
 }
 
+// The app icons: [file, side, maskable, format].
+const ICONS = [['icons/app-icon-192.png', 192, false, 'png'], ['icons/app-icon-512.png', 512, false, 'png'], ['icons/app-icon-maskable-512.png', 512, true, 'png'],
+  ['icons/app-icon.png', 512, false, 'png'], ['icons/app-icon.jpg', 512, false, 'jpeg']];
+
 async function main() {
+  const icons = process.argv.includes('--icons');
   const i = process.argv.indexOf('--out');
   const out = path.resolve(ROOT, i > 0 ? process.argv[i + 1] : 'og.jpg');
   const exe = findBrowser();
@@ -70,8 +77,24 @@ async function main() {
     const c = await cdp(wsUrl);
     const { targetId } = await c.send('Target.createTarget', { url: 'about:blank' });
     const { sessionId } = await c.send('Target.attachToTarget', { targetId, flatten: true });
-    await c.send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: 1, mobile: false }, sessionId);
     await c.send('Page.enable', {}, sessionId);
+    if (icons) {
+      for (const [file, side, mask, format] of ICONS) {
+        await c.send('Emulation.setDeviceMetricsOverride', { width: side, height: side, deviceScaleFactor: 1, mobile: false }, sessionId);
+        const done = c.once('Page.loadEventFired');
+        await c.send('Page.navigate', { url: `http://127.0.0.1:${port}/tools/og/icon.html?size=${side}&mask=${mask ? 1 : 0}` }, sessionId);
+        await done;
+        const r = await c.send('Runtime.evaluate', { expression: 'window.iconReady', awaitPromise: true, returnByValue: true }, sessionId);
+        if (r.exceptionDetails) throw new Error('icon.html failed: ' + (r.exceptionDetails.exception?.description || r.exceptionDetails.text));
+        const shot = await c.send('Page.captureScreenshot', { format, ...(format === 'jpeg' ? { quality: 92 } : {}), clip: { x: 0, y: 0, width: side, height: side, scale: 1 } }, sessionId);
+        const bytes = Buffer.from(shot.data, 'base64');
+        fs.writeFileSync(path.resolve(ROOT, file), bytes);
+        console.log(`${file}: ${side}x${side}${mask ? ' maskable' : ''}, ${bytes.length} bytes, W in ${r.result.value}`);
+      }
+      c.close();
+      return;
+    }
+    await c.send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: 1, mobile: false }, sessionId);
     const loaded = c.once('Page.loadEventFired');
     await c.send('Page.navigate', { url: `http://127.0.0.1:${port}/tools/og/og.html` }, sessionId);
     await loaded;

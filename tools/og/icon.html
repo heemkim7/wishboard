@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>app icon source</title>
+<!-- The source of the app icons (icons/app-icon*.png, icons/app-icon.jpg). Build: node tools/build-og.mjs --icons.
+     2026-11-28 (A. LED 전광판): a flat amber board with a black W on two legs, on black. No LED dots, no glow, no gradient.
+     ?size=<px> the square's side; ?mask=1 the maskable icon (the mark inside the 80% safe circle). -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<style>
+  html, body { margin: 0; background: #000; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script type="module">
+  const q = new URLSearchParams(location.search), S = Number(q.get('size')) || 512, mask = q.get('mask') === '1';
+  const cv = document.getElementById('c'); cv.width = S; cv.height = S; cv.style.width = S + 'px'; cv.style.height = S + 'px';
+  const SANS = '"Pretendard Variable", Pretendard, "Arial Black", sans-serif';
+  window.iconReady = (async () => {
+    try { await document.fonts.load(`900 100px ${SANS}`, 'W'); await document.fonts.ready; } catch { /* Arial Black draws instead */ }
+    const g = cv.getContext('2d'), u = S / 512, k = mask ? 0.72 : 1; // the mark on a 512 grid, scaled about the centre for the maskable one
+    g.fillStyle = '#000000'; g.fillRect(0, 0, S, S);
+    g.save(); g.translate(S / 2, S / 2); g.scale(u * k, u * k); g.translate(-256, -256);
+    const amber = '#ffb020';
+    // two legs under the board, then the board (16:9), its corners 12 on the 512 grid
+    g.fillStyle = amber; g.fillRect(150, 320, 30, 84); g.fillRect(332, 320, 30, 84);
+    g.beginPath(); g.roundRect(64, 108, 384, 216, 12); g.fill();
+    g.fillStyle = '#000000'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = `900 188px ${SANS}`;
+    g.fillText('W', 256, 222);
+    g.restore();
+    return document.fonts.check('900 40px "Pretendard Variable"') ? 'pretendard' : 'fallback font';
+  })();
+</script>
+</body>
+</html>
