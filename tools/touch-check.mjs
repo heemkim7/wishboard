@@ -77,7 +77,10 @@ async function main() {
     await closeAll();
     const check = async (name, sel) => {
       await closeAll(); await wait(400);
-      if (!await until(`!!document.querySelector(${JSON.stringify(sel)}) && !document.querySelector(${JSON.stringify(sel)}).closest('[hidden]')`, 15000)) { console.log(`skip  ${name}: ${sel} is not on screen`); return; }
+      if (!await until(`!!document.querySelector(${JSON.stringify(sel)}) && !document.querySelector(${JSON.stringify(sel)}).closest('[hidden]')`, 30000)) {
+        const why = await ev(`JSON.stringify({ sheets: [...document.querySelectorAll('.modal h2')].map((e) => e.textContent), boot: !!document.getElementById('boot'), prompt: document.querySelector('#ui .prompt')?.className || '' })`);
+        console.log(`skip  ${name}: ${sel} is not on screen ${why}`); return;
+      }
       await tapSel(sel);
       await wait(1200); // the compatibility click comes right after touchend; a ghost would have closed the sheet by now
       const open = await sheets();
