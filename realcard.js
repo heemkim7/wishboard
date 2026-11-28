@@ -98,8 +98,9 @@ function sparkSprite(r, col) {
   return c;
 }
 
-// gift: { id, to, from, occ, msg, th }. opts: { w, h, layout, phone (a phone screen: the card inside a dark app margin), flash }.
-export function createRealCard(gift, { w, h, layout = '', phone = false, flash = 1.5 } = {}) {
+// gift: { id, to, from, occ, msg, th }. opts: { w, h, layout, phone (a phone screen: the card inside a dark app margin), flash, hero
+// (false: no headline: the corner box's 3D letters are it), at ({ line, from }: when they come in: the music's beats on the corner box) }.
+export function createRealCard(gift, { w, h, layout = '', phone = false, flash = 1.5, hero = true, at = null } = {}) {
   const canvas = canvasOf(w, h), out = canvas.getContext('2d');
   // A phone screen: the card in an inner box with rounded corners, a dark margin round it (scene.py phone_dressing).
   const ins = phone ? Math.round(0.045 * w) : 0, W = w - 2 * ins, H = h - 2 * ins;
@@ -260,14 +261,15 @@ export function createRealCard(gift, { w, h, layout = '', phone = false, flash =
     if (p > 0) blit(to, W / 2, H * L.to.y, 0.78 + 0.22 * easeOutBack(p), Math.min(1, p * 2));
     let sheen = null, sheenAmp = 0, sheenPos = 0;
     for (const [ts, amp] of [[3.0, 0.85], [6.1, 0.65], [8.6, 0.4]]) { const q = (t - ts) / 0.9; if (q >= 0 && q <= 1) { sheenPos = -0.4 + 1.8 * q; sheenAmp = amp; sheen = sheenBand(sheenPos, amp); } }
-    head.forEach((sp, i) => {
+    if (hero) head.forEach((sp, i) => {
       const q = appear(1.8 - 1.5 + flash + 0.1 * i, 0.45);
       if (q <= 0) return;
       const e = easeOutBack(q, 2.2), s = (1.2 - 0.2 * e) * (1 + 0.012 * Math.sin((t * 2 * Math.PI) / 2.4 + i) * calm);
       blit(sp, W / 2, H * sp.y, s, Math.min(1, q * 3.5), sheen);
     });
-    line.forEach((sp, i) => { const q = appear(2.35 - 1.5 + flash + 0.1 * i, 0.55); if (q > 0) blit(sp, W / 2, H * sp.y + (1 - easeOutCubic(q)) * H * 0.03, 1, Math.min(1, q * 1.6)); });
-    p = appear(2.65 - 1.5 + flash, 0.55);
+    const tLine = Number.isFinite(at?.line) ? at.line : 2.35 - 1.5 + flash, tFrom = Number.isFinite(at?.from) ? at.from : 2.65 - 1.5 + flash;
+    line.forEach((sp, i) => { const q = appear(tLine + 0.1 * i, 0.55); if (q > 0) blit(sp, W / 2, H * sp.y + (1 - easeOutCubic(q)) * H * 0.03, 1, Math.min(1, q * 1.6)); });
+    p = appear(tFrom, 0.55);
     if (p > 0 && frm) blit(frm, W / 2, H * L.frm.y + (1 - easeOutCubic(p)) * H * 0.025, 1, Math.min(1, p * 1.6));
     p = appear(2.9 - 1.5 + flash, 0.6);
     if (p > 0) blit(brand, W / 2, H * L.brand.y, 1, 0.9 * Math.min(1, p * 1.5));
