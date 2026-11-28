@@ -66,7 +66,8 @@ describe('ui.js wiring', () => {
   });
   it('a sheet, the far board card, the ad card and a layer report that they opened', () => {
     const body = (name) => { const i = ui.indexOf(`function ${name}(`); return ui.slice(i, ui.indexOf('\n  }\n', i) > 0 ? ui.indexOf('\n  }\n', i) : ui.indexOf('\n  }\r\n', i)); };
-    for (const fn of ['openSheet', 'showFarCard', 'showAdCard', 'layer']) assert.match(body(fn), /tapGuard\.opened\(\)/, fn);
+    for (const fn of ['openSheet', 'showFarCard', 'showAdCard']) assert.match(body(fn), /tapGuard\.opened\(\)/, fn);
+    assert.match(ui, /layer\(el, close\) \{ if \(el && dance\) endDance\('layer'\); layer\(el, close\); if \(el\) tapGuard\.opened\(\); \}/);
   });
   it('the backdrop closes through backdropClose with a press that began on it', () => {
     assert.match(ui, /el\.addEventListener\('pointerdown', \(e\) => \{ me\.downOnBack = e\.target === el; \}\)/);

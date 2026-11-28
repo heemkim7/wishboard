@@ -35,6 +35,9 @@ export function claimWizard(slot) {
     // The lines as last kept: step 2 fills its boxes from here, so 이전 and 다음 never lose what was typed.
     get lines() { return state.lines.slice(); },
     choose(id) { state.slot = String(id || ''); state.step = 1; },
+    // 배경 on step 2 (the preview changes with it); a gift theme or an unknown key keeps the one there was.
+    get theme() { return state.theme; },
+    setTheme(key, themes) { if (themes?.[key] && !themes[key].gift) state.theme = key; },
     // A draft kept as typed (going back from step 2); it is checked again before step 3.
     keep(a, b, c) { state.lines = [a, b, c].map((s) => String(s ?? '')); },
     linesOk(a, b, c) {

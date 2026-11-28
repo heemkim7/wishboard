@@ -539,7 +539,7 @@ describe('5. the gift frame over the plaza: Escape closes it alone, the HUD is i
     assert.match(ui, /function syncBack\(\) \{ backKeeper\.want\(sheets\.length \+ proofLevel\(\) \+ \(ext \? 1 : 0\)\); \}/);
     // the phone's back button closes the frame first, then sheets, as one level each
     assert.match(ui, /for \(let i = 0; i < act\.back; i\+\+\) \{ if \(!\(closeLayer\(\) \|\| \(sheet \? backSheet\(\) : \(leaveProof\(\) \|\| skipProofWait\(\)\)\)\)\) break; \}/);
-    assert.match(ui, /\n\s+layer\(el, close\) \{ if \(el && dance\) endDance\('layer'\); layer\(el, close\); \},\n\s+startBake, stopBake,/); // on the UI object (it also ends 같이 춤추기: test/review2-hud.test.mjs 9)
+    assert.match(ui, /\n\s+layer\(el, close\) \{ if \(el && dance\) endDance\('layer'\); layer\(el, close\); if \(el\) tapGuard\.opened\(\); \},[^\n]*\n\s+startBake, stopBake,/); // on the UI object (it also ends 같이 춤추기: test/review2-hud.test.mjs 9)
   });
   it('gift.js hands its frame to ui.layer on open, takes it back before focus returns, and keeps Tab between ✕ and the page', () => {
     const open = gift.slice(gift.indexOf('  function openMaker('), gift.indexOf('  function closeMaker('));

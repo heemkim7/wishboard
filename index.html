@@ -585,24 +585,42 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .sheet.bill { display: flex; flex-direction: column; overflow: hidden; height: min(88vh, 860px, calc(var(--app-h, 100dvh) - 56px)); width: min(1080px, 100%); }
   .sheet.bill > header { flex: none; }
   .sheet.bill > .content { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
-  .sheet.bill .grid2.bb { flex: 1; min-height: 0; }
-  .sheet.bill .grid2.bb > :first-child,
-  .sheet.bill .grid2.bb > :last-child { min-height: 0; overflow: auto; }
-  /* One column under 900px, scrolling as a whole. Only the preview stays in view while the player types: the first
-     column is laid out as if its box were not there (display: contents), so its tabs, slot picker, place card and stats
-     scroll away with the form and the sticky preview can follow the whole scroll. (The whole first column used to be
-     sticky; it was taller than the scroller, a sticky box that tall never lets go, and the form stayed hidden under it.)
-     The preview is compact: at most 28vh tall, centred, on an opaque strip of the sheet's own surface. */
-  @media (max-width: 900px) {
-    .sheet.bill .grid2.bb { display: block; overflow: auto; }
-    .sheet.bill .grid2.bb > :first-child { display: contents; }
-    .sheet.bill .grid2.bb > :last-child { overflow: visible; margin-top: 14px; }
-    .sheet.bill .grid2.bb .screen { margin-top: 10px; padding: 8px 0; border-radius: 0; background: var(--surface); }
-    .sheet.bill .grid2.bb .screen canvas { width: min(100%, calc(28vh * 16 / 9)); margin: 0 auto; }
-  }
-  /* Nothing is sticky on a short screen (a phone on its side): there the preview would take most of the scroller. */
+  /* Billboard sheet (ui.js openBillboard, 2026-11-28 "색상을 바로 보기 어렵고 스크롤해야 해서 불편해"): one scroller. The preview
+     with the slot picker (.bb-look) stays in view at the top (sticky): the left column on a wide or short screen. The lines,
+     배경 and 글자색 (.bb-main), 걸기 (.bb-go, sticky at the bottom: on a phone on its side it is on the first screen too) and
+     the folded rest (.bb-rest) follow in .bb-right. */
+  .sheet.bill .grid2.bb { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); align-items: start; }
+  .sheet.bill .bb-look { position: sticky; top: 0; z-index: 3; }
+  .sheet.bill .bb-right { min-width: 0; }
+  .sheet.bill .bb-rest { margin-top: 14px; display: grid; gap: 12px; }
+  .sheet.bill .bb-look .screen { margin-top: 0; }
+  .sheet.bill .bb-go { position: sticky; bottom: 0; z-index: 2; margin-top: 12px; padding: 8px 0 4px; display: grid; gap: 8px; background: var(--surface); }
+  .sheet.bill .bb-go > .btn, .sheet.bill .bb-go > .balance, .sheet.bill .bb-go > .login-err { margin-top: 0; }
+  .sheet.bill .bb-go > .btn { width: 100%; justify-content: center; }
+  .sheet.bill .bb-go > .balance { gap: 8px; }
+  .sheet.bill .bb-style { margin-top: 10px; display: grid; gap: 10px; }
+  .sheet .wiz-style { margin-top: 10px; }
+  .sheet :is(.bb-style, .wiz-style) .themes { display: flex; flex-wrap: nowrap; gap: 8px; overflow-x: auto; scrollbar-width: none; }
+  .sheet :is(.bb-style, .wiz-style) .themes::-webkit-scrollbar { display: none; }
+  .sheet :is(.bb-style, .wiz-style) .theme { flex: 0 0 auto; min-width: 84px; height: 44px; align-items: center; justify-content: center; padding: 0 12px; font-size: 13px; }
+  .sheet :is(.bb-style, .wiz-style) .theme:hover { transform: none; }
+  .sheet.bill .bb-style .swatches { flex-wrap: nowrap; gap: 6px; padding: 0 3px; } /* room for the chosen one's ring: the scroller clips it */
+  .sheet.bill .bb-style .swatch { position: relative; flex: none; width: 36px; height: 36px; }
+  .sheet.bill .bb-style .swatch::after { content: ""; position: absolute; inset: -4px; }
+  /* 직접 고르기: a rainbow ring around the chosen colour, so it does not read as a second 흰색. */
+  .sheet.bill .bb-style input[type=color] { flex: none; width: 36px; height: 36px; padding: 3px; border: 0; background: conic-gradient(#ff4d4d, #ffd84d, #4dff88, #4dd2ff, #7a4dff, #ff4dd2, #ff4d4d); }
+  .sheet.bill .bb-style input[type=color]::-webkit-color-swatch-wrapper { padding: 0; }
+  .sheet.bill .bb-style input[type=color]::-webkit-color-swatch { border: 2px solid var(--surface); border-radius: 50%; }
+  .sheet.bill .bb-style input[type=color]::-moz-color-swatch { border: 2px solid var(--surface); border-radius: 50%; }
+  .sheet.bill .bb-rest .more { margin-top: 0; }
+  /* A phone held upright (and any window under 900px that is not short): one column in the order of use — the preview strip
+     (sticky, at most 19% of the height), the lines and colours, 걸기, then the folded rest — so typing → 걸기 needs no scroll. */
   @media (max-width: 900px) and (min-height: 521px) {
-    .sheet.bill .grid2.bb .screen { position: sticky; top: 0; z-index: 3; }
+    .sheet.bill .grid2.bb { display: flex; flex-direction: column; align-items: stretch; gap: 0; }
+    .sheet.bill .bb-look { padding-bottom: 8px; background: var(--surface); }
+    .sheet.bill .bb-right { margin-top: 2px; }
+    .sheet.bill .bb-look .screen { padding: 0; border-radius: 0; background: transparent; }
+    .sheet.bill .bb-look .screen canvas { width: min(100%, calc(19vh * 16 / 9)); margin: 0 auto; }
   }
   .seg { display: inline-flex; flex-wrap: wrap; padding: 4px; border-radius: 14px; background: var(--bg); border: 1px solid var(--line); gap: 4px; }
   .seg button { padding: 9px 14px; border-radius: 10px; font-size: 13px; font-weight: 700; color: var(--muted); transition: all .2s; }
@@ -871,6 +889,10 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html.touch button.nine { padding: 4px 8px; font-size: 12px; }
   html.touch .modal { padding: calc(10px + var(--safe-t)) calc(10px + var(--safe-r)) calc(10px + var(--safe-b)) calc(10px + var(--safe-l)); place-items: start center; }
   html.touch .sheet { max-height: min(76vh, calc(var(--app-h, 100dvh) - 20px - var(--safe-t) - var(--safe-b))); border-radius: 20px; }
+  /* A phone held upright: a sheet sits at the bottom, under the thumb, with its buttons there (it hung from the top and left the
+     lower half of the screen, where the thumb is, empty: 2026-11-28 "버튼 위치가 애매하다"). With the keyboard up the modal is the
+     visible viewport (--app-h), so the sheet still ends right above the keys. */
+  @media (orientation: portrait) { html.touch .modal { place-items: end center; } }
   html.touch .avatar { width: 30px; height: 30px; font-size: 15px; border-radius: 10px; }
   html.touch .profile .name { font-size: 13px; }
   html.touch .wallet { padding: 6px 8px; gap: 8px; }
@@ -1353,6 +1375,9 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .wiz-nav .btn { justify-content: center; }
   .wiz-nav .btn.gold { flex: 1; }
   .wiz-nav .login-err { flex: 1 0 100%; margin: 0; }
+  /* The wizard's buttons are the sheet's footer (ui.js wizFoot): sticky at the bottom of the scrolling sheet, in every layout. */
+  .sheet > .wiz-foot { position: sticky; bottom: 0; z-index: 2; margin: 0; padding: 10px 24px calc(14px + var(--safe-b)); border-top: 1px solid var(--line); }
+  @media (max-width: 900px) { .sheet > .wiz-foot { padding: 10px 18px calc(12px + var(--safe-b)); } }
   .wiz-sum { margin-top: 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
   .wiz-sum > div { min-width: 0; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); }
   .wiz-sum small { display: block; font-size: 12px; font-weight: 700; color: var(--muted); }
@@ -1732,11 +1757,14 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     .sheet.wiz .content:has(> .screen) > :not(.screen) { grid-column: 2; }
     .sheet.wiz .content:has(> .screen) > :nth-child(2) { margin-top: 0; }
     .sheet.wiz .screen canvas { width: 100%; height: auto; }
-    .sheet.bill .grid2.bb { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 18px; overflow: hidden; }
-    .sheet.bill .grid2.bb > :first-child { display: block; min-height: 0; overflow: auto; }
-    .sheet.bill .grid2.bb > :last-child { min-height: 0; overflow: auto; margin-top: 0; }
-    .sheet.bill .grid2.bb .screen { position: static; padding: 6px; border-radius: 14px; background: var(--bg); }
-    .sheet.bill .grid2.bb .screen canvas { width: 100%; height: auto; }
+    .sheet.bill .grid2.bb { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 0 16px; }
+    .sheet.bill .grid2.bb .screen { padding: 4px; border-radius: 12px; }
+    .sheet.bill .grid2.bb .screen canvas { width: min(100%, calc((var(--app-h, 100dvh) - 230px) * 16 / 9)); height: auto; margin: 0 auto; } /* the preview and the slot picker fit the scroller */
+    .sheet.bill .bb-look .slot-pick { margin-top: 6px; }
+    /* A phone on its side: the sheet takes the height and a slimmer header, so the lines and the sticky 걸기 share the scroller. */
+    html.touch .sheet.bill { height: calc(var(--app-h, 100dvh) - 20px - var(--safe-t) - var(--safe-b)); max-height: none; }
+    .sheet.bill > header { padding-top: 10px; padding-bottom: 8px; }
+    .sheet.bill > .content { padding-top: 12px; padding-bottom: 8px; }
     .sheet.bill .holder { grid-template-columns: 1fr 1fr; }
   }
   /* A desktop window 520px tall or less (a 1280 x 760 window at 200% is 640 x 380): the left column is the identity card
@@ -1809,6 +1837,10 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     html:not(.touch) .sheet.narrow .content { padding-bottom: 18px; }
   }
   html.touch #ui.newbie .newbie-more { min-height: 44px; }
+  /* Touch: 메뉴 모두 보기 is a row of the ⋯ menu (ui.js .tool-grad), not a button floating under the goal card. */
+  html.touch #ui.newbie .hud-l > .newbie-more { display: none; }
+  .tools .tool-grad { display: none !important; }
+  html.touch #ui.newbie .tools.open .tool-grad { display: inline-flex !important; }
   /* ---------- Sheet spacing (2026-11-24, the owner: "the board sheet's sticker and link buttons are stuck together") ----------
      One rhythm in every sheet: buttons, chips, tabs and swatches next to each other are --tap-gap apart (8px with a mouse,
      12px on touch), and a group of them stands --group-gap (16px) under what is above it. A sheet's button row (.row) had

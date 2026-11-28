@@ -309,7 +309,7 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown, netDown
     const url = URL.createObjectURL(blob);
     const wrap = document.createElement('div'); wrap.id = 'kts-gift-done';
     const box = document.createElement('div'); box.className = 'box';
-    const h2 = document.createElement('h2'); h2.textContent = '🎬 15초 축하 영상이 나왔어요';
+    const h2 = document.createElement('h2'); h2.textContent = '🎬 축하 영상이 나왔어요'; // one name for the video everywhere (the gift page has one 축하 영상 entry)
     const v = document.createElement('video'); v.src = url; v.controls = true; v.playsInline = true; v.muted = true; v.loop = true; v.autoplay = true;
     const info = document.createElement('p'); info.textContent = (blob.type.includes('mp4') ? 'MP4' : 'WebM') + ' · ' + (blob.size / 1048576).toFixed(1) + 'MB · 세로 9:16';
     const up = document.createElement('p');

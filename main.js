@@ -27,7 +27,7 @@ import { seasonFor, seasonPreview } from './seasons.js';
 import { applyInboxPush, loadInbox, readInbox, liveOnly, handledRead, liveSeeable } from './inbox.js?v=202611280944';
 import { sendCheer, sendGiftCheer } from './tribe.js?v=202611280944';
 import { applyOps, ballNotice, nineBanner, kingMinute, clockSkew, clock, nowMs } from './live.js';
-import { pushRoute, awayRead } from './overlay.js?v=202611280944';
+import { pushRoute, awayRead, paidAds } from './overlay.js?v=202611280944';
 import { isMailbox, mailArrival, mailBack, mailErrorText, retryAfterS, MAIL_ERR } from './mailcode.js?v=202611280944';
 
 adoptHandover(location.search, localStorage);
@@ -494,7 +494,8 @@ function maintTick() {
   }, ui.boot.entered() ? 300000 : 60000);
 }
 // kakaoKey settles when net.init's one /rt/config read has finished (net.js loadConfig): maint and operator are known then.
-net.kakaoKey().then(() => { ui.setOperator(net.operator); maintShow(net.maint); maintTick(); }).catch(() => {});
+let lastAds; // the last /rt/world ads, applied again once the config says whether paid options are on
+net.kakaoKey().then(() => { ui.setOperator(net.operator); ui.setPaid?.(net.payOn); if (lastAds !== undefined) world?.setAds?.(paidAds(lastAds, net.payOn)); maintShow(net.maint); maintTick(); }).catch(() => {});
 // The free-slot list in that answer. A Worker isolate that has not asked the database yet answers with the old four
 // (STARTER_DEFAULT) and asks behind the response (worker.js starterSlots, 1.5 s at most), so the next answer has the real
 // list. The same guest saw "무료 거리 칸" on one load and "건물 앞 전광판" on the next, depending on which answer it got.
@@ -1198,7 +1199,8 @@ function applyPlaza(remote) {
   }
   ui.setWorld(state);
   world.updateWorld(state);
-  world.setAds?.(remote.ads); // 광고 화면 (adsale.js adWorld checks it; a missing key is off and empty)
+  lastAds = remote.ads;
+  world.setAds?.(paidAds(remote.ads, net.payOn)); // 광고 화면 (adsale.js adWorld checks it; a missing key is off and empty). No house ad unless PAY_ON (overlay.js paidAds)
   if (giftUi) giftUi.apply(remote.gifts); else world.setGifts?.(remote.gifts); // 선물 전광판 up now (a missing key is none)
   ui.giftsIn?.(); // 오늘 할 일's cheer row: a gift board on a screen is something to cheer too
   world.setPrime?.(state.prime);

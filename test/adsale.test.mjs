@@ -392,7 +392,7 @@ describe('wiring and copy', () => {
   });
   it('the plaza: the world hands /rt/world\'s ads to the screens, a tap opens the card, the link opens in the tap and the click is counted', () => {
     const m = read('main.js'), w = read('timesSquare3d.js'), ui = read('ui.js');
-    assert.match(m, /world\.setAds\?\.\(remote\.ads\);/);
+    assert.match(m, /world\.setAds\?\.\(paidAds\(remote\.ads, net\.payOn\)\);/); // the house ad only with PAY_ON (overlay.js paidAds)
     assert.match(m, /else if \(kind === 'adscreen'\) ui\.adCard\?\.\(/);
     assert.match(m, /window\.open\(ad\.u, '_blank', 'noopener,noreferrer'\);[\s\S]{0,140}net\._plazaPost\('\/rt\/ads\/click', \{ b: ad\.id \}\)/);
     assert.match(w, /else if \(info\.kind === 'adscreen'\) opts\.onInteract\?\.\('adscreen', info\.id,/);

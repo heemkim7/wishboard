@@ -638,37 +638,26 @@ describe('desktop top-centre column: the news line and the waypoint pill on one 
   });
 });
 
-describe('billboard sheet under 900px', () => {
-  const narrow = media('(max-width: 900px)', '.sheet.bill');
-  it('only the preview is sticky, and not on a short screen', () => {
-    assert.match(rule(narrow, '.sheet.bill .grid2.bb'), /display: block; overflow: auto;/);
-    assert.match(rule(narrow, '.sheet.bill .grid2.bb > :first-child'), /display: contents;/);
-    assert.equal(/position: sticky/.test(narrow), false);
-    const tall = media('(max-width: 900px) and (min-height: 521px)', '.screen');
-    assert.match(rule(tall, '.sheet.bill .grid2.bb .screen'), /position: sticky; top: 0; z-index: 3;/);
-    assert.match(rule(narrow, '.sheet.bill .grid2.bb .screen'), /background: var\(--surface\);/);
-    assert.match(rule(narrow, '.sheet.bill .grid2.bb .screen canvas'), /width: min\(100%, calc\(28vh \* 16 \/ 9\)\); margin: 0 auto;/);
-    // the two-column layout above 900px is as it was
-    assert.match(css, /\.sheet\.bill \.grid2\.bb > :first-child,\n\s*\.sheet\.bill \.grid2\.bb > :last-child \{ min-height: 0; overflow: auto; \}/);
+describe('billboard sheet (2026-11-28: preview, lines, colours and 걸기 on the first screen)', () => {
+  it('upright under 900px: one column in the order of use, only the preview strip sticky', () => {
+    const tall = media('(max-width: 900px) and (min-height: 521px)', '.sheet.bill');
+    assert.match(rule(tall, '.sheet.bill .grid2.bb'), /display: flex; flex-direction: column;/);
+    assert.match(rule(tall, '.sheet.bill .bb-look'), /background: var\(--surface\);/);
+    assert.match(rule(css, '.sheet.bill .bb-look'), /position: sticky; top: 0; z-index: 3;/);
+    // the strip is at most 19% of the height: 154px at 812, so the lines, 배경, 글자색 and 걸기 fit under it
+    assert.match(rule(tall, '.sheet.bill .bb-look .screen canvas'), /width: min\(100%, calc\(19vh \* 16 \/ 9\)\); margin: 0 auto;/);
   });
-  it('leaves most of the scroller to the form', () => {
-    // Sticky height = the canvas (as wide as the scroller, at most 28vh tall) + 8px above and below.
-    const sticky = (width, vh) => Math.min(width * 9 / 16, vh * 0.28) + 16;
-    // 771 x 1211 (desktop rules): sheet 860px tall, header 71px, content padding 44px; the scroller is 659px wide
-    const a = { scroller: 860 - 71 - 44, sticky: sticky(771 - 64 - 48, 1211) };
-    assert.equal(a.scroller, 745);
-    assert.ok(Math.abs(a.sticky - 355.1) < 0.1);
-    assert.ok(a.scroller - a.sticky > 380);
-    // 390 x 780 (desktop rules, as measured): sheet min(88vh, 724) = 686.4px, header 67px, content padding 38px; 330px wide
-    const b = { scroller: 686.4 - 67 - 38, sticky: sticky(390 - 24 - 36, 780) };
-    assert.ok(Math.abs(b.scroller - 581.4) < 0.1);
-    assert.ok(Math.abs(b.sticky - 201.6) < 0.1);
-    assert.ok(b.scroller - b.sticky > 370);
-    // 390 x 780 on a phone (html.touch: the sheet stops at 76vh): 592.8 - 67 - 38; 334px wide
-    const c = { scroller: 592.8 - 67 - 38, sticky: sticky(390 - 20 - 36, 780) };
-    assert.ok(c.scroller - c.sticky > 280);
-    // 667 x 375: under 521px tall nothing is sticky, so the whole scroller (204px, 170px on a phone) scrolls
-    assert.ok(375 < 521);
+  it('wide or short: the preview column is sticky beside the form (lines, colours, 걸기), in one scroller', () => {
+    assert.match(rule(css, '.sheet.bill .grid2.bb'), /overflow: auto;/);
+    assert.match(rule(css, '.sheet.bill .grid2.bb'), /grid-template-columns: minmax\(0, 1\.15fr\) minmax\(0, 1fr\);/);
+    // 걸기 sticks to the bottom of the scroller inside the right column (a phone on its side: on the first screen too)
+    assert.match(rule(css, '.sheet.bill .bb-go'), /position: sticky; bottom: 0; z-index: 2;[^}]*background: var\(--surface\);/);
+  });
+  it('the sum fits a 375 x 812 phone: strip + lines + 배경 + 글자색 + 걸기 under the scroller', () => {
+    const strip = Math.min((375 - 20 - 36) * 9 / 16, 812 * 0.19) + 44 + 8 + 8; // canvas, slot picker, gaps
+    const form = 3 * 44 + 2 * 8 + 10 + 44 + 10 + 36 + 12 + 48 + 8 + 18; // lines, 배경 row, 글자색 row, 걸기, balance
+    const scroller = 812 * 0.88 - 67 - 38;
+    assert.ok(strip + form <= scroller, `${strip + form} > ${scroller}`);
   });
 });
 

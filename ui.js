@@ -136,6 +136,7 @@ export function createUI(root, hooks) {
   // Ghost clicks (overlay.js createTapGuard): the click a phone sends after a tap that opened a sheet or a card on pointerdown or
   // pointerup (걸기, a board tap in 3D) is swallowed here, before it reaches the backdrop or a button of what just opened.
   const tapGuard = createTapGuard();
+  let paidOn = false; // PAY_ON (setPaid): until it is known, nothing paid is offered
   addEventListener('pointerdown', () => tapGuard.down(), { passive: true, capture: true });
   addEventListener('click', (e) => { if (tapGuard.click(e)) { e.preventDefault(); e.stopImmediatePropagation(); } }, true);
   // The same test as index.html's html.touch (interact.js isTouchUI): a coarse pointer or more than one touch point.
@@ -1475,7 +1476,6 @@ export function createUI(root, hooks) {
   let ext = null;
   function layer(el, close) {
     ext = el && typeof close === 'function' ? { el, close } : null;
-    if (ext) tapGuard.opened();
     toasts.inert = !!ext;
     hooks.lockInput(!!ext, 'layer'); // its own owner: closing it leaves the lock to a sheet or the proof bar still up
     showTop();
@@ -2916,8 +2916,8 @@ export function createUI(root, hooks) {
         h('button', { class: 'btn ghost', type: 'button', text: 'QR 코드 받기', onclick: () => openAdQr(slot) }));
       const emojiIn = h('input', { class: 'input', maxLength: 4, 'aria-label': '이모지' });
       const emo = h('div', { class: 'emo' });
-      const themes = h('div', { class: 'themes' });
-      const inks = h('div', { class: 'swatches' });
+      const themes = h('div', { class: 'themes', role: 'group', 'aria-label': '배경' });
+      const inks = h('div', { class: 'swatches', role: 'group', 'aria-label': '글자색' });
       const inkIn = h('input', { type: 'color', 'aria-label': '글자색 직접 선택' });
       const lines = [0, 1, 2].map(i => h('input', { class: 'input', maxLength: 16, placeholder: ['메인 문구 (16자)', '둘째 줄 (16자)', '셋째 줄 (16자)'][i], 'aria-label': ['첫째 줄', '둘째 줄', '셋째 줄'][i] }));
       const urlIn = h('input', { class: 'input', type: 'url', placeholder: 'https://threads.net/...', 'aria-label': '연결할 링크', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'done' });
@@ -3021,6 +3021,7 @@ export function createUI(root, hooks) {
         const key = [slot, mine, st, b?.photo_id || '', !!pic.img, photoTold.get(slot)?.text || ''].join('|');
         if (!force && key === photoKey) return;
         photoKey = key;
+        if (mine && (pic.img || st)) photoBox.closest('details')?.setAttribute('open', ''); // my photo's state is not folded away
         const head = h('div', { class: 'ph-head' }, h('b', null, ...withIcon('camera', '사진 광고')),
           mine && st === 'pending' ? h('span', { class: 'ph-state', text: '검수 중' }) : mine && st === 'approved' ? h('span', { class: 'ph-state on', text: '송출 중' }) : null,
           h('span', { class: 'ph-fee', text: `${tierOf(slot)}급 +${money(fee())} 포인트` }));
@@ -3030,7 +3031,7 @@ export function createUI(root, hooks) {
         if (!mine) {
           const mineDark = b?.holder_id === hooks.actorId() && !boardActive(b);
           photoBox.replaceChildren(...[head, result, h('p', { class: 'note', text: mineDark
-            ? '불이 꺼져 있어요. 위쪽 불 켜기를 누르면 사진을 올릴 수 있어요.'
+            ? '불이 꺼져 있어요. 불 켜기를 누르면 사진을 올릴 수 있어요.'
             : '사진은 운영자가 확인한 뒤 걸려요.' })].filter(Boolean));
           return;
         }
@@ -3418,11 +3419,14 @@ export function createUI(root, hooks) {
         hooks.giftPop?.(slot);
         showProof(slot, giftName);
       };
-      const more = h('details', { class: 'more' },
-        h('summary', { text: '배경 · 글자색 · 링크' }),
+      // Less on the first screen (the owner, 2026-11-28: too many items, colours only after scrolling): the preview with the
+      // slot, the three lines, 배경 and 글자색 in reach of the thumb, and the one 걸기 button. The rest is folded: 이모지,
+      // 링크 and the gift mode, the slot tabs, place and numbers (자리 정보), the photo ad and stickers.
+      const more = h('details', { class: 'more bb-more' },
+        h('summary', { text: '이모지 · 링크 · 선물 문구' }),
+        h('div', { class: 'seg' }, wishBtn, giftBtn),
+        tagRow,
         h('div', { class: 'field' }, h('label', null, '이모지'), emo),
-        h('div', { class: 'field' }, h('label', null, '배경'), themes),
-        h('div', { class: 'field' }, h('label', null, '글자색'), inks),
         urlField);
       go.addEventListener('click', () => placeBoard('claim'));
       for (const i of lines) i.addEventListener('input', () => say(linesErr, ''));
@@ -3437,33 +3441,36 @@ export function createUI(root, hooks) {
         if (pic.img) refreshPhotoGo();
       }, 1000);
       host.append(h('div', { class: 'grid2 bb' },
-        h('div', null,
-          pickNote, tipsEl, seg, pick,
-          placeEl,
-          h('div', { class: 'screen' }, canvas),
-          h('div', { class: 'holder' },
-            h('div', { class: 'stat' }, h('small', { text: '지금' }), stHolder),
-            h('div', { class: 'stat' }, h('small', { text: '가격' }), stBid),
-            h('div', { class: 'stat' }, h('small', { text: '기간' }), stProt),
-            h('div', { class: 'stat', hidden: true }, h('small', { text: '연속' }), stStreak),
-            h('div', { class: 'stat', style: { gridColumn: '1 / -1' } }, h('small', { text: '반응' }), stScore),
-            relightBtn,
-            ownRow,
-            chainNote),
-        ),
-        h('div', null,
-          h('div', { class: 'seg' }, wishBtn, giftBtn),
+        // The preview and the slot stay in view (sticky) while the lines and colours change it; 걸기 comes right after the colours
+        // and sticks to the bottom of the scroller while the folds below are open (index.html "Billboard sheet").
+        h('div', { class: 'bb-look' }, h('div', { class: 'screen' }, canvas), pick),
+        h('div', { class: 'bb-right' },
+        h('div', { class: 'bb-main' },
           toField,
-          tagRow,
-          h('div', { class: 'field' }, h('label', null, '내 광고 문구'), h('div', { class: 'lines' }, ...lines), linesErr),
-          h('div', { class: 'field' }, h('label', null, '72시간 걸기'), bidIn, balance),
-          go,
-          goErr,
-          (stickers = stickerBox(() => slot)),
-          // The photo ad is its own row, open, with its review state in the head (검수 중 / 송출 중). The 60 s takeover lives in VIP.
-          photoBox, capRow, photoFile,
+          h('div', { class: 'lines', role: 'group', 'aria-label': '전광판 문구' }, ...lines), linesErr,
+          h('div', { class: 'bb-style' },
+            themes,
+            inks)),
+        h('div', { class: 'bb-go' }, relightBtn, go, balance, goErr, bidIn),
+        h('div', { class: 'bb-rest' },
+          ownRow,
           more,
-        ),
+          h('details', { class: 'more bb-place' },
+            h('summary', { text: '자리 정보 · 다른 칸 고르기' }),
+            pickNote, tipsEl, seg, placeEl,
+            h('div', { class: 'holder' },
+              h('div', { class: 'stat' }, h('small', { text: '지금' }), stHolder),
+              h('div', { class: 'stat' }, h('small', { text: '가격' }), stBid),
+              h('div', { class: 'stat' }, h('small', { text: '기간' }), stProt),
+              h('div', { class: 'stat', hidden: true }, h('small', { text: '연속' }), stStreak),
+              h('div', { class: 'stat', style: { gridColumn: '1 / -1' } }, h('small', { text: '반응' }), stScore),
+              chainNote)),
+          // The photo ad keeps its review state in its head (검수 중 / 송출 중); the 60 s takeover lives in VIP.
+          h('details', { class: 'more bb-photo' },
+            h('summary', { text: '사진 광고 · 네온 스티커' }),
+            photoBox, capRow, photoFile,
+            (stickers = stickerBox(() => slot))),
+        )),
       ));
       showZone(zone && zone !== 'tower' ? zone : (slotId ? (String(slotId).startsWith('STREET_') ? 'hot' : 'cheap') : 'pick'), slotId || undefined);
       fontsReady('타임스퀘어 전광판 걸기 ' + hooks.nick()).then(paint);
@@ -4110,6 +4117,7 @@ export function createUI(root, hooks) {
   }
   // from: where a fresh wizard was opened (tool | goal | toast). claim_start goes out once per model, at step 1 (이전 back to it sends nothing).
   const claimStart = claimStarter(slotTier);
+  function wizFoot(host, ...kids) { host.after(h('div', { class: 'wiz-nav wiz-foot' }, ...kids)); }
   function openClaimStep(n, model, from = '') {
     if (!model) return;
     if (n === 1) { const start = claimStart(model, from); if (start) trackEvent('claim_start', start); }
@@ -4153,8 +4161,9 @@ export function createUI(root, hooks) {
         };
         paintPicks();
         host.append(...rows);
-        host.append(h('div', { class: 'wiz-nav', style: { position: 'sticky', bottom: '0' } },
-          h('button', { class: 'btn gold', type: 'button', text: '다음', onclick: () => openClaimStep(2, model) })));
+        // The step's buttons are the sheet's footer (sticky at its bottom), not the last row of its content: in the two-column
+        // layout of a phone on its side a sticky row inside the grid could not leave its own cell, and 다음 / 걸기 was off screen.
+        wizFoot(host, h('button', { class: 'btn gold', type: 'button', text: '다음', onclick: () => openClaimStep(2, model) }));
       } else if (n === 2) {
         const names = ['첫째 줄', '둘째 줄', '셋째 줄'];
         const examples = ['올해는 꼭 합격', '우리 가족 건강하게', '#소원'];
@@ -4178,9 +4187,21 @@ export function createUI(root, hooks) {
         };
         inputs.forEach((el) => el.addEventListener('input', () => { say(linesErr, ''); paint(); }));
         host.append(h('div', { class: 'screen' }, canvas));
-        host.append(h('p', { class: 'note', text: '전광판에는 이렇게 보여요. 줄마다 16자까지.' }));
         inputs.forEach((el, i) => host.append(h('label', { class: 'claimline' }, el, counts[i])));
         host.append(linesErr);
+        // 배경 right under the lines, so the preview above changes as it is picked (2026-11-28: colours were out of sight).
+        const themeRow = h('div', { class: 'themes', role: 'group', 'aria-label': '배경' });
+        for (const [key, th] of Object.entries(THEMES)) {
+          if (th.gift) continue;
+          const on = key === model.theme;
+          const b = h('button', { type: 'button', class: 'theme' + (on ? ' on' : ''), 'aria-pressed': String(on), text: th.label, style: { background: `linear-gradient(135deg, ${th.swatch[0]}, ${th.swatch[1]} 55%, ${th.swatch[2]})` }, onclick: () => {
+            model.setTheme(key, THEMES);
+            for (const c of themeRow.children) { const now = c === b; c.classList.toggle('on', now); c.setAttribute('aria-pressed', String(now)); }
+            paint();
+          } });
+          themeRow.append(b);
+        }
+        host.append(h('div', { class: 'wiz-style' }, themeRow));
         // Shop templates and a link: folded for a newcomer (and while that is still undecided), open for everyone else. The filled lines stay editable and pass the same checks.
         const linkIn = h('input', { class: 'input', type: 'url', placeholder: 'https://smartstore.naver.com/...', value: model.link || '', 'aria-label': '가게 링크', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'done' });
         linkIn.addEventListener('input', () => say(linkErr, ''));
@@ -4213,9 +4234,9 @@ export function createUI(root, hooks) {
           model.link = link ? allowedLink(link) : '';
           openClaimStep(3, model);
         };
-        host.append(h('div', { class: 'wiz-nav', style: { position: 'sticky', bottom: '0' } },
+        wizFoot(host,
           h('button', { class: 'btn ghost', type: 'button', text: '이전', onclick: back }),
-          h('button', { class: 'btn gold', type: 'button', text: '다음', onclick: next })));
+          h('button', { class: 'btn gold', type: 'button', text: '다음', onclick: next }));
         return () => cancelAnimationFrame(raf);
       } else {
         const free = starterOpen(model.slot);
@@ -4267,7 +4288,8 @@ export function createUI(root, hooks) {
             h('div', null, h('small', { text: '가격' }), h('b', { class: 'gold', text: free ? '무료' : `${money(floor)}포인트` })),
             host2 ? h('div', null, h('small', { text: '링크' }), h('b', { text: host2 })) : null),
           h('p', { class: 'note', text: free ? '첫 칸은 포인트가 들지 않아요. 계정마다 한 번이에요.' : `${josa(slotName(model.slot), '은', '는')} ${money(floor)}포인트로 겁니다.` }),
-          h('div', { class: 'wiz-nav', style: { position: 'sticky', bottom: '0' } }, prev, go, err));
+        );
+        wizFoot(host, prev, go, err);
       }
     }, true, 'wiz');
   }
@@ -5670,6 +5692,8 @@ export function createUI(root, hooks) {
         raf = requestAnimationFrame(draw);
         clampLoopView(view, cv.width, cv.height);
         const d = hooks.minimap?.();
+        // 순간이동 and 지우기 act on a destination: they show only while there is one (they lay on the map's labels for nothing).
+        for (const b of zoomBtns.querySelectorAll('.wide')) { if (b.hidden !== !d?.waypoint) b.hidden = !d?.waypoint; }
         const ui = dprM * Math.max(0.9, Math.min(1.5, 1));
         const s = `${view.cx.toFixed(1)},${view.cz.toFixed(1)},${view.scale.toFixed(4)},${cv.width},${hooks.mapData?.() ? 1 : 0},${(d?.plots || []).map(p => p.level + p.color).join('')}`;
         if (s !== sig) { sig = s; drawBase(base.getContext('2d'), base.width, base.height, view, { labels: true, ui, plots: d?.plots }); }
@@ -5907,20 +5931,25 @@ export function createUI(root, hooks) {
       const open = (label, go) => h('button', { type: 'button', onclick: go }, h('span', { text: label }), icon('chevronRight'));
       host.append(
         h('div', { class: 'rowlist', style: { marginTop: 0 } }, sound.el, full?.el),
-        h('div', { class: 'holder' },
-          h('div', { class: 'stat' }, h('small', { text: '상태' }), h('b', { text: who })),
-          h('div', { class: 'stat' }, h('small', { text: '닉네임' }), h('b', { text: hooks.nick?.() || '—' })),
-          h('div', { class: 'stat' }, h('small', { text: acct.kind === 'id' ? '아이디' : '이메일' }), h('b', { text: acct.text || '없음', title: acct.text || null }))),
         account.childNodes.length ? account : null,
-        row('네온 글로우', 0, 100, Math.round(s.glow * 100), v => `${v}%`, v => hooks.setGlow(v / 100)),
-        row('화면 밝기', 60, 130, Math.round(s.exposure * 100), v => `${v}%`, v => hooks.setExposure(v / 100)),
-        h('div', { class: 'field' }, h('label', null, '그래픽 품질'), qSel, qNote),
-        h('div', { class: 'field' }, h('label', null, '계정 번호'), h('div', { class: 'bid' }, accountBox, copyBtn), idManual),
         h('div', { class: 'rowlist' },
           open('알림', () => openPushSheet()),
           open('받은 소식', () => openInboxSheet()),
           open('이번 주 코드', () => openCodeSheet()),
           open('문의하기', () => openSupport())),
+        // Fewer rows on the first screen (2026-11-28): the picture settings and the account's details are folded.
+        h('details', { class: 'more set-more' },
+          h('summary', { text: '화면 · 그래픽' }),
+          row('네온 글로우', 0, 100, Math.round(s.glow * 100), v => `${v}%`, v => hooks.setGlow(v / 100)),
+          row('화면 밝기', 60, 130, Math.round(s.exposure * 100), v => `${v}%`, v => hooks.setExposure(v / 100)),
+          h('div', { class: 'field' }, h('label', null, '그래픽 품질'), qSel, qNote)),
+        h('details', { class: 'more set-more' },
+          h('summary', { text: '내 계정 정보' }),
+          h('div', { class: 'holder' },
+            h('div', { class: 'stat' }, h('small', { text: '상태' }), h('b', { text: who })),
+            h('div', { class: 'stat' }, h('small', { text: '닉네임' }), h('b', { text: hooks.nick?.() || '—' })),
+            h('div', { class: 'stat' }, h('small', { text: acct.kind === 'id' ? '아이디' : '이메일' }), h('b', { text: acct.text || '없음', title: acct.text || null }))),
+          h('div', { class: 'field' }, h('label', null, '계정 번호'), h('div', { class: 'bid' }, accountBox, copyBtn), idManual)),
         statsField(),
         policyLinks(),
         operatorFooter(),
@@ -5947,7 +5976,7 @@ export function createUI(root, hooks) {
         const b = h('button', { type: 'button', text: label, 'aria-pressed': 'false', onclick: () => {
           kind = id;
           for (const c of kinds.children) { const on = c === b; c.classList.toggle('on', on); c.setAttribute('aria-pressed', on ? 'true' : 'false'); }
-          adsLine.hidden = id !== 'ads';
+          adsLine.hidden = id !== 'ads' || !paidOn; // the ad page is a paid option (overlay.js paidAds)
           err.hidden = true;
         } });
         kinds.append(b);
@@ -6292,6 +6321,9 @@ export function createUI(root, hooks) {
   // kts_ftue is set for every earlier player (the old tutorial bug) and for a new one only after the bake step.
   if (!grad && silentGrad({ ftue: recall('kts_ftue', ''), daily: recall('kts_daily', null), day: kstDay() })) { grad = true; store('kts_grad', 1); }
   root.querySelector('.hud-l')?.append(h('button', { class: 'newbie-more', type: 'button', text: '메뉴 모두 보기', onclick: (e) => { e.stopPropagation(); graduate(); } }));
+  // On touch the same choice is the last row of the ⋯ menu, where the rest of the menu is looked for (it floated alone under the
+  // goal card, far from the menu it opens up); index.html hides the left-column copy there.
+  toolsEl?.querySelector('.tool-fold')?.before(h('button', { class: 'btn icon tool-more tool-grad', type: 'button', 'aria-label': '메뉴 모두 보기', title: '메뉴 모두 보기', onclick: () => { foldTools(false); graduate(); } }, icon('plus')));
   newbieReady = true;
   placeGoal();
   try { if (sessionStorage.getItem('kts_viewonly') === '1') setViewOnly(true); } catch { /* private mode */ }
@@ -6302,7 +6334,7 @@ export function createUI(root, hooks) {
   return {
     sfx, note, pop, flyCoins, cooldownLeft, armCooldown, showResult,
     // A layer (gift.js's frame: the gift maker) ends 같이 춤추기 like a sheet (openSheet), and startDance waits for it to close.
-    layer(el, close) { if (el && dance) endDance('layer'); layer(el, close); },
+    layer(el, close) { if (el && dance) endDance('layer'); layer(el, close); if (el) tapGuard.opened(); }, // a frame that opens on a tap's pointerup keeps that tap's click
     startBake, stopBake, startDance, endDance, danceInvite, openBillboard, openAd, openPlot, openHub, openCredits, openMap, openSettings, openWalletInfo, openVip, toggleReacts, showProof,
     mission(kind) { if (kind === 'wish' || kind === 'heart') { missionBump(kind); renderTodo(); } }, // a cheer counts through quest (questBump)
     quest: questBump,
@@ -6458,6 +6490,8 @@ export function createUI(root, hooks) {
       entered: () => entered,
     },
     setOperator,
+    // PAY_ON from /rt/config (net.js payOn): paid options show only then.
+    setPaid(on) { paidOn = !!on; },
     setWish,
     setSeason,
     openWish,

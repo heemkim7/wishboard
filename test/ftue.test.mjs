@@ -130,7 +130,8 @@ it('ui exposes the wizard hooks', () => {
   assert.match(ui, /function openClaimStep/);
   assert.match(ui, /function setNextLine/);
   assert.match(ui, /function setQuietBlock/);
-  assert.match(ui, /position:\s*'sticky'/);
+  assert.match(ui, /function wizFoot\(host, \.\.\.kids\) \{ host\.after\(h\('div', \{ class: 'wiz-nav wiz-foot' \}, \.\.\.kids\)\); \}/); // the step's buttons: the sheet's sticky footer
+  assert.match(readFileSync(new URL('../index.html', import.meta.url), 'utf8'), /\.sheet > \.wiz-foot \{ position: sticky; bottom: 0;/);
 });
 
 it('celebration lock is five seconds', () => {

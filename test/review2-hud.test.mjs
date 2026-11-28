@@ -420,7 +420,7 @@ describe('9. 같이 춤추기', () => {
     assert.match(tick, /else if \(danceSong !== r\.id\) danceMusic\(r\);/);
   });
   it('a layer (the gift maker) ends the dance and blocks its start, as a sheet does', () => {
-    assert.match(ui, /    layer\(el, close\) \{ if \(el && dance\) endDance\('layer'\); layer\(el, close\); \},/);
+    assert.match(ui, /    layer\(el, close\) \{ if \(el && dance\) endDance\('layer'\); layer\(el, close\); if \(el\) tapGuard\.opened\(\); \},/);
     assert.match(body(ui, "  function startDance(kind = 'panel') {"), /if \(sheet \|\| ext \|\| baking \|\| driving\) return false;/);
   });
   it('the automatic re-send never eats the player\'s own reaction: it does not take the emote cooldown, it waits for it', () => {

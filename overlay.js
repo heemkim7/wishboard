@@ -197,6 +197,15 @@ export function backdropClose({ downOnBack, target, backdrop }) {
   return !!downOnBack && target === backdrop;
 }
 
+// ---- paid options ----------------------------------------------------------------------------
+// The owner, 2026-11-28: "유료옵션은 숨겨줘 일단". The plaza offers nothing paid unless /rt/config carries pay (PAY_ON=1, net.js
+// payOn): the ad screens' house ad ("이 화면에 광고하세요 · 하루 단위", its card's 광고 안내) is the plain city screen, the support
+// sheet's link to the ad page is not shown. A booked ad still plays (it is content, not an offer). With PAY_ON=1 nothing changes.
+export function paidAds(ads, payOn) {
+  if (payOn) return ads;
+  return { ...(ads && typeof ads === 'object' ? ads : {}), on: 0 };
+}
+
 // ---- the tool row's order --------------------------------------------------------------------
 // The top-right tool row, the phone's closed row and the ⋯ menu all list the tools in this order, by how much they are
 // used (each tool button carries the class): 전광판 걸기 is the core action; 선물 전광판 the growth loop (a friend's name on
