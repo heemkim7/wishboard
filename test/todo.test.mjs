@@ -58,6 +58,46 @@ describe('the list', () => {
   });
 });
 
+// worker.js Room.cheer counts only a lit board held by someone else ('dark' otherwise): with none in the plaza the cheer row waits.
+describe('the cheer row with nothing to cheer (cheerOpen false)', () => {
+  const wait = { ...base, cheerOpen: false, team: false };
+  it('stays on the list with its pays and says why, but is not counted, never next and not known', () => {
+    const l = todoList(wait), r = l[1];
+    assert.deepEqual(ids(l), ['attend', 'cheer', 'wish', 'heart']);
+    assert.deepEqual([r.wait, r.why, r.value, r.pts, r.done, r.known], [true, TODO_TEXT.cheerWait, '+45', TODO.cheerPts, false, false]);
+    assert.equal(TODO_TEXT.cheerWait, '지금은 응원할 전광판이 없어요');
+    assert.deepEqual(todoProgress(l), { n: 1, N: 3, all: false, frac: 1 / 3 });
+    assert.equal(todoNext(l).id, 'wish');
+    assert.equal(todoSnap(l).cheer, null, 'no notice can come from a waiting row');
+    assert.equal(todoList({ ...wait, cheer: 2 })[1].label, '전광판 응원 3번 (2/3)', 'cheers already landed today still show');
+  });
+  it('does not block all done; a row already done stays done and counted', () => {
+    const l = todoList({ ...wait, wish: true, heart: true });
+    assert.deepEqual(todoProgress(l), { n: 3, N: 3, all: true, frac: 1 });
+    assert.equal(todoNext(l), null);
+    const done = todoList({ ...wait, cheer: 3 })[1];
+    assert.deepEqual([done.done, done.wait, done.known], [true, undefined, true]);
+    assert.equal(todoProgress(todoList({ ...wait, cheerDone: true })).N, 4);
+  });
+  it('comes back when a board lights up (cheerOpen true or left out) and waits for the boards (null) before all done', () => {
+    for (const cheerOpen of [true, undefined, null]) {
+      const r = todoList({ ...base, cheerOpen, team: false })[1];
+      assert.deepEqual([r.wait, r.known], [undefined, true], String(cheerOpen));
+    }
+    assert.equal(todoSettled({ ...base, team: false, cheerOpen: null }), false, 'the boards are not in yet');
+    assert.equal(todoSettled({ ...base, team: false, cheerOpen: false }), true);
+    assert.equal(todoSettled({ ...base, team: false }), true, 'left out: as before');
+  });
+  it('the phone pill never points at it', () => {
+    const goal = '다음 목표: 응원 팀과 함께 명당에 이름 걸기';
+    assert.equal(pillPlan({ known: true, held: 1, goal, list: todoList(wait) }).text, '할 일 1/3 · 소원 한 줄 걸기');
+    const rest = todoList({ ...wait, wish: true, heart: true });
+    assert.equal(pillPlan({ known: true, held: 1, goal, list: rest, doneHere: true, streak: 2 }).text, '오늘 할 일 완료 · 출석 2일');
+    assert.equal(pillPlan({ known: true, held: 1, goal, list: rest }).text, goal);
+    assert.equal(itemNote(todoList(wait)[2], todoNext(todoList({ ...wait, wish: true }))), '✓ 소원 한 줄 걸기 · 다음: 소원에 하트 1개');
+  });
+});
+
 describe('what changed', () => {
   it('a row seen open and now done is new; a row that came in done says nothing', () => {
     const a = todoSnap(todoList({ ...base, wish: null, heart: false, team: null }));

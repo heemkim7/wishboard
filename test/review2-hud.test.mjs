@@ -216,6 +216,7 @@ function harness({ daily = {}, wish = { known: true, mine: null, given: [], busy
     sfx: { todo: () => calls.push(['sfx', 'todo']), todoAll: () => calls.push(['sfx', 'all']) },
     trackEvent: (n, p) => calls.push(['event', n, p]),
     hooks: { nick: () => '민지', todoCard: (c) => { calls.push(['card', c]); return true; } },
+    open: true, cheerSignal: () => ctx.open, // ui.js cheerSignal (test/todo-ui.test.mjs covers false and null)
     guideQuest: () => {}, openToday: () => {}, renderGoal: () => {},
   };
   runInNewContext(`let entered = true, driving = false, baking = null, sheets = [], ext = null; const proof = { hidden: true };\n${ui.slice(a, b)}\nthis.api = { renderTodo, attendPaid, setTeamToday, pumpTodoCard, todoPaid: typeof todoPaid === 'function' ? todoPaid : () => renderTodo(), todoQuestSent: typeof todoQuestSent === 'function' ? todoQuestSent : () => {} };`, ctx);

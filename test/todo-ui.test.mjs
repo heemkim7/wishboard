@@ -27,7 +27,7 @@ function body(src, head) {
 // ---- ui.js's 오늘 할 일 block, run with stubs ---------------------------------------------------------------------------------------
 const DAY = '2026-11-25';
 const plain = (v) => JSON.parse(JSON.stringify(v));
-function harness({ day = DAY, daily = {}, wish = { known: true, mine: null, given: [], busy: false }, entered = true, nick = '민지' } = {}) {
+function harness({ day = DAY, daily = {}, wish = { known: true, mine: null, given: [], busy: false }, entered = true, nick = '민지', cheerOpen = true } = {}) {
   const a = ui.indexOf('  let teamToday = null'), b = ui.indexOf("  addEventListener('storage'");
   assert.ok(a > 0 && b > a, 'the 오늘 할 일 block');
   const calls = [];
@@ -35,9 +35,10 @@ function harness({ day = DAY, daily = {}, wish = { known: true, mine: null, give
   let d = { day, streak: 3, last: day, cheer: 0, wish: 0, heart: 0, paid: {}, qPaid: {}, stamps: {}, allDay: '', cardDay: '', gw: '', gs: null, ...daily };
   let now = 1000;
   const body = new Set(), rootCls = new Set();
+  const rows = []; // the todo-row buttons painted (props only)
   const ctx = {
     ...TODO_MOD, BALANCE,
-    h: () => node(), icon: () => null,
+    h: (tag, props, ...kids) => { const n = node(); n.props = props || {}; n.text = kids.filter(Boolean).map((k) => k.props?.text || '').join('|'); if (String(props?.class || '').startsWith('todo-row')) rows.push(n); return n; }, icon: () => null,
     performance: { now: () => now },
     document: { body: { classList: { contains: (c) => body.has(c) } } },
     root: { classList: { contains: (c) => rootCls.has(c) } },
@@ -48,13 +49,14 @@ function harness({ day = DAY, daily = {}, wish = { known: true, mine: null, give
     trackEvent: (n, p) => calls.push(['event', n, p]),
     hooks: { nick: () => nick, todoCard: (c) => { calls.push(['card', c]); return ctx.built; } },
     built: true,
+    open: cheerOpen, cheerSignal: () => ctx.open, // ui.js cheerSignal: true / false / null (the boards not in yet)
     guideQuest: (id) => calls.push(['go', id]), openToday: () => calls.push(['sheet']), renderGoal: () => {},
   };
   runInNewContext(`let entered = ${entered}, driving = false, baking = null, sheets = [], ext = null; const proof = { hidden: true };\n${ui.slice(a, b)}\nthis.api = { renderTodo, attendPaid, setTeamToday, pumpTodoCard, todoEl, set(k, v) { if (k === 'driving') driving = v; if (k === 'baking') baking = v; if (k === 'sheet') sheets = v ? [{}] : []; if (k === 'ext') ext = v ? {} : null; if (k === 'proof') proof.hidden = !v; if (k === 'entered') entered = v; } };`, ctx);
   return {
-    api: ctx.api, ctx, calls,
+    api: ctx.api, ctx, calls, rows,
     get d() { return d; },
-    clear() { calls.length = 0; },
+    clear() { calls.length = 0; rows.length = 0; },
     tick(ms = 2500) { now += ms; },
     body, rootCls,
     // as plain data (objects made inside the context have its prototypes, which deepEqual would tell apart)
@@ -242,9 +244,70 @@ describe('the pays and their words', () => {
   });
   it('a cheer row walks to the nearest lit board of someone else', () => {
     const fn = body(ui, '  function guideQuest(key) {');
-    assert.match(fn, /boardActive\(b\) && \(!me \|\| b\.holder_id !== me\)/);
-    assert.match(fn, /hooks\.setWaypoint\?\.\(\{ \.\.\.best, auto: rows\.length > 0 \}\);/);
+    assert.match(body(ui, '  function cheerBoards() {'), /boardActive\(b\) && \(!me \|\| b\.holder_id !== me\)/);
+    assert.match(fn, /const rows = cheerBoards\(\);/);
+    assert.doesNotMatch(fn, /world\.billboards/, 'no fallback to every slot (an empty one takes no cheer)');
+    assert.match(fn, /hooks\.setWaypoint\?\.\(\{ \.\.\.best, auto: true \}\);/);
     assert.match(fn, /if \(key === 'team'\) \{ openTribeSheet\(\); return; \}/);
+  });
+  // guideQuest('cheer') run with stubs: worker.js Room.cheer counts only a lit board held by someone else.
+  describe('the cheer guide, run', () => {
+    const H = 3600e3, NOW = Date.now();
+    const lit = (slot, holder) => ({ slot_id: slot, holder_id: holder, lit_until: new Date(NOW + H).toISOString() });
+    const POS = { STREET_20: { x: 1, z: 1 }, STREET_3: { x: 2, z: 2 }, STREET_40: { x: 90, z: 90 }, STREET_9: { x: 5, z: 5 } };
+    function guide(billboards, { me = 'me', ready = true } = {}) {
+      const calls = [];
+      const ctx = {
+        TODO_TEXT: TODO_MOD.TODO_TEXT, PAY: { cheer: { base: 4 } },
+        world: { billboards }, plazaReady: ready,
+        hooks: { actorId: () => me, minimap: () => ({ me: { x: 0, z: 0 } }), slotCard: (id) => POS[id] || {}, setWaypoint: (w) => calls.push(['way', w]) },
+        note: (text, kind, tap, o) => calls.push(['note', text, kind, o?.key || '']),
+        openWish() {}, openTribeSheet() {}, openToday() {},
+      };
+      runInNewContext(`${body(ui, '  function boardActive(b) {')}\n${body(ui, '  function guideQuest(key) {')}\n${body(ui, '  function cheerBoards() {')}\n${ui.match(/  function cheerSignal\(\) \{[^\n]*\}/)[0]}\nthis.go = guideQuest; this.sig = cheerSignal;`, ctx);
+      return { go: () => { ctx.go('cheer'); return JSON.parse(JSON.stringify(calls)); }, sig: () => ctx.sig() };
+    }
+    it('only my own lit board and empty or dark slots: no waypoint, an honest note, and the row waits', () => {
+      const g = guide([lit('STREET_20', 'me'), { slot_id: 'STREET_3' }, { slot_id: 'STREET_9', holder_id: 'x', lit_until: new Date(NOW - 1).toISOString() }]);
+      assert.deepEqual(g.go(), [['note', '지금은 켜진 남의 전광판이 없어요. 누가 전광판을 켜면 응원할 수 있어요', '', 'cheer-none']]);
+      assert.equal(g.sig(), false);
+    });
+    it('the nearest lit board of someone else, walked to by itself; never mine, never an empty slot nearer', () => {
+      const g = guide([lit('STREET_20', 'me'), { slot_id: 'STREET_3' }, lit('STREET_40', 'other')]);
+      const c = g.go();
+      assert.deepEqual(c[0], ['way', { x: 90, z: 90, name: '전광판', auto: true }]);
+      assert.equal(c[1][2], 'ok');
+      assert.equal(g.sig(), true);
+    });
+    it('the boards not in yet: the signal is null (the list does not say all done on it)', () => {
+      assert.equal(guide([], { ready: false }).sig(), null);
+    });
+  });
+  it('the waiting cheer row on the card: dimmed, says why, not in n / N, not next; it comes back when a board lights up', () => {
+    const t = harness({ daily: { wish: 1 }, cheerOpen: false });
+    t.api.setTeamToday(false);
+    const row = () => t.rows.filter((n) => /^전광판 응원/.test(n.props['aria-label'])).pop();
+    const head = () => t.ctx.api.todoEl.kids[0];
+    assert.match(row().props.class, /\bwait\b/);
+    assert.doesNotMatch(row().props.class, /\bnext\b/);
+    assert.match(row().props['aria-label'], /지금은 응원할 전광판이 없어요/);
+    assert.match(row().text, /지금은 응원할 전광판이 없어요/);
+    assert.match(head().props['aria-label'], /2 \/ 3/);
+    assert.ok(t.rows.some((n) => /소원에 하트 1개/.test(n.props['aria-label']) && /\bnext\b/.test(n.props.class)), 'the heart is next');
+    t.clear(); t.ctx.open = true; t.api.renderTodo();
+    assert.doesNotMatch(row().props.class, /\bwait\b/);
+    assert.match(row().props.class, /\bnext\b/);
+    assert.match(head().props['aria-label'], /2 \/ 4/);
+    assert.deepEqual(t.notes(), [], 'coming back says nothing');
+  });
+  it('with nothing to cheer the rest can still be all done (the moment, the gold stamp); the boards not in yet hold it', () => {
+    const t = harness({ daily: { wish: 1 }, cheerOpen: null });
+    t.api.setTeamToday(false);
+    t.d.heart = 1; t.api.renderTodo();
+    assert.equal(t.d.allDay, '', 'the boards are not in: not settled');
+    t.ctx.open = false; t.api.renderTodo();
+    assert.equal(t.d.allDay, DAY);
+    assert.equal(t.d.stamps[DAY], 2);
   });
   it('the team row: /rt/team/me once per entry, false at budget hard; a cheer write marks it', () => {
     assert.match(main, /function askTeamToday\(\) \{\n\s+if \(net\.budgetDown \|\| net\.gateDown\) \{ ui\.setTeamToday\?\.\(false\); return; \}/);

@@ -21,6 +21,8 @@ export const TODO_TEXT = Object.freeze({
   chip: '🎉 오늘 할 일 완료',
   bye: '내일 또 만나요',
   teamValue: '팀 기록',
+  cheerWait: '지금은 응원할 전광판이 없어요', // the cheer row while nobody else's board is lit (todoList cheerOpen false)
+  cheerNone: '지금은 켜진 남의 전광판이 없어요. 누가 전광판을 켜면 응원할 수 있어요', // its tap: no waypoint (ui.js guideQuest)
 });
 const WD = ['월', '화', '수', '목', '금', '토', '일'];
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -41,16 +43,19 @@ export function weekStart(day) {
 }
 
 // ---- the list ---------------------------------------------------------------------------------------------------------------
-/** s: { attendPts, cheer (today's landed cheers), cheerDone (qPaid.cheer, the server's qc), wish / heart (true, false, or null when not
- *  known yet), team (null while it is being decided, false when teams are not usable now, else { has: a team of mine, done: today's
- *  cheer for it is on record }) }. -> rows in the spec's order: { id, name, label, value, pts, done, known, n?, need? }.
- *  team is a row only when { has, done } came: without it N is 4. */
+/** s: { attendPts, cheer (today's landed cheers), cheerDone (qPaid.cheer, the server's qc), cheerOpen (false: no lit board of someone
+ *  else to cheer now, the only cheer worker.js Room.cheer counts; null while the boards are not in; left out: open), wish / heart (true,
+ *  false, or null when not known yet), team (null while it is being decided, false when teams are not usable now, else { has: a team of
+ *  mine, done: today's cheer for it is on record }) }. -> rows in the spec's order: { id, name, label, value, pts, done, known, wait?,
+ *  why?, n?, need? }. team is a row only when { has, done } came: without it N is 4. A cheer row not done while cheerOpen is false waits
+ *  (wait, why): it stays on the list with its pays, is not counted in n/N, is never the next row and is not known (no notice). */
 export function todoList(s = {}) {
   const n = Math.min(TODO.cheerNeed, int(s.cheer));
   const cheerDone = !!s.cheerDone || n >= TODO.cheerNeed;
+  const cheerWait = s.cheerOpen === false && !cheerDone;
   const rows = [
     { id: 'attend', name: '출석', value: `+${int(s.attendPts)}`, pts: int(s.attendPts), done: true, known: true },
-    { id: 'cheer', name: '전광판 응원 3번', value: `+${TODO.cheerPts}`, pts: TODO.cheerPts, done: cheerDone, known: true, n: cheerDone ? TODO.cheerNeed : n, need: TODO.cheerNeed },
+    { id: 'cheer', name: '전광판 응원 3번', value: `+${TODO.cheerPts}`, pts: TODO.cheerPts, done: cheerDone, known: !cheerWait, n: cheerDone ? TODO.cheerNeed : n, need: TODO.cheerNeed, ...(cheerWait ? { wait: true, why: TODO_TEXT.cheerWait } : {}) },
     { id: 'wish', name: '소원 한 줄 걸기', value: `+${TODO.wishPts}`, pts: TODO.wishPts, done: s.wish === true, known: s.wish === true || s.wish === false },
     { id: 'heart', name: '소원에 하트 1개', value: `+${TODO.heartPts}`, pts: TODO.heartPts, done: s.heart === true, known: s.heart === true || s.heart === false },
   ];
@@ -58,16 +63,19 @@ export function todoList(s = {}) {
   for (const r of rows) r.label = r.id === 'cheer' && !r.done && r.n > 0 ? `${r.name} (${r.n}/${r.need})` : r.name;
   return rows;
 }
-/** Every signal is in: the team was decided (in or out) and the wish rows are known. Only then can "all done" be said. */
+/** Every signal is in: the team was decided (in or out), the wish rows are known and the boards are in (cheerOpen not null). Only
+ *  then can "all done" be said. */
 export function todoSettled(s = {}) {
-  return s.team !== null && s.team !== undefined && (s.wish === true || s.wish === false) && (s.heart === true || s.heart === false);
+  return s.team !== null && s.team !== undefined && (s.wish === true || s.wish === false) && (s.heart === true || s.heart === false) && s.cheerOpen !== null;
 }
+/** n / N over the rows that can be done now: a waiting row (the cheer row with nothing to cheer) is not counted. */
 export function todoProgress(list = []) {
-  const N = list.length, n = list.filter((r) => r.done).length;
+  const rows = list.filter((r) => !r.wait);
+  const N = rows.length, n = rows.filter((r) => r.done).length;
   return { n, N, all: N > 0 && n === N, frac: N ? n / N : 0 };
 }
-/** The next row to do: the first one not done (the card's highlighted row, the pill, the notice's 다음). */
-export function todoNext(list = []) { return list.find((r) => !r.done) || null; }
+/** The next row to do: the first one not done and not waiting (the card's highlighted row, the pill, the notice's 다음). */
+export function todoNext(list = []) { return list.find((r) => !r.done && !r.wait) || null; }
 
 // ---- what changed ------------------------------------------------------------------------------------------------------------
 /** { id: true (done) | false (known, not done) | null (not known) } for todoDiff. */

@@ -1974,27 +1974,34 @@ export function createUI(root, hooks) {
   }
   const RINGS = [{ x: 16, z: 52 }, { x: 16, z: 90 }];
   // A row's tap (the card, the sheet, a 오늘 할 일 notice): the wish sheet for the wish and heart rows, the 응원 팀 sheet for the team row,
-  // the week's stamps for attendance, and for a cheer the nearest lit board of someone else, walked to by itself (자동으로 가기).
+  // the week's stamps for attendance, and for a cheer the nearest lit board of someone else, walked to by itself (자동으로 가기). With no
+  // such board there is no waypoint, only TODO_TEXT.cheerNone: an empty slot or my own board takes no cheer (worker.js Room.cheer 'dark').
   function guideQuest(key) {
     if (key === 'wish' || key === 'heart') { openWish({ from: 'todo' }); return; }
     if (key === 'team') { openTribeSheet(); return; }
     if (key === 'attend') { openToday({ at: 'week' }); return; }
     if (key !== 'cheer') return;
-    const me = hooks.actorId?.() || '';
-    const rows = (world.billboards || []).filter((b) => boardActive(b) && (!me || b.holder_id !== me));
-    const pool = rows.length ? rows : (world.billboards || []);
+    const rows = cheerBoards();
+    if (!rows.length) { note(TODO_TEXT.cheerNone, '', null, { key: 'cheer-none' }); return; }
     const at = hooks.minimap?.()?.me;
     let best = null, dist = Infinity;
-    for (const b of pool) {
+    for (const b of rows) {
       const card = hooks.slotCard?.(b.slot_id);
       if (!Number.isFinite(card?.x) || !Number.isFinite(card?.z)) continue;
       const d = at ? (card.x - at.x) ** 2 + (card.z - at.z) ** 2 : 0;
       if (d < dist) { dist = d; best = { x: card.x, z: card.z, name: '전광판' }; }
     }
     if (!best) { note('길안내할 전광판이 없어요', 'err'); return; }
-    hooks.setWaypoint?.({ ...best, auto: rows.length > 0 });
+    hooks.setWaypoint?.({ ...best, auto: true });
     note(`전광판 길안내를 시작해요. 켜진 남의 전광판을 눌러 응원하면 응원 포인트 +${PAY.cheer.base}, 멀리서도 돼요`, 'ok');
   }
+  // The boards a cheer counts on (worker.js Room.cheer): lit and held by someone else. Gift boards on free screens, empty slots and my
+  // own boards are not among them. cheerSignal: todo.js cheerOpen (null until the plaza's boards are in).
+  function cheerBoards() {
+    const me = hooks.actorId?.() || '';
+    return (world.billboards || []).filter((b) => boardActive(b) && (!me || b.holder_id !== me));
+  }
+  function cheerSignal() { return plazaReady ? cheerBoards().length > 0 : null; }
 
   // ---- 오늘 할 일 (todo.js holds the rules; docs/superpowers/specs/2026-11-24-today-todo-design.md) ---------------------------------
   // The list is built from what the plaza already knows: kts_daily (attendance, cheers, what was paid), the wish state, the team state
@@ -2013,6 +2020,7 @@ export function createUI(root, hooks) {
       attendPts: BALANCE.attend[Math.min(Math.max(1, d.streak || 1) - 1, BALANCE.attend.length - 1)],
       cheer: d.cheer || 0,
       cheerDone: !!(d.qPaid || {}).cheer,
+      cheerOpen: cheerSignal(),
       wish: (d.wish || 0) >= 1 || !!wishView.mine ? true : wishKnown ? false : null,
       heart: (d.heart || 0) >= 1 || wishView.given.length > 0 ? true : wishKnown ? false : null,
       team: teamSignal(),
@@ -2036,11 +2044,14 @@ export function createUI(root, hooks) {
   }
   function todoRow(r, next, onTap, big) {
     const isNext = !!next && r.id === next.id;
-    return h('button', { type: 'button', class: 'todo-row' + (r.done ? ' done' : '') + (isNext ? ' next' : '') + (r.done && todoPop === r.id ? ' pop' : '') + (big ? ' big' : ''), 'aria-label': `${r.label} · ${r.value}${r.done ? ' · 끝' : isNext ? ' · 다음에 할 일' : ''}`, onclick: (e) => { e.stopPropagation(); onTap(r.id); } },
+    // A waiting row (todo.js wait: the cheer row with no lit board of someone else) is dimmed and says why on a line of its own.
+    const wait = !!r.wait && !r.done;
+    return h('button', { type: 'button', class: 'todo-row' + (r.done ? ' done' : '') + (wait ? ' wait' : '') + (isNext ? ' next' : '') + (r.done && todoPop === r.id ? ' pop' : '') + (big ? ' big' : ''), 'aria-label': `${r.label} · ${r.value}${r.done ? ' · 끝' : wait ? ` · ${r.why}` : isNext ? ' · 다음에 할 일' : ''}`, onclick: (e) => { e.stopPropagation(); onTap(r.id); } },
       h('span', { class: 'ck', 'aria-hidden': 'true' }, icon(r.done ? 'checkCircle' : 'todo')),
       h('span', { class: 'lb', text: r.label }),
       h('span', { class: 'vl tnum', text: r.value }),
-      isNext ? h('span', { class: 'go', 'aria-hidden': 'true' }, icon('chevronRight')) : null);
+      isNext ? h('span', { class: 'go', 'aria-hidden': 'true' }, icon('chevronRight')) : null,
+      wait ? h('span', { class: 'why', 'aria-hidden': 'true', text: r.why }) : null);
   }
   function todoBar(p) {
     return h('span', { class: 'todo-bar', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': String(p.N), 'aria-valuenow': String(p.n), 'aria-label': `${TODO_TEXT.title} ${p.n} / ${p.N}` }, h('i', { style: { width: `${Math.round(p.frac * 100)}%` } }));
@@ -2048,7 +2059,7 @@ export function createUI(root, hooks) {
   function paintTodoCard(d, list) {
     const p = todoProgress(list), next = todoNext(list);
     const foot = footLine({ all: p.all, streak: d.streak, tomorrow: todoTomorrow(d) });
-    const sig = JSON.stringify([list.map((r) => [r.id, r.label, r.value, r.done]), d.stamps, d.streak, foot, todoPop]); // todoPop: a paint with the pop, once (renderTodo clears it)
+    const sig = JSON.stringify([list.map((r) => [r.id, r.label, r.value, r.done, !!r.wait]), d.stamps, d.streak, foot, todoPop]); // todoPop: a paint with the pop, once (renderTodo clears it)
     if (sig === todoSig) return false;
     todoSig = sig;
     const tap = (id) => { if (id === 'attend') openToday({ at: 'week' }); else guideQuest(id); };
