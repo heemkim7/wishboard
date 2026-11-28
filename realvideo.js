@@ -365,7 +365,7 @@ function captionCanvas(scale, mark = true) {
 }
 
 // ---- the corner box's letters: an atlas of the headline's characters in the page's font --------------------------------------------
-// Each cell: the letter in gold (light at the top, amber at the bottom) over a rim in the theme's colour; its alpha is also the shape
+// Each cell: the letter in the board's name colour, flat (realrules.js realTheme l; 2026-11-28, A), over a rim (rim); its alpha is also the shape
 // of the extruded slices. shadow: a quarter-size copy (the filter blurs it) for the soft shadows. -> { canvas, shadow, metrics }:
 // per character its cell in the atlas (uv) and its cell and advance in font sizes (realrules.js lettersScene).
 function glyphAtlas(chars, theme, px = 150) {
@@ -375,13 +375,12 @@ function glyphAtlas(chars, theme, px = 150) {
   const W = Math.min(2048, Math.max(64, cells.reduce((a, x) => a + x.w, 0))), place = []; let x = 0, y = 0;
   for (const c of cells) { if (x + c.w > W) { x = 0; y += ch; } place.push([x, y]); x += c.w; }
   const H = y + ch, canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
-  const g = canvas.getContext('2d'), rim = theme.a.map((v) => Math.round(v * 0.85)), metrics = {};
+  const g = canvas.getContext('2d'), rim = theme.rim, metrics = {};
   g.font = font; g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineJoin = 'round';
   cells.forEach((c, i) => {
     const [x0, y0] = place[i], cx = x0 + c.w / 2, cy = y0 + ch / 2;
     g.lineWidth = px / 13; g.strokeStyle = `rgb(${rim.join(',')})`; g.strokeText(c.c, cx, cy);
-    const gr = g.createLinearGradient(0, cy - px * 0.5, 0, cy + px * 0.5); gr.addColorStop(0, 'rgb(255,246,214)'); gr.addColorStop(1, 'rgb(255,176,70)');
-    g.fillStyle = gr; g.fillText(c.c, cx, cy);
+    g.fillStyle = `rgb(${theme.l.join(',')})`; g.fillText(c.c, cx, cy);
     metrics[c.c] = { rect: [x0 / W, y0 / H, (x0 + c.w) / W, (y0 + ch) / H], w: c.w / px, h: ch / px, adv: c.adv / px };
   });
   const shadow = document.createElement('canvas'); shadow.width = Math.max(1, Math.round(W / 4)); shadow.height = Math.max(1, Math.round(H / 4));
@@ -403,9 +402,9 @@ function popper(plate, screen, theme) {
   const k = 0.5, canvas = document.createElement('canvas'); canvas.width = Math.ceil((x1 - x0) * k); canvas.height = Math.ceil((y1 - y0) * k);
   const g = canvas.getContext('2d');
   const hx = (c) => c.map((v) => Math.round(v));
-  // the box in the theme's first colour (the sample's pink on the party theme), its ribbon in the accent
-  const PINK = theme.a, PINK_D = theme.a.map((v) => v * 0.82), GOLD = theme.hi;
-  const CONF = [theme.hi, [255, 255, 255], theme.a, [255, 209, 234], [185, 246, 255], [255, 170, 90], [190, 150, 255]];
+  // the box in the board's colour, its ribbon in the name's (realTheme box, rib: amber and white on a black board)
+  const PINK = theme.box, PINK_D = theme.box.map((v) => v * 0.82), GOLD = theme.rib;
+  const CONF = [theme.hi, [255, 255, 255], theme.box, [255, 176, 32]];
   const LIGHT = (() => { const v = [-0.45, 0.75, -0.85], n = Math.hypot(...v); return v.map((x) => x / n); })();
   const add = (a, b) => a.map((v, i) => v + b[i]), sub = (a, b) => a.map((v, i) => v - b[i]), mul = (a, s) => a.map((v) => v * s);
   const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];

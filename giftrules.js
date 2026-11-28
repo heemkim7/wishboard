@@ -72,16 +72,16 @@ const kindWord = (g) => (isMe(g) ? '전광판' : '선물 전광판');
 export const boardTitle = (g) => { const to = String(g?.to || '').trim() || '당신'; return isMe(g) ? `${to}님의 전광판` : `${to}님을 위한 선물 전광판`; };
 
 // The board colours (2026-11-28, A. LED 전광판): f the board's one flat colour, k the name line's ink, t the other words' ink (every pair
-// 4.5:1 or more: test/style-tokens.test.mjs). giftart.js and the page's colour swatches draw only these. a, b, ink, hi, deep are the
-// colours before (a two-colour gradient with a light accent), kept as they were for the real video (realcard.js, realvideo.js), which
-// still reads them. The keys stay: a board keeps its th.
+// 4.5:1 or more: test/style-tokens.test.mjs). giftart.js, the page's colour swatches and the real video (realrules.js realTheme, for
+// realcard.js, realvideo.js and the corner room) draw only these; the old gradient colours (a, b, ink, hi, deep) went 2026-11-28. The keys
+// stay: a board keeps its th.
 export const GIFT_THEMES = Object.freeze({
-  party: Object.freeze({ name: '파티', f: '#b5121b', k: '#ffe04a', t: '#ffffff', a: '#ff4fa3', b: '#5b21ff', ink: '#fff7fb', hi: '#ffe08a', deep: '#22063f' }),
-  rose: Object.freeze({ name: '로즈', f: '#c2185b', k: '#ffffff', t: '#ffffff', a: '#ff8a9a', b: '#9d174d', ink: '#fff5f6', hi: '#ffe3a3', deep: '#3a0a1f' }),
-  gold: Object.freeze({ name: '골드', f: '#ffb020', k: '#1a1000', t: '#1a1000', a: '#ffd36b', b: '#c2410c', ink: '#fffaf0', hi: '#fff3c4', deep: '#3b1503' }),
-  sky: Object.freeze({ name: '하늘', f: '#0050d8', k: '#ffffff', t: '#ffffff', a: '#38bdf8', b: '#4338ca', ink: '#f4fbff', hi: '#fde68a', deep: '#0b1442' }),
-  mint: Object.freeze({ name: '민트', f: '#00875a', k: '#ffffff', t: '#ffffff', a: '#34d399', b: '#0e7490', ink: '#f2fffb', hi: '#fef08a', deep: '#062a2e' }),
-  night: Object.freeze({ name: '밤하늘', f: '#000000', k: '#ffb020', t: '#f7f5ee', a: '#312e81', b: '#020617', ink: '#eef2ff', hi: '#facc15', deep: '#01030d' }),
+  party: Object.freeze({ name: '파티', f: '#b5121b', k: '#ffe04a', t: '#ffffff' }),
+  rose: Object.freeze({ name: '로즈', f: '#c2185b', k: '#ffffff', t: '#ffffff' }),
+  gold: Object.freeze({ name: '골드', f: '#ffb020', k: '#1a1000', t: '#1a1000' }),
+  sky: Object.freeze({ name: '하늘', f: '#0050d8', k: '#ffffff', t: '#ffffff' }),
+  mint: Object.freeze({ name: '민트', f: '#00875a', k: '#ffffff', t: '#ffffff' }),
+  night: Object.freeze({ name: '밤하늘', f: '#000000', k: '#ffb020', t: '#f7f5ee' }),
 });
 export const THEME_KEYS = Object.freeze(Object.keys(GIFT_THEMES));
 

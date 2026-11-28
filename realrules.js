@@ -302,17 +302,31 @@ export function throughOpening(room, p) {
   return u < w - room.rim && f[1] > room.rimb && f[1] < 1 - room.rim;
 }
 
-// The room's colours from the gift's theme (0..255 { a, b, hi, deep }) in linear light: the walls take the theme's dark hue at one
-// brightness (the prototype's party room), so every theme keeps the lit card and the neon brighter than the room around them; the
-// neon is the theme's accent, or its highlight where the accent is too dark to glow (밤하늘).
 export const luma = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+// The real video's colours from a board's theme (giftrules.js GIFT_THEMES: f the flat board, k the name, t the words; 2026-11-28, A. LED
+// 전광판): 0..255 RGB. f, k, t as they are; a the board, b and deep the board darker (the corner room's walls); hi the name's colour (the
+// headline, the frame, the badge); ink the words; l the letters that leave the board (the name's colour, or the board's where the name is
+// dark: 골드); rim their outline; box and rib the gift box and its ribbon (the board's colour and the name's, the name's and white on a
+// black board: 밤하늘). dark: a colour too dark to light anything in the room.
+const hexRgb = (h) => { const n = parseInt(String(h || '#000000').slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+const dim = (c, k) => c.map((v) => Math.round(v * k));
+export const darkRgb = (c) => luma(lin(c)) < 0.02;
+export function realTheme(T) {
+  const f = hexRgb(T?.f), k = hexRgb(T?.k), t = hexRgb(T?.t), l = darkRgb(k) ? f : k;
+  return { f, k, t, a: f, b: dim(f, 0.62), deep: dim(f, 0.22), hi: k, ink: t, l, rim: l === k ? (darkRgb(f) ? dim(k, 0.45) : dim(f, 0.85)) : k,
+    box: darkRgb(f) ? k : f, rib: darkRgb(f) ? [255, 255, 255] : k };
+}
+// A colour at its brightest, the hue kept (its largest linear channel at 1): what a neon tube of that colour gives.
+const lit = (c) => { const m = Math.max(...c); return m > 1e-6 ? c.map((v) => v / m) : c; };
+// The room's colours from realTheme in linear light: the walls take the board's dark hue at one brightness (warm walls darker than blue
+// ones), so the lit card and the neon stay brighter than the room; a black board gives neutral dark walls. The neon edge is the board's
+// colour at its brightest, or the name's where the board is black (밤하늘); gold (the seam's strip) is the letters' colour.
 export function roomPalette(theme) {
   const mixc = (x, y, k) => x.map((v, i) => v + (y[i] - v) * k), raw = lin(mixc(theme.deep, theme.b, 0.55)), L = luma(raw);
-  // warm walls look brighter than blue ones at the same luminance: the less blue, the darker
   const blue = raw[2] / Math.max(1e-6, raw[0] + raw[1] + raw[2]), target = 0.045 * (0.5 + 0.5 * blue);
-  const wall = L > 1e-5 ? raw.map((v) => Math.min(1, (v * target) / L)) : [0.03, 0.03, 0.08], a = lin(theme.a);
-  const neon = luma(a) < 0.12 ? lin(theme.hi) : a;
-  return { wall, ceil: wall.map((v) => v * 0.6), neon, gold: lin(theme.hi) };
+  const wall = L > 1e-5 ? raw.map((v) => Math.min(1, (v * target) / L)) : [0.03, 0.03, 0.03];
+  const neon = lit(lin(darkRgb(theme.a) ? theme.hi : theme.a));
+  return { wall, ceil: wall.map((v) => v * 0.6), neon, gold: lit(lin(theme.l || theme.hi)) };
 }
 // A face's colour (box3d.py shade): the key from the upper left, a fill from the screen on faces turned to it, darker inside the room.
 function shade(room, n, base, inside, glow, k = 1) {
@@ -339,7 +353,8 @@ function confettiAt(cloud, room, t, items) {
     items.push({ pts: cs.map((v) => vadd(pos, mv(R, vmul(v, c.size)))), col: c.col.map((x) => x * k), a: 1 - smooth01((tt - c.life + 0.4) / 0.4), mode: POP_MODE.flat });
   }
 }
-const confettiCols = (T) => [T.hi, [255, 255, 255], T.a, [255, 209, 234], [185, 246, 255], [255, 170, 90], [190, 150, 255]].map(lin);
+// Confetti in the board's own colours, white and the marquee amber (no pink or violet: 2026-11-28, A).
+const confettiCols = (T) => [T.hi, [255, 255, 255], T.box || T.a, [255, 176, 32]].map(lin);
 
 // The gift box (box3d.py box_polys): body, ribbons, the lid hinged on its back edge (lidOpen) or flying (lidOff: [offset, rotation]),
 // a bow; no lid at all when lidOff is false.
@@ -384,16 +399,16 @@ function boxPolys(ctr, s, yaw, lidOpen, lidOff, col, rib) {
 // A: the gift box (render.py GiftScene) on the day's beats. In the room it hops on beats 1.. before the pop; on the pop beat (the one
 // nearest 3.17 s, at least beat 2) the lid flies off, confetti bursts and the box comes out over the frame's lower edge to stand 0.2 in
 // front of the fold; three balloons rise out of it (the beat nearest 4.83 s) past the screen's top into the sky; more confetti later.
-// theme: { a, b, hi, deep } (0..255). -> { at(t) -> { items, boxes, spheres, glyphs }, times }.
+// theme: realTheme (0..255). -> { at(t) -> { items, boxes, spheres, glyphs }, times }.
 export function giftScene(room, bt, theme) {
   const s = 0.135, out = room.out, p0 = vadd(vmul([room.rx, 0, room.rz], 0.33), [0, room.y0 + s / 2, 0]), p1 = vadd(vmul(out, 0.2), [0, 0.075, 0]);
   const kp = beatNear(bt, 3.17, 2), kb = beatNear(bt, 4.83, kp + 2), kc = beatNear(bt, 6.5, kb + 2);
   const tPop = beatAt(bt, kp), tBal = beatAt(bt, kb), hops = []; for (let k = 1; k < kp && k <= 2; k++) hops.push(beatAt(bt, k));
   const after = []; for (let k = kp + 1; beatAt(bt, k) < 10.5; k++) if (beatAt(bt, k) > tPop + 1.1) after.push(beatAt(bt, k));
-  const cols = confettiCols(theme), dark = luma(lin(theme.a)) < 0.12, boxCol = dark ? theme.hi : theme.a, ribCol = dark ? [255, 255, 255] : theme.hi, glow = lin(boxCol);
+  const cols = confettiCols(theme), boxCol = theme.box, ribCol = theme.rib, glow = lin(boxCol);
   const conf = confettiCloud(tPop + 0.02, vadd(p0, [0, s * 0.5, 0]), out, cols, { n: 130, seed: 4, speed: [0.3, 0.7], up: 0.7 });
   const conf2 = confettiCloud(beatAt(bt, kc), vadd(p1, [0, 0.12, 0]), out, cols, { n: 70, seed: 9, speed: [0.2, 0.45], up: 0.8 });
-  const bal = [[boxCol, -0.07, 0.04, 0, 0.06, 0], [theme.hi, 0.03, -0.05, 1.7, 0.052, 0.25], [[190, 150, 255], 0.1, 0.02, 3.1, 0.056, 0.12]]
+  const bal = [[boxCol, -0.07, 0.04, 0, 0.06, 0], [theme.l, 0.03, -0.05, 1.7, 0.052, 0.25], [[255, 255, 255], 0.1, 0.02, 3.1, 0.056, 0.12]]
     .map(([c, dx, dz, ph, r, d]) => ({ col: lin(c), dx, dz, ph, r, d }));
   function state(t) {
     const p = (t - tPop) / 1.1;
@@ -445,7 +460,7 @@ export function heroLines(g) {
 // starts on the panel where the card's headline would be, jumps out on its beat (beats 1, 2, ...) with a turn that shows its sides and
 // lands in front of the fold, 22 % bigger; after landing it bobs on the beats and sways. layers: the extrusion's slices.
 export function lettersScene(room, bt, theme, lines, glyphs, { layers = 14 } = {}) {
-  const pg = room.panel, out = room.out, glow = lin(theme.a), side = lin([255, 150, 60]), grow = 1.22, maxW = 0.46;
+  const pg = room.panel, out = room.out, glow = lin(darkRgb(theme.a) ? theme.l : theme.a), side = lin(dim(theme.l, 0.62)), grow = 1.22, maxW = 0.46; // sides: the letters' colour, darker
   const rows = lines.length > 1 ? [{ v: 0.398, y: 0.5, em: 0.1 }, { v: 0.562, y: 0.335, em: 0.09 }] : [{ v: 0.48, y: 0.42, em: 0.11 }];
   const L = [];
   lines.slice(0, rows.length).forEach((text, r) => {

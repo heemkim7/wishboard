@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import { OCC_KEYS, GIFT_THEMES } from '../giftrules.js';
 import {
   REAL, POP_VARIANT, popVariant, MUSIC_BEAT, beatOf, beatAt, beatNear, beatPulse, roomLights, roomFlash, cornerRoom, projectRoom, throughOpening,
-  giftScene, lettersScene, heroLines, HERO_MAX, roomPalette, luma, sortFarToNear, POP_MODE, rotAxis,
+  giftScene, lettersScene, heroLines, HERO_MAX, roomPalette, luma, sortFarToNear, POP_MODE, rotAxis, realTheme,
 } from '../realrules.js';
 import { fragmentSource } from '../realvideo.js';
 
@@ -16,7 +16,7 @@ const near = (a, b, eps, msg = '') => assert.ok(Math.abs(a - b) <= eps, `${msg} 
 const plate6 = JSON.parse(fs.readFileSync(new URL('../assets/plates/plate-06.json', import.meta.url), 'utf8'));
 const room = cornerRoom(plate6.camera);
 const hex = (h) => { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
-const theme = (k) => { const t = GIFT_THEMES[k]; return { a: hex(t.a), b: hex(t.b), hi: hex(t.hi), deep: hex(t.deep), ink: hex(t.ink) }; };
+const theme = (k) => realTheme(GIFT_THEMES[k]); // the board's flat colours (2026-11-28, A)
 const minXZ = (p) => Math.min(p[0], p[2]);
 // a monospace stand-in for the glyph atlas: every letter a cell 1.3 x 1.6 font sizes, advance 0.95 ('!' 0.35)
 const mono = (text) => Object.fromEntries(Array.from(text).map((c) => [c, { rect: [0, 0, 1, 1], w: 1.3, h: 1.6, adv: c === '!' ? 0.35 : 0.95 }]));
@@ -150,6 +150,21 @@ describe('the room\'s colours per theme', () => {
       assert.ok(luma(p.neon) >= 0.12, 'neon glows'); assert.ok(luma(p.gold) > 0.3);
     });
   }
+  it('the real video takes the flat board colours (2026-11-28, A): the neon is the board\'s own hue, never the old pink or violet', () => {
+    const T = theme('party'); assert.deepEqual([T.f, T.k, T.t], [hex('#b5121b'), hex('#ffe04a'), hex('#ffffff')]); assert.deepEqual(T.l, T.k); assert.deepEqual(T.box, T.f);
+    const p = roomPalette(T); assert.ok(p.neon[0] > 0.99 && p.neon[1] < 0.05 && p.neon[2] < 0.05, 'party: a red neon');
+    assert.ok(roomPalette(theme('sky')).neon[2] > 0.99, 'sky: a blue neon');
+    const n = theme('night'); assert.deepEqual(n.box, hex('#ffb020'), '밤하늘: the amber box on the black board'); assert.deepEqual(n.rib, [255, 255, 255]);
+    const g = theme('gold'); assert.deepEqual(g.l, hex('#ffb020'), '골드: its dark name cannot leave the board, the letters take the board\'s amber');
+    for (const k of Object.keys(GIFT_THEMES)) assert.deepEqual(Object.keys(GIFT_THEMES[k]).sort(), ['f', 'k', 'name', 't'], k + ': only the flat colours are left');
+    for (const f of ['realcard.js', 'realvideo.js', 'realrules.js']) {
+      const s = fs.readFileSync(new URL('../' + f, import.meta.url), 'utf8');
+      assert.equal(/255, 209, 234|190, 150, 255|185, 246, 255|120, 24, 92|255,247,251/.test(s), false, f + ': the old pink, violet and cyan are gone');
+    }
+    const card = fs.readFileSync(new URL('../realcard.js', import.meta.url), 'utf8');
+    assert.equal(/createRadialGradient|shadowBlur = lw|glow: \{/.test(card), false, 'the card: no light, no glowing frame or words');
+    assert.equal((card.match(/createLinearGradient/g) || []).length, 1, 'one gradient left: the sheen over the headline\'s letters, not the ground');
+  });
 });
 
 describe('the GL side', () => {

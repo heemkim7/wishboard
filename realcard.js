@@ -1,19 +1,19 @@
 // 실사 축하 영상: the gift card that plays on the plate's green screen, a canvas-2D port of tools/plates/card.py (same layouts and
-// timeline), in the gift's own theme and words. Browser only. draw(t) paints the card at time t (seconds from the clip's start) into
+// timeline), in the gift's own theme and words (2026-11-28, A. LED 전광판: the board's one flat colour, its name colour for the headline, the
+// frame and the badge, no glow, no light, no vignette; realrules.js realTheme). Browser only. draw(t) paints the card at time t (seconds from the clip's start) into
 // its canvas, which realvideo.js uploads as the screen's texture each frame. Words are only ever drawn with fillText; no emoji (the
 // occasion badge draws its own small icon).
 //
-// Timeline (flash = 1.5 s): standby (dark, a breathing glow in the theme colours, twinkles), charge-up from 0.95 s, the white flash,
-// then the card: badge, To., the headline pop, the line, From., the WISH BOARD footer, a confetti burst, falling confetti, twinkles
-// and sheen passes, settling to a calm card by the end.
-import { layoutFor, fitLines, cardWords } from './realrules.js?v=202611280944';
+// Timeline (flash = 1.5 s): standby (black, the board's colour coming in, its frame breathing, twinkles), charge-up from 0.95 s, the white
+// flash, then the card: badge, To., the headline pop, the line, From., the WISH BOARD footer, a confetti burst, falling confetti, twinkles
+// and sheen passes over the headline's letters, settling to a calm card by the end.
+import { layoutFor, fitLines, cardWords, realTheme, darkRgb } from './realrules.js?v=202611280944';
 import { themeOf, seeded, GIFT_SANS } from './giftart.js?v=202611280944';
 
 const clamp01 = (x) => Math.max(0, Math.min(1, x));
 const smoothstep = (a, b, x) => { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); };
 const easeOutBack = (t, s = 1.70158) => { const u = clamp01(t) - 1; return u * u * ((s + 1) * u + s) + 1; };
 const easeOutCubic = (t) => 1 - (1 - clamp01(t)) ** 3;
-const hex = (h) => { const n = parseInt(String(h).slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
 const rgba = (c, a = 1) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
 const font = (size, weight = 800) => `${weight} ${Math.max(4, Math.round(size))}px ${GIFT_SANS}`;
 const canvasOf = (w, h) => { const c = document.createElement('canvas'); c.width = Math.max(1, Math.ceil(w)); c.height = Math.max(1, Math.ceil(h)); return c; };
@@ -71,17 +71,17 @@ function icon(g, key, x, y, s, col) {
   }
   g.restore();
 }
-// The occasion pill: gold, deep ink, the icon and the name, a soft gold glow.
+// The occasion label: a small plate in the name's colour, the icon and the day's name in the board's colour (black on 밤하늘's amber); no
+// glow, no gloss.
 function badgeSprite(size, words, T) {
   const probe = canvasOf(1, 1).getContext('2d'); probe.font = font(size);
   const tw = probe.measureText(words.occ).width, ew = size * 0.95, gap = size * 0.3, pw = size * 0.85;
   const h = Math.round(size * 1.62), w = Math.round(ew + gap + tw + 2 * pw), pad = Math.round(size * 0.6);
   const c = canvasOf(w + 2 * pad, h + 2 * pad), g = c.getContext('2d');
-  g.save(); g.shadowColor = rgba(T.hi, 0.55); g.shadowBlur = size * 0.5; g.fillStyle = rgba(T.hi); rrect(g, pad, pad, w, h, h / 2); g.fill(); g.restore();
-  g.fillStyle = 'rgba(255,255,255,0.18)'; rrect(g, pad + 3, pad + 3, w - 6, h * 0.5 - 3, h / 2); g.fill();
-  const cy = pad + h / 2;
-  icon(g, words.key, pad + pw + ew / 2, cy, size * 0.95, rgba(T.deep));
-  g.fillStyle = rgba(T.deep); g.font = font(size); g.textBaseline = 'middle'; g.fillText(words.occ, pad + pw + ew + gap, cy);
+  g.fillStyle = rgba(T.hi); rrect(g, pad, pad, w, h, h * 0.12); g.fill();
+  const cy = pad + h / 2, on = darkRgb(T.f) ? [0, 0, 0] : T.f;
+  icon(g, words.key, pad + pw + ew / 2, cy, size * 0.95, rgba(on));
+  g.fillStyle = rgba(on); g.font = font(size); g.textBaseline = 'middle'; g.fillText(words.occ, pad + pw + ew + gap, cy);
   return { c, w: c.width, h: c.height };
 }
 // A 4-point twinkle: a bright core, two thin rays and a halo, white on transparent (tinted by colour), drawn additively.
@@ -105,49 +105,33 @@ export function createRealCard(gift, { w, h, layout = '', phone = false, flash =
   // A phone screen: the card in an inner box with rounded corners, a dark margin round it (scene.py phone_dressing).
   const ins = phone ? Math.round(0.045 * w) : 0, W = w - 2 * ins, H = h - 2 * ins;
   const inner = phone ? canvasOf(W, H) : canvas, g = inner.getContext('2d');
-  const T0 = themeOf(gift), T = { a: hex(T0.a), b: hex(T0.b), ink: hex(T0.ink), hi: hex(T0.hi), deep: hex(T0.deep) };
+  const T = realTheme(themeOf(gift));
   const words = cardWords(gift), L = layoutFor(layout, W / H), rnd = seeded('real:' + (gift?.id || gift?.to || 'gift'));
   const gauss = () => { const u = Math.max(1e-9, rnd()), v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
   const uni = (a, b) => a + (b - a) * rnd();
 
   // ---- static layers
-  const ground = canvasOf(W, H); {
-    const q = ground.getContext('2d'), gx = 0.45 / W, gy = 0.55 / H, n2 = gx * gx + gy * gy;
-    const lg = q.createLinearGradient(0, 0, gx / n2, gy / n2); lg.addColorStop(0, rgba(T.a)); lg.addColorStop(1, rgba(T.b));
-    q.fillStyle = lg; q.fillRect(0, 0, W, H);
-    q.save(); q.globalCompositeOperation = 'lighter';
-    const rl = q.createRadialGradient(W * 0.28, H * 0.16, 0, W * 0.28, H * 0.16, W * 0.9);
-    rl.addColorStop(0, 'rgba(255,255,255,0.2)'); rl.addColorStop(0.35, 'rgba(255,255,255,0.12)'); rl.addColorStop(0.7, 'rgba(255,255,255,0.03)'); rl.addColorStop(1, 'rgba(255,255,255,0)');
-    q.fillStyle = rl; q.fillRect(0, 0, W, H); q.restore();
-    q.save(); q.translate(W / 2, H / 2); q.scale(W * 0.62, H * 0.62);
-    const vg = q.createRadialGradient(0, 0, 0, 0, 0, 1.15); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(0.55 / 1.15, 'rgba(0,0,0,0)'); vg.addColorStop(0.85 / 1.15, 'rgba(0,0,0,0.17)'); vg.addColorStop(1, 'rgba(0,0,0,0.34)');
-    q.fillStyle = vg; q.fillRect(-1, -1, 2, 2); q.restore();
-  }
-  const lw = Math.max(2, Math.round(L.lw * W)), fi = L.inset * W, frad = L.radius * W;
+  // the board: one flat colour (on a black board, black); the frame: one line in the letters' colour, small corners
+  const ground = canvasOf(W, H); { const q = ground.getContext('2d'); q.fillStyle = rgba(T.f); q.fillRect(0, 0, W, H); }
+  const lw = Math.max(2, Math.round(L.lw * W)), fi = L.inset * W, frad = Math.min(L.radius * W, W * 0.01);
   const frameLayer = canvasOf(W, H); {
-    const q = frameLayer.getContext('2d'); q.strokeStyle = rgba(T.hi); q.lineWidth = lw;
-    q.save(); q.shadowColor = rgba(T.hi, 0.9); q.shadowBlur = lw * 4.4; rrect(q, fi, fi, W - 2 * fi, H - 2 * fi, frad); q.stroke(); q.stroke(); q.restore();
+    const q = frameLayer.getContext('2d'); q.strokeStyle = rgba(T.l); q.lineWidth = lw;
     rrect(q, fi, fi, W - 2 * fi, H - 2 * fi, frad); q.stroke();
   }
-  const standby = canvasOf(W, H); {
-    const q = standby.getContext('2d'), sg = q.createLinearGradient(0, 0, 0, H);
-    sg.addColorStop(0, rgba(T.deep.map((v) => Math.round(v * 0.8))));
-    sg.addColorStop(1, rgba(T.deep.map((v) => Math.round(v * 0.8 * 0.55))));
-    q.fillStyle = sg; q.fillRect(0, 0, W, H);
-  }
+  const standby = canvasOf(W, H); { const q = standby.getContext('2d'); q.fillStyle = '#000'; q.fillRect(0, 0, W, H); }
   const ws = Math.max(18, Math.round(W * 0.055));
-  const wordmark = textSprite(words.brand, ws, { fill: T.hi, tracking: 0.22, glow: { c: T.a, r: ws * 0.5, a: 0.9 } });
+  const wordmark = textSprite(words.brand, ws, { fill: T.l, tracking: 0.04 });
 
   // ---- words
   const probe = canvasOf(1, 1).getContext('2d');
   const measure = (s, size) => { probe.font = font(size); return probe.measureText(s).width; };
   const badge = badgeSprite(W * L.badge.size, words, T);
   const toFit = fitLines(words.to, measure, W * 0.84, W * L.to.size, W * 0.05, 1);
-  const to = textSprite(toFit.lines[0] || '', toFit.size, { fill: T.ink, shadow: { c: T.deep, r: toFit.size * 0.08, a: 0.55, dy: toFit.size * 0.04 }, glow: { c: [255, 255, 255], r: toFit.size * 0.18, a: 0.25 } });
+  const to = textSprite(toFit.lines[0] || '', toFit.size, { fill: T.ink, shadow: { c: T.deep, r: toFit.size * 0.06, a: 0.45, dy: toFit.size * 0.03 } });
   const headWords = L.head.ys.length === 1 ? [words.head.filter(Boolean).join(' ')] : words.head;
   const hs = Math.min(...headWords.map((t) => fitLines(t, measure, W * L.head.fit, W * L.head.size, W * 0.08, 1).size));
-  const head = headWords.map((t, i) => ({ ...textSprite(t, hs, { fill: T.hi, stroke: Math.max(2, Math.round(hs * 0.035)), strokeFill: [120, 24, 92],
-    shadow: { c: T.deep, r: hs * 0.06, a: 0.75, dy: hs * 0.045 }, glow: { c: [255, 190, 120], r: hs * 0.16, a: 0.55 } }), y: L.head.ys[i] }));
+  const head = headWords.map((t, i) => ({ ...textSprite(t, hs, { fill: T.hi, stroke: Math.max(2, Math.round(hs * 0.035)), strokeFill: T.deep,
+    shadow: { c: T.deep, r: hs * 0.05, a: 0.6, dy: hs * 0.04 } }), y: L.head.ys[i] }));
   // the line: one line if it fits, else wrapped, and then no bigger than its room (layoutFor line.room) allows; centred on line.y
   let lf = fitLines(words.line, measure, W * L.line.fit, W * L.line.size, W * 0.04, L.line.maxLines);
   const cap = (L.line.room * H) / (Math.max(1, lf.lines.length) * 1.22);
@@ -157,12 +141,12 @@ export function createRealCard(gift, { w, h, layout = '', phone = false, flash =
   const ff = words.from ? fitLines(words.from, measure, W * 0.8, W * L.frm.size, W * 0.03, 1) : null;
   const frm = ff ? textSprite(ff.lines[0], ff.size, { fill: T.ink, shadow: { c: T.deep, r: ff.size * 0.1, a: 0.55, dy: ff.size * 0.05 } }) : null;
   const bsz = W * L.brand.size;
-  const brand = textSprite('★  ' + words.brand + '  ★', bsz, { fill: T.hi, tracking: 0.16, shadow: { c: T.deep, r: bsz * 0.15, a: 0.5, dy: bsz * 0.05 } });
-  const TW = [T.hi, [255, 255, 255], [255, 209, 234]];
+  const brand = textSprite(words.brand, bsz, { fill: T.hi, tracking: 0.04, shadow: { c: T.deep, r: bsz * 0.1, a: 0.4, dy: bsz * 0.04 } });
+  const TW = [T.l, [255, 255, 255], [255, 255, 255]];
   const spark = TW.map((c) => sparkSprite(Math.max(8, Math.round(W * 0.035)), c)), sparkS = TW.map((c) => sparkSprite(Math.max(5, Math.round(W * 0.018)), c));
 
   // ---- particles (seeded by the board, the same each time)
-  const COLS = [T.hi, [255, 255, 255], T.a, [255, 209, 234], [185, 246, 255], [255, 170, 90], [190, 150, 255]];
+  const COLS = [T.hi, [255, 255, 255], [255, 176, 32], T.l]; // the name's colour, white and the marquee amber (no pink or violet)
   const burst = Array.from({ length: 170 }, () => {
     const ang = uni(-Math.PI, 0) + gauss() * 0.25, sp = uni(0.5, 1.6) * H * 0.85;
     return { x0: W * 0.5 + gauss() * W * 0.08, y0: H * L.burst + gauss() * H * 0.05, vx: Math.cos(ang) * sp * (W / H) * 1.6, vy: Math.sin(ang) * sp,
@@ -219,16 +203,13 @@ export function createRealCard(gift, { w, h, layout = '', phone = false, flash =
     if (t < flash) {
       const br = 0.5 + 0.5 * Math.sin((t * 2 * Math.PI) / 1.6 - 1.2), charge = smoothstep(0.95, flash, t);
       g.drawImage(standby, 0, 0);
-      const s1 = 0.5 + 0.5 * Math.sin(t * 1.7), glow = T.a.map((v, i) => Math.round(v * s1 + T.b[i] * (1 - s1)));
-      const k = Math.min(1, 0.24 + 0.12 * br + 0.55 * charge);
-      g.save(); g.globalCompositeOperation = 'lighter'; g.translate(W / 2, H / 2); g.scale(W * 0.55, W * 0.55);
-      const rg = g.createRadialGradient(0, 0, 0, 0, 0, 1.6); rg.addColorStop(0, rgba(glow, k)); rg.addColorStop(0.42, rgba(glow, k * 0.68)); rg.addColorStop(0.75, rgba(glow, k * 0.25)); rg.addColorStop(1, rgba(glow, 0));
-      g.fillStyle = rg; g.fillRect(-1, -H / W / 0.55, 2, (2 * H) / W / 0.55); g.restore();
-      g.save(); g.globalCompositeOperation = 'lighter'; g.globalAlpha = Math.min(1, 0.3 + 0.25 * br + 0.6 * charge); g.drawImage(frameLayer, 0, 0); g.restore();
+      // the board warming up: its flat colour coming in under the black, the frame breathing (no glow)
+      g.globalAlpha = Math.min(1, 0.1 + 0.06 * br + 0.5 * charge); g.drawImage(ground, 0, 0); g.globalAlpha = 1;
+      g.save(); g.globalAlpha = Math.min(1, 0.3 + 0.25 * br + 0.6 * charge); g.drawImage(frameLayer, 0, 0); g.restore();
       blit(wordmark, W / 2, H / 2, 1 + 0.04 * charge, 0.45 + 0.25 * br + 0.3 * charge);
       twinkles(t, 0.55 + 0.6 * charge, true);
       const fl = smoothstep(1.36, flash, t) ** 2;
-      if (fl > 0.002) { g.fillStyle = `rgba(255,247,251,${fl})`; g.fillRect(0, 0, W, H); }
+      if (fl > 0.002) { g.fillStyle = `rgba(255,255,255,${fl})`; g.fillRect(0, 0, W, H); }
       return;
     }
     const tt = t - flash;
@@ -237,12 +218,8 @@ export function createRealCard(gift, { w, h, layout = '', phone = false, flash =
     if (lit < 1) { g.fillStyle = `rgba(0,0,0,${(1 - lit).toFixed(4)})`; g.fillRect(0, 0, W, H); }
     g.save(); g.globalCompositeOperation = 'lighter';
     if (lit > 1) { g.fillStyle = `rgba(255,255,255,${(lit - 1).toFixed(4)})`; g.fillRect(0, 0, W, H); }
-    const lx = 0.3 + 0.4 * Math.sin(t * 0.45);
-    g.save(); g.translate(lx * W, 0.35 * H); g.scale(0.5 * W, 0.4 * H);
-    const ml = g.createRadialGradient(0, 0, 0, 0, 0, 2); ml.addColorStop(0, 'rgba(255,255,255,0.06)'); ml.addColorStop(0.5, 'rgba(255,255,255,0.022)'); ml.addColorStop(1, 'rgba(255,255,255,0)');
-    g.fillStyle = ml; g.fillRect(-2, -2, 4, 4); g.restore();
-    g.globalAlpha = Math.min(1, 0.9 * (0.8 + 0.2 * breathe)); g.drawImage(frameLayer, 0, 0);
     g.restore();
+    g.save(); g.globalAlpha = Math.min(1, 0.9 * (0.8 + 0.2 * breathe)); g.drawImage(frameLayer, 0, 0); g.restore();
     // the burst, then the falling confetti (behind the words)
     const tb = tt - 0.02;
     if (tb > 0) {
@@ -259,8 +236,8 @@ export function createRealCard(gift, { w, h, layout = '', phone = false, flash =
     if (p > 0) { const e = easeOutBack(p); blit(badge, W / 2, H * L.badge.y - (1 - e) * H * 0.05, 0.8 + 0.2 * e, Math.min(1, p * 2.2)); }
     p = appear(1.72 - 1.5 + flash, 0.5);
     if (p > 0) blit(to, W / 2, H * L.to.y, 0.78 + 0.22 * easeOutBack(p), Math.min(1, p * 2));
-    let sheen = null, sheenAmp = 0, sheenPos = 0;
-    for (const [ts, amp] of [[3.0, 0.85], [6.1, 0.65], [8.6, 0.4]]) { const q = (t - ts) / 0.9; if (q >= 0 && q <= 1) { sheenPos = -0.4 + 1.8 * q; sheenAmp = amp; sheen = sheenBand(sheenPos, amp); } }
+    let sheen = null;
+    for (const [ts, amp] of [[3.0, 0.85], [6.1, 0.65], [8.6, 0.4]]) { const q = (t - ts) / 0.9; if (q >= 0 && q <= 1) sheen = sheenBand(-0.4 + 1.8 * q, amp); }
     if (hero) head.forEach((sp, i) => {
       const q = appear(1.8 - 1.5 + flash + 0.1 * i, 0.45);
       if (q <= 0) return;
@@ -273,13 +250,12 @@ export function createRealCard(gift, { w, h, layout = '', phone = false, flash =
     if (p > 0 && frm) blit(frm, W / 2, H * L.frm.y + (1 - easeOutCubic(p)) * H * 0.025, 1, Math.min(1, p * 1.6));
     p = appear(2.9 - 1.5 + flash, 0.6);
     if (p > 0) blit(brand, W / 2, H * L.brand.y, 1, 0.9 * Math.min(1, p * 1.5));
-    if (sheen) { g.save(); g.globalCompositeOperation = 'lighter'; g.fillStyle = sheenBand(sheenPos, sheenAmp * 0.08)(0, 0); g.fillRect(0, 0, W, H); g.restore(); }
     twinkles(t, 1, false);
     const fl = tt < 1.2 ? Math.exp(-Math.max(0, tt) / 0.16) : 0;
-    if (fl > 0.002) { g.fillStyle = `rgba(255,247,251,${fl})`; g.fillRect(0, 0, W, H); }
+    if (fl > 0.002) { g.fillStyle = `rgba(255,255,255,${fl})`; g.fillRect(0, 0, W, H); }
   }
-  // The phone's app margin (the card's deep colour, dimmed) round the card in its rounded box.
-  const margin = rgba(T.deep.map((v) => Math.round(v * 0.79)));
+  // The phone's app margin (near black, as the pages are) round the card in its rounded box.
+  const margin = rgba([10, 10, 10]);
   function draw(t) {
     drawCard(t);
     if (!phone) return;
