@@ -31,7 +31,7 @@ import { AD, AD_TEMPLATES, adSums, adBars } from './adreport.js';
 import { adScreenName, linkHost } from './adsale.js';
 import { qrEncode, paintQr } from './qr.js?v=202611280944';
 import { icon } from './uiicons.js?v=202611280944';
-import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, proofOffers, proofPlan, TOAST, touchTag, goalKnown, PRESS, TOOL_ORDER, hintLeft, sameNews } from './overlay.js?v=202611280944';
+import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, proofOffers, proofPlan, TOAST, touchTag, goalKnown, PRESS, createTapGuard, backdropClose, TOOL_ORDER, hintLeft, sameNews } from './overlay.js?v=202611280944';
 import { linesFault, LINES_ERR } from './ftue.js?v=202611280944'; // the board-line checks
 import { TODO, TODO_TEXT, todoList, todoSettled, todoProgress, todoNext, todoSnap, todoDiff, allDue, momentHold, itemNote, allNote, attendNote, footLine, cardText, pillPlan, markStamp, stampRow, stampName, giftSeen, giftDone, weekStart, todoKeep } from './todo.js?v=202611280944';
 
@@ -133,6 +133,11 @@ const PASSENGER_LINES = [
 
 export function createUI(root, hooks) {
   root.replaceChildren();
+  // Ghost clicks (overlay.js createTapGuard): the click a phone sends after a tap that opened a sheet or a card on pointerdown or
+  // pointerup (걸기, a board tap in 3D) is swallowed here, before it reaches the backdrop or a button of what just opened.
+  const tapGuard = createTapGuard();
+  addEventListener('pointerdown', () => tapGuard.down(), { passive: true, capture: true });
+  addEventListener('click', (e) => { if (tapGuard.click(e)) { e.preventDefault(); e.stopImmediatePropagation(); } }, true);
   // The same test as index.html's html.touch (interact.js isTouchUI): a coarse pointer or more than one touch point.
   const coarse = isTouchUI({ coarse: matchMedia('(pointer: coarse)').matches, points: navigator.maxTouchPoints });
   let wallet = { confirmed: 0, pending: 0, earned: 0 };
@@ -1184,6 +1189,7 @@ export function createUI(root, hooks) {
         tw ? act('선물 보기', () => hooks.openGiftPage?.(tw), 'go') : act(state === 'mine' ? '수정' : '걸기', () => (state === 'mine' ? openAd(slot) : openBillboard(slot)), 'go')));
     toasts.prepend(el); // the bottom of the floating stack: toasts go above it, never on it
     farEl = el;
+    tapGuard.opened(); // it comes up on the tap's pointerup: that tap's click must not press its 걸기
     requestAnimationFrame(() => el.classList.add('show'));
     farTimer = setTimeout(hideFar, 4000);
   }
@@ -1205,6 +1211,7 @@ export function createUI(root, hooks) {
       h('div', { class: 'far-acts' }, ...acts));
     toasts.prepend(el);
     farEl = el;
+    tapGuard.opened();
     requestAnimationFrame(() => el.classList.add('show'));
     farTimer = setTimeout(hideFar, 6000);
   }
@@ -1468,6 +1475,7 @@ export function createUI(root, hooks) {
   let ext = null;
   function layer(el, close) {
     ext = el && typeof close === 'function' ? { el, close } : null;
+    if (ext) tapGuard.opened();
     toasts.inert = !!ext;
     hooks.lockInput(!!ext, 'layer'); // its own owner: closing it leaves the lock to a sheet or the proof bar still up
     showTop();
@@ -1554,8 +1562,11 @@ export function createUI(root, hooks) {
     const el = h('div', { class: 'modal' }, box);
     document.body.append(el);
     // A re-rendered sheet keeps the opener of the one it replaced; a child remembers the control in its parent.
-    const me = { el, box, cleanup: null, title, kind, typed: false, keep: null, opener: old ? old.opener : opener };
-    el.addEventListener('click', (e) => { if (e.target === el) backdropTap(me); });
+    const me = { el, box, cleanup: null, title, kind, typed: false, keep: null, opener: old ? old.opener : opener, downOnBack: false };
+    tapGuard.opened();
+    // The backdrop closes the sheet only for a press that began on it (overlay.js backdropClose), never the end of the tap that opened it.
+    el.addEventListener('pointerdown', (e) => { me.downOnBack = e.target === el; });
+    el.addEventListener('click', (e) => { const on = backdropClose({ downOnBack: me.downOnBack, target: e.target, backdrop: el }); me.downOnBack = false; if (on) backdropTap(me); });
     el.addEventListener('keydown', (e) => trapTab(e, box));
     box.addEventListener('input', (e) => { if (e.isTrusted) me.typed = true; });
     sheets.push(me);

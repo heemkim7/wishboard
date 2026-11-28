@@ -171,6 +171,32 @@ export function toastText(text, kind = '') {
 // .tapped on the control under the pointer for PRESS.ms from pointerdown, so a quick tap is seen too.
 export const PRESS = Object.freeze({ sel: 'button, [role="button"], summary, a.btn, label.agree', ms: 160 });
 
+// ---- ghost clicks ----------------------------------------------------------------------------
+// A phone sends a tap as pointerdown, pointerup, then (after touchend) the compatibility mouse events and the click, hit-tested
+// where the finger was at that moment. Something that opens on pointerdown or pointerup (the round touch button 걸기, a tap on a
+// board in 3D, the far board card) is already on screen by then, so the click lands on it: on the new sheet's backdrop it closed
+// the sheet at once (the owner's "전광판 걸기 누르면 바로 팝업 꺼짐", 2026-11-28), on a button of it it pressed that button.
+// ui.js calls down() on every pointerdown, opened() whenever a sheet, a layer or a floating card comes up, and click(event)
+// first thing on every click: true means "this click belongs to the press that opened it", and ui.js swallows it. A click
+// whose own handler opens something is not affected (it has already been let through), nor a keyboard click (detail 0).
+export const GHOST_MS = 1500;
+export function createTapGuard({ now = () => Date.now(), ms = GHOST_MS } = {}) {
+  let g = null;
+  return {
+    down() { g = { t: now(), opened: false, clicked: false }; },
+    opened() { if (g && !g.clicked) g.opened = true; },
+    click(ev) {
+      const swallow = !!(g && g.opened && !g.clicked && Number(ev?.detail) > 0 && now() - g.t < ms);
+      if (g) g.clicked = true;
+      return swallow;
+    },
+  };
+}
+// A backdrop closes its sheet only when the press began on it after the sheet was up (the press that opened it ended there).
+export function backdropClose({ downOnBack, target, backdrop }) {
+  return !!downOnBack && target === backdrop;
+}
+
 // ---- the tool row's order --------------------------------------------------------------------
 // The top-right tool row, the phone's closed row and the ⋯ menu all list the tools in this order, by how much they are
 // used (each tool button carries the class): 전광판 걸기 is the core action; 선물 전광판 the growth loop (a friend's name on
