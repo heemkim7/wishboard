@@ -394,7 +394,7 @@ describe('final fix pass', () => {
     assert.equal(proofOffers({ pushSupported: true, permission: 'default', gift: '민지', slot: 'STREET_8' }).push, false);
     assert.equal(proofOffers({ pushSupported: true, permission: 'default', gift: '', slot: 'PLOT_2' }).push, false);
     assert.equal(proofOffers({ pushSupported: true, permission: 'default', gift: '', slot: 'STREET_8' }).push, true);
-    assert.match(ui, /'🔔 하트가 오면 바로 알려 드릴까요\?'/);
+    assert.match(ui, /withIcon\('bell', '하트가 오면 바로 알려 드릴까요\?'\)/);
     assert.match(ui, /text: '알림 켜기'/);
   });
   it('7: the away sheet waits while the player is busy and expires after 2 minutes', () => {

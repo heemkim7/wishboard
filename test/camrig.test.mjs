@@ -591,10 +591,10 @@ describe('taps on far things', () => {
     assert.ok(at > 0 && card > at && card - at < 400);
     const css = html.slice(card, html.indexOf('.dock {', card));
     const colors = [...css.matchAll(/var\((--[a-z0-9-]+)\)/g)].map((m) => m[1]).filter((v) => v !== '--safe-b');
-    for (const v of colors) assert.ok(['--surface-hud', '--line', '--text', '--text-2', '--accent'].includes(v), v);
+    for (const v of colors) assert.ok(['--surface-hud', '--line', '--text', '--text-2', '--accent', '--r'].includes(v), v);
     assert.equal(/#[0-9a-f]{3,8}\b|rgba?\(/i.test(css), false);
     for (const m of css.matchAll(/font-size: (\d+)px/g)) assert.ok(['12', '13', '15'].includes(m[1]), m[1]);
-    for (const m of css.matchAll(/border-radius: ([^;]+);/g)) assert.equal(m[1], '14px');
+    for (const m of css.matchAll(/border-radius: ([^;]+);/g)) assert.equal(m[1], 'var(--r)'); // 4px (2026-11-28)
   });
 });
 

@@ -2854,7 +2854,7 @@ export function createUI(root, hooks) {
     openSheet('선물 전광판', null, (host) => {
       host.append(
         card ? h('div', { class: 'place' }, h('div', { class: 'where' }, h('b', { text: card.title }), h('span', { text: card.line }))) : null,
-        h('p', { class: 'note', text: `🎁 ${giftWho(g)}이에요.` }),
+        h('p', { class: 'note' }, ...withIcon('gift', `${giftWho(g)}이에요.`)),
         g.msg ? h('p', { class: 'note', text: `“${chars(g.msg, 40)}”${g.from ? ` · ${chars(g.from, 12)}` : ''}` }) : null,
         mine ? h('p', { class: 'note', text: '내가 건 선물 전광판이에요. 응원은 다른 사람이 보낼 수 있어요.' })
           : h('p', { class: 'note', text: `응원하면 응원 포인트 +${PAY.cheer.base} · 오늘 할 일 '전광판 응원'에도 들어가요` }),
@@ -4962,7 +4962,7 @@ export function createUI(root, hooks) {
       if (pushInline === 'later') { row.remove(); return; }
       if (pushInline === 'done') { fill(row, h('p', { class: 'note ok', text: msgText(pushInlineMsg) })); return; }
       fill(row,
-        h('p', { class: 'wish-push-q', text: '🔔 하트가 오면 바로 알려 드릴까요?' }),
+        h('p', { class: 'wish-push-q' }, ...withIcon('bell', '하트가 오면 바로 알려 드릴까요?')),
         h('div', { class: 'wish-push-act' },
           h('button', { class: 'btn ghost', type: 'button', text: '알림 켜기', onclick: async (e) => {
             const btn = e.currentTarget;

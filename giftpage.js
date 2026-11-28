@@ -5,6 +5,7 @@ import { GIFT, GIFT_ID, OCCASIONS, OCC_KEYS, GIFT_THEMES, THEME_KEYS, TIERS, TIE
 import { TOWER, TOWER_ERR, towerCard as towerState, towerClock, towerLook, friendsText } from './towerrules.js';
 import { paintGift, paintStreet, giftCardJpeg } from './giftart.js?v=202611280944';
 import { createFilm, FILM_MS, recordCanvas, canRecord, saveBlob, fileName } from './giftfilm.js?v=202611280944';
+import { icon } from './uiicons.js?v=202611280944';
 import { SCENES, REAL_DIR, plateUrls, musicUrls, plateFault, realFileName, realReason, inAppBrowser, lowFor, scenesToDrop } from './realrules.js?v=202611280944';
 
 const $app = document.getElementById('app');
@@ -48,7 +49,7 @@ const put = (...nodes) => $app.append(...nodes.filter(Boolean)); // h() skips nu
 const card = (...kids) => h('section', { class: 'card' }, ...kids);
 // me: a page of 내 전광판 (the maker at /gift?me=1, a board with occ me). 둘러보기 is /discover (not over the plaza: the plaza has its own lists).
 const top = (me = false) => h('div', { class: 'top' }, h('a', { class: 'brand', href: '/', onclick: (e) => toPlaza(e, 'close', '') }, 'WISH BOARD', h('small', { text: '모두의 전광판' })),
-  h('span', { class: 'toplinks' }, EMBED ? null : h('a', { class: 'linkbtn toplink', href: '/discover', text: '둘러보기' }), h('span', { class: 'tag', text: me ? '✨ 내 전광판' : '🎁 선물 전광판' })));
+  h('span', { class: 'toplinks' }, EMBED ? null : h('a', { class: 'linkbtn toplink', href: '/discover', text: '둘러보기' }), h('span', { class: 'tag' }, icon(me ? 'wish' : 'gift'), me ? '내 전광판' : '선물 전광판')));
 // The page's last lines: what a page has to say but nobody needs before acting (more: lines of that page, above the two every page has).
 const foot = (...more) => h('footer', { class: 'foot' }, ...more.map((t) => h('p', { text: t })),
   h('p', {}, '뉴욕 타임스퀘어를 본뜬 가상 광장이에요. 실제 타임스퀘어와는 관계가 없어요.', h('br'), '약관과 개인정보처리방침은 광장의 설정 › 정보에 있어요.'),
@@ -58,14 +59,14 @@ const foot = (...more) => h('footer', { class: 'foot' }, ...more.map((t) => h('p
 const screenName = (s) => { const m = /^(STREET|PLOT)_(\d+)$/.exec(String(s || '')); return m ? m[2] + (m[1] === 'STREET' ? '번 메인거리 전광판' : '번 건물 앞 전광판') : '거리 전광판'; };
 const screenZone = (s) => { const m = /^(STREET|PLOT)_(\d+)$/.exec(String(s || '')); return !m ? '' : m[1] === 'PLOT' ? '위시 스트리트' : Number(m[2]) > 30 ? '광장 한가운데' : '메인거리 건물 벽'; };
 // 어디에 걸리나, before a board is made: what the code does to every free board (giftrules.js GIFT.hours on one of GIFT_SCREENS).
-const PLACE_LINE = '📍 가상 타임스퀘어 거리 전광판 한 곳에 ' + GIFT.hours + '시간 · 3D 광장에 온 누구나 봐요';
-// icons/boot.jpg, the plaza's picture of a street of screens (giftart.js paintStreet's ground): asked once, when a page first paints a street.
+const PLACE_LINE = '가상 타임스퀘어 거리 전광판 68곳 중 한 곳에 ' + GIFT.hours + '시간 · 3D 광장에 온 누구나 봐요'; // after the pin icon
+// icons/street.jpg, a capture of the 3D plaza's street at night (giftart.js paintStreet's ground): asked once, when a page first paints a street.
 // -> the image once it has loaded, else null (then: done runs when it has).
 let STREET = null;
 function streetImg(done) {
   if (STREET?.ok) return STREET.img;
   if (typeof Image === 'undefined') return null;
-  if (!STREET) { const img = new Image(); STREET = { img, ok: false, waits: new Set() }; img.decoding = 'async'; img.onload = () => { STREET.ok = true; for (const f of STREET.waits) { try { f(); } catch { /* a view that went */ } } STREET.waits.clear(); }; img.src = '/icons/boot.jpg'; }
+  if (!STREET) { const img = new Image(); STREET = { img, ok: false, waits: new Set() }; img.decoding = 'async'; img.onload = () => { STREET.ok = true; for (const f of STREET.waits) { try { f(); } catch { /* a view that went */ } } STREET.waits.clear(); }; img.src = '/icons/street.jpg?v=1'; }
   if (done) STREET.waits.add(done);
   return null;
 }
@@ -139,7 +140,8 @@ const TICK = new Set();
 setInterval(() => { for (const f of TICK) { try { f(); } catch { /* one bad line */ } } }, 1000);
 // A line that follows the clock: painted at once (the element is usually not on the page yet: a check of isConnected here left it blank
 // for its first second, seen on a slow phone as an empty D-3), then every second while it is on the page.
-function live(el, fn) { const run = () => { if (!el.isConnected) { TICK.delete(run); return; } el.textContent = fn(); }; el.textContent = fn(); TICK.add(run); return el; }
+// fn gives the words, or [an icon, the words] (the icon is made again each second, like the words).
+function live(el, fn) { const set = (v) => { if (Array.isArray(v)) el.replaceChildren(...v); else el.textContent = v; }; const run = () => { if (!el.isConnected) { TICK.delete(run); return; } set(fn()); }; set(fn()); TICK.add(run); return el; }
 function clear() { try { document.documentElement.classList.remove('mkpage'); } catch { /* a page without classes */ } TICK.clear(); STAGES.forEach((s) => s.stop()); STAGES.clear(); REAL_RUN?.ctl.abort(); $app.replaceChildren(); window.scrollTo(0, 0); } // a 실사 영상 being made stops with its view
 const STAGES = new Set();
 
@@ -157,7 +159,7 @@ function stage(g, opts = {}) {
   box.addEventListener('click', (e) => { if (api.ended && e.target !== play && !play.contains(e.target)) api.replay(); }); // the poster after the end: a tap plays it again
   box.title = '누르면 다시 재생해요';
   const vidOk = g.vid && DATA?.media !== false && (() => { const v = document.createElement('video'), t = g.vid.t === 'webm' ? 'video/webm' : 'video/mp4'; return !!v.canPlayType?.(t); })();
-  const play = h('button', { class: 'play', type: 'button', hidden: !!opts.auto, onclick: () => { play.hidden = true; api.replay(); } }, h('span', { text: '▶ 15초 축하 영상 보기' }));
+  const play = h('button', { class: 'play', type: 'button', hidden: !!opts.auto, onclick: () => { play.hidden = true; api.replay(); } }, h('span', {}, icon('play'), '15초 축하 영상 보기'));
   if (vidOk) {
     const v = h('video', { playsinline: true, muted: true, preload: 'auto', src: '/rt/gift/' + g.id + '/video', 'aria-label': '축하 영상' });
     v.muted = true; api.video = v;
@@ -203,7 +205,7 @@ async function share(g, url, note, made) {
     + cerShareLine(made ? { ...g, at: made } : g, now()); // 점등식: ' 🎆 점등식 12월 25일 18:00에 같이 봐요!' until the start
   return sendLink(g.id, { title: boardTitle(g), text, url }, note, 'share');
 }
-// 🖼 카드 이미지 저장: the link card (giftart.js giftCardJpeg, 1200 x 630) as a file, the share sheet's 'save image' on a phone.
+// 카드 이미지 저장: the link card (giftart.js giftCardJpeg, 1200 x 630) as a file, the share sheet's 'save image' on a phone.
 async function saveCard(g, btn, note) {
   btn.disabled = true;
   try {
@@ -213,7 +215,7 @@ async function saveCard(g, btn, note) {
     if (how !== 'cancel') { beacon(g.id, 'card_save'); say(note, '카드 이미지를 저장했어요.', true); }
   } catch { say(note, '카드 이미지를 저장하지 못했어요.'); } finally { btn.disabled = false; }
 }
-const cardBtn = (g, note) => { const b = h('button', { class: 'btn', type: 'button', onclick: () => saveCard(g, b, note) }, '🖼 카드 이미지 저장'); return b; };
+const cardBtn = (g, note) => { const b = h('button', { class: 'btn', type: 'button', onclick: () => saveCard(g, b, note) }, icon('image'), '카드 이미지 저장'); return b; };
 // 계정에 남겨 두기: after a reaction on a board page (a 💖, a message, a reply hung), a guest on this browser (no signed-in session) may sign in on
 // the plaza's own sheet (/?login=1 opens it over the boot card; back= brings the signed-in browser to this page, main.js). The press is
 // counted (signup_nudge) and kept (kts_gsign); a page that opens signed in within a day of it counts signup_from_gift once (board()).
@@ -270,7 +272,7 @@ function heartBtn(g, note, { off = false, quiet = false, sent = null } = {}) {
   const btn = h('button', { class: 'btn', type: 'button', disabled: off });
   const paint = () => {
     const said = on ? '하트를 보냈어요' : '하트 보내기';
-    btn.textContent = quiet ? (on ? '💖 ' : '🤍 ') + said : (on ? '💖 ' : '🤍 ') + '하트 ' + n; btn.setAttribute('aria-pressed', String(on)); btn.setAttribute('aria-label', quiet ? said : said + ', ' + n + '개');
+    btn.replaceChildren(icon('heart'), quiet ? said : '하트 ' + n); btn.setAttribute('aria-pressed', String(on)); btn.setAttribute('aria-label', quiet ? said : said + ', ' + n + '개');
   };
   btn.addEventListener('click', async () => {
     if (on || off) return;
@@ -322,7 +324,7 @@ function maker({ re: answers = '', ...prefill } = {}) {
   try { document.title = (answers ? '답장 전광판' : ME ? '내 전광판' : '선물 전광판') + ' · WISH BOARD'; } catch { /* the tab keeps its name */ } // a reply opens here from a board page: not that board's title
   if (ref) { ls.set('kts_gref', JSON.stringify({ id: ref, at: Date.now() })); history.replaceState(null, '', ME ? '/gift?me=1' : '/gift'); }
   started(re || keptRef(ls.get('kts_gref'), Date.now()) ? 1 : 0);
-  const today = kstDay(now()), sendLabel = re ? '💌 답장 걸기' : '🎁 무료로 걸기';
+  const today = kstDay(now()), sendLabel = re ? '답장 걸기' : '무료로 걸기';
   const nick = ME ? cut(ls.get('kts_nick') || '', GIFT.toMax) : '';
   const f = { to: nick, from: '', occ: ME ? 'me' : 'bday', msg: '', th: '', day: today, at: 'now', ...prefill };
   let kind = ''; // 내 전광판: the kind chip last pressed (only seeds the line)
@@ -347,19 +349,19 @@ function maker({ re: answers = '', ...prefill } = {}) {
     if (!norm(msgIn.value) || seeds.has(norm(msgIn.value))) { msgIn.value = x.msg; f.msg = x.msg; flag(msgIn, false); if (errs.msg) errs.msg.textContent = ''; msgIn.dispatchEvent?.(new Event('input')); }
     paintKind(); repaint(); onOn();
   } }, x.name)));
-  const paintOcc = () => { if (ME) { paintKind(); return; } occRow.replaceChildren(...GIFT_PICK.filter((k) => OCC_KEYS.includes(k)).map((k) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(f.occ === k), onclick: () => { f.occ = k; f.th = ''; msgIn.placeholder = OCCASIONS[k].hint; paintOcc(); paintTh(); repaint(); onOn(); } }, OCCASIONS[k].emoji + ' ' + OCCASIONS[k].name))); };
+  const paintOcc = () => { if (ME) { paintKind(); return; } occRow.replaceChildren(...GIFT_PICK.filter((k) => OCC_KEYS.includes(k)).map((k) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(f.occ === k), onclick: () => { f.occ = k; f.th = ''; msgIn.placeholder = OCCASIONS[k].hint; paintOcc(); paintTh(); repaint(); onOn(); } }, icon(OCCASIONS[k].icon), OCCASIONS[k].name))); };
   const thRow = h('div', { class: 'chips sws', role: 'group', 'aria-label': '색' });
-  const paintTh = () => { const cur = f.th || OCCASIONS[f.occ].th; thRow.replaceChildren(...THEME_KEYS.map((k) => h('button', { type: 'button', class: 'sw', title: GIFT_THEMES[k].name, 'aria-label': GIFT_THEMES[k].name, 'aria-pressed': String(cur === k), style: `background:linear-gradient(135deg,${GIFT_THEMES[k].a},${GIFT_THEMES[k].b})`, onclick: () => { f.th = k; paintTh(); repaint(); } }))); };
+  const paintTh = () => { const cur = f.th || OCCASIONS[f.occ].th; thRow.replaceChildren(...THEME_KEYS.map((k) => h('button', { type: 'button', class: 'sw', title: GIFT_THEMES[k].name, 'aria-label': GIFT_THEMES[k].name, 'aria-pressed': String(cur === k), style: `background:${GIFT_THEMES[k].f}`, onclick: () => { f.th = k; paintTh(); repaint(); } }))); };
   const dayRow = h('div', { class: 'chips', role: 'group', 'aria-label': '날짜' }), atRow = h('div', { class: 'chips', role: 'group', 'aria-label': '시간' }), whenLine = h('p', { class: 'when' });
   const dateIn = h('input', { type: 'date', min: today, max: addDays(today, GIFT.aheadDays), value: f.day, hidden: true, 'aria-label': '날짜 고르기', onchange: () => { if (dateIn.value) { f.day = dateIn.value; f.at = ''; paintDay(); } } });
   const paintDay = () => {
     const days = [[today, '오늘'], [addDays(today, 1), '내일'], [addDays(today, 2), '모레']];
     const other = !days.some(([d]) => d === f.day);
     dayRow.replaceChildren(...days.map(([d, t]) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(f.day === d), onclick: () => { f.day = d; f.at = ''; dateIn.hidden = true; paintDay(); } }, t)),
-      h('button', { type: 'button', class: 'chip', 'aria-pressed': String(other), onclick: () => { dateIn.hidden = false; dateIn.focus(); try { dateIn.showPicker?.(); } catch { /* not allowed */ } } }, other ? dayText(f.day) : '📅 다른 날'));
+      h('button', { type: 'button', class: 'chip', 'aria-pressed': String(other), onclick: () => { dateIn.hidden = false; dateIn.focus(); try { dateIn.showPicker?.(); } catch { /* not allowed */ } } }, other ? dayText(f.day) : [icon('mission'), '다른 날']));
     const ch = startChoices(f.day, now());
     if (!ch.includes(f.at)) f.at = ch.includes('now') ? 'now' : ch.includes(18) ? 18 : ch[0] ?? '';
-    atRow.replaceChildren(...ch.map((a) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(f.at === a), onclick: () => { f.at = a; paintDay(); } }, a === 'now' ? '⚡ 지금 바로' : hourText(a) + '부터')));
+    atRow.replaceChildren(...ch.map((a) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(f.at === a), onclick: () => { f.at = a; paintDay(); } }, a === 'now' ? [icon('bolt'), '지금 바로'] : hourText(a) + '부터')));
     const w = f.at === '' ? null : windowFor(f.day, f.at, now());
     whenLine.textContent = w ? windowText(w.a, w.b) + ' · ' + GIFT.hours + '시간' : '그날은 고를 수 있는 시간이 없어요';
   };
@@ -381,9 +383,10 @@ function maker({ re: answers = '', ...prefill } = {}) {
   ];
   const dots = h('div', { class: 'dots', 'aria-hidden': 'true' }, h('i'), h('i'), h('i'));
   const stepNo = h('span', { class: 'stepno' });
-  const back = h('button', { class: 'linkbtn back', type: 'button', onclick: () => go(step - 1) }, '← 이전');
+  const back = h('button', { class: 'linkbtn back', type: 'button', onclick: () => go(step - 1) }, icon('chevronLeft'), '이전');
   const next = h('button', { class: 'btn gold', type: 'button', onclick: () => ahead() }, '다음');
-  const send = h('button', { class: 'btn gold', type: 'submit' }, sendLabel);
+  const sendFace = () => [icon(re ? 'envelope' : 'board'), sendLabel];
+  const send = h('button', { class: 'btn gold', type: 'submit' }, sendFace());
   const sendErr = h('p', { class: 'err', role: 'alert' });
   const nextBtn = h('button', { class: 'btn sm', type: 'button', hidden: true });
   const fine = h('p', { class: 'fine', text: '결제는 없어요. 문구는 광장에서 누구나 볼 수 있어요.' }); // what is needed before pressing; the other rules are in 규칙 (MAKER_RULES)
@@ -419,7 +422,7 @@ function maker({ re: answers = '', ...prefill } = {}) {
     send.disabled = true; send.textContent = '거는 중…';
     const kept = keptRef(ls.get('kts_gref'), Date.now()), ref = re || kept; // a reply names the board it answers, whatever ref was kept
     const r = await post('/rt/gift', { to: f.to, from: ME ? '' : f.from, occ: f.occ, msg: f.msg, th: f.th || OCCASIONS[f.occ].th, day: f.day, at: f.at, ...(ref ? { ref } : {}), ...(re ? { re: 1 } : {}) }, { mint: true, action: 'gift' });
-    send.disabled = false; send.textContent = sendLabel;
+    send.disabled = false; send.replaceChildren(...sendFace());
     if (!r.ok) {
       if (r.field && errs[r.field]) { go(STEP_OF[r.field] || step, false); errs[r.field].textContent = r.error; flag(fields[r.field], true); } else { go(LAST, false); say(sendErr, r.error || '걸지 못했어요. 다시 해 주세요.'); }
       if (r.code === 'full' && r.next) { nextBtn.hidden = false; nextBtn.textContent = '빈 시간으로: ' + dayText(r.next.day) + ' ' + (r.next.at === 'now' ? '지금' : hourText(r.next.at)); nextBtn.onclick = () => { f.day = r.next.day; f.at = r.next.at; paintDay(); nextBtn.hidden = true; }; }
@@ -439,8 +442,8 @@ function maker({ re: answers = '', ...prefill } = {}) {
   paintOcc(); paintTh(); paintDay(); repaint();
   // 어디에 걸리나 (the owner, 2026-11-28: "무료로 걸면 어디 걸리는 건지 와닿지 않는다"): the preview is the board on the virtual street, and
   // the line under it says where and how long, in the code's numbers (giftrules.js GIFT.hours, GIFT_SCREENS: the street and lot screens).
-  const lead = h('div', { class: 'pvcol' }, h('h1', { class: 'mkh', text: re ? '💌 답장 전광판을 걸어요' : ME ? '✨ 내 이름을 가상 전광판에 걸어요' : '🎁 친구에게 가상 전광판 선물하기' }),
-    h('div', { class: 'pv' }, cv, h('p', { class: 'place', text: PLACE_LINE })));
+  const lead = h('div', { class: 'pvcol' }, h('h1', { class: 'mkh', text: re ? '답장 전광판을 걸어요' : ME ? '내 이름을 타임스퀘어 전광판에 걸어요' : '친구 이름을 타임스퀘어 전광판에 걸어요' }),
+    h('div', { class: 'pv' }, cv, h('p', { class: 'place' }, icon('pin'), PLACE_LINE)));
   put(makerTop(ME, !!re), h('div', { class: 'cols mk' }, lead, h('section', { class: 'card mkcard' }, form)));
   document.documentElement.classList?.add?.('mkpage');
   go(re ? 2 : 1, false);
@@ -450,9 +453,9 @@ function maker({ re: answers = '', ...prefill } = {}) {
 }
 // The maker's top: the brand, and the two makers side by side (선물하기 | 내 전광판) as the switch between them; a reply has neither switch.
 const makerTop = (me, re) => h('div', { class: 'top' }, h('a', { class: 'brand', href: '/', onclick: (e) => toPlaza(e, 'close', '') }, 'WISH BOARD'),
-  re ? h('span', { class: 'tag', text: '💌 답장 전광판' }) : h('nav', { class: 'seg', 'aria-label': '무엇을 만들까요' },
-    h('a', { class: 'chip seg1', href: '/gift', 'aria-current': me ? null : 'page' }, '🎁 선물하기'),
-    h('a', { class: 'chip seg1', href: '/gift?me=1', 'aria-current': me ? 'page' : null }, '✨ 내 전광판')));
+  re ? h('span', { class: 'tag' }, icon('envelope'), '답장 전광판') : h('nav', { class: 'seg', 'aria-label': '무엇을 만들까요' },
+    h('a', { class: 'chip seg1', href: '/gift', 'aria-current': me ? null : 'page' }, '선물하기'),
+    h('a', { class: 'chip seg1', href: '/gift?me=1', 'aria-current': me ? 'page' : null }, '내 전광판')));
 
 // The maker form was shown: one count per page load (a form built again, after a delete or back and forward, is not counted again).
 // r: 1 when it came from another board (a kept ref or a reply), as made_ref is to made. No device id: a daily total only.
@@ -493,7 +496,7 @@ function gone() {
   clear();
   put(top(), card(h('h1', { text: DATA?.down ? '지금은 광장이 붐벼요' : '기념 페이지가 끝났거나 가려졌어요' }),
     h('p', { class: 'sub', text: DATA?.down ? '잠시 뒤에 다시 열어 주세요.' : '무료 선물 전광판의 기념 페이지는 그날이 지나고 7일 뒤에 지워져요.' }),
-    h('a', { class: 'btn gold', href: '/gift', text: '🎁 나도 누군가에게 걸어 주기' })), foot());
+    h('a', { class: 'btn gold', href: '/gift' }, icon('gift'), '나도 누군가에게 걸어 주기')), foot());
 }
 
 // The owner (2026-11-28, the owner: "항목이 많아서 어렵다", "영상이 많아 헷갈린다", "유료 옵션은 숨겨 줘"): first where the board hangs (the
@@ -519,33 +522,33 @@ function owner(g, { fresh = false, mine: extra = null, media = false, signNudge 
     const ks = Object.keys(asked); if (ks.length > 100) for (const k of ks.slice(0, 50)) delete asked[k];
     asked[g.id] = 1; ls.set('kts_gnudge', JSON.stringify(asked));
     nudge.replaceChildren(h('p', { style: 'margin:0 0 10px;font-weight:800', text: '광장 영상을 먼저 찍으면 받는 사람이 그 영상을 봐요' }),
-      h('div', { class: 'stack' }, recLink('btn gold', '🎬 광장 영상 먼저 찍기'), h('button', { class: 'btn', type: 'button', onclick: () => { nudge.hidden = true; run(); } }, '그냥 보내기')));
+      h('div', { class: 'stack' }, recLink('btn gold', [icon('camera'), '광장 영상 먼저 찍기']), h('button', { class: 'btn', type: 'button', onclick: () => { nudge.hidden = true; run(); } }, '그냥 보내기')));
     nudge.hidden = false;
   };
   const linkBox = h('div', { class: 'link', text: url });
-  const shareCard = card(h('h2', { text: '🔗 링크 보내기' }),
-    h('div', { class: 'row' }, h('button', { class: 'btn gold', type: 'button', onclick: () => sendOr(() => share(g, url, note, extra?.at)) }, '공유하기'),
+  const shareCard = card(h('h2', {}, icon('link'), '링크 보내기'),
+    h('div', { class: 'row' }, h('button', { class: 'btn gold', type: 'button', onclick: () => sendOr(() => share(g, url, note, extra?.at)) }, icon('share'), '공유하기'),
       h('button', { class: 'btn', type: 'button', onclick: () => sendOr(async () => { try { await navigator.clipboard.writeText(url); say(note, '링크를 복사했어요.', true); } catch { say(note, '아래 주소를 길게 눌러 복사해 주세요.'); } }) }, '링크 복사')),
     vfirst ? nudge : null, linkBox, note,
     h('p', { class: 'fine', text: (ME ? '친구들에게 보내 응원 메시지를 모아 보세요. ' : '친구들에게 먼저 보내 메시지를 모으고, 그날 ' + g.to + '님에게 보내세요. ') + (g.lk ? '메시지는 그날(' + dayText(g.day) + ') 0시에 함께 열려요.' : '메시지는 남기는 대로 바로 보여요.') }));
-  const stats = h('div', { class: 'stats' }, h('div', {}, h('b', { text: String(g.v || 0) }), h('span', { text: '열어 본 사람' })), h('div', {}, h('b', { text: String(g.n || 0) }), h('span', { text: ME ? '응원 메시지' : '친구 메시지' })), h('div', {}, h('b', { text: String(g.hearts || 0) }), h('span', { text: '💖 하트' })), h('div', {}, h('b', { text: String(extra?.kids || 0) }), h('span', { text: '이어서 걸린 전광판' })));
+  const stats = h('div', { class: 'stats' }, h('div', {}, h('b', { text: String(g.v || 0) }), h('span', { text: '열어 본 사람' })), h('div', {}, h('b', { text: String(g.n || 0) }), h('span', { text: ME ? '응원 메시지' : '친구 메시지' })), h('div', {}, h('b', { text: String(g.hearts || 0) }), h('span', { text: '하트' })), h('div', {}, h('b', { text: String(extra?.kids || 0) }), h('span', { text: '이어서 걸린 전광판' })));
   const del = twoTap(h('button', { class: 'linkbtn', type: 'button' }, '이 선물 전광판 지우기'), '한 번 더 누르면 지워요(되돌릴 수 없어요)', async () => {
     const r = await post('/rt/gift/' + g.id + '/delete', {});
     if (r.ok) { dropMine(g.id); history.replaceState(null, '', '/gift'); maker(); } else say(note, r.error || '지우지 못했어요.');
   });
-  const head = h('div', {}, h('h1', { text: fresh ? '🎉 걸었어요!' : O.emoji + ' ' + boardTitle(g) }), nudged, ...whereBlock(g, { owner: true }));
+  const head = h('div', {}, h('h1', {}, icon(fresh ? 'checkCircle' : O.icon), fresh ? '걸었어요' : boardTitle(g)), nudged, ...whereBlock(g, { owner: true }));
   // 답장 전광판: the first board hung in answer to this one (only the owner's read carries it, while that board can be opened).
-  const replyCard = extra?.re && GIFT_ID.test(String(extra.re)) ? card(h('h2', { text: '💌 답장이 도착했어요' }),
+  const replyCard = extra?.re && GIFT_ID.test(String(extra.re)) ? card(h('h2', {}, icon('envelope'), '답장이 도착했어요'),
     h('p', { class: 'sub', text: '이 전광판의 링크를 연 사람이 답장 전광판을 걸었어요.' }),
     h('a', { class: 'btn pink', href: '/g/' + extra.re + (EMBED ? '?in=1' : '') }, '답장 보기')) : null;
   const moreNote = h('p', { class: 'okmsg', role: 'status' });
   const more = h('details', { class: 'more' }, h('summary', { class: 'btn' }, '더 보기'),
     towerCard(g),
-    card(h('h2', { text: '🌐 둘러보기와 카드' }), discoverBtn(g, extra?.dc, moreNote, ME), h('div', { style: 'height:8px' }), cardBtn(g, moreNote), moreNote),
-    card(h('h2', { text: '📊 지금까지' }), stats, friendsLine(extra?.friends), h('p', { class: 'fine', text: '같은 기기는 한 번으로 세요.' })),
-    media && g.phase !== 'after' && canRecord() ? card(h('h2', { text: '📤 받는 사람 페이지에 광장 영상 올리기' }), recLink('btn', '🎬 광장에서 영상 찍기 · 약 25초'),
+    card(h('h2', {}, icon('eye'), '둘러보기와 카드'), discoverBtn(g, extra?.dc, moreNote, ME), h('div', { style: 'height:8px' }), cardBtn(g, moreNote), moreNote),
+    card(h('h2', {}, icon('chart'), '지금까지'), stats, friendsLine(extra?.friends), h('p', { class: 'fine', text: '같은 기기는 한 번으로 세요.' })),
+    media && g.phase !== 'after' && canRecord() ? card(h('h2', {}, icon('camera'), '받는 사람 페이지에 광장 영상 올리기'), recLink('btn', [icon('camera'), '광장에서 영상 찍기 · 약 25초']),
       h('p', { class: 'fine', text: g.vid ? '찍은 영상이 받는 사람 페이지에 올라가 있어요. 다시 찍으면 바뀌어요(3번까지).' : '광장에서 이 전광판 앞의 폭죽과 환호를 찍어 받는 사람 페이지에 올려요. 그날이 지나고 7일 뒤에 지워져요.' })) : null,
-    card(h('button', { class: 'btn', type: 'button', onclick: () => visit(g, { preview: true }) }, '👀 받는 사람에게 보이는 화면'), h('div', { style: 'text-align:center;margin-top:8px' }, del)));
+    card(h('button', { class: 'btn', type: 'button', onclick: () => visit(g, { preview: true }) }, icon('eye'), '받는 사람에게 보이는 화면'), h('div', { style: 'text-align:center;margin-top:8px' }, del)));
   put(top(ME), h('div', { class: 'cols' }, h('div', { class: 'sticky' }, head),
     h('div', {}, replyCard, shareCard, videoCard(g), paidCard(g, extra?.ladder), more)), foot());
 }
@@ -560,41 +563,41 @@ function whereBlock(g, { owner: own = false } = {}) {
   const tagText = () => { const t = now(), d = dDay(g.day, t); tag.className = 'tag' + (t >= g.a && t < g.b ? ' live' : ''); return t >= g.b ? '광장에서 내려왔어요' : t >= g.a ? '● 지금 걸려 있어요' : d >= 1 ? 'D-' + d : clockText(g.a) + '에 켜져요 · ' + countdown(g.a - t) + ' 남음'; };
   tag.textContent = tagText(); live(tag, tagText); // live() paints from the next second on (the tag is not on the page yet)
   const zone = screenZone(g.scr);
-  const line = h('p', { class: 'where' }, h('b', { text: '📍 ' + screenName(g.scr) }), zone ? ' · ' + zone : '', ' ', tag);
+  const line = h('p', { class: 'where' }, icon('pin'), h('b', { text: screenName(g.scr) }), zone ? ' · ' + zone : '', ' ', tag);
   const when = h('p', { class: 'fine whenl', text: windowText(g.a, g.b) + ' · ' + hours + '시간 · 누가 그 화면을 켜면 빈 거리 전광판으로 옮겨요' });
   const scene = h('canvas', { class: 'preview scene', width: 1024, height: 576, role: 'img', 'aria-label': `${screenName(g.scr)}에 걸린 ${boardTitle(g)}` });
   const paint = () => paintStreet(scene, g, streetImg(paint)); paint();
-  const label = () => { const l = plazaLook(g, now()); return l === 'live' ? '🗽 3D 광장에서 내 전광판 보기' : l === 'replay' ? (now() < Number(g.a) ? '🗽 3D 광장에서 미리 보기' : '🗽 3D 광장에서 다시 보기') : ''; };
+  const label = () => { const l = plazaLook(g, now()); return l === 'live' ? '3D 광장에서 내 전광판 보기' : l === 'replay' ? (now() < Number(g.a) ? '3D 광장에서 미리 보기' : '3D 광장에서 다시 보기') : ''; };
   const go = h('a', { class: 'btn go3d', href: '/?gb=' + g.id, onclick: (e) => { beacon(g.id, 'go'); toPlaza(e, 'go', g.id); } });
-  const paintGo = () => { const t = label(); go.hidden = !t; return t; };
-  go.textContent = paintGo(); live(go, paintGo);
+  const paintGo = () => { const t = label(); go.hidden = !t; return t ? [icon('map'), t] : ''; };
+  live(go, paintGo);
   return own ? [line, when, scene, go] : [line, when];
 }
-// 🎬 축하 영상: one entry (the owner, 2026-11-28: "영상이 많아 헷갈린다"). It opens the 실사 video maker (the seven AI scenes, realvideo.js);
+// 축하 영상: one entry (the owner, 2026-11-28: "영상이 많아 헷갈린다"). It opens the 실사 video maker (the seven AI scenes, realvideo.js);
 // where this browser cannot make it (no recording, no WebGL, or an app's own browser), the same entry opens the drawn 15-second film
 // (giftfilm.js) with its save, and says why in one line. Nothing to choose between.
 function videoCard(g) {
   const panel = h('div', { class: 'vpanel', hidden: true });
   let built = false;
-  const btn = h('button', { class: 'btn pink', type: 'button', 'aria-expanded': 'false' }, '🎬 축하 영상 만들기');
+  const btn = h('button', { class: 'btn', type: 'button', 'aria-expanded': 'false' }, icon('film'), '축하 영상 만들기');
   btn.addEventListener('click', () => {
     if (!built) { built = true; panel.append(...videoBody(g)); }
     panel.hidden = !panel.hidden; btn.setAttribute('aria-expanded', String(!panel.hidden));
   });
-  return card(h('h2', { text: '🎬 축하 영상' }), btn, panel);
+  return card(h('h2', {}, icon('film'), '축하 영상'), btn, panel);
 }
 // What the entry opens: the real video's scene picker, or the drawn film (realReason / inAppBrowser decide).
 function videoBody(g) {
   const why = realReason({ rec: canRecord(), gl: hasGL() }), inApp = inAppBrowser(navigator?.userAgent);
   if (!why && !inApp) return realBody(g);
   const st = stage(g, { auto: true, quiet: true, small: true });
-  const saveNote = h('p', { class: 'okmsg', role: 'status' }), saveBtn = h('button', { class: 'btn', type: 'button', onclick: () => saveVideo(g, st, saveBtn, saveNote) }, '⬇ 15초 영상 저장');
+  const saveNote = h('p', { class: 'okmsg', role: 'status' }), saveBtn = h('button', { class: 'btn', type: 'button', onclick: () => saveVideo(g, st, saveBtn, saveNote) }, icon('download'), '15초 영상 저장');
   if (inApp) {
     const note = h('p', { class: 'okmsg', role: 'status' }), box = h('input', { type: 'text', class: 'link', readonly: true, value: location.href, hidden: true, 'aria-label': '이 페이지 주소' });
     const copy = h('button', { class: 'btn', type: 'button', onclick: async () => {
       try { await navigator.clipboard.writeText(location.href); say(note, '주소를 복사했어요. Chrome이나 Safari 주소창에 붙여 넣어 주세요.', true); }
       catch { box.hidden = false; pickAll(box); say(note, '아래 주소를 길게 눌러 복사해 주세요.'); }
-    } }, '🔗 이 페이지 주소 복사');
+    } }, icon('link'), '이 페이지 주소 복사');
     return [h('p', { class: 'sub', text: '카카오톡 같은 앱 안의 브라우저에서는 영상을 만들거나 저장할 수 없어요. Chrome이나 Safari에서 열면 실사 축하 영상을 만들 수 있어요.' }), copy, box, note, st.box];
   }
   return [h('p', { class: 'fine', text: why === 'webgl' ? '이 기기에서는 실사 영상을 만들 수 없어서, 그려진 15초 축하 영상으로 만들어요.' : '이 브라우저는 영상 녹화를 지원하지 않아요. 영상을 보며 화면 녹화로 저장해 주세요.' }),
@@ -624,13 +627,13 @@ function ladder(g, arm = null, into = null) {
     if (!t) { ask.hidden = true; return; }
     once('pick:' + t, { act: 'pick', t });
     const T = TIERS[t], box = h('input', { type: 'checkbox', id: 'adok' }), msg = h('p', { class: 'okmsg', role: 'status' });
-    const go = h('button', { class: 'btn pink', type: 'button', disabled: true, onclick: async () => {
+    const go = h('button', { class: 'btn gold', type: 'button', disabled: true, onclick: async () => {
       go.disabled = true; say(msg, '');
       const tok = await token(false); const r = tok ? await pushOn(tok) : { ok: false, hint: '잠시 뒤에 다시 해 주세요.' };
       if (!r.ok) { say(msg, r.hint + ' 관심은 이미 셌어요. 고마워요!'); go.disabled = false; return; }
       const s = await post('/rt/gift/' + g.id + '/interest', { act: 'notify', t, consent: true });
       if (s.ok) { mark('notify:' + t); say(msg, '열리면 이 기기로 한 번 알려 드릴게요. 고마워요!', true); go.textContent = '알림 신청됨'; } else { say(msg, s.error || '신청하지 못했어요.'); go.disabled = false; }
-    } }, '🔔 열리면 알림 받기');
+    } }, icon('bell'), '열리면 알림 받기');
     box.addEventListener('change', () => { go.disabled = !box.checked; });
     ask.hidden = false;
     ask.replaceChildren(h('b', { text: `${T.name} ${won(price[t])}` }), h('p', { class: 'sub', style: 'margin:4px 0 10px', text: TIER_ASK }),
@@ -640,7 +643,7 @@ function ladder(g, arm = null, into = null) {
       h('button', { class: 'linkbtn', type: 'button', onclick: () => choose(0) }, '무료로 둘게요'));
   }
   paint();
-  const kids = [h('h2', { text: '✨ 더 오래, 더 깔끔하게 걸고 싶다면' }),
+  const kids = [h('h2', { text: '결제가 열리면 고를 수 있는 것' }),
     h('p', { class: 'sub', text: '무료 걸기는 지금 그대로 쓸 수 있어요. 그 아래는 결제가 열리면 생기는 상품이에요. 지금은 결제가 없고, 고르면 "열리면 알림"을 받을 수 있어요.' }),
     list, ask, h('p', { class: 'fine', text: TIER_NOTE })];
   const box = into || card(); box.replaceChildren(...kids); box.hidden = false;
@@ -691,7 +694,7 @@ async function payLadder(g, box) {
     const tiers = h('div', { class: 'tiers' }, ...TIERS.map((t) => {
       const p = t.t ? byTier.get(t.t) : null; if (t.t && !p) return null;
       const bought = !!(line && t.t && line.name === t.name && line.st !== 'REFUNDED');
-      const foot = !t.t ? null : bought ? h('p', { class: line.active ? 'okmsg' : 'fine', text: line.active ? '✓ 이 전광판에 적용됐어요' : '이 상품을 주문했어요 · ' + line.label })
+      const foot = !t.t ? null : bought ? h('p', { class: line.active ? 'okmsg' : 'fine', text: line.active ? '이 전광판에 적용됐어요' : '이 상품을 주문했어요 · ' + line.label })
         : line?.locked ? h('p', { class: 'fine', text: '이 전광판은 이미 결제한 상품이 있어요.' })
           : h('button', { class: t.best ? 'btn gold' : 'btn', type: 'button', onclick: () => go(p) }, `결제하기 · ${won(p.price)}`);
       return h('div', { class: 'tier pay', 'aria-current': bought ? 'true' : null },
@@ -702,7 +705,7 @@ async function payLadder(g, box) {
     }));
     const status = line ? h('p', { class: line.active ? 'okmsg' : line.st === 'FAILED' || line.st === 'REFUNDED' ? 'err' : 'sub', role: 'status', text: line.text }) : null;
     const refund = avail.refund || {};
-    box.replaceChildren(h('h2', { text: '✨ 더 오래, 더 깔끔하게 걸고 싶다면' }),
+    box.replaceChildren(h('h2', { text: '더 오래 걸기 · 워터마크 없는 영상' }),
       avail.testNote ? h('p', { class: 'sub' }, h('b', { text: avail.badge + ' · ' }), avail.testNote) : null,
       h('p', { class: 'sub', text: '무료 걸기는 지금 그대로 쓸 수 있어요. 결제하면 아래 혜택이 이 전광판에 붙어요. 혜택은 결제가 확인되고 전광판에 게시된 뒤에 적용돼요.' }),
       status, tiers, note,
@@ -718,12 +721,12 @@ async function payLadder(g, box) {
   const first = back && !RESUME_SHOWN ? back.line : null; RESUME_SHOWN = true;
   await draw(first);
 }
-// 🌐 DISCOVER에 보이기 (the owner's share card): off by default. On, the board is listed on /discover while it hangs, with its name, line
+// DISCOVER에 보이기 (the owner's share card): off by default. On, the board is listed on /discover while it hangs, with its name, line
 // and sender for anyone to read; the Worker keeps the switch (POST /rt/gift/<id>/discover). on: the owner's read (mine.dc).
 function discoverBtn(g, on0, note, me) {
   let on = !!Number(on0), busy = false;
   const btn = h('button', { class: 'btn', type: 'button' });
-  const paint = () => { btn.textContent = (on ? '🌐 DISCOVER에 보이기 · 켜짐' : '🌐 DISCOVER에 보이기 · 꺼짐'); btn.setAttribute('aria-pressed', String(on)); };
+  const paint = () => { btn.replaceChildren(icon(on ? 'eye' : 'eyeOff'), on ? 'DISCOVER에 보이기 · 켜짐' : 'DISCOVER에 보이기 · 꺼짐'); btn.setAttribute('aria-pressed', String(on)); };
   btn.addEventListener('click', async () => {
     if (busy) return; busy = true; btn.disabled = true;
     const r = await post('/rt/gift/' + g.id + '/discover', { on: !on });
@@ -764,7 +767,7 @@ function visit(g, { preview = false, swap = null } = {}) {
   if (!preview && !swap) beacon(g.id, 'open');
   const O = OCCASIONS[g.occ] || OCCASIONS.bday;
   const phase = () => pageLook(g, now(), CER_DEBUG);
-  const back = preview && !swap ? h('button', { class: 'btn sm', type: 'button', onclick: () => board() }, '← 내 관리 화면으로') : null;
+  const back = preview && !swap ? h('button', { class: 'btn sm', type: 'button', onclick: () => board() }, icon('chevronLeft'), '내 관리 화면으로') : null;
   const cer = cerCard(g, preview || swap ? '' : cerBackOnce()); // 점등식: under the countdown before the day, under the where line from the day
   const ME = isMe(g), nudge = preview ? (NUDGE = null) : nudgeLine(g); // shown after this visitor's 💖, message or reply (showNudge)
   const paper = swap?.paper || paperCard(g, preview ? null : showNudge);
@@ -775,7 +778,7 @@ function visit(g, { preview = false, swap = null } = {}) {
     const prev = h('canvas', { class: 'preview', width: 1024, height: 576, 'aria-label': '전광판 미리보기' }); paintGift(prev, { ...g, msg: w0.hush, n: g.n });
     // 💖 before the day (giftrules.js heartTakes): taken now, its count shown only from the reveal; not pressable in the owner's preview.
     const beforeNote = h('p', { class: 'okmsg', role: 'status' });
-    const left = h('div', { class: 'sticky' }, h('h1', { text: O.emoji + ' ' + boardTitle(g) }), h('p', { class: 'sub', text: '뉴욕 타임스퀘어 가상 광장에 ' + windowText(g.a, g.b) + ' 걸려요.' }),
+    const left = h('div', { class: 'sticky' }, h('h1', {}, icon(O.icon), boardTitle(g)), h('p', { class: 'sub', text: '뉴욕 타임스퀘어 가상 광장에 ' + windowText(g.a, g.b) + ' 걸려요.' }),
       card(label, cd, fine), towerLine(g), cer, prev, h('div', { class: 'row' }, heartBtn(g, beforeNote, { off: preview, quiet: true, sent: showNudge })), beforeNote, nudge);
     const right = swap?.right || h('div', {}, paper, cta(g));
     if (swap) swapLeft(swap, left, null);
@@ -803,12 +806,12 @@ function visit(g, { preview = false, swap = null } = {}) {
     return;
   }
   const st = stage(g, { auto: true });
-  const saveNote = h('p', { class: 'okmsg', role: 'status' }), saveBtn = h('button', { class: 'btn', type: 'button', onclick: () => saveVideo(g, st, saveBtn, saveNote) }, '⬇ 영상 저장');
+  const saveNote = h('p', { class: 'okmsg', role: 'status' }), saveBtn = h('button', { class: 'btn', type: 'button', onclick: () => saveVideo(g, st, saveBtn, saveNote) }, icon('download'), '영상 저장');
   // The plaza button: the visit while the board hangs; on its day before that and after its window the plaza shows it on this device only
   // (gift.js land, giftrules.js plazaLook). The label follows the clock; this part of the page is only built from the day on (a 점등식
   // board: from its start, so it never offers 광장에서 미리 보기).
-  const go = h('a', { class: 'btn', href: '/?gb=' + g.id, onclick: (e) => { beacon(g.id, 'go'); toPlaza(e, 'go', g.id); } }, PLAZA_BTN[phase()] || PLAZA_BTN.live);
-  live(go, () => PLAZA_BTN[phase()] || PLAZA_BTN.live);
+  const go = h('a', { class: 'btn', href: '/?gb=' + g.id, onclick: (e) => { beacon(g.id, 'go'); toPlaza(e, 'go', g.id); } }, icon('map'), PLAZA_BTN[phase()] || PLAZA_BTN.live);
+  live(go, () => [icon('map'), PLAZA_BTN[phase()] || PLAZA_BTN.live]);
   const where = h('p', { class: 'sub' });
   live(where, () => { const p = phase(), t = now(); return p === 'live' ? `지금 ${screenName(g.scr)}에 걸려 있어요 · ${countdown(g.b - t)} 남음` : p === 'day' ? `${hourText(new Date(g.a + 9 * 36e5).getUTCHours())}에 광장에 걸려요 · ${countdown(g.a - t)} 남음` : windowText(g.a, g.b) + ' 광장에 걸렸어요'; });
   // 답장 전광판: the first button (not in the owner's own preview). It opens the maker here, filled in from this board.
@@ -817,12 +820,12 @@ function visit(g, { preview = false, swap = null } = {}) {
     // 내 전광판: a cheer for that person (replyDraft: 응원, the name), an ordinary board led from here, not a reply
     if (ME) { history.pushState(null, '', '/gift?ref=' + g.id); maker(replyDraft(g)); return; }
     history.pushState({ re: g.id }, '', '/gift'); maker({ ...replyDraft(g), re: g.id }); // the state: back and forward come to the reply again (route)
-  } }, replyLabel(g));
+  } }, icon(isMe(g) ? 'megaphone' : 'envelope'), replyLabel(g));
   // 🔗 공유하기 (a visitor passing the page on: its own words and its own count, ev:reshare) and 💖, side by side under the reply: the
   // reply stays the first button, and the row is one button tall, so the film and that first button keep the first screen of a phone.
   // The owner's preview shows the heart as it stands (not pressable) and no share (the owner has its own).
   const url = location.origin + '/g/' + g.id, shareNote = h('p', { class: 'okmsg', role: 'status' }), copyBox = h('input', { type: 'text', class: 'link', readonly: true, value: url, hidden: true, 'aria-label': '이 전광판 주소', onfocus: () => { try { copyBox.select(); } catch { /* the field still shows the address */ } } });
-  const reshare = preview ? null : h('button', { class: 'btn', type: 'button', onclick: () => sendLink(g.id, { ...visitorShareText(g, phase()), url }, shareNote, 'reshare', copyBox) }, '🔗 공유하기');
+  const reshare = preview ? null : h('button', { class: 'btn', type: 'button', onclick: () => sendLink(g.id, { ...visitorShareText(g, phase()), url }, shareNote, 'reshare', copyBox) }, icon('share'), '공유하기');
   const pass = h('div', { class: 'row' }, reshare, heartBtn(g, shareNote, { off: preview, sent: showNudge }));
   const cardNote = h('p', { class: 'okmsg', role: 'status' });
   const more = h('details', { class: 'more' }, h('summary', { class: 'btn' }, '더 보기'), h('div', { class: 'stack' }, go, saveBtn, saveNote, cardBtn(g, cardNote), cardNote));
@@ -830,8 +833,8 @@ function visit(g, { preview = false, swap = null } = {}) {
   const skip = h('button', { class: 'linkbtn', type: 'button', onclick: () => { acts.hidden = false; skip.remove(); } }, '영상 건너뛰기');
   st.ends.add(() => { acts.hidden = false; skip.remove(); });
   const rp = twoTap(h('button', { class: 'linkbtn', type: 'button' }, '이 전광판 신고'), '한 번 더 누르면 신고해요', async () => { const r = await fetch('/rt/gift/' + g.id + '/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then((x) => x.json()).catch(() => null); rp.textContent = r?.ok ? '신고했어요' : '신고하지 못했어요'; rp.disabled = true; });
-  const left = h('div', { class: 'sticky' }, h('h1', { text: ME ? O.emoji + ' ' + boardTitle(g) : O.emoji + ' ' + g.to + '님, ' + O.head + '!' }), where, friendsLine(g.friends), towerLine(g), cer, st.box, acts.hidden ? skip : null, h('div', { style: 'height:10px' }), acts);
-  const posted = card(h('h2', { text: '📺 광장에 걸린 글' }), h('p', { class: 'big', style: 'font-size:22px', text: toLine(g) }), h('p', { style: 'font-weight:800;margin:4px 0', text: g.msg || O.hint }), g.from && !ME ? h('p', { class: 'sub', text: 'From. ' + g.from }) : null, rp);
+  const left = h('div', { class: 'sticky' }, h('h1', {}, icon(O.icon), ME ? boardTitle(g) : g.to + '님, ' + O.head), where, friendsLine(g.friends), towerLine(g), cer, st.box, acts.hidden ? skip : null, h('div', { style: 'height:10px' }), acts);
+  const posted = card(h('h2', {}, icon('board'), '광장에 걸린 글'), h('p', { class: 'big', style: 'font-size:22px', text: toLine(g) }), h('p', { style: 'font-weight:800;margin:4px 0', text: g.msg || O.hint }), g.from && !ME ? h('p', { class: 'sub', text: 'From. ' + g.from }) : null, rp);
   if (swap) swapLeft(swap, left, posted);
   else put(top(ME), back, h('div', { class: 'cols' }, left, h('div', {}, posted, paper, cta(g))), foot());
 }
@@ -926,7 +929,7 @@ function realBody(g) {
     if (!pick) { showBar(null); makeBtn.disabled = true; makeBtn.textContent = '장면을 먼저 골라 주세요'; return; }
     if (e?.err) { showBar(null); makeBtn.disabled = true; makeBtn.textContent = '장면을 다시 눌러 주세요'; say(note, '‘' + name + '’ 장면을 받지 못했어요. 장면을 다시 눌러 주세요.'); return; }
     if (!e?.url) { const p = e?.pct ?? 0; showBar(p, '‘' + name + '’ 장면 받는 중' + (p >= 0 ? ' ' + p + '%' : '…')); makeBtn.disabled = true; makeBtn.textContent = '장면 받는 중…'; return; }
-    showBar(null); makeBtn.disabled = false; makeBtn.textContent = '🎬 ‘' + name + '’ 장면으로 10초 영상 만들기';
+    showBar(null); makeBtn.disabled = false; makeBtn.replaceChildren(icon('film'), '‘' + name + '’ 장면으로 10초 영상 만들기');
   }
   function loadTool(s) {
     if (!REAL_RVP) REAL_RVP = import('./realvideo.js?v=202611280944').then((m) => { REAL_RV = m; return m; }, (e) => { REAL_RVP = null; throw e; });
@@ -991,10 +994,10 @@ function realBody(g) {
     const canShare = (() => { try { return !!(file && navigator.canShare?.({ files: [file] })); } catch { return false; } })();
     const saveB = h('button', { class: 'btn', type: 'button', onclick: () => {
       try { downloadBlob(made.blob, made.name); beacon(g.id, 'real_save'); say(note, '영상 파일을 내려받았어요. 다운로드 폴더(아이폰은 파일 앱)에서 찾아 보세요.', true); } catch { say(note, '영상을 저장하지 못했어요. 다시 해 주세요.'); }
-    } }, '⬇ 영상 파일 저장');
+    } }, icon('download'), '영상 파일 저장');
     const shareB = canShare ? h('button', { class: 'btn', type: 'button', onclick: async () => {
       try { await navigator.share({ files: [file], title: g.to + '님을 위한 축하 영상' }); beacon(g.id, 'real_share'); say(note, '영상을 보냈어요.', true); } catch (err) { if (err?.name !== 'AbortError') say(note, '공유하지 못했어요. 저장한 뒤 보내 주세요.'); }
-    } }, '📤 영상 공유') : null;
+    } }, icon('share'), '영상 공유') : null;
     result.replaceChildren(h('div', { class: 'stage sm', style: 'margin-top:10px' }, h('video', { src: made.url, controls: true, playsinline: true, preload: 'metadata', 'aria-label': g.to + '님을 위한 실사 축하 영상' })),
       h('div', { class: 'row', style: 'margin-top:10px' }, saveB, shareB));
     result.hidden = false;
@@ -1030,7 +1033,7 @@ function cerCard(g, why = '') {
     const b = btnOf();
     if (!b) { box.remove(); return false; }
     if (b.act !== act) { if (act) line.textContent = ''; act = b.act; ctl = make(b); box.replaceChildren(ctl, line); }
-    ctl.textContent = b.label;
+    ctl.replaceChildren(icon('firework'), b.label);
     if (b.act === 'go') ctl.setAttribute('href', href(b));
     return true;
   };
@@ -1056,10 +1059,10 @@ function friendsLine(n) { const t = friendsText(n); return t ? h('p', { class: '
 function towerLine(g) {
   if (!(Number(g?.tw) > 0)) return null;
   const m = Number(g.tw), box = h('div', { class: 'card' }), text = h('p', { style: 'font-weight:800;margin:0' });
-  const go = h('a', { class: 'btn gold', href: '/?gb=' + g.id, style: 'margin-top:10px', onclick: (e) => toPlaza(e, 'go', g.id), hidden: true }, '🗽 광장에서 보기');
+  const go = h('a', { class: 'btn gold', href: '/?gb=' + g.id, style: 'margin-top:10px', onclick: (e) => toPlaza(e, 'go', g.id), hidden: true }, icon('map'), '광장에서 보기');
   const words = () => {
     const t = now(), look = towerLook(m, t); go.hidden = look !== 'live';
-    return look === 'soon' ? `🗽 ${towerClock(m)}에 메인 타워에 올라가요 · ${countdown(m - t)} 남음` : look === 'live' ? '🎉 지금 메인 타워에!' : `🗽 메인 타워에 올랐어요 · ${towerClock(m)}`;
+    return look === 'soon' ? `${towerClock(m)}에 메인 타워에 올라가요 · ${countdown(m - t)} 남음` : look === 'live' ? '지금 메인 타워에 걸려 있어요' : `메인 타워에 올랐어요 · ${towerClock(m)}`;
   };
   text.textContent = words(); live(text, words); // live() paints from the next second on (the line is not on the page yet)
   box.append(text, go);
@@ -1069,7 +1072,7 @@ function towerLine(g) {
 // picker, then the countdown. Asks GET /rt/gift/<id>/tower once when built and again (its refusal carries the fresh taken minutes and days)
 // after a refused booking. No card when the Worker has no such route, the board's window is over, or this is not the owner.
 function towerCard(g) {
-  const head = () => h('h2', { text: '🗽 메인 타워에 올리기' });
+  const head = () => h('h2', {}, icon('building'), '메인 타워에 올리기');
   const box = card(head(), h('p', { class: 'fine', text: '불러오는 중…' }));
   let last = null; // the last answer: a refusal redraws from it with the fresh taken minutes and days
   let busy = false; // a booking is out: nothing redraws the card or opens another picker until it answers (no second points booking)
@@ -1089,14 +1092,14 @@ function towerCard(g) {
     // 메인 타워 주인공 (a published paid order of this board): the minute picked directly, no friends and no points
     if (s.paid) {
       box.replaceChildren(head(), h('p', { class: 'sub', text: `그날 남은 자리 ${s.left}/${TOWER.perDay} · 모든 사람이 같은 1분에 메인 타워 다섯 면에서 봐요.` }),
-        h('button', { class: 'btn gold', type: 'button', onclick: () => pick(s, 'paid') }, '👑 메인 타워 주인공 · 시간 바로 고르기'), note,
+        h('button', { class: 'btn gold', type: 'button', onclick: () => pick(s, 'paid') }, icon('crown'), '메인 타워 주인공 · 시간 바로 고르기'), note,
         h('p', { class: 'fine', text: '결제한 메인 타워 주인공이라 친구 응원이나 포인트 없이 고를 수 있어요.' }));
       if (msg) say(note, msg);
       return;
     }
-    const friendsBtn = h('button', { class: s.canFriends ? 'btn gold' : 'btn', type: 'button' }, s.canFriends ? '🎉 메인 타워가 열렸어요! 시간 고르기' : `👥 친구 응원 모으기 · ${s.friends}/${s.need}`);
+    const friendsBtn = h('button', { class: s.canFriends ? 'btn gold' : 'btn', type: 'button' }, s.canFriends ? [icon('clock'), '메인 타워가 열렸어요 · 시간 고르기'] : [icon('users'), `친구 응원 모으기 · ${s.friends}/${s.need}`]);
     friendsBtn.addEventListener('click', () => (s.canFriends ? pick(s, 'friends') : share(g, location.origin + '/g/' + g.id, note)));
-    const points = s.points === 'ok' ? h('button', { class: 'btn', type: 'button', onclick: () => pick(s, 'points') }, `✨ ${TOWER.price.toLocaleString('en-US')}포인트로 올리기`)
+    const points = s.points === 'ok' ? h('button', { class: 'btn', type: 'button', onclick: () => pick(s, 'points') }, icon('coin'), `${TOWER.price.toLocaleString('en-US')}포인트로 올리기`)
       : h('p', { class: 'fine', text: s.points === 'account' ? TOWER_ERR.account : s.points === 'prep' ? TOWER_ERR.prep : TOWER_ERR.gap });
     box.replaceChildren(head(), h('p', { class: 'sub', text: `그날 남은 자리 ${s.left}/${TOWER.perDay} · 모든 사람이 같은 1분에 메인 타워 다섯 면에서 봐요.` }),
       h('div', { class: 'stack' }, friendsBtn, points), note,
@@ -1110,7 +1113,7 @@ function towerCard(g) {
     const note = h('p', { class: 'okmsg', role: 'status' }), sel = h('select', { 'aria-label': '메인 타워에 올릴 1분' }), t0 = now();
     for (const x of s.minutes.filter((x) => x.m > t0)) { const o = h('option', { value: String(x.m), text: towerClock(x.m) + (x.why ? ' · ' + (WHY[x.why] || '고를 수 없음') : '') }); if (x.why) o.setAttribute('disabled', ''); sel.append(o); }
     const first = s.minutes.find((x) => !x.why && x.m > t0); if (first) sel.value = String(first.m);
-    const back = h('button', { class: 'linkbtn', type: 'button', onclick: () => { if (!busy) draw(last); } }, '← 돌아가기');
+    const back = h('button', { class: 'linkbtn', type: 'button', onclick: () => { if (!busy) draw(last); } }, icon('chevronLeft'), '돌아가기');
     const go = h('button', { class: 'btn gold', type: 'button' }, how === 'points' ? `이 1분으로 올리기 · ${TOWER.price.toLocaleString('en-US')}포인트` : '이 1분으로 올리기');
     go.addEventListener('click', async () => {
       if (busy) return;
@@ -1127,7 +1130,7 @@ function towerCard(g) {
       }
       say(note, r.error || '처리하지 못했어요. 잠시 뒤 다시 해 주세요.');
     });
-    box.replaceChildren(...[h('h2', { text: '🗽 메인 타워에 올릴 1분' }), h('p', { class: 'fine', text: '이 전광판이 걸리는 시간 안에서 골라요. 정각과 밤 9시대는 응원 팀의 자리예요.' }),
+    box.replaceChildren(...[h('h2', {}, icon('building'), '메인 타워에 올릴 1분'), h('p', { class: 'fine', text: '이 전광판이 걸리는 시간 안에서 골라요. 정각과 밤 9시대는 응원 팀의 자리예요.' }),
       how === 'points' ? h('p', { class: 'sub', text: `누르면 응원 포인트 ${TOWER.price.toLocaleString('en-US')}이 바로 빠져요. 그 1분 전에 전광판이 가려지거나 지워지면 돌려드려요.` }) : null,
       how === 'paid' ? h('p', { class: 'sub', text: '결제한 메인 타워 주인공으로 올려요. 그 1분 전에 전광판이 가려지거나 지워지면 1분은 풀리고 포인트로 돌려드리지 않아요. 환불은 결제의 취소와 환불 규정을 따라요.' }) : null,
       sel, h('div', { style: 'height:8px' }), go, note, h('div', { style: 'text-align:center;margin-top:8px' }, back)].filter(Boolean)); // a null would print as "null"
@@ -1142,14 +1145,14 @@ function towerCard(g) {
   return box;
 }
 function cta(g) {
-  return card(h('h2', { text: '🎁 나도 누군가에게' }), h('p', { class: 'sub', text: '친구의 생일, 합격, 기념일에 뉴욕 타임스퀘어 가상 광장의 전광판을 6시간 무료로 걸어 줄 수 있어요. 내 이름이나 다짐을 걸 수도 있어요.' }),
+  return card(h('h2', {}, icon('gift'), '나도 누군가에게'), h('p', { class: 'sub', text: '친구의 생일, 합격, 기념일에 뉴욕 타임스퀘어 가상 광장의 전광판을 6시간 무료로 걸어 줄 수 있어요. 내 이름이나 다짐을 걸 수도 있어요.' }),
     h('a', { class: 'btn', href: '/gift?ref=' + g.id, onclick: () => beacon(g.id, 'cta') }, '나도 걸어 주기'),
-    h('a', { class: 'linkbtn', href: '/gift?me=1&ref=' + g.id, style: 'display:block;text-align:center;margin-top:8px', onclick: () => beacon(g.id, 'cta') }, '✨ 내 전광판 만들기'));
+    h('a', { class: 'linkbtn', href: '/gift?me=1&ref=' + g.id, style: 'display:block;text-align:center;margin-top:8px', onclick: () => beacon(g.id, 'cta') }, '내 전광판 만들기'));
 }
 // 롤링페이퍼: the lines (once open) or the lock, and the form while the board takes lines. A new guest is minted only on sending.
 // 내 전광판: the same 롤링페이퍼 under the name 응원 메시지. sent: called after a line was left (the account nudge).
 function paperCard(g, sent = null) {
-  const title = isMe(g) ? '💌 응원 메시지' : '💌 롤링페이퍼', word = isMe(g) ? '응원 메시지 ' : '친구 메시지 ';
+  const title = isMe(g) ? '응원 메시지' : '롤링페이퍼', head = () => h('h2', {}, icon('envelope'), title), word = isMe(g) ? '응원 메시지 ' : '친구 메시지 ';
   const list = h('div', { class: 'paper' });
   const paint = () => {
     if (g.open && Array.isArray(g.paper)) {
@@ -1157,14 +1160,14 @@ function paperCard(g, sent = null) {
         const rp = twoTap(h('button', { class: 'rp', type: 'button' }, '신고'), '한 번 더', async () => { await fetch('/rt/gift/' + g.id + '/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ m: p.id }) }).catch(() => null); rp.textContent = '신고함'; rp.disabled = true; });
         return h('div', { class: 'note' }, rp, h('b', { text: p.nick }), h('p', { text: p.txt }));
       }) : [h('p', { class: 'sub', text: '아직 메시지가 없어요. 첫 메시지를 남겨 주세요!' })]));
-    } else list.replaceChildren(h('div', { class: 'lock' }, h('span', { text: '🔒' }), h('span', {}, word, h('b', { text: (g.n || 0) + '개' }), ' · ' + dayText(g.day) + '에 열려요')));
+    } else list.replaceChildren(h('div', { class: 'lock' }, icon('lock'), h('span', {}, word, h('b', { text: (g.n || 0) + '개' }), ' · ' + dayText(g.day) + '에 열려요')));
   };
   paint();
-  if (!g.takes) return card(h('h2', { text: title }), list, h('p', { class: 'fine', text: '메시지를 받는 시간이 끝났어요.' }));
+  if (!g.takes) return card(head(), list, h('p', { class: 'fine', text: '메시지를 받는 시간이 끝났어요.' }));
   const nick = h('input', { type: 'text', maxlength: 20, autocomplete: 'nickname', placeholder: '닉네임 (선택)', 'aria-label': '닉네임', 'aria-describedby': 'paper-msg', oninput: () => flag(nick, false) });
   const txt = h('textarea', { maxlength: 120, placeholder: g.to + '님에게 한마디', 'aria-label': '메시지', 'aria-describedby': 'paper-msg' });
   const cnt = h('small', { text: '0/' + GIFT.paper.txtMax }); txt.addEventListener('input', () => { flag(txt, false); cnt.textContent = cpLen(norm(txt.value)) + '/' + GIFT.paper.txtMax; });
-  const msg = h('p', { class: 'err', id: 'paper-msg', role: 'alert' }), btn = h('button', { class: 'btn gold', type: 'submit' }, '💌 메시지 남기기');
+  const msg = h('p', { class: 'err', id: 'paper-msg', role: 'alert' }), btn = h('button', { class: 'btn gold', type: 'submit' }, icon('envelope'), '메시지 남기기');
   const form = h('form', { novalidate: true, onsubmit: async (e) => {
     e.preventDefault(); say(msg, ''); flag(nick, false); flag(txt, false);
     const v = paperFault({ nick: nick.value, txt: txt.value }); if (!v.ok) { say(msg, v.error); flag(v.field === 'nick' ? nick : txt, true); return; }
@@ -1178,7 +1181,7 @@ function paperCard(g, sent = null) {
     try { sent?.(); } catch { /* the line went */ }
   } }, h('div', { class: 'field' }, nick), h('div', { class: 'field' }, h('div', { class: 'label' }, '메시지', cnt), txt), btn, msg,
   h('p', { class: 'fine', text: '닉네임과 메시지는 링크를 받은 사람 누구나 볼 수 있어요. 계정 번호는 다른 사람에게 보이지 않아요. 한 사람이 3개까지 남길 수 있고, 그날이 지나고 7일 뒤에 지워져요.' }));
-  return card(h('h2', { text: title }), list, h('div', { style: 'height:12px' }), form);
+  return card(head(), list, h('div', { style: 'height:12px' }), form);
 }
 
 // ---- start ----------------------------------------------------------------------------------------------------------------------

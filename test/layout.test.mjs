@@ -505,7 +505,7 @@ describe('touch landscape on a phone (height up to 520px)', () => {
     assert.equal(/overflow: hidden/.test(boot), false);
     // auto margins centre the card while it fits and are zero when it does not
     assert.match(rule(css, '#boot .wrap'), /margin: auto 0;/);
-    assert.match(LAND_BLOCK, /#boot \.bootmark \{ display: none; \}/);
+    assert.match(LAND_BLOCK, /#boot \.wrap \{ padding: 0 18px 14px; \}/); // tighter rows on a phone on its side (the mark is gone, 2026-11-28)
   });
 });
 

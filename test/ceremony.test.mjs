@@ -117,18 +117,18 @@ describe('time left, the countdown digit, the clock words', () => {
 describe('the recipient page: the button, the invitation, the owner\'s share line', () => {
   const g = board();
   it('before the window: says when and does not enter', () => {
-    assert.deepEqual(cerButton(g, KST('2026-12-20T12:00:00')), { label: '🎆 점등식 같이 보기 · 12월 25일 18:00', act: 'early', href: '' });
-    assert.deepEqual(cerButton(g, S - CER.open - 1), { label: '🎆 점등식 같이 보기 · 12월 25일 18:00', act: 'early', href: '' });
+    assert.deepEqual(cerButton(g, KST('2026-12-20T12:00:00')), { label: '점등식 같이 보기 · 12월 25일 18:00', act: 'early', href: '' });
+    assert.deepEqual(cerButton(g, S - CER.open - 1), { label: '점등식 같이 보기 · 12월 25일 18:00', act: 'early', href: '' });
     assert.equal(CER_TEXT.early, '10분 전부터 들어올 수 있어요');
   });
   it('inside the window: into the plaza with &cer=1, the time left on the label', () => {
-    assert.deepEqual(cerButton(g, S - CER.open), { label: '🎆 점등식 들어가기 · 10:00 남음', act: 'go', href: '/?gb=abcd1234&cer=1' });
-    assert.equal(cerButton(g, S - 1).label, '🎆 점등식 들어가기 · 00:01 남음');
-    assert.deepEqual(cerButton(g, S), { label: '🎆 방금 켜졌어요 · 점등식 보러 가기', act: 'go', href: '/?gb=abcd1234&cer=1' });
+    assert.deepEqual(cerButton(g, S - CER.open), { label: '점등식 들어가기 · 10:00 남음', act: 'go', href: '/?gb=abcd1234&cer=1' });
+    assert.equal(cerButton(g, S - 1).label, '점등식 들어가기 · 00:01 남음');
+    assert.deepEqual(cerButton(g, S), { label: '방금 켜졌어요 · 점등식 보러 가기', act: 'go', href: '/?gb=abcd1234&cer=1' });
     assert.equal(cerButton(g, S + CER.late - 1).act, 'go');
   });
   it('at budget hard the button stays but does not enter', () => {
-    assert.deepEqual(cerButton(g, S - 60000, { hard: true }), { label: '🎆 점등식 들어가기 · 01:00 남음', act: 'busy', href: '' });
+    assert.deepEqual(cerButton(g, S - 60000, { hard: true }), { label: '점등식 들어가기 · 01:00 남음', act: 'busy', href: '' });
     assert.equal(cerButton(g, S - CER.open - 1, { hard: true }).act, 'early'); // before the window it only says when
   });
   it('none after the late window, and none for a board without a fixed start', () => {

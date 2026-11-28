@@ -38,7 +38,7 @@ function fakeDom({ path = '/gift', search = '', data = null, store = {}, at = 0 
     return n;
   };
   const app = el('main'), dataTag = data ? { textContent: JSON.stringify(data) } : null;
-  const doc = { getElementById: (id) => (id === 'app' ? app : id === 'gift-data' ? dataTag : null), createElement: el, createTextNode: text, querySelector: () => null,
+  const doc = { getElementById: (id) => (id === 'app' ? app : id === 'gift-data' ? dataTag : null), createElement: el, createElementNS: (ns, tag) => el(tag), createTextNode: text, querySelector: () => null, // createElementNS: the pages' line icons (uiicons.js)
     documentElement: { classList: { add() {} } }, head: el('head'), body: el('body'), activeElement: null, hidden: false, addEventListener() {}, removeEventListener() {} };
   doc.activeElement = doc.body;
   const loc = { pathname: path, search, hash: '', origin: 'https://sq.example', reload() {}, get href() { return loc.origin + loc.pathname + loc.search; }, set href(v) { loc.went = String(v); } };
@@ -89,13 +89,13 @@ describe('the recipient page turns by itself without losing a half-written 롤�
   it('at the lighting: the board view comes, the same fields keep the words, the caret and the focus; no jump to the top', async () => {
     const { P, nick, txt, loadScrolls } = await typing(view(), KST('2026-11-25T17:59:59.500'), 1000);
     try {
-      assert.ok(P.stage(), 'the film: the page turned into the board'); assert.ok(P.heads().includes('📺 광장에 걸린 글'));
+      assert.ok(P.stage(), 'the film: the page turned into the board'); assert.ok(P.heads().includes('광장에 걸린 글'));
       assert.equal(txt.isConnected, true, 'the message field was never taken out of the page');
       assert.equal(nick.isConnected, true);
       assert.equal(nick.value, '수진'); assert.equal(txt.value, '민지야 생일 축'); assert.equal(txt.selectionStart, 8);
       assert.equal(P.doc.activeElement, txt, 'the cursor is still in the message');
       assert.deepEqual(P.scrolls.slice(loadScrolls).filter((s) => s[0] === 'to'), [], 'no scrollTo(0, 0)');
-      const order = P.heads(); assert.ok(order.indexOf('📺 광장에 걸린 글') < order.indexOf('💌 롤링페이퍼'), 'the 📺 card above the 롤링페이퍼, as on a page opened after the start');
+      const order = P.heads(); assert.ok(order.indexOf('광장에 걸린 글') < order.indexOf('롤링페이퍼'), 'the 📺 card above the 롤링페이퍼, as on a page opened after the start');
     } finally { P.done(); }
   });
   it('at 00:00 of the day: the hidden preview says the time, the fields and the focus stay', async () => {
@@ -113,7 +113,7 @@ describe('the recipient page turns by itself without losing a half-written 롤�
       await P.load('giftpage.js');
       const [txt] = P.all('textarea');
       let sec = txt; while (sec && sec.tag !== 'section') sec = sec.parent;
-      sec.getBoundingClientRect = () => ({ top: P.heads().includes('📺 광장에 걸린 글') ? 700 : 300 }); // the film and the 📺 card push it down
+      sec.getBoundingClientRect = () => ({ top: P.heads().includes('광장에 걸린 글') ? 700 : 300 }); // the film and the 📺 card push it down
       txt.value = '축하해'; txt.focus();
       const n = P.scrolls.length; P.skew += 1000; P.tick();
       assert.deepEqual(P.scrolls.slice(n), [['by', 0, 400]]);
@@ -133,7 +133,7 @@ describe('the public view says whether a board was scheduled (giftView fx); a "�
     let P = pageOf(view({ fx: 0 }), KST('2026-11-25T18:01:00'));
     try { await P.load('giftpage.js'); assert.equal(P.cer(), null); } finally { P.done(); }
     P = pageOf(view({ fx: 1 }), KST('2026-11-25T18:01:00'));
-    try { await P.load('giftpage.js'); assert.equal(P.cer()?.textContent, '🎆 방금 켜졌어요 · 점등식 보러 가기'); } finally { P.done(); }
+    try { await P.load('giftpage.js'); assert.equal(P.cer()?.textContent, '방금 켜졌어요 · 점등식 보러 가기'); } finally { P.done(); }
   });
 });
 

@@ -1,17 +1,16 @@
 // 선물 전광판 artwork on a 2D canvas: the plaza screen (ts3d/screens.js), the light pages' live preview and film (giftpage.js,
 // giftfilm.js) and the link-preview card (1200 x 630). Browser only (no three.js, no fonts of its own: the system stack is enough on a
 // phone and the plaza's Pretendard is used when it is there). Text is only ever drawn with fillText.
+// 2026-11-28 (A. LED 전광판, the owner: no LED dot texture): a board is one flat colour (giftrules.js GIFT_THEMES f) in a black frame,
+// its words left-aligned in the theme's two inks (k, t), the day's line icon (uiicons.js, the same set as the pages) and a black ticker
+// band along the foot with the amber words (From · 친구 메시지 · WISH BOARD). No gradient, light, vignette, confetti or emoji.
 import { OCCASIONS, GIFT_THEMES, CER_TEXT, toLine, isMe } from './giftrules.js';
+import { ICONS } from './uiicons.js?v=202611280944';
 
 export const GIFT_SANS = '"Pretendard Variable", Pretendard, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif';
+export const TICKER = Object.freeze({ bg: '#000000', ink: '#ffb020' }); // the band along a board's foot: black, the marquee amber
 const arr = (s) => Array.from(String(s ?? ''));
 
-function rr(g, x, y, w, h, r) {
-  const k = Math.max(0, Math.min(r, w / 2, h / 2));
-  g.beginPath();
-  g.moveTo(x + k, y); g.arcTo(x + w, y, x + w, y + h, k); g.arcTo(x + w, y + h, x, y + h, k); g.arcTo(x, y + h, x, y, k); g.arcTo(x, y, x + w, y, k);
-  g.closePath();
-}
 // The biggest size from `size` down to `min` at which text fits maxW.
 export function fitSize(g, text, maxW, size, min, weight = 800) {
   let s = Math.round(size);
@@ -35,93 +34,96 @@ export function wrapText(text, maxW, measure, lines = 2) {
   keep[lines - 1] = last.join('').trimEnd() + '…';
   return keep;
 }
-// A small seeded generator, so one board always gets the same confetti.
+// A small seeded generator: the same seed, the same numbers (the film's scene is seeded by the board id).
 export function seeded(seed) { let h = 2166136261 >>> 0; for (const c of String(seed)) h = Math.imul(h ^ c.charCodeAt(0), 16777619) >>> 0; return () => { h = Math.imul(h ^ (h >>> 15), 2246822507) >>> 0; h = Math.imul(h ^ (h >>> 13), 3266489909) >>> 0; return ((h ^= h >>> 16) >>> 0) / 4294967296; }; }
 
 export function themeOf(g) { return GIFT_THEMES[g?.th] || GIFT_THEMES[OCCASIONS[g?.occ]?.th] || GIFT_THEMES.party; }
 
-// The ground the plaza cards share (paintGift, paintWelcome): theme T's two colours across the face, a soft light from the top left (glow 0..1
-// brightens it), a darker edge, confetti from `seed` and the frame. The context is saved here and left with textBaseline 'middle': the painter
-// draws its words and restores it. -> { c, W, H, k, pad }
-function paintGround(canvas, T, seed, glowBy = 0) {
-  const c = canvas.getContext('2d'), W = canvas.width, H = canvas.height, k = Math.min(W / 1024, H / 576), rnd = seeded(seed);
+// A chip's words without a leading emoji (callers such as todo.js still pass '🎉 오늘 할 일 완료'; a board shows words and line icons only).
+export const plainWords = (s) => String(s ?? '').replace(/^(?:[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}][\u{FE0F}\u{200D}\p{Extended_Pictographic}]*\s*)+/u, '').trim();
+
+// The ground the plaza cards share (paintGift, paintWelcome, paintTeaser): a black frame and the theme's one flat colour inside it, with a
+// hairline so the black board (밤하늘) still reads as a board. The context is
+// saved here and left with textBaseline 'middle': the painter draws its words and restores it. -> { c, W, H, k, pad, x0, x1 }: x0..x1 the
+// words' left and right edges.
+function paintGround(canvas, T) {
+  const c = canvas.getContext('2d'), W = canvas.width, H = canvas.height, k = Math.min(W / 1024, H / 576);
   c.save();
   c.setTransform(1, 0, 0, 1, 0, 0);
-  // Ground: the theme's two colours across the face, a soft light from the top left, a darker frame.
-  const bg = c.createLinearGradient(0, 0, W, H); bg.addColorStop(0, T.a); bg.addColorStop(1, T.b);
-  c.fillStyle = bg; c.fillRect(0, 0, W, H);
-  const glow = c.createRadialGradient(W * 0.28, H * 0.18, 0, W * 0.28, H * 0.18, W * 0.75);
-  glow.addColorStop(0, `rgba(255,255,255,${0.22 + 0.12 * glowBy})`); glow.addColorStop(1, 'rgba(255,255,255,0)');
-  c.fillStyle = glow; c.fillRect(0, 0, W, H);
-  const vig = c.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, W * 0.72); vig.addColorStop(0, 'rgba(0,0,0,0)'); vig.addColorStop(1, 'rgba(0,0,0,0.38)');
-  c.fillStyle = vig; c.fillRect(0, 0, W, H);
-  // Confetti: dots and short ribbons, kept off the middle where the words sit.
-  for (let i = 0; i < 46; i++) {
-    const x = rnd() * W, y = rnd() * H, mid = Math.abs(x - W / 2) < W * 0.34 && Math.abs(y - H * 0.52) < H * 0.3;
-    if (mid) continue;
-    c.globalAlpha = 0.35 + rnd() * 0.45;
-    c.fillStyle = [T.hi, '#ffffff', T.a, '#ffd1ea', '#b9f6ff'][i % 5];
-    if (i % 3) { c.beginPath(); c.arc(x, y, (2 + rnd() * 5) * k, 0, Math.PI * 2); c.fill(); }
-    else { c.save(); c.translate(x, y); c.rotate(rnd() * Math.PI); c.fillRect(-9 * k, -2.5 * k, 18 * k, 5 * k); c.restore(); }
-  }
-  c.globalAlpha = 1;
-  const pad = 30 * k;
-  rr(c, pad * 0.5, pad * 0.5, W - pad, H - pad, 26 * k); c.lineWidth = Math.max(2, 5 * k); c.strokeStyle = T.hi; c.globalAlpha = 0.8; c.stroke(); c.globalAlpha = 1;
+  c.fillStyle = '#000000'; c.fillRect(0, 0, W, H);
+  const pad = 30 * k, e = pad * 0.5;
+  c.fillStyle = T.f; c.fillRect(e, e, W - 2 * e, H - 2 * e);
+  c.lineWidth = Math.max(1, 2 * k); c.strokeStyle = 'rgba(255,255,255,0.16)'; c.strokeRect(e, e, W - 2 * e, H - 2 * e);
   c.textBaseline = 'middle';
-  return { c, W, H, k, pad };
+  return { c, W, H, k, pad, x0: e + 40 * k, x1: W - e - 40 * k };
 }
-// A pill in a top corner: its left edge at x, or its right edge when `right`.
-function paintChip(c, k, text, x, y, right, bgc, ink) {
-  c.font = `800 ${Math.round(26 * k)}px ${GIFT_SANS}`;
-  const w = c.measureText(text).width + 34 * k, h = 46 * k, x0 = right ? x - w : x;
-  rr(c, x0, y, w, h, h / 2); c.fillStyle = bgc; c.fill();
-  c.fillStyle = ink; c.textAlign = 'center'; c.fillText(text, x0 + w / 2, y + h / 2 + 1);
+// A line icon of uiicons.js at (x, y) (its top left), size px square, stroked in ink. Nothing where Path2D is missing (the tests' node).
+function paintIcon(c, name, x, y, size, ink) {
+  const shapes = ICONS[name];
+  if (!shapes || typeof Path2D !== 'function') return;
+  c.save(); c.translate(x, y); c.scale(size / 24, size / 24);
+  c.strokeStyle = ink; c.lineWidth = 2; c.lineCap = 'round'; c.lineJoin = 'round';
+  for (const s of shapes) {
+    if (typeof s === 'string') { c.stroke(new Path2D(s)); continue; }
+    const [tag, a, b, w, h, r] = s; c.beginPath();
+    if (tag === 'circle') c.arc(a, b, w, 0, Math.PI * 2);
+    else if (tag === 'ellipse') c.ellipse(a, b, w, h, 0, 0, Math.PI * 2);
+    else if (tag === 'rect') { if (c.roundRect) c.roundRect(a, b, w, h, r || 0); else c.rect(a, b, w, h); }
+    c.stroke();
+  }
+  c.restore();
+}
+// A label in a top corner: words (no pill), the day's icon before them when `ico`; its left edge at x, or its right edge when `right`.
+function paintLabel(c, k, text, x, y, right, ink, ico = '') {
+  const words = plainWords(text);
+  c.font = `800 ${Math.round(28 * k)}px ${GIFT_SANS}`;
+  const s = Math.round(32 * k), gap = ico ? s + 10 * k : 0, w = c.measureText(words).width + gap, x0 = right ? x - w : x;
+  if (ico) paintIcon(c, ico, x0, y - s / 2, s, ink);
+  c.fillStyle = ink; c.textAlign = 'left'; c.fillText(words, x0 + gap, y + 1);
+}
+// The ticker band along the foot: black, amber words from the left (cut with an ellipsis when long). -> its top.
+function paintBand(c, W, H, k, pad, words) {
+  const e = pad * 0.5, bh = Math.round(66 * k), top = H - e - bh;
+  c.fillStyle = TICKER.bg; c.fillRect(e, top, W - 2 * e, bh);
+  c.fillStyle = TICKER.ink; c.textAlign = 'left'; c.font = `800 ${Math.round(28 * k)}px ${GIFT_SANS}`;
+  const maxW = W - 2 * e - 80 * k; let t = String(words);
+  if (c.measureText(t).width > maxW) { const a = Array.from(t); while (a.length && c.measureText(a.join('') + '…').width > maxW) a.pop(); t = a.join('').trimEnd() + '…'; }
+  c.fillText(t, e + 40 * k, top + bh / 2 + 1);
+  return top;
 }
 
-// g: { id, to, from, occ, msg, th, n, lk }. opts: { strip: a bottom line, chip: false to drop the "선물 전광판" chip, brand: the card's
-// bottom bar, glow: 0..1 (the film pulses it) }.
+// g: { id, to, from, occ, msg, th, n, lk }. opts: { strip: the band's words in place of From and the count, chip: false to drop the
+// "선물 전광판" label, brand: the link card's band (adds the virtual plaza's name), glow: kept for old callers, draws nothing }.
 export function paintGift(canvas, g = {}, opts = {}) {
   const T = themeOf(g), O = OCCASIONS[g.occ] || OCCASIONS.bday;
-  const { c, W, H, k, pad } = paintGround(canvas, T, g.id || g.to || 'gift', opts.glow || 0);
-  // Chips: "🎁 선물 전광판" left, the day's words right.
-  if (opts.chip !== false) paintChip(c, k, isMe(g) ? '✨ 내 전광판' : '🎁 선물 전광판', pad * 1.3, pad * 1.25, false, 'rgba(8,6,28,0.55)', '#ffffff');
-  paintChip(c, k, O.emoji + ' ' + O.head, W - pad * 1.3, pad * 1.25, true, T.hi, T.deep);
-  // To. name (by name on a board of one's own, giftrules.js toLine): the biggest line. Then the message (two lines at most), then From.
+  const { c, W, H, k, pad, x0, x1 } = paintGround(canvas, T);
+  const top = pad * 0.5 + 52 * k;
+  // Labels: "선물 전광판" left, the day's icon and words right.
+  if (opts.chip !== false) paintLabel(c, k, isMe(g) ? '내 전광판' : '선물 전광판', x0, top, false, T.t);
+  paintLabel(c, k, O.head, x1, top, true, T.t, O.icon);
+  // To. name (by name on a board of one's own, giftrules.js toLine): the biggest line. Then the message (two lines at most).
   const to = toLine(g);
-  c.textAlign = 'center';
-  const ts = fitSize(c, to, W - pad * 4, 118 * k, 46 * k, 900);
-  c.font = `900 ${ts}px ${GIFT_SANS}`;
-  c.lineWidth = Math.max(3, ts * 0.09); c.strokeStyle = 'rgba(10,4,30,0.35)'; c.strokeText(to, W / 2, H * 0.4);
-  c.fillStyle = T.hi; c.fillText(to, W / 2, H * 0.4);
+  c.textAlign = 'left';
+  const ts = fitSize(c, to, x1 - x0, 124 * k, 46 * k, 900);
+  c.font = `900 ${ts}px ${GIFT_SANS}`; c.fillStyle = T.k; c.fillText(to, x0, H * 0.4);
   const msg = String(g.msg || '').trim() || O.hint;
-  let ms = 54 * k; c.font = `800 ${Math.round(ms)}px ${GIFT_SANS}`;
-  let lines = wrapText(msg, W - pad * 4, (t) => c.measureText(t).width, 2);
-  if (lines.length > 1) { ms = 46 * k; c.font = `800 ${Math.round(ms)}px ${GIFT_SANS}`; lines = wrapText(msg, W - pad * 4, (t) => c.measureText(t).width, 2); }
-  c.fillStyle = T.ink;
-  const y0 = H * 0.62 - ((lines.length - 1) * ms * 1.18) / 2;
-  lines.forEach((l, i) => c.fillText(l, W / 2, y0 + i * ms * 1.18));
-  c.font = `700 ${Math.round(32 * k)}px ${GIFT_SANS}`; c.globalAlpha = 0.92;
-  const from = isMe(g) ? '' : String(g.from || '').trim();
-  const bottom = opts.brand ? H * 0.9 - pad * 1.1 : H - pad * 1.55;
-  if (opts.strip) { c.textAlign = 'center'; c.fillText(opts.strip, W / 2, bottom); }
-  else {
-    if (from) { c.textAlign = 'left'; c.fillText('From. ' + from, pad * 1.4, bottom); }
-    const n = Math.max(0, Math.floor(Number(g.n) || 0));
-    if (n) { c.textAlign = from ? 'right' : 'center'; c.fillText((isMe(g) ? '💌 응원 메시지 ' : '💌 친구 메시지 ') + n + '개', from ? W - pad * 1.4 : W / 2, bottom); }
-  }
-  c.globalAlpha = 1;
-  if (opts.brand) {
-    const bh = Math.round(H * 0.1);
-    c.fillStyle = 'rgba(5,6,16,0.78)'; c.fillRect(0, H - bh, W, bh);
-    c.fillStyle = '#ffe7a8'; c.textAlign = 'left'; c.font = `800 ${Math.round(bh * 0.4)}px ${GIFT_SANS}`;
-    c.fillText('WISH BOARD · 뉴욕 타임스퀘어 가상 광장', bh * 0.5, H - bh / 2);
-  }
+  let ms = 52 * k; c.font = `800 ${Math.round(ms)}px ${GIFT_SANS}`;
+  let lines = wrapText(msg, x1 - x0, (t) => c.measureText(t).width, 2);
+  if (lines.length > 1) { ms = 44 * k; c.font = `800 ${Math.round(ms)}px ${GIFT_SANS}`; lines = wrapText(msg, x1 - x0, (t) => c.measureText(t).width, 2); }
+  c.fillStyle = T.t;
+  const y0 = H * 0.4 + ts * 0.5 + ms * 0.95;
+  lines.forEach((l, i) => c.fillText(l, x0, y0 + i * ms * 1.18));
+  // The band: From, the count, WISH BOARD (or the caller's strip), the plaza's name on the link card.
+  const from = isMe(g) ? '' : String(g.from || '').trim(), n = Math.max(0, Math.floor(Number(g.n) || 0));
+  const parts = opts.strip ? [String(opts.strip)] : [from ? 'From. ' + from : '', n ? (isMe(g) ? '응원 메시지 ' : '친구 메시지 ') + n + '개' : '', 'WISH BOARD'];
+  if (opts.brand) parts.push('뉴욕 타임스퀘어 가상 광장');
+  paintBand(c, W, H, k, pad, parts.filter(Boolean).join('  ·  '));
   c.restore();
 }
 
 // 어디에 걸리나 (giftpage.js: the maker's live preview, the owner page's head): the board as one screen on the virtual street, laid in
-// perspective on the right-hand wall over the plaza's own picture of a street of screens (icons/boot.jpg, the boot card's and og.jpg's
-// ground). img: that picture once it has loaded, or null (then a dark street of its own, the board in the same place, so nothing jumps).
+// perspective on the right-hand wall over a capture of the 3D plaza's street at night (icons/street.jpg, og.jpg's ground and the boot
+// card's on a wide screen). img: that picture once it has loaded, or null (then a black street of its own, the board in the same place, so nothing jumps).
 // The quad is a fraction of the canvas: x0..x1, the far (left) edge's top and bottom, the near (right) edge's. The board's own drawing
 // (paintGift) is laid on it in strips with a perspective-correct step, so the far side is the narrower one.
 export const STREET_QUAD = Object.freeze({ x0: 0.3, x1: 0.985, l: Object.freeze([0.15, 0.76]), r: Object.freeze([0.05, 0.87]) });
@@ -132,20 +134,17 @@ export function paintStreet(canvas, g = {}, img = null, opts = {}) {
   if (img && img.width) { // cover, a little lower than the middle (the street's vanishing point stays in sight)
     const s = Math.max(W / img.width, H / img.height), w = img.width * s, h = img.height * s;
     c.drawImage(img, (W - w) / 2, (H - h) * 0.45, w, h);
-    c.fillStyle = 'rgba(6,4,20,0.28)'; c.fillRect(0, 0, W, H);
-  } else {
-    const sky = c.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, '#0b0820'); sky.addColorStop(0.6, '#151032'); sky.addColorStop(1, '#07061a');
-    c.fillStyle = sky; c.fillRect(0, 0, W, H);
-    for (let i = 0; i < 5; i++) { c.fillStyle = ['#3a1150', '#14205a', '#4a1a6a', '#1d2c70', '#2a1250'][i]; c.fillRect(W * (0.02 + i * 0.05), H * (0.18 + i * 0.07), W * 0.045, H * (0.32 - i * 0.04)); }
+    c.fillStyle = 'rgba(0,0,0,0.3)'; c.fillRect(0, 0, W, H);
+  } else { // a black street of its own: a few dark towers, so nothing jumps when the picture comes
+    c.fillStyle = '#000000'; c.fillRect(0, 0, W, H);
+    for (let i = 0; i < 5; i++) { c.fillStyle = ['#141414', '#1c1c1c', '#121212', '#202020', '#161616'][i]; c.fillRect(W * (0.02 + i * 0.05), H * (0.18 + i * 0.07), W * 0.045, H * (0.32 - i * 0.04)); }
   }
   // the board, drawn once at its own size, then laid on the wall
   if (typeof document !== 'undefined' && document.createElement) {
     if (!BOARD_CV) { BOARD_CV = document.createElement('canvas'); BOARD_CV.width = 1024; BOARD_CV.height = 576; }
     paintGift(BOARD_CV, g, opts);
     const X0 = Q.x0 * W, X1 = Q.x1 * W, lt = Q.l[0] * H, lb = Q.l[1] * H, rt = Q.r[0] * H, rb = Q.r[1] * H, hl = lb - lt, hr = rb - rt;
-    const T = themeOf(g);
-    c.save(); c.shadowColor = T.a; c.shadowBlur = 48 * (W / 1024);
-    c.beginPath(); c.moveTo(X0, lt); c.lineTo(X1, rt); c.lineTo(X1, rb); c.lineTo(X0, lb); c.closePath(); c.fillStyle = '#05040f'; c.fill(); c.restore();
+    c.beginPath(); c.moveTo(X0, lt); c.lineTo(X1, rt); c.lineTo(X1, rb); c.lineTo(X0, lb); c.closePath(); c.fillStyle = '#000000'; c.fill();
     const N = 96, sw = BOARD_CV.width / N, at = (u) => (u * hr) / ((1 - u) * hl + u * hr); // screen fraction of board fraction u
     for (let i = 0; i < N; i++) {
       const t0 = at(i / N), t1 = at((i + 1) / N), tm = (t0 + t1) / 2;
@@ -153,52 +152,50 @@ export function paintStreet(canvas, g = {}, img = null, opts = {}) {
       c.drawImage(BOARD_CV, i * sw, 0, sw, BOARD_CV.height, x, top, w, bot - top);
     }
     c.beginPath(); c.moveTo(X0, lt); c.lineTo(X1, rt); c.lineTo(X1, rb); c.lineTo(X0, lb); c.closePath();
-    c.lineWidth = Math.max(3, 9 * (W / 1024)); c.strokeStyle = '#0c0a1c'; c.stroke();
-    c.lineWidth = Math.max(1, 2 * (W / 1024)); c.strokeStyle = 'rgba(255,255,255,0.35)'; c.stroke();
+    c.lineWidth = Math.max(3, 9 * (W / 1024)); c.strokeStyle = '#000000'; c.stroke();
+    c.lineWidth = Math.max(1, 2 * (W / 1024)); c.strokeStyle = 'rgba(255,255,255,0.22)'; c.stroke();
   }
   c.restore();
 }
 
 // 환영 전광판 (ts3d/screens.js pinWelcome): the newcomer's own name on a plaza screen, drawn on their device only. name is cut to 12 code
-// points here; line is the fixed words under it (ftue.js WELCOME.line). The gift board's ground, frame and fonts, in the 밤하늘 theme.
-// chip: the top-left pill (the 오늘 할 일 card's '🎉 오늘 할 일 완료', todo.js cardText); without one it is the welcome's own.
+// points here; line is the fixed words under it (ftue.js WELCOME.line). The gift board's ground, labels and fonts, in the 밤하늘 theme.
+// chip: the top-left label (the 오늘 할 일 card's '오늘 할 일 완료', todo.js cardText; a leading emoji is not drawn); without one it is the welcome's own.
 export function paintWelcome(canvas, { name, line, chip } = {}) {
   const T = GIFT_THEMES.night, who = arr(name).slice(0, 12).join('').trim();
-  const { c, W, H, k, pad } = paintGround(canvas, T, who || 'welcome');
-  paintChip(c, k, String(chip || '👋 환영해요'), pad * 1.3, pad * 1.25, false, 'rgba(8,6,28,0.55)', '#ffffff');
-  paintChip(c, k, 'WISH BOARD', W - pad * 1.3, pad * 1.25, true, T.hi, T.deep);
+  const { c, W, H, k, x0, x1, pad } = paintGround(canvas, T);
+  const top = pad * 0.5 + 52 * k;
+  paintLabel(c, k, String(chip || '어서 와요'), x0, top, false, T.t);
+  paintLabel(c, k, 'WISH BOARD', x1, top, true, T.k);
   const big = who ? who + ' 님' : '환영해요';
-  c.textAlign = 'center';
-  const ts = fitSize(c, big, W - pad * 4, 118 * k, 46 * k, 900);
-  c.font = `900 ${ts}px ${GIFT_SANS}`;
-  c.lineWidth = Math.max(3, ts * 0.09); c.strokeStyle = 'rgba(10,4,30,0.35)'; c.strokeText(big, W / 2, H * 0.43);
-  c.fillStyle = T.hi; c.fillText(big, W / 2, H * 0.43);
+  c.textAlign = 'left';
+  const ts = fitSize(c, big, x1 - x0, 124 * k, 46 * k, 900);
+  c.font = `900 ${ts}px ${GIFT_SANS}`; c.fillStyle = T.k; c.fillText(big, x0, H * 0.45);
   const sub = String(line ?? '').trim();
-  if (sub) { c.font = `800 ${fitSize(c, sub, W - pad * 4, 50 * k, 26 * k)}px ${GIFT_SANS}`; c.fillStyle = T.ink; c.fillText(sub, W / 2, H * 0.65); }
+  if (sub) { c.font = `800 ${fitSize(c, sub, x1 - x0, 50 * k, 26 * k)}px ${GIFT_SANS}`; c.fillStyle = T.t; c.fillText(sub, x0, H * 0.68); }
   c.restore();
 }
 
 // 점등식 teaser (ts3d/screens.js pinGift with cer, before the start): t is giftrules.js cerTeaser's fields and nothing else is read, so the
-// message and the sender never reach this canvas. The gift board's ground in the board's theme, the chip (곧 켜져요) left, WISH BOARD
-// right, 'To. name' big (12 code points), '<emoji> 18:00에 켜져요' and the time left (mm:ss) under it.
+// message and the sender never reach this canvas. The gift board's ground in the board's theme, the label (곧 켜져요) left, WISH BOARD
+// right, 'To. name' big (12 code points), '18:00에 켜져요' and the time left (mm:ss) under it (the day's emoji is not drawn).
 export function paintTeaser(canvas, t = {}) {
   const T = GIFT_THEMES[t?.th] || GIFT_THEMES.party, to = arr(t?.to).slice(0, 12).join('').trim() || '당신';
-  const { c, W, H, k, pad } = paintGround(canvas, T, 'cer' + to);
-  paintChip(c, k, String(t?.chip || CER_TEXT.soon), pad * 1.3, pad * 1.25, false, 'rgba(8,6,28,0.55)', '#ffffff');
-  paintChip(c, k, 'WISH BOARD', W - pad * 1.3, pad * 1.25, true, T.hi, T.deep);
+  const { c, W, H, k, x0, x1, pad } = paintGround(canvas, T);
+  const top = pad * 0.5 + 52 * k;
+  paintLabel(c, k, String(t?.chip || CER_TEXT.soon), x0, top, false, T.t);
+  paintLabel(c, k, 'WISH BOARD', x1, top, true, T.t);
   const big = (t?.by ? 'by ' : 'To. ') + to; // by: a board of one's own (cerTeaser)
-  c.textAlign = 'center';
-  const ts = fitSize(c, big, W - pad * 4, 112 * k, 46 * k, 900);
-  c.font = `900 ${ts}px ${GIFT_SANS}`;
-  c.lineWidth = Math.max(3, ts * 0.09); c.strokeStyle = 'rgba(10,4,30,0.35)'; c.strokeText(big, W / 2, H * 0.37);
-  c.fillStyle = T.hi; c.fillText(big, W / 2, H * 0.37);
+  c.textAlign = 'left';
+  const ts = fitSize(c, big, x1 - x0, 112 * k, 46 * k, 900);
+  c.font = `900 ${ts}px ${GIFT_SANS}`; c.fillStyle = T.k; c.fillText(big, x0, H * 0.37);
   const when = String(t?.when || '');
   if (when) {
-    const line = (t?.emoji ? String(t.emoji) + ' ' : '') + when + '에 켜져요';
-    c.font = `800 ${fitSize(c, line, W - pad * 4, 50 * k, 26 * k)}px ${GIFT_SANS}`; c.fillStyle = T.ink; c.fillText(line, W / 2, H * 0.58);
+    const line = when + '에 켜져요';
+    c.font = `800 ${fitSize(c, line, x1 - x0, 50 * k, 26 * k)}px ${GIFT_SANS}`; c.fillStyle = T.t; c.fillText(line, x0, H * 0.58);
   }
   const left = String(t?.left || '');
-  if (left) { c.font = `900 ${Math.round(92 * k)}px ${GIFT_SANS}`; c.fillStyle = '#ffffff'; c.fillText(left, W / 2, H * 0.78); }
+  if (left) { c.font = `900 ${Math.round(92 * k)}px ${GIFT_SANS}`; c.fillStyle = T.k; c.fillText(left, x0, H * 0.78); }
   c.restore();
 }
 

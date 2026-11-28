@@ -45,7 +45,7 @@ describe('the welcome card', () => {
   it('draws the chip, the name and the line; nothing else of the newcomer', () => {
     const cv = fakeCanvas();
     paintWelcome(cv, { name: '네온후드77', line: WELCOME.line });
-    assert.deepEqual(cv.words, ['👋 환영해요', 'WISH BOARD', '네온후드77 님', '오늘 밤, 가상 타임스퀘어의 주인공']);
+    assert.deepEqual(cv.words, ['어서 와요', 'WISH BOARD', '네온후드77 님', '오늘 밤, 가상 타임스퀘어의 주인공']);
   });
   it('cuts the name to 12 code points and still draws a card without one', () => {
     const long = fakeCanvas();
@@ -57,22 +57,24 @@ describe('the welcome card', () => {
     assert.ok(emoji.words.includes('😀'.repeat(12) + ' 님'), 'code points, not UTF-16 units');
     const none = fakeCanvas();
     paintWelcome(none);
-    assert.deepEqual(none.words, ['👋 환영해요', 'WISH BOARD', '환영해요']);
+    assert.deepEqual(none.words, ['어서 와요', 'WISH BOARD', '환영해요']);
   });
   it('shares the gift board\'s ground and frame (the 밤하늘 theme), on any canvas size', () => {
     const a = fakeCanvas(), b = fakeCanvas(384, 216);
     paintWelcome(a, { name: '민지', line: WELCOME.line });
     paintWelcome(b, { name: '민지', line: WELCOME.line });
-    const stops = (cv) => cv.calls.filter((c) => c[0] === 'stop').slice(0, 2).map((c) => c[2]);
-    assert.deepEqual(stops(a), ['#312e81', '#020617']);
-    assert.deepEqual(stops(b), ['#312e81', '#020617']);
+    // 2026-11-28 (A. LED 전광판): the black frame, then the board's one flat colour (밤하늘 is black too); no gradient at all.
+    const fills = (cv) => cv.calls.filter((c) => c[0] === '=' && c[1] === 'fillStyle').slice(0, 2).map((c) => c[2]);
+    assert.deepEqual(fills(a), ['#000000', '#000000']);
+    assert.deepEqual(fills(b), ['#000000', '#000000']);
+    assert.equal(a.calls.some((c) => /Gradient/.test(c[0])), false, 'flat');
     assert.deepEqual(a.calls.find((c) => c[0] === 'fillRect'), ['fillRect', 0, 0, 1024, 576]);
     assert.deepEqual(b.calls.find((c) => c[0] === 'fillRect'), ['fillRect', 0, 0, 384, 216]);
-    assert.equal(a.calls.filter((c) => c[0] === 'stroke').length, 1, 'the frame');
+    assert.equal(a.calls.filter((c) => c[0] === 'strokeRect').length, 1, 'the frame');
     // The same number of ground calls as a gift board up to the frame: one helper paints both.
     const g = fakeCanvas();
     paintGift(g, { ...GIFT, id: '민지', th: 'night' });
-    const upToFrame = (cv) => cv.calls.slice(0, cv.calls.findIndex((c) => c[0] === 'stroke') + 1);
+    const upToFrame = (cv) => cv.calls.slice(0, cv.calls.findIndex((c) => c[0] === 'strokeRect') + 1);
     assert.deepEqual(upToFrame(a), upToFrame(g));
   });
 });
@@ -82,15 +84,15 @@ describe('the gift board painter is unchanged by sharing its ground', () => {
     const cv = fakeCanvas();
     paintGift(cv, GIFT);
     assert.ok(cv.words.includes('To. 민지'));
-    assert.ok(cv.words.includes('🎁 선물 전광판'));
-    // The digests were taken from giftart.js as it was before paintGround and paintChip were split out of paintGift.
-    assert.equal(digest(cv), '8e4dab62f29868f8c2757bb57454a9b472c16fc0');
+    assert.ok(cv.words.includes('선물 전광판'));
+    // The digests were taken from giftart.js after the A. LED 전광판 restyle (2026-11-28: a flat board, left-aligned words, the band).
+    assert.equal(digest(cv), '354ddab523e89ff12123b734dc34acb18fd78a9b');
     const card = fakeCanvas(1200, 630);
     paintGift(card, { ...GIFT, from: '' }, { brand: true, glow: 0.5 });
-    assert.equal(digest(card), '371f391d19cd1ffcf37e672f7060ded57083bf4a');
+    assert.equal(digest(card), '30c1ffa5ac64c77f98734ce4b1bdc536474d1b95');
     const strip = fakeCanvas(384, 216);
     paintGift(strip, { ...GIFT, msg: '' }, { strip: '그날 공개돼요', chip: false });
-    assert.equal(digest(strip), 'e662dc9f7bdcdfa12276778f9aa48c640c0d6026');
+    assert.equal(digest(strip), '9e14228529f0677383fb0a6f2f56068a4fefbc31');
   });
 });
 
@@ -126,7 +128,7 @@ async function plaza(specs = ROW.map((id, i) => [id, { x: i * 10 }]), quality = 
   return {
     boards, words, THREE,
     xOf: (id) => specs.find((s) => s[0] === id)[1].x,
-    shows: (id) => words(id).includes('👋 환영해요'),
+    shows: (id) => words(id).includes('어서 와요'),
     tick(cam, n = 8) { for (let i = 0; i < n; i++) boards.update(0.1, cam); }, // 8 ticks: one 0.64 s pass (gifts, wishes, the strips)
   };
 }
@@ -145,7 +147,7 @@ describe('the welcome pin on the plaza screens', () => {
     const at = { x: p.xOf('STREET_5') + 2, z: 30 };
     const slot = p.boards.pinWelcome('네온후드77', WELCOME.ms, at);
     assert.equal(slot, 'STREET_5');
-    assert.deepEqual(p.words(slot).slice(-4), ['👋 환영해요', 'WISH BOARD', '네온후드77 님', WELCOME.line]);
+    assert.deepEqual(p.words(slot).slice(-4), ['어서 와요', 'WISH BOARD', '네온후드77 님', WELCOME.line]);
     assert.equal(ROW.filter((id) => p.shows(id)).join(), 'STREET_5', 'one screen only');
     assert.equal(p.boards.giftSlot('aaaaaaa1'), '', 'no gift is placed by it');
     // The moving strip of the near boards: the 환영 tag and the welcome line, never the gift words.
@@ -466,7 +468,7 @@ describe('the ceremony teaser card', () => {
   it('draws the chip, WISH BOARD, the name, when it lights and the time left, in that order', () => {
     const cv = fakeCanvas();
     paintTeaser(cv, cerTeaser(board(), S - 90000));
-    assert.deepEqual(cv.words, ['곧 켜져요', 'WISH BOARD', 'To. 민지', '🎂 18:00에 켜져요', '01:30']);
+    assert.deepEqual(cv.words, ['곧 켜져요', 'WISH BOARD', 'To. 민지', '18:00에 켜져요', '01:30']);
   });
   it('never draws the message or the sender, on any canvas size, even when they are passed in', () => {
     for (const [w, h] of [[1024, 576], [384, 216], [512, 288]]) {
@@ -489,8 +491,8 @@ describe('the ceremony teaser card', () => {
     const a = fakeCanvas(), g = fakeCanvas();
     paintTeaser(a, cerTeaser(board({ th: 'sky' }), S - 1000));
     paintGift(g, { ...GIFT, id: 'abcd1234', th: 'sky' });
-    const upToFrame = (cv) => cv.calls.slice(0, cv.calls.findIndex((c) => c[0] === 'stroke') + 1);
-    assert.deepEqual(upToFrame(a).filter((c) => c[0] === 'stop').slice(0, 2), upToFrame(g).filter((c) => c[0] === 'stop').slice(0, 2));
+    const upToFrame = (cv) => cv.calls.slice(0, cv.calls.findIndex((c) => c[0] === 'strokeRect') + 1);
+    assert.deepEqual(upToFrame(a), upToFrame(g)); assert.ok(upToFrame(a).some((c) => c[0] === '=' && c[2] === '#0050d8'), 'the 하늘 board colour');
   });
 });
 
@@ -505,7 +507,7 @@ describe('the ceremony pin: the teaser before the start, the gift card from it, 
     const slot = p.boards.pinGift(cerGift(start), 180000, { cer: start });
     assert.equal(slot, 'STREET_5');
     const w = () => p.words(slot).slice(w0), placed = p.boards.get(slot).gifts;
-    assert.ok(w().includes('곧 켜져요') && w().includes('To. 민지') && w().some((s) => /^🎂 \d\d:\d\d에 켜져요$/.test(s)), 'the teaser: ' + w().join(' | '));
+    assert.ok(w().includes('곧 켜져요') && w().includes('To. 민지') && w().some((s) => /^\d\d:\d\d에 켜져요$/.test(s)), 'the teaser: ' + w().join(' | '));
     assert.equal(w().some((s) => /비밀|지수/.test(s)), false, 'never the message or the sender before the start');
     // /rt/world lists the same board (the localhost seam runs on a live one): the pin's teaser is still what this screen shows.
     p.boards.setGifts([cerGift(start)]);
@@ -516,7 +518,7 @@ describe('the ceremony pin: the teaser before the start, the gift card from it, 
     const before = w().length;
     await later(2600, () => p.tick(cam));
     const after = w().slice(before);
-    assert.ok(after.includes('🎁 선물 전광판') && after.includes('To. 민지') && after.includes('비밀 문구 🤫'), 'the gift card: ' + after.join(' | '));
+    assert.ok(after.includes('선물 전광판') && after.includes('To. 민지') && after.includes('비밀 문구 🤫'), 'the gift card: ' + after.join(' | '));
     assert.equal(after.includes('곧 켜져요'), false);
     assert.equal(p.boards.giftSlot('fffffff1'), slot, 'the same screen');
     assert.equal(p.boards.get(slot).gifts, placed, 'not placed again');

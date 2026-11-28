@@ -168,7 +168,7 @@ describe('interface icons (uiicons.js)', () => {
   });
 
   it('draws every icon with stroke geometry only, inside the 24×24 box', () => {
-    assert.ok(ICON_NAMES.length >= 35 && ICON_NAMES.length <= 80);
+    assert.ok(ICON_NAMES.length >= 35 && ICON_NAMES.length <= 90);
     for (const name of ICON_NAMES) {
       assert.match(name, /^[a-z][a-zA-Z]+$/);
       const shapes = ICONS[name];

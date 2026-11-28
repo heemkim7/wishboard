@@ -1,11 +1,12 @@
 // /discover (discover.html): 둘러보기 without the 3D plaza. It reads the cached /rt/world and /rt/wishes once (the plaza's own reads: no new
 // DO call per visit), draws each item on this device (a gift as its plaza card, giftart.js; a board or a wish as a card in HTML) and offers
-// 💖 where the item takes one (a gift: POST /rt/gift/<id>/heart, one per device; a wish: POST /rt/wish/heart as this browser's guest or
+// a heart where the item takes one (a gift: POST /rt/gift/<id>/heart, one per device; a wish: POST /rt/wish/heart as this browser's guest or
 // account), 공유하기 (its own share page), 3D에서 보기 (?gb= / ?focus= / ?wish=) and 나도 만들기. Popularity orders the lists; no rank, no count.
 // A tab with fewer real items than DISCOVER.min also shows seasonal samples in their own section (SAMPLE_LABEL), never counted or mixed in.
 // Text people wrote is only ever set with textContent.
 import { TABS, DISCOVER, discoverItems, discoverTab, samplesFor, SAMPLE_LABEL, refreshDue } from './discoverrules.js?v=202611280944';
 import { paintGift } from './giftart.js?v=202611280944';
+import { icon } from './uiicons.js?v=202611280944';
 
 const $app = document.getElementById('app');
 const ls = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
@@ -56,7 +57,7 @@ function heartBtn(it, note) {
   const had = () => { const v = read()[it.id]; return it.heart === 'gift' ? !!v : v === today(); };
   let on = had();
   const btn = h('button', { class: 'btn', type: 'button' });
-  const paint = () => { btn.textContent = on ? '💖 하트를 보냈어요' : '🤍 하트'; btn.setAttribute('aria-pressed', String(on)); };
+  const paint = () => { btn.replaceChildren(icon('heart'), on ? '하트를 보냈어요' : '하트'); btn.setAttribute('aria-pressed', String(on)); };
   btn.addEventListener('click', async () => {
     if (on) return;
     on = true; paint(); btn.disabled = true;
@@ -100,7 +101,7 @@ function itemCard(it) {
   const note = h('p', { class: 'note', role: 'status' });
   if (it.sample) return h('article', { class: 'item' }, face(it), h('span', { class: 'badge', text: SAMPLE_LABEL }), h('div', { class: 'acts' }, h('a', { class: 'btn gold', href: it.make, style: 'grid-column:1 / -1' }, '나도 만들기')));
   return h('article', { class: 'item' }, face(it),
-    h('div', { class: 'acts' }, it.heart ? heartBtn(it, note) : null, h('button', { class: 'btn', type: 'button', onclick: () => share(it, note) }, '🔗 공유'),
+    h('div', { class: 'acts' }, it.heart ? heartBtn(it, note) : null, h('button', { class: 'btn', type: 'button', onclick: () => share(it, note) }, icon('share'), '공유'),
       h('a', { class: 'btn', href: it.view }, '3D에서 보기'), h('a', { class: 'btn gold', href: it.make }, '나도 만들기')), note);
 }
 
@@ -119,9 +120,9 @@ function paint() {
     h('p', { class: 'fine', text: '실제로 걸린 전광판이 아니라, 이렇게 걸 수 있다는 예시예요. 목록과 숫자에는 넣지 않아요.' }), h('div', { class: 'grid' }, ...samplesFor(Date.now()).map(itemCard))) : null;
   $app.replaceChildren(
     h('div', { class: 'top' }, h('a', { class: 'brand', href: '/' }, 'WISH BOARD', h('small', { text: '모두의 전광판' })), h('span', { class: 'tag', text: '둘러보기' })),
-    h('h1', { text: '가상 타임스퀘어에 걸린 전광판' }),
-    h('p', { class: 'sub', text: '지금 걸린 전광판과 오늘의 소원을 3D 없이 둘러봐요. 선물 전광판은 만든 사람이 ‘DISCOVER에 보이기’를 켠 것만 보여요.' }),
-    h('div', { class: 'make' }, h('a', { class: 'btn gold', href: '/gift' }, '🎁 선물하기'), h('a', { class: 'btn', href: '/gift?me=1' }, '✨ 내 전광판')),
+    h('h1', { text: '지금 가상 광장에 켜진 전광판' }),
+    h('p', { class: 'sub', text: '전광판과 오늘의 소원을 3D 없이 봐요. 선물 전광판은 만든 사람이 ‘DISCOVER에 보이기’를 켠 것만 나와요.' }),
+    h('div', { class: 'make' }, h('a', { class: 'btn gold', href: '/gift' }, icon('gift'), '선물하기'), h('a', { class: 'btn', href: '/gift?me=1' }, icon('wish'), '내 전광판')),
     tabs, h('div', { id: 'panel', role: 'tabpanel', 'aria-labelledby': 'tab-' + tab }, body, samples),
     h('p', { class: 'foot' }, '뉴욕 타임스퀘어를 본뜬 가상 광장이에요. 실제 타임스퀘어와는 관계가 없어요. 많이 반응한 순서로 보여 줄 뿐, 순위를 매기지 않아요.', h('br'), h('a', { href: '/' }, '3D 광장 둘러보기')));
 }

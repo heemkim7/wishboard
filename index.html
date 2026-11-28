@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta name="theme-color" content="#12182c" />
-<link rel="icon" href="./icons/app-icon.jpg?v=4" type="image/jpeg" />
-<link rel="apple-touch-icon" href="./icons/app-icon.jpg?v=4" />
+<meta name="theme-color" content="#000000" />
+<link rel="icon" href="./icons/app-icon.jpg?v=5" type="image/jpeg" />
+<link rel="apple-touch-icon" href="./icons/app-icon.jpg?v=5" />
 <link rel="manifest" href="./manifest.webmanifest" />
 <meta name="description" content="뉴욕 타임스퀘어를 본뜬 3D 가상 광장의 전광판에 생일 축하·응원·소원을 거는 무료 웹 서비스. 설치 없이 친구에게 선물 전광판을 걸어 주세요." />
 <link rel="canonical" href="https://studio.wishboard.workers.dev/" />
@@ -15,8 +15,8 @@
 <meta property="og:url" content="https://studio.wishboard.workers.dev/" />
 <meta property="og:site_name" content="WISH BOARD" />
 <meta property="og:locale" content="ko_KR" />
-<meta property="og:image" content="https://studio.wishboard.workers.dev/og.jpg?v=3" />
-<meta property="og:image:secure_url" content="https://studio.wishboard.workers.dev/og.jpg?v=3" />
+<meta property="og:image" content="https://studio.wishboard.workers.dev/og.jpg?v=4" />
+<meta property="og:image:secure_url" content="https://studio.wishboard.workers.dev/og.jpg?v=4" />
 <meta property="og:image:type" content="image/jpeg" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
@@ -24,11 +24,11 @@
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="WISH BOARD : 모두의 전광판" />
 <meta name="twitter:description" content="생일 축하·응원·소원을 가상 타임스퀘어 전광판에 걸어 보세요!" />
-<meta name="twitter:image" content="https://studio.wishboard.workers.dev/og.jpg?v=3" />
+<meta name="twitter:image" content="https://studio.wishboard.workers.dev/og.jpg?v=4" />
 <meta name="twitter:image:alt" content="WISH BOARD : 모두의 전광판 — 가상 타임스퀘어에 거는 생일·응원 전광판" />
 <title>WISH BOARD : 모두의 전광판</title>
 <script type="application/ld+json">
-{"@context":"https://schema.org","@type":"WebApplication","name":"WISH BOARD : 모두의 전광판","url":"https://studio.wishboard.workers.dev/","description":"뉴욕 타임스퀘어를 본뜬 3D 가상 광장의 전광판에 생일 축하·응원·소원을 거는 무료 웹 서비스.","applicationCategory":"LifestyleApplication","operatingSystem":"Any","browserRequirements":"Requires JavaScript and WebGL","inLanguage":"ko","image":"https://studio.wishboard.workers.dev/og.jpg?v=3","offers":{"@type":"Offer","price":"0","priceCurrency":"KRW"}}
+{"@context":"https://schema.org","@type":"WebApplication","name":"WISH BOARD : 모두의 전광판","url":"https://studio.wishboard.workers.dev/","description":"뉴욕 타임스퀘어를 본뜬 3D 가상 광장의 전광판에 생일 축하·응원·소원을 거는 무료 웹 서비스.","applicationCategory":"LifestyleApplication","operatingSystem":"Any","browserRequirements":"Requires JavaScript and WebGL","inLanguage":"ko","image":"https://studio.wishboard.workers.dev/og.jpg?v=4","offers":{"@type":"Offer","price":"0","priceCurrency":"KRW"}}
 </script>
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm" crossorigin />
@@ -69,32 +69,37 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
 }
 </script>
 <style>
+  /* 2026-11-28 (A. LED 전광판, out/design-2026-11-28/STYLE.md): a true black with no blue in it, the marquee amber as the one accent,
+     4px corners (6px for a sheet), a 1px line where a shadow was. The pages outside the plaza (gift.html, discover.html, sharepage.js)
+     carry the same names and values (test/style-tokens.test.mjs). --info is the focus ring's colour. */
   :root {
-    --bg: #0a0e1c;
-    --surface: #141a2e;
-    --surface-hud: rgba(20, 26, 46, .92);
-    --surface-2: #1c2440;
-    --line: #262d47;
-    --line-strong: #3a4266;
-    --text: #f2f4ff;
-    --text-2: #b9bfdc;
-    --muted: #8f96b8;
-    --dim: #8a90b3;
+    --bg: #000000;
+    --surface: #121212;
+    --surface-hud: rgba(0, 0, 0, .86);
+    --surface-2: #1c1c1c;
+    --line: #2e2e2e;
+    --line-strong: #444444;
+    --text: #f7f5ee;
+    --text-2: #c9c6bc;
+    --muted: #9a978d;
+    --dim: #9a978d;
     --accent: #ffb020;
     --accent-press: #c98a12;
-    --on-accent: #1c1300;
+    --on-accent: #1a1000;
     --accent-weak: rgba(255, 176, 32, .14);
-    --live: #ff4fa3;
+    --live: #ff4436;
     --info: #48d6f0;
-    --ok: #3ddc97;
+    --ok: #36d67e;
     --danger: #ff5d6c;
     /* Low-alpha tints of the named colours, like --accent-weak, for tinted rows and states. */
-    --live-weak: rgba(255, 79, 163, .14);
+    --live-weak: rgba(255, 68, 54, .14);
     --info-weak: rgba(72, 214, 240, .12);
-    --ok-weak: rgba(61, 220, 151, .14);
+    --ok-weak: rgba(54, 214, 126, .14);
     --focus: 0 0 0 2px var(--bg), 0 0 0 4px var(--info);
-    --shadow-sheet: 0 20px 60px rgba(0,0,0,.5);
-    --shadow-pop: 0 8px 24px rgba(0,0,0,.4);
+    --shadow-sheet: 0 0 0 1px var(--line);
+    --shadow-pop: 0 0 0 1px var(--line-strong);
+    --r: 4px;
+    --r-sheet: 6px;
     /* ui.js paints the attendance bars with var(--gold-2); keep the old name pointing at the accent. */
     --gold-2: var(--accent);
     --font: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
@@ -127,7 +132,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .glass {
     background: var(--surface-hud);
     border: 1px solid var(--line);
-    border-radius: 14px;
+    border-radius: var(--r);
   }
   .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; }
   .live-dot.warn { background: var(--info); }
@@ -170,16 +175,16 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .sheet .ranks.board .rank { height: auto; min-height: 44px; max-height: none; }
   .profile { pointer-events: auto; display: flex; align-items: center; gap: 12px; padding: 10px 12px; cursor: pointer; transition: border-color .2s, transform .2s; }
   .profile:hover { border-color: var(--line-strong); }
-  .avatar { width: 40px; height: 40px; border-radius: 10px; flex: none; position: relative; display: grid; place-items: center; font-size: 20px;
+  .avatar { width: 40px; height: 40px; border-radius: var(--r); flex: none; position: relative; display: grid; place-items: center; font-size: 20px;
     background: var(--me, var(--live)); }
   .profile .who { min-width: 0; flex: 1; }
   .profile .name { font-weight: 800; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 6px; }
   .profile .name small { font-size: 12px; font-weight: 700; color: var(--muted); }
   .profile .status { margin-top: 3px; display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 500; color: var(--muted); }
   .profile .status [hidden] { display: none; }
-  .verified { flex: none; display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; margin-left: 4px; padding: 0 4px; border-radius: 999px; background: var(--ok); color: var(--bg); font: 800 12px/1 var(--font); font-style: normal; }
+  .verified { flex: none; display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; margin-left: 4px; padding: 0 4px; border-radius: var(--r); background: var(--ok); color: var(--bg); font: 800 12px/1 var(--font); font-style: normal; }
   .profile .name .verified { margin-left: 6px; }
-  .guestwarn { pointer-events: auto; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 14px; background: var(--surface-hud); border: 1px solid var(--line); }
+  .guestwarn { pointer-events: auto; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: var(--r); background: var(--surface-hud); border: 1px solid var(--line); }
   .guestwarn p { margin: 0; flex: 1; font-size: 12px; font-weight: 700; line-height: 1.35; color: var(--danger); }
   .guestwarn .btn { height: 32px; padding: 0 10px; font-size: 13px; white-space: nowrap; }
   .agree { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; font-weight: 500; line-height: 1.45; color: var(--muted); }
@@ -194,12 +199,12 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .login-form .agree, .login-form .note, .login-form .cta { margin-top: 0; }
   .note.login-err { font-size: 13px; color: var(--danger); }
   .agree .linkbtn, .login-terms .linkbtn, .note.legal .linkbtn { font-size: inherit; }
-  .legalbox { margin-top: 12px; max-height: 44vh; overflow: auto; padding: 12px 14px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); font-size: 13px; font-weight: 500; line-height: 1.6; color: var(--text-2); outline: none; }
+  .legalbox { margin-top: 12px; max-height: 44vh; overflow: auto; padding: 12px 14px; border-radius: var(--r); background: var(--surface-2); border: 1px solid var(--line); font-size: 13px; font-weight: 500; line-height: 1.6; color: var(--text-2); outline: none; }
   .legalbox b { display: block; font-size: 15px; color: var(--text); }
   .legalbox h3 { margin: 12px 0 4px; font-size: 13px; font-weight: 800; color: var(--text); }
   .legalbox p { margin: 0; overflow-wrap: anywhere; }
   .legalbox .btn { margin-top: 12px; }
-  .acct { margin-top: 12px; display: grid; gap: 10px; justify-items: start; padding: 12px 14px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); }
+  .acct { margin-top: 12px; display: grid; gap: 10px; justify-items: start; padding: 12px 14px; border-radius: var(--r); background: var(--surface); border: 1px solid var(--line); }
   .acct > .btn { width: 100%; justify-content: center; }
   .acct .note { margin-top: 0; }
   .acct-ask { width: 100%; display: grid; gap: 10px; }
@@ -230,20 +235,20 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .wallet .sub-fixed { flex: none; }
   .wallet .sub-live { margin-left: auto; }
   .nextgoal { position: relative; flex: 1 0 100%; font: inherit; font-size: 12px; font-weight: 700; line-height: 1.35; color: var(--info); background: none; border: 0; padding: 0; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
-  .nextline { margin: 0; padding: 8px 10px; border-radius: 14px; background: var(--surface-hud); border: 1px solid var(--line); color: var(--text); font: 700 13px/1.35 var(--font); pointer-events: auto; }
+  .nextline { margin: 0; padding: 8px 10px; border-radius: var(--r); background: var(--surface-hud); border: 1px solid var(--line); color: var(--text); font: 700 13px/1.35 var(--font); pointer-events: auto; }
   .nextline .chip { pointer-events: auto; }
   .wallet .protect { position: relative; font: inherit; font-size: 12px; font-weight: 700; color: var(--muted); white-space: nowrap; background: none; border: 0; padding: 0; cursor: pointer; }
-  .chip { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; font-size: 12px; font-weight: 700; padding: 0 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2); }
+  .chip { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; font-size: 12px; font-weight: 700; padding: 0 10px; border-radius: var(--r); background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2); }
   .chip.gold { color: var(--accent); background: var(--accent-weak); }
-  .chip.pulse { animation: chipPulse 1.4s ease-in-out infinite; }
+  .chip.pulse { animation: chipPulse 1.4s ease-in-out 1; } /* once, when the state comes (it blinked for ever) */
   @keyframes chipPulse { 50% { opacity: .6; } }
   .wallet.bump .amt { animation: bump .5s cubic-bezier(.2,1.6,.4,1); }
   @keyframes bump { 40% { transform: scale(1.14); } }
 
   .hud-r { position: absolute; top: calc(14px + var(--safe-t)); right: calc(14px + var(--safe-r)); display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
   .bar { display: flex; gap: 8px; align-items: center; }
-  .tools { pointer-events: auto; display: flex; align-items: center; height: 46px; padding: 0 4px; border-radius: 999px; }
-  .btn { pointer-events: auto; height: 42px; padding: 0 16px; border-radius: 10px; display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 15px; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); transition: transform .15s, background-color .2s, border-color .2s; white-space: nowrap; }
+  .tools { pointer-events: auto; display: flex; align-items: center; height: 46px; padding: 0 4px; border-radius: var(--r); }
+  .btn { pointer-events: auto; height: 42px; padding: 0 16px; border-radius: var(--r); display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 15px; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); transition: transform .15s, background-color .2s, border-color .2s; white-space: nowrap; }
   .btn.primary { color: var(--on-accent); background: var(--accent); border-color: transparent; }
   .btn.primary:hover { filter: brightness(1.06); }
   .btn.gold { color: var(--on-accent); background: var(--accent); border-color: transparent; }
@@ -257,10 +262,10 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
 
   .minimap { pointer-events: auto; width: 184px; height: 184px; padding: 8px; position: relative; cursor: zoom-in; transition: border-color .2s, transform .2s; }
   .minimap:hover { border-color: var(--line-strong); transform: scale(1.02); }
-  .minimap canvas { width: 100%; height: 100%; display: block; border-radius: 10px; }
+  .minimap canvas { width: 100%; height: 100%; display: block; border-radius: var(--r); }
   .minimap .tag { position: absolute; left: 14px; top: 12px; font: 700 12px/1 var(--font); letter-spacing: .04em; color: var(--muted); }
   .minimap .zoom { position: absolute; right: 13px; bottom: 11px; font-size: 13px; color: var(--muted); }
-  .locpill { margin-top: 8px; max-width: 184px; display: flex; align-items: center; gap: 6px; padding: 7px 11px; border-radius: 999px; font-size: 12px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; }
+  .locpill { margin-top: 8px; max-width: 184px; display: flex; align-items: center; gap: 6px; padding: 7px 11px; border-radius: var(--r); font-size: 12px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; }
   .locpill i { flex: none; font-style: normal; font-size: 12px; }
   .locpill span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
@@ -269,7 +274,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .taxihud .spd { display: flex; align-items: baseline; gap: 4px; }
   .taxihud .spd b { font: 800 28px/1 var(--font); letter-spacing: -.01em; color: var(--text); min-width: 2.2ch; text-align: right; font-variant-numeric: tabular-nums; }
   .taxihud .spd span { font-size: 12px; font-weight: 700; color: var(--muted); }
-  .taxihud .meter { padding: 6px 10px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); }
+  .taxihud .meter { padding: 6px 10px; border-radius: var(--r); background: var(--bg); border: 1px solid var(--line); }
   .taxihud .meter small { display: block; font: 700 12px/1 var(--font); letter-spacing: .04em; color: var(--muted); }
   .taxihud .meter b { display: block; margin-top: 3px; font: 800 17px/1 var(--font); color: var(--accent); font-variant-numeric: tabular-nums; }
   .taxihud .job { display: flex; align-items: center; gap: 12px; min-width: 0; }
@@ -279,7 +284,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .taxihud .job .time { margin-left: auto; font: 800 20px/1 var(--font); color: var(--text); font-variant-numeric: tabular-nums; }
   .taxihud .job .time.low { color: var(--danger); animation: chipPulse .6s infinite; }
   .taxihud .keys { grid-column: 1 / -1; font-size: 12px; font-weight: 500; color: var(--muted); text-align: center; }
-  .waypill { position: absolute; left: 50%; top: calc(88px + var(--safe-t)); transform: translateX(-50%); display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px; border-radius: 999px; font-size: 13px; font-weight: 700; color: var(--info); pointer-events: auto !important; }
+  .waypill { position: absolute; left: 50%; top: calc(88px + var(--safe-t)); transform: translateX(-50%); display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px; border-radius: var(--r); font-size: 13px; font-weight: 700; color: var(--info); pointer-events: auto !important; }
   .waypill .arrow { font-size: 17px; color: var(--info); }
   .waypill small { color: var(--muted); font-size: 12px; margin-left: 2px; }
   /* The guide pill's inside (ui.js wayPill / paintWay): .arrow, then .way (the place's .name over .sub: the distance and .go,
@@ -313,7 +318,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .sponsor h3, .sponsor p { overflow-wrap: anywhere; }
   .sponsor .input { width: 100%; margin-top: 8px; }
   .sponsor .row { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; position: static; width: auto; height: auto; }
-  .sponsor .row .btn { width: 100%; height: 44px; border-radius: 10px; justify-content: center; white-space: nowrap; }
+  .sponsor .row .btn { width: 100%; height: 44px; border-radius: var(--r); justify-content: center; white-space: nowrap; }
   /* Touch: the card is a piece of the floating stack (ui.js; see "The floating stack"). It used to be 148px up and 8px in
      from both edges, over 멍때리기, 동작 and the pouch (and 시점 해제 lay on its phrase chips). The chips are one row that
      scrolls sideways, so the card stays about 150px tall on a narrow phone instead of wrapping to five rows. */
@@ -328,20 +333,20 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
      nothing of the 3D view but its own line and hides nothing: the stick and the right-hand buttons stay (moving ends the
      dance). A desktop window has it over the dock; touch has it in the bottom lane the prompt tag uses (the tag is down
      while dancing); an upright phone has it over the stick, as two lines of text beside the button. */
-  .dancebar { position: absolute; left: 50%; bottom: calc(116px + var(--safe-b)); transform: translateX(-50%); display: flex; align-items: center; gap: 12px; min-height: 44px; max-width: calc(100% - 24px - var(--safe-l) - var(--safe-r)); padding: 3px 3px 3px 16px; border-radius: 999px; pointer-events: auto !important; z-index: 4; }
+  .dancebar { position: absolute; left: 50%; bottom: calc(116px + var(--safe-b)); transform: translateX(-50%); display: flex; align-items: center; gap: 12px; min-height: 44px; max-width: calc(100% - 24px - var(--safe-l) - var(--safe-r)); padding: 3px 3px 3px 16px; border-radius: var(--r); pointer-events: auto !important; z-index: 4; }
   .dancebar[hidden] { display: none; }
   .dancebar .txt { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
   .dancebar .song { font: 800 13px/1.25 var(--font); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .dancebar .mates { font: 700 12px/1.25 var(--font); color: var(--text-2); white-space: nowrap; }
-  .dancebar .stop { position: relative; flex: none; height: 38px; padding: 0 14px; border-radius: 999px; font: 700 13px/1 var(--font); color: var(--text); background: var(--surface-2); border: 1px solid var(--line-strong); white-space: nowrap; }
+  .dancebar .stop { position: relative; flex: none; height: 38px; padding: 0 14px; border-radius: var(--r); font: 700 13px/1 var(--font); color: var(--text); background: var(--surface-2); border: 1px solid var(--line-strong); white-space: nowrap; }
   .dancebar .stop::after { content: ''; position: absolute; inset: -3px 0; }
 
   /* ---------- full map / settings ---------- */
   .sheet.map { width: min(1180px, 100%); }
-  .bigmap { position: relative; width: 100%; height: min(70vh, 760px); border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: var(--bg); }
+  .bigmap { position: relative; width: 100%; height: min(70vh, 760px); border-radius: var(--r); overflow: hidden; border: 1px solid var(--line); background: var(--bg); }
   .bigmap canvas { width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; }
   .mapzoom { position: absolute; right: 12px; top: 12px; display: flex; flex-direction: column; gap: 6px; }
-  .mapzoom button { width: 40px; height: 40px; border-radius: 10px; font-size: 15px; font-weight: 800; color: var(--text); background: var(--surface-hud); border: 1px solid var(--line); }
+  .mapzoom button { width: 40px; height: 40px; border-radius: var(--r); font-size: 15px; font-weight: 800; color: var(--text); background: var(--surface-hud); border: 1px solid var(--line); }
   .mapzoom button:last-child { font-size: 12px; }
   .legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 12px; font-size: 12px; font-weight: 700; color: var(--muted); align-items: center; }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
@@ -350,9 +355,9 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   /* The quick-jump row scrolls sideways and fades at its right end, which says there is more to scroll to. */
   .quick { display: flex; gap: 6px; overflow-x: auto; padding: 0 24px 10px 0; scrollbar-width: none; -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); }
   .quick::-webkit-scrollbar { display: none; }
-  .quick button { position: relative; flex: none; height: 32px; padding: 0 12px; border-radius: 999px; font-size: 12px; font-weight: 700; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); white-space: nowrap; }
+  .quick button { position: relative; flex: none; height: 32px; padding: 0 12px; border-radius: var(--r); font-size: 12px; font-weight: 700; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); white-space: nowrap; }
   .quick button:hover { border-color: var(--line-strong); color: var(--text); }
-  .place { margin: 4px 0 12px; padding: 12px 14px; border-radius: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; background: var(--surface-2); border: 1px solid var(--line); }
+  .place { margin: 4px 0 12px; padding: 12px 14px; border-radius: var(--r); display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; background: var(--surface-2); border: 1px solid var(--line); }
   .place .where { flex: 1 1 260px; min-width: 0; }
   .place .where b { display: block; font-size: 15px; font-weight: 800; color: var(--text); }
   .place .where span { display: block; margin-top: 3px; font-size: 12px; font-weight: 500; color: var(--muted); }
@@ -360,12 +365,12 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .place .go .btn { height: 36px; padding: 0 12px; font-size: 13px; }
   .place .mine { flex-basis: 100%; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
   .place .mine small { font-size: 12px; font-weight: 700; color: var(--muted); margin-right: 2px; }
-  .chip-btn { height: 30px; padding: 0 10px; border-radius: 999px; font-size: 12px; font-weight: 700; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); }
+  .chip-btn { height: 30px; padding: 0 10px; border-radius: var(--r); font-size: 12px; font-weight: 700; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); }
   .plot.mine { outline: 2px solid var(--text); outline-offset: 1px; }
   .plot.mine::after { content: "내 땅"; position: absolute; top: 3px; font-size: 12px; font-weight: 800; color: var(--text); }
   .rangerow { display: flex; align-items: center; gap: 14px; }
   .rangerow b { min-width: 48px; text-align: right; font-size: 15px; color: var(--text); font-variant-numeric: tabular-nums; }
-  .range { flex: 1; -webkit-appearance: none; appearance: none; height: 6px; border-radius: 999px; background: var(--line-strong); outline: none; }
+  .range { flex: 1; -webkit-appearance: none; appearance: none; height: 6px; border-radius: var(--r); background: var(--line-strong); outline: none; }
   .range::-webkit-slider-thumb { -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%; background: var(--text); cursor: pointer; }
   .range::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: var(--text); border: 0; cursor: pointer; }
   .linkbtn { position: relative; color: var(--info); font-weight: 700; text-decoration: underline; }
@@ -393,14 +398,14 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   /* ---------- prompt / dock ---------- */
   .prompt { position: absolute; left: 50%; bottom: calc(118px + var(--safe-b)); transform: translate(-50%, 12px) scale(.96); opacity: 0; transition: all .25s cubic-bezier(.2,1.2,.4,1); pointer-events: none !important; }
   .prompt.show { opacity: 1; transform: translate(-50%, 0) scale(1); pointer-events: auto !important; }
-  .prompt button { display: flex; align-items: center; gap: 12px; padding: 9px 18px 9px 9px; border-radius: 999px; font-weight: 700; font-size: 15px; max-width: min(520px, calc(100vw - 24px)); }
+  .prompt button { display: flex; align-items: center; gap: 12px; padding: 9px 18px 9px 9px; border-radius: var(--r); font-weight: 700; font-size: 15px; max-width: min(520px, calc(100vw - 24px)); }
   .prompt button > span { white-space: normal; }
-  .keycap { min-width: 32px; height: 32px; padding: 0 8px; border-radius: 10px; display: inline-grid; place-items: center; font: 800 13px/1 var(--font); color: var(--text); background: var(--surface-2); border: 1px solid var(--line-strong); }
+  .keycap { min-width: 32px; height: 32px; padding: 0 8px; border-radius: var(--r); display: inline-grid; place-items: center; font: 800 13px/1 var(--font); color: var(--text); background: var(--surface-2); border: 1px solid var(--line-strong); }
   .prompt .sub { font-size: 12px; color: var(--muted); font-weight: 500; }
   .prompt .cool { position: relative; width: 26px; height: 26px; }
   .prompt .cool svg { position: absolute; inset: 0; transform: rotate(-90deg); }
   /* A tap on a far board: a small card, never a sheet. ui.js showFarCard removes it after 4 s. */
-  .farcard { position: relative; transform: translateY(8px); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; width: max-content; max-width: 100%; padding: 10px 12px; border-radius: 14px; background: var(--surface-hud); border: 1px solid var(--line); color: var(--text); opacity: 0; transition: opacity .25s ease, transform .25s ease; pointer-events: none !important; }
+  .farcard { position: relative; transform: translateY(8px); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; width: max-content; max-width: 100%; padding: 10px 12px; border-radius: var(--r); background: var(--surface-hud); border: 1px solid var(--line); color: var(--text); opacity: 0; transition: opacity .25s ease, transform .25s ease; pointer-events: none !important; }
   .farcard.show { opacity: 1; transform: none; pointer-events: auto !important; }
   /* It is the bottom of the floating stack (.toasts, see "The floating stack"): above the prompt and the waypoint pill,
      under any toasts, as wide as the stack allows. The name and state keep at least 140px; when that and the buttons do
@@ -411,7 +416,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .farcard .where span { font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   /* The card's own button row is .far-acts: the touch controls' .acts rules (absolute, bottom right, no pointer events) must never match it. */
   .farcard .far-acts { display: flex; flex-direction: row; align-items: center; gap: 6px; flex: none; margin-left: auto; pointer-events: auto; }
-  .farcard .far-acts button { min-height: 40px; padding: 0 12px; border-radius: 14px; border: 1px solid var(--line); background: transparent; color: var(--text); font-size: 13px; font-weight: 700; white-space: nowrap; }
+  .farcard .far-acts button { min-height: 40px; padding: 0 12px; border-radius: var(--r); border: 1px solid var(--line); background: transparent; color: var(--text); font-size: 13px; font-weight: 700; white-space: nowrap; }
   .farcard .far-acts button.go { border-color: var(--accent); color: var(--accent); }
   .farcard .far-acts button:disabled { color: var(--text-2); opacity: .5; }
   /* Touch: 44px targets with 8px sides (3 x 44px + 2 x 6px = 144px, so the row fits a 175px stack on a phone on its side). */
@@ -419,8 +424,8 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
 
   .dock { position: absolute; left: 50%; bottom: calc(18px + var(--safe-b)); transform: translateX(-50%); display: flex; gap: 8px; padding: 8px; pointer-events: auto !important; }
   /* An ad screen's card (ui.js showAdCard, a .farcard): the 광고 disclosure in front of the advertiser's line. */
-  .farcard .where b .adtag { display: inline-block; font-size: 12px; font-weight: 800; color: var(--on-accent); background: var(--accent); border-radius: 6px; padding: 0 6px; vertical-align: 1px; white-space: nowrap; }
-  .emote { position: relative; width: 74px; height: 70px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: var(--text); background: var(--surface-2); border: 1px solid transparent; transition: transform .15s, background .2s, border-color .2s; }
+  .farcard .where b .adtag { display: inline-block; font-size: 12px; font-weight: 800; color: var(--on-accent); background: var(--accent); border-radius: var(--r); padding: 0 6px; vertical-align: 1px; white-space: nowrap; }
+  .emote { position: relative; width: 74px; height: 70px; border-radius: var(--r); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: var(--text); background: var(--surface-2); border: 1px solid transparent; transition: transform .15s, background .2s, border-color .2s; }
   .emote:hover { border-color: var(--line-strong); transform: translateY(-2px); }
   .emote:active { transform: translateY(0) scale(.96); }
   .emote .e { font-size: 28px; line-height: 1; }
@@ -431,15 +436,15 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .dock .sep { width: 1px; margin: 8px 2px; background: var(--line); }
   .emote.more.on { border-color: var(--line-strong); background: var(--accent-weak); color: var(--accent); }
   /* 같이 춤추기 in the touch 동작 panel: a whole row under the four actions, like the pouch row above them. */
-  html.touch .reacts button.dance-go { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; width: auto; height: 44px; padding: 0 12px; border-radius: 10px; font: 700 14px/1.2 var(--font); color: var(--text); background: var(--surface-2); border: 1px solid var(--line); }
+  html.touch .reacts button.dance-go { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; width: auto; height: 44px; padding: 0 12px; border-radius: var(--r); font: 700 14px/1.2 var(--font); color: var(--text); background: var(--surface-2); border: 1px solid var(--line); }
   html.touch .reacts button.dance-go svg.ico { width: 22px; height: 22px; color: var(--accent); }
   .reacts { position: absolute; left: 50%; bottom: calc(112px + var(--safe-b)); transform: translateX(-50%); display: grid; grid-template-columns: repeat(8, 46px); gap: 6px; padding: 10px; pointer-events: auto !important; animation: fadeIn .2s ease; box-shadow: var(--shadow-pop); }
   @keyframes fadeIn { from { opacity: 0; } }
-  .reacts button { width: 46px; height: 46px; border-radius: 10px; font-size: 28px; background: var(--surface-2); border: 1px solid transparent; transition: transform .12s, border-color .2s; }
+  .reacts button { width: 46px; height: 46px; border-radius: var(--r); font-size: 28px; background: var(--surface-2); border: 1px solid transparent; transition: transform .12s, border-color .2s; }
   .reacts button:hover { transform: translateY(-2px) scale(1.06); border-color: var(--line-strong); }
 
   .help { position: absolute; left: calc(14px + var(--safe-l)); bottom: calc(18px + var(--safe-b)); padding: 10px 12px; display: grid; grid-template-columns: auto auto; gap: 6px 10px; font-size: 12px; color: var(--muted); font-weight: 500; transition: opacity .6s; }
-  .help kbd { font: 700 12px/1 var(--font); color: var(--text); padding: 4px 6px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); }
+  .help kbd { font: 700 12px/1 var(--font); color: var(--text); padding: 4px 6px; border-radius: var(--r); background: var(--surface-2); border: 1px solid var(--line); }
   .help.fade { opacity: 0; }
 
   /* ---------- touch controls ---------- */
@@ -463,7 +468,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
      (16px … right 76px, 30px left of the toasts and 55px left of the lane at 390px). One line of 12px; on a phone on its
      side under 641px wide (a 175px stack) its two halves are two lines. While a far-board card, the 홈 화면 추가 card or
      a board's card is in the stack, it steps aside. */
-  .coach { padding: 8px 12px; border-radius: 999px; background: var(--surface-hud); border: 1px solid var(--line); color: var(--text); font: 700 12px/1.35 var(--font); text-align: center; white-space: nowrap; pointer-events: none; }
+  .coach { padding: 8px 12px; border-radius: var(--r); background: var(--surface-hud); border: 1px solid var(--line); color: var(--text); font: 700 12px/1.35 var(--font); text-align: center; white-space: nowrap; pointer-events: none; }
   .toasts:has(> .farcard, > .a2hs:not([hidden]), > .sponsor:not([hidden])) > .coach { display: none; }
   /* A far-board card answers a tap: for its 4 s the 홈 화면 추가 card steps aside too, so the stack stays short. */
   .toasts:has(> .farcard) > .a2hs { display: none; }
@@ -477,10 +482,10 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .bake h3 { margin: 0; font: 800 17px/1.1 var(--font); letter-spacing: -.01em; color: var(--text); }
   .bake header span { font-size: 12px; font-weight: 500; color: var(--muted); }
   /* Flat zones: burnt/raw on the surface, GOOD in --ok, GOLD in --accent (the same 38/47/53/62 % stops as before). */
-  .gauge { position: relative; margin: 16px 0 10px; height: 46px; border-radius: 10px; overflow: hidden; background: linear-gradient(90deg, var(--surface-2) 0 34%, var(--ok-weak) 34% 38%, var(--ok) 38% 47%, var(--accent) 47% 53%, var(--ok) 53% 62%, var(--ok-weak) 62% 66%, var(--surface-2) 66%); }
+  .gauge { position: relative; margin: 16px 0 10px; height: 46px; border-radius: var(--r); overflow: hidden; background: linear-gradient(90deg, var(--surface-2) 0 34%, var(--ok-weak) 34% 38%, var(--ok) 38% 47%, var(--accent) 47% 53%, var(--ok) 53% 62%, var(--ok-weak) 62% 66%, var(--surface-2) 66%); }
   .gauge::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(90deg, transparent 0 22px, rgba(0,0,0,.16) 22px 24px); }
   .needle { position: absolute; top: -4px; bottom: -4px; width: 0; z-index: 3; }
-  .needle::before { content: ""; position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; border-radius: 999px; background: var(--text); }
+  .needle::before { content: ""; position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; border-radius: var(--r); background: var(--text); }
   .needle::after { content: "🐟"; position: absolute; left: -11px; top: -26px; font-size: 20px; }
   .bake .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .bake .hint { font-size: 12px; color: var(--muted); font-weight: 500; }
@@ -497,7 +502,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
 
   /* ---------- toasts / coins ---------- */
   .toasts { position: fixed; z-index: 70; left: 50%; bottom: calc(196px + var(--safe-b)); transform: translateX(-50%); display: flex; flex-direction: column-reverse; align-items: center; gap: 8px; pointer-events: none; }
-  .toast { padding: 10px 16px; font-size: 13px; font-weight: 700; color: var(--text); background: var(--surface-2); border-color: var(--line); border-radius: 10px; box-shadow: var(--shadow-pop); animation: toastIn .35s cubic-bezier(.2,1.2,.4,1); width: max-content; max-width: min(440px, calc(100vw - 24px)); height: auto; white-space: normal; text-align: center; line-height: 1.4; }
+  .toast { padding: 10px 16px; font-size: 13px; font-weight: 700; color: var(--text); background: var(--surface-2); border-color: var(--line); border-radius: var(--r); box-shadow: var(--shadow-pop); animation: toastIn .35s cubic-bezier(.2,1.2,.4,1); width: max-content; max-width: min(440px, calc(100vw - 24px)); height: auto; white-space: normal; text-align: center; line-height: 1.4; }
   /* The kind is a 6px dot before the text: --info by default, --ok, --danger. */
   .toast::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 8px; border-radius: 50%; background: var(--info); vertical-align: 2px; }
   .toast.hit { pointer-events: auto; cursor: pointer; border-color: var(--line-strong); }
@@ -558,7 +563,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   /* ---------- modals ---------- */
   /* Like #view and #ui, the modal covers the visible viewport (--app-top / --app-h): with the phone keyboard up the sheet ends above it. */
   .modal { position: fixed; inset: 0; top: var(--app-top, 0px); bottom: auto; height: var(--app-h, 100dvh); z-index: 40; display: grid; place-items: center; padding: max(28px, var(--safe-t)) max(32px, var(--safe-r)) max(28px, var(--safe-b)) max(32px, var(--safe-l)); background: rgba(0,0,0,.64); pointer-events: auto !important; transform: translateZ(0); }
-  .sheet { width: min(980px, 100%); max-height: min(88vh, 860px, calc(var(--app-h, 100dvh) - 56px)); overflow: auto; padding: 0; background: var(--surface); border-radius: 20px; box-shadow: var(--shadow-sheet); scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+  .sheet { width: min(980px, 100%); max-height: min(88vh, 860px, calc(var(--app-h, 100dvh) - 56px)); overflow: auto; padding: 0; background: var(--surface); border-radius: var(--r-sheet); box-shadow: var(--shadow-sheet); scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
   .sheet.narrow { width: min(560px, 100%); }
   .sheet.steady { width: min(640px, 100%); height: min(680px, 78vh, calc(var(--app-h, 100dvh) - 56px)); display: flex; flex-direction: column; overflow: hidden; }
   .sheet.steady > header { flex: none; }
@@ -567,18 +572,18 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .sheet .content { padding: 20px 24px 24px; }
   .sheet > header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 18px 24px 14px; background: var(--surface); border-bottom: 1px solid var(--line); }
   .sheet h2 { margin: 0; display: flex; align-items: center; gap: 10px; font: 800 17px/1.2 var(--font); letter-spacing: -.01em; }
-  .sheet h2 .badge { font: 700 12px/1 var(--font); letter-spacing: .02em; padding: 5px 8px; border-radius: 999px; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); }
-  .x { position: relative; width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; font-size: 20px; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); }
+  .sheet h2 .badge { font: 700 12px/1 var(--font); letter-spacing: .02em; padding: 5px 8px; border-radius: var(--r); color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); }
+  .x { position: relative; width: 38px; height: 38px; border-radius: var(--r); display: grid; place-items: center; font-size: 20px; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); }
   .x:hover { color: var(--text); border-color: var(--line-strong); }
   .sheet .more { margin-top: 12px; }
   .sheet .more summary { cursor: pointer; font-weight: 700; color: var(--text-2); }
   .sheet .more .field { margin-top: 10px; }
   .sheet .more .emo-row { display: flex; gap: 4px; align-items: center; overflow-x: auto; }
-  .sheet .more .emo-row button { position: relative; flex: 0 0 30px; width: 30px; height: 30px; border-radius: 10px; font-size: 15px; background: var(--surface-2); border: 1px solid var(--line); }
+  .sheet .more .emo-row button { position: relative; flex: 0 0 30px; width: 30px; height: 30px; border-radius: var(--r); font-size: 15px; background: var(--surface-2); border: 1px solid var(--line); }
   .sheet .more .emo-row button.on { border-color: var(--line-strong); background: var(--accent-weak); }
   .sheet .more .emo-row .input { width: 42px; height: 30px; flex: 0 0 42px; padding: 0; text-align: center; font-size: 15px; }
   .sheet .more .themes { display: flex; flex-wrap: wrap; gap: 6px; }
-  .sheet .more .theme { height: 28px; width: auto; padding: 4px 8px; border-radius: 10px; font-size: 12px; align-items: center; }
+  .sheet .more .theme { height: 28px; width: auto; padding: 4px 8px; border-radius: var(--r); font-size: 12px; align-items: center; }
   .sheet .more .swatch { position: relative; width: 26px; height: 26px; }
   .sheet .more .swatches input[type=color] { width: 28px; height: 28px; }
   .grid2 { display: grid; grid-template-columns: 1.15fr 1fr; gap: 22px; }
@@ -622,20 +627,20 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     .sheet.bill .bb-look .screen { padding: 0; border-radius: 0; background: transparent; }
     .sheet.bill .bb-look .screen canvas { width: min(100%, calc(19vh * 16 / 9)); margin: 0 auto; }
   }
-  .seg { display: inline-flex; flex-wrap: wrap; padding: 4px; border-radius: 14px; background: var(--bg); border: 1px solid var(--line); gap: 4px; }
-  .seg button { padding: 9px 14px; border-radius: 10px; font-size: 13px; font-weight: 700; color: var(--muted); transition: all .2s; }
+  .seg { display: inline-flex; flex-wrap: wrap; padding: 4px; border-radius: var(--r); background: var(--bg); border: 1px solid var(--line); gap: 4px; }
+  .seg button { padding: 9px 14px; border-radius: var(--r); font-size: 13px; font-weight: 700; color: var(--muted); transition: all .2s; }
   .seg button.on { color: var(--text); background: var(--surface-2); }
-  .sheet select, .slot-pick { margin-top: 8px; width: 100%; height: 44px; padding: 0 12px; border-radius: 10px; cursor: pointer; background: var(--bg); color: var(--text); border: 1px solid var(--line); font: 500 15px/1.2 var(--font); color-scheme: dark; }
+  .sheet select, .slot-pick { margin-top: 8px; width: 100%; height: 44px; padding: 0 12px; border-radius: var(--r); cursor: pointer; background: var(--bg); color: var(--text); border: 1px solid var(--line); font: 500 15px/1.2 var(--font); color-scheme: dark; }
   .sheet select option, .slot-pick option { background: var(--surface); color: var(--text); }
   .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
-  .chips button { min-width: 44px; padding: 7px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); }
+  .chips button { min-width: 44px; padding: 7px 10px; border-radius: var(--r); font-size: 12px; font-weight: 700; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); }
   .chips button.on { color: var(--accent); background: var(--accent-weak); }
   .chips button.owned::after { content: ""; display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: var(--live); vertical-align: 2px; }
-  .screen { position: relative; margin-top: 14px; padding: 10px; border-radius: 14px; background: var(--bg); }
+  .screen { position: relative; margin-top: 14px; padding: 10px; border-radius: var(--r); background: var(--bg); }
   .screen::before { content: none; }
-  .screen canvas { width: 100%; display: block; border-radius: 10px; aspect-ratio: 16 / 9; }
+  .screen canvas { width: 100%; display: block; border-radius: var(--r); aspect-ratio: 16 / 9; }
   .holder { margin-top: 14px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-  .stat { padding: 10px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); min-width: 0; }
+  .stat { padding: 10px 12px; border-radius: var(--r); background: var(--surface-2); border: 1px solid var(--line); min-width: 0; }
   .stat small { display: block; font-size: 12px; font-weight: 700; color: var(--muted); }
   .stat b { display: block; margin-top: 4px; font-size: 15px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .stat b.gold { color: var(--accent); font-variant-numeric: tabular-nums; }
@@ -644,13 +649,13 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .lines .input { height: 40px; }
   .field > label { display: flex; justify-content: space-between; font-size: 12px; font-weight: 700; color: var(--text-2); margin-bottom: 7px; }
   .field > label span { color: var(--muted); font-weight: 500; }
-  .input { width: 100%; height: 44px; padding: 0 14px; border-radius: 10px; font-size: 15px; font-weight: 500; color: var(--text); background: var(--bg); border: 1px solid var(--line); outline: none; transition: border-color .2s, box-shadow .2s; }
+  .input { width: 100%; height: 44px; padding: 0 14px; border-radius: var(--r); font-size: 15px; font-weight: 500; color: var(--text); background: var(--bg); border: 1px solid var(--line); outline: none; transition: border-color .2s, box-shadow .2s; }
   .input:focus { border-color: var(--line-strong); box-shadow: var(--focus); }
   .input::placeholder { color: var(--muted); }
   .lines { display: grid; gap: 8px; }
   .emo { display: grid; gap: 8px; }
   .themes { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
-  .theme { position: relative; height: 50px; border-radius: 10px; overflow: hidden; border: 2px solid transparent; display: flex; align-items: flex-end; padding: 6px; font-size: 12px; font-weight: 800; color: var(--text); text-shadow: 0 1px 4px rgba(0,0,0,.8); transition: transform .15s, border-color .2s; }
+  .theme { position: relative; height: 50px; border-radius: var(--r); overflow: hidden; border: 2px solid transparent; display: flex; align-items: flex-end; padding: 6px; font-size: 12px; font-weight: 800; color: var(--text); text-shadow: 0 1px 4px rgba(0,0,0,.8); transition: transform .15s, border-color .2s; }
   .theme:hover { transform: translateY(-2px); }
   .theme.on { border-color: var(--text); }
   .swatches { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -661,25 +666,25 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .bid { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
   .bid .input { font-size: 20px; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
   .steps { display: flex; gap: 6px; }
-  .steps button { height: 44px; padding: 0 12px; border-radius: 10px; font-weight: 700; font-size: 13px; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); }
+  .steps button { height: 44px; padding: 0 12px; border-radius: var(--r); font-weight: 700; font-size: 13px; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); }
   .steps button:hover { border-color: var(--line-strong); color: var(--text); }
   .balance { margin-top: 8px; display: flex; justify-content: space-between; font-size: 12px; font-weight: 500; color: var(--muted); }
   .balance b { color: var(--text); font-variant-numeric: tabular-nums; }
   .balance b.neg { color: var(--danger); }
-  .cta { margin-top: 14px; width: 100%; height: 54px; border-radius: 10px; font-size: 17px; justify-content: center; }
-  .callout { margin-top: 14px; padding: 12px 14px; border-radius: 10px; font-size: 13px; line-height: 1.55; font-weight: 500; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); }
+  .cta { margin-top: 14px; width: 100%; height: 54px; border-radius: var(--r); font-size: 17px; justify-content: center; }
+  .callout { margin-top: 14px; padding: 12px 14px; border-radius: var(--r); font-size: 13px; line-height: 1.55; font-weight: 500; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); }
   .callout.warn { background: var(--info-weak); }
   .callout.ok { background: var(--ok-weak); }
-  .photo-card { margin-top: 16px; padding: 14px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--line); }
+  .photo-card { margin-top: 16px; padding: 14px; border-radius: var(--r); background: var(--surface-2); border: 1px solid var(--line); }
   .photo-card.flash { animation: phFlash 1.6s ease-out; }
   @keyframes phFlash { 0%, 45% { border-color: var(--line-strong); background: var(--accent-weak); } 100% { border-color: var(--line); background: var(--surface-2); } }
   .ph-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 15px; font-weight: 800; }
-  .ph-fee { flex: none; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; color: var(--accent); background: var(--accent-weak); font-variant-numeric: tabular-nums; }
-  .ph-state { flex: none; margin-left: auto; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; color: var(--text); background: var(--info-weak); }
+  .ph-fee { flex: none; padding: 4px 10px; border-radius: var(--r); font-size: 12px; font-weight: 700; color: var(--accent); background: var(--accent-weak); font-variant-numeric: tabular-nums; }
+  .ph-state { flex: none; margin-left: auto; padding: 4px 10px; border-radius: var(--r); font-size: 12px; font-weight: 700; color: var(--text); background: var(--info-weak); }
   .ph-state.on { background: var(--ok-weak); }
   .photo-card .callout { margin-top: 10px; }
-  .photo-card > .btn.ghost { margin-top: 12px; width: 100%; height: 44px; border-radius: 10px; justify-content: center; font-weight: 700; }
-  .shot-preview { width: 100%; display: block; border-radius: 10px; background: var(--bg); }
+  .photo-card > .btn.ghost { margin-top: 12px; width: 100%; height: 44px; border-radius: var(--r); justify-content: center; font-weight: 700; }
+  .shot-preview { width: 100%; display: block; border-radius: var(--r); background: var(--bg); }
   .shot-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
   .shot-row .btn { flex: 1 1 140px; height: 44px; justify-content: center; }
   .photo-card .cta { height: 48px; font-size: 15px; }
@@ -692,50 +697,50 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .chip.warn { color: var(--danger); border-color: var(--danger); }
   .wallet { cursor: pointer; }
   /* The amount line is the card's one button of its own (ui.js amtBtn): it looks like the plain line it was. */
-  .wallet-amt { display: inline-flex; align-items: baseline; min-height: 24px; font: inherit; color: inherit; text-align: left; border-radius: 6px; }
+  .wallet-amt { display: inline-flex; align-items: baseline; min-height: 24px; font: inherit; color: inherit; text-align: left; border-radius: var(--r); }
   .note { margin-top: 10px; font-size: 12px; color: var(--muted); font-weight: 500; line-height: 1.5; }
   .sheet button.note { display: block; width: 100%; margin: 8px 0 0; padding: 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; font-weight: 500; line-height: 1.5; text-align: left; cursor: pointer; }
   .levels { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 4px; }
-  .lv { position: relative; padding: 12px 6px 10px; border-radius: 10px; text-align: center; background: var(--surface-2); border: 1px solid var(--line); opacity: .55; }
-  .lv .i { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 10px; display: block; }
+  .lv { position: relative; padding: 12px 6px 10px; border-radius: var(--r); text-align: center; background: var(--surface-2); border: 1px solid var(--line); opacity: .55; }
+  .lv .i { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: var(--r); display: block; }
   .lv .t { margin-top: 6px; font-size: 12px; font-weight: 700; color: var(--muted); }
   .lv.done { opacity: .85; }
   .lv.cur { opacity: 1; border-color: var(--line-strong); background: var(--accent-weak); }
   .lv.cur .t { color: var(--accent); }
   .lv.next { opacity: 1; border-style: dashed; border-color: var(--line-strong); }
-  .lv.next::after { content: "NEXT"; position: absolute; top: -8px; left: 50%; transform: translateX(-50%); font: 800 12px/1 var(--font); padding: 3px 6px; border-radius: 999px; color: var(--bg); background: var(--live); letter-spacing: .04em; }
-  .signprev { margin-top: 10px; width: 100%; display: block; border-radius: 10px; background: var(--bg); }
+  .lv.next::after { content: "NEXT"; position: absolute; top: -8px; left: 50%; transform: translateX(-50%); font: 800 12px/1 var(--font); padding: 3px 6px; border-radius: var(--r); color: var(--bg); background: var(--live); letter-spacing: .04em; }
+  .signprev { margin-top: 10px; width: 100%; display: block; border-radius: var(--r); background: var(--bg); }
   .plots { display: grid; grid-template-columns: repeat(10, 1fr); gap: 6px; margin-top: 10px; }
-  .plot { aspect-ratio: 1; border-radius: 10px; display: grid; place-items: center; padding: 0; overflow: hidden; font-size: 12px; font-weight: 800; background: var(--bg); border: 1px solid var(--line); position: relative; color: var(--text); }
+  .plot { aspect-ratio: 1; border-radius: var(--r); display: grid; place-items: center; padding: 0; overflow: hidden; font-size: 12px; font-weight: 800; background: var(--bg); border: 1px solid var(--line); position: relative; color: var(--text); }
   .plot img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-  .plot .n { position: relative; z-index: 1; padding: 1px 6px; border-radius: 999px; background: rgba(0,0,0,.6); }
+  .plot .n { position: relative; z-index: 1; padding: 1px 6px; border-radius: var(--r); background: rgba(0,0,0,.6); }
   .plot:hover { border-color: var(--line-strong); color: var(--text); }
   .hub { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  .hub button { text-align: left; padding: 18px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface-2); transition: transform .15s, border-color .2s; overflow: hidden; }
+  .hub button { text-align: left; padding: 18px; border-radius: var(--r); border: 1px solid var(--line); background: var(--surface-2); transition: transform .15s, border-color .2s; overflow: hidden; }
   .hub button:hover { transform: translateY(-2px); border-color: var(--line-strong); }
-  .hub .big { width: 48px; height: 48px; object-fit: cover; object-position: center; transform: none; border-radius: 10px; display: block; }
+  .hub .big { width: 48px; height: 48px; object-fit: cover; object-position: center; transform: none; border-radius: var(--r); display: block; }
   .sub-fixed .chip { min-height: 28px; padding: 0 10px; color: var(--text-2); background: var(--surface-2); border-color: var(--line); }
   .hub h4 { margin: 10px 0 5px; font: 800 17px/1.2 var(--font); letter-spacing: -.01em; }
   .hub p { margin: 0; font-size: 13px; color: var(--muted); font-weight: 500; line-height: 1.5; }
   .credits { display: grid; gap: 8px; font-size: 12px; line-height: 1.5; color: var(--muted); }
   .credits a { color: var(--info); text-decoration: none; }
-  .credits .c { padding: 10px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); }
+  .credits .c { padding: 10px 12px; border-radius: var(--r); background: var(--surface-2); border: 1px solid var(--line); }
   .credits .c b { color: var(--text); }
   .ranks { display: grid; gap: 8px; }
-  .rank { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); }
+  .rank { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--r); background: var(--surface-2); border: 1px solid var(--line); }
   .rank .n { width: 28px; font: 800 15px/1 var(--font); color: var(--muted); font-variant-numeric: tabular-nums; }
   .rank b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rank .pts { font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
   .rank.me { border-color: var(--line-strong); background: var(--accent-weak); }
-  .rank .mini { position: relative; height: 32px; padding: 0 8px; border-radius: 10px; font-size: 12px; font-weight: 700; color: var(--text); background: var(--surface); border: 1px solid var(--line-strong); flex: none; }
+  .rank .mini { position: relative; height: 32px; padding: 0 8px; border-radius: var(--r); font-size: 12px; font-weight: 700; color: var(--text); background: var(--surface); border: 1px solid var(--line-strong); flex: none; }
   .colors { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
   .species { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
-  .species button { height: 42px; padding: 0 14px; border-radius: 10px; font-size: 15px; font-weight: 700; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); }
+  .species button { height: 42px; padding: 0 14px; border-radius: var(--r); font-size: 15px; font-weight: 700; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); }
   .species button.on { color: var(--accent); background: var(--accent-weak); border-color: var(--line-strong); }
   /* Character picker (ui.js speciesPicker): ten tiles, five a row at every width. At 320 px the sheet's content is about 260 px wide,
      so a tile is about 47 px wide and 64 px tall: a whole tap target with no sideways scroll. */
   .species-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
-  .species-grid button { display: grid; justify-items: center; align-content: center; gap: 4px; min-width: 0; min-height: 64px; padding: 6px 2px; border-radius: 10px; font: 700 12px/1.15 var(--font); color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); }
+  .species-grid button { display: grid; justify-items: center; align-content: center; gap: 4px; min-width: 0; min-height: 64px; padding: 6px 2px; border-radius: var(--r); font: 700 12px/1.15 var(--font); color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); }
   /* The thumbnails leave headroom for the rabbit's ears, so they fill the tile (up to 56px) rather than a 36px box. The hoodie
      takes the chosen colour (--c on the grid): the colour multiplied through the species' hoodie mask, over the picture. */
   .species-grid .pic { position: relative; display: block; width: 100%; max-width: 56px; aspect-ratio: 1 / 1; isolation: isolate; }
@@ -753,14 +758,14 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .shop-tabs { display: flex; flex-wrap: nowrap; overflow-x: auto; max-width: 100%; scrollbar-width: none; }
   .shop-tabs button { flex: none; }
   .shop-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; margin-top: 12px; }
-  .shop-item { display: grid; gap: 6px; align-content: start; min-width: 0; padding: 8px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--line); }
+  .shop-item { display: grid; gap: 6px; align-content: start; min-width: 0; padding: 8px; border-radius: var(--r); background: var(--surface-2); border: 1px solid var(--line); }
   .shop-item.on { border-color: var(--accent); background: var(--accent-weak); }
-  .shop-item .pv { display: grid; place-items: center; height: 64px; border-radius: 10px; background: var(--bg); overflow: hidden; }
+  .shop-item .pv { display: grid; place-items: center; height: 64px; border-radius: var(--r); background: var(--bg); overflow: hidden; }
   .shop-item .pv canvas { display: block; max-width: 100%; max-height: 100%; }
   .shop-item .pv.tag canvas { width: 100%; height: auto; }
   .shop-item .pv.ring canvas { width: 60px; height: 60px; }
   .shop-item .pv.frame canvas { width: 104px; height: 52px; }
-  .shop-item .pv.tint i { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 12px; border: 1px solid var(--line-strong); }
+  .shop-item .pv.tint i { display: grid; place-items: center; width: 48px; height: 48px; border-radius: var(--r); border: 1px solid var(--line-strong); }
   .shop-item .pv.tint svg.ico { width: 28px; height: 28px; vertical-align: 0; }
   .shop-item .nm { font: 700 13px/1.25 var(--font); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .shop-item .pr { display: inline-flex; align-items: center; gap: 4px; font: 700 12px/1.2 var(--font); color: var(--accent); font-variant-numeric: tabular-nums; }
@@ -773,44 +778,49 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   /* ---------- boot ---------- */
   /* The card is centred while it fits (its auto margins take the free space) and starts at the top and scrolls when it
      is taller than the screen (a phone on its side): centring a taller card cut 입장하기 off with nothing to scroll. */
-  #boot { position: fixed; inset: 0; z-index: 50; display: grid; place-items: start center; text-align: center; overflow-x: hidden; overflow-y: auto; padding: max(12px, var(--safe-t)) 0 max(12px, var(--safe-b));
-    background:
-      linear-gradient(180deg, rgba(0,0,0,.72), rgba(0,0,0,.5) 46%, rgba(0,0,0,.82)),
-      url('icons/boot.jpg') center/cover no-repeat,
-      var(--bg);
+  #boot { position: fixed; inset: 0; z-index: 50; display: grid; place-items: start center; text-align: left; overflow-x: hidden; overflow-y: auto; padding: max(12px, var(--safe-t)) 0 max(12px, var(--safe-b));
+    background: url('icons/boot.jpg?v=2') 50% 30% / cover no-repeat, var(--bg); box-shadow: inset 0 0 0 100vmax rgba(0,0,0,.3); /* the plaza at night (a capture of the 3D scene), a flat dark wash over it */
     transition: opacity .8s ease, visibility .8s; }
+  @media (min-aspect-ratio: 1/1) { #boot { background-image: url('icons/street.jpg?v=1'); background-position: 50% 50%; } } /* a wide screen: the street capture, not the upright one */
   #boot.gone { opacity: 0; visibility: hidden; pointer-events: none; }
   #boot .grid { display: none; }
-  #boot .wrap { position: relative; z-index: 3; width: min(560px, calc(100% - 32px)); margin: auto 0; padding: 22px 18px 18px; border-radius: 20px; background: var(--bg); border: 1px solid var(--line); box-shadow: var(--shadow-sheet); }
-  #boot h1 { margin: 14px 0 6px; font: 800 40px/1.1 var(--font); letter-spacing: -.01em; color: var(--text); }
-  #boot .tag { font-size: 15px; font-weight: 500; color: var(--text-2); line-height: 1.45; }
-  #boot .prog { margin: 30px auto 10px; height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+  #boot .wrap { position: relative; z-index: 3; width: min(560px, calc(100% - 32px)); margin: auto 0; padding: 0 18px 18px; border-radius: var(--r-sheet); background: var(--bg); border: 1px solid var(--line); overflow: hidden; }
+  #boot h1 { margin: 16px 0 6px; font: 900 34px/1.15 var(--font); letter-spacing: -.035em; color: var(--text); }
+  #boot .tag { font-size: 15px; font-weight: 500; color: var(--text-2); line-height: 1.45; word-break: keep-all; }
+  #boot .prog { margin: 30px auto 10px; height: 6px; border-radius: var(--r); background: var(--surface-2); overflow: hidden; }
   #boot .prog i { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--info); transition: width .3s ease; }
   #boot .msg { font-size: 12px; font-weight: 500; color: var(--muted); min-height: 18px; }
   #boot .enter { margin-top: 22px; display: grid; gap: 12px; }
   #boot .enter .input { height: 50px; text-align: center; font-size: 17px; font-weight: 700; background: var(--bg); }
   #boot .enter .colors, #boot .enter .species { justify-content: center; }
-  #boot .enter .btn { width: 100%; height: 52px; justify-content: center; font-size: 17px; border-radius: 10px; }
-  #boot .bootmark { width: 84px; height: 84px; border-radius: 20px; display: block; margin: 0 auto 10px; }
-  #boot .badge { display: inline-block; margin-bottom: 8px; padding: 6px 12px; border-radius: 999px; font: 700 12px/1.2 var(--font); letter-spacing: .04em; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); }
-  #boot .bootlive { margin-top: 14px; padding: 12px 14px; border-radius: 14px; text-align: left; background: var(--surface); border: 1px solid var(--line); font-size: 13px; font-weight: 500; line-height: 1.5; color: var(--text); }
+  #boot .enter .btn { width: 100%; height: 52px; justify-content: center; font-size: 17px; border-radius: var(--r); }
+  /* The ticker (A. LED 전광판): one line of what the service is, running along the top of the card like the news band round a Times Square
+     building (24 s a lap; still with reduced motion). The words are written twice so the loop has no seam; screen readers read the tag below. */
+  #boot .ticker { margin: 0 -18px; height: 32px; overflow: hidden; background: #000; border-bottom: 1px solid var(--line); color: var(--accent); font: 800 13px/32px var(--font); white-space: nowrap; }
+  #boot .ticker span { display: inline-block; padding-left: 18px; animation: bootTick 24s linear infinite; }
+  @keyframes bootTick { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+  @media (prefers-reduced-motion: reduce) { #boot .ticker span { animation: none; } }
+  #boot .ico { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+  #boot .bootlive { margin-top: 14px; padding: 10px 12px; border-radius: var(--r); text-align: left; background: var(--surface); border: 1px solid var(--line); font-size: 13px; font-weight: 500; line-height: 1.5; color: var(--text); }
   #boot .enter-go.pulse { animation: none; }
   /* The boot card's two makers (static, before the 3D city): the gift first in the accent, 내 전광판 beside it outlined, the DISCOVER link
      small under them. On a phone they stack. The 3D plaza's own button stays under the live lines. */
   #boot .bootcta { margin-top: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  #boot .bootbtn { display: flex; align-items: center; justify-content: center; min-height: 48px; padding: 6px 8px; border-radius: 10px; font: 800 15px/1.25 var(--font); text-align: center; word-break: keep-all; text-decoration: none; -webkit-tap-highlight-color: transparent; }
+  #boot .bootbtn { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 48px; padding: 6px 8px; border-radius: var(--r); font: 800 15px/1.25 var(--font); text-align: center; word-break: keep-all; text-decoration: none; -webkit-tap-highlight-color: transparent; }
   #boot .bootbtn.gift { color: var(--on-accent); background: var(--accent); border: 1px solid transparent; }
   #boot .bootbtn.gift:active { background: var(--accent-press); }
   #boot .bootbtn.me { color: var(--text); background: var(--surface-2); border: 1px solid var(--line); }
   #boot .bootbtn.me:active { background: var(--surface); }
-  #boot .bootdisc { grid-column: 1 / -1; display: inline-flex; align-items: center; justify-content: center; min-height: 40px; font-size: 13px; font-weight: 600; color: var(--text-2); text-decoration: underline; }
-  /* One row even at 320px (a long label wraps inside its button), and on a short screen no mark and a smaller title: the 3D entry and the
-     nickname stay on the first screen of a 375x812 phone. */
-  @media (max-height: 760px) { #boot .bootmark { display: none; } #boot h1 { font-size: 30px; margin: 4px 0; } #boot .bootcta { margin-top: 10px; } }
+  #boot .bootdisc { grid-column: 1 / -1; display: inline-flex; align-items: center; justify-content: flex-start; min-height: 44px; font-size: 13px; font-weight: 600; color: var(--text-2); text-decoration: underline; }
+  /* One row even at 320px (a long label wraps inside its button), and on a short screen a smaller title: the 3D entry and the nickname
+     stay on the first screen of a 375x812 phone. */
+  @media (max-height: 760px) { #boot h1 { font-size: 30px; margin: 10px 0 4px; } #boot .bootcta { margin-top: 10px; } }
+  /* An upright phone: the card sits at the foot of the screen, full width, and the plaza at night shows above it. */
+  @media (max-width: 599px) and (orientation: portrait) { #boot { padding: 0; } #boot .wrap { width: 100%; margin: auto 0 0; border-width: 1px 0 0; border-radius: var(--r-sheet) var(--r-sheet) 0 0; padding-bottom: max(18px, var(--safe-b)); } }
   /* With the makers above it, 3D 광장 둘러보기 is the quieter third choice (the accent stays the gift's). */
   #boot .bootcta ~ .enter .enter-go { color: var(--text); background: var(--surface-2); border: 1px solid var(--line); }
   #boot .bootcta ~ .enter .enter-go:active { background: var(--surface); }
-  .vipcard { padding: 14px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface-2); text-align: left; }
+  .vipcard { padding: 14px; border-radius: var(--r); border: 1px solid var(--line); background: var(--surface-2); text-align: left; }
   .vipcard h4 { margin: 0 0 6px; font: 800 15px/1.3 var(--font); }
   .vipcard p { margin: 0 0 10px; font-size: 13px; color: var(--muted); font-weight: 500; line-height: 1.45; }
   .vipcard .btn, .vipcard .input { width: 100%; margin-top: 8px; }
@@ -840,7 +850,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     .bar { gap: 6px; }
     .acts { flex-direction: row; align-items: flex-end; }
     .profile { padding: 8px 10px; gap: 10px; }
-    .avatar { width: 34px; height: 34px; font-size: 17px; border-radius: 10px; }
+    .avatar { width: 34px; height: 34px; font-size: 17px; border-radius: var(--r); }
     .wallet { padding: 9px 12px 9px 10px; gap: 10px; }
     /* Narrow column: every wallet chip flows in one wrapping row, so none runs past the panel edge. */
     .wallet .sub-fixed, .wallet .sub-live { display: contents; }
@@ -872,7 +882,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     .sheet h2 { font-size: 17px; }
     .sheet .content { padding: 16px 18px 22px; }
     .modal { padding: max(12px, var(--safe-t)) max(12px, var(--safe-r)) 0 max(12px, var(--safe-l)); place-items: end center; }
-    .sheet { max-height: min(92vh, calc(var(--app-h, 100dvh) - 12px - var(--safe-t))); border-radius: 20px 20px 0 0; }
+    .sheet { max-height: min(92vh, calc(var(--app-h, 100dvh) - 12px - var(--safe-t))); border-radius: var(--r-sheet) var(--r-sheet) 0 0; }
     .themes { grid-template-columns: repeat(3, 1fr); }
     .plots { grid-template-columns: repeat(5, 1fr); }
     .hub { grid-template-columns: 1fr; }
@@ -888,12 +898,12 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html.touch .nextgoal { flex: 1 0 100%; width: 100%; white-space: normal; overflow: visible; }
   html.touch button.nine { padding: 4px 8px; font-size: 12px; }
   html.touch .modal { padding: calc(10px + var(--safe-t)) calc(10px + var(--safe-r)) calc(10px + var(--safe-b)) calc(10px + var(--safe-l)); place-items: start center; }
-  html.touch .sheet { max-height: min(76vh, calc(var(--app-h, 100dvh) - 20px - var(--safe-t) - var(--safe-b))); border-radius: 20px; }
+  html.touch .sheet { max-height: min(76vh, calc(var(--app-h, 100dvh) - 20px - var(--safe-t) - var(--safe-b))); border-radius: var(--r-sheet); }
   /* A phone held upright: a sheet sits at the bottom, under the thumb, with its buttons there (it hung from the top and left the
      lower half of the screen, where the thumb is, empty: 2026-11-28 "버튼 위치가 애매하다"). With the keyboard up the modal is the
      visible viewport (--app-h), so the sheet still ends right above the keys. */
   @media (orientation: portrait) { html.touch .modal { place-items: end center; } }
-  html.touch .avatar { width: 30px; height: 30px; font-size: 15px; border-radius: 10px; }
+  html.touch .avatar { width: 30px; height: 30px; font-size: 15px; border-radius: var(--r); }
   html.touch .profile .name { font-size: 13px; }
   html.touch .wallet { padding: 6px 8px; gap: 8px; }
   html.touch .coin-icon { width: 26px; height: 26px; }
@@ -927,7 +937,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     html:not(.touch) .tools .tool-more { display: none; }
     html:not(.touch) .tools.open .tool-more { display: inline-flex; }
     html:not(.touch) .bar { position: relative; min-height: 46px; }
-    html:not(.touch) .tools.open { position: absolute; top: 0; right: 0; z-index: 7; flex-wrap: wrap; justify-content: flex-end; width: 170px; height: auto; padding: 3px 4px; border-radius: 20px; }
+    html:not(.touch) .tools.open { position: absolute; top: 0; right: 0; z-index: 7; flex-wrap: wrap; justify-content: flex-end; width: 170px; height: auto; padding: 3px 4px; border-radius: var(--r-sheet); }
   }
   @media (max-width: 640px) {
     /* The left column may take the width the folded row leaves: 250px + 10px from the right, and a 12px gap. */
@@ -965,10 +975,10 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html.touch .reacts { left: auto; right: calc(72px + var(--safe-r)); bottom: calc(36px + var(--safe-b)); transform: none; gap: 4px; padding: 6px; max-height: calc(var(--app-h, 100dvh) - 200px - var(--safe-t) - var(--safe-b)); overflow: auto; overscroll-behavior: contain; z-index: 8; }
   /* The pouch in the panel: one full-width row with its icon, its name and the count (ui.js paintBalloon: 1 … 999, then
      999+; 준비 or the wait in seconds while there is none) as a badge at the right end; muted while there is none. */
-  html.touch .reacts button.stay-balloon { grid-column: 1 / -1; position: relative; display: flex; align-items: center; gap: 8px; width: auto; height: 48px; padding: 0 10px 0 12px; border-radius: 10px; font: 700 14px/1.2 var(--font); color: var(--text); background: var(--surface-2); border: 1px solid var(--line); transform: none; left: auto; max-width: none; }
+  html.touch .reacts button.stay-balloon { grid-column: 1 / -1; position: relative; display: flex; align-items: center; gap: 8px; width: auto; height: 48px; padding: 0 10px 0 12px; border-radius: var(--r); font: 700 14px/1.2 var(--font); color: var(--text); background: var(--surface-2); border: 1px solid var(--line); transform: none; left: auto; max-width: none; }
   html.touch .reacts button.stay-balloon svg.ico { width: 22px; height: 22px; color: var(--accent); }
   html.touch .reacts button.stay-balloon .bl { flex: 1; min-width: 0; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  html.touch .reacts button.stay-balloon .bn { flex: none; min-width: 28px; height: 24px; padding: 0 8px; border-radius: 12px; background: var(--accent); color: var(--on-accent); font: 800 13px/24px var(--font); text-align: center; white-space: nowrap; }
+  html.touch .reacts button.stay-balloon .bn { flex: none; min-width: 28px; height: 24px; padding: 0 8px; border-radius: var(--r); background: var(--accent); color: var(--on-accent); font: 800 13px/24px var(--font); text-align: center; white-space: nowrap; }
   html.touch .reacts button.stay-balloon:disabled { color: var(--text-2); }
   html.touch .reacts button.stay-balloon:disabled .bn { background: var(--bg); color: var(--text-2); }
   /* After a throw from the panel, the next throws are one tap: a 52px circle left of 동작, level with it (ui.js pouchGo:
@@ -976,7 +986,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html.touch #ui > .pouchgo { position: absolute; right: calc(72px + var(--safe-r)); bottom: calc(160px + var(--safe-b)); z-index: 6; width: 52px; height: 52px; padding: 0; border-radius: 50%; display: grid; place-items: center; pointer-events: auto; color: var(--accent); background: var(--surface-hud); border: 1px solid var(--line-strong); }
   html.touch #ui > .pouchgo[hidden] { display: none; }
   html.touch #ui > .pouchgo svg.ico { width: 24px; height: 24px; }
-  html.touch #ui > .pouchgo .bn { position: absolute; top: -6px; left: -8px; min-width: 24px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--accent); color: var(--on-accent); font: 800 12px/20px var(--font); text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  html.touch #ui > .pouchgo .bn { position: absolute; top: -6px; left: -8px; min-width: 24px; height: 20px; padding: 0 6px; border-radius: var(--r); background: var(--accent); color: var(--on-accent); font: 800 12px/20px var(--font); text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; }
   html.touch #ui:is(.newbie, .lounging, .viewonly, :has(.bake.show)) > .pouchgo { display: none; }
   html.touch .toasts { bottom: calc(190px + var(--safe-b)); left: calc(72px + var(--safe-l)); right: calc(72px + var(--safe-r)); transform: none; }
   /* A desktop window lifts the toasts over the board's card; on touch the card is in the toasts' own column. */
@@ -1022,10 +1032,9 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
        and the right-hand column. */
     html.touch .bake { bottom: calc(8px + var(--safe-b)); width: min(560px, calc(100% - 24px)); }
     html.touch .dancebar { bottom: calc(10px + var(--safe-b)); left: calc(110px + var(--safe-l)); }
-    #boot h1 { font-size: 28px; margin: 6px 0; }
-    /* A phone on its side: no mark and tighter rows, so less of the card needs scrolling to reach 입장하기. */
-    #boot .bootmark { display: none; }
-    #boot .wrap { padding: 14px 18px; }
+    #boot h1 { font-size: 28px; margin: 8px 0 4px; }
+    /* A phone on its side: tighter rows, so less of the card needs scrolling to reach 입장하기. */
+    #boot .wrap { padding: 0 18px 14px; }
     #boot .bootlive { margin-top: 8px; padding: 8px 12px; }
     #boot .enter { margin-top: 12px; gap: 8px; }
   }
@@ -1055,7 +1064,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html.touch .reacts { grid-template-columns: repeat(4, 50px); }
   html.touch .reacts button { position: relative; width: 50px; height: 44px; font-size: 20px; }
   html.touch .reacts .rh { grid-column: 1 / -1; margin: 4px 2px 0; font: 700 12px/1.2 var(--font); color: var(--text-2); }
-  html.touch .reacts button.emote { width: 50px; height: 56px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 0; overflow: hidden; }
+  html.touch .reacts button.emote { width: 50px; height: 56px; border-radius: var(--r); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 0; overflow: hidden; }
   html.touch .reacts button.emote .e { font-size: 18px; min-height: 0; }
   html.touch .reacts button.emote .l { display: block; font-size: 12px; line-height: 1.1; font-weight: 700; color: var(--text); white-space: nowrap; letter-spacing: -.04em; }
   html.touch .reacts button.emote .k { display: none; }
@@ -1065,7 +1074,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
      멍때리기 alone (the eye belongs to the compact phone HUD). */
   .viewrow { display: none; }
   html.touch .viewrow { display: flex; gap: 6px; pointer-events: none; }
-  html.touch .viewrow > button { pointer-events: auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; width: 60px; height: 48px; padding: 0; border-radius: 14px; font: 700 12px/1 var(--font); letter-spacing: -.04em; white-space: nowrap; color: var(--text); background: var(--surface-hud); border: 1px solid var(--line); cursor: pointer; }
+  html.touch .viewrow > button { pointer-events: auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; width: 60px; height: 48px; padding: 0; border-radius: var(--r); font: 700 12px/1 var(--font); letter-spacing: -.04em; white-space: nowrap; color: var(--text); background: var(--surface-hud); border: 1px solid var(--line); cursor: pointer; }
   html.touch .viewrow > button svg.ico { width: 20px; height: 20px; display: block; }
   html.touch .viewrow > button .e { display: block; min-height: 0; font-size: 0; line-height: 0; }
   html.touch .viewrow > button .l { font-size: 12px; font-weight: 700; color: inherit; }
@@ -1092,21 +1101,21 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html.touch .hud-l .guestwarn { position: static; width: 100%; }
   html.touch .act,
   html.touch .dock .emote { border-radius: 50%; }
-  .dock .stay-lounge-btn { pointer-events: auto; width: 74px; height: 70px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font: 700 12px/1.15 var(--font); color: var(--text); background: var(--surface-2); border: 1px solid transparent; }
+  .dock .stay-lounge-btn { pointer-events: auto; width: 74px; height: 70px; border-radius: var(--r); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font: 700 12px/1.15 var(--font); color: var(--text); background: var(--surface-2); border: 1px solid transparent; }
   .dock .stay-lounge-btn .e { font-size: 28px; line-height: 1; }
   .dock .stay-lounge-btn .l { font-size: 12px; font-weight: 700; color: var(--text-2); }
   .dock .stay-lounge-btn.on .l { color: var(--accent); }
   .dock .stay-lounge-btn.on { color: var(--accent); background: var(--accent-weak); border-color: var(--line-strong); }
   /* 오늘 할 일 (ui.js todoEl, todo.js): right under the wallet card. The head line (name, n / N, the bar) opens the sheet; each row is
      a button (its action), the next one tinted with an arrow; the week's stamps and the foot line close it. */
-  .hud-l .todo-card { pointer-events: auto; display: grid; gap: 6px; padding: 10px 12px; border-radius: 14px; font: 500 12px/1.4 var(--font); color: var(--text); }
+  .hud-l .todo-card { pointer-events: auto; display: grid; gap: 6px; padding: 10px 12px; border-radius: var(--r); font: 500 12px/1.4 var(--font); color: var(--text); }
   .todo-head { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 5px 8px; width: 100%; min-height: 24px; margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
   .todo-head b { font-size: 13px; font-weight: 800; }
   .todo-head .n, .todo-prog .n { font-weight: 800; color: var(--accent); }
-  .todo-bar { grid-column: 1 / -1; display: block; height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
-  .todo-bar i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), #ffd36a); transition: width .45s ease; }
+  .todo-bar { grid-column: 1 / -1; display: block; height: 6px; border-radius: var(--r); background: var(--surface-2); overflow: hidden; }
+  .todo-bar i { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width .45s ease; }
   .todo-rows { display: grid; gap: 2px; }
-  .todo-row { position: relative; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto auto; align-items: center; gap: 6px; width: calc(100% + 12px); min-height: 24px; margin: 0 -6px; padding: 2px 6px; border: 0; border-radius: 8px; background: none; color: var(--text-2); font: inherit; text-align: left; cursor: pointer; }
+  .todo-row { position: relative; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto auto; align-items: center; gap: 6px; width: calc(100% + 12px); min-height: 24px; margin: 0 -6px; padding: 2px 6px; border: 0; border-radius: var(--r); background: none; color: var(--text-2); font: inherit; text-align: left; cursor: pointer; }
   .todo-row .ck { display: grid; place-items: center; color: var(--muted); }
   .todo-row .ck svg { width: 16px; height: 16px; }
   .todo-row .lb { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1127,10 +1136,10 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .todo-foot { display: grid; gap: 4px; }
   .todo-foot small { color: var(--muted); font-size: 12px; font-weight: 700; }
   .todo-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
-  .stamp { display: grid; place-items: center; height: 24px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); font-size: 12px; font-weight: 800; }
+  .stamp { display: grid; place-items: center; height: 24px; border-radius: var(--r); border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); font-size: 12px; font-weight: 800; }
   .stamp i { font-style: normal; }
   .stamp.attend { background: rgba(255, 176, 32, .16); border-color: rgba(255, 176, 32, .4); color: #ffd98a; }
-  .stamp.all { background: linear-gradient(135deg, #ffe08a, #ffb020); border-color: #ffcf5a; color: #1c1300; box-shadow: 0 0 10px rgba(255, 176, 32, .45); }
+  .stamp.all { background: var(--accent); border-color: var(--accent); color: #1c1300; }
   .stamp.today { background: none; border: 1px dashed var(--accent); color: var(--text); }
   .stamp.later { background: none; }
   .todo-line { margin: 0; color: var(--text-2); font-size: 12px; }
@@ -1147,19 +1156,19 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .todo-row.big.extra.done { border-style: solid; color: var(--muted); }
   .todo-row.big .lb { white-space: normal; }
   .todo-weekbox { display: grid; gap: 6px; margin: 0 0 10px; outline: none; }
-  .todo-weekbox:focus-visible { box-shadow: var(--focus); border-radius: 10px; }
+  .todo-weekbox:focus-visible { box-shadow: var(--focus); border-radius: var(--r); }
   .todo-weekbox b { font-size: 13px; }
-  .todo-weekbox .stamp { height: 36px; border-radius: 10px; font-size: 13px; }
+  .todo-weekbox .stamp { height: 36px; border-radius: var(--r); font-size: 13px; }
   .todo-sheet .todo-line { margin: 0 0 10px; }
-  .todo-sheet .todo-goal { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 44px; margin: 0 0 10px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; background: none; color: var(--info); font: inherit; font-weight: 700; text-align: left; cursor: pointer; }
+  .todo-sheet .todo-goal { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 44px; margin: 0 0 10px; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--r); background: none; color: var(--info); font: inherit; font-weight: 700; text-align: left; cursor: pointer; }
   #ui > .stay-balloon, #ui > .stay-focus { pointer-events: auto; }
   .stay-balloon, .stay-lounge { position: absolute; left: 50%; transform: translateX(-50%); z-index: 6; width: min(520px, calc(100% - 300px)); max-width: calc(100% - 24px); }
   /* A neutral HUD pill (not the primary action): only the packet icon is amber. */
-  .hud-r .stay-balloon { position: static; left: auto; right: auto; top: auto; bottom: auto; transform: none; width: 100%; max-width: 184px; margin-top: 8px; pointer-events: auto; padding: 8px 10px; border-radius: 999px; display: flex; align-items: center; justify-content: center; gap: 6px; font: 700 12px/1.3 var(--font); color: var(--text); background: var(--surface-hud); border: 1px solid var(--line); text-align: center; font-variant-numeric: tabular-nums; }
+  .hud-r .stay-balloon { position: static; left: auto; right: auto; top: auto; bottom: auto; transform: none; width: 100%; max-width: 184px; margin-top: 8px; pointer-events: auto; padding: 8px 10px; border-radius: var(--r); display: flex; align-items: center; justify-content: center; gap: 6px; font: 700 12px/1.3 var(--font); color: var(--text); background: var(--surface-hud); border: 1px solid var(--line); text-align: center; font-variant-numeric: tabular-nums; }
   .hud-r .stay-balloon svg.ico { color: var(--accent); }
   .hud-r .stay-balloon:disabled { color: var(--muted); cursor: default; }
-  .stay-lounge { top: calc(176px + var(--safe-t)); padding: 12px 14px; border-radius: 14px; text-align: center; font: 700 13px/1.4 var(--font); color: var(--text); background: var(--surface-hud); border: 1px solid var(--line); pointer-events: none; }
-  .stay-focus { position: absolute; left: 50%; bottom: calc(310px + var(--safe-b)); transform: translateX(-50%); z-index: 9; padding: 12px 22px; border-radius: 999px; border: 1px solid var(--line); font: 700 15px/1 var(--font); color: var(--text); background: var(--surface-hud); pointer-events: auto; }
+  .stay-lounge { top: calc(176px + var(--safe-t)); padding: 12px 14px; border-radius: var(--r); text-align: center; font: 700 13px/1.4 var(--font); color: var(--text); background: var(--surface-hud); border: 1px solid var(--line); pointer-events: none; }
+  .stay-focus { position: absolute; left: 50%; bottom: calc(310px + var(--safe-b)); transform: translateX(-50%); z-index: 9; padding: 12px 22px; border-radius: var(--r); border: 1px solid var(--line); font: 700 15px/1 var(--font); color: var(--text); background: var(--surface-hud); pointer-events: auto; }
   @media (max-width: 900px) {
     .stay-balloon, .stay-lounge { width: min(520px, calc(100% - 24px)); }
     .stay-balloon { position: static; left: auto; right: auto; bottom: auto; top: auto; transform: none; width: 100%; max-width: 184px; }
@@ -1214,7 +1223,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
      three lines that did the same as the round button beside it. */
   html.touch .prompt { top: auto; bottom: calc(44px + var(--safe-b)); left: calc(122px + var(--safe-l)); right: calc(72px + var(--safe-r)); width: fit-content; max-width: 440px; margin: 0 0 0 auto; transform: translateY(8px) scale(.96); z-index: 4; }
   html.touch .prompt.show { transform: none; pointer-events: none !important; }
-  html.touch .prompt .tag { display: block; padding: 8px 12px; border-radius: 14px; font: 700 13px/1.35 var(--font); color: var(--text); text-align: right; word-break: keep-all; overflow-wrap: anywhere; }
+  html.touch .prompt .tag { display: block; padding: 8px 12px; border-radius: var(--r); font: 700 13px/1.35 var(--font); color: var(--text); text-align: right; word-break: keep-all; overflow-wrap: anywhere; }
   html.touch .prompt .tag .sub { display: block; font-size: 12px; }
   html.touch .prompt .tag .sub:empty { display: none; }
   /* 시점 해제 (ui.js focusBtn) takes the tag's place, right against the column: the prompt is hidden while the focus camera
@@ -1249,9 +1258,9 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   /* Newcomer focus mode: ui.js toggles #ui.newbie until kts_grad is set. Hidden, not removed. */
   #ui.newbie .liveboard, #ui.newbie .todo-card, #ui.newbie .stay-balloon, #ui.newbie .channel-card, #ui.newbie .tool-adv, #ui.newbie .guestwarn, #ui.newbie .nextline { display: none !important; }
   .newbie-more { display: none; }
-  #ui.newbie .newbie-more { display: inline-flex; align-items: center; align-self: flex-start; min-height: 40px; pointer-events: auto; padding: 0 14px; border-radius: 999px; background: var(--surface-hud); border: 1px solid var(--line); color: var(--text); font: 700 12px/1.3 var(--font); cursor: pointer; }
+  #ui.newbie .newbie-more { display: inline-flex; align-items: center; align-self: flex-start; min-height: 40px; pointer-events: auto; padding: 0 14px; border-radius: var(--r); background: var(--surface-hud); border: 1px solid var(--line); color: var(--text); font: 700 12px/1.3 var(--font); cursor: pointer; }
   .newbie-more:focus-visible, #ui .nextgoal.task:focus-visible { outline: none; box-shadow: var(--focus); }
-  #ui .nextgoal.task { flex: none; display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; width: 100%; padding: 10px 12px; border-radius: 14px; pointer-events: auto; background: var(--surface-hud); border: 1px solid var(--line); color: var(--text); font: 700 15px/1.35 var(--font); white-space: normal; overflow: visible; text-align: left; }
+  #ui .nextgoal.task { flex: none; display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; width: 100%; padding: 10px 12px; border-radius: var(--r); pointer-events: auto; background: var(--surface-hud); border: 1px solid var(--line); color: var(--text); font: 700 15px/1.35 var(--font); white-space: normal; overflow: visible; text-align: left; }
   #ui .nextgoal.task small { flex: 1 0 100%; font-size: 12px; font-weight: 700; letter-spacing: .02em; color: var(--info); }
   #ui .nextgoal.task span { flex: 1; min-width: 0; }
   #ui .nextgoal.task i { flex: none; font-style: normal; font-size: 20px; line-height: 1; color: var(--info); }
@@ -1267,13 +1276,13 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   #boot #bootWish { color: var(--text); overflow-wrap: anywhere; }
   /* 계절 소원 테마 (seasons.js): the boot card line and the header on top of the wish sheet, both in the season's neon accent. */
   #boot #bootSeason { color: var(--season, var(--text)); font-weight: 700; overflow-wrap: anywhere; }
-  .sheet.wish .wish-season { margin: 0 0 10px; padding: 8px 12px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--season, #ffb020) 55%, transparent); background: color-mix(in srgb, var(--season, #ffb020) 12%, transparent); color: var(--text); font: 700 14px/1.4 var(--font); overflow-wrap: anywhere; }
+  .sheet.wish .wish-season { margin: 0 0 10px; padding: 8px 12px; border-radius: var(--r); border: 1px solid color-mix(in srgb, var(--season, #ffb020) 55%, transparent); background: color-mix(in srgb, var(--season, #ffb020) 12%, transparent); color: var(--text); font: 700 14px/1.4 var(--font); overflow-wrap: anywhere; }
   .sheet.wish .wish-season[hidden] { display: none; }
   .sheet.wish h3 { margin: 16px 0 8px; font: 800 15px/1.3 var(--font); }
   .sheet.wish .btn { height: auto; min-height: 44px; padding: 8px 16px; white-space: normal; text-align: center; justify-content: center; line-height: 1.3; }
   .sheet.wish .wish-go { width: 100%; margin-top: 10px; font-size: 15px; }
   .sheet.wish .wish-edit { margin-top: 8px; }
-  .wish-card { padding: 14px 16px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--line); }
+  .wish-card { padding: 14px 16px; border-radius: var(--r); background: var(--surface-2); border: 1px solid var(--line); }
   .wish-card + .wish-mine { margin-top: 14px; }
   .wish-focus { border-color: var(--line-strong); }
   .wish-card p { margin: 0; }
@@ -1298,7 +1307,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .manual-copy[hidden] { display: none; }
   .manual-copy .input { width: 100%; font-size: 13px; }
   .manual-copy .note { margin: 6px 0 0; }
-  .wish-push { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); }
+  .wish-push { margin-top: 12px; padding: 10px 12px; border-radius: var(--r); background: var(--surface-2); border: 1px solid var(--line); }
   .wish-push .wish-push-q { margin: 0; font-weight: 700; }
   .wish-push-act { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
   .sheet.wish .wish-push-act .btn { width: auto; margin: 0; }
@@ -1317,19 +1326,19 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .a2hs .a2hs-later { min-height: 40px; padding: 0 6px; background: none; border: 0; color: var(--text-2); font: 700 13px/1 var(--font); text-decoration: underline; cursor: pointer; }
   html.touch .a2hs { width: min(360px, calc(100% + 60px)); }
   .recap-list { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 14px; }
-  .recap-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); }
+  .recap-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: var(--r); background: var(--surface-2); border: 1px solid var(--line); }
   .recap-row b { color: var(--accent); font-size: 17px; }
   .away-list { display: flex; flex-direction: column; gap: 10px; }
-  .away-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); }
+  .away-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--r); background: var(--surface-2); border: 1px solid var(--line); }
   .away-row p { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; line-height: 1.4; }
   .away-row .btn { flex: none; min-height: 40px; height: auto; padding: 8px 12px; white-space: nowrap; }
   @media (max-width: 420px) { .away-row { flex-direction: column; align-items: stretch; } .away-row .btn { width: 100%; } }
   .wish-tabs { display: flex; gap: 6px; margin-top: 18px; }
-  .wish-tab { flex: 1; min-height: 40px; border-radius: 10px; font: 700 15px/1 var(--font); color: var(--muted); background: var(--bg); border: 1px solid var(--line); cursor: pointer; }
+  .wish-tab { flex: 1; min-height: 40px; border-radius: var(--r); font: 700 15px/1 var(--font); color: var(--muted); background: var(--bg); border: 1px solid var(--line); cursor: pointer; }
   .wish-tab.on { color: var(--text); background: var(--surface-2); border-color: var(--line-strong); }
   .wish-left { margin: 8px 0 4px; }
   .wish-list { display: flex; flex-direction: column; gap: 6px; }
-  .wish-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); }
+  .wish-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 8px 10px; border-radius: var(--r); background: var(--surface-2); border: 1px solid var(--line); }
   .wish-row.mine { border-color: var(--line-strong); }
   .wish-row .n { flex: none; width: 22px; text-align: center; font-weight: 800; color: var(--muted); font-variant-numeric: tabular-nums; }
   .wish-row .wt { flex: 1 1 160px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
@@ -1337,7 +1346,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .wish-row .wt small { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
   .wish-row .wh { flex: none; color: var(--live); font-weight: 800; font-size: 13px; font-variant-numeric: tabular-nums; }
   .wish-row .wa { flex: none; display: flex; align-items: center; gap: 6px; margin-left: auto; }
-  .wish-heart, .wish-report { min-height: 44px; min-width: 44px; padding: 0 12px; border-radius: 999px; font: 700 13px/1 var(--font); cursor: pointer; }
+  .wish-heart, .wish-report { min-height: 44px; min-width: 44px; padding: 0 12px; border-radius: var(--r); font: 700 13px/1 var(--font); cursor: pointer; }
   .wish-heart { color: var(--bg); background: var(--live); border: 0; }
   .wish-heart:disabled { color: var(--dim); background: var(--surface-2); border: 1px solid var(--line); cursor: default; }
   .wish-report { color: var(--muted); background: none; border: 1px solid transparent; font-weight: 700; font-size: 12px; }
@@ -1379,7 +1388,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .sheet > .wiz-foot { position: sticky; bottom: 0; z-index: 2; margin: 0; padding: 10px 24px calc(14px + var(--safe-b)); border-top: 1px solid var(--line); }
   @media (max-width: 900px) { .sheet > .wiz-foot { padding: 10px 18px calc(12px + var(--safe-b)); } }
   .wiz-sum { margin-top: 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
-  .wiz-sum > div { min-width: 0; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); }
+  .wiz-sum > div { min-width: 0; padding: 10px 12px; border-radius: var(--r); background: var(--surface-2); border: 1px solid var(--line); }
   .wiz-sum small { display: block; font-size: 12px; font-weight: 700; color: var(--muted); }
   .wiz-sum b { display: block; margin-top: 4px; font-size: 15px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .wiz-sum b.gold { color: var(--accent); font-variant-numeric: tabular-nums; }
@@ -1417,14 +1426,14 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     html.touch .hud-l > * { grid-column: 1 / -1; justify-self: start; max-width: 100%; }
     html.touch .hud-l > .wallet, html.touch .hud-l > .liveboard { display: none; }
     html.touch .hud-l > .todo-card { display: none; } /* the goal pill carries 오늘 할 일 here (ui.js phonePill) */
-    html.touch .hud-l > .ident { grid-row: 1; border-radius: 22px; max-width: min(100%, calc(100vw - 206px - var(--safe-l) - var(--safe-r))); }
+    html.touch .hud-l > .ident { grid-row: 1; border-radius: var(--r-sheet); max-width: min(100%, calc(100vw - 206px - var(--safe-l) - var(--safe-r))); }
     html.touch #ui:has(.tool-inbox:not([hidden])) .hud-l > .ident { max-width: min(100%, calc(100vw - 250px - var(--safe-l) - var(--safe-r))); }
     html.touch .ident .profile { flex: 0 1 auto; gap: 7px; padding: 7px 7px 7px 6px; }
     html.touch .ident .profile .status { margin-top: 1px; gap: 5px; font-size: 12px; }
     html.touch .ident .id-coin { position: relative; display: grid; grid-template-rows: auto auto; align-content: center; justify-items: start; flex: none; padding: 0 10px 0 7px; border: 0; border-left: 1px solid var(--line); background: none; color: var(--accent); font: 800 15px/1 var(--font); cursor: pointer; pointer-events: auto; }
     html.touch .id-coin img { grid-column: 1; grid-row: 1 / span 2; align-self: center; width: 24px; height: 24px; margin: -3px 2px -3px -4px; clip-path: circle(34%); object-fit: cover; filter: brightness(1.35) saturate(1.3); }
     html.touch .id-coin > span { grid-column: 2; grid-row: 1; }
-    html.touch .id-coin .pend { grid-row: 2; margin-top: 2px; padding: 0 4px; border-radius: 999px; background: var(--accent-weak); font-size: 12px; font-weight: 700; line-height: 14px; animation: chipPulse 1.4s ease-in-out infinite; }
+    html.touch .id-coin .pend { grid-row: 2; margin-top: 2px; padding: 0 4px; border-radius: var(--r); background: var(--accent-weak); font-size: 12px; font-weight: 700; line-height: 14px; animation: chipPulse 1.4s ease-in-out infinite; }
     html.touch .id-coin .pend.warn { color: var(--danger); }
     html.touch .id-coin.bump > span:first-of-type { animation: bump .5s cubic-bezier(.2,1.6,.4,1); }
     html.touch .hud-l > .nextgoal { grid-row: 2; }
@@ -1433,13 +1442,13 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     @media (orientation: portrait) and (max-width: 399px) { html.touch .ident .id-coin { padding: 0 8px 0 5px; } html.touch .id-coin img { margin-right: 0; } }
     @media (orientation: portrait) and (max-width: 359px) { html.touch .ident .id-coin { padding: 0 6px 0 4px; font-size: 14px; } html.touch .ident .profile { padding-right: 4px; } }
     html.touch .ident .profile .status > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    html.touch .hud-l > .nextgoal:not(.task) { grid-column: 1; display: block; width: auto; padding: 6px 10px; border-radius: 999px; background: var(--surface-hud); border: 1px solid var(--line); font-size: 12px; line-height: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: auto; }
+    html.touch .hud-l > .nextgoal:not(.task) { grid-column: 1; display: block; width: auto; padding: 6px 10px; border-radius: var(--r); background: var(--surface-hud); border: 1px solid var(--line); font-size: 12px; line-height: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: auto; }
     html.touch .hud-l > .nextgoal:not(.task) .ng-k { font-size: 0; line-height: 0; vertical-align: top; }
-    html.touch .hud-l > .nextgoal:not(.task) .ng-t { display: inline-block; vertical-align: top; margin: 3px 6px 0 0; padding: 0 5px; border-radius: 6px; background: rgba(255, 176, 32, .2); color: var(--accent); font-size: 12px; line-height: 16px; }
-    html.touch .hud-l > .nextgoal:not(.task) .ng-k::before { content: "목표"; display: inline-block; vertical-align: top; margin: 3px 6px 0 0; padding: 0 5px; border-radius: 6px; background: color-mix(in srgb, var(--info) 20%, transparent); font-size: 12px; line-height: 16px; }
+    html.touch .hud-l > .nextgoal:not(.task) .ng-t { display: inline-block; vertical-align: top; margin: 3px 6px 0 0; padding: 0 5px; border-radius: var(--r); background: rgba(255, 176, 32, .2); color: var(--accent); font-size: 12px; line-height: 16px; }
+    html.touch .hud-l > .nextgoal:not(.task) .ng-k::before { content: "목표"; display: inline-block; vertical-align: top; margin: 3px 6px 0 0; padding: 0 5px; border-radius: var(--r); background: color-mix(in srgb, var(--info) 20%, transparent); font-size: 12px; line-height: 16px; }
     html.touch .hud-l > .guestwarn { width: auto; padding: 0; border: 0; border-radius: 0; background: none; }
     html.touch .hud-l > .guestwarn p { display: none; }
-    html.touch .hud-l > .guestwarn .btn { height: 36px; padding: 0 14px; border-radius: 999px; font-size: 13px; }
+    html.touch .hud-l > .guestwarn .btn { height: 36px; padding: 0 14px; border-radius: var(--r); font-size: 13px; }
     html.touch .hud-l > .nextgoal:not(.task)::after, html.touch .hud-l > .guestwarn .btn::after { inset: -4px 0; }
     html.touch .hud-r .view-btn { display: flex; }
     @media (orientation: landscape) { html.touch .hud-r > .viewrow { position: absolute; top: 54px; right: 62px; } }
@@ -1474,8 +1483,8 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
      before, its aria-label written beside the icon; ⋯ itself becomes 닫기 at the bottom. It lies over the minimap while
      open, like any menu, and everything behind it is dimmed (its 100vmax shadow), so the half-covered left column no
      longer reads as part of it. 소리 and 전체 화면 are in the settings sheet, so the menu is four rows of two. */
-  html.touch .tools.open { position: absolute; top: 0; right: 0; z-index: 9; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; width: min(300px, calc(100vw - 20px - var(--safe-l) - var(--safe-r))); max-width: none; height: auto; padding: 8px; border-radius: 18px; background: var(--surface); border: 1px solid var(--line-strong); box-shadow: var(--shadow-sheet), 0 0 0 100vmax rgba(0, 0, 0, .56); }
-  html.touch .tools.open > .btn { position: relative; width: auto; height: 48px; justify-content: flex-start; gap: 8px; padding: 0 10px; border-radius: 12px; }
+  html.touch .tools.open { position: absolute; top: 0; right: 0; z-index: 9; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; width: min(300px, calc(100vw - 20px - var(--safe-l) - var(--safe-r))); max-width: none; height: auto; padding: 8px; border-radius: var(--r-sheet); background: var(--surface); border: 1px solid var(--line-strong); box-shadow: var(--shadow-sheet), 0 0 0 100vmax rgba(0, 0, 0, .56); }
+  html.touch .tools.open > .btn { position: relative; width: auto; height: 48px; justify-content: flex-start; gap: 8px; padding: 0 10px; border-radius: var(--r); }
   html.touch .tools.open > .btn::after { content: attr(aria-label); min-width: 0; font: 700 13px/1.2 var(--font); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   html.touch .tools.open > .tool-fold { grid-column: 1 / -1; order: 99; justify-content: center; }
   html.touch .tools.open > .tool-fold::after { content: "닫기"; }
@@ -1484,14 +1493,14 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
 
   /* 멍때리기: the boards are the whole view. One small line at the top says what is happening; 그만 is the only button.
      The stick still works where it was (moving ends the tour), it is just not drawn. */
-  .stay-lounge { top: calc(10px + var(--safe-t)); width: auto; max-width: calc(100% - 24px); padding: 7px 14px; border-radius: 999px; font: 700 12px/1.3 var(--font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stay-lounge { top: calc(10px + var(--safe-t)); width: auto; max-width: calc(100% - 24px); padding: 7px 14px; border-radius: var(--r); font: 700 12px/1.3 var(--font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #ui.lounging > :is(.hud-r, .prompt, .waypill, .stay-focus, .reacts, .joy, .acts, .help) { visibility: hidden !important; }
   #ui.lounging .dock > :not(.stay-lounge-btn) { display: none !important; }
   html:not(.touch) #ui.lounging .dock { background: none; border-color: transparent; box-shadow: none; }
   /* On a touch screen 그만 보기 is one pill in the bottom right corner, off the boards; the notices take the bottom edge
      left of it. The button lives in the row under the map (.viewrow), which is hidden with the rest of that column: only
      the button shows, fixed to the corner. */
-  html.touch #ui.lounging .viewrow > .stay-lounge-btn { visibility: visible !important; position: fixed; right: calc(16px + var(--safe-r)); bottom: calc(14px + var(--safe-b)); z-index: 9; flex-direction: row; gap: 6px; width: auto; height: 44px; padding: 0 18px; border-radius: 999px; font-size: 14px; color: var(--text); background: var(--surface-hud); border-color: var(--line); }
+  html.touch #ui.lounging .viewrow > .stay-lounge-btn { visibility: visible !important; position: fixed; right: calc(16px + var(--safe-r)); bottom: calc(14px + var(--safe-b)); z-index: 9; flex-direction: row; gap: 6px; width: auto; height: 44px; padding: 0 18px; border-radius: var(--r); font-size: 14px; color: var(--text); background: var(--surface-hud); border-color: var(--line); }
   html.touch #ui.lounging .viewrow > .stay-lounge-btn .l { font-size: 14px; }
   html.touch #ui.lounging .viewrow > .stay-lounge-btn svg.ico { width: 18px; height: 18px; }
   body:has(#ui.lounging) .toasts { bottom: calc(76px + var(--safe-b)); }
@@ -1655,9 +1664,9 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   html.touch .legend .osm { display: inline-flex; align-items: center; min-height: 44px; }
   /* Sliders: the track is 6px in a taller box, so the thumb can be caught anywhere along a 44px row on touch. */
   .range { height: 28px; background: none; }
-  .range::-webkit-slider-runnable-track { height: 6px; border-radius: 999px; background: var(--line-strong); }
+  .range::-webkit-slider-runnable-track { height: 6px; border-radius: var(--r); background: var(--line-strong); }
   .range::-webkit-slider-thumb { margin-top: -8px; }
-  .range::-moz-range-track { height: 6px; border-radius: 999px; background: var(--line-strong); }
+  .range::-moz-range-track { height: 6px; border-radius: var(--r); background: var(--line-strong); }
   html.touch .range { height: 44px; }
 
   /* Map sheet: 44px buttons 8px apart; the quick-jump row fades at its right end, which says there is more to scroll to. */
@@ -1690,15 +1699,15 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   .note a, .callout a, .credits a { color: var(--info); font-weight: 700; }
   /* A row of link buttons (the settings sheet's map credit, licences, terms, privacy; a photo's licence and source). */
   .linkrow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
-  .linkrow > :is(a, button) { display: flex; align-items: center; justify-content: center; min-height: 44px; padding: 6px 10px; border-radius: 10px; font: 700 13px/1.3 var(--font); color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); text-align: center; text-decoration: none; cursor: pointer; }
+  .linkrow > :is(a, button) { display: flex; align-items: center; justify-content: center; min-height: 44px; padding: 6px 10px; border-radius: var(--r); font: 700 13px/1.3 var(--font); color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); text-align: center; text-decoration: none; cursor: pointer; }
   .credits .c .linkrow { margin-top: 8px; }
   /* Settings: a row that opens another sheet (its name, then a chevron), and the 소리 / 전체 화면 switches. */
   .rowlist { display: grid; gap: 8px; margin-top: 12px; }
-  .rowlist > button { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 48px; padding: 0 12px 0 14px; border-radius: 10px; font: 700 15px/1.3 var(--font); color: var(--text); background: var(--surface-2); border: 1px solid var(--line); text-align: left; cursor: pointer; }
+  .rowlist > button { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 48px; padding: 0 12px 0 14px; border-radius: var(--r); font: 700 15px/1.3 var(--font); color: var(--text); background: var(--surface-2); border: 1px solid var(--line); text-align: left; cursor: pointer; }
   .rowlist > button > span { flex: 1; min-width: 0; }
   .rowlist > button > em { flex: none; font-style: normal; font-size: 13px; font-weight: 700; color: var(--text-2); }
   .rowlist > button svg.ico { color: var(--text-2); }
-  .rowlist > .switch > i { flex: none; position: relative; width: 44px; height: 26px; border-radius: 13px; background: var(--line-strong); transition: background-color .15s; }
+  .rowlist > .switch > i { flex: none; position: relative; width: 44px; height: 26px; border-radius: var(--r); background: var(--line-strong); transition: background-color .15s; }
   .rowlist > .switch > i::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--text); transition: translate .15s; }
   .rowlist > .switch[aria-pressed="true"] > i { background: var(--accent); }
   .rowlist > .switch[aria-pressed="true"] > i::after { translate: 18px 0; background: var(--on-accent); }
@@ -1758,7 +1767,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     .sheet.wiz .content:has(> .screen) > :nth-child(2) { margin-top: 0; }
     .sheet.wiz .screen canvas { width: 100%; height: auto; }
     .sheet.bill .grid2.bb { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 0 16px; }
-    .sheet.bill .grid2.bb .screen { padding: 4px; border-radius: 12px; }
+    .sheet.bill .grid2.bb .screen { padding: 4px; border-radius: var(--r); }
     .sheet.bill .grid2.bb .screen canvas { width: min(100%, calc((var(--app-h, 100dvh) - 230px) * 16 / 9)); height: auto; margin: 0 auto; } /* the preview and the slot picker fit the scroller */
     .sheet.bill .bb-look .slot-pick { margin-top: 6px; }
     /* A phone on its side: the sheet takes the height and a slimmer header, so the lines and the sticky 걸기 share the scroller. */
@@ -1775,7 +1784,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     html:not(.touch) .hud-l > :not(.ident) { display: none; }
     html:not(.touch) .ident .id-coin { display: flex; align-items: center; gap: 4px; flex: none; padding: 0 12px 0 8px; border: 0; border-left: 1px solid var(--line); background: none; color: var(--accent); font: 800 15px/1 var(--font); cursor: pointer; pointer-events: auto; }
     html:not(.touch) .id-coin img { width: 24px; height: 24px; clip-path: circle(34%); object-fit: cover; filter: brightness(1.35) saturate(1.3); }
-    html:not(.touch) .id-coin .pend { padding: 0 4px; border-radius: 999px; background: var(--accent-weak); font-size: 12px; font-weight: 700; line-height: 14px; }
+    html:not(.touch) .id-coin .pend { padding: 0 4px; border-radius: var(--r); background: var(--accent-weak); font-size: 12px; font-weight: 700; line-height: 14px; }
     html:not(.touch) .dock { left: 50%; right: auto; bottom: calc(10px + var(--safe-b)); transform: translateX(-50%); flex-direction: row; padding: 4px; gap: 4px; }
     html:not(.touch) .dock .emote, html:not(.touch) .dock .stay-lounge-btn { width: 50px; height: 44px; }
     html:not(.touch) .dock .emote :is(.l, .k), html:not(.touch) .dock .stay-lounge-btn .l { display: none; }
@@ -1807,7 +1816,7 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
   @media (min-width: 1024px) {
     html:not(.touch) .bar { position: relative; min-height: 46px; }
     html:not(.touch) .tools { gap: 4px; }
-    html:not(.touch) .tools > .btn { width: auto; padding: 0 12px 0 10px; gap: 6px; border-radius: 999px; font-size: 13px; font-weight: 700; line-height: 1; }
+    html:not(.touch) .tools > .btn { width: auto; padding: 0 12px 0 10px; gap: 6px; border-radius: var(--r); font-size: 13px; font-weight: 700; line-height: 1; }
     html:not(.touch) .tools > .btn::after { content: attr(aria-label); white-space: nowrap; }
     html:not(.touch) .tools > .tool-gift::after { content: "선물 전광판"; }
     html:not(.touch) .tools > .tool-fold { display: inline-flex; }
@@ -1815,8 +1824,8 @@ addEventListener('appinstalled', () => { window.__ktsInstall = null; try { local
     html:not(.touch) .tools > .btn :is(.wish-dot, .inbox-dot) { top: 4px; right: 4px; }
     html:not(.touch) .tools:not(.open) > :is(.t-1280, .t-1440, .t-1680) { display: none; }
     /* Open: one column of rows over the minimap, the same tools in the same order, ⋯ becomes 닫기 at the bottom. */
-    html:not(.touch) .tools.open { position: absolute; top: 0; right: 0; z-index: 9; display: grid; grid-template-columns: 1fr; gap: 2px; width: 220px; height: auto; padding: 6px; border-radius: 18px; background: var(--surface); border: 1px solid var(--line-strong); box-shadow: var(--shadow-sheet); }
-    html:not(.touch) .tools.open > .btn { display: inline-flex; width: 100%; height: 40px; justify-content: flex-start; border-radius: 12px; }
+    html:not(.touch) .tools.open { position: absolute; top: 0; right: 0; z-index: 9; display: grid; grid-template-columns: 1fr; gap: 2px; width: 220px; height: auto; padding: 6px; border-radius: var(--r-sheet); background: var(--surface); border: 1px solid var(--line-strong); box-shadow: var(--shadow-sheet); }
+    html:not(.touch) .tools.open > .btn { display: inline-flex; width: 100%; height: 40px; justify-content: flex-start; border-radius: var(--r); }
     html:not(.touch) .tools.open > .tool-fold::after { content: "닫기"; }
     html:not(.touch) .tools.open :is(.wish-dot, .inbox-dot) { position: static; order: 1; flex: none; margin-left: -2px; outline: 0; }
   }
@@ -1913,18 +1922,17 @@ const CLARITY_ID = '';
 <div id="boot" role="dialog" aria-label="위시보드 입장">
   <div class="grid" aria-hidden="true"></div>
   <div class="wrap">
-    <img class="bootmark" src="./icons/app-icon.jpg?v=4" alt="" width="84" height="84" />
-    <div class="badge">NEW YORK WISH SQUARE</div>
+    <div class="ticker" aria-hidden="true"><span>거리 전광판 68곳 · 6시간 무료 · 15초 축하 영상 · 친구들의 롤링페이퍼 · WISH BOARD · 거리 전광판 68곳 · 6시간 무료 · 15초 축하 영상 · 친구들의 롤링페이퍼 · WISH BOARD · </span></div>
     <h1>모두의 전광판</h1>
-    <div class="tag">당신의 특별한 순간을, 가상 타임스퀘어 전광판에.<br>생일 축하도, 내 이름과 다짐도 6시간 무료로 걸어요.</div>
+    <div class="tag">친구 이름이나 내 다짐을 가상 타임스퀘어 전광판에 걸어요. 6시간 무료예요.</div>
     <!-- B2C (2026-11-27): the two things to make, in plain links that work before the 3D city loads (and without it). The 3D plaza is the
          third choice, the button below that comes once the city is built (ui.js bootReady: 3D 광장 둘러보기). -->
     <nav class="bootcta" aria-label="만들기">
-      <a class="bootbtn gift" href="/gift">🎁 누군가에게 선물하기</a>
-      <a class="bootbtn me" href="/gift?me=1">✨ 내 전광판 만들기</a>
+      <a class="bootbtn gift" href="/gift"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="9" width="16" height="4" rx="1"/><path d="M5.5 13V19.5A1 1 0 0 0 6.5 20.5H17.5A1 1 0 0 0 18.5 19.5V13"/><path d="M12 9V20.5"/><path d="M12 9C10.5 6.5 7.5 5 7 7C6.6 8.6 9.5 9 12 9"/><path d="M12 9C13.5 6.5 16.5 5 17 7C17.4 8.6 14.5 9 12 9"/></svg>누군가에게 선물하기</a>
+      <a class="bootbtn me" href="/gift?me=1"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 8L11.2 12.15L15.68 12.49L12.26 15.4L13.32 19.76L9.5 17.4L5.68 19.76L6.74 15.4L3.32 12.49L7.8 12.15Z"/><path d="M13.5 8.5L20 3.5"/><path d="M17 11L21 8"/><path d="M11.5 6L15 3"/></svg>내 전광판 만들기</a>
       <a class="bootdisc" href="/discover">다른 사람들의 전광판 둘러보기</a>
     </nav>
-    <div class="bootlive" id="bootLive"><div id="bootSeason" hidden></div><div id="bootWish" hidden></div><div id="bootKing">👑 지금 메인 타워의 소원: 확인 중…</div><div id="bootStat">빈 자리와 오늘 다녀간 사람을 세는 중…</div></div>
+    <div class="bootlive" id="bootLive"><div id="bootSeason" hidden></div><div id="bootWish" hidden></div><div id="bootKing">메인 타워 소식을 불러오는 중…</div><div id="bootStat">빈 자리와 오늘 다녀간 사람을 세는 중…</div></div>
     <div class="prog" aria-hidden="true"><i id="bootBar"></i></div>
     <div class="msg" id="bootMsg">타임스퀘어로 이동하는 중…</div>
     <div class="enter" id="bootEnter" hidden></div>

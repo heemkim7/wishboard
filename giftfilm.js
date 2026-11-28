@@ -5,7 +5,7 @@
 // sought and recorded the same way each time; the scene is seeded by the board id.
 // recordCanvas is shared with the plaza's 3D recording (gift.js): MP4 where MediaRecorder makes it, WebM otherwise.
 import { OCCASIONS, pickRecordType, isMe, toLine, filmMark } from './giftrules.js';
-import { paintGift, themeOf, seeded, GIFT_SANS, fitSize } from './giftart.js?v=202611280944';
+import { paintGift, seeded, GIFT_SANS, fitSize } from './giftart.js?v=202611280944';
 
 export const FILM_MS = 15000;
 const ease = (u) => (u <= 0 ? 0 : u >= 1 ? 1 : u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2);
@@ -54,7 +54,7 @@ export function createFilm(canvas, gift, opts = {}) {
   const g = canvas.getContext('2d'), scene = buildScene(gift?.id || gift?.to || 'gift');
   const board = document.createElement('canvas'); board.width = 1024; board.height = 576;
   paintGift(board, gift);
-  const T = themeOf(gift), O = OCCASIONS[gift?.occ] || OCCASIONS.bday;
+  const O = OCCASIONS[gift?.occ] || OCCASIONS.bday;
   let raf = 0, t0 = 0, playing = false, ended = false;
   const ends = new Set(); if (opts.onEnd) ends.add(opts.onEnd);
 
@@ -63,25 +63,26 @@ export function createFilm(canvas, gift, opts = {}) {
     const C = cam(t, W, f);
     const P = (x, y, z) => { const dz = Math.max(0.5, z - C.z); return [cx + f * (x - C.x) / dz, hy - f * (y - C.y) / dz, f / dz]; };
     // Sky, stars, the far skyline.
-    const sky = g.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, '#03041a'); sky.addColorStop(0.42, '#140c44'); sky.addColorStop(0.62, '#3a1150'); sky.addColorStop(1, '#07040f');
+    // 2026-11-28 (A. LED 전광판): the night is black, no purple in it; the colour is the screens'.
+    const sky = g.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, '#000000'); sky.addColorStop(0.42, '#08090c'); sky.addColorStop(0.62, '#121317'); sky.addColorStop(1, '#000000');
     g.fillStyle = sky; g.fillRect(0, 0, W, H);
     for (const s of scene.stars) { g.globalAlpha = 0.35 + 0.35 * Math.sin(t * 2 + s.p); g.fillStyle = '#fff'; g.fillRect(s.x * W, s.y * H, s.s, s.s); }
     g.globalAlpha = 1;
     const sk = hy - H * 0.02;
-    for (const b of scene.sky) { g.fillStyle = `rgb(${18 + b.c * 14},${12 + b.c * 10},${44 + b.c * 20})`; g.fillRect(b.x * W - b.w * W / 2, sk - b.h * H, b.w * W, b.h * H + 2); }
+    for (const b of scene.sky) { g.fillStyle = `rgb(${14 + b.c * 10},${14 + b.c * 10},${16 + b.c * 12})`; g.fillRect(b.x * W - b.w * W / 2, sk - b.h * H, b.w * W, b.h * H + 2); }
     // The street floor and its lane lines, wet with the neon.
-    const fl = g.createLinearGradient(0, hy, 0, H); fl.addColorStop(0, '#1a0f2e'); fl.addColorStop(1, '#05030a'); g.fillStyle = fl; g.fillRect(0, hy, W, H - hy);
+    const fl = g.createLinearGradient(0, hy, 0, H); fl.addColorStop(0, '#141416'); fl.addColorStop(1, '#030303'); g.fillStyle = fl; g.fillRect(0, hy, W, H - hy);
     g.strokeStyle = 'rgba(255,207,90,0.5)'; g.lineWidth = 2;
     for (let z = Math.ceil((C.z + 2) / 8) * 8; z < Z_END; z += 8) { const [x0, y0] = P(0, 0, z), [x1, y1] = P(0, 0, z + 3.5); if (y0 > H) continue; g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke(); }
     // The end building and its board.
     { const [x0, y0] = P(-40, 92, Z_END), [x1, y1] = P(40, 0, Z_END);
-      g.fillStyle = '#0d0a22'; g.fillRect(x0, y0, x1 - x0, y1 - y0);
+      g.fillStyle = '#0e0e10'; g.fillRect(x0, y0, x1 - x0, y1 - y0);
       g.fillStyle = '#ffd68c'; for (const w of scene.endWin) { const p = P(w.x, w.y, Z_END - 0.05), s = Math.max(1, p[2] * 0.8); g.globalAlpha = w.a * 0.8; g.fillRect(p[0] - s / 2, p[1] - s * 1.3, s, s * 1.3); } g.globalAlpha = 1;
       const [bx0, by0, sc] = P(-BOARD.w / 2, BOARD.y + BOARD.h / 2, Z_END - 0.2), [bx1, by1] = P(BOARD.w / 2, BOARD.y - BOARD.h / 2, Z_END - 0.2);
       for (let i = 0; i < 6; i++) { const [px0, py0] = P(-34 + i * 11.5, 60, Z_END - 0.1), [px1, py1] = P(-27 + i * 11.5, 40, Z_END - 0.1); if (i === 2 || i === 3) continue; g.fillStyle = NEON[i % NEON.length]; g.globalAlpha = 0.55 + 0.25 * Math.sin(t * 3 + i); g.fillRect(px0, py0, px1 - px0, py1 - py0); }
       g.globalAlpha = 1;
       const pad = sc * 0.6;
-      g.save(); g.shadowColor = T.a; g.shadowBlur = Math.min(90, 18 + sc * 2.2) * (0.8 + 0.2 * Math.sin(t * 4)); g.fillStyle = '#05040c'; g.fillRect(bx0 - pad, by0 - pad, bx1 - bx0 + pad * 2, by1 - by0 + pad * 2); g.restore();
+      g.fillStyle = '#000000'; g.fillRect(bx0 - pad, by0 - pad, bx1 - bx0 + pad * 2, by1 - by0 + pad * 2); // the board's black frame (no glow: A. LED 전광판, 2026-11-28)
       g.drawImage(board, bx0, by0, bx1 - bx0, by1 - by0);
     }
     // The side buildings, far to near: the face along the street (a trapezoid), its windows and neon boards, then its front.
@@ -90,7 +91,7 @@ export function createFilm(canvas, gift, opts = {}) {
       const z0 = Math.max(b.z0, C.z + 0.6), xs = b.s * HALF, xo = b.s * (HALF + b.w);
       const a = P(xs, 0, z0), bb = P(xs, b.h, z0), c = P(xs, b.h, b.z1), d = P(xs, 0, b.z1);
       const shade = Math.round(255 * b.tint);
-      g.fillStyle = `rgb(${shade + 8},${shade},${shade + 30})`;
+      g.fillStyle = `rgb(${shade + 4},${shade + 4},${shade + 8})`;
       g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(bb[0], bb[1]); g.lineTo(c[0], c[1]); g.lineTo(d[0], d[1]); g.closePath(); g.fill();
       // windows: 4 columns along the face, a row every 3.6 m
       g.fillStyle = 'rgba(255,214,140,0.75)';
@@ -107,7 +108,7 @@ export function createFilm(canvas, gift, opts = {}) {
         g.beginPath(); g.moveTo(q0[0], q0[1]); g.lineTo(q1[0], q1[1]); g.lineTo(q2[0], q2[1]); g.lineTo(q3[0], q3[1]); g.closePath(); g.fill();
         g.globalAlpha = 1;
       }
-      if (b.z0 >= C.z + 0.6) { const f0 = P(xs, b.h, b.z0), f1 = P(xo, 0, b.z0); g.fillStyle = `rgb(${shade},${shade},${shade + 18})`; g.fillRect(Math.min(f0[0], f1[0]), f0[1], Math.abs(f1[0] - f0[0]), f1[1] - f0[1]); }
+      if (b.z0 >= C.z + 0.6) { const f0 = P(xs, b.h, b.z0), f1 = P(xo, 0, b.z0); g.fillStyle = `rgb(${shade},${shade},${shade + 4})`; g.fillRect(Math.min(f0[0], f1[0]), f0[1], Math.abs(f1[0] - f0[0]), f1[1] - f0[1]); }
     }
     // The party: fireworks (additive), confetti, the crowd.
     const [bx0, by0] = P(-BOARD.w / 2, BOARD.y + BOARD.h / 2, Z_END), [bx1, by1] = P(BOARD.w / 2, BOARD.y - BOARD.h / 2, Z_END);
@@ -134,7 +135,7 @@ export function createFilm(canvas, gift, opts = {}) {
     // 축하 영상 세트 or 메인 타워 주인공 order is published, its view's clean).
     const title = clamp01((t - 0.3) / 0.6) * (1 - clamp01((t - 3.6) / 0.6));
     if (title > 0) {
-      g.globalAlpha = title; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#ffe7a8';
+      g.globalAlpha = title; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#ffb020';
       g.font = `700 ${Math.round(W * 0.042)}px ${GIFT_SANS}`; g.fillText('오늘 밤, 뉴욕 타임스퀘어', W / 2, H * 0.12);
       const line = (String(gift?.to || '').trim() || '당신') + (isMe(gift) ? '님의 전광판이 켜졌어요' : '님을 위한 전광판이 켜졌어요'); // 내 전광판: no "for"
       g.fillStyle = '#ffffff'; g.font = `800 ${fitSize(g, line, W * 0.86, W * 0.062, W * 0.04, 800)}px ${GIFT_SANS}`; g.fillText(line, W / 2, H * 0.17);
@@ -143,9 +144,10 @@ export function createFilm(canvas, gift, opts = {}) {
     const outro = clamp01((t - 10.2) / 0.8);
     if (outro > 0) {
       g.globalAlpha = outro; g.textAlign = 'center'; g.textBaseline = 'middle';
-      const big = isMe(gift) ? O.emoji + ' ' + toLine(gift) : O.emoji + ' ' + (String(gift?.to || '').trim() || '당신') + '님, ' + O.head + '!';
+      const big = isMe(gift) ? toLine(gift) : (String(gift?.to || '').trim() || '당신') + '님, ' + O.head;
       g.font = `900 ${fitSize(g, big, W * 0.9, W * 0.075, W * 0.045, 900)}px ${GIFT_SANS}`;
-      g.lineWidth = W * 0.012; g.strokeStyle = 'rgba(10,4,30,0.7)'; g.strokeText(big, W / 2, H * 0.62); g.fillStyle = T.hi; g.fillText(big, W / 2, H * 0.62);
+      g.fillStyle = 'rgba(0,0,0,0.6)'; g.fillRect(0, H * 0.565, W, H * 0.13); // a flat black band under the words (no outline, no glow)
+      g.fillStyle = '#ffb020'; g.fillText(big, W / 2, H * 0.62);
       const from = isMe(gift) ? '' : String(gift?.from || '').trim();
       if (from) { g.font = `700 ${Math.round(W * 0.042)}px ${GIFT_SANS}`; g.fillStyle = '#ffffff'; g.fillText('From. ' + from, W / 2, H * 0.67); }
       g.globalAlpha = 1;

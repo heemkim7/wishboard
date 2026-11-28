@@ -58,14 +58,14 @@ describe('the owner page (giftpage.js)', () => {
     assert.match(src, /m\.payApi\(undefined, sessionToken\)/);
   });
   it('keeps the interest flow as the card, and turns it into 결제하기 only when payAvailable answers', () => {
-    assert.match(src, /'🔔 열리면 알림 받기'/); assert.match(src, /payLadder\(g, box\)/);
+    assert.match(src, /icon\('bell'\), '열리면 알림 받기'/); assert.match(src, /payLadder\(g, box\)/);
     assert.match(src, /m\.payAvailable\(\{ kind, boardId: g\.id \}, api\)/); assert.match(src, /if \(!avail \|\| !box\.isConnected\) return;/);
     assert.match(src, /`결제하기 · \$\{won\(p\.price\)\}`/); assert.match(src, /m\.openCheckout\(\{ boardId: g\.id, kind, product: p\.id \}, api\)/);
     assert.match(src, /kind = isMe\(g\) \? 'personal' : 'gift'/);
   });
   it('shows the order state, the refund rules and the test badge; applied only by the line (게시됨)', () => {
     assert.match(src, /m\.ownerOrderLine\(orders\)/); assert.match(src, /api\.boardOrders\(g\.id\)/);
-    assert.match(src, /'취소와 환불'/); assert.match(src, /avail\.badge/); assert.match(src, /line\.active \? '✓ 이 전광판에 적용됐어요'/);
+    assert.match(src, /'취소와 환불'/); assert.match(src, /avail\.badge/); assert.match(src, /line\.active \? '이 전광판에 적용됐어요'/);
   });
   it('confirms the mobile return once on load and cleans the address', () => {
     assert.match(src, /m\.resumeCheckout\(payApiOf\(m\)\)/); assert.match(src, /kts_pay=1/); assert.match(src, /history\.replaceState/);

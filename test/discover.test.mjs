@@ -89,10 +89,10 @@ describe('the page', () => {
     assert.equal(/three|timesSquare3d|net\.js|WebSocket/.test(page), false);
     assert.equal(/innerHTML|outerHTML|insertAdjacentHTML|document\.write/.test(page), false, 'what people wrote is only set as text');
   });
-  it('a long board or wish card grows instead of clipping; the chip has its own row; the big words have a shadow on the light corner', () => {
+  it('a long board or wish card grows instead of clipping; the chip has its own row; a flat board, no shadow on the words', () => {
     const css = /<style>([\s\S]*?)<\/style>/.exec(html)[1], rule = (sel) => new RegExp('\\n\\s*' + sel.replace(/[.*]/g, '\\$&') + ' \\{([^}]*)\\}').exec(css)?.[1] || '';
     assert.match(rule('.face'), /aspect-ratio: 16 \/ 9/); assert.doesNotMatch(rule('.face'), /overflow: hidden/);
-    assert.doesNotMatch(rule('.face .chip'), /position: absolute/); assert.match(rule('.face .big'), /text-shadow/);
+    assert.doesNotMatch(rule('.face .chip'), /position: absolute/); assert.doesNotMatch(rule('.face .big'), /text-shadow/); assert.doesNotMatch(css, /gradient/, 'flat boards and page (2026-11-28)');
     assert.match(page, /h\('div', \{ class: 'mid' \}/);
   });
   it('the tabs are a tablist with one panel, moved through with the arrow keys', () => {

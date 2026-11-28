@@ -726,9 +726,9 @@ describe('account: nickname, sign-out, settings, handover, withdrawal', () => {
     const block = html.slice(at, html.indexOf('.policydoc {', at));
     assert.ok(at > 0 && block.includes('.login-google') && block.includes('.legalbox') && block.includes('.acct'));
     const vars = new Set([...block.matchAll(/var\((--[a-z0-9-]+)\)/g)].map((m) => m[1]));
-    for (const v of vars) assert.ok(['--surface', '--surface-2', '--line', '--text', '--text-2', '--muted', '--accent', '--danger', '--info'].includes(v), v);
+    for (const v of vars) assert.ok(['--surface', '--surface-2', '--line', '--text', '--text-2', '--muted', '--accent', '--danger', '--info', '--r'].includes(v), v);
     for (const m of block.matchAll(/font-size: (\d+)px/g)) assert.ok(['12', '13', '15', '17'].includes(m[1]), m[0]);
-    for (const m of block.matchAll(/border-radius: (\d+)px/g)) assert.ok(['10', '14'].includes(m[1]), m[0]);
+    for (const m of block.matchAll(/border-radius: ([^;]+);/g)) assert.ok(['var(--r)', '50%'].includes(m[1]), m[0]); // 2026-11-28: 4px corners (--r)
     assert.doesNotMatch(block, /#[0-9a-f]{3,8}\b|rgba?\(/i);
   });
 });

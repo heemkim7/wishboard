@@ -51,8 +51,8 @@ describe('PERSONAL: a board of one\'s own (occ me)', () => {
   });
   it('the visitor\'s button on a board of one\'s own is a cheer for that person, not a reply', () => {
     assert.deepEqual(replyDraft({ occ: 'me', to: '민지', from: '' }), { to: '민지', from: '', occ: 'cheer', msg: '', th: '' });
-    assert.equal(replyLabel({ occ: 'me', to: '민지' }), '📣 민지님에게 응원 전광판 걸기');
-    assert.equal(replyLabel({ occ: 'bday', to: '민지', from: '지수' }), '💌 지수님에게 답장 전광판 걸기');
+    assert.equal(replyLabel({ occ: 'me', to: '민지' }), '민지님에게 응원 전광판 걸기');
+    assert.equal(replyLabel({ occ: 'bday', to: '민지', from: '지수' }), '지수님에게 답장 전광판 걸기');
   });
 });
 

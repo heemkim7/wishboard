@@ -38,7 +38,7 @@ describe('paid options are hidden unless PAY_ON', () => {
   });
   it('the plaza names the video one way: 축하 영상', () => {
     assert.doesNotMatch(read('gift.js'), /15초 축하 영상이 나왔어요/);
-    assert.match(read('gift.js'), /🎬 축하 영상이 나왔어요/);
+    assert.match(read('gift.js'), /h2\.textContent = '축하 영상이 나왔어요'/);
   });
 });
 

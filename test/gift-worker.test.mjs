@@ -452,7 +452,7 @@ describe('답장 전광판 on the Worker', { concurrency: false }, () => {
       // The reply: an ordinary board whose ref is the answered one.
       const res = await H.post('/rt/gift', REPLY(first.id), B.token, '2.2.2.2'), reply = await res.json();
       assert.equal(res.status, 200, JSON.stringify(reply));
-      assert.deepEqual([reply.gift.to, reply.gift.from, reply.gift.occ, reply.gift.msg, reply.gift.th], ['지수', '민지', 'thanks', REPLY_MSG, 'rose']);
+      assert.deepEqual([reply.gift.to, reply.gift.from, reply.gift.occ, reply.gift.msg, reply.gift.th], ['지수', '민지', 'thanks', REPLY_MSG, 'night']);
       assert.equal('reply' in reply, false); assert.equal(JSON.stringify(reply).includes(A.id), false, 'the answer never names the answered board\'s owner');
       assert.equal(reOf(env, first.id), reply.id);
       assert.equal(db(env).prepare('select ref from gb where id = ?').get(reply.id).ref, first.id);

@@ -182,10 +182,10 @@ describe('the whole list: once a day per device', () => {
     const g = new Proxy({}, { get: (o, k) => (k in o ? o[k] : k === 'measureText' ? (s) => ({ width: String(s).length * 10 }) : k === 'fillText' ? (s) => words.push(String(s)) : k.startsWith('create') ? () => ({ addColorStop() {} }) : () => {}), set: (o, k, v) => { o[k] = v; return true; } });
     const c = TODO_MOD.cardText('네온후드77', 4);
     paintWelcome({ width: 1024, height: 576, getContext: () => g }, { name: c.name, line: c.line, chip: c.chip });
-    assert.deepEqual(words, ['🎉 오늘 할 일 완료', 'WISH BOARD', '네온후드77 님', '출석 4일째 · 내일 또 만나요']);
+    assert.deepEqual(words, ['오늘 할 일 완료', 'WISH BOARD', '네온후드77 님', '출석 4일째 · 내일 또 만나요'], 'the chip\'s emoji is not drawn on a board (2026-11-28)');
     words.length = 0;
     paintWelcome({ width: 1024, height: 576, getContext: () => g }, { name: '민지', line: WELCOME.line });
-    assert.deepEqual(words, ['👋 환영해요', 'WISH BOARD', '민지 님', WELCOME.line], 'the welcome card is unchanged without a chip');
+    assert.deepEqual(words, ['어서 와요', 'WISH BOARD', '민지 님', WELCOME.line], 'the welcome card is unchanged without a chip');
   });
 });
 

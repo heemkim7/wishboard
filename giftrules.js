@@ -39,18 +39,20 @@ export const VISITOR_ID = /^[0-9a-f]{16,32}$/;
 
 // The line a reply board (답장 전광판) starts with; 고마움's hint is the same words.
 export const REPLY_MSG = '덕분에 행복했어, 고마워!';
+// icon: the day's line icon on the pages and the boards (uiicons.js, 2026-11-28); emoji: the day in the words people send (the share
+// text, the link preview's title), never on a button, a heading or a board.
 export const OCCASIONS = Object.freeze({
-  bday: Object.freeze({ name: '생일', head: '생일 축하해요', emoji: '🎂', th: 'party', hint: '태어나 줘서 고마워!' }),
-  anniv: Object.freeze({ name: '기념일', head: '기념일 축하해요', emoji: '💐', th: 'rose', hint: '함께라서 행복해' }),
-  pass: Object.freeze({ name: '합격', head: '합격 축하해요', emoji: '🎓', th: 'gold', hint: '고생 많았어, 정말 축하해!' }),
-  cheer: Object.freeze({ name: '응원', head: '언제나 응원해요', emoji: '📣', th: 'sky', hint: '넌 할 수 있어!' }),
-  just: Object.freeze({ name: '그냥', head: '그냥 생각나서', emoji: '💌', th: 'mint', hint: '오늘도 좋은 하루 보내' }),
-  thanks: Object.freeze({ name: '고마움', head: '정말 고마워요', emoji: '🙏', th: 'rose', hint: REPLY_MSG }),
+  bday: Object.freeze({ name: '생일', head: '생일 축하해요', emoji: '🎂', icon: 'cake', th: 'party', hint: '태어나 줘서 고마워!' }),
+  anniv: Object.freeze({ name: '기념일', head: '기념일 축하해요', emoji: '💐', icon: 'flower', th: 'rose', hint: '함께라서 행복해' }),
+  pass: Object.freeze({ name: '합격', head: '합격 축하해요', emoji: '🎓', icon: 'cap', th: 'gold', hint: '고생 많았어, 정말 축하해!' }),
+  cheer: Object.freeze({ name: '응원', head: '언제나 응원해요', emoji: '📣', icon: 'megaphone', th: 'sky', hint: '넌 할 수 있어!' }),
+  just: Object.freeze({ name: '그냥', head: '그냥 생각나서', emoji: '💌', icon: 'envelope', th: 'mint', hint: '오늘도 좋은 하루 보내' }),
+  thanks: Object.freeze({ name: '고마움', head: '정말 고마워요', emoji: '🙏', icon: 'pray', th: 'night', hint: REPLY_MSG }),
   // 2026-11-27 (B2C free season): two more days, and `me`, a board of one's own (PERSONAL, /gift?me=1): the same engine, the name shown
   // with "by" in place of "To.", no sender. Old boards keep their keys; these come after them.
-  love: Object.freeze({ name: '사랑', head: '많이 사랑해요', emoji: '💗', th: 'rose', hint: '항상 고마워, 사랑해' }),
-  grad: Object.freeze({ name: '졸업·승진', head: '졸업·승진 축하해요', emoji: '🎊', th: 'gold', hint: '새 출발을 응원해!' }),
-  me: Object.freeze({ name: '내 전광판', head: '오늘의 주인공', emoji: '✨', th: 'night', hint: '오늘의 나를 응원해요' }),
+  love: Object.freeze({ name: '사랑', head: '많이 사랑해요', emoji: '💗', icon: 'heart', th: 'rose', hint: '항상 고마워, 사랑해' }),
+  grad: Object.freeze({ name: '졸업·승진', head: '졸업·승진 축하해요', emoji: '🎊', icon: 'firework', th: 'gold', hint: '새 출발을 응원해!' }),
+  me: Object.freeze({ name: '내 전광판', head: '오늘의 주인공', emoji: '✨', icon: 'wish', th: 'night', hint: '오늘의 나를 응원해요' }),
 });
 export const OCC_KEYS = Object.freeze(Object.keys(OCCASIONS));
 // The days the gift maker offers, in the order it shows them (내 전광판 is its own mode, never a day there).
@@ -69,14 +71,17 @@ const kindWord = (g) => (isMe(g) ? '전광판' : '선물 전광판');
 // A page's title for a board: '민지님의 전광판' / '민지님을 위한 선물 전광판'.
 export const boardTitle = (g) => { const to = String(g?.to || '').trim() || '당신'; return isMe(g) ? `${to}님의 전광판` : `${to}님을 위한 선물 전광판`; };
 
-// a, b: the gradient; ink: the text; hi: the accent (To. line, chips); deep: the frame.
+// The board colours (2026-11-28, A. LED 전광판): f the board's one flat colour, k the name line's ink, t the other words' ink (every pair
+// 4.5:1 or more: test/style-tokens.test.mjs). giftart.js and the page's colour swatches draw only these. a, b, ink, hi, deep are the
+// colours before (a two-colour gradient with a light accent), kept as they were for the real video (realcard.js, realvideo.js), which
+// still reads them. The keys stay: a board keeps its th.
 export const GIFT_THEMES = Object.freeze({
-  party: Object.freeze({ name: '파티', a: '#ff4fa3', b: '#5b21ff', ink: '#fff7fb', hi: '#ffe08a', deep: '#22063f' }),
-  rose: Object.freeze({ name: '로즈', a: '#ff8a9a', b: '#9d174d', ink: '#fff5f6', hi: '#ffe3a3', deep: '#3a0a1f' }),
-  gold: Object.freeze({ name: '골드', a: '#ffd36b', b: '#c2410c', ink: '#fffaf0', hi: '#fff3c4', deep: '#3b1503' }),
-  sky: Object.freeze({ name: '하늘', a: '#38bdf8', b: '#4338ca', ink: '#f4fbff', hi: '#fde68a', deep: '#0b1442' }),
-  mint: Object.freeze({ name: '민트', a: '#34d399', b: '#0e7490', ink: '#f2fffb', hi: '#fef08a', deep: '#062a2e' }),
-  night: Object.freeze({ name: '밤하늘', a: '#312e81', b: '#020617', ink: '#eef2ff', hi: '#facc15', deep: '#01030d' }),
+  party: Object.freeze({ name: '파티', f: '#b5121b', k: '#ffe04a', t: '#ffffff', a: '#ff4fa3', b: '#5b21ff', ink: '#fff7fb', hi: '#ffe08a', deep: '#22063f' }),
+  rose: Object.freeze({ name: '로즈', f: '#c2185b', k: '#ffffff', t: '#ffffff', a: '#ff8a9a', b: '#9d174d', ink: '#fff5f6', hi: '#ffe3a3', deep: '#3a0a1f' }),
+  gold: Object.freeze({ name: '골드', f: '#ffb020', k: '#1a1000', t: '#1a1000', a: '#ffd36b', b: '#c2410c', ink: '#fffaf0', hi: '#fff3c4', deep: '#3b1503' }),
+  sky: Object.freeze({ name: '하늘', f: '#0050d8', k: '#ffffff', t: '#ffffff', a: '#38bdf8', b: '#4338ca', ink: '#f4fbff', hi: '#fde68a', deep: '#0b1442' }),
+  mint: Object.freeze({ name: '민트', f: '#00875a', k: '#ffffff', t: '#ffffff', a: '#34d399', b: '#0e7490', ink: '#f2fffb', hi: '#fef08a', deep: '#062a2e' }),
+  night: Object.freeze({ name: '밤하늘', f: '#000000', k: '#ffb020', t: '#f7f5ee', a: '#312e81', b: '#020617', ink: '#eef2ff', hi: '#facc15', deep: '#01030d' }),
 });
 export const THEME_KEYS = Object.freeze(Object.keys(GIFT_THEMES));
 
@@ -346,7 +351,7 @@ export function hiddenWords(g, now = Date.now(), start = 0) {
   return { label: '켜지기까지', count: countdown(s - now), fine: `오늘 ${hm}에 전광판이 켜지면 축하 영상이 함께 열려요.`, hush: `${hm}에 공개돼요 🤫` };
 }
 // The recipient page's plaza button by phase (/?gb=<id>); before the day there is none.
-export const PLAZA_BTN = Object.freeze({ day: '🗽 광장에서 미리 보기', live: '🗽 직접 가서 보기', after: '🗽 광장에서 다시 보기' });
+export const PLAZA_BTN = Object.freeze({ day: '광장에서 미리 보기', live: '직접 가서 보기', after: '광장에서 다시 보기' }); // giftpage.js puts the map icon before them
 // The plaza's toast once the board is on a screen: look 'live', or 'replay' (on its day before the window: when it hangs; after: only here).
 export function plazaNote(g, look, now = Date.now()) {
   const who = String(g?.to || '') || '당신', head = isMe(g) ? `✨ ${who}님의 전광판이에요` : `🎁 ${who}님을 위한 선물 전광판이에요`;
@@ -406,7 +411,7 @@ export function keptRef(raw, now = Date.now()) {
 // A board of one's own (내 전광판) has nobody to answer: its visitors hang a cheer for that person (응원, the name filled in).
 export function replyDraft(g) { if (isMe(g)) return { to: cut(g?.to, GIFT.toMax), from: '', occ: 'cheer', msg: '', th: '' }; return { to: cut(g?.from, GIFT.toMax), from: cut(g?.to, GIFT.fromMax), occ: 'thanks', msg: REPLY_MSG, th: '' }; }
 // The recipient page's reply button: by the sender's name when the board has one.
-export function replyLabel(g) { if (isMe(g)) return `📣 ${cut(g?.to, GIFT.toMax) || '이분'}님에게 응원 전광판 걸기`; const from = cut(g?.from, GIFT.fromMax); return from ? `💌 ${from}님에게 답장 전광판 걸기` : '💌 고마워 전광판 걸기'; }
+export function replyLabel(g) { if (isMe(g)) return `${cut(g?.to, GIFT.toMax) || '이분'}님에게 응원 전광판 걸기`; const from = cut(g?.from, GIFT.fromMax); return from ? `${from}님에게 답장 전광판 걸기` : '고마워 전광판 걸기'; } // giftpage.js puts the icon before it
 
 // ---- what a page shows ---------------------------------------------------------------------------------------------------
 // The public view of a stored board (the Worker strips the owner, network and visitor fields before this).
@@ -575,8 +580,8 @@ export const cerUrl = (id) => '/?gb=' + id + '&cer=1';
 export function cerButton(g, now = Date.now(), { hard = false, start = 0 } = {}) {
   const x = start || g, p = cerPhase(x, now);
   if (p === 'over') return null;
-  if (p === 'early') return { label: '🎆 점등식 같이 보기 · ' + cerWhen(x), act: 'early', href: '' };
-  const label = p === 'lit' ? '🎆 방금 켜졌어요 · 점등식 보러 가기' : '🎆 점등식 들어가기 · ' + cerClock(cerLeft(x, now)) + ' 남음';
+  if (p === 'early') return { label: '점등식 같이 보기 · ' + cerWhen(x), act: 'early', href: '' };
+  const label = p === 'lit' ? '방금 켜졌어요 · 점등식 보러 가기' : '점등식 들어가기 · ' + cerClock(cerLeft(x, now)) + ' 남음';
   return hard ? { label, act: 'busy', href: '' } : { label, act: 'go', href: cerUrl(g.id) };
 }
 /** The invitation for the share sheet (url: the recipient page), or null without a fixed start. start: as cerButton's. */

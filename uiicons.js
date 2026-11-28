@@ -107,6 +107,21 @@ export const ICONS = Object.freeze({
   // 화면만 보기 on a phone, and (struck through) 화면 다시 보기
   eye: ['M2.5 12C5 7.5 8.3 5.5 12 5.5C15.7 5.5 19 7.5 21.5 12C19 16.5 15.7 18.5 12 18.5C8.3 18.5 5 16.5 2.5 12Z', ['circle', 12, 12, 3]],
   eyeOff: ['M2.5 12C5 7.5 8.3 5.5 12 5.5C15.7 5.5 19 7.5 21.5 12C19 16.5 15.7 18.5 12 18.5C8.3 18.5 5 16.5 2.5 12Z', ['circle', 12, 12, 3], 'M4 4L20 20'],
+  // 2026-11-28 (the pages outside the plaza lose their emoji: out/design-2026-11-28/STYLE.md 5-3): the days of a gift board
+  // (giftrules.js OCCASIONS icon) and the film, play and save buttons of the gift pages.
+  // 생일: a cake with a wavy cream line and one candle
+  cake: ['M4.5 20.5H19.5', 'M5.5 20.5V13.5A1.5 1.5 0 0 1 7 12H17A1.5 1.5 0 0 1 18.5 13.5V20.5', 'M5.5 16C7.5 17.5 9.5 14.5 12 16C14.5 17.5 16.5 14.5 18.5 16', 'M12 12V8.5', 'M12 4.5C11 5.6 11 6.8 12 7.2C13 6.8 13 5.6 12 4.5Z'],
+  // 기념일: a tulip of three petals on a stem with two leaves
+  flower: ['M12 21V12', 'M12 12C9 12 7.5 9.5 8 6.5C10.5 6.8 12 9 12 12Z', 'M12 12C15 12 16.5 9.5 16 6.5C13.5 6.8 12 9 12 12Z', 'M12 12C10.6 9.8 10.8 6.2 12 3.5C13.2 6.2 13.4 9.8 12 12Z', 'M12 17C10 17 8.5 16 8 14.5', 'M12 17C14 17 15.5 16 16 14.5'],
+  // 합격: a mortarboard with its tassel
+  cap: ['M2.5 9.5L12 5L21.5 9.5L12 14Z', 'M6.5 11.5V16C8 17.5 10 18.2 12 18.2C14 18.2 16 17.5 17.5 16V11.5', 'M21.5 9.5V14.5'],
+  // 그냥, 롤링페이퍼, 답장: a letter
+  envelope: [['rect', 3.5, 6, 17, 12, 2], 'M4 7L12 13L20 7'],
+  // 축하 영상: a strip of film
+  film: [['rect', 3.5, 5, 17, 14, 2], 'M3.5 9H20.5', 'M3.5 15H20.5', 'M8 5V9', 'M16 5V9', 'M8 15V19', 'M16 15V19'],
+  play: ['M8 5.5L18.5 12L8 18.5Z'],
+  // 영상 저장: an arrow down into a tray
+  download: ['M12 3.5V14.5', 'M7.5 10L12 14.5L16.5 10', 'M4.5 15.5V18.5A2 2 0 0 0 6.5 20.5H17.5A2 2 0 0 0 19.5 18.5V15.5'],
 });
 
 export const ICON_NAMES = Object.freeze(Object.keys(ICONS));
