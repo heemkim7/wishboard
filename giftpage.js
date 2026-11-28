@@ -137,7 +137,9 @@ const dropMine = (id) => ls.set('kts_gmine', JSON.stringify(mine().filter((x) =>
 // ---- shared pieces ----------------------------------------------------------------------------------------------------------
 const TICK = new Set();
 setInterval(() => { for (const f of TICK) { try { f(); } catch { /* one bad line */ } } }, 1000);
-function live(el, fn) { const run = () => { if (!el.isConnected) { TICK.delete(run); return; } el.textContent = fn(); }; run(); TICK.add(run); return el; }
+// A line that follows the clock: painted at once (the element is usually not on the page yet: a check of isConnected here left it blank
+// for its first second, seen on a slow phone as an empty D-3), then every second while it is on the page.
+function live(el, fn) { const run = () => { if (!el.isConnected) { TICK.delete(run); return; } el.textContent = fn(); }; el.textContent = fn(); TICK.add(run); return el; }
 function clear() { try { document.documentElement.classList.remove('mkpage'); } catch { /* a page without classes */ } TICK.clear(); STAGES.forEach((s) => s.stop()); STAGES.clear(); REAL_RUN?.ctl.abort(); $app.replaceChildren(); window.scrollTo(0, 0); } // a 실사 영상 being made stops with its view
 const STAGES = new Set();
 
