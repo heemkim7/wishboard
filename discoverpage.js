@@ -4,8 +4,8 @@
 // account), 공유하기 (its own share page), 3D에서 보기 (?gb= / ?focus= / ?wish=) and 나도 만들기. Popularity orders the lists; no rank, no count.
 // A tab with fewer real items than DISCOVER.min also shows seasonal samples in their own section (SAMPLE_LABEL), never counted or mixed in.
 // Text people wrote is only ever set with textContent.
-import { TABS, DISCOVER, discoverItems, discoverTab, samplesFor, SAMPLE_LABEL, refreshDue } from './discoverrules.js?v=202611272230';
-import { paintGift } from './giftart.js?v=202611272230';
+import { TABS, DISCOVER, discoverItems, discoverTab, samplesFor, SAMPLE_LABEL, refreshDue } from './discoverrules.js?v=202611280912';
+import { paintGift } from './giftart.js?v=202611280912';
 
 const $app = document.getElementById('app');
 const ls = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
@@ -36,7 +36,7 @@ async function token() {
     const post = async (body) => { const r = await fetch('/rt/guest', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); return { r, d: await r.json().catch(() => null) }; };
     let { r, d } = await post(g?.token ? { t: g.token } : {});
     if (r.status === 403 && d?.err === 'human') {
-      let ts = ''; try { const m = await import('./human.js?v=202611272230'); ts = await m.humanToken(String(d.site || ''), { action: 'guest' }); } catch { ts = ''; }
+      let ts = ''; try { const m = await import('./human.js?v=202611280912'); ts = await m.humanToken(String(d.site || ''), { action: 'guest' }); } catch { ts = ''; }
       if (!ts) return '';
       ({ r, d } = await post({ ts }));
     }

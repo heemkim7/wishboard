@@ -8,9 +8,9 @@
 import { GIFT_ID, OCCASIONS, windowText, plazaLook, plazaNote, CER, CER_TEXT, cerStart, cerArrive, cerBack, cerDebugStart, cerSteps, cerDigit, cerPinMs, cerArriveNote, cerBand, cerPhotoText, beaconOnce, kstDay, revealAt, isMe, filmMark, toLine } from './giftrules.js';
 import { towerLook } from './towerrules.js';
 import { nowMs, clock, skewOf } from './live.js';
-import { GIFT_SANS, fitSize } from './giftart.js?v=202611272230';
-import { recordCanvas, canRecord, saveBlob, fileName } from './giftfilm.js?v=202611272230';
-import { doToken } from './net.js?v=202611272230';
+import { GIFT_SANS, fitSize } from './giftart.js?v=202611280912';
+import { recordCanvas, canRecord, saveBlob, fileName } from './giftfilm.js?v=202611280912';
+import { doToken } from './net.js?v=202611280912';
 
 const CSS = `
 #kts-gift-frame{position:fixed;inset:0;z-index:2147482000;background:rgba(4,4,14,.72);display:flex;align-items:stretch;justify-content:center;outline:none}
@@ -121,7 +121,7 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown, netDown
   const note = (t, k, fn, o) => { try { ui?.note?.(t, k, fn, o); } catch { /* no toast */ } };
   // The 🎁 button: right after 🌠, when the HUD is there (it is built before the world).
   const btn = document.createElement('button');
-  btn.className = 'btn icon tool-gift'; btn.type = 'button'; btn.title = '선물 전광판'; btn.setAttribute('aria-label', '선물 전광판 걸기'); import('./uiicons.js?v=202611272230').then((m) => btn.replaceChildren(m.icon('gift'))).catch(() => { btn.textContent = '🎁'; }); // the line icon, like its neighbours (the emoji only if the icon set cannot be loaded)
+  btn.className = 'btn icon tool-gift'; btn.type = 'button'; btn.title = '선물 전광판'; btn.setAttribute('aria-label', '선물 전광판 걸기'); import('./uiicons.js?v=202611280912').then((m) => btn.replaceChildren(m.icon('gift'))).catch(() => { btn.textContent = '🎁'; }); // the line icon, like its neighbours (the emoji only if the icon set cannot be loaded)
   btn.addEventListener('click', () => openMaker());
   const place = () => { const w = document.querySelector('#ui .tool-wish'); if (w && !btn.isConnected) w.after(btn); return !!w; };
   if (!place()) { const t = setInterval(() => { if (place()) clearInterval(t); }, 500); setTimeout(() => clearInterval(t), 30000); }
@@ -329,7 +329,7 @@ export function mountGift({ world, ui, whenBuilt, introDone, budgetDown, netDown
     const send = async (ts) => { try { const r = await fetch('/rt/gift/' + id + '/video', { method: 'POST', headers: { authorization: 'Bearer ' + tok, 'content-type': blob.type || 'application/octet-stream', ...(ts ? { 'x-ts': ts } : {}) }, body: blob }); return { s: r.status, d: await r.json().catch(() => ({})) }; } catch { return { s: 0, d: { ok: false } }; } };
     let { s, d } = await send('');
     if (s === 403 && d?.code === 'human' && d.site) {
-      let ts = ''; try { ts = await (await import('./human.js?v=202611272230')).humanToken(String(d.site), { action: 'gvid' }); } catch { ts = ''; }
+      let ts = ''; try { ts = await (await import('./human.js?v=202611280912')).humanToken(String(d.site), { action: 'gvid' }); } catch { ts = ''; }
       if (ts) ({ s, d } = await send(ts));
     }
     return d || { ok: false };
