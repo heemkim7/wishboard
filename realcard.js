@@ -7,8 +7,8 @@
 // Timeline (flash = 1.5 s): standby (black, the board's colour coming in, its frame breathing, twinkles), charge-up from 0.95 s, the white
 // flash, then the card: badge, To., the headline pop, the line, From., the WISH BOARD footer, a confetti burst, falling confetti, twinkles
 // and sheen passes over the headline's letters, settling to a calm card by the end.
-import { layoutFor, fitLines, cardWords, realTheme, darkRgb } from './realrules.js?v=202611280944';
-import { themeOf, seeded, GIFT_SANS } from './giftart.js?v=202611280944';
+import { layoutFor, fitLines, cardWords, realTheme, darkRgb } from './realrules.js?v=202611281741';
+import { themeOf, seeded, GIFT_SANS } from './giftart.js?v=202611281741';
 
 const clamp01 = (x) => Math.max(0, Math.min(1, x));
 const smoothstep = (a, b, x) => { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); };

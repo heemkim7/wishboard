@@ -8,7 +8,7 @@
 // account or guest this browser already is (its token, never a new guest for this), else the gift pages' random browser id (kts_gv).
 // Nothing else: no contact, no notice. This browser remembers what it registered (kts_soon), so the button stays "관심 담음".
 import { SOON, SOON_LABEL, SOON_BTN, SOON_DONE, SOON_THANKS, SOON_BUSY, SOON_HEAD, SOON_INTRO, SOON_FREE, SOON_SRC } from './soonrules.js';
-import { icon } from './uiicons.js?v=202611280944';
+import { icon } from './uiicons.js?v=202611281741';
 
 const KEY = 'kts_soon';
 const ls = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };

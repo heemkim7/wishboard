@@ -4,12 +4,12 @@
 // on the canyon walls, the New Year's ball, steam stacks, and the K-food blade signs beside the lot pad.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { LAYOUT } from './layout.js?v=202611280944';
-import { Kit, cropPlane } from './kit.js?v=202611280944';
-import { makeCanvas, paintBlade, paintLabel, paintGlow, THEMES } from './art.js?v=202611280944';
-import { addFrame } from './screens.js?v=202611280944';
-import { planBowtie, wallsIn, STREET_OLD } from './bowtie.js?v=202611280944';
-import { ENV_PHOTOS, envPhotoUrl } from './loadplan.js?v=202611280944';
+import { LAYOUT } from './layout.js?v=202611281741';
+import { Kit, cropPlane } from './kit.js?v=202611281741';
+import { makeCanvas, paintBlade, paintLabel, paintGlow, THEMES } from './art.js?v=202611281741';
+import { addFrame } from './screens.js?v=202611281741';
+import { planBowtie, wallsIn, STREET_OLD } from './bowtie.js?v=202611281741';
+import { ENV_PHOTOS, envPhotoUrl } from './loadplan.js?v=202611281741';
 
 const ONE = new THREE.Vector3(1, 1, 1);
 const Y_AXIS = new THREE.Vector3(0, 1, 0);

@@ -3,7 +3,7 @@ import { CHEER_PHRASES } from './plaza-account.js';
 
 async function bearer() {
   try {
-    const { doToken } = await import('./net.js?v=202611280944');
+    const { doToken } = await import('./net.js?v=202611281741');
     const tok = await doToken();
     if (tok) return tok;
   } catch { /* node tests have no session */ }

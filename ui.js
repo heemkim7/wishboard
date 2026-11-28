@@ -1,40 +1,40 @@
 // Plaza UI: glass HUD, wallet, news wire, emote dock, prompts, bungeo-ppang timing game, 같이 춤추기 (dance.js),
 // taxi HUD, city map + minimap, billboard / plot / ATM / settings / credits sheets, onboarding, touch controls, SFX.
-import { paintBillboard, paintNeonSign, THEMES, makeCanvas, chars, fontsReady, tierOf, boardPhoto, photoReady, paintNameTag, paintRingFx, paintFrameSwatch } from './ts3d/art.js?v=202611280944';
-import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, LANDMARKS } from './ts3d/layout.js?v=202611280944';
+import { paintBillboard, paintNeonSign, THEMES, makeCanvas, chars, fontsReady, tierOf, boardPhoto, photoReady, paintNameTag, paintRingFx, paintFrameSwatch } from './ts3d/art.js?v=202611281741';
+import { LAYOUT, LOOP, insideLoop, PLOT_SLOTS, TAXI_STANDS, LANDMARKS } from './ts3d/layout.js?v=202611281741';
 import { BALANCE, PAY, chainBoost, floorOf, slotName, josa, STREET_N, SLOT_SOON, slotOpen, SHOP_KINDS, shopTiles, shopItem, isPrimeSlot } from './balance.js';
-import { createTeamUI } from './teamui.js?v=202611280944';
-import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611280944';
+import { createTeamUI } from './teamui.js?v=202611281741';
+import { claimWizard, crowdFacts, firstStep, graduation, kstDay, newcomer, newcomerKnown, peopleTag, tutorialNext, silentGrad, wishStep, wishHeart, wishDraft, shareWish, present, msgText, pushAsk, PUSH_WHY } from './ftue.js?v=202611281741';
 import { WISH, WISH_ERR, cleanWish, wishRejected, wishShareText, nickRefused, NICK_FIX } from './wish.js';
 import { botNick } from './league.js';
-import { backFields, returnGap, claimStarter, sheetStarts } from './growth.js?v=202611280944';
-import { A2HS_KEY, VISITS_KEY, bumpVisits, isStandalone, isIosSafari, installMode, installDue, INSTALL_COPY, INSTALL_CRAMPED_Q } from './install.js?v=202611280944';
-import { RECAP_KEY, RECAP_SHOWN_KEY, noteDay, noteHeld, noteHearts, noteClaim as recapClaim, recapDue, recapLines, recapShareText, weekOf } from './recap.js?v=202611280944';
+import { backFields, returnGap, claimStarter, sheetStarts } from './growth.js?v=202611281741';
+import { A2HS_KEY, VISITS_KEY, bumpVisits, isStandalone, isIosSafari, installMode, installDue, INSTALL_COPY, INSTALL_CRAMPED_Q } from './install.js?v=202611281741';
+import { RECAP_KEY, RECAP_SHOWN_KEY, noteDay, noteHeld, noteHearts, noteClaim as recapClaim, recapDue, recapLines, recapShareText, weekOf } from './recap.js?v=202611281741';
 import { nowMs } from './live.js';
 import { TOWER, towerNews } from './towerrules.js';
-import { cardUrl, vipShareLink, composeWishShot, kakaoFeed, kakaoSend, loadKakao, invited } from './share.js?v=202611280944';
+import { cardUrl, vipShareLink, composeWishShot, kakaoFeed, kakaoSend, loadKakao, invited } from './share.js?v=202611281741';
 import { inviteView } from './invite.js';
-import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611280944';
-import { EMOTES, REACTIONS, AVATAR_COLORS, AVATAR_COLOR_NAMES, SPECIES } from './ts3d/avatars.js?v=202611280944';
-import { trackEvent, statsOff, statsGpc, setStatsOff } from './analytics.js?v=202611280944';
+import { TILE, ROAD, AREA } from './ts3d/nyc.js?v=202611281741';
+import { EMOTES, REACTIONS, AVATAR_COLORS, AVATAR_COLOR_NAMES, SPECIES } from './ts3d/avatars.js?v=202611281741';
+import { trackEvent, statsOff, statsGpc, setStatsOff } from './analytics.js?v=202611281741';
 import { CHEER_PHRASES, SITE, accountLabel, allowedLink, blockedText, linkedActor, slotTier, freshBoards, otherShare, adActions } from './plaza-account.js';
-import { codeStart, codeStep, codeView, otpField } from './mailcode.js?v=202611280944';
-import { policyDoc } from './legal.js?v=202611280944';
-import { setOperator, operatorInfo } from './legal.js?v=202611280944';
+import { codeStart, codeStep, codeView, otpField } from './mailcode.js?v=202611281741';
+import { policyDoc } from './legal.js?v=202611281741';
+import { setOperator, operatorInfo } from './legal.js?v=202611281741';
 import { SUPPORT_KINDS, SUPPORT_TEXT, SUPPORT_CONSENT, SUP, supportFault, textLen, maintOf, maintLines, operatorLine } from './opsrules.js';
-import { subscribePush, resendPush } from './push.js?v=202611280944';
-import { bindSfx, bindMusic, play, setSound, haptic, musicVisible } from './audio.js?v=202611280944';
-import { createBgm } from './bgm.js?v=202611280944';
-import { radioAt, spanBucket } from './dance.js?v=202611280944';
-import { stickVec, isTouchUI, STICK_W, STICK_H, STICK_THROW, STICK_ENGAGE, bakeFlip, bakeBest, BAKE_FLIPS, BAKE_ROUND_MS, COMPACT_HUD_Q } from './interact.js?v=202611280944';
+import { subscribePush, resendPush } from './push.js?v=202611281741';
+import { bindSfx, bindMusic, play, setSound, haptic, musicVisible } from './audio.js?v=202611281741';
+import { createBgm } from './bgm.js?v=202611281741';
+import { radioAt, spanBucket } from './dance.js?v=202611281741';
+import { stickVec, isTouchUI, STICK_W, STICK_H, STICK_THROW, STICK_ENGAGE, bakeFlip, bakeBest, BAKE_FLIPS, BAKE_ROUND_MS, COMPACT_HUD_Q } from './interact.js?v=202611281741';
 import { AD, AD_TEMPLATES, adSums, adBars } from './adreport.js';
 import { adScreenName, linkHost } from './adsale.js';
-import { qrEncode, paintQr } from './qr.js?v=202611280944';
-import { icon } from './uiicons.js?v=202611280944';
-import { soonBlock } from './soon.js?v=202611280944'; // 출시 예정: the coming features and their interest button (the proof bar's sheet)
-import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, proofOffers, proofPlan, TOAST, touchTag, goalKnown, PRESS, createTapGuard, backdropClose, TOOL_ORDER, hintLeft, sameNews } from './overlay.js?v=202611280944';
-import { linesFault, LINES_ERR } from './ftue.js?v=202611280944'; // the board-line checks
-import { TODO, TODO_TEXT, todoList, todoSettled, todoProgress, todoNext, todoSnap, todoDiff, allDue, momentHold, itemNote, allNote, attendNote, footLine, cardText, pillPlan, markStamp, stampRow, stampName, giftSeen, giftDone, weekStart, todoKeep } from './todo.js?v=202611280944';
+import { qrEncode, paintQr } from './qr.js?v=202611281741';
+import { icon } from './uiicons.js?v=202611281741';
+import { soonBlock } from './soon.js?v=202611281741'; // 출시 예정: the coming features and their interest button (the proof bar's sheet)
+import { createBackKeeper, createInputLock, sheetPlan, draftAtRisk, toastMs, toastText, proofOffers, proofPlan, TOAST, touchTag, goalKnown, PRESS, createTapGuard, backdropClose, TOOL_ORDER, hintLeft, sameNews } from './overlay.js?v=202611281741';
+import { linesFault, LINES_ERR } from './ftue.js?v=202611281741'; // the board-line checks
+import { TODO, TODO_TEXT, todoList, todoSettled, todoProgress, todoNext, todoSnap, todoDiff, allDue, momentHold, itemNote, allNote, attendNote, footLine, cardText, pillPlan, markStamp, stampRow, stampName, giftSeen, giftDone, weekStart, todoKeep } from './todo.js?v=202611281741';
 
 const LEVELS = [
   { src: 'icons/lot.jpg?v=2', t: '빈 땅' },

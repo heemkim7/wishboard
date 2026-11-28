@@ -11,7 +11,7 @@
 //
 // No DOM and no three.js here (Node tests run it). radioAt fills an object it is given, so the world can ask every frame
 // without making one.
-import { TRACKS } from './bgm.js?v=202611280944';
+import { TRACKS } from './bgm.js?v=202611281741';
 
 // The model's clips a move may use (ts3d/gestures.js CLIPS): the Dance loop between the others.
 export const DANCE_CLIPS = Object.freeze(['Dance', 'Wave', 'Jump', 'ThumbsUp', 'Yes', 'No']);

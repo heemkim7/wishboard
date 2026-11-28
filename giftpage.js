@@ -3,11 +3,11 @@
 // #gift-data (the Worker renders /g/<id>), the rest is a few small JSON calls. Text people wrote is only set with textContent.
 import { GIFT, GIFT_ID, OCCASIONS, OCC_KEYS, GIFT_THEMES, THEME_KEYS, TIERS, TIER_NOTE, TIER_ASK, won, giftFault, paperFault, startChoices, windowText, dayText, hourText, clockText, plazaLook, kstDay, addDays, countdown, dDay, refOf, keptRef, cpLen, norm, windowFor, replyDraft, replyLabel, PLAZA_BTN, videoFirst, CER_TEXT, cerStart, cerButton, cerInvite, cerShareLine, cerBackWhy, cerDebugStart, pageLook, hiddenWords, visitorShareText, GIFT_PICK, ME_KINDS, isMe, toLine, boardTitle, cut, filmMark, teaserCard } from './giftrules.js';
 import { TOWER, TOWER_ERR, towerCard as towerState, towerClock, towerLook, friendsText } from './towerrules.js';
-import { paintGift, paintStreet, giftCardJpeg } from './giftart.js?v=202611280944';
-import { createFilm, FILM_MS, recordCanvas, canRecord, saveBlob, fileName } from './giftfilm.js?v=202611280944';
-import { icon } from './uiicons.js?v=202611280944';
-import { SCENES, REAL_DIR, plateUrls, musicUrls, plateFault, realFileName, realReason, inAppBrowser, lowFor, scenesToDrop } from './realrules.js?v=202611280944';
-import { soonBlock } from './soon.js?v=202611280944'; // 출시 예정: the four coming features and their interest button (owner pages only)
+import { paintGift, paintStreet, giftCardJpeg } from './giftart.js?v=202611281741';
+import { createFilm, FILM_MS, recordCanvas, canRecord, saveBlob, fileName } from './giftfilm.js?v=202611281741';
+import { icon } from './uiicons.js?v=202611281741';
+import { SCENES, REAL_DIR, plateUrls, musicUrls, plateFault, realFileName, realReason, inAppBrowser, lowFor, scenesToDrop } from './realrules.js?v=202611281741';
+import { soonBlock } from './soon.js?v=202611281741'; // 출시 예정: the four coming features and their interest button (owner pages only)
 
 const $app = document.getElementById('app');
 // Opened over the plaza (gift.js, ?in=1 in a frame): links into the plaza tell the plaza instead of loading a second one in the frame.
@@ -86,7 +86,7 @@ function sessionToken() {
 // ms: human.js HUMAN_MS overrides (the 💖 check is quiet: HEART_TS).
 async function human(site, action, { ms = null } = {}) {
   if (!site) return '';
-  try { const m = await import('./human.js?v=202611280944'); return await m.humanToken(site, ms ? { action, ms } : { action }); } catch { return ''; }
+  try { const m = await import('./human.js?v=202611281741'); return await m.humanToken(site, ms ? { action, ms } : { action }); } catch { return ''; }
 }
 let MINT = null;
 async function token(mint = false) {
@@ -693,7 +693,7 @@ function paidCard(g, arm = null) {
 // 결제 (payclient.js, only while the Worker has PAY_ON=1 and this account may pay): loaded on the owner page only, when its card is built.
 // The mobile return from PortOne (?kts_pay=1&paymentId=<order>) is confirmed once on load (resumeCheckout) and the address cleaned.
 let PAYMOD = null;
-const payMod = () => (PAYMOD ||= import('./payclient.js?v=202611280944').catch(() => null));
+const payMod = () => (PAYMOD ||= import('./payclient.js?v=202611281741').catch(() => null));
 const payApiOf = (m) => m.payApi(undefined, sessionToken); // orders are an account's: the signed-in session only
 const PAY_BACK = ['kts_pay', 'paymentId', 'code', 'message', 'pgCode', 'pgMessage', 'transactionType', 'txId'];
 const RESUMED = /[?&]kts_pay=1(?:&|$)/.test(location.search) ? payMod().then(async (m) => {
@@ -960,7 +960,7 @@ function realBody(g) {
     showBar(null); makeBtn.disabled = false; makeBtn.replaceChildren(icon('film'), '‘' + name + '’ 장면으로 10초 영상 만들기');
   }
   function loadTool(s) {
-    if (!REAL_RVP) REAL_RVP = import('./realvideo.js?v=202611280944').then((m) => { REAL_RV = m; return m; }, (e) => { REAL_RVP = null; throw e; });
+    if (!REAL_RVP) REAL_RVP = import('./realvideo.js?v=202611281741').then((m) => { REAL_RV = m; return m; }, (e) => { REAL_RVP = null; throw e; });
     REAL_RVP.catch(() => { if (pick === s && makeBtn.isConnected) { say(note, '영상 도구를 불러오지 못했어요. 장면을 다시 눌러 주세요.'); makeBtn.disabled = true; makeBtn.textContent = '장면을 다시 눌러 주세요'; } });
   }
   function choose(s) {

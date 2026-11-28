@@ -5,7 +5,7 @@
 // its words left-aligned in the theme's two inks (k, t), the day's line icon (uiicons.js, the same set as the pages) and a black ticker
 // band along the foot with the amber words (From · 친구 메시지 · WISH BOARD). No gradient, light, vignette, confetti or emoji.
 import { OCCASIONS, GIFT_THEMES, CER_TEXT, toLine, isMe } from './giftrules.js';
-import { ICONS } from './uiicons.js?v=202611280944';
+import { ICONS } from './uiicons.js?v=202611281741';
 
 export const GIFT_SANS = '"Pretendard Variable", Pretendard, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif';
 export const TICKER = Object.freeze({ bg: '#000000', ink: '#ffb020' }); // the band along a board's foot: black, the marquee amber
